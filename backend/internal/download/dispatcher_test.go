@@ -545,5 +545,64 @@ func TestDispatcher_ZeroPadding(t *testing.T) {
 	}
 }
 
+// TestDispatcher_NoProviderStaysWanted verifies that a Chapter with no matching
+// ProviderChapter is skipped during RunOnce: it must stay in wanted state and a
+// download.skip SSE notice must be emitted. This branch is near-defensive —
+// the ingest invariant always creates a ProviderChapter alongside each Chapter —
+// but it is reachable in tests by constructing a Chapter without any
+// ProviderChapter row.
+func TestDispatcher_NoProviderStaysWanted(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	events, unsub := hub.Subscribe()
+	defer unsub()
+
+	s := client.Series.Create().SetTitle("No-Provider Series").SetSlug("no-provider-series").SaveX(ctx)
+	// Intentionally create a Chapter with NO matching ProviderChapter row.
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-orphan").SaveX(ctx)
+
+	f := fake.New()
+	d := download.New(client, f, hub, download.Config{
+		PerProviderConcurrency: 1,
+		MaxRetries:             3,
+		Storage:                storageDir,
+	})
+
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	// Chapter must remain in wanted — no illegal wanted→failed transition.
+	got := client.Chapter.GetX(ctx, ch.ID)
+	if got.State != "wanted" {
+		t.Errorf("state: want wanted (no-provider chapter must not advance), got %s", got.State)
+	}
+
+	// A download.skip SSE event must have been emitted within a short window.
+	var skipSeen bool
+	timeout := time.After(500 * time.Millisecond)
+drain:
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				break drain
+			}
+			if ev.Type == "download.skip" {
+				skipSeen = true
+				break drain
+			}
+		case <-timeout:
+			break drain
+		}
+	}
+	if !skipSeen {
+		t.Error("expected a download.skip SSE event for the no-provider chapter, got none")
+	}
+}
+
 // Ensure uuid is used to keep the import — used in table-driven extensions.
 var _ = uuid.Nil

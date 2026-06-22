@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -49,15 +50,20 @@ type Config struct {
 
 // defaultBackoff is the backoff function used when Config.Backoff is nil.
 // It doubles the delay for each attempt up to a maximum of 1 hour.
+//
+// Overflow analysis: base = 5 min = 3e11 ns. The hour cap fires at shift=4
+// (5min×2^4=80min>1h), so shift is capped at 12 as a conservative guard.
+// At shift=12: 5min×2^12 ≈ 1.2e15 ns — far below int64 max (≈9.2e18 ns).
 func defaultBackoff(attempt int) time.Duration {
 	base := 5 * time.Minute
 	shift := attempt
-	if shift > 30 {
-		// Cap the shift to 30 to prevent integer overflow: 1<<31 wraps negative on
-		// int32 targets and would bypass the hour cap entirely.
-		shift = 30
+	// Cap shift at 12 so the multiplication stays well within int64 range.
+	// The hour ceiling already kicks in at shift=4; the cap prevents any
+	// theoretical overflow on very large attempt counts.
+	if shift > 12 {
+		shift = 12
 	}
-	d := base * (1 << uint(shift)) //nolint:gosec // shift is capped to 30; overflow is impossible.
+	d := base * (1 << uint(shift)) //nolint:gosec // shift is capped at 12; 5min×2^12 ≈ 1.2e15ns << int64 max.
 	if d > time.Hour {
 		d = time.Hour
 	}
@@ -112,6 +118,10 @@ func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config)
 // concurrently, honouring the per-provider concurrency cap. It waits for all
 // downloads to complete before returning. Per-chapter errors are collected; the
 // first non-nil error is returned. Callers can run this method in a ticker loop.
+//
+// BestProviderChapter is resolved exactly once per chapter here so that the
+// semaphore key and the actual fetch target are always the same provider
+// snapshot, preventing a TOCTOU skew if provider importance changes mid-run.
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
 	chapters, err := chapter.WantedChapters(ctx, d.client, 1000, d.cfg.MaxRetries)
 	if err != nil {
@@ -140,11 +150,25 @@ func (d *Dispatcher) RunOnce(ctx context.Context) error {
 	for _, ch := range chapters {
 		chID := ch.ID
 
-		// Determine provider before launching the goroutine so we acquire the
-		// correct semaphore without racing on the BestProviderChapter result.
-		pc, _, err := chapter.BestProviderChapter(ctx, d.client, chID)
+		// Resolve the best provider ONCE per chapter so the semaphore key and the
+		// fetch target are guaranteed to be the same provider.
+		pc, importance, err := chapter.BestProviderChapter(ctx, d.client, chID)
 		if err != nil {
-			// No provider can service this chapter; skip it this round.
+			// No-provider is near-defensive: the ingest invariant guarantees every
+			// Chapter is created alongside at least one ProviderChapter. If that
+			// invariant is violated (e.g. a manual DB edit), the chapter should stay
+			// in wanted — it is awaiting a source via ingest, NOT a fetch failure.
+			// Transitioning to failed here would be an illegal state-graph edge.
+			// Emit an observable skip notice and continue; do not silently swallow.
+			slog.WarnContext(ctx, "download.RunOnce: no provider for chapter — skipping this round; chapter stays wanted until ingest supplies a provider",
+				"chapter_id", chID,
+				"err", err,
+			)
+			d.broadcast("download.skip", DownloadEvent{
+				ChapterID: chID,
+				State:     string(entchapter.StateWanted),
+				Error:     "no provider available: " + err.Error(),
+			})
 			continue
 		}
 		sp := pc.Edges.SeriesProvider
@@ -162,7 +186,7 @@ func (d *Dispatcher) RunOnce(ctx context.Context) error {
 			// Per-chapter errors are recorded in the DB and broadcast via SSE.
 			// They are not propagated to the caller — a failed chapter is a
 			// handled outcome, not an infrastructure failure.
-			_ = d.Process(ctx, chID)
+			_ = d.process(ctx, chID, pc, importance)
 		}()
 	}
 
@@ -170,35 +194,46 @@ func (d *Dispatcher) RunOnce(ctx context.Context) error {
 	return nil
 }
 
-// Process executes the full download pipeline for a single chapter:
+// Process executes the full download pipeline for a single chapter by chapter
+// ID. It resolves the best provider internally and delegates to the internal
+// process method. Callers that have already resolved the best ProviderChapter
+// (e.g. RunOnce) should use process directly to avoid a redundant DB query.
+func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
+	pc, importance, err := chapter.BestProviderChapter(ctx, d.client, chapterID)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.Process: best provider for chapter %s: %w", chapterID, err)
+	}
+	return d.process(ctx, chapterID, pc, importance)
+}
+
+// process executes the full download pipeline for a single chapter using a
+// pre-resolved ProviderChapter. RunOnce calls this directly so that the
+// BestProviderChapter resolution is never duplicated (semaphore key and fetch
+// target are always the same provider snapshot).
+//
 //  1. Load the chapter with its series edge.
-//  2. Identify the best ProviderChapter via chapter.BestProviderChapter.
-//  3. Transition the chapter to downloading.
-//  4. Broadcast a download.start SSE event.
-//  5. Build a FetchRef and fetch pages.
-//  6. On success: render to disk, update provenance fields, transition to
+//  2. Transition the chapter to downloading.
+//  3. Broadcast a download.start SSE event.
+//  4. Build a FetchRef and fetch pages.
+//  5. On success: render to disk, update provenance fields, transition to
 //     downloaded, broadcast download.done.
-//  7. On failure: call handleFailure, which increments retries, sets last_error
+//  6. On failure: call handleFailure, which increments retries, sets last_error
 //     and next_attempt_at, transitions to permanently_failed when the retry
 //     budget is exhausted, and broadcasts download.fail.
-func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
+func (d *Dispatcher) process(ctx context.Context, chapterID uuid.UUID, pc *ent.ProviderChapter, importance int) error {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
 		WithSeries().
 		Only(ctx)
 	if err != nil {
-		return fmt.Errorf("download.Dispatcher.Process: load chapter %s: %w", chapterID, err)
+		return fmt.Errorf("download.Dispatcher.process: load chapter %s: %w", chapterID, err)
 	}
 
-	pc, importance, err := chapter.BestProviderChapter(ctx, d.client, chapterID)
-	if err != nil {
-		return fmt.Errorf("download.Dispatcher.Process: best provider for chapter %s: %w", chapterID, err)
-	}
 	sp := pc.Edges.SeriesProvider
 
 	// Transition wanted / failed → downloading.
 	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloading); err != nil {
-		return fmt.Errorf("download.Dispatcher.Process: transition to downloading for chapter %s: %w", chapterID, err)
+		return fmt.Errorf("download.Dispatcher.process: transition to downloading for chapter %s: %w", chapterID, err)
 	}
 
 	d.broadcast("download.start", DownloadEvent{
