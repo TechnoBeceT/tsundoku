@@ -224,10 +224,16 @@ func TestUpgrade_NonDestructiveOnFailure(t *testing.T) {
 		originalFilename, spLow.ID, 2, originalBytes, originalPath)
 }
 
-// TestDetectUpgrades_StrictlyGreater verifies that the upgrade rule is a
-// strict > comparison: a chapter already satisfied at importance=5 with
-// another provider also at importance=5 must NOT be flagged. This test FAILS
-// if the comparison is >= instead of >.
+// TestDetectUpgrades_StrictlyGreater verifies the strict > comparison rule.
+//
+// Two cases are tested:
+//  1. Equal-importance alternative: a second provider at the same importance=5
+//     exists for the same chapter key. DetectUpgrades must return 0 and the
+//     chapter must remain downloaded — an equal-importance source is NOT an
+//     upgrade (guards against an accidental >= regression).
+//  2. Strictly-higher provider: adding a third provider at importance=6 must
+//     cause DetectUpgrades to return 1 and transition the chapter to
+//     upgrade_available (guards against an accidental <= regression).
 func TestDetectUpgrades_StrictlyGreater(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -235,11 +241,13 @@ func TestDetectUpgrades_StrictlyGreater(t *testing.T) {
 	hub := sse.NewHub()
 
 	s := client.Series.Create().SetTitle("Strict Series").SetSlug("strict-series").SaveX(ctx)
-	sp := client.SeriesProvider.Create().
-		SetSeries(s).SetProvider("prov-equal").SetImportance(5).SaveX(ctx)
+
+	// Provider that will satisfy the initial download (importance=5).
+	spA := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-a").SetImportance(5).SaveX(ctx)
 	client.ProviderChapter.Create().
-		SetSeriesProviderID(sp.ID).SetChapterKey("ch-strict").
-		SetURL("https://equal.example.com/ch-strict").SetProviderIndex(0).SaveX(ctx)
+		SetSeriesProviderID(spA.ID).SetChapterKey("ch-strict").
+		SetURL("https://a.example.com/ch-strict").SetProviderIndex(0).SaveX(ctx)
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-strict").SaveX(ctx)
 
 	d := download.New(client, fake.New(), hub, download.Config{
@@ -252,16 +260,43 @@ func TestDetectUpgrades_StrictlyGreater(t *testing.T) {
 		t.Fatal("chapter should be downloaded before DetectUpgrades")
 	}
 
-	// DetectUpgrades must return 0 — equal importance must NOT trigger an upgrade.
+	// Case 1: add a second provider at the SAME importance=5 (different provider,
+	// same chapter key). DetectUpgrades must return 0 — equal importance is not
+	// an upgrade, so the strict > rule must hold.
+	spB := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-b").SetImportance(5).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spB.ID).SetChapterKey("ch-strict").
+		SetURL("https://b.example.com/ch-strict").SetProviderIndex(0).SaveX(ctx)
+
 	n, err := download.DetectUpgrades(ctx, client)
 	if err != nil {
-		t.Fatalf("DetectUpgrades: %v", err)
+		t.Fatalf("DetectUpgrades (equal-importance case): %v", err)
 	}
 	if n != 0 {
-		t.Errorf("DetectUpgrades: want 0 (equal importance is not an upgrade), got %d", n)
+		t.Errorf("DetectUpgrades (equal-importance): want 0, got %d — equal importance must NOT trigger an upgrade", n)
 	}
 	if client.Chapter.GetX(ctx, ch.ID).State != entchapter.StateDownloaded {
-		t.Error("state must remain downloaded when no strictly-higher provider exists")
+		t.Error("state must remain downloaded when only equal-importance alternatives exist")
+	}
+
+	// Case 2: add a STRICTLY higher-importance provider (importance=6). Now
+	// DetectUpgrades must return 1 and the chapter must be flagged upgrade_available.
+	spC := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-c").SetImportance(6).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spC.ID).SetChapterKey("ch-strict").
+		SetURL("https://c.example.com/ch-strict").SetProviderIndex(0).SaveX(ctx)
+
+	n, err = download.DetectUpgrades(ctx, client)
+	if err != nil {
+		t.Fatalf("DetectUpgrades (strictly-higher case): %v", err)
+	}
+	if n != 1 {
+		t.Errorf("DetectUpgrades (strictly-higher): want 1, got %d — a strictly higher provider must trigger an upgrade", n)
+	}
+	if client.Chapter.GetX(ctx, ch.ID).State != entchapter.StateUpgradeAvailable {
+		t.Errorf("state after strictly-higher detect: want upgrade_available, got %s", client.Chapter.GetX(ctx, ch.ID).State)
 	}
 }
 

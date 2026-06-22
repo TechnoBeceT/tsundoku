@@ -230,8 +230,13 @@ func (d *Dispatcher) persistUpgradeSuccess(ctx context.Context, chapterID uuid.U
 	}
 
 	// Defensive path: reachable only on DB failure between the provenance update
-	// and this state transition. If it fails, handleUpgradeFailure is called by
-	// Upgrade — the chapter will not be left in upgrading.
+	// above and this state transition. If it fails, Upgrade routes through
+	// handleUpgradeFailure, which sets state=downloaded (good state: new file on
+	// disk + correct provenance already written), records last_error, and emits an
+	// upgrade.fail event. That event is a misleading false-failure signal — no data
+	// was lost and the upgrade actually succeeded — but it is harmless: Task 7
+	// reconcile / the next DetectUpgrades run will observe state=downloaded with
+	// satisfied_importance already at the new value and will not re-flag the chapter.
 	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
 		return fmt.Errorf("transition to downloaded: %w", err)
 	}
