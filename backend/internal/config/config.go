@@ -30,11 +30,22 @@ type Config struct {
 	Server ServerConfig
 	// Database holds PostgreSQL connection parameters.
 	Database DatabaseConfig
+	// Auth holds HMAC signing settings for the owner JWT layer.
+	Auth AuthConfig
 	// Suwayomi holds connection settings for the Suwayomi manga server.
 	// Fields are stubs for M0; Milestone 2 fills in the full integration.
 	Suwayomi SuwayomiConfig
 	// Storage holds library-path settings for downloaded chapters.
 	Storage StorageConfig
+}
+
+// AuthConfig holds HMAC signing settings for the single-owner auth layer.
+type AuthConfig struct {
+	// Secret is the HMAC-SHA256 signing key for owner JWTs.
+	// Must be at least 16 characters; validate() fails closed on startup when
+	// this is empty or shorter, preventing all tokens from being forgeable.
+	// Set via TSUNDOKU_AUTH_SECRET.
+	Secret string
 }
 
 // ServerConfig holds HTTP server settings.
@@ -104,6 +115,7 @@ func defaults() map[string]any {
 		"database.password": "",
 		"database.name":     "tsundoku",
 		"database.sslmode":  "disable",
+		"auth.secret":       "",
 		"suwayomi.host":     "localhost",
 		"suwayomi.port":     "4567",
 		"suwayomi.basepath": "/api",
@@ -185,17 +197,30 @@ func envKeyTransform(s string) string {
 // it works correctly on all platforms and with wrapped errors.
 func isNotExist(err error) bool { return err != nil && errors.Is(err, os.ErrNotExist) }
 
+// minAuthSecretLen is the minimum acceptable length for the HMAC auth secret.
+// A shorter secret makes tokens trivially forgeable; we fail closed at startup.
+const minAuthSecretLen = 16
+
 // validate checks that the loaded configuration is safe to use. It returns an
 // error at startup rather than allowing the binary to run with a broken or
 // insecure setup (fail-closed semantics per DEC-NX-054 / QCAT-019).
 //
 // Rules enforced:
 //   - Database.Password must be set — never run against a passwordless DB.
+//   - Auth.Secret must be at least 16 characters — an empty or short HMAC
+//     secret makes all tokens forgeable (flagged by Task 5 adversarial review).
 func (c *Config) validate() error {
 	var errs []string
 
 	if c.Database.Password == "" {
 		errs = append(errs, "TSUNDOKU_DATABASE_PASSWORD must be set")
+	}
+
+	if len(c.Auth.Secret) < minAuthSecretLen {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_AUTH_SECRET must be at least %d characters (got %d)",
+			minAuthSecretLen, len(c.Auth.Secret),
+		))
 	}
 
 	if len(errs) > 0 {

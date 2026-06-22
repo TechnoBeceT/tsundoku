@@ -67,9 +67,9 @@ func TestLoadRejectsMalformedYAML(t *testing.T) {
 		}
 	})
 
-	// DB password is needed to pass validate(), but we expect a parse error
-	// before validate() is reached.
+	// Required secrets — but we expect a parse error before validate() is reached.
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
 
 	_, err = Load()
 	if err == nil {

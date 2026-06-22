@@ -64,11 +64,12 @@ func TestDSNEncodesSpecialChars(t *testing.T) {
 }
 
 // TestLoadDefaults confirms that Load() applies sane defaults for all
-// non-secret fields and that validate() passes when the required DB
-// password is provided via the environment.
+// non-secret fields and that validate() passes when the required secrets are
+// provided via the environment.
 func TestLoadDefaults(t *testing.T) {
-	// Only the one required secret — everything else should default.
+	// Required secrets — everything else should default.
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234") // >= 16 chars
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -91,6 +92,7 @@ func TestLoadDefaults(t *testing.T) {
 // TestLoadAppliesEnvOverride confirms that env vars override built-in defaults.
 func TestLoadAppliesEnvOverride(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "secret")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234") // >= 16 chars
 	t.Setenv("TSUNDOKU_SERVER_PORT", "9999")
 
 	cfg, err := config.Load()
@@ -111,6 +113,7 @@ func TestLoadEnvDatabaseFields(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "mysecret")
 	t.Setenv("TSUNDOKU_DATABASE_NAME", "mydb")
 	t.Setenv("TSUNDOKU_DATABASE_SSLMODE", "require")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234") // >= 16 chars
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -156,6 +159,7 @@ func TestDSNUsedByLoad(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PORT", "5432")
 	t.Setenv("TSUNDOKU_DATABASE_NAME", "ldb")
 	t.Setenv("TSUNDOKU_DATABASE_SSLMODE", "disable")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234") // >= 16 chars
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -171,7 +175,8 @@ func TestDSNUsedByLoad(t *testing.T) {
 // TestLoadEnvSuwayomiFields confirms that all SuwayomiConfig fields are
 // settable via environment variables.
 func TestLoadEnvSuwayomiFields(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x") // required to pass validate()
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")                 // required to pass validate()
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234") // required to pass validate()
 	t.Setenv("TSUNDOKU_SUWAYOMI_HOST", "suwhost")
 	t.Setenv("TSUNDOKU_SUWAYOMI_PORT", "9999")
 	t.Setenv("TSUNDOKU_SUWAYOMI_BASEPATH", "/graphql")
@@ -196,7 +201,8 @@ func TestLoadEnvSuwayomiFields(t *testing.T) {
 // TestLoadEnvStorageFolder confirms that the StorageConfig.Folder field is
 // settable via environment variable.
 func TestLoadEnvStorageFolder(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x") // required to pass validate()
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")                 // required to pass validate()
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234") // required to pass validate()
 	t.Setenv("TSUNDOKU_STORAGE_FOLDER", "/mnt/manga")
 
 	cfg, err := config.Load()
@@ -206,5 +212,73 @@ func TestLoadEnvStorageFolder(t *testing.T) {
 
 	if cfg.Storage.Folder != "/mnt/manga" {
 		t.Errorf("Storage.Folder = %q, want %q", cfg.Storage.Folder, "/mnt/manga")
+	}
+}
+
+// TestValidateRejectsEmptyAuthSecret confirms that validate() refuses a config
+// with no auth secret — an empty HMAC secret makes all tokens forgeable.
+func TestValidateRejectsEmptyAuthSecret(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: ""},
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for empty auth secret, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_AUTH_SECRET") {
+		t.Errorf("error should mention TSUNDOKU_AUTH_SECRET, got: %v", err)
+	}
+}
+
+// TestValidateRejectsShortAuthSecret confirms that validate() refuses a secret
+// shorter than the minimum (16 characters).
+func TestValidateRejectsShortAuthSecret(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "tooshort"},
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for short auth secret, got nil")
+	}
+}
+
+// TestValidateAcceptsValidAuthSecret confirms that a 16+ character secret
+// passes validate() when combined with a valid DB password.
+func TestValidateAcceptsValidAuthSecret(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+	}
+	if err := config.ExportValidateForTest(cfg); err != nil {
+		t.Fatalf("expected validate to pass, got: %v", err)
+	}
+}
+
+// TestLoadAuthSecretFromEnv confirms that TSUNDOKU_AUTH_SECRET is loaded and
+// stored in Config.Auth.Secret.
+func TestLoadAuthSecretFromEnv(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "mysupersecretauth123") // >= 16 chars
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Auth.Secret != "mysupersecretauth123" {
+		t.Errorf("Auth.Secret = %q, want %q", cfg.Auth.Secret, "mysupersecretauth123")
+	}
+}
+
+// TestLoadRejectsWithoutAuthSecret confirms that Load() fails closed when
+// TSUNDOKU_AUTH_SECRET is absent, preventing startup with forgeable tokens.
+func TestLoadRejectsWithoutAuthSecret(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	// Deliberately do not set TSUNDOKU_AUTH_SECRET
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected Load() to fail without auth secret, got nil")
 	}
 }
