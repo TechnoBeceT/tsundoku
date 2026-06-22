@@ -123,9 +123,12 @@ func upsertSidecar(seriesDir string, m RenderMeta, filename string, pageCount in
 }
 
 // buildProviderOrder builds a unique, importance-ordered list of provider names
-// from all chapter provenance records. Providers are sorted by Importance DESC,
-// then Provider name ASC for stable ties. Deduplication keeps the first occurrence
-// (highest importance) of each provider name.
+// from all chapter provenance records.
+//
+// Sorted by Importance DESC — in Tsundoku a HIGHER importance number means
+// HIGHER priority/quality (opposite of legacy Kaizoku.GO, where lower was better).
+// Index 0 is the highest-priority provider. Ties broken by provider name ASC.
+// Deduplication keeps the first occurrence (highest importance) of each provider name.
 func buildProviderOrder(chapters []ChapterProvenance) []string {
 	type pair struct {
 		provider   string

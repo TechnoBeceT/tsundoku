@@ -27,7 +27,9 @@ type ChapterProvenance struct {
 	// Scanlator is the scanlation group name.
 	Scanlator string `json:"scanlator,omitempty"`
 
-	// Importance is the provider importance rank (lower = higher priority).
+	// Importance is the provider importance rank.
+	// Tsundoku convention: HIGHER number = HIGHER priority/quality
+	// (opposite of legacy Kaizoku.GO where lower was better).
 	Importance int `json:"importance"`
 
 	// Filename is the on-disk CBZ filename (basename only, not the full path).
@@ -53,7 +55,9 @@ type Sidecar struct {
 	Category string `json:"category,omitempty"`
 
 	// ProviderOrder is the ordered list of provider names by importance
-	// (index 0 = highest priority). Used by Task 7 to restore ImportanceOrder.
+	// (index 0 = highest-priority provider; highest importance number — Tsundoku
+	// convention: higher importance number = higher priority). Used by Task 7
+	// to restore ImportanceOrder.
 	ProviderOrder []string `json:"provider_order,omitempty"`
 
 	// Chapters is the ordered list of chapter provenance records.

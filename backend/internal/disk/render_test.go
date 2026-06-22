@@ -342,6 +342,64 @@ func TestBuildProviderOrderDedup(t *testing.T) {
 	}
 }
 
+// TestBuildProviderOrderSortsByImportanceDesc is the executable guard for the
+// Tsundoku importance convention: HIGHER importance number = HIGHER priority.
+// Index 0 of ProviderOrder MUST be the provider with the largest importance value.
+// This test will fail if anyone inverts the comparator in buildProviderOrder.
+func TestBuildProviderOrderSortsByImportanceDesc(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	num := 1.0
+	max := 10.0
+
+	render := func(chKey, provider string, importance int) {
+		t.Helper()
+		req := disk.RenderRequest{
+			Storage: storage,
+			Meta: disk.RenderMeta{
+				Provider:    provider,
+				Language:    "en",
+				SeriesTitle: "Importance Order Series",
+				Category:    "Manga",
+				Number:      &num,
+				MaxChapter:  &max,
+				ChapterKey:  chKey,
+				Importance:  importance,
+			},
+			Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+		}
+		if _, err := disk.RenderChapter(req); err != nil {
+			t.Fatalf("RenderChapter(%q): %v", chKey, err)
+		}
+	}
+
+	// "low" has importance=1; "high" has importance=5.
+	// Tsundoku convention: higher importance number = higher priority.
+	// Therefore ProviderOrder[0] must be "high".
+	render("ch-low", "low", 1)
+	render("ch-high", "high", 5)
+
+	seriesDir := filepath.Join(storage, "Manga", "Importance Order Series")
+	sidecar, err := disk.ReadSidecar(seriesDir)
+	if err != nil {
+		t.Fatalf("ReadSidecar: %v", err)
+	}
+	if sidecar == nil {
+		t.Fatal("ReadSidecar returned nil")
+	}
+	if len(sidecar.ProviderOrder) < 2 {
+		t.Fatalf("ProviderOrder len = %d, want 2", len(sidecar.ProviderOrder))
+	}
+	// The provider with importance=5 must be at index 0.
+	if sidecar.ProviderOrder[0] != "high" {
+		t.Errorf("ProviderOrder[0] = %q, want %q (higher importance number must be first)", sidecar.ProviderOrder[0], "high")
+	}
+	if sidecar.ProviderOrder[1] != "low" {
+		t.Errorf("ProviderOrder[1] = %q, want %q", sidecar.ProviderOrder[1], "low")
+	}
+}
+
 // TestRenderChapterUpdatesSidecar verifies that a second RenderChapter call for
 // the same series appends to (rather than replaces) the sidecar.
 func TestRenderChapterUpdatesSidecar(t *testing.T) {
