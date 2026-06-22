@@ -24,12 +24,20 @@ import (
 // retryPolicy controls how Open retries a failed connection attempt.
 // The defaults are short enough to exercise in tests (300 ms total sleep)
 // while still being useful for a real startup race with PostgreSQL.
+// len(delays) must equal maxAttempts-1 (no sleep after the final attempt).
 var retryPolicy = struct {
 	maxAttempts int
 	delays      []time.Duration
 }{
 	maxAttempts: 3,
 	delays:      []time.Duration{100 * time.Millisecond, 200 * time.Millisecond},
+}
+
+// pingDB is the function used by Open to check connectivity after sql.Open.
+// It is a package-level variable so that tests can substitute a controlled
+// implementation (see export_test.go / SetPingForTest).
+var pingDB = func(ctx context.Context, db *sql.DB) error {
+	return db.PingContext(ctx)
 }
 
 // Open builds a *sql.DB backed by the pgx stdlib driver, wraps it as an Ent
@@ -46,15 +54,14 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*ent.Client, error) {
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		// UNCOVERABLE: the pgx stdlib driver registers without error;
-		// sql.Open only fails for unknown driver names.
+		// UNCOVERABLE: pgx/v5 stdlib registers cleanly; sql.Open only errors for an unregistered driver name.
 		return nil, fmt.Errorf("database: sql.Open: %w", err)
 	}
 
 	// Retry loop: ping the DB until reachable or attempts exhausted.
 	var pingErr error
 	for attempt := 0; attempt < retryPolicy.maxAttempts; attempt++ {
-		pingErr = db.PingContext(ctx)
+		pingErr = pingDB(ctx, db)
 		if pingErr == nil {
 			break
 		}
@@ -63,10 +70,8 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*ent.Client, error) {
 			select {
 			case <-time.After(retryPolicy.delays[attempt]):
 			case <-ctx.Done():
-				// UNCOVERABLE in the normal test path: exercising this branch
-				// requires cancelling the context mid-sleep, which adds test
-				// complexity for a defensive shutdown guard. The branch is
-				// correct and documented here; it is not fake-covered.
+				// Covered by TestOpenCancelledDuringBackoff: context cancelled
+				// while waiting between retry attempts; abort immediately.
 				_ = db.Close()
 				return nil, fmt.Errorf("database: context cancelled while waiting to retry: %w", ctx.Err())
 			}
