@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 )
@@ -30,19 +31,23 @@ import (
 func ProgressHandler(hub *Hub) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		w := c.Response()
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		// Disable buffering at the response writer level so frames are sent
-		// immediately. WriteHeader flushes headers to the client.
-		w.WriteHeader(http.StatusOK)
 
+		// Check for flushing support BEFORE committing any response headers or
+		// status code, so that we can still return a 500 if streaming is
+		// unsupported. Once WriteHeader is called the status code is locked.
 		flusher, ok := w.Writer.(http.Flusher)
 		if !ok {
 			// This should not happen with a real HTTP/1.1 connection, but if the
 			// underlying ResponseWriter does not support flushing we cannot stream.
 			return echo.NewHTTPError(http.StatusInternalServerError, "streaming unsupported")
 		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		// Disable buffering at the response writer level so frames are sent
+		// immediately. WriteHeader flushes headers to the client.
+		w.WriteHeader(http.StatusOK)
 
 		ch, unsubscribe := hub.Subscribe()
 		defer unsubscribe()
@@ -68,17 +73,27 @@ func ProgressHandler(hub *Hub) echo.HandlerFunc {
 	}
 }
 
+// sseNewlineReplacer strips CR and LF from strings that are written verbatim
+// into SSE field values. A newline in an SSE field name or event type would
+// break the framing; we remove it defensively rather than rejecting the event.
+var sseNewlineReplacer = strings.NewReplacer("\n", "", "\r", "")
+
 // writeSSEFrame serialises event into the SSE wire format and writes it to w:
 //
 //	event: <type>
 //	data: <json>
 //	<blank line>
+//
+// event.Type is sanitized to strip any CR/LF before being written (SSE framing
+// is newline-delimited; a newline in the type would corrupt the frame). Data is
+// JSON-encoded, so it is already safe.
 func writeSSEFrame(w interface{ Write([]byte) (int, error) }, event Event) error {
 	data, err := json.Marshal(event.Data)
 	if err != nil {
 		return fmt.Errorf("marshal SSE event data: %w", err)
 	}
-	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, data)
+	safeType := sseNewlineReplacer.Replace(event.Type)
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", safeType, data)
 	return err
 }
 

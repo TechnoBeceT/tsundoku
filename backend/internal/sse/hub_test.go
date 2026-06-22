@@ -3,13 +3,17 @@ package sse_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/technobecet/tsundoku/internal/middleware"
+	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -21,6 +25,69 @@ import (
 //   - writeSSEFrame error path — fmt.Fprintf to an in-memory recorder never
 //     returns an error; a real network write failure races with ctx.Done so
 //     the client-disconnect path fires first. Document, not fake-covered.
+
+// waitForSubscribers polls hub's subscriber count until it reaches n or the
+// deadline elapses. It is used instead of time.Sleep to provide deterministic
+// synchronization between the test goroutine and the handler goroutine.
+func waitForSubscribers(t *testing.T, hub *sse.Hub, n int, deadline time.Duration) {
+	t.Helper()
+	timeout := time.After(deadline)
+	for {
+		if sse.SubscriberCount(hub) >= n {
+			return
+		}
+		select {
+		case <-timeout:
+			t.Fatalf("timed out waiting for %d subscriber(s); current count: %d", n, sse.SubscriberCount(hub))
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+// assertSSEHeaders checks that rec contains the required SSE response headers.
+func assertSSEHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	ct := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/event-stream") {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	if rec.Header().Get("Cache-Control") != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", rec.Header().Get("Cache-Control"))
+	}
+	if rec.Header().Get("Connection") != "keep-alive" {
+		t.Errorf("Connection = %q, want keep-alive", rec.Header().Get("Connection"))
+	}
+}
+
+// assertSSEFrame checks that body contains a well-formed SSE frame for the
+// given event type.
+func assertSSEFrame(t *testing.T, body, eventType string) {
+	t.Helper()
+	if !strings.Contains(body, "event: "+eventType+"\n") {
+		t.Errorf("body missing SSE event line for %q; got:\n%s", eventType, body)
+	}
+	if !strings.Contains(body, "data: ") {
+		t.Errorf("body missing SSE data line; got:\n%s", body)
+	}
+	if !strings.Contains(body, "\n\n") {
+		t.Errorf("body missing SSE frame terminator; got:\n%s", body)
+	}
+}
+
+// waitBroadcastDispatched broadcasts event to hub, waits for the probe channel
+// to confirm delivery (proving the hub dispatched to all concurrent
+// subscribers), then returns. It is safe to cancel the handler and read
+// rec.Body once this function returns.
+func waitBroadcastDispatched(t *testing.T, hub *sse.Hub, event sse.Event, probe <-chan sse.Event) {
+	t.Helper()
+	hub.Broadcast(event)
+	select {
+	case <-probe:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for probe to receive broadcast event")
+	}
+}
 
 // TestHubBroadcastReachesSubscriber verifies that an event sent via Broadcast
 // arrives on a subscriber's channel within a reasonable timeout.
@@ -106,32 +173,41 @@ func TestSlowSubscriberDoesNotBlockHub(t *testing.T) {
 // correct HTTP headers and that a broadcast event appears in the response body
 // as a properly formatted SSE frame. A cancelled context ends the stream so
 // the test terminates.
+//
+// Synchronization is deterministic: we poll sse.SubscriberCount (via
+// export_test.go) rather than sleeping, so the test is not sensitive to
+// scheduling delays.
 func TestHandlerSetsEventStreamHeaders(t *testing.T) {
 	hub := sse.NewHub()
 	e := echo.New()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/progress", nil)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	// Run the handler in a goroutine; cancel context after a short delay.
+	// Run the handler in a goroutine.
 	done := make(chan error, 1)
 	go func() {
 		done <- sse.ProgressHandler(hub)(c)
 	}()
 
-	// Give the handler time to subscribe and write headers.
-	time.Sleep(50 * time.Millisecond)
+	// Wait deterministically until the handler has subscribed.
+	waitForSubscribers(t, hub, 1, 2*time.Second)
 
-	hub.Broadcast(sse.Event{Type: "progress", Data: map[string]any{"pct": 99}})
+	// Subscribe a probe BEFORE broadcasting; wait for probe receipt to confirm
+	// the hub dispatched to all subscribers. Reading rec.Body before <-done
+	// would race with the handler's concurrent Write calls.
+	probe, probeUnsub := hub.Subscribe()
+	defer probeUnsub()
 
-	// Give the handler time to write the event frame.
-	time.Sleep(50 * time.Millisecond)
+	waitBroadcastDispatched(t, hub, sse.Event{Type: "progress", Data: map[string]any{"pct": 99}}, probe)
+
+	// Cancel and wait for the handler to exit before reading the response.
 	cancel()
-
 	select {
 	case err := <-done:
 		if err != nil {
@@ -141,29 +217,8 @@ func TestHandlerSetsEventStreamHeaders(t *testing.T) {
 		t.Fatal("handler did not return after context cancellation")
 	}
 
-	// Verify headers.
-	ct := rec.Header().Get("Content-Type")
-	if !strings.HasPrefix(ct, "text/event-stream") {
-		t.Errorf("Content-Type = %q, want text/event-stream", ct)
-	}
-	if rec.Header().Get("Cache-Control") != "no-cache" {
-		t.Errorf("Cache-Control = %q, want no-cache", rec.Header().Get("Cache-Control"))
-	}
-	if rec.Header().Get("Connection") != "keep-alive" {
-		t.Errorf("Connection = %q, want keep-alive", rec.Header().Get("Connection"))
-	}
-
-	// Verify SSE frame format: must contain "event: progress" and "data: ".
-	body := rec.Body.String()
-	if !strings.Contains(body, "event: progress\n") {
-		t.Errorf("body missing SSE event line; got:\n%s", body)
-	}
-	if !strings.Contains(body, "data: ") {
-		t.Errorf("body missing SSE data line; got:\n%s", body)
-	}
-	if !strings.Contains(body, "\n\n") {
-		t.Errorf("body missing SSE frame terminator; got:\n%s", body)
-	}
+	assertSSEHeaders(t, rec)
+	assertSSEFrame(t, rec.Body.String(), "progress")
 }
 
 // TestRegisterRoutes verifies that RegisterRoutes wires GET /progress on the
@@ -175,6 +230,7 @@ func TestRegisterRoutes(t *testing.T) {
 	e := echo.New()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	api := e.Group("/api")
 	sse.RegisterRoutes(api, hub)
@@ -189,7 +245,8 @@ func TestRegisterRoutes(t *testing.T) {
 		e.ServeHTTP(rec, req)
 	}()
 
-	time.Sleep(30 * time.Millisecond)
+	// Wait deterministically until the handler has subscribed, then cancel.
+	waitForSubscribers(t, hub, 1, 2*time.Second)
 	cancel()
 
 	<-done
@@ -213,4 +270,65 @@ func TestUnsubscribeIdempotent(t *testing.T) {
 	}()
 	unsubscribe()
 	unsubscribe() // must not panic
+}
+
+// TestProgressRouteRequiresOwner proves that the /api/progress endpoint is
+// protected by the RequireOwner middleware: an unauthenticated request must
+// receive 401, and an authenticated request must reach the stream (not 401).
+func TestProgressRouteRequiresOwner(t *testing.T) {
+	const secret = "test-secret"
+	authSvc := auth.NewService(secret)
+
+	hub := sse.NewHub()
+	e := echo.New()
+	// Hide Echo's default error handler output in tests.
+	e.HideBanner = true
+
+	api := e.Group("/api", middleware.RequireOwner(authSvc))
+	sse.RegisterRoutes(api, hub)
+
+	t.Run("unauthenticated returns 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/progress", nil)
+		// No Authorization header — must be rejected.
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("unauthenticated request: got status %d, want 401", rec.Code)
+		}
+	})
+
+	t.Run("authenticated reaches stream", func(t *testing.T) {
+		ownerID := uuid.New()
+		token, err := authSvc.Issue(ownerID)
+		if err != nil {
+			t.Fatalf("failed to issue token: %v", err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/progress", nil)
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			e.ServeHTTP(rec, req)
+		}()
+
+		// Wait until the handler has subscribed (proves it got past auth).
+		waitForSubscribers(t, hub, 1, 2*time.Second)
+		cancel()
+		<-done
+
+		if rec.Code == http.StatusUnauthorized {
+			t.Error("authenticated request was rejected with 401")
+		}
+		ct := rec.Header().Get("Content-Type")
+		if !strings.HasPrefix(ct, "text/event-stream") {
+			t.Errorf("authenticated request: Content-Type = %q, want text/event-stream", ct)
+		}
+	})
 }

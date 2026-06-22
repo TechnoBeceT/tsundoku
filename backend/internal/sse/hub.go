@@ -23,6 +23,10 @@ const subscriberBufSize = 16
 // Type identifies the SSE event type; Data is any JSON-serialisable payload.
 type Event struct {
 	// Type is the SSE event name (e.g. "progress", "done", "error").
+	// It MUST NOT contain newline (\n) or carriage-return (\r) characters;
+	// the SSE wire format is newline-delimited, and a newline in the type field
+	// would corrupt the frame. writeSSEFrame strips any such characters
+	// defensively, but callers should not rely on that sanitization.
 	Type string `json:"type"`
 	// Data is the event payload; it is JSON-marshalled into the SSE data line.
 	Data any `json:"data"`
