@@ -76,6 +76,9 @@ func SetState(ctx context.Context, client *ent.Client, chapterID uuid.UUID, to e
 		return fmt.Errorf("chapter.SetState: illegal transition %s → %s", ch.State, to)
 	}
 
+	// Defensive path: Exec error is only reachable if the DB connection is lost
+	// between loading the chapter and persisting the new state — not reachable
+	// under normal operation.
 	if err := client.Chapter.UpdateOneID(chapterID).SetState(to).Exec(ctx); err != nil {
 		return fmt.Errorf("chapter.SetState: persist state %s for chapter %s: %w", to, chapterID, err)
 	}

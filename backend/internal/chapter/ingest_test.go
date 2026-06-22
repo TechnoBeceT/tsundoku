@@ -95,8 +95,7 @@ func TestIngestConcurrentRaceNoDuplicate(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	wg.Add(2)
-	for i := 0; i < 2; i++ {
-		i := i
+	for i := range 2 {
 		go func() {
 			defer wg.Done()
 			<-start
@@ -280,5 +279,60 @@ func TestIngestProviderChaptersDBError(t *testing.T) {
 	_, err := chapter.IngestProviderChapters(cancelCtx, client, sp.ID, chapters)
 	if err == nil {
 		t.Fatal("expected error with cancelled context, got nil")
+	}
+}
+
+// TestAbsorbProviderChapterRace verifies absorbProviderChapterRace deterministically:
+// given an existing ProviderChapter row, calling AbsorbProviderChapterRace with new
+// values must re-fetch the row, update all mutable fields, and return nil error.
+// This exercises the concurrent-INSERT loser path without relying on a real race.
+func TestAbsorbProviderChapterRace(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	s := client.Series.Create().SetTitle("Race Absorb Test").SetSlug("race-absorb-test").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-absorb").SetImportance(1).SaveX(ctx)
+
+	const key = "7"
+
+	// Seed an existing ProviderChapter row — this is the "winner" of the INSERT race.
+	initialNum := ptr(7.0)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).
+		SetChapterKey(key).
+		SetNillableNumber(initialNum).
+		SetName("Chapter 7 initial").
+		SetURL("https://example.com/ch7-initial").
+		SetProviderIndex(0).
+		SaveX(ctx)
+
+	// The "loser" goroutine calls AbsorbProviderChapterRace with updated values.
+	newNum := ptr(7.0)
+	newFC := chapter.FetchedChapter{
+		Number:        newNum,
+		Name:          "Chapter 7 updated",
+		URL:           "https://example.com/ch7-updated",
+		ProviderIndex: 99,
+	}
+
+	err := chapter.AbsorbProviderChapterRace(ctx, client, sp.ID, key, newFC)
+	if err != nil {
+		t.Fatalf("AbsorbProviderChapterRace returned unexpected error: %v", err)
+	}
+
+	// Verify the existing row was updated to the new values.
+	rows := client.ProviderChapter.Query().AllX(ctx)
+	if len(rows) != 1 {
+		t.Fatalf("want exactly 1 ProviderChapter row, got %d", len(rows))
+	}
+	got := rows[0]
+	if got.Name != newFC.Name {
+		t.Errorf("Name: want %q, got %q", newFC.Name, got.Name)
+	}
+	if got.URL != newFC.URL {
+		t.Errorf("URL: want %q, got %q", newFC.URL, got.URL)
+	}
+	if got.ProviderIndex != newFC.ProviderIndex {
+		t.Errorf("ProviderIndex: want %d, got %d", newFC.ProviderIndex, got.ProviderIndex)
 	}
 }

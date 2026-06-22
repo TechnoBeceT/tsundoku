@@ -113,6 +113,9 @@ func ingestProviderChapter(
 	}
 
 	if !ent.IsNotFound(err) {
+		// Defensive path: real DB error (e.g. connection lost) during the initial
+		// read. Not reachable under normal operation — only a mid-operation failure
+		// of the database layer would reach this branch.
 		return false, fmt.Errorf("query: %w", err)
 	}
 
@@ -138,6 +141,8 @@ func ingestProviderChapter(
 		return false, absorbProviderChapterRace(ctx, client, seriesProviderID, key, fc)
 	}
 
+	// Defensive path: non-constraint insert error (e.g. DB connection lost after
+	// the initial query succeeded). Not reachable under normal operation.
 	return false, fmt.Errorf("insert: %w", err)
 }
 
@@ -157,9 +162,14 @@ func absorbProviderChapterRace(
 		).
 		Only(ctx)
 	if err != nil {
+		// Defensive path: the winner's row vanished between the constraint error
+		// and this re-fetch — not reachable under normal operation (rows are never
+		// deleted mid-ingest).
 		return fmt.Errorf("re-fetch after constraint race: %w", err)
 	}
 	if _, err := applyProviderChapterUpdate(ctx, client, existing.ID, fc); err != nil {
+		// Defensive path: DB connection lost between re-fetch and update — not
+		// reachable under normal operation.
 		return fmt.Errorf("update after constraint race: %w", err)
 	}
 	return nil
@@ -189,6 +199,9 @@ func applyProviderChapterUpdate(
 	if fc.PageCount == nil {
 		upd = upd.ClearPageCount()
 	}
+	// Defensive path: Save error is only reachable if the DB connection is lost
+	// between building the update and executing it — not reachable under normal
+	// operation.
 	return upd.Save(ctx)
 }
 
