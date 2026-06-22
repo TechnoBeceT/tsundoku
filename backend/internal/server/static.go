@@ -2,10 +2,12 @@
 package server
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 )
@@ -16,7 +18,8 @@ import (
 // assets directly; no separate static file server is needed.
 const staticDistDir = "dist"
 
-// registerStaticSPA wires the SPA static-file serving and fallback onto e.
+// registerStaticSPA wires the SPA static-file serving and fallback onto e
+// using the default dist/ directory.
 //
 // Behaviour:
 //   - If dist/ does not exist at startup a warning is logged and no static
@@ -30,8 +33,15 @@ const staticDistDir = "dist"
 //   - Unknown /api/* paths return 404 JSON so that API consumers get a
 //     machine-readable error rather than the SPA HTML.
 func registerStaticSPA(e *echo.Echo) {
-	indexPath := filepath.Join(staticDistDir, "index.html")
-	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+	registerStaticSPAFromDir(e, staticDistDir)
+}
+
+// registerStaticSPAFromDir is the implementation behind registerStaticSPA.
+// It accepts an explicit distDir so that tests can point it at a temp directory
+// instead of the real dist/ location.
+func registerStaticSPAFromDir(e *echo.Echo, distDir string) {
+	indexPath := filepath.Join(distDir, "index.html")
+	if _, err := os.Stat(indexPath); errors.Is(err, os.ErrNotExist) {
 		log.Printf("server: static dist not found at %q — SPA serving disabled; API still operational", indexPath)
 		// Register a fallback that returns 404 JSON for unknown routes so the
 		// server stays well-behaved even without a frontend build.
@@ -39,12 +49,40 @@ func registerStaticSPA(e *echo.Echo) {
 		return
 	}
 
-	// Serve static assets (JS, CSS, images …) from dist/.
-	e.Static("/", staticDistDir)
+	// Resolve distDir to an absolute path once so the handler closure can use
+	// it for traversal checking without repeated Abs calls.
+	absDistDir, err := filepath.Abs(distDir)
+	if err != nil {
+		log.Printf("server: cannot resolve dist dir: %v — SPA serving disabled", err)
+		registerAPINotFound(e)
+		return
+	}
 
-	// SPA fallback: any path not matched by a more-specific route receives
-	// index.html so that client-side routing works after a hard refresh.
+	// Single catch-all GET handler: serves static assets when the file exists
+	// inside distDir, falls back to index.html for SPA client-side routes.
+	//
+	// Traversal guard: filepath.Clean("/" + path) always produces an absolute
+	// path beginning with "/" — it eliminates ".." sequences before the Join,
+	// so the resolved full path is guaranteed to remain under absDistDir.
+	// A prefix check after the join provides defence-in-depth.
 	e.GET("/*", func(c echo.Context) error {
+		rel := filepath.Clean("/" + c.Param("*"))
+
+		// Reject any path whose cleaned form still contains "..".
+		if strings.Contains(rel, "..") {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid path")
+		}
+
+		full := filepath.Join(absDistDir, rel)
+
+		// Ensure the resolved path is actually inside the dist directory.
+		if !strings.HasPrefix(full, absDistDir+string(filepath.Separator)) && full != absDistDir {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid path")
+		}
+
+		if st, err := os.Stat(full); err == nil && !st.IsDir() {
+			return c.File(full)
+		}
 		return c.File(indexPath)
 	})
 

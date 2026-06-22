@@ -3,6 +3,7 @@ package middleware_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,6 +45,11 @@ func TestErrorHandlerHTTPError(t *testing.T) {
 	if resp.Message != "bad" {
 		t.Errorf("message = %q, want %q", resp.Message, "bad")
 	}
+
+	// M-2: every error response must carry the request-id header.
+	if rid := rec.Header().Get(middleware.RequestIDHeader); rid == "" {
+		t.Errorf("%s header missing from error response", middleware.RequestIDHeader)
+	}
 }
 
 // TestErrorHandlerInternalError confirms that a handler returning a raw error
@@ -76,6 +82,42 @@ func TestErrorHandlerInternalError(t *testing.T) {
 	}
 	if resp.Message == "" {
 		t.Error("response message must not be empty")
+	}
+
+	// M-2: every error response must carry the request-id header.
+	if rid := rec.Header().Get(middleware.RequestIDHeader); rid == "" {
+		t.Errorf("%s header missing from internal error response", middleware.RequestIDHeader)
+	}
+}
+
+// TestErrorHandlerWrappedHTTPError confirms that an *echo.HTTPError wrapped
+// with fmt.Errorf / errors.Join is still handled correctly (I-2: errors.As).
+func TestErrorHandlerWrappedHTTPError(t *testing.T) {
+	e := newTestEcho()
+	e.GET("/test", func(c echo.Context) error {
+		inner := echo.NewHTTPError(http.StatusTeapot, "i am a teapot")
+		return fmt.Errorf("some wrapper: %w", inner)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("wrapped HTTPError: status = %d, want %d", rec.Code, http.StatusTeapot)
+	}
+
+	var resp middleware.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v (body: %s)", err, rec.Body.String())
+	}
+	if resp.Message != "i am a teapot" {
+		t.Errorf("message = %q, want %q", resp.Message, "i am a teapot")
+	}
+
+	// M-2: request-id must be present.
+	if rid := rec.Header().Get(middleware.RequestIDHeader); rid == "" {
+		t.Errorf("%s header missing from wrapped HTTPError response", middleware.RequestIDHeader)
 	}
 }
 

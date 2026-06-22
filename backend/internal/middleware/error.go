@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"errors"
 	"log"
 	"net/http"
 
@@ -62,12 +63,9 @@ func ErrorHandler(err error, c echo.Context) {
 }
 
 // isHTTPError checks whether err is (or wraps) an *echo.HTTPError and, if so,
-// writes the unwrapped value into target. This keeps the type-assertion logic
-// in one place and makes it trivially testable.
+// writes the unwrapped value into target. errors.As is used so that wrapped
+// HTTPErrors (e.g. fmt.Errorf("…: %w", httpErr)) are handled correctly, not
+// just direct type assertions.
 func isHTTPError(err error, target **echo.HTTPError) bool {
-	if he, ok := err.(*echo.HTTPError); ok {
-		*target = he
-		return true
-	}
-	return false
+	return errors.As(err, target)
 }
