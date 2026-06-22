@@ -23,7 +23,7 @@ func TestHealthCheck(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d, want %d", rec.Code, http.StatusOK)
 	}
-	if !strings.Contains(rec.Body.String(), `"ok"`) {
-		t.Fatalf("body %q does not contain \"ok\"", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"status":"ok"`) {
+		t.Fatalf("body %q does not contain \"status\":\"ok\"", rec.Body.String())
 	}
 }
