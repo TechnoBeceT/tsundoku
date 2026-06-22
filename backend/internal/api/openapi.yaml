@@ -1,0 +1,200 @@
+openapi: "3.1.0"
+
+info:
+  title: Tsundoku API
+  version: "0.1.0"
+  description: |
+    Tsundoku backend API — single-owner manga tracker.
+    Authentication: Bearer token obtained from /api/owner/claim or /api/owner/login.
+
+servers:
+  - url: /
+    description: Same-origin server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: JWT Bearer token issued by /api/owner/claim or /api/owner/login.
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Always "ok" when the server is healthy.
+          example: ok
+
+    ClaimRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          description: Desired owner username.
+          example: owner
+        password:
+          type: string
+          description: Desired owner password (minimum 8 characters).
+          minLength: 8
+          example: "s3cret!!"
+
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          description: Owner username.
+          example: owner
+        password:
+          type: string
+          description: Owner password.
+          example: "s3cret!!"
+
+    TokenResponse:
+      type: object
+      required:
+        - token
+      properties:
+        token:
+          type: string
+          description: Signed Bearer JWT for the authenticated owner.
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    ErrorResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Human-readable error description.
+          example: owner already exists
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      description: Returns HTTP 200 with {"status":"ok"} when the server is running. No authentication required.
+      tags:
+        - system
+      responses:
+        "200":
+          description: Server is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/owner/claim:
+    post:
+      operationId: claimOwner
+      summary: First-run owner claim
+      description: |
+        Creates the single owner account. Succeeds exactly once — if any owner
+        already exists the request is rejected with 409 Conflict (fail-closed).
+        Concurrent claims are serialised; only one will succeed.
+      tags:
+        - owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimRequest"
+      responses:
+        "200":
+          description: Owner created. Returns a signed Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Missing or invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: An owner already exists; claim is permanently rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/owner/login:
+    post:
+      operationId: loginOwner
+      summary: Owner login
+      description: |
+        Authenticates with username and password and returns a signed Bearer token.
+        Returns 401 for wrong credentials without revealing which field was wrong.
+      tags:
+        - owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Credentials accepted. Returns a signed Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Missing or invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/progress:
+    get:
+      operationId: streamProgress
+      summary: SSE progress stream
+      description: |
+        Server-Sent Events stream delivering real-time progress events.
+        Requires a valid Bearer token sent via the Authorization header
+        (not via query-string — QCAT-018). The client must use a fetch-based
+        SSE implementation, not the browser EventSource API, to support
+        custom headers.
+      tags:
+        - sse
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: SSE stream opened. Events are pushed as `text/event-stream`.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Newline-delimited SSE frames. Each frame carries a `data:` field
+                  containing a JSON-encoded progress event. The `event:` field names
+                  the event type (e.g. `chapter.downloaded`, `series.synced`).
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"

@@ -8,13 +8,17 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "lint": "eslint .",
-    "typecheck": "nuxt typecheck"
+    "typecheck": "nuxt typecheck",
+    "gen:api": "npx openapi-typescript ../backend/internal/api/openapi.yaml -o app/utils/api/schema.d.ts",
+    "check:api-drift": "bun run gen:api && git diff --exit-code app/utils/api/"
   },
   "dependencies": {
-    "nuxt": "^3.16.2"
+    "nuxt": "^3.16.2",
+    "openapi-fetch": "^0.13.5"
   },
   "devDependencies": {
     "@nuxt/eslint": "^1.4.1",
+    "openapi-typescript": "^7.8.0",
     "typescript": "^5.8.3",
     "vue-tsc": "^2.2.10"
   }

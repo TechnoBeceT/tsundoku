@@ -6,4 +6,5 @@ import "github.com/labstack/echo/v4"
 // Additional route groups (API, SSE, docs) are registered in subsequent tasks.
 func registerRoutes(e *echo.Echo) {
 	e.GET("/health", HealthCheck)
+	RegisterDocs(e)
 }
