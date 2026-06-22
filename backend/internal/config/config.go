@@ -12,6 +12,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
 
 	"github.com/knadh/koanf/parsers/yaml"
@@ -59,13 +61,18 @@ type DatabaseConfig struct {
 	SSLMode string
 }
 
-// DSN returns a postgres:// connection string suitable for pgx and the
-// standard lib/pq driver.
+// DSN returns the PostgreSQL connection URI for this database config.
+// net/url is used so that a password containing @ / # % is percent-encoded,
+// producing a valid URI that pgx and lib/pq can parse correctly.
 func (d DatabaseConfig) DSN() string {
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode,
-	)
+	u := &url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(d.User, d.Password),
+		Host:     d.Host + ":" + d.Port,
+		Path:     "/" + d.Name,
+		RawQuery: "sslmode=" + url.QueryEscape(d.SSLMode),
+	}
+	return u.String()
 }
 
 // SuwayomiConfig holds connection settings for the Suwayomi manga server.
@@ -173,16 +180,10 @@ func envKeyTransform(s string) string {
 	return strings.Replace(strings.ToLower(s), "_", ".", 1)
 }
 
-// isNotExist reports whether err is a "file not found" variant.
-func isNotExist(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "no such file") ||
-		strings.Contains(msg, "cannot find") ||
-		strings.Contains(msg, "not exist")
-}
+// isNotExist reports whether err is a "file not found" error.
+// It uses errors.Is against os.ErrNotExist rather than string-matching so that
+// it works correctly on all platforms and with wrapped errors.
+func isNotExist(err error) bool { return err != nil && errors.Is(err, os.ErrNotExist) }
 
 // validate checks that the loaded configuration is safe to use. It returns an
 // error at startup rather than allowing the binary to run with a broken or

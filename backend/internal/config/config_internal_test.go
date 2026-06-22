@@ -4,6 +4,7 @@ package config
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,18 +21,20 @@ func TestIsNotExistNil(t *testing.T) {
 // TestIsNotExistUnknownError confirms that a generic error is not treated as
 // a "file not found" so that real yaml parse errors surface correctly.
 func TestIsNotExistUnknownError(t *testing.T) {
-	err := errors.New("yaml: line 1: unexpected key")
+	err := errors.New("some other error")
 	if isNotExist(err) {
 		t.Fatal("isNotExist(non-fs-error) should be false")
 	}
 }
 
-// TestIsNotExistFileMissing confirms that a "no such file" error is
-// correctly identified so that a missing config.yaml is silently skipped.
+// TestIsNotExistFileMissing confirms that a real os.ErrNotExist-wrapped error
+// is correctly identified so that a missing config.yaml is silently skipped.
+// Uses fs.PathError (the concrete type os.Open returns) rather than
+// string-matching so the test stays honest about what errors.Is checks.
 func TestIsNotExistFileMissing(t *testing.T) {
-	err := errors.New("open config.yaml: no such file or directory")
+	err := &fs.PathError{Op: "open", Path: "config.yaml", Err: os.ErrNotExist}
 	if !isNotExist(err) {
-		t.Fatal("isNotExist(no such file) should be true")
+		t.Fatal("isNotExist(fs.PathError wrapping os.ErrNotExist) should be true")
 	}
 }
 

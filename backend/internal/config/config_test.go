@@ -3,6 +3,8 @@
 package config_test
 
 import (
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/config"
@@ -26,6 +28,41 @@ func TestDSN(t *testing.T) {
 	}
 }
 
+// TestDSNEncodesSpecialChars verifies that a password containing URL-special
+// characters (@ / # %) is percent-encoded so that the result is a valid URI
+// that round-trips correctly through url.Parse.
+func TestDSNEncodesSpecialChars(t *testing.T) {
+	d := config.DatabaseConfig{
+		Host:     "h",
+		Port:     "5432",
+		User:     "u",
+		Password: "p@ss/w#rd",
+		Name:     "db",
+		SSLMode:  "disable",
+	}
+	dsn := d.DSN()
+
+	// The raw special chars must NOT appear unencoded in the userinfo part.
+	if strings.Contains(dsn, ":p@ss/w#rd@") {
+		t.Fatalf("DSN contains unencoded special chars: %q", dsn)
+	}
+
+	// The DSN must be a valid URL.
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("url.Parse(%q): %v", dsn, err)
+	}
+
+	// Round-trip: the parsed password must equal the original.
+	gotPw, ok := parsed.User.Password()
+	if !ok {
+		t.Fatalf("url.Parse result has no password set")
+	}
+	if gotPw != d.Password {
+		t.Fatalf("round-trip password = %q, want %q", gotPw, d.Password)
+	}
+}
+
 // TestLoadDefaults confirms that Load() applies sane defaults for all
 // non-secret fields and that validate() passes when the required DB
 // password is provided via the environment.
@@ -42,6 +79,12 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Database.Host == "" {
 		t.Fatal("defaults not applied: Database.Host is empty")
+	}
+	if cfg.Suwayomi.Host == "" {
+		t.Fatal("defaults not applied: Suwayomi.Host is empty")
+	}
+	if cfg.Storage.Folder == "" {
+		t.Fatal("defaults not applied: Storage.Folder is empty")
 	}
 }
 
@@ -122,5 +165,46 @@ func TestDSNUsedByLoad(t *testing.T) {
 	want := "postgres://luser:loadpw@lhost:5432/ldb?sslmode=disable" //nolint:gosec // test fixture, not real credentials
 	if dsn != want {
 		t.Fatalf("DSN from loaded config = %q, want %q", dsn, want)
+	}
+}
+
+// TestLoadEnvSuwayomiFields confirms that all SuwayomiConfig fields are
+// settable via environment variables.
+func TestLoadEnvSuwayomiFields(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x") // required to pass validate()
+	t.Setenv("TSUNDOKU_SUWAYOMI_HOST", "suwhost")
+	t.Setenv("TSUNDOKU_SUWAYOMI_PORT", "9999")
+	t.Setenv("TSUNDOKU_SUWAYOMI_BASEPATH", "/graphql")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	s := cfg.Suwayomi
+	if s.Host != "suwhost" {
+		t.Errorf("Suwayomi.Host = %q, want %q", s.Host, "suwhost")
+	}
+	if s.Port != "9999" {
+		t.Errorf("Suwayomi.Port = %q, want %q", s.Port, "9999")
+	}
+	if s.BasePath != "/graphql" {
+		t.Errorf("Suwayomi.BasePath = %q, want %q", s.BasePath, "/graphql")
+	}
+}
+
+// TestLoadEnvStorageFolder confirms that the StorageConfig.Folder field is
+// settable via environment variable.
+func TestLoadEnvStorageFolder(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x") // required to pass validate()
+	t.Setenv("TSUNDOKU_STORAGE_FOLDER", "/mnt/manga")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Storage.Folder != "/mnt/manga" {
+		t.Errorf("Storage.Folder = %q, want %q", cfg.Storage.Folder, "/mnt/manga")
 	}
 }
