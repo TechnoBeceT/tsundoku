@@ -241,14 +241,7 @@ func (d *Dispatcher) process(ctx context.Context, chapterID uuid.UUID, pc *ent.P
 		State:     string(entchapter.StateDownloading),
 	})
 
-	ref := fetcher.FetchRef{
-		Provider:         sp.Provider,
-		Scanlator:        sp.Scanlator,
-		Language:         sp.Language,
-		URL:              pc.URL,
-		SuwayomiID:       sp.SuwayomiID,
-		SeriesProviderID: sp.ID,
-	}
+	ref := buildFetchRef(pc, sp)
 
 	pages, fetchErr := d.f.Fetch(ctx, ref)
 	if fetchErr != nil {
@@ -398,6 +391,21 @@ func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesPro
 		URL:                 pc.URL,
 		Importance:          sp.Importance,
 		SeriesProviderTitle: sp.Title,
+	}
+}
+
+// buildFetchRef constructs a fetcher.FetchRef from a ProviderChapter and its
+// owning SeriesProvider. It is the single place that maps provider-row fields
+// to the fetch port's input type, shared by process and Upgrade so that no
+// ref-building logic is duplicated.
+func buildFetchRef(pc *ent.ProviderChapter, sp *ent.SeriesProvider) fetcher.FetchRef {
+	return fetcher.FetchRef{
+		Provider:         sp.Provider,
+		Scanlator:        sp.Scanlator,
+		Language:         sp.Language,
+		URL:              pc.URL,
+		SuwayomiID:       sp.SuwayomiID,
+		SeriesProviderID: sp.ID,
 	}
 }
 
