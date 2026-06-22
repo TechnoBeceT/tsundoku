@@ -2,7 +2,7 @@
  * apiClient is the single typed HTTP client for the Tsundoku backend.
  *
  * Types are generated from the OpenAPI 3.1 contract at
- * backend/api/openapi.yaml via `bun run gen:api`. Never hand-edit schema.d.ts
+ * backend/internal/api/openapi.yaml via `bun run gen:api`. Never hand-edit schema.d.ts
  * — regenerate it and run `bun run check:api-drift` to confirm alignment.
  *
  * GOTCHA: openapi-fetch sends no base URL prefix by default — the empty

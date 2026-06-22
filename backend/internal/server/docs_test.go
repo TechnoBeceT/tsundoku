@@ -55,4 +55,7 @@ func TestDocsSpec(t *testing.T) {
 	if !strings.Contains(body, "Tsundoku API") {
 		t.Fatalf("GET /docs/openapi.yaml: body does not contain spec title; got:\n%s", body)
 	}
+	if !strings.Contains(body, "openapi:") {
+		t.Fatalf("GET /docs/openapi.yaml: body does not contain openapi: field; got:\n%s", body)
+	}
 }

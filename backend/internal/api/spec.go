@@ -1,7 +1,7 @@
 // Package api embeds the OpenAPI 3.1 contract so it can be served at runtime
 // without requiring the YAML file to be present on the deployed filesystem.
 //
-// The spec file lives at backend/api/openapi.yaml (repository root) and is
+// The spec file lives at backend/internal/api/openapi.yaml and is
 // the single source of truth for the Tsundoku HTTP surface. Update it in the
 // same commit as any endpoint change (ENGINEERING.md §14).
 package api

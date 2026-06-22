@@ -9,7 +9,7 @@
     "preview": "nuxt preview",
     "lint": "eslint .",
     "typecheck": "nuxt typecheck",
-    "gen:api": "npx openapi-typescript ../backend/internal/api/openapi.yaml -o app/utils/api/schema.d.ts",
+    "gen:api": "bunx openapi-typescript ../backend/internal/api/openapi.yaml -o app/utils/api/schema.d.ts",
     "check:api-drift": "bun run gen:api && git diff --exit-code app/utils/api/"
   },
   "dependencies": {
