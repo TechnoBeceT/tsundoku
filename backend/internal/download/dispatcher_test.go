@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,7 +37,8 @@ func mustTempDir(t *testing.T) string {
 }
 
 // TestDispatcher_HappyPath verifies that RunOnce on a single wanted chapter
-// ends with state==downloaded and a CBZ file on disk.
+// ends with state==downloaded, a CBZ file on disk, and all provenance fields set
+// (§16 full-payload: satisfied_by_provider_id + satisfied_importance verified).
 func TestDispatcher_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -65,23 +67,53 @@ func TestDispatcher_HappyPath(t *testing.T) {
 	}
 
 	got := client.Chapter.GetX(ctx, ch.ID)
-	if got.State != entchapter.StateDownloaded {
-		t.Errorf("state: want downloaded, got %s", got.State)
-	}
-	if got.Filename == "" {
-		t.Error("filename should be set after download")
-	}
-	if got.PageCount == nil || *got.PageCount != 5 {
-		t.Errorf("page_count: want 5, got %v", got.PageCount)
-	}
-	if got.DownloadDate == nil {
-		t.Error("download_date should be set after download")
-	}
+	assertSuccessProvenance(t, got.State, got.Filename, got.PageCount, got.DownloadDate,
+		got.SatisfiedByProviderID, got.SatisfiedImportance, sp.ID, sp.Importance, 5)
 
 	// Verify the CBZ file exists on disk.
 	cbzPath := filepath.Join(storageDir, "Other", "Happy Series", got.Filename)
-	if _, err := os.Stat(cbzPath); err != nil {
-		t.Errorf("CBZ file not found at %s: %v", cbzPath, err)
+	if _, statErr := os.Stat(cbzPath); statErr != nil {
+		t.Errorf("CBZ file not found at %s: %v", cbzPath, statErr)
+	}
+}
+
+// assertSuccessProvenance validates all provenance fields that the download
+// success path must set (§16 full-payload).
+func assertSuccessProvenance(
+	t *testing.T,
+	state entchapter.State,
+	filename string,
+	pageCount *int,
+	downloadDate *time.Time,
+	satisfiedByProviderID *uuid.UUID,
+	satisfiedImportance *int,
+	wantProviderID uuid.UUID,
+	wantImportance int,
+	wantPageCount int,
+) {
+	t.Helper()
+	if state != entchapter.StateDownloaded {
+		t.Errorf("state: want downloaded, got %s", state)
+	}
+	if filename == "" {
+		t.Error("filename should be set after download")
+	}
+	if pageCount == nil || *pageCount != wantPageCount {
+		t.Errorf("page_count: want %d, got %v", wantPageCount, pageCount)
+	}
+	if downloadDate == nil {
+		t.Error("download_date should be set after download")
+	}
+	// §16 provenance fields.
+	if satisfiedByProviderID == nil {
+		t.Error("satisfied_by_provider_id should be set after download")
+	} else if *satisfiedByProviderID != wantProviderID {
+		t.Errorf("satisfied_by_provider_id: want %s, got %s", wantProviderID, *satisfiedByProviderID)
+	}
+	if satisfiedImportance == nil {
+		t.Error("satisfied_importance should be set after download")
+	} else if *satisfiedImportance != wantImportance {
+		t.Errorf("satisfied_importance: want %d, got %v", wantImportance, *satisfiedImportance)
 	}
 }
 
@@ -410,6 +442,106 @@ done:
 	}
 	if got[1].Type != "download.fail" {
 		t.Errorf("second event: want download.fail, got %q", got[1].Type)
+	}
+}
+
+// TestDispatcher_NoChapterStrandedInDownloading asserts that after RunOnce
+// completes (for both fetch failures and permanent failures), no chapter remains
+// in the downloading state. This is the regression test for the "stuck in
+// downloading" bugs: provenance-update failure and SetState(downloaded) failure
+// are DB-only paths, but the fetch-error path exercises the same handleFailure
+// code that guards against stranding.
+func TestDispatcher_NoChapterStrandedInDownloading(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("NoStrand Series").SetSlug("nostrand-series").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).
+		SetChapterKey("ch-nostrand").
+		SetURL("https://mangadex.org/ch-nostrand").
+		SetProviderIndex(0).
+		SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-nostrand").SaveX(ctx)
+
+	// Use an always-failing fetcher so handleFailure is exercised.
+	f := fake.New(fake.WithError(errors.New("forced failure")))
+	d := download.New(client, f, hub, download.Config{
+		PerProviderConcurrency: 1,
+		MaxRetries:             2,
+		Storage:                storageDir,
+		Backoff:                func(_ int) time.Duration { return 0 },
+	})
+
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	got := client.Chapter.GetX(ctx, ch.ID)
+	if got.State == entchapter.StateDownloading {
+		t.Errorf("chapter %s is stranded in downloading state after RunOnce", ch.ID)
+	}
+}
+
+// TestDispatcher_ZeroPadding asserts that when a series has a high-numbered
+// chapter, a low-numbered chapter's CBZ filename is zero-padded to match the
+// width of the highest chapter number.
+func TestDispatcher_ZeroPadding(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Pad Series").SetSlug("pad-series").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
+
+	// Chapter 5 is the download target; chapter 120 sets the series max (so the
+	// integer part of "5" must be padded to "005").
+	num5 := 5.0
+	num120 := 120.0
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).
+		SetChapterKey("ch-5").
+		SetNillableNumber(&num5).
+		SetURL("https://mangadex.org/ch-5").
+		SetProviderIndex(0).
+		SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).
+		SetChapterKey("ch-120").
+		SetNillableNumber(&num120).
+		SetURL("https://mangadex.org/ch-120").
+		SetProviderIndex(1).
+		SaveX(ctx)
+
+	// Only set chapter 5 to wanted; chapter 120 exists only as a ProviderChapter
+	// to establish the series max — no Chapter row needed for it.
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-5").SetNillableNumber(&num5).SaveX(ctx)
+
+	f := fake.New()
+	d := download.New(client, f, hub, download.Config{
+		PerProviderConcurrency: 1,
+		MaxRetries:             3,
+		Storage:                storageDir,
+	})
+
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	got := client.Chapter.GetX(ctx, ch.ID)
+	if got.State != entchapter.StateDownloaded {
+		t.Fatalf("state: want downloaded, got %s", got.State)
+	}
+	if got.Filename == "" {
+		t.Fatal("filename should be set after download")
+	}
+	// The chapter number "5" with series max 120 must be zero-padded to "005".
+	if !strings.Contains(got.Filename, "005") {
+		t.Errorf("filename %q: expected zero-padded chapter number '005' (max=%v)", got.Filename, num120)
 	}
 }
 

@@ -21,6 +21,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
+	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
@@ -49,7 +51,13 @@ type Config struct {
 // It doubles the delay for each attempt up to a maximum of 1 hour.
 func defaultBackoff(attempt int) time.Duration {
 	base := 5 * time.Minute
-	d := base * (1 << uint(attempt)) //nolint:gosec
+	shift := attempt
+	if shift > 30 {
+		// Cap the shift to 30 to prevent integer overflow: 1<<31 wraps negative on
+		// int32 targets and would bypass the hour cap entirely.
+		shift = 30
+	}
+	d := base * (1 << uint(shift)) //nolint:gosec // shift is capped to 30; overflow is impossible.
 	if d > time.Hour {
 		d = time.Hour
 	}
@@ -213,7 +221,8 @@ func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
 	}
 
 	// Render to disk.
-	meta := buildRenderMeta(ch, pc, sp)
+	maxChap := maxChapterNumber(ctx, d.client, ch.SeriesID)
+	meta := buildRenderMeta(ch, pc, sp, maxChap)
 	filename, renderErr := disk.RenderChapter(disk.RenderRequest{
 		Storage: d.cfg.Storage,
 		Meta:    meta,
@@ -234,11 +243,17 @@ func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
 		SetDownloadDate(now).
 		SetLastError("").
 		Exec(ctx); err != nil {
-		return fmt.Errorf("download.Dispatcher.Process: update provenance for chapter %s: %w", chapterID, err)
+		// Route through handleFailure so the chapter transitions out of
+		// downloading (→ failed / permanently_failed) rather than stranding there.
+		// Re-downloading on retry is safe: RenderChapter upserts the CBZ.
+		return d.handleFailure(ctx, ch, chapterID, fmt.Errorf("persist provenance: %w", err))
 	}
 
 	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
-		return fmt.Errorf("download.Dispatcher.Process: transition to downloaded for chapter %s: %w", chapterID, err)
+		// Defensive path: only reachable on DB failure between the provenance
+		// update and this state transition. Route through handleFailure so the
+		// chapter is never left in downloading.
+		return d.handleFailure(ctx, ch, chapterID, fmt.Errorf("transition to downloaded: %w", err))
 	}
 
 	d.broadcast("download.done", DownloadEvent{
@@ -251,6 +266,10 @@ func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
 
 // handleFailure records a failed download attempt and transitions the chapter
 // to the appropriate terminal (permanently_failed) or retry (failed) state.
+//
+// ch is the snapshot of the Chapter row taken at Process entry. The
+// wanted/failed→downloading state-gate in SetState prevents double-processing,
+// so ch.Retries reflects the value at Process entry and is not stale in practice.
 //
 // It increments the retry counter, stores the cause as last_error, computes
 // next_attempt_at via cfg.Backoff, then:
@@ -319,8 +338,13 @@ func (d *Dispatcher) broadcast(eventType string, data DownloadEvent) {
 }
 
 // buildRenderMeta constructs a disk.RenderMeta from the Chapter, its
-// best ProviderChapter, and the owning SeriesProvider.
-func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesProvider) disk.RenderMeta {
+// best ProviderChapter, the owning SeriesProvider, and the series' max chapter
+// number (for zero-padding).
+//
+// Known limitation (matches legacy Kaizoku.GO): as the series max grows,
+// previously-rendered files keep their old (narrower) padding until re-rendered.
+// Acceptable for M1.
+func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesProvider, maxChapter *float64) disk.RenderMeta {
 	seriesTitle := ""
 	if ch.Edges.Series != nil {
 		seriesTitle = ch.Edges.Series.Title
@@ -332,6 +356,7 @@ func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesPro
 		SeriesTitle:         seriesTitle,
 		Category:            disk.CategoryOther, // Series has no category field in M1
 		Number:              pc.Number,
+		MaxChapter:          maxChapter,
 		ChapterName:         pc.Name,
 		ChapterKey:          pc.ChapterKey,
 		UploadDate:          pc.ProviderUploadDate,
@@ -339,4 +364,28 @@ func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesPro
 		Importance:          sp.Importance,
 		SeriesProviderTitle: sp.Title,
 	}
+}
+
+// maxChapterNumber returns the highest chapter number across all ProviderChapters
+// for the given series, used to zero-pad CBZ filenames to consistent width.
+// Returns nil if no numbered chapters exist for this series.
+func maxChapterNumber(ctx context.Context, client *ent.Client, seriesID uuid.UUID) *float64 {
+	var result []struct {
+		Max *float64 `json:"max"`
+	}
+	err := client.ProviderChapter.Query().
+		Where(
+			entproviderchapter.HasSeriesProviderWith(
+				entseriesprovider.SeriesIDEQ(seriesID),
+			),
+			entproviderchapter.NumberNotNil(),
+		).
+		Aggregate(ent.Max(entproviderchapter.FieldNumber)).
+		Scan(ctx, &result)
+	if err != nil || len(result) == 0 || result[0].Max == nil {
+		// Defensive path: on query failure or no numbered chapters, fall back to
+		// unpadded filenames — non-critical for correctness.
+		return nil
+	}
+	return result[0].Max
 }
