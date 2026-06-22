@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -30,7 +31,7 @@ func takeChapterSnapshot(ctx context.Context, t *testing.T, client *ent.Client) 
 	allChapters := client.Chapter.Query().AllX(ctx)
 	allSPs := client.SeriesProvider.Query().AllX(ctx)
 
-	spNames := make(map[interface{}]string, len(allSPs))
+	spNames := make(map[uuid.UUID]string, len(allSPs))
 	for _, sp := range allSPs {
 		spNames[sp.ID] = sp.Provider
 	}
@@ -53,7 +54,7 @@ func takeChapterSnapshot(ctx context.Context, t *testing.T, client *ent.Client) 
 }
 
 // assertChapterRebuildMatch verifies one rebuilt chapter against its pre-drop snapshot.
-func assertChapterRebuildMatch(t *testing.T, ch *ent.Chapter, snap chSnapshot, spNames map[interface{}]string) {
+func assertChapterRebuildMatch(t *testing.T, ch *ent.Chapter, snap chSnapshot, spNames map[uuid.UUID]string) {
 	t.Helper()
 	key := ch.ChapterKey
 	if ch.State != entchapter.StateDownloaded {
@@ -160,7 +161,7 @@ func assertRebuiltChapters(t *testing.T, ctx context.Context, client *ent.Client
 	}
 
 	newSPs := client.SeriesProvider.Query().AllX(ctx)
-	spNames := make(map[interface{}]string, len(newSPs))
+	spNames := make(map[uuid.UUID]string, len(newSPs))
 	for _, sp := range newSPs {
 		spNames[sp.ID] = sp.Provider
 	}

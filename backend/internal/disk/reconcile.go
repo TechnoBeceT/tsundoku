@@ -15,20 +15,28 @@ import (
 )
 
 // ReconcileResult reports what Reconcile changed in the DB on a single run.
-// A fully idempotent second run produces all-zero counts.
+//
+// Idempotency guarantee: a fully idempotent second run (unchanged library,
+// existing DB rows) produces ChaptersAdopted == 0 and no row-count growth.
+// The Upserted counters (SeriesUpserted, ProvidersUpserted, ChaptersUpserted)
+// reflect rows PROCESSED (created or updated) on this run, not only newly
+// created; they will be non-zero even on a second run over an unchanged library.
 type ReconcileResult struct {
-	// SeriesUpserted is the number of Series rows created or updated.
+	// SeriesUpserted is the number of Series rows created or updated this run.
+	// Non-zero even on a second run — counts every series that was processed.
 	SeriesUpserted int
 
-	// ProvidersUpserted is the number of SeriesProvider rows created or updated.
+	// ProvidersUpserted is the number of SeriesProvider rows created or updated
+	// this run. Non-zero even on a second run.
 	ProvidersUpserted int
 
 	// ChaptersUpserted is the number of Chapter rows set to downloaded with
-	// updated provenance.
+	// updated provenance this run. Non-zero even on a second run — counts every
+	// chapter that was processed (created or updated), not only newly created.
 	ChaptersUpserted int
 
 	// ChaptersAdopted is the number of Chapter rows that did not exist in the DB
-	// and were created (adopted) from disk.
+	// and were created (adopted) from disk. Zero on a fully idempotent re-run.
 	ChaptersAdopted int
 
 	// MissingFiles is the number of sidecar entries whose CBZ file is absent on

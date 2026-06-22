@@ -191,6 +191,9 @@ func scanSeriesDir(dir, category string) (*SeriesFacts, error) {
 
 	facts, sidecarCovered, err := factsFromSidecar(dir, sidecar)
 	if err != nil {
+		// Defensive path: currently unreachable — factsFromSidecar absorbs
+		// os.Stat errors into FileExists=false and never returns a non-nil error.
+		// Guard retained for future sidecar validation that may return real errors.
 		return nil, err
 	}
 
@@ -330,6 +333,9 @@ func provenanceKeyAndNumber(ci *ComicInfo) (string, *float64) {
 // Returns an error when the string is empty or not a valid decimal number.
 func parseNumber(s string) (float64, error) {
 	if s == "" {
+		// Defensive path: currently unreachable — the sole production caller
+		// (provenanceKeyAndNumber) guards with `if ci.Number != ""` before calling.
+		// Guard retained for future callers that may not pre-check.
 		return 0, fmt.Errorf("empty number string")
 	}
 	var f float64
