@@ -48,7 +48,7 @@ type ComicInfo struct {
 	// Scanlator is the scanlation group name.
 	Scanlator string `xml:"Scanlator,omitempty"`
 
-	// Importance is the provider importance rank (lower = higher priority).
+	// Importance is the provider importance rank (higher number = higher priority/quality; opposite of legacy Kaizoku.GO).
 	// The value 0 serialises as absent (omitempty); the minimum real importance is 1.
 	Importance int `xml:"Importance,omitempty"`
 

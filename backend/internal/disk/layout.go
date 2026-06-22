@@ -51,7 +51,7 @@ type RenderMeta struct {
 	// integer-part zero-padding. Nil disables padding.
 	MaxChapter *float64
 
-	// Importance is the provider importance rank (lower = higher priority).
+	// Importance is the provider importance rank (higher number = higher priority/quality; opposite of legacy Kaizoku.GO).
 	Importance int
 
 	// ChapterKey is the normalised chapter identity string from Task 1.
