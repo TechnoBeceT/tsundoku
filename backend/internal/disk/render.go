@@ -3,6 +3,8 @@ package disk
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 
 	"github.com/technobecet/tsundoku/internal/fetcher"
 )
@@ -39,7 +41,7 @@ type RenderRequest struct {
 func RenderChapter(req RenderRequest) (filename string, err error) {
 	filename = GenerateCBZFilename(req.Meta)
 	seriesDir := SeriesDir(req.Storage, req.Meta.Category, req.Meta.SeriesTitle)
-	cbzPath := seriesDir + "/" + filename
+	cbzPath := filepath.Join(seriesDir, filename)
 
 	// Ensure the series directory exists.
 	if mkErr := os.MkdirAll(seriesDir, 0o750); mkErr != nil {
@@ -107,9 +109,41 @@ func upsertSidecar(seriesDir string, m RenderMeta, filename string, pageCount in
 		sidecar.Chapters = append(sidecar.Chapters, prov)
 	}
 
+	sidecar.ProviderOrder = buildProviderOrder(sidecar.Chapters)
+
 	if err := WriteSidecar(seriesDir, sidecar); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
 
 	return nil
+}
+
+// buildProviderOrder builds a unique, importance-ordered list of provider names
+// from all chapter provenance records. Providers are sorted by Importance DESC,
+// then Provider name ASC for stable ties. Deduplication keeps the first occurrence
+// (highest importance) of each provider name.
+func buildProviderOrder(chapters []ChapterProvenance) []string {
+	type pair struct {
+		provider   string
+		importance int
+	}
+	pairs := make([]pair, len(chapters))
+	for i, ch := range chapters {
+		pairs[i] = pair{provider: ch.Provider, importance: ch.Importance}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].importance != pairs[j].importance {
+			return pairs[i].importance > pairs[j].importance
+		}
+		return pairs[i].provider < pairs[j].provider
+	})
+	seen := make(map[string]struct{}, len(pairs))
+	order := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		if _, ok := seen[p.provider]; !ok {
+			seen[p.provider] = struct{}{}
+			order = append(order, p.provider)
+		}
+	}
+	return order
 }

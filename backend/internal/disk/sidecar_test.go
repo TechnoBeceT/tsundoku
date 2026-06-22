@@ -1,6 +1,7 @@
 package disk_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -80,5 +81,26 @@ func TestReadSidecarMissing(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("ReadSidecar on missing file: want nil, got %+v", got)
+	}
+}
+
+// TestWriteSidecarMkdirAllFailure verifies that WriteSidecar returns a non-nil
+// error when the target directory cannot be created because its parent is a
+// regular file (ENOTDIR).
+func TestWriteSidecarMkdirAllFailure(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	// Create a regular file where a directory would need to be.
+	blocker := filepath.Join(base, "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup WriteFile: %v", err)
+	}
+
+	// The target dir sits inside the file — MkdirAll must fail with ENOTDIR.
+	dir := filepath.Join(blocker, "subdir")
+	s := disk.Sidecar{Title: "Test", Chapters: []disk.ChapterProvenance{}}
+	if err := disk.WriteSidecar(dir, s); err == nil {
+		t.Fatal("WriteSidecar expected error (ENOTDIR), got nil")
 	}
 }

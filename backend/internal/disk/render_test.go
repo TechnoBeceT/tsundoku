@@ -10,6 +10,101 @@ import (
 	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
+// TestRenderChapterDeduplication verifies the in-place chapter-key update path:
+// calling RenderChapter twice with the same ChapterKey must result in exactly one
+// chapter entry in the sidecar, reflecting the second call's values.
+func TestRenderChapterDeduplication(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	num := 3.0
+	max := 10.0
+
+	renderWith := func(title, provider string, importance int) string {
+		t.Helper()
+		req := disk.RenderRequest{
+			Storage: storage,
+			Meta: disk.RenderMeta{
+				Provider:    provider,
+				Scanlator:   "",
+				Language:    "en",
+				SeriesTitle: "Dedup Series",
+				Category:    "Manga",
+				Number:      &num,
+				MaxChapter:  &max,
+				ChapterKey:  "3",
+				ChapterName: title,
+				Importance:  importance,
+			},
+			Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+		}
+		fn, err := disk.RenderChapter(req)
+		if err != nil {
+			t.Fatalf("RenderChapter(%q): %v", title, err)
+		}
+		return fn
+	}
+
+	renderWith("First Title", "provider-a", 2)
+	renderWith("Second Title", "provider-b", 1)
+
+	seriesDir := filepath.Join(storage, "Manga", "Dedup Series")
+	sidecar, err := disk.ReadSidecar(seriesDir)
+	if err != nil {
+		t.Fatalf("ReadSidecar: %v", err)
+	}
+	if sidecar == nil {
+		t.Fatal("ReadSidecar returned nil")
+	}
+
+	// Must have exactly one chapter entry — the second render replaced the first.
+	if len(sidecar.Chapters) != 1 {
+		t.Fatalf("sidecar.Chapters len = %d, want 1 (dedup failed)", len(sidecar.Chapters))
+	}
+
+	ch := sidecar.Chapters[0]
+	assertEqual(t, "ChapterKey", "3", ch.ChapterKey)
+	// The second render used "provider-b".
+	assertEqual(t, "Provider after update", "provider-b", ch.Provider)
+}
+
+// TestRenderChapterSidecarCorrupt verifies that a corrupt tsundoku.json causes
+// RenderChapter to return a non-nil error.
+func TestRenderChapterSidecarCorrupt(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	seriesDir := filepath.Join(storage, "Manga", "Corrupt Series")
+	if err := os.MkdirAll(seriesDir, 0o750); err != nil {
+		t.Fatalf("setup MkdirAll: %v", err)
+	}
+
+	// Pre-write a corrupt tsundoku.json.
+	if err := os.WriteFile(filepath.Join(seriesDir, "tsundoku.json"), []byte("{invalid json"), 0o600); err != nil {
+		t.Fatalf("setup WriteFile: %v", err)
+	}
+
+	num := 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: "Corrupt Series",
+			Category:    "Manga",
+			Number:      &num,
+			MaxChapter:  &num,
+			ChapterKey:  "1",
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+
+	_, err := disk.RenderChapter(req)
+	if err == nil {
+		t.Fatal("RenderChapter with corrupt sidecar: expected error, got nil")
+	}
+}
+
 // TestRenderChapterWritesCBZAndSidecar verifies that RenderChapter:
 //  1. Creates the CBZ at the categorized layout path.
 //  2. Creates/updates tsundoku.json with the chapter's provenance.

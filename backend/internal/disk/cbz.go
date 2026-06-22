@@ -82,6 +82,9 @@ func writeZipContent(f *os.File, tmpPath string, pages []fetcher.PageImage, ci C
 
 // closeAndClean silently closes the zip writer and file, then removes tmpPath.
 // Used on error paths where the primary error has already been captured.
+//
+// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
+// rename failure); 0% coverage is expected per engineering standard.
 func closeAndClean(w *zip.Writer, f *os.File, tmpPath string) {
 	_ = w.Close()
 	_ = f.Close()
@@ -256,6 +259,9 @@ func copyZipEntry(w *zip.Writer, entry *zip.File) error {
 // removeTmp silently removes a temporary file. Called on error paths where the
 // primary error has already been captured; the cleanup error is intentionally
 // discarded.
+//
+// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
+// rename failure); 0% coverage is expected per engineering standard.
 func removeTmp(path string) {
 	_ = os.Remove(path)
 }
