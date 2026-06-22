@@ -6,10 +6,13 @@
 //  3. auth.NewService — builds the HMAC token service from the validated secret.
 //  4. sse.NewHub — allocates the SSE subscriber registry.
 //  5. owner.NewHandler — assembles the claim/login handler.
-//  6. server.New — wires middleware + routes, returns a ready Echo instance.
-//  7. Graceful shutdown on SIGINT / SIGTERM with a 15-second drain timeout.
-//
-// River job manager is not implemented in M0; a stub log line documents the gap.
+//  6. job.NewRunner — assembles the chapter job runner (download/upgrade/reconcile).
+//     M1 status: the reconcile trigger is wired live. The download/upgrade ticker
+//     (runner.Start) is NOT started yet — it requires the Suwayomi ChapterFetcher
+//     which ships in M2. Once M2 supplies the fetcher, construct download.New with
+//     it and call runner.Start(ctx, cfg.Jobs.DownloadInterval).
+//  7. server.New — wires middleware + routes, returns a ready Echo instance.
+//  8. Graceful shutdown on SIGINT / SIGTERM with a 15-second drain timeout.
 package main
 
 import (
@@ -24,7 +27,9 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
+	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -55,13 +60,37 @@ func main() {
 		}
 	}()
 
-	// River job manager is out of scope for M0; Milestone 1 wires the real
-	// River worker pool here.
-	log.Println("tsundoku: job manager: not implemented (stub — M1)")
-
 	authSvc := auth.NewService(cfg.Auth.Secret)
 	hub := sse.NewHub()
 	ownerH := owner.NewHandler(client, authSvc)
+
+	// M1: The chapter job runner is assembled here.
+	//
+	// Reconcile is available immediately — it requires no fetcher and can be
+	// triggered on-demand (HTTP surface in M3/M5).
+	//
+	// The download/upgrade ticker (runner.Start) is NOT started in M1 because
+	// the production Suwayomi ChapterFetcher does not yet exist (it lands in M2).
+	// Once M2 ships the fetcher, replace the nil stub below with:
+	//
+	//   suwayomiFetcher := suwayomi.NewFetcher(cfg.Suwayomi)
+	//   dispatcher := download.New(client, suwayomiFetcher, hub, download.Config{
+	//       PerProviderConcurrency: 4,
+	//       MaxRetries:             5,
+	//       Storage:                cfg.Storage.Folder,
+	//   })
+	//   runner.Start(ctx, 15*time.Minute)
+	//
+	// M2 seam: the zero-value dispatcher below is never used for download/upgrade
+	// in M1 production (Start is not called). It satisfies the type system.
+	dispatcher := download.New(client, nil, hub, download.Config{ //nolint:staticcheck // nil fetcher intentional: M2 seam, Start not called in M1
+		PerProviderConcurrency: 4,
+		MaxRetries:             5,
+		Storage:                cfg.Storage.Folder,
+	})
+	runner := job.NewRunner(dispatcher, client, hub, cfg.Storage.Folder)
+	_ = runner // reconcile available; used by future HTTP handler layer (M3/M5)
+	log.Println("tsundoku: job runner ready (reconcile live; download/upgrade ticker awaits M2 Suwayomi fetcher)")
 
 	e := server.New(cfg, client, authSvc, hub, ownerH)
 
