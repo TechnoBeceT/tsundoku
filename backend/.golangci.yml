@@ -1,0 +1,48 @@
+# golangci-lint v2 configuration for the Tsundoku backend.
+# Fleet standard: gofmt + vet + security + duplication + complexity.
+# See ENGINEERING.md §7 for the rationale.
+#
+# Note: in golangci-lint v2, formatters are declared under `formatters:`,
+# not under `linters:`.
+
+version: "2"
+
+formatters:
+  enable:
+    - gofmt
+
+linters:
+  default: none
+  enable:
+    # Static analysis (includes go vet passes)
+    - govet
+    # Security scanning
+    - gosec
+    # Duplication detection
+    - dupl
+    # Cyclomatic complexity
+    - cyclop
+    # Cognitive complexity
+    - gocognit
+    # Error return checking
+    - errcheck
+    # Unused code
+    - unused
+    # Simplification and correctness suggestions
+    - gocritic
+
+linters-settings:
+  cyclop:
+    # Maximum cyclomatic complexity per function.
+    max-complexity: 10
+  gocognit:
+    # Minimum cognitive complexity score to flag.
+    min-complexity: 15
+  dupl:
+    # Minimum token count to report as duplication.
+    threshold: 100
+
+issues:
+  # Surface all issues without capping per-linter or per-symbol.
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,36 @@
+# Go
+backend/tsundoku
+backend/vendor/
+*.test
+*.out
+
+# Node / Bun
+frontend/node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/dist/
+frontend/.pnpm-store/
+
+# Superpowers scratch (agent working files — not for VCS)
+.superpowers/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+config.yaml
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+/tmp/
+coverage.out
+coverage.html
