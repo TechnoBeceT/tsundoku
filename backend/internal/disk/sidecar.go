@@ -73,6 +73,8 @@ func WriteSidecar(dir string, s Sidecar) error {
 
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
+		// Defensive path: json.MarshalIndent on a Sidecar struct (strings, ints, *time.Time only)
+		// cannot fail in practice; this guard exists for future schema changes.
 		return fmt.Errorf("disk.WriteSidecar: marshal: %w", err)
 	}
 
@@ -84,27 +86,32 @@ func WriteSidecar(dir string, s Sidecar) error {
 	//nolint:gosec
 	f, err := os.Create(tmpPath)
 	if err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / permission denied).
 		return fmt.Errorf("disk.WriteSidecar: create temp file: %w", err)
 	}
 
 	if _, err := f.Write(data); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		_ = f.Close()
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.WriteSidecar: write: %w", err)
 	}
 
 	if err := f.Sync(); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / corrupt FS).
 		_ = f.Close()
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.WriteSidecar: fsync: %w", err)
 	}
 
 	if err := f.Close(); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / corrupt FS).
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.WriteSidecar: close file: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, finalPath); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (cross-device rename / permission).
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.WriteSidecar: rename: %w", err)
 	}
@@ -123,6 +130,8 @@ func ReadSidecar(dir string) (*Sidecar, error) {
 		return nil, nil
 	}
 	if err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (permission denied /
+		// fd exhausted) after ErrNotExist is already handled above.
 		return nil, fmt.Errorf("disk.ReadSidecar: read file: %w", err)
 	}
 

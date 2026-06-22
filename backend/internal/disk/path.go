@@ -36,6 +36,8 @@ var multiSpaceRe = regexp.MustCompile(`\s+`)
 // trailing dots (matching .NET Kaizoku behaviour).
 func replaceInvalidPathCharacters(s string) string {
 	if s == "" {
+		// Defensive path: the assembled filename from GenerateCBZFilename always begins
+		// with "[provider]" so s is never empty; this guard protects against future callers.
 		return s
 	}
 	for _, pair := range invalidPathCharMap {

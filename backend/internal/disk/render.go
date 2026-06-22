@@ -53,6 +53,8 @@ func RenderChapter(req RenderRequest) (filename string, err error) {
 
 	// Write CBZ atomically.
 	if err := CreateCBZ(cbzPath, req.Pages, ci); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
+		// permission denied) after MkdirAll already succeeded.
 		return "", fmt.Errorf("disk.RenderChapter: %w", err)
 	}
 
@@ -112,6 +114,8 @@ func upsertSidecar(seriesDir string, m RenderMeta, filename string, pageCount in
 	sidecar.ProviderOrder = buildProviderOrder(sidecar.Chapters)
 
 	if err := WriteSidecar(seriesDir, sidecar); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
+		// permission denied) when writing the sidecar JSON.
 		return fmt.Errorf("write: %w", err)
 	}
 

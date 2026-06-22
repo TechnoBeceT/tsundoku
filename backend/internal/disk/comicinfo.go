@@ -64,6 +64,9 @@ func MarshalComicInfo(ci ComicInfo) ([]byte, error) {
 	header := []byte(xml.Header)
 	body, err := xml.MarshalIndent(ci, "", "  ")
 	if err != nil {
+		// Defensive path: xml.MarshalIndent on a ComicInfo struct (strings + ints only)
+		// cannot fail in practice; this guard exists for future schema changes that add
+		// channel/function fields.
 		return nil, fmt.Errorf("disk.MarshalComicInfo: %w", err)
 	}
 	return append(header, body...), nil

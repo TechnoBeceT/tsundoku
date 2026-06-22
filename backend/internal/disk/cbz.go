@@ -30,14 +30,17 @@ func CreateCBZ(destPath string, pages []fetcher.PageImage, ci ComicInfo) error {
 	// G304: path constructed from a validated storage root — not a path traversal concern.
 	f, err := os.Create(tmpPath) //nolint:gosec
 	if err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / permission denied).
 		return fmt.Errorf("disk.CreateCBZ: create temp file: %w", err)
 	}
 
 	if err := writeZipContent(f, tmpPath, pages, ci); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		return err
 	}
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (cross-device rename / permission).
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.CreateCBZ: rename to final path: %w", err)
 	}
@@ -51,28 +54,33 @@ func writeZipContent(f *os.File, tmpPath string, pages []fetcher.PageImage, ci C
 	w := zip.NewWriter(f)
 
 	if err := writePages(w, pages); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		closeAndClean(w, f, tmpPath)
 		return err
 	}
 
 	if err := writeComicInfo(w, ci); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		closeAndClean(w, f, tmpPath)
 		return err
 	}
 
 	if err := w.Close(); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / corrupt FS).
 		_ = f.Close()
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.CreateCBZ: close zip writer: %w", err)
 	}
 
 	if err := f.Sync(); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / corrupt FS).
 		_ = f.Close()
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.CreateCBZ: fsync: %w", err)
 	}
 
 	if err := f.Close(); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / corrupt FS).
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.CreateCBZ: close file: %w", err)
 	}
@@ -100,9 +108,11 @@ func writePages(w *zip.Writer, pages []fetcher.PageImage) error {
 		header := &zip.FileHeader{Name: entryName, Method: zip.Store}
 		entry, err := w.CreateHeader(header)
 		if err != nil {
+			// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 			return fmt.Errorf("disk.CreateCBZ: create page entry %d: %w", i+1, err)
 		}
 		if _, err := entry.Write(page.Data); err != nil {
+			// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 			return fmt.Errorf("disk.CreateCBZ: write page %d: %w", i+1, err)
 		}
 	}
@@ -113,14 +123,18 @@ func writePages(w *zip.Writer, pages []fetcher.PageImage) error {
 func writeComicInfo(w *zip.Writer, ci ComicInfo) error {
 	xmlData, err := MarshalComicInfo(ci)
 	if err != nil {
+		// Defensive path: xml.MarshalIndent on a ComicInfo struct (strings + ints only)
+		// cannot fail in practice; this guard exists for future schema changes.
 		return fmt.Errorf("disk.CreateCBZ: marshal ComicInfo: %w", err)
 	}
 	header := &zip.FileHeader{Name: "ComicInfo.xml", Method: zip.Deflate}
 	entry, err := w.CreateHeader(header)
 	if err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		return fmt.Errorf("disk.CreateCBZ: create ComicInfo entry: %w", err)
 	}
 	if _, err := entry.Write(xmlData); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		return fmt.Errorf("disk.CreateCBZ: write ComicInfo: %w", err)
 	}
 	return nil
@@ -150,6 +164,7 @@ func ReadComicInfoFromCBZ(path string) (*ComicInfo, error) {
 func readComicInfoEntry(f *zip.File) (*ComicInfo, error) {
 	rc, err := f.Open()
 	if err != nil {
+		// Defensive path: reachable only on corrupt FS / truncated archive / fd exhausted.
 		return nil, fmt.Errorf("disk.ReadComicInfoFromCBZ: open entry: %w", err)
 	}
 	defer func() { _ = rc.Close() }()
@@ -158,6 +173,7 @@ func readComicInfoEntry(f *zip.File) (*ComicInfo, error) {
 	// A decompression bomb is not a realistic concern here.
 	data, err := io.ReadAll(rc) //nolint:gosec
 	if err != nil {
+		// Defensive path: reachable only on corrupt archive data or I/O error mid-read.
 		return nil, fmt.Errorf("disk.ReadComicInfoFromCBZ: read entry: %w", err)
 	}
 	return UnmarshalComicInfo(data)
@@ -177,17 +193,20 @@ func UpdateCBZComicInfo(cbzPath string, ci ComicInfo) error {
 	tmpPath := cbzPath + ".tmp"
 	f, err := os.Create(tmpPath) //nolint:gosec
 	if err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / permission denied).
 		_ = reader.Close()
 		return fmt.Errorf("disk.UpdateCBZComicInfo: create temp file: %w", err)
 	}
 
 	if err := rebuildZip(f, tmpPath, reader, ci); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		_ = reader.Close()
 		return err
 	}
 	_ = reader.Close()
 
 	if err := os.Rename(tmpPath, cbzPath); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (cross-device rename / permission).
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.UpdateCBZComicInfo: rename to final path: %w", err)
 	}
@@ -205,29 +224,34 @@ func rebuildZip(f *os.File, tmpPath string, reader *zip.ReadCloser, ci ComicInfo
 			continue
 		}
 		if err := copyZipEntry(w, entry); err != nil {
+			// Defensive path: reachable only on OS-level I/O failure (disk full / corrupt archive).
 			closeAndClean(w, f, tmpPath)
 			return err
 		}
 	}
 
 	if err := writeComicInfo(w, ci); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		closeAndClean(w, f, tmpPath)
 		return fmt.Errorf("disk.UpdateCBZComicInfo: %w", err)
 	}
 
 	if err := w.Close(); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / corrupt FS).
 		_ = f.Close()
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.UpdateCBZComicInfo: close zip writer: %w", err)
 	}
 
 	if err := f.Sync(); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / corrupt FS).
 		_ = f.Close()
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.UpdateCBZComicInfo: fsync: %w", err)
 	}
 
 	if err := f.Close(); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / corrupt FS).
 		removeTmp(tmpPath)
 		return fmt.Errorf("disk.UpdateCBZComicInfo: close file: %w", err)
 	}
@@ -241,16 +265,19 @@ func copyZipEntry(w *zip.Writer, entry *zip.File) error {
 	fh := entry.FileHeader
 	writer, err := w.CreateHeader(&fh)
 	if err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
 		return fmt.Errorf("disk.UpdateCBZComicInfo: create entry %q: %w", entry.Name, err)
 	}
 	rc, err := entry.Open()
 	if err != nil {
+		// Defensive path: reachable only on corrupt archive data or fd exhausted.
 		return fmt.Errorf("disk.UpdateCBZComicInfo: open entry %q: %w", entry.Name, err)
 	}
 	defer func() { _ = rc.Close() }()
 
 	// G110: copying existing zip entries from a controlled internal archive.
 	if _, err := io.Copy(writer, rc); err != nil { //nolint:gosec
+		// Defensive path: reachable only on OS-level I/O failure (disk full / corrupt archive data).
 		return fmt.Errorf("disk.UpdateCBZComicInfo: copy entry %q: %w", entry.Name, err)
 	}
 	return nil

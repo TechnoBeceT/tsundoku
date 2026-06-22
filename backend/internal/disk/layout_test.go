@@ -199,6 +199,46 @@ func TestGenerateCBZFilename(t *testing.T) {
 	}
 }
 
+// TestBuildChapterStrNilMaxChapter verifies that buildChapterStr with a non-nil
+// number but nil maxChapter returns the raw formatted chapter number without padding.
+// This exercises the nil-maxChapter early return in buildChapterStr.
+func TestBuildChapterStrNilMaxChapter(t *testing.T) {
+	t.Parallel()
+
+	meta := disk.RenderMeta{
+		Provider:    "mangadex",
+		Language:    "en",
+		SeriesTitle: "Test Series",
+		Number:      ptr(7.5),
+		MaxChapter:  nil, // no padding → raw "7.5"
+	}
+	got := disk.GenerateCBZFilename(meta)
+	want := "[mangadex][en] Test Series 7.5.cbz"
+	if got != want {
+		t.Errorf("GenerateCBZFilename with nil MaxChapter = %q, want %q", got, want)
+	}
+}
+
+// TestEllipsisInTitle verifies that "..." in a series title is converted to the
+// Unicode ellipsis character "…" in the generated filename. This exercises the
+// strings.ReplaceAll("...", "…") branch inside replaceInvalidPathCharacters.
+func TestEllipsisInTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := disk.RenderMeta{
+		Provider:    "mangadex",
+		Language:    "en",
+		SeriesTitle: "The End...",
+		Number:      ptr(1),
+		MaxChapter:  ptr(1),
+	}
+	got := disk.GenerateCBZFilename(meta)
+	want := "[mangadex][en] The End… 1.cbz"
+	if got != want {
+		t.Errorf("GenerateCBZFilename with ellipsis = %q, want %q", got, want)
+	}
+}
+
 // TestSeriesDir verifies the storage/category/title directory layout.
 func TestSeriesDir(t *testing.T) {
 	t.Parallel()

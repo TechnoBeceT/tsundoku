@@ -235,6 +235,113 @@ func TestRenderChapterAtomicity(t *testing.T) {
 	}
 }
 
+// TestRenderChapterMangaAndCount verifies that RenderChapter writes ComicInfo with
+// Manga="YesAndRightToLeft" when Meta.Manga=true, and sets Count when
+// Meta.ChapterCount>0. This exercises the Manga and ChapterCount branches in
+// the unexported newComicInfo helper.
+func TestRenderChapterMangaAndCount(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	num := 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:     "mangadex",
+			Language:     "ja",
+			SeriesTitle:  "Manga Series",
+			Category:     "Manga",
+			Number:       &num,
+			MaxChapter:   &num,
+			ChapterKey:   "1",
+			Manga:        true,
+			ChapterCount: 50,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+
+	filename, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	cbzPath := filepath.Join(storage, "Manga", "Manga Series", filename)
+	ci, err := disk.ReadComicInfoFromCBZ(cbzPath)
+	if err != nil {
+		t.Fatalf("ReadComicInfoFromCBZ: %v", err)
+	}
+	if ci == nil {
+		t.Fatal("ReadComicInfoFromCBZ returned nil")
+	}
+	if ci.Manga != "YesAndRightToLeft" {
+		t.Errorf("ComicInfo.Manga = %q, want %q", ci.Manga, "YesAndRightToLeft")
+	}
+	if ci.Count != 50 {
+		t.Errorf("ComicInfo.Count = %d, want 50", ci.Count)
+	}
+}
+
+// TestBuildProviderOrderDedup verifies that buildProviderOrder deduplicates
+// providers, keeping the entry with higher importance. This exercises the
+// "already seen" branch in the dedup loop.
+func TestBuildProviderOrderDedup(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	num := 1.0
+	max := 5.0
+
+	render := func(chKey, provider string, importance int) {
+		t.Helper()
+		req := disk.RenderRequest{
+			Storage: storage,
+			Meta: disk.RenderMeta{
+				Provider:    provider,
+				Language:    "en",
+				SeriesTitle: "Dedup Order Series",
+				Category:    "Manga",
+				Number:      &num,
+				MaxChapter:  &max,
+				ChapterKey:  chKey,
+				Importance:  importance,
+			},
+			Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+		}
+		if _, err := disk.RenderChapter(req); err != nil {
+			t.Fatalf("RenderChapter(%q): %v", chKey, err)
+		}
+	}
+
+	// Render two chapters from the same provider, plus one from another.
+	// After both, buildProviderOrder must deduplicate "mangadex" and keep it once.
+	render("1", "mangadex", 2)
+	render("2", "mangadex", 2) // duplicate provider — hits the seen[p.provider] dedup branch
+	render("3", "other-src", 1)
+
+	seriesDir := filepath.Join(storage, "Manga", "Dedup Order Series")
+	sidecar, err := disk.ReadSidecar(seriesDir)
+	if err != nil {
+		t.Fatalf("ReadSidecar: %v", err)
+	}
+	if sidecar == nil {
+		t.Fatal("ReadSidecar returned nil")
+	}
+
+	// ProviderOrder must contain each provider exactly once.
+	seen := make(map[string]int)
+	for _, p := range sidecar.ProviderOrder {
+		seen[p]++
+	}
+	for p, count := range seen {
+		if count > 1 {
+			t.Errorf("provider %q appears %d times in ProviderOrder, want 1", p, count)
+		}
+	}
+	if len(sidecar.ProviderOrder) != 2 {
+		t.Errorf("ProviderOrder len = %d, want 2 (mangadex, other-src)", len(sidecar.ProviderOrder))
+	}
+}
+
 // TestRenderChapterUpdatesSidecar verifies that a second RenderChapter call for
 // the same series appends to (rather than replaces) the sidecar.
 func TestRenderChapterUpdatesSidecar(t *testing.T) {
