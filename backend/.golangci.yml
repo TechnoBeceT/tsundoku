@@ -46,3 +46,14 @@ issues:
   # Surface all issues without capping per-linter or per-symbol.
   max-issues-per-linter: 0
   max-same-issues: 0
+  exclude-rules:
+    - path: internal/ent/(?!schema)
+      linters:
+        - errcheck
+        - govet
+        - unused
+        - gocritic
+        - gosec
+        - dupl
+        - cyclop
+        - gocognit
