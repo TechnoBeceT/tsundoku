@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
@@ -89,6 +91,7 @@ func TestIngestConcurrentRaceNoDuplicate(t *testing.T) {
 		ProviderIndex: 0,
 	}
 
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	wg.Add(2)
@@ -96,10 +99,12 @@ func TestIngestConcurrentRaceNoDuplicate(t *testing.T) {
 		i := i
 		go func() {
 			defer wg.Done()
+			<-start
 			_, err := chapter.IngestProviderChapters(ctx, client, sp.ID, []chapter.FetchedChapter{fc})
 			errs[i] = err
 		}()
 	}
+	close(start)
 	wg.Wait()
 
 	for i, err := range errs {
@@ -125,7 +130,8 @@ func TestIngestKeyNormalizationDedup(t *testing.T) {
 	sp1 := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-norm-a").SetImportance(1).SaveX(ctx)
 	sp2 := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-norm-b").SetImportance(2).SaveX(ctx)
 
-	// 12.0 and 12 both normalise to "12" via NormalizeChapterKey.
+	// Both 12.0 (float literal) and 12 (integer-like literal) normalise to
+	// chapter_key "12" via NormalizeChapterKey — trailing zero is stripped.
 	_, err := chapter.IngestProviderChapters(ctx, client, sp1.ID, []chapter.FetchedChapter{
 		{Number: ptr(12.0), ProviderIndex: 0},
 	})
@@ -134,15 +140,21 @@ func TestIngestKeyNormalizationDedup(t *testing.T) {
 	}
 
 	_, err = chapter.IngestProviderChapters(ctx, client, sp2.ID, []chapter.FetchedChapter{
-		{Number: ptr(12.0), ProviderIndex: 0},
+		{Number: ptr(12), ProviderIndex: 0},
 	})
 	if err != nil {
-		t.Fatalf("ingest 12.0 again via sp2: %v", err)
+		t.Fatalf("ingest 12 via sp2: %v", err)
 	}
 
 	chapterCount := client.Chapter.Query().CountX(ctx)
 	if chapterCount != 1 {
 		t.Errorf("normalisation dedup: want 1 chapter row, got %d", chapterCount)
+	}
+
+	// Confirm the normaliser produced key "12", not "12.0".
+	ch := client.Chapter.Query().OnlyX(ctx)
+	if ch.ChapterKey != "12" {
+		t.Errorf("normalised chapter_key: want %q, got %q", "12", ch.ChapterKey)
 	}
 }
 
@@ -233,5 +245,40 @@ func TestIngestResultCounts(t *testing.T) {
 	}
 	if res2.NewProviderChapters != 0 {
 		t.Errorf("second ingest: want NewProviderChapters=0, got %d", res2.NewProviderChapters)
+	}
+}
+
+// TestSetStateChapterNotFound verifies that SetState returns a non-nil error
+// when the given chapter ID does not exist.
+func TestSetStateChapterNotFound(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	err := chapter.SetState(ctx, client, uuid.New(), entchapter.StateDownloading)
+	if err == nil {
+		t.Fatal("expected error for nonexistent chapter ID, got nil")
+	}
+}
+
+// TestIngestProviderChaptersDBError verifies that IngestProviderChapters returns
+// a non-nil error when the database is unavailable (cancelled context).
+func TestIngestProviderChaptersDBError(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	// Create a real SeriesProvider before cancelling so the cancellation exercises
+	// the chapter ingest path, not the SeriesProvider load path.
+	s := client.Series.Create().SetTitle("Error Test").SetSlug("error-test").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-error").SetImportance(1).SaveX(ctx)
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately to simulate a dead DB connection
+
+	chapters := []chapter.FetchedChapter{
+		{Number: ptr(1.0), ProviderIndex: 0},
+	}
+	_, err := chapter.IngestProviderChapters(cancelCtx, client, sp.ID, chapters)
+	if err == nil {
+		t.Fatal("expected error with cancelled context, got nil")
 	}
 }

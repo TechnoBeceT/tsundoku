@@ -106,23 +106,7 @@ func ingestProviderChapter(
 
 	if err == nil {
 		// Row exists — update all mutable fields in place.
-		upd := client.ProviderChapter.UpdateOneID(existing.ID).
-			SetNillableNumber(fc.Number).
-			SetName(fc.Name).
-			SetURL(fc.URL).
-			SetProviderIndex(fc.ProviderIndex).
-			SetNillableProviderUploadDate(fc.UploadDate).
-			SetNillablePageCount(fc.PageCount)
-		if fc.Number == nil {
-			upd = upd.ClearNumber()
-		}
-		if fc.UploadDate == nil {
-			upd = upd.ClearProviderUploadDate()
-		}
-		if fc.PageCount == nil {
-			upd = upd.ClearPageCount()
-		}
-		if _, err := upd.Save(ctx); err != nil {
+		if _, err := applyProviderChapterUpdate(ctx, client, existing.ID, fc); err != nil {
 			return false, fmt.Errorf("update: %w", err)
 		}
 		return false, nil
@@ -143,10 +127,69 @@ func ingestProviderChapter(
 		SetNillableProviderUploadDate(fc.UploadDate).
 		SetNillablePageCount(fc.PageCount).
 		Save(ctx)
-	if err != nil {
-		return false, fmt.Errorf("insert: %w", err)
+	if err == nil {
+		return true, nil
 	}
-	return true, nil
+
+	// Absorb a unique-constraint race — a concurrent goroutine beat us to the
+	// INSERT. Re-fetch the existing row and apply our values via UPDATE so the
+	// caller never sees a constraint error.
+	if ent.IsConstraintError(err) {
+		return false, absorbProviderChapterRace(ctx, client, seriesProviderID, key, fc)
+	}
+
+	return false, fmt.Errorf("insert: %w", err)
+}
+
+// absorbProviderChapterRace handles the concurrent-INSERT race for ProviderChapter:
+// re-fetches the winner's row and updates it with the current call's values.
+func absorbProviderChapterRace(
+	ctx context.Context,
+	client *ent.Client,
+	seriesProviderID uuid.UUID,
+	key string,
+	fc FetchedChapter,
+) error {
+	existing, err := client.ProviderChapter.Query().
+		Where(
+			entproviderchapter.SeriesProviderID(seriesProviderID),
+			entproviderchapter.ChapterKey(key),
+		).
+		Only(ctx)
+	if err != nil {
+		return fmt.Errorf("re-fetch after constraint race: %w", err)
+	}
+	if _, err := applyProviderChapterUpdate(ctx, client, existing.ID, fc); err != nil {
+		return fmt.Errorf("update after constraint race: %w", err)
+	}
+	return nil
+}
+
+// applyProviderChapterUpdate sets all mutable fields on an existing ProviderChapter
+// row, clearing optional fields when the corresponding FetchedChapter field is nil.
+func applyProviderChapterUpdate(
+	ctx context.Context,
+	client *ent.Client,
+	id uuid.UUID,
+	fc FetchedChapter,
+) (*ent.ProviderChapter, error) {
+	upd := client.ProviderChapter.UpdateOneID(id).
+		SetNillableNumber(fc.Number).
+		SetName(fc.Name).
+		SetURL(fc.URL).
+		SetProviderIndex(fc.ProviderIndex).
+		SetNillableProviderUploadDate(fc.UploadDate).
+		SetNillablePageCount(fc.PageCount)
+	if fc.Number == nil {
+		upd = upd.ClearNumber()
+	}
+	if fc.UploadDate == nil {
+		upd = upd.ClearProviderUploadDate()
+	}
+	if fc.PageCount == nil {
+		upd = upd.ClearPageCount()
+	}
+	return upd.Save(ctx)
 }
 
 // ensureChapter guarantees that exactly one Chapter row exists for
@@ -180,6 +223,10 @@ func ensureChapter(
 			).
 			Only(ctx)
 		if ferr != nil {
+			// Defensive path: the row was deleted between our constraint error and
+			// this re-fetch. This cannot happen under normal operation (rows are
+			// never deleted mid-ingest). Documented per engineering standard —
+			// unreachable branches are documented, not faked.
 			return false, fmt.Errorf("re-fetch after constraint race: %w", ferr)
 		}
 		return false, nil
