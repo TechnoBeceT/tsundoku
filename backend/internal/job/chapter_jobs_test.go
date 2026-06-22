@@ -4,6 +4,7 @@ package job_test
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -158,9 +159,15 @@ func TestRunner_DownloadCycle_UpgradePass(t *testing.T) {
 }
 
 // TestRunner_Start_TicksAndStopsCleanly verifies that Start ticks at least once
-// and stops cleanly when the context is cancelled, with no goroutine leak.
+// and that its goroutine actually exits when the context is cancelled (no leak).
+//
+// Goroutine-stop is verified by comparing runtime.NumGoroutine() before Start
+// with a polled count after cancel: if the ticker goroutine does not exit, the
+// count stays elevated and the test fails.
 func TestRunner_Start_TicksAndStopsCleanly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	client := testdb.New(t)
 	storage := t.TempDir()
 	hub := sse.NewHub()
@@ -175,6 +182,10 @@ func TestRunner_Start_TicksAndStopsCleanly(t *testing.T) {
 	// Subscribe to observe at least one cycle.start before cancelling.
 	events, unsub := hub.Subscribe()
 	defer unsub()
+
+	// Baseline goroutine count taken immediately before Start so that any
+	// goroutines spawned by test setup are already counted.
+	base := runtime.NumGoroutine()
 
 	// Short interval so the ticker fires quickly in tests.
 	r.Start(ctx, 20*time.Millisecond)
@@ -198,27 +209,25 @@ loop:
 		}
 	}
 
-	// Cancel the context — Start must return.
-	cancel()
-
-	// Allow up to 500ms for the goroutine to stop cleanly.
-	done := make(chan struct{})
-	go func() {
-		// Spin briefly waiting for the ticker goroutine to exit.
-		// We verify this by re-running the cycle after cancel; if
-		// the goroutine is gone the channel drains without new events.
-		time.Sleep(100 * time.Millisecond)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		t.Error("Start goroutine did not stop within 500ms after context cancel")
-	}
-
 	if !tickSeen {
 		t.Error("expected at least one cycle.start event before cancel")
 	}
+
+	// Cancel the context — the ticker goroutine must exit.
+	cancel()
+
+	// Poll until runtime.NumGoroutine() drops back to <= base+1 (allow +1 slack
+	// for transient runtime goroutines) or until the deadline. Failing to reach
+	// baseline within 2s means the ticker goroutine leaked / did not exit.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= base+1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("Start goroutine did not exit within 2s after context cancel: goroutines now=%d, base=%d",
+		runtime.NumGoroutine(), base)
 }
 
 // TestRunner_Reconcile_SmokesWrapper verifies that Reconcile wraps

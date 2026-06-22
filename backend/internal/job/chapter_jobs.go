@@ -44,9 +44,15 @@ import (
 // download cycle. It carries summary information so clients can display a
 // "last synced" indicator.
 type CycleEvent struct {
-	// Chapters is the number of chapters that were actioned in this cycle.
-	// Set on cycle.done; zero on cycle.start.
-	Chapters int `json:"chapters,omitempty"`
+	// Flagged is the number of downloaded chapters detected as having a
+	// strictly better source available (upgrade_available). Set on cycle.done;
+	// zero on cycle.start.
+	Flagged int `json:"flagged,omitempty"`
+
+	// Upgraded is the number of upgrade operations actually performed in this
+	// cycle. A chapter counted here was fetched from the better source and
+	// returned to state=downloaded. Set on cycle.done; zero on cycle.start.
+	Upgraded int `json:"upgraded,omitempty"`
 
 	// Error is set when the cycle completed with an error.
 	Error string `json:"error,omitempty"`
@@ -115,12 +121,12 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 	if flagged > 0 {
 		upgraded, err = r.upgradeAll(ctx)
 		if err != nil {
-			r.broadcastCycle("cycle.done", CycleEvent{Chapters: flagged, Error: err.Error()})
+			r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Error: err.Error()})
 			return fmt.Errorf("job.Runner.RunDownloadCycle: upgrade: %w", err)
 		}
 	}
 
-	r.broadcastCycle("cycle.done", CycleEvent{Chapters: flagged + upgraded})
+	r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Upgraded: upgraded})
 	slog.InfoContext(ctx, "job.Runner: download cycle finished",
 		"flagged_upgrades", flagged,
 		"upgraded", upgraded,
