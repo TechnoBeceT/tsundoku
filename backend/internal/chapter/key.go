@@ -16,7 +16,7 @@ import (
 // reStripNonSlug matches any character that is not a lowercase ASCII letter,
 // digit, dot, or hyphen. It is applied after whitespace has been collapsed to
 // hyphens so that the resulting slug contains only [a-z0-9.-].
-var reStripNonSlug = regexp.MustCompile(`[^a-z0-9.\-]`)
+var reStripNonSlug = regexp.MustCompile(`[^a-z0-9.-]`)
 
 // FormatChapterNumber converts a chapter number to its canonical decimal string.
 //

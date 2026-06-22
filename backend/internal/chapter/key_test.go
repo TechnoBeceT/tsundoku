@@ -57,6 +57,10 @@ func TestNormalizeChapterKey(t *testing.T) {
 		// Unnumbered branch.
 		{"simple name lowercase", nil, "Extra", "name:extra"},
 		{"name with double space collapses to single hyphen", nil, "Side  Story", "name:side-story"},
+		// Slug strip/collapse edge cases — prove [a-z0-9.-] rule precisely.
+		{"dot is preserved in slug", nil, "Vol.1", "name:vol.1"},
+		{"pre-existing hyphen is kept by strip", nil, "Side-Story", "name:side-story"},
+		{"punctuation outside allowed set is stripped", nil, "Extra!", "name:extra"},
 		// Nil number AND empty name yields "name:".
 		{"nil number and empty name", nil, "", "name:"},
 	}
