@@ -47,6 +47,8 @@ const (
 	EdgeProviderChapters = "provider_chapters"
 	// EdgeSyncState holds the string denoting the sync_state edge name in mutations.
 	EdgeSyncState = "sync_state"
+	// EdgeSatisfiedChapters holds the string denoting the satisfied_chapters edge name in mutations.
+	EdgeSatisfiedChapters = "satisfied_chapters"
 	// Table holds the table name of the seriesprovider in the database.
 	Table = "series_providers"
 	// SeriesTable is the table that holds the series relation/edge.
@@ -70,6 +72,13 @@ const (
 	SyncStateInverseTable = "suwayomi_sync_states"
 	// SyncStateColumn is the table column denoting the sync_state relation/edge.
 	SyncStateColumn = "series_provider_id"
+	// SatisfiedChaptersTable is the table that holds the satisfied_chapters relation/edge.
+	SatisfiedChaptersTable = "chapters"
+	// SatisfiedChaptersInverseTable is the table name for the Chapter entity.
+	// It exists in this package in order to avoid circular dependency with the "chapter" package.
+	SatisfiedChaptersInverseTable = "chapters"
+	// SatisfiedChaptersColumn is the table column denoting the satisfied_chapters relation/edge.
+	SatisfiedChaptersColumn = "satisfied_by_provider_id"
 )
 
 // Columns holds all SQL columns for seriesprovider fields.
@@ -227,6 +236,20 @@ func BySyncStateField(field string, opts ...sql.OrderTermOption) OrderOption {
 		sqlgraph.OrderByNeighborTerms(s, newSyncStateStep(), sql.OrderByField(field, opts...))
 	}
 }
+
+// BySatisfiedChaptersCount orders the results by satisfied_chapters count.
+func BySatisfiedChaptersCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newSatisfiedChaptersStep(), opts...)
+	}
+}
+
+// BySatisfiedChapters orders the results by satisfied_chapters terms.
+func BySatisfiedChapters(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newSatisfiedChaptersStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
 func newSeriesStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -246,5 +269,12 @@ func newSyncStateStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(SyncStateInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2O, false, SyncStateTable, SyncStateColumn),
+	)
+}
+func newSatisfiedChaptersStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(SatisfiedChaptersInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, true, SatisfiedChaptersTable, SatisfiedChaptersColumn),
 	)
 }

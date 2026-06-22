@@ -1457,6 +1457,22 @@ func (c *SeriesProviderClient) QuerySyncState(_m *SeriesProvider) *SuwayomiSyncS
 	return query
 }
 
+// QuerySatisfiedChapters queries the satisfied_chapters edge of a SeriesProvider.
+func (c *SeriesProviderClient) QuerySatisfiedChapters(_m *SeriesProvider) *ChapterQuery {
+	query := (&ChapterClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(seriesprovider.Table, seriesprovider.FieldID, id),
+			sqlgraph.To(chapter.Table, chapter.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, true, seriesprovider.SatisfiedChaptersTable, seriesprovider.SatisfiedChaptersColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // Hooks returns the client hooks.
 func (c *SeriesProviderClient) Hooks() []Hook {
 	return c.hooks.SeriesProvider

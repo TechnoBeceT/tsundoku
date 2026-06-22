@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
@@ -241,6 +242,21 @@ func (_c *SeriesProviderCreate) SetNillableSyncStateID(id *uuid.UUID) *SeriesPro
 // SetSyncState sets the "sync_state" edge to the SuwayomiSyncState entity.
 func (_c *SeriesProviderCreate) SetSyncState(v *SuwayomiSyncState) *SeriesProviderCreate {
 	return _c.SetSyncStateID(v.ID)
+}
+
+// AddSatisfiedChapterIDs adds the "satisfied_chapters" edge to the Chapter entity by IDs.
+func (_c *SeriesProviderCreate) AddSatisfiedChapterIDs(ids ...uuid.UUID) *SeriesProviderCreate {
+	_c.mutation.AddSatisfiedChapterIDs(ids...)
+	return _c
+}
+
+// AddSatisfiedChapters adds the "satisfied_chapters" edges to the Chapter entity.
+func (_c *SeriesProviderCreate) AddSatisfiedChapters(v ...*Chapter) *SeriesProviderCreate {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddSatisfiedChapterIDs(ids...)
 }
 
 // Mutation returns the SeriesProviderMutation object of the builder.
@@ -490,6 +506,22 @@ func (_c *SeriesProviderCreate) createSpec() (*SeriesProvider, *sqlgraph.CreateS
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(suwayomisyncstate.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.SatisfiedChaptersIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: true,
+			Table:   seriesprovider.SatisfiedChaptersTable,
+			Columns: []string{seriesprovider.SatisfiedChaptersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {

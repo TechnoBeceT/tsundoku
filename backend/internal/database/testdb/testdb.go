@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
@@ -57,7 +58,9 @@ func New(t *testing.T) *ent.Client {
 	t.Cleanup(func() {
 		_ = client.Close()
 		_ = db.Close()
-		if err := ctr.Terminate(ctx); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := ctr.Terminate(shutdownCtx); err != nil {
 			t.Logf("testdb: terminate container: %v", err)
 		}
 	})

@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/series"
@@ -258,6 +259,21 @@ func (_u *SeriesProviderUpdate) SetSyncState(v *SuwayomiSyncState) *SeriesProvid
 	return _u.SetSyncStateID(v.ID)
 }
 
+// AddSatisfiedChapterIDs adds the "satisfied_chapters" edge to the Chapter entity by IDs.
+func (_u *SeriesProviderUpdate) AddSatisfiedChapterIDs(ids ...uuid.UUID) *SeriesProviderUpdate {
+	_u.mutation.AddSatisfiedChapterIDs(ids...)
+	return _u
+}
+
+// AddSatisfiedChapters adds the "satisfied_chapters" edges to the Chapter entity.
+func (_u *SeriesProviderUpdate) AddSatisfiedChapters(v ...*Chapter) *SeriesProviderUpdate {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddSatisfiedChapterIDs(ids...)
+}
+
 // Mutation returns the SeriesProviderMutation object of the builder.
 func (_u *SeriesProviderUpdate) Mutation() *SeriesProviderMutation {
 	return _u.mutation
@@ -294,6 +310,27 @@ func (_u *SeriesProviderUpdate) RemoveProviderChapters(v ...*ProviderChapter) *S
 func (_u *SeriesProviderUpdate) ClearSyncState() *SeriesProviderUpdate {
 	_u.mutation.ClearSyncState()
 	return _u
+}
+
+// ClearSatisfiedChapters clears all "satisfied_chapters" edges to the Chapter entity.
+func (_u *SeriesProviderUpdate) ClearSatisfiedChapters() *SeriesProviderUpdate {
+	_u.mutation.ClearSatisfiedChapters()
+	return _u
+}
+
+// RemoveSatisfiedChapterIDs removes the "satisfied_chapters" edge to Chapter entities by IDs.
+func (_u *SeriesProviderUpdate) RemoveSatisfiedChapterIDs(ids ...uuid.UUID) *SeriesProviderUpdate {
+	_u.mutation.RemoveSatisfiedChapterIDs(ids...)
+	return _u
+}
+
+// RemoveSatisfiedChapters removes "satisfied_chapters" edges to Chapter entities.
+func (_u *SeriesProviderUpdate) RemoveSatisfiedChapters(v ...*Chapter) *SeriesProviderUpdate {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveSatisfiedChapterIDs(ids...)
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
@@ -493,6 +530,51 @@ func (_u *SeriesProviderUpdate) sqlSave(ctx context.Context) (_node int, err err
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(suwayomisyncstate.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.SatisfiedChaptersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: true,
+			Table:   seriesprovider.SatisfiedChaptersTable,
+			Columns: []string{seriesprovider.SatisfiedChaptersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedSatisfiedChaptersIDs(); len(nodes) > 0 && !_u.mutation.SatisfiedChaptersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: true,
+			Table:   seriesprovider.SatisfiedChaptersTable,
+			Columns: []string{seriesprovider.SatisfiedChaptersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.SatisfiedChaptersIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: true,
+			Table:   seriesprovider.SatisfiedChaptersTable,
+			Columns: []string{seriesprovider.SatisfiedChaptersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {
@@ -746,6 +828,21 @@ func (_u *SeriesProviderUpdateOne) SetSyncState(v *SuwayomiSyncState) *SeriesPro
 	return _u.SetSyncStateID(v.ID)
 }
 
+// AddSatisfiedChapterIDs adds the "satisfied_chapters" edge to the Chapter entity by IDs.
+func (_u *SeriesProviderUpdateOne) AddSatisfiedChapterIDs(ids ...uuid.UUID) *SeriesProviderUpdateOne {
+	_u.mutation.AddSatisfiedChapterIDs(ids...)
+	return _u
+}
+
+// AddSatisfiedChapters adds the "satisfied_chapters" edges to the Chapter entity.
+func (_u *SeriesProviderUpdateOne) AddSatisfiedChapters(v ...*Chapter) *SeriesProviderUpdateOne {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddSatisfiedChapterIDs(ids...)
+}
+
 // Mutation returns the SeriesProviderMutation object of the builder.
 func (_u *SeriesProviderUpdateOne) Mutation() *SeriesProviderMutation {
 	return _u.mutation
@@ -782,6 +879,27 @@ func (_u *SeriesProviderUpdateOne) RemoveProviderChapters(v ...*ProviderChapter)
 func (_u *SeriesProviderUpdateOne) ClearSyncState() *SeriesProviderUpdateOne {
 	_u.mutation.ClearSyncState()
 	return _u
+}
+
+// ClearSatisfiedChapters clears all "satisfied_chapters" edges to the Chapter entity.
+func (_u *SeriesProviderUpdateOne) ClearSatisfiedChapters() *SeriesProviderUpdateOne {
+	_u.mutation.ClearSatisfiedChapters()
+	return _u
+}
+
+// RemoveSatisfiedChapterIDs removes the "satisfied_chapters" edge to Chapter entities by IDs.
+func (_u *SeriesProviderUpdateOne) RemoveSatisfiedChapterIDs(ids ...uuid.UUID) *SeriesProviderUpdateOne {
+	_u.mutation.RemoveSatisfiedChapterIDs(ids...)
+	return _u
+}
+
+// RemoveSatisfiedChapters removes "satisfied_chapters" edges to Chapter entities.
+func (_u *SeriesProviderUpdateOne) RemoveSatisfiedChapters(v ...*Chapter) *SeriesProviderUpdateOne {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveSatisfiedChapterIDs(ids...)
 }
 
 // Where appends a list predicates to the SeriesProviderUpdate builder.
@@ -1011,6 +1129,51 @@ func (_u *SeriesProviderUpdateOne) sqlSave(ctx context.Context) (_node *SeriesPr
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(suwayomisyncstate.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.SatisfiedChaptersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: true,
+			Table:   seriesprovider.SatisfiedChaptersTable,
+			Columns: []string{seriesprovider.SatisfiedChaptersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedSatisfiedChaptersIDs(); len(nodes) > 0 && !_u.mutation.SatisfiedChaptersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: true,
+			Table:   seriesprovider.SatisfiedChaptersTable,
+			Columns: []string{seriesprovider.SatisfiedChaptersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.SatisfiedChaptersIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: true,
+			Table:   seriesprovider.SatisfiedChaptersTable,
+			Columns: []string{seriesprovider.SatisfiedChaptersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {

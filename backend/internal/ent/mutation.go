@@ -5171,35 +5171,38 @@ func (m *SeriesMutation) ResetEdge(name string) error {
 // SeriesProviderMutation represents an operation that mutates the SeriesProvider nodes in the graph.
 type SeriesProviderMutation struct {
 	config
-	op                       Op
-	typ                      string
-	id                       *uuid.UUID
-	suwayomi_id              *int
-	addsuwayomi_id           *int
-	provider                 *string
-	scanlator                *string
-	language                 *string
-	url                      *string
-	title                    *string
-	metadata                 *bool
-	status                   *string
-	flags                    *uint32
-	addflags                 *int32
-	importance               *int
-	addimportance            *int
-	created_at               *time.Time
-	updated_at               *time.Time
-	clearedFields            map[string]struct{}
-	series                   *uuid.UUID
-	clearedseries            bool
-	provider_chapters        map[uuid.UUID]struct{}
-	removedprovider_chapters map[uuid.UUID]struct{}
-	clearedprovider_chapters bool
-	sync_state               *uuid.UUID
-	clearedsync_state        bool
-	done                     bool
-	oldValue                 func(context.Context) (*SeriesProvider, error)
-	predicates               []predicate.SeriesProvider
+	op                        Op
+	typ                       string
+	id                        *uuid.UUID
+	suwayomi_id               *int
+	addsuwayomi_id            *int
+	provider                  *string
+	scanlator                 *string
+	language                  *string
+	url                       *string
+	title                     *string
+	metadata                  *bool
+	status                    *string
+	flags                     *uint32
+	addflags                  *int32
+	importance                *int
+	addimportance             *int
+	created_at                *time.Time
+	updated_at                *time.Time
+	clearedFields             map[string]struct{}
+	series                    *uuid.UUID
+	clearedseries             bool
+	provider_chapters         map[uuid.UUID]struct{}
+	removedprovider_chapters  map[uuid.UUID]struct{}
+	clearedprovider_chapters  bool
+	sync_state                *uuid.UUID
+	clearedsync_state         bool
+	satisfied_chapters        map[uuid.UUID]struct{}
+	removedsatisfied_chapters map[uuid.UUID]struct{}
+	clearedsatisfied_chapters bool
+	done                      bool
+	oldValue                  func(context.Context) (*SeriesProvider, error)
+	predicates                []predicate.SeriesProvider
 }
 
 var _ ent.Mutation = (*SeriesProviderMutation)(nil)
@@ -5968,6 +5971,60 @@ func (m *SeriesProviderMutation) ResetSyncState() {
 	m.clearedsync_state = false
 }
 
+// AddSatisfiedChapterIDs adds the "satisfied_chapters" edge to the Chapter entity by ids.
+func (m *SeriesProviderMutation) AddSatisfiedChapterIDs(ids ...uuid.UUID) {
+	if m.satisfied_chapters == nil {
+		m.satisfied_chapters = make(map[uuid.UUID]struct{})
+	}
+	for i := range ids {
+		m.satisfied_chapters[ids[i]] = struct{}{}
+	}
+}
+
+// ClearSatisfiedChapters clears the "satisfied_chapters" edge to the Chapter entity.
+func (m *SeriesProviderMutation) ClearSatisfiedChapters() {
+	m.clearedsatisfied_chapters = true
+}
+
+// SatisfiedChaptersCleared reports if the "satisfied_chapters" edge to the Chapter entity was cleared.
+func (m *SeriesProviderMutation) SatisfiedChaptersCleared() bool {
+	return m.clearedsatisfied_chapters
+}
+
+// RemoveSatisfiedChapterIDs removes the "satisfied_chapters" edge to the Chapter entity by IDs.
+func (m *SeriesProviderMutation) RemoveSatisfiedChapterIDs(ids ...uuid.UUID) {
+	if m.removedsatisfied_chapters == nil {
+		m.removedsatisfied_chapters = make(map[uuid.UUID]struct{})
+	}
+	for i := range ids {
+		delete(m.satisfied_chapters, ids[i])
+		m.removedsatisfied_chapters[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedSatisfiedChapters returns the removed IDs of the "satisfied_chapters" edge to the Chapter entity.
+func (m *SeriesProviderMutation) RemovedSatisfiedChaptersIDs() (ids []uuid.UUID) {
+	for id := range m.removedsatisfied_chapters {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// SatisfiedChaptersIDs returns the "satisfied_chapters" edge IDs in the mutation.
+func (m *SeriesProviderMutation) SatisfiedChaptersIDs() (ids []uuid.UUID) {
+	for id := range m.satisfied_chapters {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetSatisfiedChapters resets all changes to the "satisfied_chapters" edge.
+func (m *SeriesProviderMutation) ResetSatisfiedChapters() {
+	m.satisfied_chapters = nil
+	m.clearedsatisfied_chapters = false
+	m.removedsatisfied_chapters = nil
+}
+
 // Where appends a list predicates to the SeriesProviderMutation builder.
 func (m *SeriesProviderMutation) Where(ps ...predicate.SeriesProvider) {
 	m.predicates = append(m.predicates, ps...)
@@ -6353,7 +6410,7 @@ func (m *SeriesProviderMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *SeriesProviderMutation) AddedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.series != nil {
 		edges = append(edges, seriesprovider.EdgeSeries)
 	}
@@ -6362,6 +6419,9 @@ func (m *SeriesProviderMutation) AddedEdges() []string {
 	}
 	if m.sync_state != nil {
 		edges = append(edges, seriesprovider.EdgeSyncState)
+	}
+	if m.satisfied_chapters != nil {
+		edges = append(edges, seriesprovider.EdgeSatisfiedChapters)
 	}
 	return edges
 }
@@ -6384,15 +6444,24 @@ func (m *SeriesProviderMutation) AddedIDs(name string) []ent.Value {
 		if id := m.sync_state; id != nil {
 			return []ent.Value{*id}
 		}
+	case seriesprovider.EdgeSatisfiedChapters:
+		ids := make([]ent.Value, 0, len(m.satisfied_chapters))
+		for id := range m.satisfied_chapters {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *SeriesProviderMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.removedprovider_chapters != nil {
 		edges = append(edges, seriesprovider.EdgeProviderChapters)
+	}
+	if m.removedsatisfied_chapters != nil {
+		edges = append(edges, seriesprovider.EdgeSatisfiedChapters)
 	}
 	return edges
 }
@@ -6407,13 +6476,19 @@ func (m *SeriesProviderMutation) RemovedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case seriesprovider.EdgeSatisfiedChapters:
+		ids := make([]ent.Value, 0, len(m.removedsatisfied_chapters))
+		for id := range m.removedsatisfied_chapters {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *SeriesProviderMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.clearedseries {
 		edges = append(edges, seriesprovider.EdgeSeries)
 	}
@@ -6422,6 +6497,9 @@ func (m *SeriesProviderMutation) ClearedEdges() []string {
 	}
 	if m.clearedsync_state {
 		edges = append(edges, seriesprovider.EdgeSyncState)
+	}
+	if m.clearedsatisfied_chapters {
+		edges = append(edges, seriesprovider.EdgeSatisfiedChapters)
 	}
 	return edges
 }
@@ -6436,6 +6514,8 @@ func (m *SeriesProviderMutation) EdgeCleared(name string) bool {
 		return m.clearedprovider_chapters
 	case seriesprovider.EdgeSyncState:
 		return m.clearedsync_state
+	case seriesprovider.EdgeSatisfiedChapters:
+		return m.clearedsatisfied_chapters
 	}
 	return false
 }
@@ -6466,6 +6546,9 @@ func (m *SeriesProviderMutation) ResetEdge(name string) error {
 		return nil
 	case seriesprovider.EdgeSyncState:
 		m.ResetSyncState()
+		return nil
+	case seriesprovider.EdgeSatisfiedChapters:
+		m.ResetSatisfiedChapters()
 		return nil
 	}
 	return fmt.Errorf("unknown SeriesProvider edge %s", name)

@@ -44,5 +44,10 @@ func (SeriesProvider) Edges() []ent.Edge {
 			Unique(),
 		edge.To("provider_chapters", ProviderChapter.Type),
 		edge.To("sync_state", SuwayomiSyncState.Type).Unique(),
+		// satisfied_chapters is the back-reference for Chapter.satisfied_by.
+		// It lets the M1 upgrade engine query "which chapters does this
+		// SeriesProvider currently satisfy?" without a reverse table scan.
+		edge.From("satisfied_chapters", Chapter.Type).
+			Ref("satisfied_by"),
 	}
 }

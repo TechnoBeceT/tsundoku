@@ -60,9 +60,11 @@ type SeriesProviderEdges struct {
 	ProviderChapters []*ProviderChapter `json:"provider_chapters,omitempty"`
 	// SyncState holds the value of the sync_state edge.
 	SyncState *SuwayomiSyncState `json:"sync_state,omitempty"`
+	// SatisfiedChapters holds the value of the satisfied_chapters edge.
+	SatisfiedChapters []*Chapter `json:"satisfied_chapters,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [3]bool
+	loadedTypes [4]bool
 }
 
 // SeriesOrErr returns the Series value or an error if the edge
@@ -94,6 +96,15 @@ func (e SeriesProviderEdges) SyncStateOrErr() (*SuwayomiSyncState, error) {
 		return nil, &NotFoundError{label: suwayomisyncstate.Label}
 	}
 	return nil, &NotLoadedError{edge: "sync_state"}
+}
+
+// SatisfiedChaptersOrErr returns the SatisfiedChapters value or an error if the edge
+// was not loaded in eager-loading.
+func (e SeriesProviderEdges) SatisfiedChaptersOrErr() ([]*Chapter, error) {
+	if e.loadedTypes[3] {
+		return e.SatisfiedChapters, nil
+	}
+	return nil, &NotLoadedError{edge: "satisfied_chapters"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -236,6 +247,11 @@ func (_m *SeriesProvider) QueryProviderChapters() *ProviderChapterQuery {
 // QuerySyncState queries the "sync_state" edge of the SeriesProvider entity.
 func (_m *SeriesProvider) QuerySyncState() *SuwayomiSyncStateQuery {
 	return NewSeriesProviderClient(_m.config).QuerySyncState(_m)
+}
+
+// QuerySatisfiedChapters queries the "satisfied_chapters" edge of the SeriesProvider entity.
+func (_m *SeriesProvider) QuerySatisfiedChapters() *ChapterQuery {
+	return NewSeriesProviderClient(_m.config).QuerySatisfiedChapters(_m)
 }
 
 // Update returns a builder for updating this SeriesProvider.

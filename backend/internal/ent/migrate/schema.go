@@ -12,7 +12,7 @@ var (
 	ChaptersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
 		{Name: "chapter_key", Type: field.TypeString},
-		{Name: "number", Type: field.TypeFloat64, Nullable: true},
+		{Name: "number", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "numeric"}},
 		{Name: "state", Type: field.TypeEnum, Enums: []string{"wanted", "downloading", "downloaded", "upgrade_available", "upgrading", "failed", "permanently_failed"}, Default: "wanted"},
 		{Name: "satisfied_importance", Type: field.TypeInt, Nullable: true},
 		{Name: "page_count", Type: field.TypeInt, Nullable: true},
@@ -112,7 +112,7 @@ var (
 	ProviderChaptersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
 		{Name: "chapter_key", Type: field.TypeString},
-		{Name: "number", Type: field.TypeFloat64, Nullable: true},
+		{Name: "number", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "numeric"}},
 		{Name: "name", Type: field.TypeString, Default: ""},
 		{Name: "url", Type: field.TypeString, Default: ""},
 		{Name: "provider_upload_date", Type: field.TypeTime, Nullable: true},

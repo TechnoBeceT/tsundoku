@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/series"
@@ -23,13 +24,14 @@ import (
 // SeriesProviderQuery is the builder for querying SeriesProvider entities.
 type SeriesProviderQuery struct {
 	config
-	ctx                  *QueryContext
-	order                []seriesprovider.OrderOption
-	inters               []Interceptor
-	predicates           []predicate.SeriesProvider
-	withSeries           *SeriesQuery
-	withProviderChapters *ProviderChapterQuery
-	withSyncState        *SuwayomiSyncStateQuery
+	ctx                   *QueryContext
+	order                 []seriesprovider.OrderOption
+	inters                []Interceptor
+	predicates            []predicate.SeriesProvider
+	withSeries            *SeriesQuery
+	withProviderChapters  *ProviderChapterQuery
+	withSyncState         *SuwayomiSyncStateQuery
+	withSatisfiedChapters *ChapterQuery
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -125,6 +127,28 @@ func (_q *SeriesProviderQuery) QuerySyncState() *SuwayomiSyncStateQuery {
 			sqlgraph.From(seriesprovider.Table, seriesprovider.FieldID, selector),
 			sqlgraph.To(suwayomisyncstate.Table, suwayomisyncstate.FieldID),
 			sqlgraph.Edge(sqlgraph.O2O, false, seriesprovider.SyncStateTable, seriesprovider.SyncStateColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QuerySatisfiedChapters chains the current query on the "satisfied_chapters" edge.
+func (_q *SeriesProviderQuery) QuerySatisfiedChapters() *ChapterQuery {
+	query := (&ChapterClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(seriesprovider.Table, seriesprovider.FieldID, selector),
+			sqlgraph.To(chapter.Table, chapter.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, true, seriesprovider.SatisfiedChaptersTable, seriesprovider.SatisfiedChaptersColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -319,14 +343,15 @@ func (_q *SeriesProviderQuery) Clone() *SeriesProviderQuery {
 		return nil
 	}
 	return &SeriesProviderQuery{
-		config:               _q.config,
-		ctx:                  _q.ctx.Clone(),
-		order:                append([]seriesprovider.OrderOption{}, _q.order...),
-		inters:               append([]Interceptor{}, _q.inters...),
-		predicates:           append([]predicate.SeriesProvider{}, _q.predicates...),
-		withSeries:           _q.withSeries.Clone(),
-		withProviderChapters: _q.withProviderChapters.Clone(),
-		withSyncState:        _q.withSyncState.Clone(),
+		config:                _q.config,
+		ctx:                   _q.ctx.Clone(),
+		order:                 append([]seriesprovider.OrderOption{}, _q.order...),
+		inters:                append([]Interceptor{}, _q.inters...),
+		predicates:            append([]predicate.SeriesProvider{}, _q.predicates...),
+		withSeries:            _q.withSeries.Clone(),
+		withProviderChapters:  _q.withProviderChapters.Clone(),
+		withSyncState:         _q.withSyncState.Clone(),
+		withSatisfiedChapters: _q.withSatisfiedChapters.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
@@ -363,6 +388,17 @@ func (_q *SeriesProviderQuery) WithSyncState(opts ...func(*SuwayomiSyncStateQuer
 		opt(query)
 	}
 	_q.withSyncState = query
+	return _q
+}
+
+// WithSatisfiedChapters tells the query-builder to eager-load the nodes that are connected to
+// the "satisfied_chapters" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *SeriesProviderQuery) WithSatisfiedChapters(opts ...func(*ChapterQuery)) *SeriesProviderQuery {
+	query := (&ChapterClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withSatisfiedChapters = query
 	return _q
 }
 
@@ -444,10 +480,11 @@ func (_q *SeriesProviderQuery) sqlAll(ctx context.Context, hooks ...queryHook) (
 	var (
 		nodes       = []*SeriesProvider{}
 		_spec       = _q.querySpec()
-		loadedTypes = [3]bool{
+		loadedTypes = [4]bool{
 			_q.withSeries != nil,
 			_q.withProviderChapters != nil,
 			_q.withSyncState != nil,
+			_q.withSatisfiedChapters != nil,
 		}
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
@@ -486,6 +523,13 @@ func (_q *SeriesProviderQuery) sqlAll(ctx context.Context, hooks ...queryHook) (
 	if query := _q.withSyncState; query != nil {
 		if err := _q.loadSyncState(ctx, query, nodes, nil,
 			func(n *SeriesProvider, e *SuwayomiSyncState) { n.Edges.SyncState = e }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withSatisfiedChapters; query != nil {
+		if err := _q.loadSatisfiedChapters(ctx, query, nodes,
+			func(n *SeriesProvider) { n.Edges.SatisfiedChapters = []*Chapter{} },
+			func(n *SeriesProvider, e *Chapter) { n.Edges.SatisfiedChapters = append(n.Edges.SatisfiedChapters, e) }); err != nil {
 			return nil, err
 		}
 	}
@@ -573,6 +617,39 @@ func (_q *SeriesProviderQuery) loadSyncState(ctx context.Context, query *Suwayom
 		node, ok := nodeids[fk]
 		if !ok {
 			return fmt.Errorf(`unexpected referenced foreign-key "series_provider_id" returned %v for node %v`, fk, n.ID)
+		}
+		assign(node, n)
+	}
+	return nil
+}
+func (_q *SeriesProviderQuery) loadSatisfiedChapters(ctx context.Context, query *ChapterQuery, nodes []*SeriesProvider, init func(*SeriesProvider), assign func(*SeriesProvider, *Chapter)) error {
+	fks := make([]driver.Value, 0, len(nodes))
+	nodeids := make(map[uuid.UUID]*SeriesProvider)
+	for i := range nodes {
+		fks = append(fks, nodes[i].ID)
+		nodeids[nodes[i].ID] = nodes[i]
+		if init != nil {
+			init(nodes[i])
+		}
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(chapter.FieldSatisfiedByProviderID)
+	}
+	query.Where(predicate.Chapter(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(seriesprovider.SatisfiedChaptersColumn), fks...))
+	}))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		fk := n.SatisfiedByProviderID
+		if fk == nil {
+			return fmt.Errorf(`foreign-key "satisfied_by_provider_id" is nil for node %v`, n.ID)
+		}
+		node, ok := nodeids[*fk]
+		if !ok {
+			return fmt.Errorf(`unexpected referenced foreign-key "satisfied_by_provider_id" returned %v for node %v`, *fk, n.ID)
 		}
 		assign(node, n)
 	}

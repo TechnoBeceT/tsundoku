@@ -820,6 +820,29 @@ func HasSyncStateWith(preds ...predicate.SuwayomiSyncState) predicate.SeriesProv
 	})
 }
 
+// HasSatisfiedChapters applies the HasEdge predicate on the "satisfied_chapters" edge.
+func HasSatisfiedChapters() predicate.SeriesProvider {
+	return predicate.SeriesProvider(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, true, SatisfiedChaptersTable, SatisfiedChaptersColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasSatisfiedChaptersWith applies the HasEdge predicate on the "satisfied_chapters" edge with a given conditions (other predicates).
+func HasSatisfiedChaptersWith(preds ...predicate.Chapter) predicate.SeriesProvider {
+	return predicate.SeriesProvider(func(s *sql.Selector) {
+		step := newSatisfiedChaptersStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
 // And groups predicates with the AND operator between them.
 func And(predicates ...predicate.SeriesProvider) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.AndPredicates(predicates...))
