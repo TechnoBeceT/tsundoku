@@ -80,6 +80,173 @@ components:
           description: Human-readable error description.
           example: owner already exists
 
+    ChapterCounts:
+      type: object
+      required:
+        - total
+        - downloaded
+        - wanted
+        - failed
+      properties:
+        total:
+          type: integer
+          description: Total number of chapters in the series.
+        downloaded:
+          type: integer
+          description: Chapters currently in the downloaded state.
+        wanted:
+          type: integer
+          description: Chapters currently in the wanted state.
+        failed:
+          type: integer
+          description: Chapters currently in the failed state.
+
+    SeriesSummary:
+      type: object
+      required:
+        - id
+        - title
+        - slug
+        - category
+        - coverUrl
+        - chapterCounts
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Series identifier.
+        title:
+          type: string
+          description: Series display title.
+        slug:
+          type: string
+          description: Deterministic URL-safe series slug.
+        category:
+          type: string
+          enum: [Manga, Manhwa, Manhua, Comic, Other]
+          description: Library category the series is filed under.
+        coverUrl:
+          type: string
+          description: Cover image URL (may be empty).
+        chapterCounts:
+          $ref: "#/components/schemas/ChapterCounts"
+
+    Chapter:
+      type: object
+      required:
+        - chapterKey
+        - number
+        - name
+        - state
+        - filename
+        - pageCount
+      properties:
+        chapterKey:
+          type: string
+          description: Stable per-series chapter identity (never the number).
+        number:
+          type: [number, "null"]
+          description: Display/sort number; null when unknown. Never identity.
+        name:
+          type: string
+          description: Chapter display title from the best provider's feed (may be empty).
+        state:
+          type: string
+          description: Chapter download state.
+        filename:
+          type: string
+          description: Rendered CBZ filename (empty until downloaded).
+        pageCount:
+          type: [integer, "null"]
+          description: Page count; null until the chapter is downloaded.
+
+    Provider:
+      type: object
+      required:
+        - provider
+        - scanlator
+        - language
+        - importance
+      properties:
+        provider:
+          type: string
+          description: Provider key (e.g. mangadex).
+        scanlator:
+          type: string
+          description: Scanlation group (may be empty).
+        language:
+          type: string
+          description: Language code (e.g. en).
+        importance:
+          type: integer
+          description: Priority/quality rank — higher is preferred.
+
+    SeriesDetail:
+      type: object
+      required:
+        - id
+        - title
+        - slug
+        - category
+        - coverUrl
+        - chapterCounts
+        - chapters
+        - providers
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Series identifier.
+        title:
+          type: string
+          description: Series display title.
+        slug:
+          type: string
+          description: Deterministic URL-safe series slug.
+        category:
+          type: string
+          enum: [Manga, Manhwa, Manhua, Comic, Other]
+          description: Library category the series is filed under.
+        coverUrl:
+          type: string
+          description: Cover image URL (may be empty).
+        chapterCounts:
+          $ref: "#/components/schemas/ChapterCounts"
+        chapters:
+          type: array
+          description: The series' chapters, ordered by number then chapter key.
+          items:
+            $ref: "#/components/schemas/Chapter"
+        providers:
+          type: array
+          description: The series' providers.
+          items:
+            $ref: "#/components/schemas/Provider"
+
+    CategoryCount:
+      type: object
+      required:
+        - category
+        - count
+      properties:
+        category:
+          type: string
+          enum: [Manga, Manhwa, Manhua, Comic, Other]
+          description: Category enum value.
+        count:
+          type: integer
+          description: Number of series filed under this category.
+
+    SetCategoryRequest:
+      type: object
+      required:
+        - category
+      properties:
+        category:
+          type: string
+          enum: [Manga, Manhwa, Manhua, Comic, Other]
+          description: Target category to file the series under.
+
 paths:
   /health:
     get:
@@ -192,6 +359,181 @@ paths:
                   Newline-delimited SSE frames. Each frame carries a `data:` field
                   containing a JSON-encoded progress event. The `event:` field names
                   the event type (e.g. `chapter.downloaded`, `series.synced`).
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series:
+    get:
+      operationId: listSeries
+      summary: List library series
+      description: |
+        Returns a title-ascending page of series summaries with per-series
+        chapter-state rollups. Optionally filtered by category and paginated.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: Restrict to a single category enum value.
+          schema:
+            type: string
+            enum: [Manga, Manhwa, Manhua, Comic, Other]
+        - name: limit
+          in: query
+          required: false
+          description: Page size (default 50, capped at 200).
+          schema:
+            type: integer
+            minimum: 0
+        - name: offset
+          in: query
+          required: false
+          description: Number of rows to skip.
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: A page of series summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SeriesSummary"
+        "400":
+          description: Invalid category or pagination parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}:
+    get:
+      operationId: getSeries
+      summary: Get series detail
+      description: Returns the full detail of one series — summary fields, chapters, and providers.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Malformed series id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/category:
+    patch:
+      operationId: setSeriesCategory
+      summary: Recategorize a series
+      description: |
+        Files the series under a new category. The on-disk series folder is moved
+        before the database is updated (with compensation) so the DB and disk
+        never drift. Returns the updated series summary.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetCategoryRequest"
+      responses:
+        "200":
+          description: Recategorized. Returns the updated series summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesSummary"
+        "400":
+          description: Malformed id or invalid category.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/categories:
+    get:
+      operationId: listCategories
+      summary: Category counts
+      description: Returns one entry per category enum value (all five) with the number of series in each.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: All category counts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CategoryCount"
         "401":
           description: Missing or invalid Bearer token.
           content:
