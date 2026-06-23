@@ -374,15 +374,19 @@ func (d *Dispatcher) broadcast(eventType string, data DownloadEvent) {
 // Acceptable for M1.
 func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesProvider, maxChapter *float64) disk.RenderMeta {
 	seriesTitle := ""
+	// Default to Other when the series edge is unloaded/absent (same guard as the
+	// title): a downloaded chapter must still render somewhere valid.
+	category := disk.CategoryOther
 	if ch.Edges.Series != nil {
 		seriesTitle = ch.Edges.Series.Title
+		category = disk.Category(ch.Edges.Series.Category.String())
 	}
 	return disk.RenderMeta{
 		Provider:            sp.Provider,
 		Scanlator:           sp.Scanlator,
 		Language:            sp.Language,
 		SeriesTitle:         seriesTitle,
-		Category:            disk.CategoryOther, // Series has no category field in M1
+		Category:            category,
 		Number:              pc.Number,
 		MaxChapter:          maxChapter,
 		ChapterName:         pc.Name,

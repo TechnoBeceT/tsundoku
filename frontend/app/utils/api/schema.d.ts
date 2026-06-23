@@ -91,6 +91,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List library series
+         * @description Returns a title-ascending page of series summaries with per-series
+         *     chapter-state rollups. Optionally filtered by category and paginated.
+         */
+        get: operations["listSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get series detail
+         * @description Returns the full detail of one series — summary fields, chapters, and providers.
+         */
+        get: operations["getSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/category": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Recategorize a series
+         * @description Files the series under a new category. The on-disk series folder is moved
+         *     before the database is updated (with compensation) so the DB and disk
+         *     never drift. Returns the updated series summary.
+         */
+        patch: operations["setSeriesCategory"];
+        trace?: never;
+    };
+    "/api/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Category counts
+         * @description Returns one entry per category enum value (all five) with the number of series in each.
+         */
+        get: operations["listCategories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -139,6 +222,98 @@ export interface components {
              * @example owner already exists
              */
             message: string;
+        };
+        ChapterCounts: {
+            /** @description Total number of chapters in the series. */
+            total: number;
+            /** @description Chapters currently in the downloaded state. */
+            downloaded: number;
+            /** @description Chapters currently in the wanted state. */
+            wanted: number;
+            /** @description Chapters currently in the failed state. */
+            failed: number;
+        };
+        SeriesSummary: {
+            /**
+             * Format: uuid
+             * @description Series identifier.
+             */
+            id: string;
+            /** @description Series display title. */
+            title: string;
+            /** @description Deterministic URL-safe series slug. */
+            slug: string;
+            /**
+             * @description Library category the series is filed under.
+             * @enum {string}
+             */
+            category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            /** @description Cover image URL (may be empty). */
+            coverUrl: string;
+            chapterCounts: components["schemas"]["ChapterCounts"];
+        };
+        Chapter: {
+            /** @description Stable per-series chapter identity (never the number). */
+            chapterKey: string;
+            /** @description Display/sort number; null when unknown. Never identity. */
+            number: number | null;
+            /** @description Chapter display title from the best provider's feed (may be empty). */
+            name: string;
+            /** @description Chapter download state. */
+            state: string;
+            /** @description Rendered CBZ filename (empty until downloaded). */
+            filename: string;
+            /** @description Page count; null until the chapter is downloaded. */
+            pageCount: number | null;
+        };
+        Provider: {
+            /** @description Provider key (e.g. mangadex). */
+            provider: string;
+            /** @description Scanlation group (may be empty). */
+            scanlator: string;
+            /** @description Language code (e.g. en). */
+            language: string;
+            /** @description Priority/quality rank — higher is preferred. */
+            importance: number;
+        };
+        SeriesDetail: {
+            /**
+             * Format: uuid
+             * @description Series identifier.
+             */
+            id: string;
+            /** @description Series display title. */
+            title: string;
+            /** @description Deterministic URL-safe series slug. */
+            slug: string;
+            /**
+             * @description Library category the series is filed under.
+             * @enum {string}
+             */
+            category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            /** @description Cover image URL (may be empty). */
+            coverUrl: string;
+            chapterCounts: components["schemas"]["ChapterCounts"];
+            /** @description The series' chapters, ordered by number then chapter key. */
+            chapters: components["schemas"]["Chapter"][];
+            /** @description The series' providers. */
+            providers: components["schemas"]["Provider"][];
+        };
+        CategoryCount: {
+            /**
+             * @description Category enum value.
+             * @enum {string}
+             */
+            category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            /** @description Number of series filed under this category. */
+            count: number;
+        };
+        SetCategoryRequest: {
+            /**
+             * @description Target category to file the series under.
+             * @enum {string}
+             */
+            category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
         };
     };
     responses: never;
@@ -269,6 +444,184 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSeries: {
+        parameters: {
+            query?: {
+                /** @description Restrict to a single category enum value. */
+                category?: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+                /** @description Page size (default 50, capped at 200). */
+                limit?: number;
+                /** @description Number of rows to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of series summaries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesSummary"][];
+                };
+            };
+            /** @description Invalid category or pagination parameter. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSeries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setSeriesCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetCategoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Recategorized. Returns the updated series summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesSummary"];
+                };
+            };
+            /** @description Malformed id or invalid category. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listCategories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All category counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryCount"][];
                 };
             };
             /** @description Missing or invalid Bearer token. */

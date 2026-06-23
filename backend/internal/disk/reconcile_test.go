@@ -13,6 +13,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
@@ -205,6 +206,99 @@ func renderForRebuild(t *testing.T, storage string, num *float64, key, provider 
 		t.Fatalf("RenderChapter(%q): %v", key, err)
 	}
 	return fn
+}
+
+// TestReconcile_restores_category is the M3 lossless-round-trip proof: a
+// reconcile after a recategorize restores the series' category from disk.
+//
+// It renders a series under Other/, recategorizes it to Manhwa via
+// MoveSeriesCategory (folder + sidecar both flip to Manhwa), wipes all DB rows
+// to simulate a total DB loss, then re-runs Reconcile and asserts the rebuilt
+// Series.Category is Manhwa — not the column default Other. Before the fix
+// upsertSeries never wrote the category, so the restored row defaulted to Other.
+func TestReconcile_restores_category(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	num := 1.0
+	max := 1.0
+	const title = "Round Trip Series"
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: title,
+			Category:    disk.CategoryOther,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "1",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	if _, err := disk.RenderChapter(req); err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	// Recategorize Other → Manhwa: moves the folder and rewrites the sidecar.
+	if err := disk.MoveSeriesCategory(storage, disk.CategoryOther, disk.CategoryManhwa, title); err != nil {
+		t.Fatalf("MoveSeriesCategory: %v", err)
+	}
+
+	// Simulate total DB loss: nothing in the DB, only the (recategorized) disk.
+	result, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("Reconcile after recategorize: %v", err)
+	}
+	if result.SeriesUpserted == 0 {
+		t.Fatal("SeriesUpserted = 0, want > 0")
+	}
+
+	got := client.Series.Query().OnlyX(ctx)
+	if got.Category != entseries.CategoryManhwa {
+		t.Errorf("restored Series.Category = %q, want %q (round-trip must preserve the recategorize)",
+			got.Category, entseries.CategoryManhwa)
+	}
+}
+
+// TestReconcile_orphan_no_category_defaults_other verifies that a series with no
+// sidecar category and no category folder (directly under the storage root)
+// reconciles without error and lands on the column default Other — the empty
+// SeriesFacts.Category case must never write an illegal empty enum value.
+func TestReconcile_orphan_no_category_defaults_other(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	// Orphan CBZ directly under storage root → SeriesFacts.Category == "".
+	seriesDir := filepath.Join(storage, "Rootless Series")
+	if err := os.MkdirAll(seriesDir, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	ci := disk.ComicInfo{
+		Series:     "Rootless Series",
+		Number:     "1",
+		Provider:   "comick",
+		Importance: 1,
+		ChapterKey: "1",
+		PageCount:  1,
+	}
+	cbzPath := filepath.Join(seriesDir, "[comick][en] Rootless Series 1.cbz")
+	if err := disk.CreateCBZ(cbzPath, []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}}, ci); err != nil {
+		t.Fatalf("CreateCBZ: %v", err)
+	}
+
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got := client.Series.Query().OnlyX(ctx)
+	if got.Category != entseries.CategoryOther {
+		t.Errorf("category = %q, want %q (empty disk category must default to Other)",
+			got.Category, entseries.CategoryOther)
+	}
 }
 
 // TestReconcile_idempotent verifies that running Reconcile twice on an

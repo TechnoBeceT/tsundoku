@@ -77,6 +77,20 @@ func (_c *SeriesCreate) SetNillableStatus(v *string) *SeriesCreate {
 	return _c
 }
 
+// SetCategory sets the "category" field.
+func (_c *SeriesCreate) SetCategory(v series.Category) *SeriesCreate {
+	_c.mutation.SetCategory(v)
+	return _c
+}
+
+// SetNillableCategory sets the "category" field if the given value is not nil.
+func (_c *SeriesCreate) SetNillableCategory(v *series.Category) *SeriesCreate {
+	if v != nil {
+		_c.SetCategory(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *SeriesCreate) SetCreatedAt(v time.Time) *SeriesCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -196,6 +210,10 @@ func (_c *SeriesCreate) defaults() {
 		v := series.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	if _, ok := _c.mutation.Category(); !ok {
+		v := series.DefaultCategory
+		_c.mutation.SetCategory(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := series.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -226,6 +244,14 @@ func (_c *SeriesCreate) check() error {
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Series.status"`)}
+	}
+	if _, ok := _c.mutation.Category(); !ok {
+		return &ValidationError{Name: "category", err: errors.New(`ent: missing required field "Series.category"`)}
+	}
+	if v, ok := _c.mutation.Category(); ok {
+		if err := series.CategoryValidator(v); err != nil {
+			return &ValidationError{Name: "category", err: fmt.Errorf(`ent: validator failed for field "Series.category": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "Series.created_at"`)}
@@ -287,6 +313,10 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := _c.mutation.Category(); ok {
+		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
+		_node.Category = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(series.FieldCreatedAt, field.TypeTime, value)

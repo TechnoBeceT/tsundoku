@@ -19,6 +19,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/download"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -659,6 +660,57 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 		t.Errorf("FetchRef.SuwayomiID: got %d, want %d (chapter-level ID); "+
 			"got the manga-level ID %d instead — buildFetchRef is using the wrong source",
 			gotSuwayomiID, chapterSuwayomi, seriesMangaID)
+	}
+}
+
+// TestDispatcher_RendersToSeriesCategory verifies that a downloaded chapter is
+// rendered under the series' real category folder, not the hardcoded Other.
+// Seeds a series with category=Manhwa and asserts the CBZ lands at
+// <storage>/Manhwa/<Title>/... — the M3 fix for buildRenderMeta.
+func TestDispatcher_RendersToSeriesCategory(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().
+		SetTitle("Category Series").
+		SetSlug("category-series").
+		SetCategory(entseries.CategoryManhwa).
+		SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).
+		SetChapterKey("ch-1").
+		SetURL("https://mangadex.org/ch1").
+		SetProviderIndex(0).
+		SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-1").SaveX(ctx)
+
+	f := fake.New()
+	d := download.New(client, f, hub, download.Config{
+		PerProviderConcurrency: 1,
+		MaxRetries:             3,
+		Storage:                storageDir,
+	})
+
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	got := client.Chapter.GetX(ctx, ch.ID)
+	if got.State != entchapter.StateDownloaded {
+		t.Fatalf("state: want downloaded, got %s", got.State)
+	}
+
+	// The CBZ must live under the Manhwa category folder, not Other.
+	wantPath := filepath.Join(storageDir, "Manhwa", "Category Series", got.Filename)
+	if _, statErr := os.Stat(wantPath); statErr != nil {
+		t.Errorf("CBZ not found under series category at %s: %v", wantPath, statErr)
+	}
+	otherPath := filepath.Join(storageDir, "Other", "Category Series", got.Filename)
+	if _, statErr := os.Stat(otherPath); statErr == nil {
+		t.Errorf("CBZ rendered to Other/ — category was hardcoded, not read from the series")
 	}
 }
 

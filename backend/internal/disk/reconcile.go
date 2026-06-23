@@ -3,6 +3,7 @@ package disk
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -98,7 +99,7 @@ func Reconcile(ctx context.Context, client *ent.Client, storage string) (Reconci
 
 // reconcileSeries upserts one series and all its providers and chapters.
 func reconcileSeries(ctx context.Context, client *ent.Client, sf SeriesFacts, result *ReconcileResult) error {
-	series, err := upsertSeries(ctx, client, sf.Title)
+	series, err := upsertSeries(ctx, client, sf.Title, sf.Category)
 	if err != nil {
 		return err
 	}
@@ -112,10 +113,23 @@ func reconcileSeries(ctx context.Context, client *ent.Client, sf SeriesFacts, re
 	return reconcileChapters(ctx, client, series.ID, providerIDs, sf.Chapters, result)
 }
 
-// upsertSeries finds the Series row by slug or creates it.
+// upsertSeries finds the Series row by slug or creates it, restoring the
+// library category from disk so a reconcile after a recategorize is a no-op
+// (the M3 lossless-round-trip guarantee).
+//
+// category is the on-disk category (folder name / sidecar), e.g. "Manhwa". It
+// is "" for an orphan series with no category folder and no sidecar category:
+// in that case the category is left untouched — on create the column default
+// (Other) applies; on update the existing value is preserved — so an unknown
+// disk category never clobbers a real one with an illegal empty enum. A
+// non-empty but invalid category (an unrecognised folder name) is treated the
+// same as empty: skipped with a logged warning, never failing the whole
+// reconcile over one bad folder.
+//
 // Returns the existing or newly created row.
-func upsertSeries(ctx context.Context, client *ent.Client, title string) (*ent.Series, error) {
+func upsertSeries(ctx context.Context, client *ent.Client, title, category string) (*ent.Series, error) {
 	slug := Slugify(title)
+	cat, hasCat := validCategory(ctx, category)
 
 	series, err := client.Series.Query().
 		Where(entseries.Slug(slug)).
@@ -126,10 +140,13 @@ func upsertSeries(ctx context.Context, client *ent.Client, title string) (*ent.S
 		return nil, fmt.Errorf("disk.Reconcile: query series %q: %w", slug, err)
 	}
 	if ent.IsNotFound(err) {
-		series, err = client.Series.Create().
+		create := client.Series.Create().
 			SetTitle(title).
-			SetSlug(slug).
-			Save(ctx)
+			SetSlug(slug)
+		if hasCat {
+			create = create.SetCategory(cat)
+		}
+		series, err = create.Save(ctx)
 		if err != nil {
 			// Defensive path: reachable only on DB connection loss or a concurrent
 			// INSERT that wins the slug unique constraint race.
@@ -138,13 +155,38 @@ func upsertSeries(ctx context.Context, client *ent.Client, title string) (*ent.S
 		return series, nil
 	}
 
-	// Update title in case it changed (slug stays fixed).
-	series, err = client.Series.UpdateOne(series).SetTitle(title).Save(ctx)
+	// Update title (and category) in case they changed; slug stays fixed.
+	update := client.Series.UpdateOne(series).SetTitle(title)
+	if hasCat {
+		update = update.SetCategory(cat)
+	}
+	series, err = update.Save(ctx)
 	if err != nil {
 		// Defensive path: reachable only on DB connection loss mid-run.
 		return nil, fmt.Errorf("disk.Reconcile: update series %q: %w", slug, err)
 	}
 	return series, nil
+}
+
+// validCategory converts an on-disk category string into a typed enum value.
+// It returns (cat, true) only for a legal Series category; for an empty or
+// unrecognised string it returns (_, false) so the caller skips setting the
+// field. An invalid (non-empty, unrecognised) value is logged — not silently
+// swallowed (§16) and not fatal: one bad library folder must not abort the
+// whole reconcile.
+func validCategory(ctx context.Context, category string) (entseries.Category, bool) {
+	if category == "" {
+		return "", false
+	}
+	cat := entseries.Category(category)
+	if err := entseries.CategoryValidator(cat); err != nil {
+		slog.WarnContext(ctx, "disk.Reconcile: ignoring unrecognised series category on disk; leaving category at its default/current value",
+			"category", category,
+			"err", err,
+		)
+		return "", false
+	}
+	return cat, true
 }
 
 // upsertProviders builds a provider→SeriesProvider.ID map for all distinct

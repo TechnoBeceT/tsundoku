@@ -149,11 +149,11 @@ func init() {
 	// series.DefaultStatus holds the default value on creation for the status field.
 	series.DefaultStatus = seriesDescStatus.Default.(string)
 	// seriesDescCreatedAt is the schema descriptor for created_at field.
-	seriesDescCreatedAt := seriesFields[6].Descriptor()
+	seriesDescCreatedAt := seriesFields[7].Descriptor()
 	// series.DefaultCreatedAt holds the default value on creation for the created_at field.
 	series.DefaultCreatedAt = seriesDescCreatedAt.Default.(func() time.Time)
 	// seriesDescUpdatedAt is the schema descriptor for updated_at field.
-	seriesDescUpdatedAt := seriesFields[7].Descriptor()
+	seriesDescUpdatedAt := seriesFields[8].Descriptor()
 	// series.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	series.DefaultUpdatedAt = seriesDescUpdatedAt.Default.(func() time.Time)
 	// series.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

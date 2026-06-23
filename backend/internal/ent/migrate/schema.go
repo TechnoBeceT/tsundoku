@@ -150,6 +150,7 @@ var (
 		{Name: "cover_url", Type: field.TypeString, Default: ""},
 		{Name: "description", Type: field.TypeString, Default: ""},
 		{Name: "status", Type: field.TypeString, Default: ""},
+		{Name: "category", Type: field.TypeEnum, Enums: []string{"Manga", "Manhwa", "Manhua", "Comic", "Other"}, Default: "Other"},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}

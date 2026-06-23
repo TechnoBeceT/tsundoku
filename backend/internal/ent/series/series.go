@@ -3,6 +3,7 @@
 package series
 
 import (
+	"fmt"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
@@ -25,6 +26,8 @@ const (
 	FieldDescription = "description"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
+	// FieldCategory holds the string denoting the category field in the database.
+	FieldCategory = "category"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -59,6 +62,7 @@ var Columns = []string{
 	FieldCoverURL,
 	FieldDescription,
 	FieldStatus,
+	FieldCategory,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -89,6 +93,35 @@ var (
 	// DefaultID holds the default value on creation for the "id" field.
 	DefaultID func() uuid.UUID
 )
+
+// Category defines the type for the "category" enum field.
+type Category string
+
+// CategoryOther is the default value of the Category enum.
+const DefaultCategory = CategoryOther
+
+// Category values.
+const (
+	CategoryManga  Category = "Manga"
+	CategoryManhwa Category = "Manhwa"
+	CategoryManhua Category = "Manhua"
+	CategoryComic  Category = "Comic"
+	CategoryOther  Category = "Other"
+)
+
+func (c Category) String() string {
+	return string(c)
+}
+
+// CategoryValidator is a validator for the "category" field enum values. It is called by the builders before save.
+func CategoryValidator(c Category) error {
+	switch c {
+	case CategoryManga, CategoryManhwa, CategoryManhua, CategoryComic, CategoryOther:
+		return nil
+	default:
+		return fmt.Errorf("series: invalid enum value for category field: %q", c)
+	}
+}
 
 // OrderOption defines the ordering options for the Series queries.
 type OrderOption func(*sql.Selector)
@@ -121,6 +154,11 @@ func ByDescription(opts ...sql.OrderTermOption) OrderOption {
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
+// ByCategory orders the results by the category field.
+func ByCategory(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCategory, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

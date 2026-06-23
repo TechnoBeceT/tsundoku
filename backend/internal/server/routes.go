@@ -6,8 +6,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -19,12 +21,16 @@ import (
 //   - /api/owner/claim   — first-run owner creation (no auth; fail-closed).
 //   - /api/owner/login   — owner login (no auth).
 //   - /api/progress      — SSE stream (RequireOwner).
+//   - /api/series        — library list (RequireOwner).
+//   - /api/series/:id     — library detail (RequireOwner).
+//   - /api/series/:id/category — recategorize (RequireOwner).
+//   - /api/categories    — per-category counts (RequireOwner).
 //   - /api/*             — catch-all 404 JSON for unknown API paths.
 //   - /*                 — SPA static fallback for non-API routes (same-origin).
 func registerRoutes(
 	e *echo.Echo,
-	_ *config.Config,
-	_ *entpkg.Client,
+	cfg *config.Config,
+	client *entpkg.Client,
 	authSvc *auth.Service,
 	hub *sse.Hub,
 	ownerH *owner.Handler,
@@ -41,6 +47,14 @@ func registerRoutes(
 	// Authenticated API group — all routes require a valid Bearer token.
 	authed := e.Group("/api", mw.RequireOwner(authSvc))
 	sse.RegisterRoutes(authed, hub)
+
+	// Library (series) API. The service owns the Ent client and the storage root
+	// so the recategorize path can move folders on disk in lockstep with the DB.
+	seriesH := seriesh.NewHandler(series.NewService(client, cfg.Storage.Folder))
+	authed.GET("/series", seriesH.List)
+	authed.GET("/series/:id", seriesH.Detail)
+	authed.PATCH("/series/:id/category", seriesH.SetCategory)
+	authed.GET("/categories", seriesH.Categories)
 
 	// SPA static serving + unknown-route handling (registered last).
 	registerStaticSPA(e)
