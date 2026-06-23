@@ -96,6 +96,11 @@ func PageCount(v int) predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldEQ(FieldPageCount, v))
 }
 
+// SuwayomiChapterID applies equality check predicate on the "suwayomi_chapter_id" field. It's identical to SuwayomiChapterIDEQ.
+func SuwayomiChapterID(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldSuwayomiChapterID, v))
+}
+
 // SeriesProviderIDEQ applies the EQ predicate on the "series_provider_id" field.
 func SeriesProviderIDEQ(v uuid.UUID) predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldEQ(FieldSeriesProviderID, v))
@@ -499,6 +504,56 @@ func PageCountIsNil() predicate.ProviderChapter {
 // PageCountNotNil applies the NotNil predicate on the "page_count" field.
 func PageCountNotNil() predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldNotNull(FieldPageCount))
+}
+
+// SuwayomiChapterIDEQ applies the EQ predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDEQ(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldSuwayomiChapterID, v))
+}
+
+// SuwayomiChapterIDNEQ applies the NEQ predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDNEQ(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNEQ(FieldSuwayomiChapterID, v))
+}
+
+// SuwayomiChapterIDIn applies the In predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDIn(vs ...int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldIn(FieldSuwayomiChapterID, vs...))
+}
+
+// SuwayomiChapterIDNotIn applies the NotIn predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDNotIn(vs ...int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNotIn(FieldSuwayomiChapterID, vs...))
+}
+
+// SuwayomiChapterIDGT applies the GT predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDGT(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGT(FieldSuwayomiChapterID, v))
+}
+
+// SuwayomiChapterIDGTE applies the GTE predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDGTE(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGTE(FieldSuwayomiChapterID, v))
+}
+
+// SuwayomiChapterIDLT applies the LT predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDLT(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLT(FieldSuwayomiChapterID, v))
+}
+
+// SuwayomiChapterIDLTE applies the LTE predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDLTE(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLTE(FieldSuwayomiChapterID, v))
+}
+
+// SuwayomiChapterIDIsNil applies the IsNil predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDIsNil() predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldIsNull(FieldSuwayomiChapterID))
+}
+
+// SuwayomiChapterIDNotNil applies the NotNil predicate on the "suwayomi_chapter_id" field.
+func SuwayomiChapterIDNotNil() predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNotNull(FieldSuwayomiChapterID))
 }
 
 // HasSeriesProvider applies the HasEdge predicate on the "series_provider" edge.

@@ -3424,6 +3424,8 @@ type ProviderChapterMutation struct {
 	addprovider_index      *int
 	page_count             *int
 	addpage_count          *int
+	suwayomi_chapter_id    *int
+	addsuwayomi_chapter_id *int
 	clearedFields          map[string]struct{}
 	series_provider        *uuid.UUID
 	clearedseries_provider bool
@@ -3925,6 +3927,76 @@ func (m *ProviderChapterMutation) ResetPageCount() {
 	delete(m.clearedFields, providerchapter.FieldPageCount)
 }
 
+// SetSuwayomiChapterID sets the "suwayomi_chapter_id" field.
+func (m *ProviderChapterMutation) SetSuwayomiChapterID(i int) {
+	m.suwayomi_chapter_id = &i
+	m.addsuwayomi_chapter_id = nil
+}
+
+// SuwayomiChapterID returns the value of the "suwayomi_chapter_id" field in the mutation.
+func (m *ProviderChapterMutation) SuwayomiChapterID() (r int, exists bool) {
+	v := m.suwayomi_chapter_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSuwayomiChapterID returns the old "suwayomi_chapter_id" field's value of the ProviderChapter entity.
+// If the ProviderChapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProviderChapterMutation) OldSuwayomiChapterID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSuwayomiChapterID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSuwayomiChapterID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSuwayomiChapterID: %w", err)
+	}
+	return oldValue.SuwayomiChapterID, nil
+}
+
+// AddSuwayomiChapterID adds i to the "suwayomi_chapter_id" field.
+func (m *ProviderChapterMutation) AddSuwayomiChapterID(i int) {
+	if m.addsuwayomi_chapter_id != nil {
+		*m.addsuwayomi_chapter_id += i
+	} else {
+		m.addsuwayomi_chapter_id = &i
+	}
+}
+
+// AddedSuwayomiChapterID returns the value that was added to the "suwayomi_chapter_id" field in this mutation.
+func (m *ProviderChapterMutation) AddedSuwayomiChapterID() (r int, exists bool) {
+	v := m.addsuwayomi_chapter_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSuwayomiChapterID clears the value of the "suwayomi_chapter_id" field.
+func (m *ProviderChapterMutation) ClearSuwayomiChapterID() {
+	m.suwayomi_chapter_id = nil
+	m.addsuwayomi_chapter_id = nil
+	m.clearedFields[providerchapter.FieldSuwayomiChapterID] = struct{}{}
+}
+
+// SuwayomiChapterIDCleared returns if the "suwayomi_chapter_id" field was cleared in this mutation.
+func (m *ProviderChapterMutation) SuwayomiChapterIDCleared() bool {
+	_, ok := m.clearedFields[providerchapter.FieldSuwayomiChapterID]
+	return ok
+}
+
+// ResetSuwayomiChapterID resets all changes to the "suwayomi_chapter_id" field.
+func (m *ProviderChapterMutation) ResetSuwayomiChapterID() {
+	m.suwayomi_chapter_id = nil
+	m.addsuwayomi_chapter_id = nil
+	delete(m.clearedFields, providerchapter.FieldSuwayomiChapterID)
+}
+
 // ClearSeriesProvider clears the "series_provider" edge to the SeriesProvider entity.
 func (m *ProviderChapterMutation) ClearSeriesProvider() {
 	m.clearedseries_provider = true
@@ -3986,7 +4058,7 @@ func (m *ProviderChapterMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProviderChapterMutation) Fields() []string {
-	fields := make([]string, 0, 8)
+	fields := make([]string, 0, 9)
 	if m.series_provider != nil {
 		fields = append(fields, providerchapter.FieldSeriesProviderID)
 	}
@@ -4010,6 +4082,9 @@ func (m *ProviderChapterMutation) Fields() []string {
 	}
 	if m.page_count != nil {
 		fields = append(fields, providerchapter.FieldPageCount)
+	}
+	if m.suwayomi_chapter_id != nil {
+		fields = append(fields, providerchapter.FieldSuwayomiChapterID)
 	}
 	return fields
 }
@@ -4035,6 +4110,8 @@ func (m *ProviderChapterMutation) Field(name string) (ent.Value, bool) {
 		return m.ProviderIndex()
 	case providerchapter.FieldPageCount:
 		return m.PageCount()
+	case providerchapter.FieldSuwayomiChapterID:
+		return m.SuwayomiChapterID()
 	}
 	return nil, false
 }
@@ -4060,6 +4137,8 @@ func (m *ProviderChapterMutation) OldField(ctx context.Context, name string) (en
 		return m.OldProviderIndex(ctx)
 	case providerchapter.FieldPageCount:
 		return m.OldPageCount(ctx)
+	case providerchapter.FieldSuwayomiChapterID:
+		return m.OldSuwayomiChapterID(ctx)
 	}
 	return nil, fmt.Errorf("unknown ProviderChapter field %s", name)
 }
@@ -4125,6 +4204,13 @@ func (m *ProviderChapterMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetPageCount(v)
 		return nil
+	case providerchapter.FieldSuwayomiChapterID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSuwayomiChapterID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter field %s", name)
 }
@@ -4142,6 +4228,9 @@ func (m *ProviderChapterMutation) AddedFields() []string {
 	if m.addpage_count != nil {
 		fields = append(fields, providerchapter.FieldPageCount)
 	}
+	if m.addsuwayomi_chapter_id != nil {
+		fields = append(fields, providerchapter.FieldSuwayomiChapterID)
+	}
 	return fields
 }
 
@@ -4156,6 +4245,8 @@ func (m *ProviderChapterMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedProviderIndex()
 	case providerchapter.FieldPageCount:
 		return m.AddedPageCount()
+	case providerchapter.FieldSuwayomiChapterID:
+		return m.AddedSuwayomiChapterID()
 	}
 	return nil, false
 }
@@ -4186,6 +4277,13 @@ func (m *ProviderChapterMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddPageCount(v)
 		return nil
+	case providerchapter.FieldSuwayomiChapterID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSuwayomiChapterID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter numeric field %s", name)
 }
@@ -4202,6 +4300,9 @@ func (m *ProviderChapterMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(providerchapter.FieldPageCount) {
 		fields = append(fields, providerchapter.FieldPageCount)
+	}
+	if m.FieldCleared(providerchapter.FieldSuwayomiChapterID) {
+		fields = append(fields, providerchapter.FieldSuwayomiChapterID)
 	}
 	return fields
 }
@@ -4225,6 +4326,9 @@ func (m *ProviderChapterMutation) ClearField(name string) error {
 		return nil
 	case providerchapter.FieldPageCount:
 		m.ClearPageCount()
+		return nil
+	case providerchapter.FieldSuwayomiChapterID:
+		m.ClearSuwayomiChapterID()
 		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter nullable field %s", name)
@@ -4257,6 +4361,9 @@ func (m *ProviderChapterMutation) ResetField(name string) error {
 		return nil
 	case providerchapter.FieldPageCount:
 		m.ResetPageCount()
+		return nil
+	case providerchapter.FieldSuwayomiChapterID:
+		m.ResetSuwayomiChapterID()
 		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter field %s", name)
