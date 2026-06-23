@@ -320,8 +320,9 @@ func TestLoadSuwayomiM2Fields(t *testing.T) {
 	}
 }
 
-// TestSuwayomiDefaults confirms that Load() applies sane defaults for
-// all new SuwayomiConfig fields when no env vars are set.
+// TestSuwayomiDefaults confirms that Load() applies the pinned defaults for
+// all new SuwayomiConfig fields when no env vars are set. The exact values are
+// asserted so that accidental changes to pinned constants are caught.
 func TestSuwayomiDefaults(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
@@ -332,14 +333,16 @@ func TestSuwayomiDefaults(t *testing.T) {
 	}
 
 	s := cfg.Suwayomi
-	if s.Version == "" {
-		t.Error("Suwayomi.Version default must not be empty")
+	const wantVersion = "v2.2.2100"
+	if s.Version != wantVersion {
+		t.Errorf("Suwayomi.Version default = %q, want %q", s.Version, wantVersion)
+	}
+	const wantTemplate = "https://github.com/Suwayomi/Suwayomi-Server/releases/download/%s/Suwayomi-Server-%s.jar"
+	if s.DownloadURLTemplate != wantTemplate {
+		t.Errorf("Suwayomi.DownloadURLTemplate default = %q, want %q", s.DownloadURLTemplate, wantTemplate)
 	}
 	if s.RuntimeDir == "" {
 		t.Error("Suwayomi.RuntimeDir default must not be empty")
-	}
-	if s.DownloadURLTemplate == "" {
-		t.Error("Suwayomi.DownloadURLTemplate default must not be empty")
 	}
 	if s.StartTimeout <= 0 {
 		t.Error("Suwayomi.StartTimeout default must be positive")

@@ -96,7 +96,7 @@ func (d DatabaseConfig) DSN() string {
 const suwayomiDefaultVersion = "v2.2.2100"
 
 // suwayomiDownloadURLTemplate is the GitHub release JAR asset URL pattern.
-// Two %s placeholders: first = version tag, second = version tag.
+// Both %s placeholders receive the Version tag (first = path segment, second = filename).
 // Example: .../download/v2.2.2100/Suwayomi-Server-v2.2.2100.jar
 // Verified against https://github.com/Suwayomi/Suwayomi-Server/releases on 2026-06-23.
 const suwayomiDownloadURLTemplate = "https://github.com/Suwayomi/Suwayomi-Server/releases/download/%s/Suwayomi-Server-%s.jar"

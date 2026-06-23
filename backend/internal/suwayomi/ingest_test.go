@@ -367,6 +367,54 @@ func TestIngest_AddSeries_UnnumberedChapter(t *testing.T) {
 	}
 }
 
+// TestIngest_AddSeries_TitleUpdate verifies that re-calling AddSeries with a
+// changed title UPDATES Series.Title while keeping Series.Slug unchanged and
+// creates no duplicate Series row (covers the upsertSeries title-update branch).
+func TestIngest_AddSeries_TitleUpdate(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID      = 88
+		initialTitle = "some manga title"
+		// updatedTitle has the same slug ("some-manga-title") after Slugify but
+		// different casing, exercising the update branch of upsertSeries.
+		updatedTitle = "Some Manga Title"
+		sourceName   = "test-source"
+	)
+
+	stubs := makeChapters(1)
+	sc := &ingestStubClient{chapters: stubs}
+	ing := suwayomi.NewIngest(sc, client)
+
+	// First call: creates the Series row.
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, initialTitle); err != nil {
+		t.Fatalf("first AddSeries: %v", err)
+	}
+
+	initialSlug := disk.Slugify(initialTitle)
+	assertSeries(t, ctx, client, initialTitle, initialSlug)
+
+	// Second call with a changed title: Series.Title must be updated.
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, updatedTitle); err != nil {
+		t.Fatalf("second AddSeries (title change): %v", err)
+	}
+
+	// Still exactly one Series row.
+	list := client.Series.Query().AllX(ctx)
+	if len(list) != 1 {
+		t.Fatalf("Series count after title update: got %d, want 1", len(list))
+	}
+	// Title must reflect the new value.
+	if list[0].Title != updatedTitle {
+		t.Errorf("Series.Title after update: got %q, want %q", list[0].Title, updatedTitle)
+	}
+	// Slug must be unchanged (identity is slug, not title).
+	if list[0].Slug != initialSlug {
+		t.Errorf("Series.Slug after title update: got %q, want %q (slug must not change)", list[0].Slug, initialSlug)
+	}
+}
+
 // TestIngest_AddSeries_SeriesProviderTitle verifies that upsertSeriesProvider
 // stores the manga display title in SeriesProvider.Title on both the create and
 // the update path. A non-empty title is required so that downstream CBZ rendering

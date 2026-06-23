@@ -2,7 +2,6 @@ package suwayomi_test
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -128,7 +127,6 @@ func TestEnsureJAR_idempotent(t *testing.T) {
 // leaves no file at the final JAR path.
 func TestEnsureJAR_httpError(t *testing.T) {
 	for _, code := range []int{http.StatusNotFound, http.StatusInternalServerError} {
-		code := code
 		t.Run(http.StatusText(code), func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "nope", code)
@@ -290,8 +288,3 @@ func TestEnsureJAR_noTempFileLeftOnError(t *testing.T) {
 		}
 	}
 }
-
-// Ensure the io import is used (it's needed for the body-streaming pattern
-// the implementation will use; this compile-time check lives in the test
-// package to avoid pulling it into the implementation).
-var _ = io.Discard

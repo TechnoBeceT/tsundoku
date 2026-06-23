@@ -12,7 +12,7 @@ const minPasswordLen = 8
 type ClaimRequest struct {
 	// Username is the desired owner username.
 	Username string `json:"username"`
-	// Password is the desired owner password (min 8 chars).
+	// Password is the desired owner password (min 8 bytes).
 	Password string `json:"password"`
 }
 
@@ -24,7 +24,7 @@ func (r ClaimRequest) validate() error {
 		return errors.New("username is required")
 	}
 	if len(r.Password) < minPasswordLen {
-		return errors.New("password must be at least 8 characters")
+		return errors.New("password must be at least 8 bytes")
 	}
 	return nil
 }

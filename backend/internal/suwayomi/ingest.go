@@ -216,6 +216,8 @@ func (i *Ingest) upsertSeriesProvider(
 func mapToFetchedChapters(chs []Chapter) []chapter.FetchedChapter {
 	out := make([]chapter.FetchedChapter, len(chs))
 	for idx, ch := range chs {
+		// Suwayomi returns PageCount=0 when pages have not been fetched yet; pass
+		// nil rather than a misleading zero so the M1 ingest stores no page count.
 		var pc *int
 		if ch.PageCount > 0 {
 			pc = &chs[idx].PageCount
