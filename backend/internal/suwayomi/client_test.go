@@ -472,6 +472,203 @@ func TestClient_PageBytes_LargeBody(t *testing.T) {
 	}
 }
 
+// --- doGraphQL: network error ------------------------------------------------
+
+// TestClient_doGraphQL_NetworkError exercises the c.http.Do error path inside
+// doGraphQL by pointing the client at a server that is already closed.
+func TestClient_doGraphQL_NetworkError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	// Close immediately — subsequent requests will get a connection-refused error.
+	srv.Close()
+
+	client := newTestClient(t, srv)
+	_, err := client.Sources(context.Background())
+	if err == nil {
+		t.Fatal("Sources() with dead server: expected network error, got nil")
+	}
+}
+
+// --- doGraphQL: body-decode error --------------------------------------------
+
+// TestClient_doGraphQL_BodyDecodeError exercises the json.Decode error path
+// inside doGraphQL — HTTP 200 but the body is not valid JSON.
+func TestClient_doGraphQL_BodyDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	_, err := client.Sources(context.Background())
+	if err == nil {
+		t.Fatal("Sources() with non-JSON body: expected decode error, got nil")
+	}
+	if !strings.Contains(err.Error(), "decode GraphQL envelope") {
+		t.Errorf("error %q should contain 'decode GraphQL envelope'", err.Error())
+	}
+}
+
+// --- doGraphQL: data-unmarshal error -----------------------------------------
+
+// TestClient_doGraphQL_DataUnmarshalError exercises the json.Unmarshal error
+// path inside doGraphQL — the envelope is valid but the data field has a shape
+// incompatible with the target DTO (sources expects an object, we send a number).
+func TestClient_doGraphQL_DataUnmarshalError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Valid JSON envelope but data is a bare number — cannot unmarshal into
+		// the gqlSourcesData struct (which expects an object).
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data": 42}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	_, err := client.Sources(context.Background())
+	if err == nil {
+		t.Fatal("Sources() with wrong-shape data: expected unmarshal error, got nil")
+	}
+	if !strings.Contains(err.Error(), "decode GraphQL data") {
+		t.Errorf("error %q should contain 'decode GraphQL data'", err.Error())
+	}
+}
+
+// --- PageBytes: network error ------------------------------------------------
+
+// TestClient_PageBytes_NetworkError exercises the c.http.Do error path inside
+// PageBytes by pointing the client at a server that is already closed.
+func TestClient_PageBytes_NetworkError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	pageURL := srv.URL + "/page/0"
+	// Close immediately — the subsequent Do will fail.
+	srv.Close()
+
+	client := newTestClient(t, srv)
+	_, _, err := client.PageBytes(context.Background(), pageURL)
+	if err == nil {
+		t.Fatal("PageBytes() with dead server: expected network error, got nil")
+	}
+}
+
+// --- PageBytes: "bin" fallback -----------------------------------------------
+
+// TestClient_PageBytes_BinFallback exercises the bin fallback when
+// http.DetectContentType returns an unrecognised type AND no Content-Type
+// header is present. All-zero bytes map to "application/octet-stream" by the
+// sniffer, which is not in contentTypeToExt; the header is absent so ext = "bin".
+func TestClient_PageBytes_BinFallback(t *testing.T) {
+	// All-zero bytes: http.DetectContentType returns "application/octet-stream".
+	unknownBytes := make([]byte, 20)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Intentionally no Content-Type header — exercising the bin fallback.
+		_, _ = w.Write(unknownBytes)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	_, ext, err := client.PageBytes(context.Background(), srv.URL+"/page/0")
+	if err != nil {
+		t.Fatalf("PageBytes() error = %v", err)
+	}
+	if ext != "bin" {
+		t.Errorf("PageBytes() ext = %q, want bin (no header + unrecognised MIME)", ext)
+	}
+}
+
+// --- Search: ThumbnailURL nil propagation ------------------------------------
+
+// TestClient_Search_ThumbnailURL verifies that a nil thumbnailUrl in the
+// GraphQL response produces a nil ThumbnailURL pointer on the Manga DTO, while
+// a non-nil value is preserved correctly.
+func TestClient_Search_ThumbnailURL(t *testing.T) {
+	const thumb = "/thumbnail/42"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, map[string]any{
+			"fetchSourceManga": map[string]any{
+				"mangas": []map[string]any{
+					{"id": 42, "title": "One Piece", "url": "/manga/42", "thumbnailUrl": thumb},
+					{"id": 43, "title": "One Punch Man", "url": "/manga/43", "thumbnailUrl": nil},
+				},
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	mangas, err := client.Search(context.Background(), "src", "q")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(mangas) != 2 {
+		t.Fatalf("Search() got %d results, want 2", len(mangas))
+	}
+	// mangas[0] must have a non-nil ThumbnailURL equal to the expected value.
+	if mangas[0].ThumbnailURL == nil {
+		t.Fatal("mangas[0].ThumbnailURL is nil, want non-nil")
+	}
+	if *mangas[0].ThumbnailURL != thumb {
+		t.Errorf("mangas[0].ThumbnailURL = %q, want %q", *mangas[0].ThumbnailURL, thumb)
+	}
+	// mangas[1] must have a nil ThumbnailURL.
+	if mangas[1].ThumbnailURL != nil {
+		t.Errorf("mangas[1].ThumbnailURL = %q, want nil", *mangas[1].ThumbnailURL)
+	}
+}
+
+// --- MangaChapters: nullable chapter fields ----------------------------------
+
+// TestClient_MangaChapters_NullableFields exercises the zero-guard for
+// chapterNumber and uploadDate — when the GraphQL response contains null for
+// chapterNumber and 0 for uploadDate the DTO fields must be nil pointers.
+func TestClient_MangaChapters_NullableFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, map[string]any{
+			"chapters": map[string]any{
+				"nodes": []map[string]any{
+					{
+						"id":            201,
+						"url":           "/chapter/201",
+						"name":          "Prologue",
+						"chapterNumber": nil, // null → Number must be nil
+						"uploadDate":    0,   // zero → UploadDate must be nil
+						"pageCount":     10,
+						"sourceOrder":   0,
+					},
+				},
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	chapters, err := client.MangaChapters(context.Background(), 99)
+	if err != nil {
+		t.Fatalf("MangaChapters() error = %v", err)
+	}
+	if len(chapters) != 1 {
+		t.Fatalf("MangaChapters() got %d chapters, want 1", len(chapters))
+	}
+	ch := chapters[0]
+	if ch.Number != nil {
+		t.Errorf("ch.Number = %v, want nil (chapterNumber was null)", ch.Number)
+	}
+	if ch.UploadDate != nil {
+		t.Errorf("ch.UploadDate = %v, want nil (uploadDate was 0)", ch.UploadDate)
+	}
+}
+
 // --- Interface seam ----------------------------------------------------------
 
 // TestClientIsInterface verifies that Client is an interface type and that the

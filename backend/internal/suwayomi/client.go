@@ -435,14 +435,14 @@ func (c *httpClient) PageBytes(ctx context.Context, pageURL string) ([]byte, str
 	}
 	detected := http.DetectContentType(sniff)
 	// DetectContentType may include parameters (e.g. "image/jpeg; charset=...").
-	mimeType := strings.SplitN(detected, ";", 2)[0]
+	mimeType, _, _ := strings.Cut(detected, ";")
 	mimeType = strings.TrimSpace(mimeType)
 
 	ext, ok := contentTypeToExt[mimeType]
 	if !ok {
 		// Fall back to content-type header if sniffing yields an unknown type.
 		ctHeader := resp.Header.Get("Content-Type")
-		headerMIME := strings.SplitN(ctHeader, ";", 2)[0]
+		headerMIME, _, _ := strings.Cut(ctHeader, ";")
 		headerMIME = strings.TrimSpace(headerMIME)
 		ext = contentTypeToExt[headerMIME]
 		if ext == "" {
