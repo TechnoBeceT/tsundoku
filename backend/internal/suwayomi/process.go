@@ -46,6 +46,14 @@ type ProcessManager struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	running bool
+
+	// waitDone is closed and waitErr is written by the single background waiter
+	// goroutine that owns cmd.Wait(). Both Stop and the public Wait method select
+	// on this channel instead of calling cmd.Wait() themselves, ensuring that
+	// cmd.Wait() is called by exactly one goroutine (exec.Cmd documents Wait as
+	// not safe to call concurrently or more than once).
+	waitDone chan struct{}
+	waitErr  error
 }
 
 // NewProcessManager returns a ProcessManager configured from cfg.
@@ -122,9 +130,23 @@ func (pm *ProcessManager) launch(ctx context.Context, jarPath string) (<-chan st
 		return nil, fmt.Errorf("suwayomi.ProcessManager.Start: exec: %w", err)
 	}
 
+	waitDone := make(chan struct{})
 	pm.mu.Lock()
 	pm.cmd = cmd
+	pm.waitDone = waitDone
+	pm.waitErr = nil
 	pm.mu.Unlock()
+
+	// Single background waiter — the only goroutine that calls cmd.Wait().
+	// exec.Cmd documents Wait as not safe to call concurrently or more than once;
+	// all other code (Stop, public Wait) blocks on waitDone instead.
+	go func() {
+		err := cmd.Wait()
+		pm.mu.Lock()
+		pm.waitErr = err
+		pm.mu.Unlock()
+		close(waitDone)
+	}()
 
 	// Forward stderr to the logger; no synchronisation needed — this goroutine
 	// only reads from the pipe and calls the logger.
@@ -190,40 +212,45 @@ func (pm *ProcessManager) waitReady(ctx context.Context, readyCh <-chan struct{}
 // idempotent — calling it on an already-stopped manager is a no-op.
 //
 // Stop is safe to call from any goroutine while Start is blocked in its ready
-// wait; it will unblock Start via the context cancel that exec.CommandContext
-// propagates when the process exits.
+// wait; when the process exits its stdout/stderr pipes close, so the stdout
+// scan goroutine terminates naturally and waitReady falls through to its
+// timeout/ctx arm.
 func (pm *ProcessManager) Stop() {
 	pm.mu.Lock()
-	defer pm.mu.Unlock()
 
 	if pm.cmd == nil || pm.cmd.Process == nil {
+		pm.mu.Unlock()
 		return
 	}
 
 	slog.Info("suwayomi: stopping process")
 
-	// SIGTERM for a graceful JVM shutdown.
-	if err := pm.cmd.Process.Signal(os.Interrupt); err != nil {
+	// Capture both cmd and waitDone under the lock. The background waiter goroutine
+	// owns cmd.Wait(); Stop and the public Wait method select on waitDone instead of
+	// calling cmd.Wait() directly, so there is no concurrent cmd.Wait() race.
+	cmd := pm.cmd
+	waitDone := pm.waitDone
+
+	pm.mu.Unlock()
+
+	// os.Interrupt = SIGTERM on Unix — request a graceful JVM shutdown.
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		// Defensive path: SIGTERM to a live process fails only on OS-level errors
 		// (e.g. the process exited between the nil-check and Signal). Unreachable in
 		// normal operation; coverage gap is expected per engineering standard.
 		slog.Warn("suwayomi: SIGTERM failed, killing", "err", err)
-		_ = pm.cmd.Process.Kill()
-		_ = pm.cmd.Wait()
+		_ = cmd.Process.Kill()
+		<-waitDone
+		pm.mu.Lock()
 		pm.running = false
 		pm.cmd = nil
+		pm.mu.Unlock()
 		return
 	}
 
-	// Wait for the process to exit, with an escalation to SIGKILL.
-	done := make(chan struct{})
-	go func() {
-		_ = pm.cmd.Wait()
-		close(done)
-	}()
-
+	// Wait for the background waiter to observe process exit, with escalation to SIGKILL.
 	select {
-	case <-done:
+	case <-waitDone:
 		slog.Info("suwayomi: stopped gracefully")
 	case <-time.After(stopGracePeriod):
 		// Defensive path: a real JVM that ignores SIGTERM for >5 s is pathological.
@@ -231,12 +258,14 @@ func (pm *ProcessManager) Stop() {
 		// for the full grace period, making the test suite unacceptably slow.
 		// Coverage gap documented per engineering standard.
 		slog.Warn("suwayomi: grace period elapsed, killing")
-		_ = pm.cmd.Process.Kill()
-		<-done
+		_ = cmd.Process.Kill()
+		<-waitDone
 	}
 
+	pm.mu.Lock()
 	pm.running = false
 	pm.cmd = nil
+	pm.mu.Unlock()
 }
 
 // IsRunning reports whether the Suwayomi process is currently running and ready.
@@ -254,13 +283,19 @@ func (pm *ProcessManager) IsRunning() bool {
 // detect unexpected crashes) should call Wait after Start returns nil.
 func (pm *ProcessManager) Wait() error {
 	pm.mu.Lock()
-	cmd := pm.cmd
+	waitDone := pm.waitDone
 	pm.mu.Unlock()
 
-	if cmd == nil {
+	if waitDone == nil {
 		return nil
 	}
-	return cmd.Wait()
+
+	<-waitDone
+
+	pm.mu.Lock()
+	err := pm.waitErr
+	pm.mu.Unlock()
+	return err
 }
 
 // findJarFile searches dir for the first regular file whose name ends in ".jar"

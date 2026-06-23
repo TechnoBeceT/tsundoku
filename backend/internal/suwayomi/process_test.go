@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -357,6 +358,47 @@ func TestProcessManager_Wait_WithRunningProcess(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Wait did not return within 3 seconds after process killed")
 	}
+}
+
+// TestProcessManager_StopWait_Concurrent verifies that calling Stop and Wait
+// concurrently from separate goroutines does not trigger the race detector. This
+// locks in the fix for the unlocked pm.cmd dereference inside Stop's goroutine:
+// cmd is now captured under pm.mu before the goroutine is launched so that both
+// Stop's internal goroutine and an external Wait caller operate on their own
+// locally captured *exec.Cmd reference.
+func TestProcessManager_StopWait_Concurrent(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := shortCfg(t, 5*time.Second)
+	pm := suwayomi.NewProcessManager(cfg)
+	suwayomi.SetCommandContext(pm, fakeReady)
+
+	if err := pm.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Fire Stop and Wait concurrently a few times to give the race detector
+	// sufficient opportunity to observe any unsynchronised access.
+	const concurrency = 5
+	ready := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(concurrency * 2)
+
+	for range concurrency {
+		go func() {
+			defer wg.Done()
+			<-ready
+			pm.Stop()
+		}()
+		go func() {
+			defer wg.Done()
+			<-ready
+			_ = pm.Wait()
+		}()
+	}
+
+	close(ready) // release all goroutines simultaneously
+	wg.Wait()
 }
 
 // TestProcessManager_Start_EnsureJARFails verifies that Start returns an error
