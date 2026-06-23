@@ -134,6 +134,48 @@ func TestMoveSeriesCategoryTargetCollision(t *testing.T) {
 	}
 }
 
+// TestMoveSeriesCategoryRollsBackOnSidecarReadFailure verifies the no-net-move
+// invariant: when a post-rename sidecar step fails (here ReadSidecar fails on a
+// malformed tsundoku.json), the folder is rolled back to its OLD location so the
+// caller can trust that a non-nil error means nothing net moved.
+func TestMoveSeriesCategoryRollsBackOnSidecarReadFailure(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	const title = "Solo Leveling"
+	srcBytes := seedSeriesDir(t, storage, disk.CategoryOther, title)
+
+	// Corrupt the sidecar so ReadSidecar fails AFTER the rename succeeds.
+	srcDir := disk.SeriesDir(storage, disk.CategoryOther, title)
+	if err := os.WriteFile(filepath.Join(srcDir, "tsundoku.json"), []byte("{ not valid json"), 0o600); err != nil {
+		t.Fatalf("corrupt sidecar: %v", err)
+	}
+
+	err := disk.MoveSeriesCategory(storage, disk.CategoryOther, disk.CategoryManhwa, title)
+	if err == nil {
+		t.Fatal("MoveSeriesCategory with malformed sidecar: want error, got nil")
+	}
+
+	// The folder must be back at the OLD location (rollback happened).
+	oldDir := disk.SeriesDir(storage, disk.CategoryOther, title)
+	if _, statErr := os.Stat(oldDir); statErr != nil {
+		t.Fatalf("rollback: old dir %q should exist again: %v", oldDir, statErr)
+	}
+	// And NOT present at the new location.
+	newDir := disk.SeriesDir(storage, disk.CategoryManhwa, title)
+	if _, statErr := os.Stat(newDir); !os.IsNotExist(statErr) {
+		t.Fatalf("rollback: new dir %q should not exist, stat err = %v", newDir, statErr)
+	}
+	// CBZ is intact back at the source.
+	got, statErr := os.ReadFile(filepath.Join(oldDir, "[Other][en] "+title+" 001.cbz")) //nolint:gosec // test-only, path is from t.TempDir()
+	if statErr != nil {
+		t.Fatalf("rollback: source CBZ missing: %v", statErr)
+	}
+	if string(got) != string(srcBytes) {
+		t.Errorf("rollback: source CBZ bytes changed: want %q, got %q", srcBytes, got)
+	}
+}
+
 // TestMoveSeriesCategoryMissingSource verifies that a missing source dir is a
 // clear error and nothing is created at the target.
 func TestMoveSeriesCategoryMissingSource(t *testing.T) {
