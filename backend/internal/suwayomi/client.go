@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,7 +86,8 @@ type Chapter struct {
 // Method overview:
 //   - Sources: list installed Suwayomi extensions/sources.
 //   - Search: search a source for manga by query string.
-//   - MangaChapters: list all chapters for a manga.
+//   - FetchChapters: trigger a live chapter-list fetch from the source and return results.
+//   - MangaChapters: list already-cached chapters for a manga (read-only; no source fetch).
 //   - ChapterPages: trigger page-fetch and return the ordered page URLs.
 //   - PageBytes: download a single page image and detect its file type.
 type Client interface {
@@ -96,12 +98,30 @@ type Client interface {
 	// page of results.
 	Search(ctx context.Context, sourceID, query string) ([]Manga, error)
 
-	// MangaChapters returns all chapters for the given manga ID.
+	// FetchChapters triggers the Suwayomi fetchChapters mutation, which fetches
+	// the live chapter list from the source and populates Suwayomi's internal
+	// cache. It returns the full chapter list for the manga. Call this when
+	// ingesting a manga for the first time or to refresh the chapter list.
+	//
+	// Shape validated against Suwayomi v2.2.2100 (Task 7): mutation input
+	// field is `mangaId: Int!`; result field is `chapters`.
+	FetchChapters(ctx context.Context, mangaID int) ([]Chapter, error)
+
+	// MangaChapters returns already-cached chapters for the given manga ID
+	// using the chapters(filter:{mangaId:{equalTo:N}}) query. It does NOT
+	// contact the upstream source; call FetchChapters first if the manga was
+	// just added via Search.
+	//
+	// Shape validated against Suwayomi v2.2.2100 (Task 7): filter operator
+	// `equalTo` is correct for the mangaId field.
 	MangaChapters(ctx context.Context, mangaID int) ([]Chapter, error)
 
 	// ChapterPages triggers a Suwayomi page-fetch for chapterID and returns
 	// the ordered list of page-image URLs. The URLs are relative paths on the
 	// Suwayomi server (e.g. /api/v1/manga/7/chapter/3/page/0).
+	//
+	// Shape validated against Suwayomi v2.2.2100 (Task 7): page URLs are
+	// relative paths, not absolute URLs.
 	ChapterPages(ctx context.Context, chapterID int) ([]string, error)
 
 	// PageBytes downloads the image at pageURL (an absolute URL) and returns
@@ -254,10 +274,12 @@ type gqlSearchData struct {
 	} `json:"fetchSourceManga"`
 }
 
+// Shape validation (Task 7, live): the input field is `source` (not `sourceId`).
+// Confirmed against Suwayomi v2.2.2100 by introspecting FetchSourceMangaInput.
 const searchMutation = `
 mutation SearchSource($sourceId: LongString!, $query: String!, $page: Int!) {
   fetchSourceManga(input: {
-    sourceId: $sourceId
+    source: $sourceId
     type: SEARCH
     query: $query
     page: $page
@@ -295,20 +317,96 @@ func (c *httpClient) Search(ctx context.Context, sourceID, query string) ([]Mang
 	return out, nil
 }
 
+// --- Chapter conversion helper -----------------------------------------------
+
+// gqlChapterNode is the common JSON shape for a chapter node returned by both
+// the fetchChapters mutation and the chapters query. Both operations return
+// the same set of fields; this shared type avoids duplicating the struct and
+// the conversion loop.
+//
+// uploadDate is typed as LongString! in the Suwayomi GraphQL schema — the same
+// custom scalar used for sourceId. Suwayomi serialises 64-bit integers as JSON
+// strings ("1782184812670") to avoid JavaScript float precision loss. We receive
+// it as *string and parse it in mapChapterNodes.
+type gqlChapterNode struct {
+	ID            int      `json:"id"`
+	URL           string   `json:"url"`
+	Name          string   `json:"name"`
+	ChapterNumber *float64 `json:"chapterNumber"`
+	UploadDate    *string  `json:"uploadDate"`
+	PageCount     int      `json:"pageCount"`
+	SourceOrder   int      `json:"sourceOrder"`
+}
+
+// mapChapterNodes converts a slice of gqlChapterNode to []Chapter.
+// UploadDate arrives as a LongString (string-encoded milliseconds-since-epoch);
+// a missing, zero, or unparseable value is treated as nil.
+func mapChapterNodes(nodes []gqlChapterNode) []Chapter {
+	out := make([]Chapter, len(nodes))
+	for i, n := range nodes {
+		var uploadDate *time.Time
+		if n.UploadDate != nil && *n.UploadDate != "" && *n.UploadDate != "0" {
+			if ms, err := strconv.ParseInt(*n.UploadDate, 10, 64); err == nil && ms != 0 {
+				t := time.UnixMilli(ms).UTC()
+				uploadDate = &t
+			}
+		}
+		out[i] = Chapter{
+			ID:         n.ID,
+			Index:      n.SourceOrder,
+			Name:       n.Name,
+			Number:     n.ChapterNumber,
+			URL:        n.URL,
+			UploadDate: uploadDate,
+			PageCount:  n.PageCount,
+		}
+	}
+	return out
+}
+
+// --- FetchChapters -----------------------------------------------------------
+
+// gqlFetchChaptersData is the typed shape of the `data` field for fetchChapters.
+type gqlFetchChaptersData struct {
+	FetchChapters struct {
+		Chapters []gqlChapterNode `json:"chapters"`
+	} `json:"fetchChapters"`
+}
+
+const fetchChaptersMutation = `
+mutation FetchChapters($mangaId: Int!) {
+  fetchChapters(input: { mangaId: $mangaId }) {
+    chapters {
+      id
+      url
+      name
+      chapterNumber
+      uploadDate
+      pageCount
+      sourceOrder
+    }
+  }
+}`
+
+// FetchChapters calls the Suwayomi fetchChapters mutation to trigger a live
+// chapter-list refresh from the upstream source and returns the results.
+// Use this when ingesting a manga for the first time; for read-only queries
+// on already-cached data use MangaChapters.
+func (c *httpClient) FetchChapters(ctx context.Context, mangaID int) ([]Chapter, error) {
+	vars := map[string]any{"mangaId": mangaID}
+	var data gqlFetchChaptersData
+	if err := c.doGraphQL(ctx, fetchChaptersMutation, vars, &data); err != nil {
+		return nil, err
+	}
+	return mapChapterNodes(data.FetchChapters.Chapters), nil
+}
+
 // --- MangaChapters -----------------------------------------------------------
 
 // gqlChaptersData is the typed shape of the `data` field for the chapters query.
 type gqlChaptersData struct {
 	Chapters struct {
-		Nodes []struct {
-			ID            int      `json:"id"`
-			URL           string   `json:"url"`
-			Name          string   `json:"name"`
-			ChapterNumber *float64 `json:"chapterNumber"`
-			UploadDate    *int64   `json:"uploadDate"`
-			PageCount     int      `json:"pageCount"`
-			SourceOrder   int      `json:"sourceOrder"`
-		} `json:"nodes"`
+		Nodes []gqlChapterNode `json:"nodes"`
 	} `json:"chapters"`
 }
 
@@ -327,7 +425,7 @@ query MangaChapters($mangaId: Int!) {
   }
 }`
 
-// MangaChapters returns all chapters for the given manga ID via GraphQL.
+// MangaChapters returns already-cached chapters for the given manga ID.
 // UploadDate is stored as milliseconds-since-epoch in Suwayomi; it is converted
 // to *time.Time (UTC) for callers. A zero uploadDate is treated as nil.
 func (c *httpClient) MangaChapters(ctx context.Context, mangaID int) ([]Chapter, error) {
@@ -336,25 +434,7 @@ func (c *httpClient) MangaChapters(ctx context.Context, mangaID int) ([]Chapter,
 	if err := c.doGraphQL(ctx, chaptersQuery, vars, &data); err != nil {
 		return nil, err
 	}
-	nodes := data.Chapters.Nodes
-	out := make([]Chapter, len(nodes))
-	for i, n := range nodes {
-		var uploadDate *time.Time
-		if n.UploadDate != nil && *n.UploadDate != 0 {
-			t := time.UnixMilli(*n.UploadDate).UTC()
-			uploadDate = &t
-		}
-		out[i] = Chapter{
-			ID:         n.ID,
-			Index:      n.SourceOrder,
-			Name:       n.Name,
-			Number:     n.ChapterNumber,
-			URL:        n.URL,
-			UploadDate: uploadDate,
-			PageCount:  n.PageCount,
-		}
-	}
-	return out, nil
+	return mapChapterNodes(data.Chapters.Nodes), nil
 }
 
 // --- ChapterPages ------------------------------------------------------------
@@ -397,12 +477,21 @@ var contentTypeToExt = map[string]string{
 	"image/avif": "avif",
 }
 
-// PageBytes downloads the image at pageURL (absolute URL) and returns the raw
-// bytes and bare file extension (e.g. "jpg"). Extension is detected via
-// http.DetectContentType on the first 512 bytes of the response body. A non-2xx
-// response status is returned as an error.
+// PageBytes downloads the image at pageURL and returns the raw bytes and bare
+// file extension (e.g. "jpg"). Extension is detected via http.DetectContentType
+// on the first 512 bytes of the response body. A non-2xx response status is
+// returned as an error.
+//
+// pageURL may be an absolute URL (e.g. "http://host/path") or a server-relative
+// path (e.g. "/api/v1/manga/1/chapter/1/page/0"). Suwayomi v2.2.2100 returns
+// relative paths from the fetchChapterPages mutation (LongString scalar); this
+// method prepends c.baseURL when the URL starts with "/".
 func (c *httpClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	fullURL := pageURL
+	if strings.HasPrefix(pageURL, "/") {
+		fullURL = c.baseURL + pageURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
 		// Defensive path: reachable only with a malformed pageURL (which
 		// comes from Suwayomi's own server response) or a nil context.
@@ -416,7 +505,7 @@ func (c *httpClient) PageBytes(ctx context.Context, pageURL string) ([]byte, str
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("suwayomi: page HTTP %d for %s", resp.StatusCode, pageURL)
+		return nil, "", fmt.Errorf("suwayomi: page HTTP %d for %s", resp.StatusCode, fullURL)
 	}
 
 	data, err := io.ReadAll(resp.Body)

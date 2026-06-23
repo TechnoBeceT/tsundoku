@@ -24,15 +24,15 @@ import (
 // --- stub Client for ingest tests --------------------------------------------
 
 // ingestStubClient implements suwayomi.Client with canned responses for Search
-// and MangaChapters. Other methods panic if called — Ingest must not call them.
+// and FetchChapters. Other methods panic if called — Ingest must not call them.
 type ingestStubClient struct {
 	// searchResults is the slice returned by Search.
 	searchResults []suwayomi.Manga
 	// searchErr is the error returned by Search (nil = success).
 	searchErr error
-	// chapters is the slice returned by MangaChapters.
+	// chapters is the slice returned by FetchChapters.
 	chapters []suwayomi.Chapter
-	// chaptersErr is the error returned by MangaChapters (nil = success).
+	// chaptersErr is the error returned by FetchChapters (nil = success).
 	chaptersErr error
 }
 
@@ -40,13 +40,16 @@ func (s *ingestStubClient) Search(_ context.Context, _, _ string) ([]suwayomi.Ma
 	return s.searchResults, s.searchErr
 }
 
-func (s *ingestStubClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
+func (s *ingestStubClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	return s.chapters, s.chaptersErr
 }
 
 // Ingest must never call these methods in M2; panic loudly if reached.
 func (s *ingestStubClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
 	panic("ingestStubClient.Sources: must not be called by Ingest")
+}
+func (s *ingestStubClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
+	panic("ingestStubClient.MangaChapters: must not be called by Ingest (use FetchChapters)")
 }
 func (s *ingestStubClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
 	panic("ingestStubClient.ChapterPages: must not be called by Ingest")
@@ -257,9 +260,9 @@ func TestIngest_AddSeries_Idempotent(t *testing.T) {
 	assertProviderChapterIDs(t, ctx, client, sp.ID, buildWantIDs(stubs))
 }
 
-// TestIngest_AddSeries_MangaChaptersError verifies that a MangaChapters client
+// TestIngest_AddSeries_FetchChaptersError verifies that a FetchChapters client
 // error is propagated as-is and no DB rows are created.
-func TestIngest_AddSeries_MangaChaptersError(t *testing.T) {
+func TestIngest_AddSeries_FetchChaptersError(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 

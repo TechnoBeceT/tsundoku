@@ -7,6 +7,7 @@ package suwayomi_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -188,8 +189,12 @@ func TestClient_Search_GraphQLError(t *testing.T) {
 // --- MangaChapters -----------------------------------------------------------
 
 // cannedChaptersServer builds an httptest.Server returning two canned chapters.
+// uploadDate is passed as an int64 (ms since epoch) but serialised as a JSON
+// string to match the Suwayomi v2.2.2100 wire format: uploadDate is typed as
+// LongString! in the GraphQL schema, so the server sends it as a quoted integer.
 func cannedChaptersServer(t *testing.T, uploadDateMs int64) *httptest.Server {
 	t.Helper()
+	uploadDateStr := fmt.Sprintf("%d", uploadDateMs)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := graphqlResponse(t, map[string]any{
 			"chapters": map[string]any{
@@ -199,7 +204,7 @@ func cannedChaptersServer(t *testing.T, uploadDateMs int64) *httptest.Server {
 						"url":           "/chapter/101",
 						"name":          "Chapter 1",
 						"chapterNumber": 1.0,
-						"uploadDate":    uploadDateMs,
+						"uploadDate":    uploadDateStr,
 						"pageCount":     24,
 						"sourceOrder":   1,
 					},
@@ -208,7 +213,7 @@ func cannedChaptersServer(t *testing.T, uploadDateMs int64) *httptest.Server {
 						"url":           "/chapter/102",
 						"name":          "Chapter 2",
 						"chapterNumber": 2.0,
-						"uploadDate":    uploadDateMs,
+						"uploadDate":    uploadDateStr,
 						"pageCount":     20,
 						"sourceOrder":   2,
 					},
@@ -293,6 +298,80 @@ func TestClient_MangaChapters_GraphQLError(t *testing.T) {
 	_, err := client.MangaChapters(context.Background(), 999)
 	if err == nil {
 		t.Fatal("MangaChapters() with GraphQL errors: expected error, got nil")
+	}
+}
+
+// --- FetchChapters -----------------------------------------------------------
+
+// TestClient_FetchChapters verifies that FetchChapters deserialises the
+// fetchChapters mutation response and maps all fields correctly.
+// Shape validated against Suwayomi v2.2.2100 (Task 7): the mutation input
+// uses `mangaId`; the result has a `chapters` field with `id`, `url`, etc.
+func TestClient_FetchChapters(t *testing.T) {
+	const uploadDateMs = int64(1_700_000_000_000)
+	expectedUploadDate := time.UnixMilli(uploadDateMs).UTC()
+	// uploadDate is typed as LongString! in Suwayomi's GraphQL schema (same as sourceId).
+	// The server sends it as a quoted integer string, not a JSON number.
+	uploadDateStr := fmt.Sprintf("%d", uploadDateMs)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := graphqlResponse(t, map[string]any{
+			"fetchChapters": map[string]any{
+				"chapters": []map[string]any{
+					{
+						"id":            101,
+						"url":           "/chapter/101",
+						"name":          "Chapter 1",
+						"chapterNumber": 1.0,
+						"uploadDate":    uploadDateStr,
+						"pageCount":     24,
+						"sourceOrder":   1,
+					},
+					{
+						"id":            102,
+						"url":           "/chapter/102",
+						"name":          "Chapter 2",
+						"chapterNumber": 2.0,
+						"uploadDate":    uploadDateStr,
+						"pageCount":     20,
+						"sourceOrder":   2,
+					},
+				},
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	chapters, err := client.FetchChapters(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("FetchChapters() error = %v", err)
+	}
+	if len(chapters) != 2 {
+		t.Fatalf("FetchChapters() got %d chapters, want 2", len(chapters))
+	}
+	assertChapter0(t, chapters[0], expectedUploadDate)
+	assertChapter1(t, chapters[1])
+}
+
+// TestClient_FetchChapters_GraphQLError checks that GraphQL errors are
+// propagated as Go errors from FetchChapters.
+func TestClient_FetchChapters_GraphQLError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := graphqlResponse(t, nil, []map[string]any{
+			{"message": "manga not found"},
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	_, err := client.FetchChapters(context.Background(), 999)
+	if err == nil {
+		t.Fatal("FetchChapters() with GraphQL errors: expected error, got nil")
 	}
 }
 
@@ -403,6 +482,36 @@ func TestClient_PageBytes_NonOK(t *testing.T) {
 	_, _, err := client.PageBytes(context.Background(), srv.URL+"/page/missing")
 	if err == nil {
 		t.Fatal("PageBytes() with 404: expected error, got nil")
+	}
+}
+
+// TestClient_PageBytes_RelativeURL validates that PageBytes correctly handles
+// the Suwayomi v2.2.2100 wire format: fetchChapterPages returns server-relative
+// paths (e.g. "/api/v1/manga/1/chapter/1/page/0") rather than absolute URLs.
+// PageBytes must prepend the client's baseURL when the path starts with "/".
+func TestClient_PageBytes_RelativeURL(t *testing.T) {
+	// PNG magic bytes so the response is recognised as image/png.
+	pngData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00}
+
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngData)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	// Pass a server-relative path — PageBytes must prepend the base URL.
+	_, ext, err := client.PageBytes(context.Background(), "/api/v1/manga/1/chapter/1/page/0")
+	if err != nil {
+		t.Fatalf("PageBytes() relative URL: error = %v", err)
+	}
+	if ext != "png" {
+		t.Errorf("PageBytes() relative URL: ext = %q, want png", ext)
+	}
+	if gotPath != "/api/v1/manga/1/chapter/1/page/0" {
+		t.Errorf("PageBytes() relative URL: server received path %q, want /api/v1/manga/1/chapter/1/page/0", gotPath)
 	}
 }
 
@@ -629,7 +738,9 @@ func TestClient_Search_ThumbnailURL(t *testing.T) {
 
 // TestClient_MangaChapters_NullableFields exercises the zero-guard for
 // chapterNumber and uploadDate — when the GraphQL response contains null for
-// chapterNumber and 0 for uploadDate the DTO fields must be nil pointers.
+// chapterNumber and "0" for uploadDate the DTO fields must be nil pointers.
+// Note: uploadDate is typed as LongString! in Suwayomi's schema, so it arrives
+// as a JSON string even when the value is zero ("0"), not as a JSON number.
 func TestClient_MangaChapters_NullableFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := graphqlResponse(t, map[string]any{
@@ -640,7 +751,7 @@ func TestClient_MangaChapters_NullableFields(t *testing.T) {
 						"url":           "/chapter/201",
 						"name":          "Prologue",
 						"chapterNumber": nil, // null → Number must be nil
-						"uploadDate":    0,   // zero → UploadDate must be nil
+						"uploadDate":    "0", // zero string → UploadDate must be nil
 						"pageCount":     10,
 						"sourceOrder":   0,
 					},

@@ -78,9 +78,13 @@ func (i *Ingest) AddSeries(
 	mangaID int,
 	title string,
 ) (chapter.IngestResult, error) {
-	// 1. Fetch all chapters from Suwayomi before touching the DB so that a
-	//    client failure does not leave partially-created rows.
-	swChapters, err := i.client.MangaChapters(ctx, mangaID)
+	// 1. Fetch all chapters from Suwayomi via the fetchChapters mutation. This
+	//    contacts the upstream source and populates Suwayomi's internal cache
+	//    before we touch our own DB, so that a client failure does not leave
+	//    partially-created rows. FetchChapters must be called (not MangaChapters)
+	//    because after Search the manga exists in Suwayomi but chapters are not
+	//    cached yet (they require an explicit source fetch first).
+	swChapters, err := i.client.FetchChapters(ctx, mangaID)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: fetch chapters for manga %d: %w", mangaID, err)
 	}
