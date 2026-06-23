@@ -24,6 +24,12 @@ func (Series) Fields() []ent.Field {
 		field.String("cover_url").Default(""),
 		field.String("description").Default(""),
 		field.String("status").Default(""),
+		// category drives the on-disk library layout (one top-level folder per
+		// category, e.g. Manhwa/<Title>/) and Komga organisation. "Other" is the
+		// safe default so existing rows and new imports need no data migration.
+		field.Enum("category").
+			Values("Manga", "Manhwa", "Manhua", "Comic", "Other").
+			Default("Other"),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

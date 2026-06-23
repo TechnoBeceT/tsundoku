@@ -4454,6 +4454,7 @@ type SeriesMutation struct {
 	cover_url        *string
 	description      *string
 	status           *string
+	category         *series.Category
 	created_at       *time.Time
 	updated_at       *time.Time
 	clearedFields    map[string]struct{}
@@ -4752,6 +4753,42 @@ func (m *SeriesMutation) ResetStatus() {
 	m.status = nil
 }
 
+// SetCategory sets the "category" field.
+func (m *SeriesMutation) SetCategory(s series.Category) {
+	m.category = &s
+}
+
+// Category returns the value of the "category" field in the mutation.
+func (m *SeriesMutation) Category() (r series.Category, exists bool) {
+	v := m.category
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCategory returns the old "category" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldCategory(ctx context.Context) (v series.Category, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCategory is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCategory requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCategory: %w", err)
+	}
+	return oldValue.Category, nil
+}
+
+// ResetCategory resets all changes to the "category" field.
+func (m *SeriesMutation) ResetCategory() {
+	m.category = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *SeriesMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -4966,7 +5003,7 @@ func (m *SeriesMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesMutation) Fields() []string {
-	fields := make([]string, 0, 7)
+	fields := make([]string, 0, 8)
 	if m.title != nil {
 		fields = append(fields, series.FieldTitle)
 	}
@@ -4981,6 +5018,9 @@ func (m *SeriesMutation) Fields() []string {
 	}
 	if m.status != nil {
 		fields = append(fields, series.FieldStatus)
+	}
+	if m.category != nil {
+		fields = append(fields, series.FieldCategory)
 	}
 	if m.created_at != nil {
 		fields = append(fields, series.FieldCreatedAt)
@@ -5006,6 +5046,8 @@ func (m *SeriesMutation) Field(name string) (ent.Value, bool) {
 		return m.Description()
 	case series.FieldStatus:
 		return m.Status()
+	case series.FieldCategory:
+		return m.Category()
 	case series.FieldCreatedAt:
 		return m.CreatedAt()
 	case series.FieldUpdatedAt:
@@ -5029,6 +5071,8 @@ func (m *SeriesMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldDescription(ctx)
 	case series.FieldStatus:
 		return m.OldStatus(ctx)
+	case series.FieldCategory:
+		return m.OldCategory(ctx)
 	case series.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case series.FieldUpdatedAt:
@@ -5076,6 +5120,13 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetStatus(v)
+		return nil
+	case series.FieldCategory:
+		v, ok := value.(series.Category)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCategory(v)
 		return nil
 	case series.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -5154,6 +5205,9 @@ func (m *SeriesMutation) ResetField(name string) error {
 		return nil
 	case series.FieldStatus:
 		m.ResetStatus()
+		return nil
+	case series.FieldCategory:
+		m.ResetCategory()
 		return nil
 	case series.FieldCreatedAt:
 		m.ResetCreatedAt()

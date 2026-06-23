@@ -101,6 +101,20 @@ func (_u *SeriesUpdate) SetNillableStatus(v *string) *SeriesUpdate {
 	return _u
 }
 
+// SetCategory sets the "category" field.
+func (_u *SeriesUpdate) SetCategory(v series.Category) *SeriesUpdate {
+	_u.mutation.SetCategory(v)
+	return _u
+}
+
+// SetNillableCategory sets the "category" field if the given value is not nil.
+func (_u *SeriesUpdate) SetNillableCategory(v *series.Category) *SeriesUpdate {
+	if v != nil {
+		_u.SetCategory(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesUpdate) SetUpdatedAt(v time.Time) *SeriesUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -220,7 +234,20 @@ func (_u *SeriesUpdate) defaults() {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (_u *SeriesUpdate) check() error {
+	if v, ok := _u.mutation.Category(); ok {
+		if err := series.CategoryValidator(v); err != nil {
+			return &ValidationError{Name: "category", err: fmt.Errorf(`ent: validator failed for field "Series.category": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
+	if err := _u.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(series.Table, series.Columns, sqlgraph.NewFieldSpec(series.FieldID, field.TypeUUID))
 	if ps := _u.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -243,6 +270,9 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Category(); ok {
+		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)
@@ -427,6 +457,20 @@ func (_u *SeriesUpdateOne) SetNillableStatus(v *string) *SeriesUpdateOne {
 	return _u
 }
 
+// SetCategory sets the "category" field.
+func (_u *SeriesUpdateOne) SetCategory(v series.Category) *SeriesUpdateOne {
+	_u.mutation.SetCategory(v)
+	return _u
+}
+
+// SetNillableCategory sets the "category" field if the given value is not nil.
+func (_u *SeriesUpdateOne) SetNillableCategory(v *series.Category) *SeriesUpdateOne {
+	if v != nil {
+		_u.SetCategory(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesUpdateOne) SetUpdatedAt(v time.Time) *SeriesUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -559,7 +603,20 @@ func (_u *SeriesUpdateOne) defaults() {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (_u *SeriesUpdateOne) check() error {
+	if v, ok := _u.mutation.Category(); ok {
+		if err := series.CategoryValidator(v); err != nil {
+			return &ValidationError{Name: "category", err: fmt.Errorf(`ent: validator failed for field "Series.category": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err error) {
+	if err := _u.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(series.Table, series.Columns, sqlgraph.NewFieldSpec(series.FieldID, field.TypeUUID))
 	id, ok := _u.mutation.ID()
 	if !ok {
@@ -599,6 +656,9 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Category(); ok {
+		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)
