@@ -34,8 +34,8 @@ func (h *Handler) Claim(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	if req.Username == "" || req.Password == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "username and password are required")
+	if err := req.validate(); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	tok, err := h.claimTx(c.Request().Context(), req.Username, req.Password)

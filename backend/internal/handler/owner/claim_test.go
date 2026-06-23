@@ -198,3 +198,46 @@ func TestLogin_WrongUsername(t *testing.T) {
 		t.Errorf("login wrong username: expected 401, got %d", loginCode)
 	}
 }
+
+// TestClaim_ShortPassword verifies that a password shorter than 8 bytes is
+// rejected with 400 before any hashing or DB work is attempted.
+func TestClaim_ShortPassword(t *testing.T) {
+	cases := []struct {
+		name     string
+		password string
+	}{
+		{"empty", ""},
+		{"one_char", "a"},
+		{"seven_chars", "1234567"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, e, client := newHandlerWithClient(t)
+
+			code := callClaim(t, e, h, "admin", tc.password)
+			if code != http.StatusBadRequest {
+				t.Errorf("password %q: expected 400, got %d", tc.password, code)
+			}
+
+			// No owner row should have been created — no hashing/DB work done.
+			if count := ownerCount(t, client); count != 0 {
+				t.Errorf("password %q: expected 0 owner rows, got %d", tc.password, count)
+			}
+		})
+	}
+}
+
+// TestClaim_MinPasswordLength verifies that an exactly-8-byte password succeeds,
+// confirming the boundary is inclusive.
+func TestClaim_MinPasswordLength(t *testing.T) {
+	h, e, client := newHandlerWithClient(t)
+
+	code := callClaim(t, e, h, "admin", "12345678")
+	if code != http.StatusOK {
+		t.Errorf("8-char password: expected 200, got %d", code)
+	}
+
+	if count := ownerCount(t, client); count != 1 {
+		t.Errorf("8-char password: expected 1 owner row, got %d", count)
+	}
+}
