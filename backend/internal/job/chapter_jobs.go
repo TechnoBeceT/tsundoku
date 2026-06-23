@@ -14,16 +14,12 @@
 //     the context is cancelled.
 //   - Reconcile: thin wrapper around disk.Reconcile for the on-demand trigger.
 //
-// # M2 seam
+// # M2 (LIVE)
 //
-// The Dispatcher held by Runner requires a fetcher.ChapterFetcher. In M1 no
-// production fetcher exists — only the test-only fetcher/fake. Callers must
-// construct the Dispatcher with the real Suwayomi ChapterFetcher once M2 ships
-// it. When the M2 fetcher is available, pass a Dispatcher built with it to
-// NewRunner and call Start; the runner's internals are fetcher-agnostic.
-//
-// In main.go, Start is intentionally NOT called in M1 (no real fetcher).
-// Reconcile IS wired and available immediately.
+// The Dispatcher held by Runner requires a fetcher.ChapterFetcher. In M2,
+// suwayomi.NewFetcher is the real implementation. In main.go, runner.Start is
+// called in a background goroutine once pm.Start succeeds; the runner's
+// internals are fetcher-agnostic. Reconcile has been live since M1.
 package job
 
 import (
@@ -73,7 +69,7 @@ type Runner struct {
 // The Dispatcher must be constructed by the caller with the appropriate
 // ChapterFetcher:
 //   - Tests: use fetcher/fake.New().
-//   - M2 production: use the Suwayomi ChapterFetcher once it is implemented.
+//   - Production (M2+): use suwayomi.NewFetcher (already wired in main.go).
 //
 // NewRunner does not start any background goroutines; call Start to begin
 // periodic download cycles.
@@ -166,12 +162,10 @@ func (r *Runner) upgradeAll(ctx context.Context) (int, error) {
 // the runner permanently. Start returns immediately; the goroutine runs until
 // ctx.Done() is closed.
 //
-// # M2 wiring note
-//
-// In M1 production this method is NOT called because no real ChapterFetcher
-// exists. It is called from tests (using fetcher/fake) and will be wired in
-// main.go once M2 supplies the Suwayomi fetcher. The reconcile entrypoint
-// (Reconcile) does not use the fetcher and is available immediately.
+// In main.go, Start is called in a background goroutine after pm.Start
+// succeeds (Suwayomi is ready). If Suwayomi fails to start, downloads are
+// simply suspended; the API server continues running. Reconcile does not use
+// the fetcher and is live since M1.
 func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)

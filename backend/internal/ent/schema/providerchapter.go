@@ -36,6 +36,11 @@ func (ProviderChapter) Fields() []ent.Field {
 		field.Time("provider_upload_date").Optional().Nillable(),
 		field.Int("provider_index").Default(0),
 		field.Int("page_count").Optional().Nillable(),
+		// suwayomi_chapter_id is the Suwayomi-internal chapter identifier.
+		// 0 (the zero value for Optional) means the ID is not yet known.
+		// Populated by the M2 ingest service when a chapter is sourced from
+		// Suwayomi; used by the download dispatcher to fetch page bytes.
+		field.Int("suwayomi_chapter_id").Optional(),
 	}
 }
 

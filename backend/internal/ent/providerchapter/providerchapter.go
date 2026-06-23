@@ -29,6 +29,8 @@ const (
 	FieldProviderIndex = "provider_index"
 	// FieldPageCount holds the string denoting the page_count field in the database.
 	FieldPageCount = "page_count"
+	// FieldSuwayomiChapterID holds the string denoting the suwayomi_chapter_id field in the database.
+	FieldSuwayomiChapterID = "suwayomi_chapter_id"
 	// EdgeSeriesProvider holds the string denoting the series_provider edge name in mutations.
 	EdgeSeriesProvider = "series_provider"
 	// Table holds the table name of the providerchapter in the database.
@@ -53,6 +55,7 @@ var Columns = []string{
 	FieldProviderUploadDate,
 	FieldProviderIndex,
 	FieldPageCount,
+	FieldSuwayomiChapterID,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -122,6 +125,11 @@ func ByProviderIndex(opts ...sql.OrderTermOption) OrderOption {
 // ByPageCount orders the results by the page_count field.
 func ByPageCount(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPageCount, opts...).ToFunc()
+}
+
+// BySuwayomiChapterID orders the results by the suwayomi_chapter_id field.
+func BySuwayomiChapterID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSuwayomiChapterID, opts...).ToFunc()
 }
 
 // BySeriesProviderField orders the results by series_provider field.

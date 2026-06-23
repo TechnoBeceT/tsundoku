@@ -118,6 +118,20 @@ func (_c *ProviderChapterCreate) SetNillablePageCount(v *int) *ProviderChapterCr
 	return _c
 }
 
+// SetSuwayomiChapterID sets the "suwayomi_chapter_id" field.
+func (_c *ProviderChapterCreate) SetSuwayomiChapterID(v int) *ProviderChapterCreate {
+	_c.mutation.SetSuwayomiChapterID(v)
+	return _c
+}
+
+// SetNillableSuwayomiChapterID sets the "suwayomi_chapter_id" field if the given value is not nil.
+func (_c *ProviderChapterCreate) SetNillableSuwayomiChapterID(v *int) *ProviderChapterCreate {
+	if v != nil {
+		_c.SetSuwayomiChapterID(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *ProviderChapterCreate) SetID(v uuid.UUID) *ProviderChapterCreate {
 	_c.mutation.SetID(v)
@@ -272,6 +286,10 @@ func (_c *ProviderChapterCreate) createSpec() (*ProviderChapter, *sqlgraph.Creat
 	if value, ok := _c.mutation.PageCount(); ok {
 		_spec.SetField(providerchapter.FieldPageCount, field.TypeInt, value)
 		_node.PageCount = &value
+	}
+	if value, ok := _c.mutation.SuwayomiChapterID(); ok {
+		_spec.SetField(providerchapter.FieldSuwayomiChapterID, field.TypeInt, value)
+		_node.SuwayomiChapterID = value
 	}
 	if nodes := _c.mutation.SeriesProviderIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{

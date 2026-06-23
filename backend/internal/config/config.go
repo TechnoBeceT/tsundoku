@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/confmap"
@@ -32,11 +33,13 @@ type Config struct {
 	Database DatabaseConfig
 	// Auth holds HMAC signing settings for the owner JWT layer.
 	Auth AuthConfig
-	// Suwayomi holds connection settings for the Suwayomi manga server.
-	// Fields are stubs for M0; Milestone 2 fills in the full integration.
+	// Suwayomi holds connection and lifecycle settings for the embedded
+	// Suwayomi manga server (M2 integration).
 	Suwayomi SuwayomiConfig
 	// Storage holds library-path settings for downloaded chapters.
 	Storage StorageConfig
+	// Jobs holds background-job scheduler settings.
+	Jobs JobsConfig
 }
 
 // AuthConfig holds HMAC signing settings for the single-owner auth layer.
@@ -86,15 +89,66 @@ func (d DatabaseConfig) DSN() string {
 	return u.String()
 }
 
-// SuwayomiConfig holds connection settings for the Suwayomi manga server.
-// These are stubs for Milestone 0; the full Suwayomi integration lands in M2.
+// suwayomiDefaultVersion is the pinned Suwayomi-Server release used for
+// provisioning. Verified online on 2026-06-23 against
+// https://github.com/Suwayomi/Suwayomi-Server/releases — update this constant
+// (and the Task 1 report) when bumping to a newer release.
+const suwayomiDefaultVersion = "v2.2.2100"
+
+// suwayomiDownloadURLTemplate is the GitHub release JAR asset URL pattern.
+// Both %s placeholders receive the Version tag (first = path segment, second = filename).
+// Example: .../download/v2.2.2100/Suwayomi-Server-v2.2.2100.jar
+// Verified against https://github.com/Suwayomi/Suwayomi-Server/releases on 2026-06-23.
+const suwayomiDownloadURLTemplate = "https://github.com/Suwayomi/Suwayomi-Server/releases/download/%s/Suwayomi-Server-%s.jar"
+
+// SuwayomiConfig holds connection and lifecycle settings for the embedded
+// Suwayomi manga server. M0 fields (Host, Port, BasePath) are preserved;
+// M2 adds provisioning and timeout fields.
 type SuwayomiConfig struct {
 	// Host is the Suwayomi server host (default "localhost").
+	// Set via TSUNDOKU_SUWAYOMI_HOST.
 	Host string
 	// Port is the Suwayomi server port (default "4567").
+	// Set via TSUNDOKU_SUWAYOMI_PORT.
 	Port string
 	// BasePath is the Suwayomi API base path (default "/api").
+	// Set via TSUNDOKU_SUWAYOMI_BASEPATH.
 	BasePath string
+	// Version is the pinned Suwayomi-Server release tag to provision.
+	// Defaults to suwayomiDefaultVersion. Set via TSUNDOKU_SUWAYOMI_VERSION.
+	Version string
+	// RuntimeDir is the directory where the provisioned JAR and Suwayomi
+	// data are stored. Set via TSUNDOKU_SUWAYOMI_RUNTIMEDIR.
+	RuntimeDir string
+	// DownloadURLTemplate is the fmt-style URL pattern used to build the
+	// JAR asset download URL; the two %s placeholders are both filled with
+	// the Version tag. Set via TSUNDOKU_SUWAYOMI_DOWNLOADURLTEMPLATE.
+	DownloadURLTemplate string
+	// StartTimeout is how long to wait for Suwayomi to become ready after
+	// launch. Default 2m. Set via TSUNDOKU_SUWAYOMI_STARTTIMEOUT.
+	StartTimeout time.Duration
+	// DownloadTimeout is the HTTP client deadline for downloading the JAR.
+	// Default 10m. Set via TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT.
+	DownloadTimeout time.Duration
+	// JavaPath is the path to the java executable used to launch the
+	// Suwayomi JAR. Defaults to "java" (system PATH). Override when the
+	// system default java is too old (Suwayomi v2.2.2100 requires Java 21+).
+	// Set via TSUNDOKU_SUWAYOMI_JAVAPATH.
+	// Example: /usr/lib/jvm/java-26-openjdk/bin/java
+	JavaPath string
+}
+
+// BaseURL returns the base HTTP URL for the Suwayomi server in the form
+// http://Host:Port. BasePath is not included; callers append the path they need.
+func (s SuwayomiConfig) BaseURL() string {
+	return "http://" + s.Host + ":" + s.Port
+}
+
+// JobsConfig holds background-job scheduler settings.
+type JobsConfig struct {
+	// DownloadInterval is the tick period for the M1 download runner.
+	// Default 15m. Set via TSUNDOKU_JOBS_DOWNLOADINTERVAL.
+	DownloadInterval time.Duration
 }
 
 // StorageConfig holds library-path settings.
@@ -116,10 +170,19 @@ func defaults() map[string]any {
 		"database.name":     "tsundoku",
 		"database.sslmode":  "disable",
 		"auth.secret":       "",
-		"suwayomi.host":     "localhost",
-		"suwayomi.port":     "4567",
-		"suwayomi.basepath": "/api",
-		"storage.folder":    "/data/manga",
+		// Suwayomi — M0 fields preserved; M2 fields added below.
+		"suwayomi.host":                "localhost",
+		"suwayomi.port":                "4567",
+		"suwayomi.basepath":            "/api",
+		"suwayomi.version":             suwayomiDefaultVersion,
+		"suwayomi.runtimedir":          "/data/suwayomi",
+		"suwayomi.downloadurltemplate": suwayomiDownloadURLTemplate,
+		"suwayomi.starttimeout":        "2m",
+		"suwayomi.downloadtimeout":     "10m",
+		"suwayomi.javapath":            "java",
+		// Jobs — background-job scheduler.
+		"jobs.downloadinterval": "15m",
+		"storage.folder":        "/data/manga",
 	}
 }
 
@@ -174,12 +237,20 @@ func Load() (*Config, error) {
 //
 // Concrete mapping:
 //
-//	TSUNDOKU_SERVER_PORT         → server.port
-//	TSUNDOKU_DATABASE_HOST       → database.host
-//	TSUNDOKU_DATABASE_PASSWORD   → database.password
-//	TSUNDOKU_DATABASE_SSLMODE    → database.sslmode
-//	TSUNDOKU_SUWAYOMI_BASEPATH   → suwayomi.basepath
-//	TSUNDOKU_STORAGE_FOLDER      → storage.folder
+//	TSUNDOKU_SERVER_PORT                    → server.port
+//	TSUNDOKU_DATABASE_HOST                  → database.host
+//	TSUNDOKU_DATABASE_PASSWORD              → database.password
+//	TSUNDOKU_DATABASE_SSLMODE               → database.sslmode
+//	TSUNDOKU_SUWAYOMI_HOST                  → suwayomi.host
+//	TSUNDOKU_SUWAYOMI_BASEPATH              → suwayomi.basepath
+//	TSUNDOKU_SUWAYOMI_VERSION               → suwayomi.version
+//	TSUNDOKU_SUWAYOMI_RUNTIMEDIR            → suwayomi.runtimedir
+//	TSUNDOKU_SUWAYOMI_DOWNLOADURLTEMPLATE   → suwayomi.downloadurltemplate
+//	TSUNDOKU_SUWAYOMI_STARTTIMEOUT          → suwayomi.starttimeout
+//	TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT       → suwayomi.downloadtimeout
+//	TSUNDOKU_SUWAYOMI_JAVAPATH              → suwayomi.javapath
+//	TSUNDOKU_JOBS_DOWNLOADINTERVAL          → jobs.downloadinterval
+//	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //
 // Convention: after stripping the prefix the first "_" separates the
 // top-level struct key from the field name; the remainder is kept as-is

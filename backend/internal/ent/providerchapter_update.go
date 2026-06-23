@@ -181,6 +181,33 @@ func (_u *ProviderChapterUpdate) ClearPageCount() *ProviderChapterUpdate {
 	return _u
 }
 
+// SetSuwayomiChapterID sets the "suwayomi_chapter_id" field.
+func (_u *ProviderChapterUpdate) SetSuwayomiChapterID(v int) *ProviderChapterUpdate {
+	_u.mutation.ResetSuwayomiChapterID()
+	_u.mutation.SetSuwayomiChapterID(v)
+	return _u
+}
+
+// SetNillableSuwayomiChapterID sets the "suwayomi_chapter_id" field if the given value is not nil.
+func (_u *ProviderChapterUpdate) SetNillableSuwayomiChapterID(v *int) *ProviderChapterUpdate {
+	if v != nil {
+		_u.SetSuwayomiChapterID(*v)
+	}
+	return _u
+}
+
+// AddSuwayomiChapterID adds value to the "suwayomi_chapter_id" field.
+func (_u *ProviderChapterUpdate) AddSuwayomiChapterID(v int) *ProviderChapterUpdate {
+	_u.mutation.AddSuwayomiChapterID(v)
+	return _u
+}
+
+// ClearSuwayomiChapterID clears the value of the "suwayomi_chapter_id" field.
+func (_u *ProviderChapterUpdate) ClearSuwayomiChapterID() *ProviderChapterUpdate {
+	_u.mutation.ClearSuwayomiChapterID()
+	return _u
+}
+
 // SetSeriesProvider sets the "series_provider" edge to the SeriesProvider entity.
 func (_u *ProviderChapterUpdate) SetSeriesProvider(v *SeriesProvider) *ProviderChapterUpdate {
 	return _u.SetSeriesProviderID(v.ID)
@@ -282,6 +309,15 @@ func (_u *ProviderChapterUpdate) sqlSave(ctx context.Context) (_node int, err er
 	}
 	if _u.mutation.PageCountCleared() {
 		_spec.ClearField(providerchapter.FieldPageCount, field.TypeInt)
+	}
+	if value, ok := _u.mutation.SuwayomiChapterID(); ok {
+		_spec.SetField(providerchapter.FieldSuwayomiChapterID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedSuwayomiChapterID(); ok {
+		_spec.AddField(providerchapter.FieldSuwayomiChapterID, field.TypeInt, value)
+	}
+	if _u.mutation.SuwayomiChapterIDCleared() {
+		_spec.ClearField(providerchapter.FieldSuwayomiChapterID, field.TypeInt)
 	}
 	if _u.mutation.SeriesProviderCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -483,6 +519,33 @@ func (_u *ProviderChapterUpdateOne) ClearPageCount() *ProviderChapterUpdateOne {
 	return _u
 }
 
+// SetSuwayomiChapterID sets the "suwayomi_chapter_id" field.
+func (_u *ProviderChapterUpdateOne) SetSuwayomiChapterID(v int) *ProviderChapterUpdateOne {
+	_u.mutation.ResetSuwayomiChapterID()
+	_u.mutation.SetSuwayomiChapterID(v)
+	return _u
+}
+
+// SetNillableSuwayomiChapterID sets the "suwayomi_chapter_id" field if the given value is not nil.
+func (_u *ProviderChapterUpdateOne) SetNillableSuwayomiChapterID(v *int) *ProviderChapterUpdateOne {
+	if v != nil {
+		_u.SetSuwayomiChapterID(*v)
+	}
+	return _u
+}
+
+// AddSuwayomiChapterID adds value to the "suwayomi_chapter_id" field.
+func (_u *ProviderChapterUpdateOne) AddSuwayomiChapterID(v int) *ProviderChapterUpdateOne {
+	_u.mutation.AddSuwayomiChapterID(v)
+	return _u
+}
+
+// ClearSuwayomiChapterID clears the value of the "suwayomi_chapter_id" field.
+func (_u *ProviderChapterUpdateOne) ClearSuwayomiChapterID() *ProviderChapterUpdateOne {
+	_u.mutation.ClearSuwayomiChapterID()
+	return _u
+}
+
 // SetSeriesProvider sets the "series_provider" edge to the SeriesProvider entity.
 func (_u *ProviderChapterUpdateOne) SetSeriesProvider(v *SeriesProvider) *ProviderChapterUpdateOne {
 	return _u.SetSeriesProviderID(v.ID)
@@ -614,6 +677,15 @@ func (_u *ProviderChapterUpdateOne) sqlSave(ctx context.Context) (_node *Provide
 	}
 	if _u.mutation.PageCountCleared() {
 		_spec.ClearField(providerchapter.FieldPageCount, field.TypeInt)
+	}
+	if value, ok := _u.mutation.SuwayomiChapterID(); ok {
+		_spec.SetField(providerchapter.FieldSuwayomiChapterID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedSuwayomiChapterID(); ok {
+		_spec.AddField(providerchapter.FieldSuwayomiChapterID, field.TypeInt, value)
+	}
+	if _u.mutation.SuwayomiChapterIDCleared() {
+		_spec.ClearField(providerchapter.FieldSuwayomiChapterID, field.TypeInt)
 	}
 	if _u.mutation.SeriesProviderCleared() {
 		edge := &sqlgraph.EdgeSpec{

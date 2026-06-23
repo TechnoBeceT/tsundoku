@@ -47,14 +47,17 @@ type ReconcileResult struct {
 // reSlugStrip matches any character outside the allowed slug set [a-z0-9-].
 var reSlugStrip = regexp.MustCompile(`[^a-z0-9-]`)
 
-// slugify derives a deterministic, URL-safe identifier from a series title.
+// Slugify derives a deterministic, URL-safe identifier from a series title.
 //
 // Steps:
 //  1. Lowercase the string.
 //  2. Trim leading/trailing whitespace.
 //  3. Collapse each run of whitespace to a single hyphen.
 //  4. Strip characters outside [a-z0-9-].
-func slugify(title string) string {
+//
+// Exported so the M2 ingest service can produce the same slug for a given
+// title, guaranteeing that ingest and disk reconciliation agree on identity.
+func Slugify(title string) string {
 	s := strings.ToLower(title)
 	s = strings.TrimSpace(s)
 	s = strings.Join(strings.Fields(s), "-")
@@ -112,7 +115,7 @@ func reconcileSeries(ctx context.Context, client *ent.Client, sf SeriesFacts, re
 // upsertSeries finds the Series row by slug or creates it.
 // Returns the existing or newly created row.
 func upsertSeries(ctx context.Context, client *ent.Client, title string) (*ent.Series, error) {
-	slug := slugify(title)
+	slug := Slugify(title)
 
 	series, err := client.Series.Query().
 		Where(entseries.Slug(slug)).

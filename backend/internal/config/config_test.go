@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/config"
 )
@@ -280,5 +281,147 @@ func TestLoadRejectsWithoutAuthSecret(t *testing.T) {
 	_, err := config.Load()
 	if err == nil {
 		t.Fatal("expected Load() to fail without auth secret, got nil")
+	}
+}
+
+// TestLoadSuwayomiM2Fields confirms that the M2 SuwayomiConfig fields
+// (Version, RuntimeDir, DownloadURLTemplate, StartTimeout, DownloadTimeout)
+// are readable from environment variables and that typed durations unmarshal
+// correctly.
+func TestLoadSuwayomiM2Fields(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SUWAYOMI_VERSION", "v9.9.9999")
+	t.Setenv("TSUNDOKU_SUWAYOMI_RUNTIMEDIR", "/tmp/suwayomi-test")
+	t.Setenv("TSUNDOKU_SUWAYOMI_DOWNLOADURLTEMPLATE", "https://example.com/%s/%s.jar")
+	t.Setenv("TSUNDOKU_SUWAYOMI_STARTTIMEOUT", "3m")
+	t.Setenv("TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT", "10m")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	s := cfg.Suwayomi
+	if s.Version != "v9.9.9999" {
+		t.Errorf("Suwayomi.Version = %q, want %q", s.Version, "v9.9.9999")
+	}
+	if s.RuntimeDir != "/tmp/suwayomi-test" {
+		t.Errorf("Suwayomi.RuntimeDir = %q, want %q", s.RuntimeDir, "/tmp/suwayomi-test")
+	}
+	if s.DownloadURLTemplate != "https://example.com/%s/%s.jar" {
+		t.Errorf("Suwayomi.DownloadURLTemplate = %q, want %q", s.DownloadURLTemplate, "https://example.com/%s/%s.jar")
+	}
+	if s.StartTimeout != 3*time.Minute {
+		t.Errorf("Suwayomi.StartTimeout = %v, want %v", s.StartTimeout, 3*time.Minute)
+	}
+	if s.DownloadTimeout != 10*time.Minute {
+		t.Errorf("Suwayomi.DownloadTimeout = %v, want %v", s.DownloadTimeout, 10*time.Minute)
+	}
+}
+
+// TestSuwayomiDefaults confirms that Load() applies the pinned defaults for
+// all new SuwayomiConfig fields when no env vars are set. The exact values are
+// asserted so that accidental changes to pinned constants are caught.
+func TestSuwayomiDefaults(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	s := cfg.Suwayomi
+	const wantVersion = "v2.2.2100"
+	if s.Version != wantVersion {
+		t.Errorf("Suwayomi.Version default = %q, want %q", s.Version, wantVersion)
+	}
+	const wantTemplate = "https://github.com/Suwayomi/Suwayomi-Server/releases/download/%s/Suwayomi-Server-%s.jar"
+	if s.DownloadURLTemplate != wantTemplate {
+		t.Errorf("Suwayomi.DownloadURLTemplate default = %q, want %q", s.DownloadURLTemplate, wantTemplate)
+	}
+	if s.RuntimeDir == "" {
+		t.Error("Suwayomi.RuntimeDir default must not be empty")
+	}
+	if s.StartTimeout <= 0 {
+		t.Error("Suwayomi.StartTimeout default must be positive")
+	}
+	if s.DownloadTimeout <= 0 {
+		t.Error("Suwayomi.DownloadTimeout default must be positive")
+	}
+}
+
+// TestSuwayomiBaseURL confirms that BaseURL() produces the correct
+// http://host:port string from SuwayomiConfig.
+func TestSuwayomiBaseURL(t *testing.T) {
+	s := config.SuwayomiConfig{Host: "127.0.0.1", Port: "4567"}
+	got := s.BaseURL()
+	want := "http://127.0.0.1:4567"
+	if got != want {
+		t.Errorf("BaseURL() = %q, want %q", got, want)
+	}
+}
+
+// TestJobsConfig confirms that JobsConfig fields are read from env vars
+// and that a sane default is applied when the var is absent.
+func TestJobsConfig(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_JOBS_DOWNLOADINTERVAL", "5m")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.DownloadInterval != 5*time.Minute {
+		t.Errorf("Jobs.DownloadInterval = %v, want %v", cfg.Jobs.DownloadInterval, 5*time.Minute)
+	}
+}
+
+// TestSuwayomiJavaPathDefault confirms that JavaPath defaults to "java"
+// when TSUNDOKU_SUWAYOMI_JAVAPATH is not set.
+func TestSuwayomiJavaPathDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Suwayomi.JavaPath != "java" {
+		t.Errorf("Suwayomi.JavaPath default = %q, want %q", cfg.Suwayomi.JavaPath, "java")
+	}
+}
+
+// TestSuwayomiJavaPathEnv confirms that TSUNDOKU_SUWAYOMI_JAVAPATH overrides
+// the default java executable path.
+func TestSuwayomiJavaPathEnv(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SUWAYOMI_JAVAPATH", "/usr/lib/jvm/java-26-openjdk/bin/java")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := "/usr/lib/jvm/java-26-openjdk/bin/java"
+	if cfg.Suwayomi.JavaPath != want {
+		t.Errorf("Suwayomi.JavaPath = %q, want %q", cfg.Suwayomi.JavaPath, want)
+	}
+}
+
+// TestJobsDefaultInterval confirms that a sensible default is applied for
+// Jobs.DownloadInterval when TSUNDOKU_JOBS_DOWNLOADINTERVAL is not set.
+func TestJobsDefaultInterval(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.DownloadInterval <= 0 {
+		t.Error("Jobs.DownloadInterval default must be positive")
 	}
 }

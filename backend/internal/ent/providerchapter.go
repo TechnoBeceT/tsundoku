@@ -35,6 +35,8 @@ type ProviderChapter struct {
 	ProviderIndex int `json:"provider_index,omitempty"`
 	// PageCount holds the value of the "page_count" field.
 	PageCount *int `json:"page_count,omitempty"`
+	// SuwayomiChapterID holds the value of the "suwayomi_chapter_id" field.
+	SuwayomiChapterID int `json:"suwayomi_chapter_id,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ProviderChapterQuery when eager-loading is set.
 	Edges        ProviderChapterEdges `json:"edges"`
@@ -68,7 +70,7 @@ func (*ProviderChapter) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case providerchapter.FieldNumber:
 			values[i] = new(sql.NullFloat64)
-		case providerchapter.FieldProviderIndex, providerchapter.FieldPageCount:
+		case providerchapter.FieldProviderIndex, providerchapter.FieldPageCount, providerchapter.FieldSuwayomiChapterID:
 			values[i] = new(sql.NullInt64)
 		case providerchapter.FieldChapterKey, providerchapter.FieldName, providerchapter.FieldURL:
 			values[i] = new(sql.NullString)
@@ -148,6 +150,12 @@ func (_m *ProviderChapter) assignValues(columns []string, values []any) error {
 				_m.PageCount = new(int)
 				*_m.PageCount = int(value.Int64)
 			}
+		case providerchapter.FieldSuwayomiChapterID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field suwayomi_chapter_id", values[i])
+			} else if value.Valid {
+				_m.SuwayomiChapterID = int(value.Int64)
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -218,6 +226,9 @@ func (_m *ProviderChapter) String() string {
 		builder.WriteString("page_count=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("suwayomi_chapter_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.SuwayomiChapterID))
 	builder.WriteByte(')')
 	return builder.String()
 }
