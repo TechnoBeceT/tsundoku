@@ -62,6 +62,14 @@ type ProviderDTO struct {
 	Importance int    `json:"importance"`
 }
 
+// CategoryCountDTO is one row of the /api/categories response: a category enum
+// value and the number of series currently filed under it. Every enum value is
+// reported, including those with a zero count.
+type CategoryCountDTO struct {
+	Category string `json:"category"`
+	Count    int    `json:"count"`
+}
+
 // newSummaryDTO maps an ent.Series plus its computed rollup into a summary DTO.
 func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
 	return SeriesSummaryDTO{

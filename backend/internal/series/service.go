@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
@@ -15,6 +17,10 @@ import (
 // ErrSeriesNotFound is returned by GetSeries when no series matches the given id.
 // The HTTP handler maps it to a 404.
 var ErrSeriesNotFound = errors.New("series not found")
+
+// ErrInvalidCategory is returned by SetCategory when the requested category is not
+// one of the legal Series.category enum values. The HTTP handler maps it to a 400.
+var ErrInvalidCategory = errors.New("invalid category")
 
 // Service is the library read service over the M0 entities. It owns the storage
 // root (unused by the read methods; the recategorize path that moves folders on
@@ -118,6 +124,139 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		Chapters:      chapters,
 		Providers:     providers,
 	}, nil
+}
+
+// SetCategory recategorizes a series, keeping the DB and disk consistent.
+//
+// It validates newCat is a legal enum value (else ErrInvalidCategory), loads the
+// series for its current category + title (missing → ErrSeriesNotFound), and:
+//   - if newCat == the current category → a no-op, returns nil.
+//   - otherwise moves the series folder on disk FIRST, then updates the DB, with
+//     compensation, so DB and disk never end in disagreement (either both old,
+//     both new, or a surfaced error):
+//   - disk.MoveSeriesCategory relocates <storage>/<old>/<title> to
+//     <storage>/<new>/<title> and rewrites the sidecar.
+//   - on a successful move the DB category is updated; if that DB update fails
+//     the folder is moved back (compensation) and the DB error is returned
+//     (joined with any compensation failure so nothing is swallowed).
+//
+// No-disk-folder branch: a not-yet-downloaded series has no folder on disk yet,
+// so there is nothing to move. We detect this by stat-ing the source dir and
+// skipping the move only when it genuinely does not exist (os.IsNotExist). Any
+// other move failure (collision, cross-device, permission) is NOT treated as
+// "no folder" — the folder exists, so MoveSeriesCategory runs and its error
+// propagates. This keeps the DB-only path strictly limited to series with no
+// rendered chapters.
+func (s *Service) SetCategory(ctx context.Context, id uuid.UUID, newCat string) error {
+	cat := entseries.Category(newCat)
+	if err := entseries.CategoryValidator(cat); err != nil {
+		return fmt.Errorf("series.SetCategory: %q: %w", newCat, ErrInvalidCategory)
+	}
+
+	row, err := s.client.Series.Get(ctx, id)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return ErrSeriesNotFound
+		}
+		// Defensive path: a non-not-found load error is reachable only on a DB-level
+		// failure (connection dropped / query error) — not forceable in a black-box
+		// test without tearing down the shared client.
+		return fmt.Errorf("series.SetCategory: load series %s: %w", id, err)
+	}
+
+	current := row.Category
+	if cat == current {
+		return nil
+	}
+
+	moved, err := s.moveSeriesFolder(string(current), newCat, row.Title)
+	if err != nil {
+		return err
+	}
+
+	// Defensive path (the whole DB-failure + compensation block below): reachable
+	// only when the DB UPDATE fails AFTER the disk move/skip already succeeded.
+	// Forcing it in a black-box test would require injecting a mid-operation DB
+	// failure, which the standard says to document rather than wire a production
+	// seam for. The compensation logic itself is exercised in reverse by the happy
+	// move test (it is the same MoveSeriesCategory call with swapped categories).
+	if err := s.client.Series.UpdateOneID(id).SetCategory(cat).Exec(ctx); err != nil {
+		dbErr := fmt.Errorf("series.SetCategory: update DB category for %s: %w", id, err)
+		if !moved {
+			return dbErr
+		}
+		// Compensate: the folder already moved but the DB update failed. Move it
+		// back so disk matches the still-old DB state. If the compensation also
+		// fails, surface BOTH errors — never swallow either (§16).
+		if cErr := disk.MoveSeriesCategory(s.storage, newCat, string(current), row.Title); cErr != nil {
+			return errors.Join(dbErr, fmt.Errorf("series.SetCategory: compensating move-back failed: %w", cErr))
+		}
+		return dbErr
+	}
+
+	return nil
+}
+
+// moveSeriesFolder moves the series folder on disk from oldCat to newCat, unless
+// the series has no folder yet (not-yet-downloaded). It returns moved=true when a
+// real move happened (so SetCategory knows whether to compensate on a later DB
+// failure), moved=false when the move was skipped because the source dir is
+// genuinely absent. A real move failure is returned as-is and never masked as
+// "no folder".
+func (s *Service) moveSeriesFolder(oldCat, newCat, title string) (moved bool, err error) {
+	src := disk.SeriesDir(s.storage, oldCat, title)
+	if _, statErr := os.Stat(src); statErr != nil {
+		if os.IsNotExist(statErr) {
+			// No-disk-folder branch: nothing rendered yet, DB-only update.
+			return false, nil
+		}
+		// Defensive path: reachable only on an OS-level stat failure other than
+		// not-exist (permission denied / fd exhausted). Surfaced, not swallowed.
+		return false, fmt.Errorf("series.SetCategory: stat series dir %q: %w", src, statErr)
+	}
+
+	if err := disk.MoveSeriesCategory(s.storage, oldCat, newCat, title); err != nil {
+		return false, fmt.Errorf("series.SetCategory: move folder: %w", err)
+	}
+	return true, nil
+}
+
+// Categories returns one CategoryCountDTO per Series.category enum value — all
+// five, including zero-count categories — in the enum's declared order. The
+// counts come from a SINGLE grouped aggregate (GROUP BY category); enum values
+// with no series are then filled in with a zero count so the response is complete
+// and deterministic.
+func (s *Service) Categories(ctx context.Context) ([]CategoryCountDTO, error) {
+	var rows []struct {
+		Category entseries.Category `json:"category"`
+		Count    int                `json:"count"`
+	}
+	err := s.client.Series.Query().
+		GroupBy(entseries.FieldCategory).
+		Aggregate(ent.Count()).
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("series.Categories: aggregate series by category: %w", err)
+	}
+
+	counts := make(map[entseries.Category]int, len(rows))
+	for _, r := range rows {
+		counts[r.Category] = r.Count
+	}
+
+	// Declared enum order — deterministic, matches the schema definition.
+	order := []entseries.Category{
+		entseries.CategoryManga,
+		entseries.CategoryManhwa,
+		entseries.CategoryManhua,
+		entseries.CategoryComic,
+		entseries.CategoryOther,
+	}
+	out := make([]CategoryCountDTO, len(order))
+	for i, c := range order {
+		out[i] = CategoryCountDTO{Category: string(c), Count: counts[c]}
+	}
+	return out, nil
 }
 
 // chapterRollupRow is the scan target for the grouped chapter-count aggregate.

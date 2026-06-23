@@ -5,11 +5,14 @@ package series_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
@@ -231,5 +234,243 @@ func TestGetSeriesNotFound(t *testing.T) {
 	_, err := svc.GetSeries(ctx, uuid.New())
 	if !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("GetSeries(random): want ErrSeriesNotFound, got %v", err)
+	}
+}
+
+// seedSeriesDir creates a real on-disk series directory at <storage>/<cat>/<title>
+// with one CBZ and a tsundoku.json sidecar (written via the real WriteSidecar so
+// the on-disk shape is genuine). It mirrors the disk-test seeding so SetCategory
+// exercises a real folder move. Returns the CBZ bytes for integrity checks.
+func seedSeriesDir(t *testing.T, storage, category, title string) []byte {
+	t.Helper()
+
+	dir := disk.SeriesDir(storage, category, title)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("seedSeriesDir MkdirAll: %v", err)
+	}
+
+	cbzBytes := []byte("fake-cbz-archive-contents")
+	num := 1.0
+	cbzPath := filepath.Join(dir, "["+category+"][en] "+title+" 001.cbz")
+	if err := os.WriteFile(cbzPath, cbzBytes, 0o600); err != nil {
+		t.Fatalf("seedSeriesDir WriteFile: %v", err)
+	}
+
+	sidecar := disk.Sidecar{
+		Title:    title,
+		Category: category,
+		Chapters: []disk.ChapterProvenance{{
+			ChapterKey: "1",
+			Number:     &num,
+			Provider:   "mangadex",
+			Importance: 1,
+			Filename:   filepath.Base(cbzPath),
+			PageCount:  10,
+		}},
+	}
+	if err := disk.WriteSidecar(dir, sidecar); err != nil {
+		t.Fatalf("seedSeriesDir WriteSidecar: %v", err)
+	}
+
+	return cbzBytes
+}
+
+// TestSetCategoryMovesDiskAndUpdatesDB is the core invariant proof: recategorizing
+// a series with a real on-disk folder moves the folder to the new category dir AND
+// updates the DB, with both sides asserted (DB↔disk consistency).
+func TestSetCategoryMovesDiskAndUpdatesDB(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	storage := t.TempDir()
+
+	const title = "Solo Leveling"
+	row := client.Series.Create().
+		SetTitle(title).
+		SetSlug("solo-leveling").
+		SetCategory(entseries.CategoryOther).
+		SaveX(ctx)
+
+	cbzBytes := seedSeriesDir(t, storage, string(entseries.CategoryOther), title)
+
+	svc := series.NewService(client, storage)
+	if err := svc.SetCategory(ctx, row.ID, "Manhwa"); err != nil {
+		t.Fatalf("SetCategory: %v", err)
+	}
+
+	// DB side: category updated.
+	reread := client.Series.GetX(ctx, row.ID)
+	if reread.Category != entseries.CategoryManhwa {
+		t.Fatalf("SetCategory: DB category want Manhwa, got %s", reread.Category)
+	}
+
+	// Disk side: folder moved to the new category, old folder gone, CBZ intact.
+	oldDir := disk.SeriesDir(storage, string(entseries.CategoryOther), title)
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatalf("SetCategory: old dir %q should be gone, stat err = %v", oldDir, err)
+	}
+	newDir := disk.SeriesDir(storage, string(entseries.CategoryManhwa), title)
+	if _, err := os.Stat(newDir); err != nil {
+		t.Fatalf("SetCategory: new dir %q should exist: %v", newDir, err)
+	}
+	// The CBZ filename does NOT encode the category, so the archive keeps its
+	// original name after the move (it is carried over untouched).
+	gotBytes, err := os.ReadFile(filepath.Join(newDir, "[Other][en] "+title+" 001.cbz")) //nolint:gosec // test-only, path is from t.TempDir()
+	if err != nil {
+		t.Fatalf("SetCategory: read moved CBZ: %v", err)
+	}
+	if string(gotBytes) != string(cbzBytes) {
+		t.Fatalf("SetCategory: moved CBZ bytes changed")
+	}
+	// Sidecar at the new home reflects the new category.
+	sidecar, err := disk.ReadSidecar(newDir)
+	if err != nil {
+		t.Fatalf("SetCategory: read moved sidecar: %v", err)
+	}
+	if sidecar == nil || sidecar.Category != string(entseries.CategoryManhwa) {
+		t.Fatalf("SetCategory: moved sidecar category want Manhwa, got %+v", sidecar)
+	}
+}
+
+// TestSetCategorySameCategoryNoOp verifies that setting the current category is a
+// true no-op: no error, DB and disk unchanged.
+func TestSetCategorySameCategoryNoOp(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	storage := t.TempDir()
+
+	const title = "Solo Leveling"
+	row := client.Series.Create().
+		SetTitle(title).
+		SetSlug("solo-leveling").
+		SetCategory(entseries.CategoryManhwa).
+		SaveX(ctx)
+	seedSeriesDir(t, storage, string(entseries.CategoryManhwa), title)
+
+	svc := series.NewService(client, storage)
+	if err := svc.SetCategory(ctx, row.ID, "Manhwa"); err != nil {
+		t.Fatalf("SetCategory(same): %v", err)
+	}
+
+	if client.Series.GetX(ctx, row.ID).Category != entseries.CategoryManhwa {
+		t.Fatalf("SetCategory(same): category changed")
+	}
+	if _, err := os.Stat(disk.SeriesDir(storage, string(entseries.CategoryManhwa), title)); err != nil {
+		t.Fatalf("SetCategory(same): dir should be untouched: %v", err)
+	}
+}
+
+// TestSetCategoryInvalidCategory verifies an illegal enum value is rejected with
+// ErrInvalidCategory and nothing changes on either DB or disk.
+func TestSetCategoryInvalidCategory(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	storage := t.TempDir()
+
+	const title = "Solo Leveling"
+	row := client.Series.Create().
+		SetTitle(title).
+		SetSlug("solo-leveling").
+		SetCategory(entseries.CategoryOther).
+		SaveX(ctx)
+	seedSeriesDir(t, storage, string(entseries.CategoryOther), title)
+
+	svc := series.NewService(client, storage)
+	err := svc.SetCategory(ctx, row.ID, "Bogus")
+	if !errors.Is(err, series.ErrInvalidCategory) {
+		t.Fatalf("SetCategory(Bogus): want ErrInvalidCategory, got %v", err)
+	}
+
+	if client.Series.GetX(ctx, row.ID).Category != entseries.CategoryOther {
+		t.Fatalf("SetCategory(Bogus): DB category changed")
+	}
+	if _, err := os.Stat(disk.SeriesDir(storage, string(entseries.CategoryOther), title)); err != nil {
+		t.Fatalf("SetCategory(Bogus): dir should be untouched: %v", err)
+	}
+}
+
+// TestSetCategoryNoDiskFolderUpdatesDBOnly verifies the not-yet-downloaded branch:
+// a series with no folder on disk is still recategorizable — the DB is updated and
+// no error is raised (there is simply nothing to move).
+func TestSetCategoryNoDiskFolderUpdatesDBOnly(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	storage := t.TempDir()
+
+	row := client.Series.Create().
+		SetTitle("No Downloads Yet").
+		SetSlug("no-downloads-yet").
+		SetCategory(entseries.CategoryOther).
+		SaveX(ctx)
+
+	svc := series.NewService(client, storage)
+	if err := svc.SetCategory(ctx, row.ID, "Manhua"); err != nil {
+		t.Fatalf("SetCategory(no folder): %v", err)
+	}
+
+	if client.Series.GetX(ctx, row.ID).Category != entseries.CategoryManhua {
+		t.Fatalf("SetCategory(no folder): DB category want Manhua")
+	}
+	// No folder was ever created on either side.
+	if _, err := os.Stat(disk.SeriesDir(storage, string(entseries.CategoryManhua), "No Downloads Yet")); !os.IsNotExist(err) {
+		t.Fatalf("SetCategory(no folder): no dir should have been created, stat err = %v", err)
+	}
+}
+
+// TestSetCategoryNotFound verifies an unknown series id yields ErrSeriesNotFound.
+func TestSetCategoryNotFound(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	svc := series.NewService(client, t.TempDir())
+	err := svc.SetCategory(ctx, uuid.New(), "Manga")
+	if !errors.Is(err, series.ErrSeriesNotFound) {
+		t.Fatalf("SetCategory(random): want ErrSeriesNotFound, got %v", err)
+	}
+}
+
+// TestCategoriesReturnsAllEnumValuesWithCounts verifies Categories reports exactly
+// the five enum values (including zero-count ones) with correct counts.
+func TestCategoriesReturnsAllEnumValuesWithCounts(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	storage := t.TempDir()
+
+	// Two series: one Manga, one Other (then moved to Manhwa below).
+	manga := client.Series.Create().
+		SetTitle("Alpha Saga").SetSlug("alpha-saga").
+		SetCategory(entseries.CategoryManga).SaveX(ctx)
+	_ = manga
+	other := client.Series.Create().
+		SetTitle("Solo Leveling").SetSlug("solo-leveling").
+		SetCategory(entseries.CategoryOther).SaveX(ctx)
+	seedSeriesDir(t, storage, string(entseries.CategoryOther), "Solo Leveling")
+
+	svc := series.NewService(client, storage)
+	if err := svc.SetCategory(ctx, other.ID, "Manhwa"); err != nil {
+		t.Fatalf("SetCategory: %v", err)
+	}
+
+	got, err := svc.Categories(ctx)
+	if err != nil {
+		t.Fatalf("Categories: %v", err)
+	}
+
+	if len(got) != 5 {
+		t.Fatalf("Categories: want 5 entries, got %d (%+v)", len(got), got)
+	}
+
+	want := map[string]int{"Manga": 1, "Manhwa": 1, "Manhua": 0, "Comic": 0, "Other": 0}
+	for _, c := range got {
+		exp, ok := want[c.Category]
+		if !ok {
+			t.Fatalf("Categories: unexpected category %q", c.Category)
+		}
+		if c.Count != exp {
+			t.Fatalf("Categories: %s count want %d, got %d", c.Category, exp, c.Count)
+		}
+		delete(want, c.Category)
+	}
+	if len(want) != 0 {
+		t.Fatalf("Categories: missing enum values: %+v", want)
 	}
 }
