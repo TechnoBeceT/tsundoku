@@ -398,13 +398,18 @@ func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesPro
 // owning SeriesProvider. It is the single place that maps provider-row fields
 // to the fetch port's input type, shared by process and Upgrade so that no
 // ref-building logic is duplicated.
+//
+// SuwayomiID comes from the ProviderChapter row (the per-chapter Suwayomi ID),
+// not from SeriesProvider.SuwayomiID (which is the manga/series-level ID used
+// for MangaChapters queries). The chapter-level ID is required by
+// suwayomi.Fetcher.Fetch → client.ChapterPages(ctx, ref.SuwayomiID).
 func buildFetchRef(pc *ent.ProviderChapter, sp *ent.SeriesProvider) fetcher.FetchRef {
 	return fetcher.FetchRef{
 		Provider:         sp.Provider,
 		Scanlator:        sp.Scanlator,
 		Language:         sp.Language,
 		URL:              pc.URL,
-		SuwayomiID:       sp.SuwayomiID,
+		SuwayomiID:       pc.SuwayomiChapterID,
 		SeriesProviderID: sp.ID,
 	}
 }

@@ -604,5 +604,81 @@ drain:
 	}
 }
 
+// TestDispatcher_BuildFetchRef_SuwayomiID verifies that buildFetchRef populates
+// FetchRef.SuwayomiID from ProviderChapter.suwayomi_chapter_id, NOT from
+// SeriesProvider.suwayomi_id. This is the M2 invariant: the dispatcher passes
+// the per-chapter Suwayomi ID to the fetcher so it can call ChapterPages with
+// the correct chapter identifier.
+//
+// The test uses a ref-capturing fetcher that records the FetchRef it receives,
+// then asserts FetchRef.SuwayomiID == ProviderChapter.suwayomi_chapter_id.
+func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	const (
+		seriesMangaID   = 77  // SeriesProvider.suwayomi_id (manga-level)
+		chapterSuwayomi = 999 // ProviderChapter.suwayomi_chapter_id (chapter-level)
+	)
+
+	s := client.Series.Create().SetTitle("FetchRef Series").SetSlug("fetchref-series").SaveX(ctx)
+	sp := client.SeriesProvider.Create().
+		SetSeries(s).
+		SetProvider("suwayomi").
+		SetImportance(10).
+		SetSuwayomiID(seriesMangaID). // manga-level ID — must NOT appear in FetchRef
+		SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).
+		SetChapterKey("ch-fetchref").
+		SetURL("https://suwayomi.test/ch/1").
+		SetProviderIndex(0).
+		SetSuwayomiChapterID(chapterSuwayomi). // chapter-level ID — must appear in FetchRef
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("ch-fetchref").SaveX(ctx)
+
+	// Use a capturing fetcher to record the FetchRef the dispatcher constructs.
+	cf := &fetchRefCapture{}
+	d := download.New(client, cf, hub, download.Config{
+		PerProviderConcurrency: 1,
+		MaxRetries:             3,
+		Storage:                storageDir,
+	})
+
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	cf.mu.Lock()
+	gotSuwayomiID := cf.ref.SuwayomiID
+	cf.mu.Unlock()
+
+	if gotSuwayomiID != chapterSuwayomi {
+		t.Errorf("FetchRef.SuwayomiID: got %d, want %d (chapter-level ID); "+
+			"got the manga-level ID %d instead — buildFetchRef is using the wrong source",
+			gotSuwayomiID, chapterSuwayomi, seriesMangaID)
+	}
+}
+
+// fetchRefCapture is a fetcher.ChapterFetcher that records the last FetchRef
+// it received and returns a single-page success so the dispatcher can complete.
+type fetchRefCapture struct {
+	mu  sync.Mutex
+	ref fetcher.FetchRef
+}
+
+// Fetch records ref and returns a minimal valid ChapterPages.
+func (c *fetchRefCapture) Fetch(_ context.Context, ref fetcher.FetchRef) (fetcher.ChapterPages, error) {
+	c.mu.Lock()
+	c.ref = ref
+	c.mu.Unlock()
+	return fetcher.ChapterPages{
+		Pages:     []fetcher.PageImage{{Data: []byte{0xFF}, Ext: "jpg"}},
+		PageCount: 1,
+	}, nil
+}
+
 // Ensure uuid is used to keep the import — used in table-driven extensions.
 var _ = uuid.Nil
