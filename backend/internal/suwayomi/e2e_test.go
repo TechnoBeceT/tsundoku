@@ -268,7 +268,9 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 
 	// ── Step 5: Assert downloaded chapters + Komga-valid CBZs ─────────────────
 	t.Log("Step 5: asserting downloaded chapters and CBZ validity...")
-	assertDownloadedCBZs(t, storageDir, testharness.FixtureChapterCount)
+	// mangaTitle is the title returned by Search (= testharness.FixtureMangaTitle).
+	// It must appear in ComicInfo.Series for Komga series grouping.
+	assertDownloadedCBZs(t, storageDir, testharness.FixtureChapterCount, mangaTitle)
 
 	// ── Step 6: Verify provenance in the DB (state=downloaded, page_count) ────
 	t.Log("Step 6: verifying DB provenance...")
@@ -276,8 +278,9 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 }
 
 // assertDownloadedCBZs walks storageDir, counts .cbz files, and validates each
-// one is Komga-valid (ComicInfo.xml present + at least one image page).
-func assertDownloadedCBZs(t *testing.T, storageDir string, expectedCount int) {
+// one is Komga-valid (ComicInfo.xml present + at least one image page +
+// ComicInfo.Series equals wantSeriesTitle so Komga can group the series).
+func assertDownloadedCBZs(t *testing.T, storageDir string, expectedCount int, wantSeriesTitle string) {
 	t.Helper()
 
 	var cbzFiles []string
@@ -306,7 +309,7 @@ func assertDownloadedCBZs(t *testing.T, storageDir string, expectedCount int) {
 	for _, cbzPath := range cbzFiles {
 		cbzPath := cbzPath // loop var capture
 		t.Run(filepath.Base(cbzPath), func(t *testing.T) {
-			assertKomgaValidCBZ(t, cbzPath)
+			assertKomgaValidCBZ(t, cbzPath, wantSeriesTitle)
 		})
 	}
 }
@@ -314,7 +317,10 @@ func assertDownloadedCBZs(t *testing.T, storageDir string, expectedCount int) {
 // assertKomgaValidCBZ opens a CBZ and checks:
 //  1. ComicInfo.xml is present and parseable by disk.ReadComicInfoFromCBZ.
 //  2. At least one image page is present (png/jpg/webp/gif/avif).
-func assertKomgaValidCBZ(t *testing.T, cbzPath string) {
+//  3. ComicInfo.Series equals wantSeriesTitle (non-empty; required for Komga
+//     series grouping — an empty <Series> causes every chapter to appear as
+//     an ungrouped one-off in the Komga library).
+func assertKomgaValidCBZ(t *testing.T, cbzPath string, wantSeriesTitle string) {
 	t.Helper()
 
 	// G304: path is from a test-controlled temp directory.
@@ -353,6 +359,13 @@ func assertKomgaValidCBZ(t *testing.T, cbzPath string) {
 	}
 	if ci != nil {
 		t.Logf("ComicInfo: series=%q chapter=%q pages=%d", ci.Series, ci.Number, ci.PageCount)
+		// ComicInfo.Series must be non-empty and match the expected title so that
+		// Komga can group chapters under the correct series.
+		if ci.Series == "" {
+			t.Errorf("ComicInfo.Series is empty — Komga cannot group this chapter into a series")
+		} else if ci.Series != wantSeriesTitle {
+			t.Errorf("ComicInfo.Series: got %q, want %q", ci.Series, wantSeriesTitle)
+		}
 	}
 
 	t.Logf("CBZ valid: ComicInfo=%v pages=%d", hasComicInfo, pageCount)

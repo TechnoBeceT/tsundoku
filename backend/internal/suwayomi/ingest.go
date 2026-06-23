@@ -96,7 +96,9 @@ func (i *Ingest) AddSeries(
 	}
 
 	// 3. Upsert the SeriesProvider row, keyed by (series_id, provider).
-	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID)
+	//    title is passed so that SeriesProvider.Title is populated for downstream
+	//    CBZ rendering (ComicInfo.Series → Komga series grouping).
+	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID, title)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: upsert series provider %q for series %s: %w", sourceName, series.ID, err)
 	}
@@ -157,13 +159,16 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 }
 
 // upsertSeriesProvider finds the SeriesProvider row by (series_id, provider)
-// or creates it. On find it updates suwayomi_id in case it changed.
+// or creates it. On find it updates suwayomi_id and title in case they changed.
+// title is the manga display title from Suwayomi; it is stored so that downstream
+// CBZ rendering can populate ComicInfo.Series for Komga series grouping.
 // Returns the existing or newly created row.
 func (i *Ingest) upsertSeriesProvider(
 	ctx context.Context,
 	seriesID uuid.UUID,
 	provider string,
 	suwayomiMangaID int,
+	title string,
 ) (*ent.SeriesProvider, error) {
 	existing, err := i.db.SeriesProvider.Query().
 		Where(
@@ -176,10 +181,11 @@ func (i *Ingest) upsertSeriesProvider(
 		return nil, fmt.Errorf("query (series=%s provider=%q): %w", seriesID, provider, err)
 	}
 	if existing != nil {
-		// Keep suwayomi_id fresh in case the manga was re-added from a different
-		// Suwayomi instance with a different ID (unlikely but correct).
+		// Keep suwayomi_id and title fresh in case the manga was re-added from a
+		// different Suwayomi instance or the title has been corrected upstream.
 		updated, updateErr := i.db.SeriesProvider.UpdateOne(existing).
 			SetSuwayomiID(suwayomiMangaID).
+			SetTitle(title).
 			Save(ctx)
 		if updateErr != nil {
 			// Defensive path: reachable only on DB connection loss mid-operation.
@@ -192,6 +198,7 @@ func (i *Ingest) upsertSeriesProvider(
 		SetSeriesID(seriesID).
 		SetProvider(provider).
 		SetSuwayomiID(suwayomiMangaID).
+		SetTitle(title).
 		// importance=0 is the schema default; multi-source ranking is M3/M4.
 		Save(ctx)
 	if createErr != nil {

@@ -100,8 +100,8 @@ func assertSeries(t *testing.T, ctx context.Context, client *ent.Client, wantTit
 }
 
 // assertSeriesProvider checks that exactly one SeriesProvider exists with the
-// expected provider name and suwayomi_id.
-func assertSeriesProvider(t *testing.T, ctx context.Context, client *ent.Client, wantProvider string, wantSuwayomiID int) *ent.SeriesProvider {
+// expected provider name, suwayomi_id, and title.
+func assertSeriesProvider(t *testing.T, ctx context.Context, client *ent.Client, wantProvider string, wantSuwayomiID int, wantTitle string) *ent.SeriesProvider {
 	t.Helper()
 	list := client.SeriesProvider.Query().AllX(ctx)
 	if len(list) != 1 {
@@ -113,6 +113,9 @@ func assertSeriesProvider(t *testing.T, ctx context.Context, client *ent.Client,
 	}
 	if sp.SuwayomiID != wantSuwayomiID {
 		t.Errorf("SeriesProvider.SuwayomiID: got %d, want %d", sp.SuwayomiID, wantSuwayomiID)
+	}
+	if sp.Title != wantTitle {
+		t.Errorf("SeriesProvider.Title: got %q, want %q", sp.Title, wantTitle)
 	}
 	return sp
 }
@@ -209,7 +212,7 @@ func TestIngest_AddSeries_Basic(t *testing.T) {
 	}
 
 	assertSeries(t, ctx, client, mangaTitle, disk.Slugify(mangaTitle))
-	sp := assertSeriesProvider(t, ctx, client, sourceName, mangaID)
+	sp := assertSeriesProvider(t, ctx, client, sourceName, mangaID, mangaTitle)
 	assertProviderChapterIDs(t, ctx, client, sp.ID, buildWantIDs(stubs))
 	assertChapterCount(t, ctx, client, k)
 }
@@ -253,7 +256,7 @@ func TestIngest_AddSeries_Idempotent(t *testing.T) {
 
 	// Still exactly one of each row type.
 	assertSeries(t, ctx, client, mangaTitle, disk.Slugify(mangaTitle))
-	sp := assertSeriesProvider(t, ctx, client, sourceName, mangaID)
+	sp := assertSeriesProvider(t, ctx, client, sourceName, mangaID, mangaTitle)
 
 	// K Chapter rows and K ProviderChapters with correct suwayomi_chapter_id.
 	assertChapterCount(t, ctx, client, k)
@@ -361,5 +364,53 @@ func TestIngest_AddSeries_UnnumberedChapter(t *testing.T) {
 	}
 	if pc.SuwayomiChapterID != 201 {
 		t.Errorf("SuwayomiChapterID: got %d, want 201", pc.SuwayomiChapterID)
+	}
+}
+
+// TestIngest_AddSeries_SeriesProviderTitle verifies that upsertSeriesProvider
+// stores the manga display title in SeriesProvider.Title on both the create and
+// the update path. A non-empty title is required so that downstream CBZ rendering
+// writes a non-empty ComicInfo.Series element for Komga series grouping.
+func TestIngest_AddSeries_SeriesProviderTitle(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID      = 77
+		initialTitle = "Dragon Reborn"
+		// updatedTitle differs only in casing so disk.Slugify produces the same
+		// slug ("dragon-reborn") — the upsertSeries call reuses the existing
+		// Series row and we get exactly one SeriesProvider to assert against.
+		updatedTitle = "DRAGON REBORN"
+		sourceName   = "test-source"
+	)
+
+	stubs := makeChapters(1)
+	sc := &ingestStubClient{chapters: stubs}
+	ing := suwayomi.NewIngest(sc, client)
+
+	// ── Create path: title must be stored on first AddSeries ─────────────────
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, initialTitle); err != nil {
+		t.Fatalf("first AddSeries: %v", err)
+	}
+
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Title != initialTitle {
+		t.Errorf("SeriesProvider.Title after create: got %q, want %q", sp.Title, initialTitle)
+	}
+
+	// ── Update path: title must be refreshed on re-add with a changed title ──
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, updatedTitle); err != nil {
+		t.Fatalf("second AddSeries (title change): %v", err)
+	}
+
+	sp = client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Title != updatedTitle {
+		t.Errorf("SeriesProvider.Title after update: got %q, want %q", sp.Title, updatedTitle)
+	}
+
+	// Only one SeriesProvider row must exist (idempotent upsert).
+	if n := len(client.SeriesProvider.Query().AllX(ctx)); n != 1 {
+		t.Errorf("SeriesProvider count: got %d, want 1", n)
 	}
 }

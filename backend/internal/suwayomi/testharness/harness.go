@@ -1,3 +1,5 @@
+//go:build suwayomi
+
 // Package testharness provides a shared, real Suwayomi-Server instance for
 // build-tagged integration tests (//go:build suwayomi).
 //
@@ -279,14 +281,17 @@ func waitHTTPReady(ctx context.Context, url string) error {
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
+		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			_ = resp.Body.Close()
 			consecutive++
 			if consecutive >= consecutiveSuccessesRequired {
 				return nil // server is stable
 			}
 		} else {
-			consecutive = 0 // reset the run on any error
+			if err == nil {
+				_ = resp.Body.Close()
+			}
+			consecutive = 0 // reset the run on any error or non-2xx response
 		}
 
 		select {
