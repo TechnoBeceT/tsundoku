@@ -164,6 +164,24 @@ func TestListSeriesFiltersByCategory(t *testing.T) {
 	}
 }
 
+// TestListSeriesInvalidCategory verifies that an illegal category filter is
+// rejected with ErrInvalidCategory rather than silently returning an empty page.
+func TestListSeriesInvalidCategory(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	seedLibrary(ctx, t, client)
+
+	svc := series.NewService(client, t.TempDir())
+	bogus := "Bogus"
+	got, err := svc.ListSeries(ctx, series.ListFilter{Category: &bogus})
+	if !errors.Is(err, series.ErrInvalidCategory) {
+		t.Fatalf("ListSeries(Bogus): want ErrInvalidCategory, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("ListSeries(Bogus): want nil result, got %+v", got)
+	}
+}
+
 func TestListSeriesPaginates(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
@@ -222,6 +240,70 @@ func TestGetSeriesReturnsDetail(t *testing.T) {
 
 	if len(got.Providers) != 2 {
 		t.Fatalf("GetSeries: want 2 providers, got %d", len(got.Providers))
+	}
+}
+
+// TestGetSeriesChapterNameFromBestProvider verifies ChapterDTO.Name is populated
+// from the HIGHEST-importance provider's ProviderChapter.name (mirroring M1's
+// best-provider rule: higher importance = higher priority), and that an empty
+// name on the highest-importance provider does NOT shadow a real name from a
+// lower-importance one.
+func TestGetSeriesChapterNameFromBestProvider(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	storage := t.TempDir()
+
+	sr := client.Series.Create().
+		SetTitle("Tower Climb").
+		SetSlug("tower-climb").
+		SetCategory(entseries.CategoryManhwa).
+		SaveX(ctx)
+
+	// Two chapters sharing keys across two providers.
+	num1, num2 := 1.0, 2.0
+	client.Chapter.Create().
+		SetSeriesID(sr.ID).SetChapterKey("tc-1").SetNumber(num1).
+		SetState(entchapter.StateWanted).SaveX(ctx)
+	client.Chapter.Create().
+		SetSeriesID(sr.ID).SetChapterKey("tc-2").SetNumber(num2).
+		SetState(entchapter.StateWanted).SaveX(ctx)
+
+	// Low-importance provider: has a real name for BOTH chapters.
+	low := client.SeriesProvider.Create().
+		SetSeriesID(sr.ID).SetProvider("asura").SetLanguage("en").
+		SetImportance(5).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(low.ID).SetChapterKey("tc-1").SetName("Low Name C1").SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(low.ID).SetChapterKey("tc-2").SetName("Low Name C2").SaveX(ctx)
+
+	// High-importance provider: a real name for tc-1, but an EMPTY name for tc-2.
+	high := client.SeriesProvider.Create().
+		SetSeriesID(sr.ID).SetProvider("flame").SetLanguage("en").
+		SetImportance(8).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(high.ID).SetChapterKey("tc-1").SetName("High Name C1").SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(high.ID).SetChapterKey("tc-2").SetName("").SaveX(ctx)
+
+	svc := series.NewService(client, storage)
+	got, err := svc.GetSeries(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+
+	names := map[string]string{}
+	for _, ch := range got.Chapters {
+		names[ch.ChapterKey] = ch.Name
+	}
+	// tc-1: highest-importance provider has a real name → wins.
+	if names["tc-1"] != "High Name C1" {
+		t.Fatalf("tc-1 name: want %q (highest importance), got %q", "High Name C1", names["tc-1"])
+	}
+	// tc-2: highest-importance provider's name is empty → fall through to the
+	// real (lower-importance) name rather than shadowing it with "".
+	if names["tc-2"] != "Low Name C2" {
+		t.Fatalf("tc-2 name: want %q (highest provider empty → lower wins), got %q", "Low Name C2", names["tc-2"])
 	}
 }
 

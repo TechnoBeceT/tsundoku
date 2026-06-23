@@ -83,12 +83,14 @@ func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
 }
 
 // newChapterDTO maps an ent.Chapter into its detail DTO. The chapter's display
-// title lives on the provider feed, not the Chapter row, so Name is left empty
-// here — detail surfaces only the canonical chapter fields.
-func newChapterDTO(c *ent.Chapter) ChapterDTO {
+// title lives on the provider feed, not the Chapter row, so name is resolved by
+// the caller (best-provider ProviderChapter.name) and passed in; an empty name is
+// legitimate when no provider supplies a title.
+func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
 	return ChapterDTO{
 		ChapterKey: c.ChapterKey,
 		Number:     c.Number,
+		Name:       name,
 		State:      c.State.String(),
 		Filename:   c.Filename,
 		PageCount:  c.PageCount,

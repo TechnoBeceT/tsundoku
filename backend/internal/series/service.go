@@ -18,8 +18,9 @@ import (
 // The HTTP handler maps it to a 404.
 var ErrSeriesNotFound = errors.New("series not found")
 
-// ErrInvalidCategory is returned by SetCategory when the requested category is not
-// one of the legal Series.category enum values. The HTTP handler maps it to a 400.
+// ErrInvalidCategory is returned by SetCategory and ListSeries when the requested
+// category is not one of the legal Series.category enum values. The HTTP handler
+// maps it to a 400.
 var ErrInvalidCategory = errors.New("invalid category")
 
 // Service is the library read service over the M0 entities. It owns the storage
@@ -53,7 +54,13 @@ func (s *Service) ListSeries(ctx context.Context, filter ListFilter) ([]SeriesSu
 	q := s.client.Series.Query().Order(entseries.ByTitle())
 
 	if filter.Category != nil {
-		q = q.Where(entseries.CategoryEQ(entseries.Category(*filter.Category)))
+		cat := entseries.Category(*filter.Category)
+		// Reject an unknown category instead of silently returning an empty page
+		// (an invalid filter applied as a predicate would just match nothing).
+		if err := entseries.CategoryValidator(cat); err != nil {
+			return nil, fmt.Errorf("series.ListSeries: %q: %w", *filter.Category, ErrInvalidCategory)
+		}
+		q = q.Where(entseries.CategoryEQ(cat))
 	}
 	if filter.Offset > 0 {
 		q = q.Offset(filter.Offset)
@@ -86,14 +93,20 @@ func (s *Service) ListSeries(ctx context.Context, filter ListFilter) ([]SeriesSu
 
 // GetSeries returns the full detail of one series: its summary fields, the
 // chapter-state rollup, its chapters (ordered by number then chapter_key), and
-// its providers. A missing id yields ErrSeriesNotFound.
+// its providers. Each chapter's display Name is sourced from the best provider's
+// ProviderChapter title (see chapterTitles). A missing id yields ErrSeriesNotFound.
 func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO, error) {
 	row, err := s.client.Series.Query().
 		Where(entseries.IDEQ(id)).
 		WithChapters(func(cq *ent.ChapterQuery) {
 			cq.Order(entchapter.ByNumber(), entchapter.ByChapterKey())
 		}).
-		WithProviders().
+		// Eager-load providers WITH their per-chapter feed so chapter titles can be
+		// resolved without an extra query per chapter (no N+1): one nested load over
+		// the already-loaded providers supplies every ProviderChapter row.
+		WithProviders(func(pq *ent.SeriesProviderQuery) {
+			pq.WithProviderChapters()
+		}).
 		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
@@ -102,10 +115,12 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		return SeriesDetailDTO{}, fmt.Errorf("series.GetSeries: query series %s: %w", id, err)
 	}
 
+	titles := chapterTitles(row.Edges.Providers)
+
 	chapters := make([]ChapterDTO, len(row.Edges.Chapters))
 	counts := ChapterCounts{Total: len(row.Edges.Chapters)}
 	for i, ch := range row.Edges.Chapters {
-		chapters[i] = newChapterDTO(ch)
+		chapters[i] = newChapterDTO(ch, titles[ch.ChapterKey])
 		addToCounts(&counts, ch.State)
 	}
 
@@ -299,6 +314,30 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 		out[r.SeriesID] = c
 	}
 	return out, nil
+}
+
+// chapterTitles builds a chapter_key → display title map from the series'
+// eagerly-loaded providers and their ProviderChapter feeds. For each chapter_key
+// it picks the name from the provider with the HIGHEST importance that supplies a
+// non-empty name (mirroring M1's best-provider rule: higher importance = higher
+// priority). An empty name never shadows a real one from a lower-importance
+// provider; a key no provider titles is simply absent (legitimately empty Name,
+// not a dropped field). Cost is one pass over the already-loaded rows — no N+1.
+func chapterTitles(providers []*ent.SeriesProvider) map[string]string {
+	titles := make(map[string]string)
+	bestImportance := make(map[string]int)
+	for _, p := range providers {
+		for _, pc := range p.Edges.ProviderChapters {
+			if pc.Name == "" {
+				continue
+			}
+			if cur, seen := bestImportance[pc.ChapterKey]; !seen || p.Importance > cur {
+				titles[pc.ChapterKey] = pc.Name
+				bestImportance[pc.ChapterKey] = p.Importance
+			}
+		}
+	}
+	return titles
 }
 
 // addToCounts increments the rollup for a single chapter's state. Total is
