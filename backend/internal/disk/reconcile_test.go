@@ -1,0 +1,373 @@
+// Package disk_test — integration tests for the DB-loss reconciler.
+// Tests require Docker (via testcontainers) for an ephemeral PostgreSQL instance.
+package disk_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/disk"
+	"github.com/technobecet/tsundoku/internal/ent"
+	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/fetcher"
+)
+
+// chSnapshot records the fields used to verify lossless rebuild for one chapter.
+type chSnapshot struct {
+	Provider   string
+	Filename   string
+	Number     *float64
+	Importance int
+	PageCount  int
+}
+
+// takeChapterSnapshot captures a key→chSnapshot map from the current DB state.
+func takeChapterSnapshot(ctx context.Context, t *testing.T, client *ent.Client) map[string]chSnapshot {
+	t.Helper()
+	allChapters := client.Chapter.Query().AllX(ctx)
+	allSPs := client.SeriesProvider.Query().AllX(ctx)
+
+	spNames := make(map[uuid.UUID]string, len(allSPs))
+	for _, sp := range allSPs {
+		spNames[sp.ID] = sp.Provider
+	}
+
+	out := make(map[string]chSnapshot, len(allChapters))
+	for _, ch := range allChapters {
+		s := chSnapshot{Filename: ch.Filename, Number: ch.Number}
+		if ch.SatisfiedImportance != nil {
+			s.Importance = *ch.SatisfiedImportance
+		}
+		if ch.PageCount != nil {
+			s.PageCount = *ch.PageCount
+		}
+		if ch.SatisfiedByProviderID != nil {
+			s.Provider = spNames[*ch.SatisfiedByProviderID]
+		}
+		out[ch.ChapterKey] = s
+	}
+	return out
+}
+
+// assertChapterRebuildMatch verifies one rebuilt chapter against its pre-drop snapshot.
+func assertChapterRebuildMatch(t *testing.T, ch *ent.Chapter, snap chSnapshot, spNames map[uuid.UUID]string) {
+	t.Helper()
+	key := ch.ChapterKey
+	if ch.State != entchapter.StateDownloaded {
+		t.Errorf("chapter %q: state = %s, want downloaded", key, ch.State)
+	}
+	if ch.Filename != snap.Filename {
+		t.Errorf("chapter %q: filename = %q, want %q", key, ch.Filename, snap.Filename)
+	}
+	assertFloat64Ptr(t, key, "number", ch.Number, snap.Number)
+	if ch.SatisfiedImportance != nil && *ch.SatisfiedImportance != snap.Importance {
+		t.Errorf("chapter %q: importance = %d, want %d", key, *ch.SatisfiedImportance, snap.Importance)
+	}
+	if ch.PageCount != nil && *ch.PageCount != snap.PageCount {
+		t.Errorf("chapter %q: page_count = %d, want %d", key, *ch.PageCount, snap.PageCount)
+	}
+	if ch.SatisfiedByProviderID != nil {
+		if got := spNames[*ch.SatisfiedByProviderID]; got != snap.Provider {
+			t.Errorf("chapter %q: provider = %q, want %q", key, got, snap.Provider)
+		}
+	}
+}
+
+// assertFloat64Ptr verifies two *float64 values are equal.
+func assertFloat64Ptr(t *testing.T, key, field string, got, want *float64) {
+	t.Helper()
+	switch {
+	case got == nil && want != nil:
+		t.Errorf("chapter %q: %s = nil, want %v", key, field, *want)
+	case got != nil && want == nil:
+		t.Errorf("chapter %q: %s = %v, want nil", key, field, *got)
+	case got != nil && want != nil && *got != *want:
+		t.Errorf("chapter %q: %s = %v, want %v", key, field, *got, *want)
+	}
+}
+
+// TestReconcile_lossless_rebuild is the milestone's third regression proof.
+//
+// It renders real CBZs to a temp storage directory (producing tsundoku.json
+// sidecar + CBZ archives), seeds the DB via Reconcile, snapshots the chapter
+// rows, drops all rows to simulate a total DB loss, re-runs Reconcile, and
+// asserts the chapters table is rebuilt identically: same chapter_key,
+// state=downloaded, provider, importance, filename, page_count, number.
+func TestReconcile_lossless_rebuild(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	max := 10.0
+	num1, num2 := 1.0, 2.0
+
+	fn1 := renderForRebuild(t, storage, &num1, "1", "mangadex", 2, &max)
+	fn2 := renderForRebuild(t, storage, &num2, "2", "comick", 1, &max)
+
+	seedAndDrop(t, ctx, client, storage)
+	snapshots := takeChapterSnapshot(ctx, t, client)
+	dropAllRows(ctx, client)
+
+	result, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("Reconcile after DB loss: %v", err)
+	}
+	assertReconcileResultNonZero(t, result)
+	assertRebuiltChapters(t, ctx, client, snapshots, fn1, fn2)
+}
+
+// seedAndDrop seeds the DB from disk and verifies 2 chapters exist.
+func seedAndDrop(t *testing.T, ctx context.Context, client *ent.Client, storage string) {
+	t.Helper()
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	if n := client.Chapter.Query().CountX(ctx); n != 2 {
+		t.Fatalf("want 2 chapter rows after initial Reconcile, got %d", n)
+	}
+}
+
+// dropAllRows deletes all Series/SeriesProvider/Chapter rows to simulate DB loss.
+func dropAllRows(ctx context.Context, client *ent.Client) {
+	client.Chapter.Delete().ExecX(ctx)
+	client.SeriesProvider.Delete().ExecX(ctx)
+	client.Series.Delete().ExecX(ctx)
+}
+
+// assertReconcileResultNonZero asserts that at least one row of each type was upserted.
+func assertReconcileResultNonZero(t *testing.T, r disk.ReconcileResult) {
+	t.Helper()
+	if r.SeriesUpserted == 0 {
+		t.Error("SeriesUpserted = 0, want > 0")
+	}
+	if r.ProvidersUpserted == 0 {
+		t.Error("ProvidersUpserted = 0, want > 0")
+	}
+	if r.ChaptersUpserted == 0 {
+		t.Error("ChaptersUpserted = 0, want > 0")
+	}
+}
+
+// assertRebuiltChapters verifies the rebuilt chapter table against pre-drop snapshots
+// and checks that the expected filenames are present.
+func assertRebuiltChapters(t *testing.T, ctx context.Context, client *ent.Client, snapshots map[string]chSnapshot, fn1, fn2 string) {
+	t.Helper()
+	rebuilt := client.Chapter.Query().AllX(ctx)
+	if len(rebuilt) != 2 {
+		t.Fatalf("want 2 chapters after rebuild, got %d", len(rebuilt))
+	}
+
+	newSPs := client.SeriesProvider.Query().AllX(ctx)
+	spNames := make(map[uuid.UUID]string, len(newSPs))
+	for _, sp := range newSPs {
+		spNames[sp.ID] = sp.Provider
+	}
+
+	fileMap := make(map[string]string, len(rebuilt))
+	for _, ch := range rebuilt {
+		fileMap[ch.ChapterKey] = ch.Filename
+		snap, ok := snapshots[ch.ChapterKey]
+		if !ok {
+			t.Errorf("rebuilt chapter_key %q not in original snapshot", ch.ChapterKey)
+			continue
+		}
+		assertChapterRebuildMatch(t, ch, snap, spNames)
+	}
+	assertEqual(t, "chapter 1 filename after rebuild", fn1, fileMap["1"])
+	assertEqual(t, "chapter 2 filename after rebuild", fn2, fileMap["2"])
+}
+
+// renderForRebuild renders a single chapter to storage and returns its filename.
+func renderForRebuild(t *testing.T, storage string, num *float64, key, provider string, importance int, max *float64) string {
+	t.Helper()
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    provider,
+			Language:    "en",
+			SeriesTitle: "Rebuild Test",
+			Category:    disk.CategoryManga,
+			Number:      num,
+			MaxChapter:  max,
+			ChapterKey:  key,
+			Importance:  importance,
+		},
+		Pages: []fetcher.PageImage{
+			{Data: []byte{0xFF, 0xD8}, Ext: "jpg"},
+			{Data: []byte{0xFF, 0xD9}, Ext: "jpg"},
+		},
+	}
+	fn, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter(%q): %v", key, err)
+	}
+	return fn
+}
+
+// TestReconcile_idempotent verifies that running Reconcile twice on an
+// unchanged library produces 0 new series/providers/chapters on the second run.
+func TestReconcile_idempotent(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	num := 5.0
+	max := 10.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: "Idempotent Test",
+			Category:    disk.CategoryManga,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "5",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	if _, err := disk.RenderChapter(req); err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	// First Reconcile — must create rows.
+	r1, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if r1.SeriesUpserted == 0 {
+		t.Error("first Reconcile: expected SeriesUpserted > 0")
+	}
+
+	// Capture row counts after first run.
+	seriesCount := client.Series.Query().CountX(ctx)
+	spCount := client.SeriesProvider.Query().CountX(ctx)
+	chCount := client.Chapter.Query().CountX(ctx)
+
+	// Second Reconcile — must report 0 newly created.
+	r2, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if r2.ChaptersAdopted != 0 {
+		t.Errorf("second Reconcile: ChaptersAdopted = %d, want 0", r2.ChaptersAdopted)
+	}
+
+	// Row counts must not have grown.
+	if got := client.Series.Query().CountX(ctx); got != seriesCount {
+		t.Errorf("Series count grew: was %d, now %d", seriesCount, got)
+	}
+	if got := client.SeriesProvider.Query().CountX(ctx); got != spCount {
+		t.Errorf("SeriesProvider count grew: was %d, now %d", spCount, got)
+	}
+	if got := client.Chapter.Query().CountX(ctx); got != chCount {
+		t.Errorf("Chapter count grew: was %d, now %d", chCount, got)
+	}
+}
+
+// TestReconcile_adopt_orphan verifies that a CBZ on disk with ComicInfo provenance
+// but no existing DB row is adopted: Reconcile creates the Chapter row.
+func TestReconcile_adopt_orphan(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	// Create an orphan CBZ with ComicInfo provenance but NO tsundoku.json.
+	seriesDir := filepath.Join(storage, "Manga", "Orphan Test")
+	if err := os.MkdirAll(seriesDir, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	ci := disk.ComicInfo{
+		Series:     "Orphan Test",
+		Number:     "3",
+		Provider:   "comick",
+		Importance: 1,
+		ChapterKey: "3",
+		PageCount:  1,
+	}
+	cbzPath := filepath.Join(seriesDir, "[comick][en] Orphan Test 3.cbz")
+	if err := disk.CreateCBZ(cbzPath, []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}}, ci); err != nil {
+		t.Fatalf("CreateCBZ: %v", err)
+	}
+
+	result, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if result.ChaptersAdopted < 1 {
+		t.Errorf("ChaptersAdopted = %d, want >= 1", result.ChaptersAdopted)
+	}
+
+	ch := client.Chapter.Query().OnlyX(ctx)
+	if ch.ChapterKey != "3" {
+		t.Errorf("adopted chapter_key = %q, want %q", ch.ChapterKey, "3")
+	}
+	if ch.State != entchapter.StateDownloaded {
+		t.Errorf("adopted chapter state = %s, want downloaded", ch.State)
+	}
+}
+
+// TestReconcile_missing_file_reported verifies that a sidecar entry whose CBZ
+// has been deleted is reported in MissingFiles without crashing and without
+// forcing an illegal state transition.
+func TestReconcile_missing_file_reported(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	num := 2.0
+	max := 5.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: "Missing Test",
+			Category:    disk.CategoryManga,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "2",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	filename, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	// Seed the DB.
+	r1, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	if r1.MissingFiles != 0 {
+		t.Fatalf("initial Reconcile: MissingFiles = %d, want 0", r1.MissingFiles)
+	}
+
+	// Delete the CBZ — sidecar entry remains.
+	seriesDir := filepath.Join(storage, "Manga", "Missing Test")
+	if err := os.Remove(filepath.Join(seriesDir, filename)); err != nil {
+		t.Fatalf("remove cbz: %v", err)
+	}
+
+	// Reconcile must report MissingFiles=1 without crashing.
+	r2, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if r2.MissingFiles != 1 {
+		t.Errorf("MissingFiles = %d, want 1", r2.MissingFiles)
+	}
+
+	// No illegal state transition must have been forced.
+	ch := client.Chapter.Query().OnlyX(ctx)
+	if ch.State != entchapter.StateDownloaded {
+		t.Errorf("chapter state changed to %s; illegal downloaded→wanted transition must not occur", ch.State)
+	}
+}
