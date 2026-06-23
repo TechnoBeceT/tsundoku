@@ -112,9 +112,17 @@ func (pm *ProcessManager) launch(ctx context.Context, jarPath string) (<-chan st
 		"-jar", jarPath,
 	}
 
-	slog.Info("suwayomi: starting process", "jar", jarPath)
+	// Use the configured java executable (defaults to "java" on PATH).
+	// Override via cfg.JavaPath when the system default JVM is too old
+	// (Suwayomi v2.2.2100 requires Java 21+).
+	javaExec := pm.cfg.JavaPath
+	if javaExec == "" {
+		javaExec = "java"
+	}
 
-	cmd := pm.commandContext(ctx, "java", args...)
+	slog.Info("suwayomi: starting process", "jar", jarPath, "java", javaExec)
+
+	cmd := pm.commandContext(ctx, javaExec, args...)
 	cmd.Dir = pm.cfg.RuntimeDir
 
 	stdout, err := cmd.StdoutPipe()

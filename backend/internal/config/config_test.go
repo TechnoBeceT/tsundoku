@@ -376,6 +376,38 @@ func TestJobsConfig(t *testing.T) {
 	}
 }
 
+// TestSuwayomiJavaPathDefault confirms that JavaPath defaults to "java"
+// when TSUNDOKU_SUWAYOMI_JAVAPATH is not set.
+func TestSuwayomiJavaPathDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Suwayomi.JavaPath != "java" {
+		t.Errorf("Suwayomi.JavaPath default = %q, want %q", cfg.Suwayomi.JavaPath, "java")
+	}
+}
+
+// TestSuwayomiJavaPathEnv confirms that TSUNDOKU_SUWAYOMI_JAVAPATH overrides
+// the default java executable path.
+func TestSuwayomiJavaPathEnv(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SUWAYOMI_JAVAPATH", "/usr/lib/jvm/java-26-openjdk/bin/java")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := "/usr/lib/jvm/java-26-openjdk/bin/java"
+	if cfg.Suwayomi.JavaPath != want {
+		t.Errorf("Suwayomi.JavaPath = %q, want %q", cfg.Suwayomi.JavaPath, want)
+	}
+}
+
 // TestJobsDefaultInterval confirms that a sensible default is applied for
 // Jobs.DownloadInterval when TSUNDOKU_JOBS_DOWNLOADINTERVAL is not set.
 func TestJobsDefaultInterval(t *testing.T) {

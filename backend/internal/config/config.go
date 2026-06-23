@@ -130,6 +130,12 @@ type SuwayomiConfig struct {
 	// DownloadTimeout is the HTTP client deadline for downloading the JAR.
 	// Default 10m. Set via TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT.
 	DownloadTimeout time.Duration
+	// JavaPath is the path to the java executable used to launch the
+	// Suwayomi JAR. Defaults to "java" (system PATH). Override when the
+	// system default java is too old (Suwayomi v2.2.2100 requires Java 21+).
+	// Set via TSUNDOKU_SUWAYOMI_JAVAPATH.
+	// Example: /usr/lib/jvm/java-26-openjdk/bin/java
+	JavaPath string
 }
 
 // BaseURL returns the base HTTP URL for the Suwayomi server in the form
@@ -173,6 +179,7 @@ func defaults() map[string]any {
 		"suwayomi.downloadurltemplate": suwayomiDownloadURLTemplate,
 		"suwayomi.starttimeout":        "2m",
 		"suwayomi.downloadtimeout":     "10m",
+		"suwayomi.javapath":            "java",
 		// Jobs — background-job scheduler.
 		"jobs.downloadinterval": "15m",
 		"storage.folder":        "/data/manga",
@@ -241,6 +248,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_SUWAYOMI_DOWNLOADURLTEMPLATE   → suwayomi.downloadurltemplate
 //	TSUNDOKU_SUWAYOMI_STARTTIMEOUT          → suwayomi.starttimeout
 //	TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT       → suwayomi.downloadtimeout
+//	TSUNDOKU_SUWAYOMI_JAVAPATH              → suwayomi.javapath
 //	TSUNDOKU_JOBS_DOWNLOADINTERVAL          → jobs.downloadinterval
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //
