@@ -84,7 +84,6 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 
 	g, gctx := errgroup.WithContext(ctx)
 	for _, src := range sources {
-		src := src // loop variable capture
 		g.Go(func() error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
