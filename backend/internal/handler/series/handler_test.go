@@ -49,7 +49,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	client := testdb.New(t)
 	storage := t.TempDir()
 	authSvc := auth.NewService(testSecret)
-	svc := seriessvc.NewService(client, storage)
+	svc := seriessvc.NewService(client, storage, 14)
 	triggered := new(int)
 	h := handler.NewHandler(svc, func() { *triggered++ })
 

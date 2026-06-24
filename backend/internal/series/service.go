@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -35,13 +36,15 @@ var ErrProviderNotInSeries = errors.New("provider does not belong to series")
 // root (unused by the read methods; the recategorize path that moves folders on
 // disk will use it) so all library operations share one service.
 type Service struct {
-	client  *ent.Client
-	storage string
+	client         *ent.Client
+	storage        string
+	staleGraceDays int
 }
 
-// NewService constructs a Service bound to an Ent client and the storage root.
-func NewService(client *ent.Client, storage string) *Service {
-	return &Service{client: client, storage: storage}
+// NewService builds the series library service. staleGraceDays tunes the M7
+// source-health staleness rule (see HealthConfig).
+func NewService(client *ent.Client, storage string, staleGraceDays int) *Service {
+	return &Service{client: client, storage: storage, staleGraceDays: staleGraceDays}
 }
 
 // ProviderRank pairs a SeriesProvider UUID with the desired importance value. Used
@@ -276,11 +279,12 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		WithChapters(func(cq *ent.ChapterQuery) {
 			cq.Order(entchapter.ByNumber(), entchapter.ByChapterKey())
 		}).
-		// Eager-load providers WITH their per-chapter feed so chapter titles can be
-		// resolved without an extra query per chapter (no N+1): one nested load over
-		// the already-loaded providers supplies every ProviderChapter row.
+		// Eager-load providers WITH their per-chapter feed and sync state so
+		// chapter titles and source health can be resolved without an extra query
+		// per provider (no N+1): one nested load over the already-loaded providers
+		// supplies every ProviderChapter row and each provider's SyncState.
 		WithProviders(func(pq *ent.SeriesProviderQuery) {
-			pq.WithProviderChapters()
+			pq.WithProviderChapters().WithSyncState()
 		}).
 		Only(ctx)
 	if err != nil {
@@ -299,9 +303,11 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		addToCounts(&counts, ch.State)
 	}
 
+	keys, maxNumber, multi := seriesHealthInputs(row)
+	now := time.Now().UTC()
 	providers := make([]ProviderDTO, len(row.Edges.Providers))
 	for i, p := range row.Edges.Providers {
-		providers[i] = newProviderDTO(p)
+		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, now))
 	}
 
 	return SeriesDetailDTO{
@@ -315,6 +321,97 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		Chapters:      chapters,
 		Providers:     providers,
 	}, nil
+}
+
+// seriesHealthInputs derives the shared inputs (key set + leading-edge number +
+// multi-source flag) used to compute every provider's health for one series.
+func seriesHealthInputs(row *ent.Series) (keys map[string]struct{}, maxNumber *float64, multi bool) {
+	keys = make(map[string]struct{}, len(row.Edges.Chapters))
+	for _, ch := range row.Edges.Chapters {
+		keys[ch.ChapterKey] = struct{}{}
+		if ch.Number != nil && (maxNumber == nil || *ch.Number > *maxNumber) {
+			n := *ch.Number
+			maxNumber = &n
+		}
+	}
+	return keys, maxNumber, len(row.Edges.Providers) > 1
+}
+
+// providerHealth computes one provider's health within an already-loaded series.
+func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}, maxNumber *float64, multi bool, now time.Time) ProviderHealth {
+	return ComputeProviderHealth(ProviderHealthInput{
+		SyncState:         p.Edges.SyncState,
+		ProviderChapters:  p.Edges.ProviderChapters,
+		SeriesChapterKeys: keys,
+		SeriesMaxNumber:   maxNumber,
+		MultiSource:       multi,
+	}, now, s.staleGraceDays)
+}
+
+// loadSeriesWithHealthData loads every series with the chapters, providers,
+// provider-chapters and sync-state needed to compute source health.
+func (s *Service) loadSeriesWithHealthData(ctx context.Context) ([]*ent.Series, error) {
+	rows, err := s.client.Series.Query().
+		Order(entseries.ByTitle()).
+		WithChapters().
+		WithProviders(func(pq *ent.SeriesProviderQuery) {
+			pq.WithProviderChapters().WithSyncState()
+		}).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("series.loadSeriesWithHealthData: %w", err)
+	}
+	return rows, nil
+}
+
+// sickSources returns the providers of one loaded series whose health is stale
+// or erroring (empty if the series is fully healthy).
+func (s *Service) sickSources(row *ent.Series, now time.Time) []ProviderDTO {
+	keys, maxNumber, multi := seriesHealthInputs(row)
+	var sick []ProviderDTO
+	for _, p := range row.Edges.Providers {
+		h := s.providerHealth(p, keys, maxNumber, multi, now)
+		if h.Status == HealthStale || h.Status == HealthErroring {
+			sick = append(sick, newProviderDTO(p, h))
+		}
+	}
+	return sick
+}
+
+// LibraryHealth returns only the series that have at least one stale or
+// erroring source, each with its sick sources listed.
+func (s *Service) LibraryHealth(ctx context.Context) (LibraryHealthDTO, error) {
+	rows, err := s.loadSeriesWithHealthData(ctx)
+	if err != nil {
+		return LibraryHealthDTO{}, err
+	}
+	now := time.Now().UTC()
+	out := LibraryHealthDTO{}
+	for _, row := range rows {
+		if sick := s.sickSources(row, now); len(sick) > 0 {
+			out.Series = append(out.Series, SeriesHealthDTO{
+				ID: row.ID.String(), Title: row.Title, Slug: row.Slug, Sources: sick,
+			})
+		}
+	}
+	return out, nil
+}
+
+// UnhealthyCount is the number of series with at least one stale/erroring
+// source — the cheap figure behind the health.summary SSE.
+func (s *Service) UnhealthyCount(ctx context.Context) (int, error) {
+	rows, err := s.loadSeriesWithHealthData(ctx)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC()
+	n := 0
+	for _, row := range rows {
+		if len(s.sickSources(row, now)) > 0 {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // SetCategory recategorizes a series, keeping the DB and disk consistent.

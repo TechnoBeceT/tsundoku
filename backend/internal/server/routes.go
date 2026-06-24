@@ -64,7 +64,7 @@ func registerRoutes(
 	// so the recategorize path can move folders on disk in lockstep with the DB.
 	// seriesSvc is shared: reused by both the series handler and the imports
 	// handler (to render SeriesDetailDTO after Adopt).
-	seriesSvc := series.NewService(client, cfg.Storage.Folder)
+	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays)
 	seriesH := seriesh.NewHandler(seriesSvc, trigger)
 	authed.GET("/series", seriesH.List)
 	authed.GET("/series/:id", seriesH.Detail)
