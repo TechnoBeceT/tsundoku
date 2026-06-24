@@ -4,7 +4,11 @@
 // and must be imported aliased (entseries) wherever both are needed.
 package series
 
-import "github.com/technobecet/tsundoku/internal/ent"
+import (
+	"time"
+
+	"github.com/technobecet/tsundoku/internal/ent"
+)
 
 // ChapterCounts is the per-series rollup of chapter download state used in list
 // and detail responses. Total is every chapter; the other fields count chapters
@@ -57,13 +61,35 @@ type ChapterDTO struct {
 
 // ProviderDTO is one SeriesProvider in a series-detail response. ID is the
 // SeriesProvider UUID (used by Task 5/7 re-rank). Importance is the
-// priority/quality rank (higher = preferred).
+// priority/quality rank (higher = preferred). The health fields (Health,
+// ChaptersBehind, NewestChapterAt, LastSyncedAt, LastError) are derived on
+// read from the source's availability feed and sync state — never persisted.
 type ProviderDTO struct {
-	ID         string `json:"id"`
-	Provider   string `json:"provider"`
-	Scanlator  string `json:"scanlator"`
-	Language   string `json:"language"`
-	Importance int    `json:"importance"`
+	ID              string     `json:"id"`
+	Provider        string     `json:"provider"`
+	Scanlator       string     `json:"scanlator"`
+	Language        string     `json:"language"`
+	Importance      int        `json:"importance"`
+	Health          string     `json:"health"`
+	ChaptersBehind  int        `json:"chaptersBehind"`
+	NewestChapterAt *time.Time `json:"newestChapterAt"`
+	LastSyncedAt    *time.Time `json:"lastSyncedAt"`
+	LastError       string     `json:"lastError"`
+}
+
+// LibraryHealthDTO is the library-wide source-health scan: only series that
+// have at least one stale or erroring source.
+type LibraryHealthDTO struct {
+	Series []SeriesHealthDTO `json:"series"`
+}
+
+// SeriesHealthDTO is one sick series in the library-health scan and its sick
+// sources.
+type SeriesHealthDTO struct {
+	ID      string        `json:"id"`
+	Title   string        `json:"title"`
+	Slug    string        `json:"slug"`
+	Sources []ProviderDTO `json:"sources"`
 }
 
 // CategoryCountDTO is one row of the /api/categories response: a category enum
@@ -102,13 +128,19 @@ func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
 	}
 }
 
-// newProviderDTO maps an ent.SeriesProvider into its detail DTO.
-func newProviderDTO(p *ent.SeriesProvider) ProviderDTO {
+// newProviderDTO maps an ent.SeriesProvider and its computed health into a
+// detail DTO. h carries all derived health fields; they are never persisted.
+func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth) ProviderDTO {
 	return ProviderDTO{
-		ID:         p.ID.String(),
-		Provider:   p.Provider,
-		Scanlator:  p.Scanlator,
-		Language:   p.Language,
-		Importance: p.Importance,
+		ID:              p.ID.String(),
+		Provider:        p.Provider,
+		Scanlator:       p.Scanlator,
+		Language:        p.Language,
+		Importance:      p.Importance,
+		Health:          h.Status,
+		ChaptersBehind:  h.ChaptersBehind,
+		NewestChapterAt: h.NewestChapterAt,
+		LastSyncedAt:    h.LastSyncedAt,
+		LastError:       h.LastError,
 	}
 }

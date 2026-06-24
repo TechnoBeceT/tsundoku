@@ -114,7 +114,7 @@ func TestListSeriesReturnsAllWithRollup(t *testing.T) {
 	ctx := context.Background()
 	seedLibrary(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 	got, err := svc.ListSeries(ctx, series.ListFilter{})
 	if err != nil {
 		t.Fatalf("ListSeries: %v", err)
@@ -151,7 +151,7 @@ func TestListSeriesFiltersByCategory(t *testing.T) {
 	ctx := context.Background()
 	seedLibrary(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 	cat := "Manhwa"
 	got, err := svc.ListSeries(ctx, series.ListFilter{Category: &cat})
 	if err != nil {
@@ -173,7 +173,7 @@ func TestListSeriesInvalidCategory(t *testing.T) {
 	ctx := context.Background()
 	seedLibrary(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 	bogus := "Bogus"
 	got, err := svc.ListSeries(ctx, series.ListFilter{Category: &bogus})
 	if !errors.Is(err, series.ErrInvalidCategory) {
@@ -189,7 +189,7 @@ func TestListSeriesPaginates(t *testing.T) {
 	ctx := context.Background()
 	seedLibrary(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 
 	page1, err := svc.ListSeries(ctx, series.ListFilter{Limit: 1, Offset: 0})
 	if err != nil {
@@ -216,7 +216,7 @@ func TestGetSeriesReturnsDetail(t *testing.T) {
 	ctx := context.Background()
 	lib := seedLibrary(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 	got, err := svc.GetSeries(ctx, lib.manhwaID)
 	if err != nil {
 		t.Fatalf("GetSeries: %v", err)
@@ -288,7 +288,7 @@ func TestGetSeriesChapterNameFromBestProvider(t *testing.T) {
 	client.ProviderChapter.Create().
 		SetSeriesProviderID(high.ID).SetChapterKey("tc-2").SetName("").SaveX(ctx)
 
-	svc := series.NewService(client, storage)
+	svc := series.NewService(client, storage, 14)
 	got, err := svc.GetSeries(ctx, sr.ID)
 	if err != nil {
 		t.Fatalf("GetSeries: %v", err)
@@ -314,7 +314,7 @@ func TestGetSeriesNotFound(t *testing.T) {
 	ctx := context.Background()
 	seedLibrary(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 	_, err := svc.GetSeries(ctx, uuid.New())
 	if !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("GetSeries(random): want ErrSeriesNotFound, got %v", err)
@@ -376,7 +376,7 @@ func TestSetCategoryMovesDiskAndUpdatesDB(t *testing.T) {
 
 	cbzBytes := seedSeriesDir(t, storage, string(entseries.CategoryOther), title)
 
-	svc := series.NewService(client, storage)
+	svc := series.NewService(client, storage, 14)
 	if err := svc.SetCategory(ctx, row.ID, "Manhwa"); err != nil {
 		t.Fatalf("SetCategory: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestSetCategorySameCategoryNoOp(t *testing.T) {
 		SaveX(ctx)
 	seedSeriesDir(t, storage, string(entseries.CategoryManhwa), title)
 
-	svc := series.NewService(client, storage)
+	svc := series.NewService(client, storage, 14)
 	if err := svc.SetCategory(ctx, row.ID, "Manhwa"); err != nil {
 		t.Fatalf("SetCategory(same): %v", err)
 	}
@@ -458,7 +458,7 @@ func TestSetCategoryInvalidCategory(t *testing.T) {
 		SaveX(ctx)
 	seedSeriesDir(t, storage, string(entseries.CategoryOther), title)
 
-	svc := series.NewService(client, storage)
+	svc := series.NewService(client, storage, 14)
 	err := svc.SetCategory(ctx, row.ID, "Bogus")
 	if !errors.Is(err, series.ErrInvalidCategory) {
 		t.Fatalf("SetCategory(Bogus): want ErrInvalidCategory, got %v", err)
@@ -486,7 +486,7 @@ func TestSetCategoryNoDiskFolderUpdatesDBOnly(t *testing.T) {
 		SetCategory(entseries.CategoryOther).
 		SaveX(ctx)
 
-	svc := series.NewService(client, storage)
+	svc := series.NewService(client, storage, 14)
 	if err := svc.SetCategory(ctx, row.ID, "Manhua"); err != nil {
 		t.Fatalf("SetCategory(no folder): %v", err)
 	}
@@ -521,7 +521,7 @@ func TestMonitoredDefaultsTrue(t *testing.T) {
 		SetImportance(10).
 		SaveX(ctx)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 
 	detail, err := svc.GetSeries(ctx, sr.ID)
 	if err != nil {
@@ -562,7 +562,7 @@ func TestMonitoredToggle(t *testing.T) {
 		SetCategory(entseries.CategoryManga).
 		SaveX(ctx)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 
 	client.Series.UpdateOneID(sr.ID).SetMonitored(false).ExecX(ctx)
 
@@ -591,7 +591,7 @@ func TestSetCategoryNotFound(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 	err := svc.SetCategory(ctx, uuid.New(), "Manga")
 	if !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("SetCategory(random): want ErrSeriesNotFound, got %v", err)
@@ -610,7 +610,7 @@ func TestSetMonitoredFlipsField(t *testing.T) {
 		SetCategory(entseries.CategoryManga).
 		SaveX(ctx)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 
 	// Default is true; flip to false.
 	if err := svc.SetMonitored(ctx, sr.ID, false); err != nil {
@@ -644,7 +644,7 @@ func TestSetMonitoredNotFound(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 	err := svc.SetMonitored(ctx, uuid.New(), false)
 	if !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("SetMonitored(random): want ErrSeriesNotFound, got %v", err)
@@ -715,7 +715,7 @@ func TestReorderProvidersUpdatesImportances(t *testing.T) {
 	ctx := context.Background()
 	seed := seedProviders(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 
 	ranks := []series.ProviderRank{
 		{SeriesProviderID: seed.providerAID, Importance: 20},
@@ -747,7 +747,7 @@ func TestReorderProvidersNotFound(t *testing.T) {
 	ctx := context.Background()
 	seed := seedProviders(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 
 	ranks := []series.ProviderRank{
 		{SeriesProviderID: seed.providerAID, Importance: 99},
@@ -767,7 +767,7 @@ func TestReorderProvidersForeignProviderAllOrNothing(t *testing.T) {
 	ctx := context.Background()
 	seed := seedProviders(ctx, t, client)
 
-	svc := series.NewService(client, t.TempDir())
+	svc := series.NewService(client, t.TempDir(), 14)
 
 	// providerA is valid; foreignProviderID belongs to a different series — bad.
 	ranks := []series.ProviderRank{
@@ -817,7 +817,7 @@ func seedTwoProviderSeries(t *testing.T, ctx context.Context, db *ent.Client) (s
 func TestRemoveProvider_KeepsChaptersAndSibling(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	svc := series.NewService(db, t.TempDir())
+	svc := series.NewService(db, t.TempDir(), 14)
 	sid, aID, bID := seedTwoProviderSeries(t, ctx, db)
 
 	if err := svc.RemoveProvider(ctx, sid, aID); err != nil {
@@ -853,7 +853,7 @@ func TestRemoveProvider_KeepsChaptersAndSibling(t *testing.T) {
 func TestRemoveProvider_LastSourceLeavesZeroProviderSeries(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	svc := series.NewService(db, t.TempDir())
+	svc := series.NewService(db, t.TempDir(), 14)
 	s := db.Series.Create().SetTitle("Solo").SetSlug("solo").SetMonitored(true).SaveX(ctx)
 	p := db.SeriesProvider.Create().SetSeries(s).SetProvider("only").SetSuwayomiID(9).SetImportance(10).SaveX(ctx)
 
@@ -877,7 +877,7 @@ func TestRemoveProvider_LastSourceLeavesZeroProviderSeries(t *testing.T) {
 func TestRemoveProvider_ProviderNotInSeries(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	svc := series.NewService(db, t.TempDir())
+	svc := series.NewService(db, t.TempDir(), 14)
 	s1 := db.Series.Create().SetTitle("One").SetSlug("one").SaveX(ctx)
 	s2 := db.Series.Create().SetTitle("Two").SetSlug("two").SaveX(ctx)
 	pOther := db.SeriesProvider.Create().SetSeries(s2).SetProvider("x").SetImportance(10).SaveX(ctx)
@@ -895,7 +895,7 @@ func TestRemoveProvider_ProviderNotInSeries(t *testing.T) {
 func TestRemoveProvider_UnknownSeries(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	svc := series.NewService(db, t.TempDir())
+	svc := series.NewService(db, t.TempDir(), 14)
 	if err := svc.RemoveProvider(ctx, uuid.New(), uuid.New()); !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("err = %v, want ErrSeriesNotFound", err)
 	}
@@ -918,7 +918,7 @@ func TestCategoriesReturnsAllEnumValuesWithCounts(t *testing.T) {
 		SetCategory(entseries.CategoryOther).SaveX(ctx)
 	seedSeriesDir(t, storage, string(entseries.CategoryOther), "Solo Leveling")
 
-	svc := series.NewService(client, storage)
+	svc := series.NewService(client, storage, 14)
 	if err := svc.SetCategory(ctx, other.ID, "Manhwa"); err != nil {
 		t.Fatalf("SetCategory: %v", err)
 	}

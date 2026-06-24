@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
+	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -254,5 +255,54 @@ func TestRefreshAll_EmitsSSEEvents(t *testing.T) {
 	doneEv := readEvent("refresh.done")
 	if doneEv.Type != "refresh.done" {
 		t.Errorf("second event type = %q, want %q", doneEv.Type, "refresh.done")
+	}
+}
+
+func TestRefreshAll_PersistsSyncStateOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
+		42: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}},
+	}}
+	_, sp := seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
+
+	// No sync-state row should exist before the sweep.
+	if n := db.SuwayomiSyncState.Query().CountX(ctx); n != 0 {
+		t.Fatalf("pre-sweep sync states = %d, want 0", n)
+	}
+
+	svc := newSvc(t, db, fc)
+	if _, err := svc.RefreshAll(ctx); err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+
+	st := db.SuwayomiSyncState.Query().
+		Where(suwayomisyncstate.SeriesProviderID(sp.ID)).OnlyX(ctx)
+	if st.LastSyncedAt == nil {
+		t.Error("LastSyncedAt = nil, want set after a successful refresh")
+	}
+	if st.LastError != "" {
+		t.Errorf("LastError = %q, want empty after success", st.LastError)
+	}
+}
+
+func TestRefreshAll_PersistsSyncStateOnFailure(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	fc := &fakeClient{
+		chaptersByManga: map[int][]suwayomi.Chapter{},
+		failManga:       map[int]bool{42: true},
+	}
+	_, sp := seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
+
+	svc := newSvc(t, db, fc)
+	if _, err := svc.RefreshAll(ctx); err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+
+	st := db.SuwayomiSyncState.Query().
+		Where(suwayomisyncstate.SeriesProviderID(sp.ID)).OnlyX(ctx)
+	if st.LastError == "" {
+		t.Error("LastError = empty, want a recorded error after a failed refresh")
 	}
 }

@@ -316,6 +316,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library source-health scan
+         * @description Returns every series that has at least one stale or erroring source.
+         */
+        get: operations["getLibraryHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -417,6 +437,25 @@ export interface components {
             language: string;
             /** @description Priority/quality rank — higher is preferred. */
             importance: number;
+            /**
+             * @description Computed source health within this series.
+             * @enum {string}
+             */
+            health: "ok" | "stale" | "erroring";
+            /** @description How many of the series' chapters this source lacks (informational). */
+            chaptersBehind: number;
+            /**
+             * Format: date-time
+             * @description Newest chapter upload date this source carries (null if unknown).
+             */
+            newestChapterAt?: string | null;
+            /**
+             * Format: date-time
+             * @description When a refresh last successfully fetched this source (null if never).
+             */
+            lastSyncedAt?: string | null;
+            /** @description Last refresh error for this source (empty if none). */
+            lastError: string;
         };
         SeriesDetail: {
             /**
@@ -535,6 +574,16 @@ export interface components {
             category?: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
             /** @description Ordered list of (source, manga) pairs to adopt; must have at least one entry. */
             providers: components["schemas"]["AdoptProvider"][];
+        };
+        LibraryHealth: {
+            series: components["schemas"]["SeriesHealth"][];
+        };
+        SeriesHealth: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            slug: string;
+            sources: components["schemas"]["Provider"][];
         };
     };
     responses: never;
@@ -1163,6 +1212,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getLibraryHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sick series and their sick sources. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryHealth"];
                 };
             };
             /** @description Missing or invalid Bearer token. */

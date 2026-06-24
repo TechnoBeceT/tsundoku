@@ -35,6 +35,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/refresh"
+	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -126,8 +127,14 @@ func main() {
 			"download_interval", cfg.Jobs.DownloadInterval,
 			"refresh_interval", cfg.Jobs.RefreshInterval,
 		)
+		// healthSvc is a stateless series.Service instance used only to
+		// supply the UnhealthyCount function to StartRefresh. A second
+		// stateless instance is safe — it shares no mutable state with the
+		// one constructed by registerRoutes; this follows the M5 precedent
+		// for a second suwayomi.NewIngest.
+		healthSvc := series.NewService(entClient, cfg.Storage.Folder, cfg.Health.StaleGraceDays)
 		runner.Start(ctx, cfg.Jobs.DownloadInterval)
-		runner.StartRefresh(ctx, cfg.Jobs.RefreshInterval, refreshSvc)
+		runner.StartRefresh(ctx, cfg.Jobs.RefreshInterval, refreshSvc, healthSvc.UnhealthyCount)
 	}()
 
 	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, runner.Trigger)

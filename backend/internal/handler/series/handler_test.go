@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -49,7 +50,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	client := testdb.New(t)
 	storage := t.TempDir()
 	authSvc := auth.NewService(testSecret)
-	svc := seriessvc.NewService(client, storage)
+	svc := seriessvc.NewService(client, storage, 14)
 	triggered := new(int)
 	h := handler.NewHandler(svc, func() { *triggered++ })
 
@@ -63,6 +64,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/series/:id/providers", h.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", h.RemoveProvider)
 	authed.GET("/categories", h.Categories)
+	authed.GET("/health", h.LibraryHealth)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -340,6 +342,7 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPatch, "/api/series/" + id + "/providers"},
 		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
 		{http.MethodGet, "/api/categories"},
+		{http.MethodGet, "/api/health"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {
@@ -597,5 +600,67 @@ func TestReorderProviders_TriggersConvergeOnSuccess(t *testing.T) {
 	}
 	if *env.triggered != 0 {
 		t.Errorf("trigger fired %d times on failure, want 0", *env.triggered)
+	}
+}
+
+// TestLibraryHealthEndpoint seeds a 2-source series where one source is stale
+// (last chapter > staleGraceDays old) and asserts GET /api/health returns 200
+// with that series listed with its one stale source.
+func TestLibraryHealthEndpoint(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	// Seed a 2-source series with a stale source via the ent client directly.
+	old := time.Now().UTC().AddDate(0, 0, -40)
+	recent := time.Now().UTC().AddDate(0, 0, -1)
+	s := env.client.Series.Create().SetTitle("Sick").SetSlug("sick").SetCategory(entseries.CategoryManga).SaveX(ctx)
+	a := env.client.SeriesProvider.Create().SetSeriesID(s.ID).SetProvider("a").SetImportance(20).SaveX(ctx)
+	b := env.client.SeriesProvider.Create().SetSeriesID(s.ID).SetProvider("b").SetImportance(10).SaveX(ctx)
+	for _, k := range []struct {
+		key string
+		n   float64
+	}{{"c1", 1}, {"c2", 2}} {
+		env.client.Chapter.Create().SetSeriesID(s.ID).SetChapterKey(k.key).SetNumber(k.n).SetState("downloaded").SaveX(ctx)
+		env.client.ProviderChapter.Create().SetSeriesProviderID(a.ID).SetChapterKey(k.key).SetNumber(k.n).SetProviderUploadDate(recent).SaveX(ctx)
+	}
+	env.client.ProviderChapter.Create().SetSeriesProviderID(b.ID).SetChapterKey("c1").SetNumber(1).SetProviderUploadDate(old).SaveX(ctx)
+
+	rec := env.do(http.MethodGet, "/api/health", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/health = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Series []struct {
+			ID      string `json:"id"`
+			Sources []struct {
+				Health string `json:"health"`
+			} `json:"sources"`
+		} `json:"series"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(body.Series) != 1 || len(body.Series[0].Sources) != 1 || body.Series[0].Sources[0].Health != "stale" {
+		t.Fatalf("body = %+v, want one series with one stale source", body)
+	}
+}
+
+// TestLibraryHealth_EmptyLibrary asserts GET /api/health on an empty library
+// returns 200 with {"series":[]} (a non-null empty array, not null — see §series).
+func TestLibraryHealth_EmptyLibrary(t *testing.T) {
+	env := newTestEnv(t)
+
+	rec := env.do(http.MethodGet, "/api/health", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/health empty = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body seriessvc.LibraryHealthDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Series == nil {
+		t.Fatal("empty library: Series must be a non-nil slice (not null in JSON), got nil")
+	}
+	if len(body.Series) != 0 {
+		t.Fatalf("empty library: want 0 series, got %d", len(body.Series))
 	}
 }
