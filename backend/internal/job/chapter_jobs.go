@@ -33,6 +33,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -54,13 +55,18 @@ type CycleEvent struct {
 	Error string `json:"error,omitempty"`
 }
 
-// Runner orchestrates the chapter download/upgrade cycle and the on-demand disk
-// reconciler. Create one with NewRunner.
+// Runner orchestrates the chapter download/upgrade cycle, the discovery refresh
+// sweep, and the on-demand disk reconciler. Create one with NewRunner.
 type Runner struct {
 	dispatcher *download.Dispatcher
 	client     *ent.Client
 	hub        *sse.Hub
 	storage    string
+	// trigger requests an immediate download cycle. Buffered (cap 1) so a
+	// request coalesces: if one is already pending, further Trigger() calls are
+	// dropped. Drained only by the Start loop, so all cycles run in one
+	// goroutine and never overlap.
+	trigger chan struct{}
 }
 
 // NewRunner creates a Runner that delegates to the given Dispatcher (which
@@ -79,6 +85,7 @@ func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub
 		client:     client,
 		hub:        hub,
 		storage:    storage,
+		trigger:    make(chan struct{}, 1),
 	}
 }
 
@@ -181,6 +188,55 @@ func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 						"err", err,
 					)
 				}
+			case <-r.trigger:
+				if err := r.RunDownloadCycle(ctx); err != nil {
+					slog.ErrorContext(ctx, "job.Runner: triggered download cycle error",
+						"err", err,
+					)
+				}
+			}
+		}
+	}()
+}
+
+// Trigger requests an immediate download cycle from the Start loop. It is
+// non-blocking and coalescing: if a cycle is already pending, the request is
+// dropped (the pending cycle will reflect current DB state). Safe to call from
+// any goroutine — e.g. the Adopt / ReorderProviders handlers (M5 auto-converge)
+// and the refresh ticker after a discovery sweep.
+func (r *Runner) Trigger() {
+	select {
+	case r.trigger <- struct{}{}:
+	default:
+	}
+}
+
+// StartRefresh launches a background goroutine that runs the discovery sweep
+// (svc.RefreshAll) every interval until ctx is cancelled, then Triggers a
+// download cycle so newly-discovered chapters download promptly instead of
+// waiting for the download ticker. Sweep errors are logged and never stop the
+// ticker. Returns immediately.
+func (r *Runner) StartRefresh(ctx context.Context, interval time.Duration, svc *refresh.Service) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				slog.InfoContext(ctx, "job.Runner: refresh ticker stopped (context cancelled)")
+				return
+			case <-ticker.C:
+				res, err := svc.RefreshAll(ctx)
+				if err != nil {
+					slog.ErrorContext(ctx, "job.Runner: refresh sweep error", "err", err)
+					continue
+				}
+				slog.InfoContext(ctx, "job.Runner: refresh sweep finished",
+					"series", res.SeriesRefreshed,
+					"new_chapters", res.NewChapters,
+					"errors", res.Errors,
+				)
+				r.Trigger()
 			}
 		}
 	}()
