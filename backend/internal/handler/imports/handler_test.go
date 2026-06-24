@@ -525,12 +525,17 @@ func TestAdopt_NegativeImportance_400(t *testing.T) {
 	}
 }
 
-func TestAdopt_DuplicateProvider_400(t *testing.T) {
+// TestAdopt_DuplicateSource_400 verifies that two providers sharing the same
+// source — even with different mangaIds — are rejected with 400. A series may
+// carry at most one SeriesProvider per source; allowing two would silently
+// collapse them onto a single row (last-write wins on suwayomi_id / importance).
+func TestAdopt_DuplicateSource_400(t *testing.T) {
 	env := newTestEnv(t, &fakeClient{})
-	body := `{"title":"Test","providers":[{"source":"a","mangaId":1,"importance":1},{"source":"a","mangaId":1,"importance":2}]}`
+	// Same source, different mangaIds — the tighter check must catch this.
+	body := `{"title":"Test","providers":[{"source":"a","mangaId":1,"importance":1},{"source":"a","mangaId":2,"importance":2}]}`
 	rec := env.do(http.MethodPost, "/api/series", body)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("Adopt duplicate provider: want 400, got %d", rec.Code)
+		t.Fatalf("Adopt duplicate source (different mangaId): want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 

@@ -82,7 +82,9 @@ func parseMangaID(raw string) (int, error) {
 //   - title must be non-blank.
 //   - providers must have >= 1 entry.
 //   - each provider's importance must be >= 0.
-//   - each (source, mangaId) pair must be distinct (no duplicates).
+//   - each source must be distinct across providers (a series may carry at most
+//     one provider per source; duplicate sources — even with different mangaIds —
+//     would silently collapse onto a single SeriesProvider row).
 //   - category, if non-empty, must be a legal enum value.
 func validateAdoptBody(req adoptRequestBody) error {
 	if strings.TrimSpace(req.Title) == "" {
@@ -91,16 +93,15 @@ func validateAdoptBody(req adoptRequestBody) error {
 	if len(req.Providers) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "providers must have at least one entry")
 	}
-	seen := make(map[string]bool, len(req.Providers))
+	seenSource := make(map[string]bool, len(req.Providers))
 	for _, p := range req.Providers {
 		if p.Importance < 0 {
 			return echo.NewHTTPError(http.StatusBadRequest, "provider importance must be >= 0")
 		}
-		key := p.Source + ":" + strconv.Itoa(p.MangaID)
-		if seen[key] {
-			return echo.NewHTTPError(http.StatusBadRequest, "duplicate (source, mangaId) pair in providers")
+		if seenSource[p.Source] {
+			return echo.NewHTTPError(http.StatusBadRequest, "duplicate source in providers: each source may appear at most once")
 		}
-		seen[key] = true
+		seenSource[p.Source] = true
 	}
 	if req.Category != "" {
 		if err := entseries.CategoryValidator(entseries.Category(req.Category)); err != nil {
