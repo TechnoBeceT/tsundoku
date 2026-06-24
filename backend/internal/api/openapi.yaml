@@ -167,6 +167,9 @@ components:
         - scanlator
         - language
         - importance
+        - health
+        - chaptersBehind
+        - lastError
       properties:
         provider:
           type: string
@@ -180,6 +183,26 @@ components:
         importance:
           type: integer
           description: Priority/quality rank — higher is preferred.
+        health:
+          type: string
+          enum: [ok, stale, erroring]
+          description: Computed source health within this series.
+        chaptersBehind:
+          type: integer
+          description: How many of the series' chapters this source lacks (informational).
+        newestChapterAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Newest chapter upload date this source carries (null if unknown).
+        lastSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a refresh last successfully fetched this source (null if never).
+        lastError:
+          type: string
+          description: Last refresh error for this source (empty if none).
 
     SeriesDetail:
       type: object
@@ -397,6 +420,31 @@ components:
           minItems: 1
           items:
             $ref: "#/components/schemas/AdoptProvider"
+
+    LibraryHealth:
+      type: object
+      required: [series]
+      properties:
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeriesHealth"
+
+    SeriesHealth:
+      type: object
+      required: [id, title, slug, sources]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        slug:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/Provider"
 
 paths:
   /health:
@@ -1005,6 +1053,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/health:
+    get:
+      operationId: getLibraryHealth
+      summary: Library source-health scan
+      description: Returns every series that has at least one stale or erroring source.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The sick series and their sick sources.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryHealth"
         "401":
           description: Missing or invalid Bearer token.
           content:

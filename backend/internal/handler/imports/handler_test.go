@@ -120,7 +120,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 
 	ingest := suwayomi.NewIngest(fc, db)
 	importsSvc := imports.NewService(fc, ingest, db, "")
-	seriesSvc := seriessvc.NewService(db, "")
+	seriesSvc := seriessvc.NewService(db, "", 14)
 
 	triggered := new(int)
 	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ })

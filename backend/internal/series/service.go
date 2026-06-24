@@ -386,7 +386,7 @@ func (s *Service) LibraryHealth(ctx context.Context) (LibraryHealthDTO, error) {
 		return LibraryHealthDTO{}, err
 	}
 	now := time.Now().UTC()
-	out := LibraryHealthDTO{}
+	out := LibraryHealthDTO{Series: []SeriesHealthDTO{}}
 	for _, row := range rows {
 		if sick := s.sickSources(row, now); len(sick) > 0 {
 			out.Series = append(out.Series, SeriesHealthDTO{

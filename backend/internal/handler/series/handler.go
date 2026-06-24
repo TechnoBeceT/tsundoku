@@ -231,6 +231,16 @@ func (h *Handler) RemoveProvider(c echo.Context) error {
 	return c.JSON(http.StatusOK, updated)
 }
 
+// LibraryHealth handles GET /api/health — the library-wide source-health scan:
+// every series with at least one stale or erroring source.
+func (h *Handler) LibraryHealth(c echo.Context) error {
+	res, err := h.svc.LibraryHealth(c.Request().Context())
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, res)
+}
+
 // mapServiceError translates a series.Service sentinel error into the matching
 // HTTP status, leaving any unexpected error to fall through to the central
 // middleware as a 500. ErrSeriesNotFound → 404; ErrInvalidCategory → 400;

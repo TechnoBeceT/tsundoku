@@ -35,6 +35,7 @@ import (
 //   - /api/series/:id/providers                    — re-rank provider importances (RequireOwner).
 //   - /api/series/:id/providers/:providerId        — remove a source (RequireOwner).
 //   - /api/categories                              — per-category counts (RequireOwner).
+//   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
 func registerRoutes(
@@ -73,6 +74,7 @@ func registerRoutes(
 	authed.PATCH("/series/:id/providers", seriesH.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", seriesH.RemoveProvider)
 	authed.GET("/categories", seriesH.Categories)
+	authed.GET("/health", seriesH.LibraryHealth)
 
 	// Imports (discovery + adoption) API. The ingest is built here so it shares
 	// the same Ent client as the rest of the application; a single suwayomiClient
