@@ -214,9 +214,13 @@ func (r *Runner) Trigger() {
 // StartRefresh launches a background goroutine that runs the discovery sweep
 // (svc.RefreshAll) every interval until ctx is cancelled, then Triggers a
 // download cycle so newly-discovered chapters download promptly instead of
-// waiting for the download ticker. Sweep errors are logged and never stop the
-// ticker. Returns immediately.
-func (r *Runner) StartRefresh(ctx context.Context, interval time.Duration, svc *refresh.Service) {
+// waiting for the download ticker. After each successful sweep it calls
+// healthCount to get the current number of unhealthy sources and broadcasts a
+// health.summary SSE event so UI badges stay current without a manual refresh.
+// If healthCount returns an error the broadcast is skipped for that cycle
+// (the error is logged). Sweep errors are logged and never stop the ticker.
+// Returns immediately.
+func (r *Runner) StartRefresh(ctx context.Context, interval time.Duration, svc *refresh.Service, healthCount func(context.Context) (int, error)) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -237,9 +241,27 @@ func (r *Runner) StartRefresh(ctx context.Context, interval time.Duration, svc *
 					"errors", res.Errors,
 				)
 				r.Trigger()
+				if n, err := healthCount(ctx); err != nil {
+					slog.ErrorContext(ctx, "refresh: health summary count failed", "err", err)
+				} else {
+					r.broadcastHealthSummary(n)
+				}
 			}
 		}
 	}()
+}
+
+// broadcastHealthSummary emits a health.summary SSE event with the count of
+// series that have at least one stale or erroring source.
+func (r *Runner) broadcastHealthSummary(unhealthy int) {
+	raw, err := json.Marshal(struct {
+		Unhealthy int `json:"unhealthy"`
+	}{Unhealthy: unhealthy})
+	if err != nil {
+		// Defensive path: a single int field cannot fail to marshal.
+		return
+	}
+	r.hub.Broadcast(sse.Event{Type: "health.summary", Data: json.RawMessage(raw)})
 }
 
 // Reconcile wraps disk.Reconcile: it scans the storage root and idempotently

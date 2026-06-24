@@ -4,6 +4,7 @@ package job_test
 
 import (
 	"context"
+	"encoding/json"
 	"runtime"
 	"testing"
 	"time"
@@ -318,8 +319,10 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, MaxRetries: 3, Storage: storage})
 	r := job.NewRunner(d, client, hub, storage)
 
-	r.Start(ctx, time.Hour)                               // download loop (trigger-driven here)
-	r.StartRefresh(ctx, 100*time.Millisecond, refreshSvc) // fast refresh tick for the test
+	r.Start(ctx, time.Hour) // download loop (trigger-driven here)
+	// fast refresh tick for the test; healthCount is a no-op stub.
+	r.StartRefresh(ctx, 100*time.Millisecond, refreshSvc,
+		func(context.Context) (int, error) { return 0, nil })
 
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -331,6 +334,54 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 			t.Fatal("refresh tick did not discover + download the chapter within 15s")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestStartRefresh_BroadcastsHealthSummary verifies that StartRefresh emits a
+// health.summary SSE event after each sweep, with the payload produced by the
+// supplied healthCount function.
+func TestStartRefresh_BroadcastsHealthSummary(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+	events, unsub := hub.Subscribe()
+	defer unsub()
+
+	fc := fakeSuwayomi{}
+	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, 2)
+
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, MaxRetries: 3, Storage: storage})
+	r := job.NewRunner(d, client, hub, storage)
+
+	// Stub the unhealthy count so the assertion is deterministic.
+	healthCount := func(context.Context) (int, error) { return 3, nil }
+
+	r.StartRefresh(ctx, 50*time.Millisecond, refreshSvc, healthCount)
+
+	// Drain events until health.summary (skipping refresh.start/done/cycle.*).
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == "health.summary" {
+				raw, _ := ev.Data.(json.RawMessage)
+				var p struct {
+					Unhealthy int `json:"unhealthy"`
+				}
+				if err := json.Unmarshal([]byte(raw), &p); err != nil {
+					t.Fatalf("unmarshal health.summary: %v", err)
+				}
+				if p.Unhealthy != 3 {
+					t.Fatalf("health.summary unhealthy = %d, want 3", p.Unhealthy)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for health.summary")
+		}
 	}
 }
 
