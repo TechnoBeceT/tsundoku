@@ -16,11 +16,14 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	entsuwayomisyncstate "github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -71,12 +74,13 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 
 	s.broadcast("refresh.start", RefreshEvent{Monitored: len(seriesList)})
 
-	// Build a flat work list of (series title, provider, manga id) tuples,
-	// skipping providers whose suwayomi_id is unknown (0 — cannot fetch).
+	// Build a flat work list of (series title, provider, manga id, provider id)
+	// tuples, skipping providers whose suwayomi_id is unknown (0 — cannot fetch).
 	type item struct {
-		title    string
-		provider string
-		mangaID  int
+		title      string
+		provider   string
+		mangaID    int
+		providerID uuid.UUID
 	}
 	var items []item
 	for _, sr := range seriesList {
@@ -86,7 +90,7 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 					"series", sr.Title, "provider", p.Provider)
 				continue
 			}
-			items = append(items, item{title: sr.Title, provider: p.Provider, mangaID: p.SuwayomiID})
+			items = append(items, item{title: sr.Title, provider: p.Provider, mangaID: p.SuwayomiID, providerID: p.ID})
 		}
 	}
 
@@ -98,6 +102,13 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	for _, it := range items {
 		g.Go(func() error {
 			res, addErr := s.ingest.AddSeries(gctx, it.provider, it.mangaID, it.title)
+
+			// Persist polling health; upsertSyncState skips on ctx-cancel.
+			if uerr := s.upsertSyncState(gctx, it.providerID, addErr); uerr != nil {
+				slog.ErrorContext(gctx, "refresh: persist sync state failed",
+					"series", it.title, "provider", it.provider, "err", uerr)
+			}
+
 			mu.Lock()
 			defer mu.Unlock()
 			if addErr != nil {
@@ -129,4 +140,39 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 		Errors:             result.Errors,
 	})
 	return result, nil
+}
+
+// upsertSyncState records the outcome of refreshing one provider into its
+// SuwayomiSyncState row, creating the row the first time. A nil syncErr means
+// success (stamp last_synced_at, clear last_error); a non-nil syncErr records
+// last_error. Context cancellation / deadline exceeded is silently skipped
+// (clean shutdown, not a bookkeeping event). It never deletes anything.
+func (s *Service) upsertSyncState(ctx context.Context, providerID uuid.UUID, syncErr error) error {
+	// Skip on clean cancellation — this is shutdown, not a real fetch failure.
+	if errors.Is(syncErr, context.Canceled) || errors.Is(syncErr, context.DeadlineExceeded) {
+		return nil
+	}
+	now := time.Now().UTC()
+	existing, err := s.client.SuwayomiSyncState.Query().
+		Where(entsuwayomisyncstate.SeriesProviderID(providerID)).
+		Only(ctx)
+	if ent.IsNotFound(err) {
+		c := s.client.SuwayomiSyncState.Create().SetSeriesProviderID(providerID)
+		if syncErr == nil {
+			c = c.SetLastSyncedAt(now)
+		} else {
+			c = c.SetLastError(syncErr.Error())
+		}
+		return c.Exec(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("refresh.upsertSyncState: query %s: %w", providerID, err)
+	}
+	u := s.client.SuwayomiSyncState.UpdateOneID(existing.ID)
+	if syncErr == nil {
+		u = u.SetLastSyncedAt(now).SetLastError("")
+	} else {
+		u = u.SetLastError(syncErr.Error())
+	}
+	return u.Exec(ctx)
 }
