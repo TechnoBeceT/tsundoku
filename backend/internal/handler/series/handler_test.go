@@ -420,7 +420,7 @@ func firstProviderID(t *testing.T, env *testEnv, seriesID string) string {
 		t.Fatalf("firstProviderID: decode: %v", err)
 	}
 	if len(detail.Providers) == 0 {
-		t.Skip("no provider on series; nothing to re-rank")
+		t.Fatalf("firstProviderID: no provider seeded for manga series")
 	}
 	return detail.Providers[0].ID
 }
@@ -460,6 +460,16 @@ func TestReorderProviders_OK(t *testing.T) {
 		t.Fatalf("ReorderProviders: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	assertProviderImportance(t, rec.Body.Bytes(), provID, 5)
+
+	// DB round-trip: the importance must be persisted, not just echoed in the response.
+	provUUID, err := uuid.Parse(provID)
+	if err != nil {
+		t.Fatalf("ReorderProviders: parse provID: %v", err)
+	}
+	dbProv := env.client.SeriesProvider.GetX(ctx, provUUID)
+	if dbProv.Importance != 5 {
+		t.Fatalf("ReorderProviders: DB importance want 5, got %d", dbProv.Importance)
+	}
 }
 
 // TestReorderProviders_WrongSeries checks that supplying a provider id from
