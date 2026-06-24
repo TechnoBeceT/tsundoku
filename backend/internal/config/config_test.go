@@ -461,3 +461,35 @@ func TestJobsRefreshDefaults(t *testing.T) {
 		t.Errorf("Jobs.RefreshConcurrency default = %d, want 4", cfg.Jobs.RefreshConcurrency)
 	}
 }
+
+// TestLoadDefaultsHealthStaleGrace confirms that Load() applies the default
+// value (14) for Health.StaleGraceDays when TSUNDOKU_HEALTH_STALEGRACEDAYS
+// is not set.
+func TestLoadDefaultsHealthStaleGrace(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Health.StaleGraceDays != 14 {
+		t.Fatalf("Health.StaleGraceDays default = %d, want 14", cfg.Health.StaleGraceDays)
+	}
+}
+
+// TestLoadAppliesHealthEnvOverride confirms that TSUNDOKU_HEALTH_STALEGRACEDAYS
+// overrides the built-in default for Health.StaleGraceDays.
+func TestLoadAppliesHealthEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_HEALTH_STALEGRACEDAYS", "30")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Health.StaleGraceDays != 30 {
+		t.Fatalf("Health.StaleGraceDays env override = %d, want 30", cfg.Health.StaleGraceDays)
+	}
+}

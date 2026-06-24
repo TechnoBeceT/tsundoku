@@ -40,6 +40,8 @@ type Config struct {
 	Storage StorageConfig
 	// Jobs holds background-job scheduler settings.
 	Jobs JobsConfig
+	// Health holds M7 source-health computation settings.
+	Health HealthConfig
 }
 
 // AuthConfig holds HMAC signing settings for the single-owner auth layer.
@@ -163,6 +165,14 @@ type JobsConfig struct {
 	RefreshConcurrency int
 }
 
+// HealthConfig tunes the M7 source-health computation.
+type HealthConfig struct {
+	// StaleGraceDays is how old a source's newest chapter must be — on top of
+	// the source having fallen behind the series' leading edge — before it is
+	// reported "stale". Default 14. Set via TSUNDOKU_HEALTH_STALEGRACEDAYS.
+	StaleGraceDays int
+}
+
 // StorageConfig holds library-path settings.
 type StorageConfig struct {
 	// Folder is the absolute path to the manga library on disk where
@@ -196,7 +206,9 @@ func defaults() map[string]any {
 		"jobs.downloadinterval":   "15m",
 		"jobs.refreshinterval":    "2h",
 		"jobs.refreshconcurrency": 4,
-		"storage.folder":          "/data/manga",
+		// Health — M7 source-health computation.
+		"health.stalegracedays": 14,
+		"storage.folder":        "/data/manga",
 	}
 }
 
