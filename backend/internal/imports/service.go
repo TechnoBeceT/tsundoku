@@ -63,6 +63,35 @@ func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 	return out, nil
 }
 
+// searchOneSource performs a single-source search against the Suwayomi client
+// and maps the results to Candidates. A nil error and nil slice is returned
+// when the source fails — the caller logs the failure and skips the source so
+// that partial results from healthy sources still reach the user.
+func (s *Service) searchOneSource(ctx context.Context, src suwayomi.Source, query string) ([]Candidate, error) {
+	results, err := s.client.Search(ctx, src.ID, query)
+	if err != nil {
+		return nil, err
+	}
+
+	// Map Manga results to Candidates tagged with source metadata.
+	out := make([]Candidate, 0, len(results))
+	for _, m := range results {
+		thumb := ""
+		if m.ThumbnailURL != nil {
+			thumb = *m.ThumbnailURL
+		}
+		out = append(out, Candidate{
+			Source:       src.ID,
+			SourceName:   src.Name,
+			Lang:         src.Lang,
+			MangaID:      m.ID,
+			Title:        m.Title,
+			ThumbnailURL: thumb,
+		})
+	}
+	return out, nil
+}
+
 // Search fans out a query to all sources (or a subset when sourceIDs is
 // non-nil), collects Candidates in parallel with bounded concurrency, groups
 // them by title similarity, and returns []SearchGroupDTO.
@@ -95,28 +124,11 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 			}
 			defer func() { <-sem }()
 
-			results, err := s.client.Search(gctx, src.ID, query)
+			local, err := s.searchOneSource(gctx, src, query)
 			if err != nil {
 				slog.WarnContext(gctx, "imports: source search failed",
 					"source", src.ID, "source_name", src.Name, "err", err)
 				return nil // skip failing source; partial results are acceptable
-			}
-
-			// Map Manga results to Candidates tagged with source metadata.
-			local := make([]Candidate, 0, len(results))
-			for _, m := range results {
-				thumb := ""
-				if m.ThumbnailURL != nil {
-					thumb = *m.ThumbnailURL
-				}
-				local = append(local, Candidate{
-					Source:       src.ID,
-					SourceName:   src.Name,
-					Lang:         src.Lang,
-					MangaID:      m.ID,
-					Title:        m.Title,
-					ThumbnailURL: thumb,
-				})
 			}
 
 			mu.Lock()
