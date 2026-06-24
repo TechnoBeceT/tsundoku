@@ -163,8 +163,12 @@ func absorbProviderChapterRace(
 		Only(ctx)
 	if err != nil {
 		// Defensive path: the winner's row vanished between the constraint error
-		// and this re-fetch — not reachable under normal operation (rows are never
-		// deleted mid-ingest).
+		// and this re-fetch. Since M6, this is reachable in principle: a concurrent
+		// owner-initiated RemoveProvider (HTTP goroutine) can delete the
+		// ProviderChapter row after the ingest goroutine received the constraint
+		// error but before this re-fetch executes. The error is handled gracefully
+		// (returned to the caller, never panics). Tested by
+		// TestAbsorbProviderChapterRaceVanishedRow.
 		return fmt.Errorf("re-fetch after constraint race: %w", err)
 	}
 	if _, err := applyProviderChapterUpdate(ctx, client, existing.ID, fc); err != nil {
