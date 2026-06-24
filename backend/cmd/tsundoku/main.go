@@ -114,7 +114,7 @@ func main() {
 		runner.Start(ctx, cfg.Jobs.DownloadInterval)
 	}()
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 

@@ -14,14 +14,16 @@ import (
 // All business logic lives in imports.Service and series.Service; this handler
 // is thin — it binds, validates, calls the service, and renders the DTO.
 type Handler struct {
-	svc    *imports.Service
-	series *seriessvc.Service
+	svc     *imports.Service
+	series  *seriessvc.Service
+	trigger func()
 }
 
-// NewHandler constructs a Handler bound to an imports.Service and a
-// series.Service (needed to render SeriesDetailDTO after Adopt).
-func NewHandler(svc *imports.Service, series *seriessvc.Service) *Handler {
-	return &Handler{svc: svc, series: series}
+// NewHandler constructs a Handler bound to an imports.Service, a series.Service
+// (to render SeriesDetailDTO after Adopt), and an auto-converge trigger (called
+// after a successful adopt to kick an immediate download/upgrade cycle — M5).
+func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func()) *Handler {
+	return &Handler{svc: svc, series: series, trigger: trigger}
 }
 
 // Sources handles GET /api/sources.
@@ -122,5 +124,8 @@ func (h *Handler) Adopt(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// Auto-converge: kick an immediate download/upgrade cycle so the adopted
+	// series' backlog downloads now instead of at the next tick (M5).
+	h.trigger()
 	return c.JSON(http.StatusCreated, detail)
 }

@@ -30,12 +30,13 @@ const testSecret = "series-handler-test-secret"
 
 // testEnv bundles the wired Echo app, a valid owner token, and the seeded ids.
 type testEnv struct {
-	e        *echo.Echo
-	client   *ent.Client
-	token    string
-	storage  string
-	mangaID  uuid.UUID
-	manhwaID uuid.UUID
+	e         *echo.Echo
+	client    *ent.Client
+	token     string
+	storage   string
+	mangaID   uuid.UUID
+	manhwaID  uuid.UUID
+	triggered *int
 }
 
 // newTestEnv stands up a fully-wired Echo: the series routes registered behind
@@ -49,7 +50,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	storage := t.TempDir()
 	authSvc := auth.NewService(testSecret)
 	svc := seriessvc.NewService(client, storage)
-	h := handler.NewHandler(svc)
+	triggered := new(int)
+	h := handler.NewHandler(svc, func() { *triggered++ })
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -66,7 +68,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatalf("Issue token: %v", err)
 	}
 
-	return &testEnv{e: e, client: client, token: token, storage: storage}
+	return &testEnv{e: e, client: client, token: token, storage: storage, triggered: triggered}
 }
 
 // seed populates two series (Alpha Saga/Manga, Beta Quest/Manhwa) with chapters
@@ -507,5 +509,34 @@ func TestReorderProviders_NotFound(t *testing.T) {
 	rec := env.do(http.MethodPatch, "/api/series/"+uuid.New().String()+"/providers", body)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("ReorderProviders missing: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReorderProviders_TriggersConvergeOnSuccess asserts ReorderProviders fires
+// the auto-converge trigger exactly once on success and never on a failure path.
+func TestReorderProviders_TriggersConvergeOnSuccess(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	body := `{"providers":[{"id":"` + provID + `","importance":7}]}`
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/providers", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ReorderProviders trigger: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if *env.triggered != 1 {
+		t.Errorf("trigger fired %d times, want 1", *env.triggered)
+	}
+
+	// Failure path: invalid series id is rejected before the service runs.
+	*env.triggered = 0
+	rec = env.do(http.MethodPatch, "/api/series/not-a-uuid/providers", body)
+	if rec.Code == http.StatusOK {
+		t.Fatal("invalid-uuid series id must not succeed")
+	}
+	if *env.triggered != 0 {
+		t.Errorf("trigger fired %d times on failure, want 0", *env.triggered)
 	}
 }

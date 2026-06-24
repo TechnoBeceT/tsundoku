@@ -59,7 +59,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	// and ensure no test exercises a path that calls into the DB.
 	ownerH := owner.NewHandler(nil, authSvc)
 
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, func() {}), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path
