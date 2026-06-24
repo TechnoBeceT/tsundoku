@@ -203,6 +203,34 @@ func (h *Handler) ReorderProviders(c echo.Context) error {
 	return c.JSON(http.StatusOK, updated)
 }
 
+// RemoveProvider handles DELETE /api/series/:id/providers/:providerId. It
+// removes one source from the series (deleting the provider row + its
+// availability feed + sync state, clearing satisfied_by on affected chapters),
+// keeping every downloaded CBZ, and returns the updated series detail. It does
+// NOT trigger an auto-converge cycle — removal creates no wanted chapters (M6).
+func (h *Handler) RemoveProvider(c echo.Context) error {
+	id, err := validateID(c.Param("id"))
+	if err != nil {
+		return err
+	}
+	providerID, err := validateID(c.Param("providerId"))
+	if err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := h.svc.RemoveProvider(ctx, id, providerID); err != nil {
+		return mapServiceError(err)
+	}
+
+	// Return the updated detail so the caller sees the removal without a refetch (§16).
+	updated, err := h.svc.GetSeries(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
 // mapServiceError translates a series.Service sentinel error into the matching
 // HTTP status, leaving any unexpected error to fall through to the central
 // middleware as a 500. ErrSeriesNotFound → 404; ErrInvalidCategory → 400;
