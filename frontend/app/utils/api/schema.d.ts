@@ -206,6 +206,30 @@ export interface paths {
         patch: operations["reorderSeriesProviders"];
         trace?: never;
     };
+    "/api/series/{id}/providers/{providerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a source from a series
+         * @description Removes one source (provider) from a series: deletes the provider, its
+         *     chapter availability feed, and its sync state, and clears the
+         *     satisfied-by link on any chapters it had satisfied — while keeping every
+         *     downloaded CBZ on disk. Removing the last source leaves a zero-provider
+         *     series in place. Returns the updated series detail (§16).
+         */
+        delete: operations["removeSeriesProvider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/categories": {
         parameters: {
             query?: never;
@@ -925,6 +949,58 @@ export interface operations {
                 };
             };
             /** @description Malformed id, invalid provider UUID, empty list, or provider not in series. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    removeSeriesProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description SeriesProvider UUID to remove. */
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source removed. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed series or provider UUID, or provider not in series. */
             400: {
                 headers: {
                     [name: string]: unknown;

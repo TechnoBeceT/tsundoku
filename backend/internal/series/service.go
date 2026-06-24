@@ -11,8 +11,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	entsuwayomisyncstate "github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 )
 
 // ErrSeriesNotFound is returned by GetSeries when no series matches the given id.
@@ -127,6 +129,84 @@ func reorderProvidersInTx(ctx context.Context, tx *ent.Tx, id uuid.UUID, ranks [
 			// black-box test without tearing down the shared transaction.
 			return fmt.Errorf("series.ReorderProviders: update importance for provider %s: %w", r.SeriesProviderID, err)
 		}
+	}
+	return nil
+}
+
+// RemoveProvider removes one source (SeriesProvider) from a series in a single
+// all-or-nothing transaction: it clears the satisfied_by edge on any chapters
+// that source satisfied (keeping satisfied_importance as a quality watermark),
+// deletes the source's ProviderChapter availability feed and its
+// SuwayomiSyncState, then deletes the SeriesProvider row. It performs NO disk
+// I/O — every downloaded CBZ and every Chapter row is preserved (M6
+// keep-CBZs invariant). Removing the last source is allowed and leaves a
+// 0-provider series in place. Returns ErrSeriesNotFound if id is unknown, or
+// ErrProviderNotInSeries if providerID does not belong to the series.
+func (s *Service) RemoveProvider(ctx context.Context, id, providerID uuid.UUID) error {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("series.RemoveProvider: begin tx: %w", err)
+	}
+	if err := removeProviderInTx(ctx, tx, id, providerID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("series.RemoveProvider: commit tx: %w", err)
+	}
+	return nil
+}
+
+// removeProviderInTx performs the FK-safe ordered deletion. Order matters: the
+// SeriesProvider row can only be deleted after every row that references it
+// (ProviderChapter, SuwayomiSyncState) is gone and the Chapter.satisfied_by FK
+// pointing at it is cleared — there is no DB-level cascade (deliberately, since
+// a cascade would destroy downloaded Chapter rows).
+func removeProviderInTx(ctx context.Context, tx *ent.Tx, id, providerID uuid.UUID) error {
+	exists, err := tx.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return fmt.Errorf("series.RemoveProvider: check series %s: %w", id, err)
+	}
+	if !exists {
+		return ErrSeriesNotFound
+	}
+
+	owned, err := tx.SeriesProvider.Query().
+		Where(entseriesprovider.IDEQ(providerID), entseriesprovider.SeriesID(id)).
+		Exist(ctx)
+	if err != nil {
+		return fmt.Errorf("series.RemoveProvider: check provider %s: %w", providerID, err)
+	}
+	if !owned {
+		return ErrProviderNotInSeries
+	}
+
+	// 1. Clear satisfied_by on chapters this source satisfied — keep the
+	//    satisfied_importance watermark (do NOT call ClearSatisfiedImportance).
+	if err := tx.Chapter.Update().
+		Where(entchapter.SatisfiedByProviderID(providerID)).
+		ClearSatisfiedBy().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("series.RemoveProvider: clear satisfied_by for provider %s: %w", providerID, err)
+	}
+
+	// 2. Delete the source's availability feed.
+	if _, err := tx.ProviderChapter.Delete().
+		Where(entproviderchapter.SeriesProviderID(providerID)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("series.RemoveProvider: delete provider chapters for %s: %w", providerID, err)
+	}
+
+	// 3. Delete its sync state (0 or 1 row).
+	if _, err := tx.SuwayomiSyncState.Delete().
+		Where(entsuwayomisyncstate.SeriesProviderID(providerID)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("series.RemoveProvider: delete sync state for %s: %w", providerID, err)
+	}
+
+	// 4. Delete the source row itself.
+	if err := tx.SeriesProvider.DeleteOneID(providerID).Exec(ctx); err != nil {
+		return fmt.Errorf("series.RemoveProvider: delete provider %s: %w", providerID, err)
 	}
 	return nil
 }

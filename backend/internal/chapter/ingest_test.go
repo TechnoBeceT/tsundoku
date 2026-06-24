@@ -336,3 +336,35 @@ func TestAbsorbProviderChapterRace(t *testing.T) {
 		t.Errorf("ProviderIndex: want %d, got %d", newFC.ProviderIndex, got.ProviderIndex)
 	}
 }
+
+// TestAbsorbProviderChapterRaceVanishedRow exercises the "vanished row" branch of
+// absorbProviderChapterRace: if the ProviderChapter row disappears between the
+// constraint error and the re-fetch (possible since M6 introduced owner-initiated
+// deletion via series.RemoveProvider), the function must return a wrapped error
+// rather than panic.
+//
+// This is deterministically reachable without timing seams: calling
+// AbsorbProviderChapterRace with no pre-existing row for the given
+// (seriesProviderID, key) pair places us directly in the "winner vanished"
+// state — no goroutine scheduling is required.
+func TestAbsorbProviderChapterRaceVanishedRow(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	s := client.Series.Create().SetTitle("Vanished Row Test").SetSlug("vanished-row-test").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-vanished").SetImportance(1).SaveX(ctx)
+
+	// Call AbsorbProviderChapterRace for a key that has no pre-existing row.
+	// This simulates: ingest goroutine got a constraint error (the "winner"
+	// inserted the row), then RemoveProvider deleted that row before the re-fetch.
+	fc := chapter.FetchedChapter{
+		Number:        ptr(3.0),
+		Name:          "Chapter 3",
+		URL:           "https://example.com/ch3",
+		ProviderIndex: 0,
+	}
+	err := chapter.AbsorbProviderChapterRace(ctx, client, sp.ID, "3", fc)
+	if err == nil {
+		t.Fatal("expected an error when the ProviderChapter row does not exist, got nil")
+	}
+}

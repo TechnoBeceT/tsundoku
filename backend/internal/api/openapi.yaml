@@ -809,6 +809,61 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/series/{id}/providers/{providerId}:
+    delete:
+      operationId: removeSeriesProvider
+      summary: Remove a source from a series
+      description: |
+        Removes one source (provider) from a series: deletes the provider, its
+        chapter availability feed, and its sync state, and clears the
+        satisfied-by link on any chapters it had satisfied — while keeping every
+        downloaded CBZ on disk. Removing the last source leaves a zero-provider
+        series in place. Returns the updated series detail (§16).
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: providerId
+          in: path
+          required: true
+          description: SeriesProvider UUID to remove.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Source removed. Returns the updated series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Malformed series or provider UUID, or provider not in series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/categories:
     get:
       operationId: listCategories

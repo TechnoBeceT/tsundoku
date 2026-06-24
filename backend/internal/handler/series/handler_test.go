@@ -61,6 +61,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/series/:id/category", h.SetCategory)
 	authed.PATCH("/series/:id/monitored", h.SetMonitored)
 	authed.PATCH("/series/:id/providers", h.ReorderProviders)
+	authed.DELETE("/series/:id/providers/:providerId", h.RemoveProvider)
 	authed.GET("/categories", h.Categories)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -337,6 +338,7 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPatch, "/api/series/" + id + "/category"},
 		{http.MethodPatch, "/api/series/" + id + "/monitored"},
 		{http.MethodPatch, "/api/series/" + id + "/providers"},
+		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
 		{http.MethodGet, "/api/categories"},
 	}
 	for _, tc := range cases {
@@ -509,6 +511,63 @@ func TestReorderProviders_NotFound(t *testing.T) {
 	rec := env.do(http.MethodPatch, "/api/series/"+uuid.New().String()+"/providers", body)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("ReorderProviders missing: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRemoveProvider_OK removes a provider and asserts 200 + a SeriesDetail that
+// no longer lists it.
+func TestRemoveProvider_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	rec := env.do(http.MethodDelete, "/api/series/"+env.mangaID.String()+"/providers/"+provID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var detail seriessvc.SeriesDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, p := range detail.Providers {
+		if p.ID == provID {
+			t.Errorf("removed provider %s still present in detail", provID)
+		}
+	}
+}
+
+// TestRemoveProvider_RequiresOwner asserts the route is behind RequireOwner.
+func TestRemoveProvider_RequiresOwner(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	// env.do attaches the owner token; here we send WITHOUT it.
+	req := httptest.NewRequest(http.MethodDelete, "/api/series/"+env.mangaID.String()+"/providers/"+provID, nil)
+	rec := httptest.NewRecorder()
+	env.e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+// TestRemoveProvider_BadIDs asserts a malformed series id is a 400.
+func TestRemoveProvider_BadIDs(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodDelete, "/api/series/not-a-uuid/providers/"+uuid.NewString(), "")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// TestRemoveProvider_UnknownSeries asserts a 404 for a valid-but-missing series.
+func TestRemoveProvider_UnknownSeries(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodDelete, "/api/series/"+uuid.NewString()+"/providers/"+uuid.NewString(), "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}
 }
 

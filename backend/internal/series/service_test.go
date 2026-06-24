@@ -15,7 +15,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
@@ -786,6 +788,116 @@ func TestReorderProvidersForeignProviderAllOrNothing(t *testing.T) {
 		if p.Provider == "mangadex" && p.Importance != 5 {
 			t.Fatalf("ReorderProviders(all-or-nothing): mangadex importance changed to %d; want 5 (rolled back)", p.Importance)
 		}
+	}
+}
+
+// seedTwoProviderSeries creates a monitored series with two providers
+// A(importance 50) and B(importance 10). It gives A a ProviderChapter + a
+// SuwayomiSyncState, and a downloaded Chapter satisfied by A (importance 50,
+// with a filename so we can assert the row is preserved). Returns the series id
+// and both provider ids.
+func seedTwoProviderSeries(t *testing.T, ctx context.Context, db *ent.Client) (sid, aID, bID uuid.UUID) {
+	t.Helper()
+	s := db.Series.Create().SetTitle("Removal Series").SetSlug("removal-series").SetMonitored(true).SaveX(ctx)
+	a := db.SeriesProvider.Create().SetSeries(s).SetProvider("src-a").SetSuwayomiID(1).SetImportance(50).SaveX(ctx)
+	b := db.SeriesProvider.Create().SetSeries(s).SetProvider("src-b").SetSuwayomiID(2).SetImportance(10).SaveX(ctx)
+	db.ProviderChapter.Create().SetSeriesProviderID(a.ID).SetChapterKey("1").SetURL("u1").SetProviderIndex(0).SaveX(ctx)
+	db.SuwayomiSyncState.Create().SetSeriesProviderID(a.ID).SetState("ok").SaveX(ctx)
+	db.Chapter.Create().
+		SetSeries(s).SetChapterKey("1").SetState(entchapter.StateDownloaded).
+		SetSatisfiedByProviderID(a.ID).SetSatisfiedImportance(50).
+		SetFilename("[src-a][en] Removal Series 0001.cbz").SaveX(ctx)
+	return s.ID, a.ID, b.ID
+}
+
+// TestRemoveProvider_KeepsChaptersAndSibling removes provider A and asserts:
+// A's row + ProviderChapter + SuwayomiSyncState are gone; B survives; the
+// downloaded Chapter is UNTOUCHED except satisfied_by is now null while
+// satisfied_importance (50) is preserved.
+func TestRemoveProvider_KeepsChaptersAndSibling(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	svc := series.NewService(db, t.TempDir())
+	sid, aID, bID := seedTwoProviderSeries(t, ctx, db)
+
+	if err := svc.RemoveProvider(ctx, sid, aID); err != nil {
+		t.Fatalf("RemoveProvider: %v", err)
+	}
+
+	if n := db.SeriesProvider.Query().Where(entseriesprovider.IDEQ(aID)).CountX(ctx); n != 0 {
+		t.Errorf("provider A still present (%d), want 0", n)
+	}
+	if n := db.SeriesProvider.Query().Where(entseriesprovider.IDEQ(bID)).CountX(ctx); n != 1 {
+		t.Errorf("provider B count = %d, want 1 (sibling must survive)", n)
+	}
+	if n := db.ProviderChapter.Query().Where(entproviderchapter.SeriesProviderID(aID)).CountX(ctx); n != 0 {
+		t.Errorf("A's provider chapters still present (%d), want 0", n)
+	}
+	ch := db.Chapter.Query().Where(entchapter.ChapterKey("1")).OnlyX(ctx)
+	if ch.State != entchapter.StateDownloaded {
+		t.Errorf("chapter state = %s, want downloaded (must NOT be deleted/changed)", ch.State)
+	}
+	if ch.SatisfiedByProviderID != nil {
+		t.Errorf("satisfied_by_provider_id = %v, want nil (FK cleared)", ch.SatisfiedByProviderID)
+	}
+	if ch.SatisfiedImportance == nil || *ch.SatisfiedImportance != 50 {
+		t.Errorf("satisfied_importance = %v, want 50 (watermark preserved)", ch.SatisfiedImportance)
+	}
+	if ch.Filename == "" {
+		t.Error("chapter filename was cleared; the downloaded CBZ reference must survive")
+	}
+}
+
+// TestRemoveProvider_LastSourceLeavesZeroProviderSeries removes the only
+// provider and asserts the series row persists with zero providers.
+func TestRemoveProvider_LastSourceLeavesZeroProviderSeries(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	svc := series.NewService(db, t.TempDir())
+	s := db.Series.Create().SetTitle("Solo").SetSlug("solo").SetMonitored(true).SaveX(ctx)
+	p := db.SeriesProvider.Create().SetSeries(s).SetProvider("only").SetSuwayomiID(9).SetImportance(10).SaveX(ctx)
+
+	if err := svc.RemoveProvider(ctx, s.ID, p.ID); err != nil {
+		t.Fatalf("RemoveProvider: %v", err)
+	}
+	if n := db.Series.Query().Where(entseries.IDEQ(s.ID)).CountX(ctx); n != 1 {
+		t.Errorf("series count = %d, want 1 (must persist with 0 providers)", n)
+	}
+	if n := db.SeriesProvider.Query().CountX(ctx); n != 0 {
+		t.Errorf("provider count = %d, want 0", n)
+	}
+	// Detail must still read on a 0-provider series.
+	if _, err := svc.GetSeries(ctx, s.ID); err != nil {
+		t.Errorf("GetSeries on 0-provider series: %v", err)
+	}
+}
+
+// TestRemoveProvider_ProviderNotInSeries returns ErrProviderNotInSeries when the
+// provider belongs to a different series, and performs no mutation.
+func TestRemoveProvider_ProviderNotInSeries(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	svc := series.NewService(db, t.TempDir())
+	s1 := db.Series.Create().SetTitle("One").SetSlug("one").SaveX(ctx)
+	s2 := db.Series.Create().SetTitle("Two").SetSlug("two").SaveX(ctx)
+	pOther := db.SeriesProvider.Create().SetSeries(s2).SetProvider("x").SetImportance(10).SaveX(ctx)
+
+	err := svc.RemoveProvider(ctx, s1.ID, pOther.ID)
+	if !errors.Is(err, series.ErrProviderNotInSeries) {
+		t.Fatalf("err = %v, want ErrProviderNotInSeries", err)
+	}
+	if n := db.SeriesProvider.Query().Where(entseriesprovider.IDEQ(pOther.ID)).CountX(ctx); n != 1 {
+		t.Errorf("provider was deleted despite ownership failure (%d), want still 1", n)
+	}
+}
+
+// TestRemoveProvider_UnknownSeries returns ErrSeriesNotFound for a missing series.
+func TestRemoveProvider_UnknownSeries(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	svc := series.NewService(db, t.TempDir())
+	if err := svc.RemoveProvider(ctx, uuid.New(), uuid.New()); !errors.Is(err, series.ErrSeriesNotFound) {
+		t.Fatalf("err = %v, want ErrSeriesNotFound", err)
 	}
 }
 
