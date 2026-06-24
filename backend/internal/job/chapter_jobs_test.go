@@ -15,7 +15,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/job"
+	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/sse"
+	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // TestRunner_DownloadCycle_DrainWanted verifies that RunDownloadCycle with the
@@ -228,6 +230,108 @@ loop:
 	}
 	t.Errorf("Start goroutine did not exit within 2s after context cancel: goroutines now=%d, base=%d",
 		runtime.NumGoroutine(), base)
+}
+
+// TestRunner_Trigger_RunsCycle verifies Trigger() causes the running download
+// loop to execute a cycle that drains a wanted chapter — without waiting for the
+// (long) ticker interval.
+func TestRunner_Trigger_RunsCycle(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Trig Series").SetSlug("trig-series").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
+	client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("ch-1").
+		SetURL("https://x/ch-1").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-1").SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, MaxRetries: 3, Storage: storage})
+	r := job.NewRunner(d, client, hub, storage)
+
+	// Long interval so only the trigger can drive the cycle within the test.
+	r.Start(ctx, time.Hour)
+	r.Trigger()
+
+	// Poll for the chapter to reach downloaded (cycle runs async in the loop).
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if client.Chapter.GetX(ctx, ch.ID).State == entchapter.StateDownloaded {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("triggered cycle did not drain the wanted chapter within 10s")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestRunner_Trigger_Coalesces verifies Trigger() is non-blocking and never
+// panics when called repeatedly with no loop draining the channel (buffer 1).
+func TestRunner_Trigger_Coalesces(t *testing.T) {
+	client := testdb.New(t)
+	r := job.NewRunner(
+		download.New(client, fake.New(), sse.NewHub(), download.Config{PerProviderConcurrency: 1, MaxRetries: 1, Storage: t.TempDir()}),
+		client, sse.NewHub(), t.TempDir(),
+	)
+	// No Start → nothing drains the channel. Many triggers must not block/panic.
+	for i := 0; i < 100; i++ {
+		r.Trigger()
+	}
+}
+
+// fakeSuwayomi is a minimal suwayomi.Client returning one chapter for any manga,
+// used to prove StartRefresh discovers chapters and then triggers a download.
+type fakeSuwayomi struct{}
+
+func (fakeSuwayomi) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
+func (fakeSuwayomi) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
+	return nil, nil
+}
+func (fakeSuwayomi) FetchChapters(context.Context, int) ([]suwayomi.Chapter, error) {
+	n := 1.0
+	return []suwayomi.Chapter{{ID: 1, Index: 0, Number: &n, URL: "u1"}}, nil
+}
+func (fakeSuwayomi) MangaChapters(context.Context, int) ([]suwayomi.Chapter, error) { return nil, nil }
+func (fakeSuwayomi) ChapterPages(context.Context, int) ([]string, error)            { return nil, nil }
+func (fakeSuwayomi) PageBytes(context.Context, string) ([]byte, string, error)      { return nil, "", nil }
+
+// TestRunner_StartRefresh_DiscoversAndDownloads verifies the refresh ticker
+// re-fetches a monitored series (creating a wanted chapter) and then triggers a
+// download cycle that drains it — end to end.
+func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	// Monitored series + provider with a known suwayomi_id, NO chapters yet.
+	s := client.Series.Create().SetTitle("Disc Series").SetSlug("disc-series").SetMonitored(true).SaveX(ctx)
+	client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(42).SetImportance(10).SaveX(ctx)
+
+	fc := fakeSuwayomi{}
+	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, 2)
+
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, MaxRetries: 3, Storage: storage})
+	r := job.NewRunner(d, client, hub, storage)
+
+	r.Start(ctx, time.Hour)                               // download loop (trigger-driven here)
+	r.StartRefresh(ctx, 100*time.Millisecond, refreshSvc) // fast refresh tick for the test
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		downloaded := client.Chapter.Query().Where(entchapter.StateEQ(entchapter.StateDownloaded)).CountX(ctx)
+		if downloaded == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("refresh tick did not discover + download the chapter within 15s")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // TestRunner_Reconcile_SmokesWrapper verifies that Reconcile wraps

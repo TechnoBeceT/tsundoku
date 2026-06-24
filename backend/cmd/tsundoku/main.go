@@ -34,6 +34,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -87,6 +88,17 @@ func main() {
 	})
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder)
 
+	// Discovery sweep service (M5): re-fetches every monitored series' chapter
+	// list to find new releases. Its own ingest shares the same Ent client +
+	// Suwayomi client; NewIngest is a stateless constructor so a second instance
+	// alongside the one built in registerRoutes is fine.
+	refreshSvc := refresh.NewService(
+		entClient,
+		suwayomi.NewIngest(suwayomiClient, entClient),
+		hub,
+		cfg.Jobs.RefreshConcurrency,
+	)
+
 	// pm is the embedded Suwayomi process manager. It is initialised here so
 	// that the shutdown path can call pm.Stop() unconditionally — Stop is
 	// idempotent and a no-op when the process was never started.
@@ -110,11 +122,15 @@ func main() {
 			}
 			return
 		}
-		slog.Info("tsundoku: Suwayomi ready — starting download ticker", "interval", cfg.Jobs.DownloadInterval)
+		slog.Info("tsundoku: Suwayomi ready — starting download + refresh tickers",
+			"download_interval", cfg.Jobs.DownloadInterval,
+			"refresh_interval", cfg.Jobs.RefreshInterval,
+		)
 		runner.Start(ctx, cfg.Jobs.DownloadInterval)
+		runner.StartRefresh(ctx, cfg.Jobs.RefreshInterval, refreshSvc)
 	}()
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 

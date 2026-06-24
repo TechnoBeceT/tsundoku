@@ -44,6 +44,7 @@ func registerRoutes(
 	hub *sse.Hub,
 	ownerH *owner.Handler,
 	suwayomiClient suwayomi.Client,
+	trigger func(),
 ) {
 	// Infrastructure routes — no authentication required.
 	e.GET("/health", HealthCheck)
@@ -63,7 +64,7 @@ func registerRoutes(
 	// seriesSvc is shared: reused by both the series handler and the imports
 	// handler (to render SeriesDetailDTO after Adopt).
 	seriesSvc := series.NewService(client, cfg.Storage.Folder)
-	seriesH := seriesh.NewHandler(seriesSvc)
+	seriesH := seriesh.NewHandler(seriesSvc, trigger)
 	authed.GET("/series", seriesH.List)
 	authed.GET("/series/:id", seriesH.Detail)
 	authed.PATCH("/series/:id/category", seriesH.SetCategory)
@@ -76,7 +77,7 @@ func registerRoutes(
 	// value is threaded in from main.
 	ingest := suwayomi.NewIngest(suwayomiClient, client)
 	importsSvc := imports.NewService(suwayomiClient, ingest, client, cfg.Storage.Folder)
-	importsH := importsh.NewHandler(importsSvc, seriesSvc)
+	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)

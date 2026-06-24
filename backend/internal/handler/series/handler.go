@@ -12,12 +12,15 @@ import (
 // Handler holds the dependencies for the library (series) HTTP handlers.
 // All business logic lives in the series.Service; the handler is thin.
 type Handler struct {
-	svc *seriessvc.Service
+	svc     *seriessvc.Service
+	trigger func()
 }
 
-// NewHandler constructs a Handler bound to a series.Service.
-func NewHandler(svc *seriessvc.Service) *Handler {
-	return &Handler{svc: svc}
+// NewHandler constructs a Handler bound to a series.Service and an auto-converge
+// trigger (called after a successful provider re-rank to re-evaluate upgrades
+// immediately — M5; other routes do not use it).
+func NewHandler(svc *seriessvc.Service, trigger func()) *Handler {
+	return &Handler{svc: svc, trigger: trigger}
 }
 
 // List handles GET /api/series.
@@ -194,6 +197,9 @@ func (h *Handler) ReorderProviders(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+	// Auto-converge: re-rank may make a downloaded chapter's new top source a
+	// strictly-better version — trigger a cycle so DetectUpgrades runs now (M5).
+	h.trigger()
 	return c.JSON(http.StatusOK, updated)
 }
 

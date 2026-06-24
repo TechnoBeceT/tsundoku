@@ -425,3 +425,39 @@ func TestJobsDefaultInterval(t *testing.T) {
 		t.Error("Jobs.DownloadInterval default must be positive")
 	}
 }
+
+// TestJobsRefreshConfig confirms the M5 refresh fields are read from env vars.
+func TestJobsRefreshConfig(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_JOBS_REFRESHINTERVAL", "30m")
+	t.Setenv("TSUNDOKU_JOBS_REFRESHCONCURRENCY", "8")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Jobs.RefreshInterval != 30*time.Minute {
+		t.Errorf("Jobs.RefreshInterval = %v, want %v", cfg.Jobs.RefreshInterval, 30*time.Minute)
+	}
+	if cfg.Jobs.RefreshConcurrency != 8 {
+		t.Errorf("Jobs.RefreshConcurrency = %d, want 8", cfg.Jobs.RefreshConcurrency)
+	}
+}
+
+// TestJobsRefreshDefaults confirms sensible defaults when the env vars are unset.
+func TestJobsRefreshDefaults(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Jobs.RefreshInterval != 2*time.Hour {
+		t.Errorf("Jobs.RefreshInterval default = %v, want 2h", cfg.Jobs.RefreshInterval)
+	}
+	if cfg.Jobs.RefreshConcurrency != 4 {
+		t.Errorf("Jobs.RefreshConcurrency default = %d, want 4", cfg.Jobs.RefreshConcurrency)
+	}
+}

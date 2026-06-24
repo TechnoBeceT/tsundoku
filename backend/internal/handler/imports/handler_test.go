@@ -104,9 +104,10 @@ func ptrStr(s string) *string { return &s }
 
 // testEnv bundles the wired Echo app, a valid token, and helper methods.
 type testEnv struct {
-	e      *echo.Echo
-	token  string
-	client *fakeClient
+	e         *echo.Echo
+	token     string
+	client    *fakeClient
+	triggered *int
 }
 
 // newTestEnv wires a full Echo with the imports routes behind RequireOwner.
@@ -121,7 +122,8 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	importsSvc := imports.NewService(fc, ingest, db, "")
 	seriesSvc := seriessvc.NewService(db, "")
 
-	h := handler.NewHandler(importsSvc, seriesSvc)
+	triggered := new(int)
+	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ })
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -136,7 +138,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 		t.Fatalf("Issue token: %v", err)
 	}
 
-	return &testEnv{e: e, token: token, client: fc}
+	return &testEnv{e: e, token: token, client: fc, triggered: triggered}
 }
 
 // do issues an authenticated request.
@@ -557,5 +559,34 @@ func TestAdopt_MissingBody_400(t *testing.T) {
 	env.e.ServeHTTP(rec, r)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Adopt missing body: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAdopt_TriggersConvergeOnSuccess asserts Adopt fires the auto-converge
+// trigger exactly once on success and never on a validation failure.
+func TestAdopt_TriggersConvergeOnSuccess(t *testing.T) {
+	fc := &fakeClient{chaptersPerManga: map[int][]suwayomi.Chapter{101: makeChapters(1000, 2)}}
+	env := newTestEnv(t, fc)
+
+	body, _ := json.Marshal(map[string]any{
+		"title":     "Solo Leveling",
+		"providers": []map[string]any{{"source": "mangadex", "mangaId": 101, "importance": 10}},
+	})
+	rec := env.do(http.MethodPost, "/api/series", string(body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	if *env.triggered != 1 {
+		t.Errorf("trigger fired %d times, want 1", *env.triggered)
+	}
+
+	// Failure path: blank title is rejected by validation before the service runs.
+	*env.triggered = 0
+	rec = env.do(http.MethodPost, "/api/series", `{"title":"  ","providers":[]}`)
+	if rec.Code == http.StatusCreated {
+		t.Fatal("blank-title adopt must not succeed")
+	}
+	if *env.triggered != 0 {
+		t.Errorf("trigger fired %d times on failure, want 0", *env.triggered)
 	}
 }

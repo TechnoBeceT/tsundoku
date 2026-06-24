@@ -32,6 +32,10 @@ import (
 //
 // suwayomiClient is the typed Suwayomi interface used by the imports handler and
 // the ingest service. It is constructed in main.go before server.New is called.
+//
+// trigger is the runner's auto-converge hook (bound to runner.Trigger in main.go).
+// It is called by Adopt and ReorderProviders on success to kick an immediate
+// download/upgrade cycle (M5); passing a no-op func() disables the behaviour.
 func New(
 	cfg *config.Config,
 	client *entpkg.Client,
@@ -39,6 +43,7 @@ func New(
 	hub *sse.Hub,
 	ownerH *owner.Handler,
 	suwayomiClient suwayomi.Client,
+	trigger func(),
 ) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -61,6 +66,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, trigger)
 	return e
 }

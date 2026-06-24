@@ -146,9 +146,21 @@ func (s SuwayomiConfig) BaseURL() string {
 
 // JobsConfig holds background-job scheduler settings.
 type JobsConfig struct {
-	// DownloadInterval is the tick period for the M1 download runner.
-	// Default 15m. Set via TSUNDOKU_JOBS_DOWNLOADINTERVAL.
+	// DownloadInterval is the tick period for the download runner (queue drain
+	// + upgrade-swap). Default 15m. Set via TSUNDOKU_JOBS_DOWNLOADINTERVAL.
 	DownloadInterval time.Duration
+
+	// RefreshInterval is the tick period for the M5 discovery poll, which
+	// re-fetches every monitored series' chapter list to find new releases.
+	// Default 2h (Kaizoku.GO's proven per-title cadence). Set via
+	// TSUNDOKU_JOBS_REFRESHINTERVAL.
+	RefreshInterval time.Duration
+
+	// RefreshConcurrency bounds how many provider re-fetches the refresh sweep
+	// runs in parallel (each is a live upstream call). Default 4 — gentler on
+	// sources than the in-process search fan-out. Set via
+	// TSUNDOKU_JOBS_REFRESHCONCURRENCY.
+	RefreshConcurrency int
 }
 
 // StorageConfig holds library-path settings.
@@ -181,8 +193,10 @@ func defaults() map[string]any {
 		"suwayomi.downloadtimeout":     "10m",
 		"suwayomi.javapath":            "java",
 		// Jobs — background-job scheduler.
-		"jobs.downloadinterval": "15m",
-		"storage.folder":        "/data/manga",
+		"jobs.downloadinterval":   "15m",
+		"jobs.refreshinterval":    "2h",
+		"jobs.refreshconcurrency": 4,
+		"storage.folder":          "/data/manga",
 	}
 }
 
@@ -250,6 +264,8 @@ func Load() (*Config, error) {
 //	TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT       → suwayomi.downloadtimeout
 //	TSUNDOKU_SUWAYOMI_JAVAPATH              → suwayomi.javapath
 //	TSUNDOKU_JOBS_DOWNLOADINTERVAL          → jobs.downloadinterval
+//	TSUNDOKU_JOBS_REFRESHINTERVAL           → jobs.refreshinterval
+//	TSUNDOKU_JOBS_REFRESHCONCURRENCY        → jobs.refreshconcurrency
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //
 // Convention: after stripping the prefix the first "_" separates the
