@@ -49,10 +49,45 @@ type ProviderHealthInput struct {
 	MultiSource bool
 }
 
+// providerMaxNumber returns the maximum non-nil Number across chs, or nil if
+// none of the entries carry a number.
+func providerMaxNumber(chs []*ent.ProviderChapter) *float64 {
+	var max *float64
+	for _, pc := range chs {
+		if pc.Number != nil && (max == nil || *pc.Number > *max) {
+			n := *pc.Number
+			max = &n
+		}
+	}
+	return max
+}
+
+// newestUpload returns the maximum non-nil ProviderUploadDate across chs, or
+// nil if none of the entries carry a date.
+func newestUpload(chs []*ent.ProviderChapter) *time.Time {
+	var newest *time.Time
+	for _, pc := range chs {
+		if pc.ProviderUploadDate != nil && (newest == nil || pc.ProviderUploadDate.After(*newest)) {
+			newest = pc.ProviderUploadDate
+		}
+	}
+	return newest
+}
+
+// countBehind returns how many keys in seriesKeys are absent from the have set.
+func countBehind(have map[string]struct{}, seriesKeys map[string]struct{}) int {
+	n := 0
+	for k := range seriesKeys {
+		if _, ok := have[k]; !ok {
+			n++
+		}
+	}
+	return n
+}
+
 // ComputeProviderHealth derives one source's health from already-loaded data.
 // now and graceDays are passed in so the result is deterministic and testable.
 // Status precedence: erroring > stale > ok.
-// nolint:cyclop
 func ComputeProviderHealth(in ProviderHealthInput, now time.Time, graceDays int) ProviderHealth {
 	h := ProviderHealth{Status: HealthOK}
 
@@ -61,25 +96,14 @@ func ComputeProviderHealth(in ProviderHealthInput, now time.Time, graceDays int)
 		h.LastError = in.SyncState.LastError
 	}
 
-	// chaptersBehind: series keys this source lacks.
 	have := make(map[string]struct{}, len(in.ProviderChapters))
-	var providerMax *float64
 	for _, pc := range in.ProviderChapters {
 		have[pc.ChapterKey] = struct{}{}
-		if pc.Number != nil && (providerMax == nil || *pc.Number > *providerMax) {
-			n := *pc.Number
-			providerMax = &n
-		}
-		if pc.ProviderUploadDate != nil &&
-			(h.NewestChapterAt == nil || pc.ProviderUploadDate.After(*h.NewestChapterAt)) {
-			h.NewestChapterAt = pc.ProviderUploadDate
-		}
 	}
-	for k := range in.SeriesChapterKeys {
-		if _, ok := have[k]; !ok {
-			h.ChaptersBehind++
-		}
-	}
+
+	h.ChaptersBehind = countBehind(have, in.SeriesChapterKeys)
+	h.NewestChapterAt = newestUpload(in.ProviderChapters)
+	providerMax := providerMaxNumber(in.ProviderChapters)
 
 	if h.LastError != "" {
 		h.Status = HealthErroring
