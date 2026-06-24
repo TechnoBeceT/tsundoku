@@ -1,13 +1,21 @@
-// Package imports_test — unit tests for Service (Sources, Search, InspectChapters).
+// Package imports_test — unit tests for Service (Sources, Search, InspectChapters, Adopt).
 //
-// All tests use an in-process fakeClient; no Suwayomi process, no network, no DB.
+// Task 3 tests use an in-process fakeClient; no Suwayomi process, no network, no DB.
+// Task 4 Adopt tests additionally require testdb (ephemeral Postgres via Docker).
 package imports_test
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/disk"
+	"github.com/technobecet/tsundoku/internal/ent"
+	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -16,6 +24,13 @@ import (
 
 // fakeClient implements suwayomi.Client with canned per-source responses.
 // Methods unused by Service return nil, nil.
+//
+// For Adopt tests (Task 4) the client dispatches FetchChapters by mangaID:
+//   - chaptersPerManga maps mangaID → chapters to return.
+//   - chapterErrs maps mangaID → error to return (takes priority).
+//
+// The original flat chapters/chaptersErr fields remain for Task 3 compatibility;
+// if chaptersPerManga is non-nil it takes priority over the flat fields.
 type fakeClient struct {
 	// sources is the slice returned by Sources.
 	sources []suwayomi.Source
@@ -25,10 +40,15 @@ type fakeClient struct {
 	searchResults map[string][]suwayomi.Manga
 	// searchErrs maps sourceID → error returned by Search (nil = success).
 	searchErrs map[string]error
-	// chapters is the slice returned by FetchChapters.
+	// chapters is the slice returned by FetchChapters (Task 3 flat path).
 	chapters []suwayomi.Chapter
-	// chaptersErr is the error returned by FetchChapters (nil = success).
+	// chaptersErr is the error returned by FetchChapters (Task 3 flat path).
 	chaptersErr error
+	// chaptersPerManga maps mangaID → chapters (Task 4 per-manga path).
+	// Non-nil activates the per-manga dispatch.
+	chaptersPerManga map[int][]suwayomi.Chapter
+	// chapterErrs maps mangaID → error (Task 4 per-manga error injection).
+	chapterErrs map[int]error
 }
 
 func (f *fakeClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
@@ -49,11 +69,21 @@ func (f *fakeClient) Search(_ context.Context, sourceID, _ string) ([]suwayomi.M
 	return nil, nil
 }
 
-func (f *fakeClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
+func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+	// Per-manga dispatch (Task 4): error first, then chapters.
+	if f.chapterErrs != nil {
+		if err, ok := f.chapterErrs[mangaID]; ok {
+			return nil, err
+		}
+	}
+	if f.chaptersPerManga != nil {
+		return f.chaptersPerManga[mangaID], nil
+	}
+	// Flat fallback (Task 3).
 	return f.chapters, f.chaptersErr
 }
 
-// Remaining Client methods are unused by Service in Task 3; return nil, nil.
+// Remaining Client methods are unused by Service; return nil, nil.
 func (f *fakeClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	return nil, nil
 }
@@ -75,6 +105,26 @@ func ptrF64(v float64) *float64 { return &v }
 // newService constructs a Service with a fake client and nil ingest/db (unused in Task 3).
 func newService(fc *fakeClient) *imports.Service {
 	return imports.NewService(fc, nil, nil, "")
+}
+
+// makeAdoptChapters builds n stub suwayomi.Chapter values anchored to a base ID
+// so that distinct mangaIDs get non-overlapping suwayomi chapter IDs. Each
+// chapter has a sequential chapter number so that NormalizeChapterKey produces
+// distinct, deterministic keys.
+func makeAdoptChapters(baseID, n int) []suwayomi.Chapter {
+	chs := make([]suwayomi.Chapter, n)
+	for i := range n {
+		num := float64(i + 1)
+		numCopy := num
+		chs[i] = suwayomi.Chapter{
+			ID:     baseID + i,
+			Index:  i,
+			Name:   fmt.Sprintf("Chapter %.0f", num),
+			Number: &numCopy,
+			URL:    fmt.Sprintf("https://test/ch/%d", i+1),
+		}
+	}
+	return chs
 }
 
 // --- Sources tests -----------------------------------------------------------
@@ -446,5 +496,383 @@ func TestService_InspectChapters_Error(t *testing.T) {
 	_, err := svc.InspectChapters(context.Background(), "src", 99)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("InspectChapters error: got %v, want to wrap %v", err, sentinel)
+	}
+}
+
+// --- Adopt tests (Task 4) — require testdb (Docker) --------------------------
+//
+// newServiceDB constructs a Service with a real testdb-backed Ingest and the
+// given fakeClient. Storage is left empty because Adopt does not touch disk.
+func newServiceDB(t *testing.T, fc *fakeClient) *imports.Service {
+	t.Helper()
+	db := testdb.New(t)
+	ingest := suwayomi.NewIngest(fc, db)
+	return imports.NewService(fc, ingest, db, "")
+}
+
+// assertAdoptSeries verifies that exactly one Series exists with the expected
+// slug (derived from title) and that its ID matches the returned UUID.
+func assertAdoptSeries(t *testing.T, ctx context.Context, db *ent.Client, title string, wantID fmt.Stringer) {
+	t.Helper()
+	series := db.Series.Query().AllX(ctx)
+	if len(series) != 1 {
+		t.Fatalf("Series count: got %d, want 1", len(series))
+	}
+	wantSlug := disk.Slugify(title)
+	if series[0].Slug != wantSlug {
+		t.Errorf("Series.Slug: got %q, want %q", series[0].Slug, wantSlug)
+	}
+	if series[0].ID.String() != wantID.String() {
+		t.Errorf("Series.ID: got %s, want %s", series[0].ID, wantID.String())
+	}
+}
+
+// assertAdoptProviders checks that exactly wantCount SeriesProvider rows exist
+// and that each (provider, importance) pair in wantImportances is satisfied.
+func assertAdoptProviders(t *testing.T, ctx context.Context, db *ent.Client, wantCount int, wantImportances map[string]int) {
+	t.Helper()
+	providers := db.SeriesProvider.Query().AllX(ctx)
+	if len(providers) != wantCount {
+		t.Fatalf("SeriesProvider count: got %d, want %d", len(providers), wantCount)
+	}
+	got := make(map[string]int, len(providers))
+	for _, sp := range providers {
+		got[sp.Provider] = sp.Importance
+	}
+	for src, imp := range wantImportances {
+		if got[src] != imp {
+			t.Errorf("Provider %q importance: got %d, want %d", src, got[src], imp)
+		}
+	}
+}
+
+// assertAdoptChapters checks that exactly wantCount Chapter rows exist and that
+// all are in state "wanted".
+func assertAdoptChapters(t *testing.T, ctx context.Context, db *ent.Client, wantCount int) {
+	t.Helper()
+	chapters := db.Chapter.Query().AllX(ctx)
+	if len(chapters) != wantCount {
+		t.Fatalf("Chapter count: got %d, want %d", len(chapters), wantCount)
+	}
+	for _, ch := range chapters {
+		if ch.State != "wanted" {
+			t.Errorf("Chapter %q: state got %q, want wanted", ch.ChapterKey, ch.State)
+		}
+	}
+}
+
+// TestService_Adopt_TwoProviders verifies the canonical Adopt case: two
+// providers with DIFFERENT per-source titles ("Solo Leveling" / "Solo Leveling
+// (Official)") are adopted under one canonical title "Solo Leveling" → exactly
+// ONE Series row (slug = disk.Slugify("Solo Leveling")), TWO SeriesProvider rows
+// with correct importances, and chapters in state wanted.
+func TestService_Adopt_TwoProviders(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	const (
+		canonicalTitle = "Solo Leveling"
+		srcA           = "mangadex"
+		mangaIDA       = 101
+		impA           = 10 // higher importance → ranked first
+		srcB           = "toonily"
+		mangaIDB       = 202
+		impB           = 5
+	)
+
+	fc := &fakeClient{
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			mangaIDA: makeAdoptChapters(1000, 2),
+			mangaIDB: makeAdoptChapters(2000, 3),
+		},
+	}
+	ingest := suwayomi.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingest, db, "")
+
+	id, err := svc.Adopt(ctx, imports.AdoptRequest{
+		Title: canonicalTitle,
+		Providers: []imports.AdoptProvider{
+			{Source: srcA, MangaID: mangaIDA, Importance: impA},
+			{Source: srcB, MangaID: mangaIDB, Importance: impB},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Adopt: unexpected error: %v", err)
+	}
+	if id.String() == "00000000-0000-0000-0000-000000000000" {
+		t.Fatal("Adopt: returned zero UUID")
+	}
+
+	assertAdoptSeries(t, ctx, db, canonicalTitle, id)
+	assertAdoptProviders(t, ctx, db, 2, map[string]int{srcA: impA, srcB: impB})
+	assertAdoptChapters(t, ctx, db, 3)
+}
+
+// TestService_Adopt_Idempotent verifies that calling Adopt twice with the same
+// request produces no new Series/SeriesProvider/Chapter rows on the second call.
+func TestService_Adopt_Idempotent(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	const (
+		canonicalTitle = "Tower of God"
+		srcA           = "webtoons"
+		mangaIDA       = 301
+		impA           = 10
+	)
+
+	chapA := makeAdoptChapters(3000, 2)
+	fc := &fakeClient{
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			mangaIDA: chapA,
+		},
+	}
+	ingest := suwayomi.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingest, db, "")
+
+	req := imports.AdoptRequest{
+		Title: canonicalTitle,
+		Providers: []imports.AdoptProvider{
+			{Source: srcA, MangaID: mangaIDA, Importance: impA},
+		},
+	}
+
+	// First call.
+	if _, err := svc.Adopt(ctx, req); err != nil {
+		t.Fatalf("first Adopt: %v", err)
+	}
+
+	countSeries := len(db.Series.Query().AllX(ctx))
+	countProviders := len(db.SeriesProvider.Query().AllX(ctx))
+	countChapters := len(db.Chapter.Query().AllX(ctx))
+
+	// Second call: must be idempotent — no new rows.
+	if _, err := svc.Adopt(ctx, req); err != nil {
+		t.Fatalf("second Adopt: %v", err)
+	}
+
+	if n := len(db.Series.Query().AllX(ctx)); n != countSeries {
+		t.Errorf("Series count after second Adopt: got %d, want %d", n, countSeries)
+	}
+	if n := len(db.SeriesProvider.Query().AllX(ctx)); n != countProviders {
+		t.Errorf("SeriesProvider count after second Adopt: got %d, want %d", n, countProviders)
+	}
+	if n := len(db.Chapter.Query().AllX(ctx)); n != countChapters {
+		t.Errorf("Chapter count after second Adopt: got %d, want %d", n, countChapters)
+	}
+}
+
+// TestService_Adopt_AttachToExisting verifies that adopting a second source for
+// an already-adopted canonical title adds just one more SeriesProvider to the
+// existing series without duplicating the series row or existing chapters.
+func TestService_Adopt_AttachToExisting(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	const (
+		canonicalTitle = "Vinland Saga"
+		srcA           = "mangaplus"
+		mangaIDA       = 401
+		impA           = 10
+		srcB           = "mangasee"
+		mangaIDB       = 402
+		impB           = 5
+	)
+
+	chapA := makeAdoptChapters(4000, 2)
+	chapB := makeAdoptChapters(5000, 1)
+	fc := &fakeClient{
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			mangaIDA: chapA,
+			mangaIDB: chapB,
+		},
+	}
+	ingest := suwayomi.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingest, db, "")
+
+	// First adopt: one provider.
+	if _, err := svc.Adopt(ctx, imports.AdoptRequest{
+		Title:     canonicalTitle,
+		Providers: []imports.AdoptProvider{{Source: srcA, MangaID: mangaIDA, Importance: impA}},
+	}); err != nil {
+		t.Fatalf("first Adopt: %v", err)
+	}
+
+	seriesCount1 := len(db.Series.Query().AllX(ctx))
+	if seriesCount1 != 1 {
+		t.Fatalf("after first Adopt: Series count got %d, want 1", seriesCount1)
+	}
+
+	// Second adopt: new provider for the same series.
+	if _, err := svc.Adopt(ctx, imports.AdoptRequest{
+		Title:     canonicalTitle,
+		Providers: []imports.AdoptProvider{{Source: srcB, MangaID: mangaIDB, Importance: impB}},
+	}); err != nil {
+		t.Fatalf("second Adopt (attach): %v", err)
+	}
+
+	// Still ONE Series.
+	if n := len(db.Series.Query().AllX(ctx)); n != 1 {
+		t.Errorf("Series count after attach: got %d, want 1", n)
+	}
+	// TWO SeriesProviders.
+	if n := len(db.SeriesProvider.Query().AllX(ctx)); n != 2 {
+		t.Errorf("SeriesProvider count after attach: got %d, want 2", n)
+	}
+	// Both providers should carry correct importances.
+	providers := db.SeriesProvider.Query().AllX(ctx)
+	impByProvider := make(map[string]int, 2)
+	for _, sp := range providers {
+		impByProvider[sp.Provider] = sp.Importance
+	}
+	if impByProvider[srcA] != impA {
+		t.Errorf("Provider %q importance: got %d, want %d", srcA, impByProvider[srcA], impA)
+	}
+	if impByProvider[srcB] != impB {
+		t.Errorf("Provider %q importance: got %d, want %d", srcB, impByProvider[srcB], impB)
+	}
+}
+
+// TestService_Adopt_Category verifies that a non-empty Category in AdoptRequest
+// sets Series.category, and that an empty Category leaves it at the default Other.
+func TestService_Adopt_Category(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("set_category", func(t *testing.T) {
+		db := testdb.New(t)
+		fc := &fakeClient{
+			chaptersPerManga: map[int][]suwayomi.Chapter{
+				501: makeAdoptChapters(6000, 1),
+			},
+		}
+		ingest := suwayomi.NewIngest(fc, db)
+		svc := imports.NewService(fc, ingest, db, "")
+
+		_, err := svc.Adopt(ctx, imports.AdoptRequest{
+			Title:    "Berserk",
+			Category: "Manga",
+			Providers: []imports.AdoptProvider{
+				{Source: "mangadex", MangaID: 501, Importance: 1},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Adopt with category: %v", err)
+		}
+
+		s := db.Series.Query().OnlyX(ctx)
+		if s.Category != entseries.CategoryManga {
+			t.Errorf("Series.Category: got %q, want Manga", s.Category)
+		}
+	})
+
+	t.Run("default_category", func(t *testing.T) {
+		db := testdb.New(t)
+		fc := &fakeClient{
+			chaptersPerManga: map[int][]suwayomi.Chapter{
+				502: makeAdoptChapters(7000, 1),
+			},
+		}
+		ingest := suwayomi.NewIngest(fc, db)
+		svc := imports.NewService(fc, ingest, db, "")
+
+		_, err := svc.Adopt(ctx, imports.AdoptRequest{
+			Title:    "Naruto",
+			Category: "", // omitted — should default to Other
+			Providers: []imports.AdoptProvider{
+				{Source: "mangasee", MangaID: 502, Importance: 1},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Adopt without category: %v", err)
+		}
+
+		s := db.Series.Query().OnlyX(ctx)
+		if s.Category != entseries.CategoryOther {
+			t.Errorf("Series.Category: got %q, want Other", s.Category)
+		}
+	})
+}
+
+// TestService_Adopt_NoSilentPartial verifies §16: when one provider's AddSeries
+// errors mid-group, Adopt returns a non-nil error naming the source(s) already
+// attached in this call. The successful provider's rows ARE present (no rollback).
+func TestService_Adopt_NoSilentPartial(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	const (
+		canonicalTitle = "Demon Slayer"
+		srcOK          = "mangadex"
+		mangaIDOK      = 601
+		impOK          = 10
+		srcFail        = "toonily"
+		mangaIDFail    = 602
+		impFail        = 5
+	)
+
+	injectErr := errors.New("suwayomi: source unavailable")
+	fc := &fakeClient{
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			mangaIDOK: makeAdoptChapters(8000, 2),
+		},
+		chapterErrs: map[int]error{
+			mangaIDFail: injectErr,
+		},
+	}
+	ingest := suwayomi.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingest, db, "")
+
+	req := imports.AdoptRequest{
+		Title: canonicalTitle,
+		Providers: []imports.AdoptProvider{
+			{Source: srcOK, MangaID: mangaIDOK, Importance: impOK},
+			{Source: srcFail, MangaID: mangaIDFail, Importance: impFail},
+		},
+	}
+
+	_, err := svc.Adopt(ctx, req)
+	if err == nil {
+		t.Fatal("Adopt: expected non-nil error for mid-group provider failure, got nil")
+	}
+
+	// Error message must name the already-attached source.
+	if !strings.Contains(err.Error(), srcOK) {
+		t.Errorf("Adopt error %q: must name already-attached source %q", err.Error(), srcOK)
+	}
+
+	// The successful provider's rows MUST be present (no rollback).
+	seriesList := db.Series.Query().AllX(ctx)
+	if len(seriesList) != 1 {
+		t.Fatalf("Series count after partial failure: got %d, want 1 (successful provider must be persisted)", len(seriesList))
+	}
+	spList := db.SeriesProvider.Query().
+		Where(entseriesprovider.Provider(srcOK)).
+		AllX(ctx)
+	if len(spList) != 1 {
+		t.Fatalf("SeriesProvider for %q: got %d, want 1", srcOK, len(spList))
+	}
+}
+
+// TestService_Adopt_InvalidCategory verifies that an invalid Category value in
+// AdoptRequest returns a non-nil error before any DB rows are created.
+func TestService_Adopt_InvalidCategory(t *testing.T) {
+	ctx := context.Background()
+
+	fc := &fakeClient{
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			701: makeAdoptChapters(9000, 1),
+		},
+	}
+	svc := newServiceDB(t, fc)
+
+	_, err := svc.Adopt(ctx, imports.AdoptRequest{
+		Title:    "One Piece",
+		Category: "NotACategory",
+		Providers: []imports.AdoptProvider{
+			{Source: "mangadex", MangaID: 701, Importance: 1},
+		},
+	})
+	if err == nil {
+		t.Fatal("Adopt: expected error for invalid category, got nil")
 	}
 }

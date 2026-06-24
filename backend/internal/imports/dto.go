@@ -51,3 +51,34 @@ type ChapterInspectDTO struct {
 	// Name is the chapter's display name (e.g. "Chapter 1").
 	Name string `json:"name"`
 }
+
+// AdoptProvider identifies one source/manga pair within an adopt request.
+// Importance controls the provider priority for this series: higher number =
+// higher priority (Tsundoku convention). Callers are responsible for assigning
+// unique importances across the providers in a single AdoptRequest.
+type AdoptProvider struct {
+	// Source is the Suwayomi source ID (e.g. "mangadex").
+	Source string
+	// MangaID is the Suwayomi-internal manga identifier within Source.
+	MangaID int
+	// Importance is the provider rank for this series (higher = better).
+	Importance int
+}
+
+// AdoptRequest groups one or more (source, manga) candidates under a single
+// canonical Title and merges them into one Series with N importance-ranked
+// providers. Category is optional: when empty ("") the series category defaults
+// to Other (the schema default); when non-empty it must be a valid
+// Series.category enum value (Manga, Manhwa, Manhua, Comic, Other).
+//
+// Callers must supply at least one provider; the service assumes len(Providers) >= 1.
+type AdoptRequest struct {
+	// Title is the canonical series title. All providers are attached to the
+	// Series whose slug equals disk.Slugify(Title).
+	Title string
+	// Category sets the Series.category when non-empty.
+	Category string
+	// Providers is the ordered list of (source, manga) pairs to adopt. Must
+	// have at least one entry (validated by the HTTP handler, not the service).
+	Providers []AdoptProvider
+}
