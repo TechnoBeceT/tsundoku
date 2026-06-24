@@ -161,6 +161,51 @@ export interface paths {
         patch: operations["setSeriesCategory"];
         trace?: never;
     };
+    "/api/series/{id}/monitored": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Toggle series monitoring
+         * @description Sets the monitored flag for a series. When monitored is true the download
+         *     ticker will pick up new chapters; when false the series is paused. Returns
+         *     the updated series summary so the caller sees the new state without a refetch (§16).
+         */
+        patch: operations["setSeriesMonitored"];
+        trace?: never;
+    };
+    "/api/series/{id}/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Re-rank series providers
+         * @description Updates the importance values for a series' providers in a single
+         *     all-or-nothing transaction. A higher importance means the provider is
+         *     preferred when selecting the best chapter source. Returns the updated
+         *     series detail so importances are reflected without a refetch (§16).
+         */
+        patch: operations["reorderSeriesProviders"];
+        trace?: never;
+    };
     "/api/categories": {
         parameters: {
             query?: never;
@@ -387,6 +432,23 @@ export interface components {
              * @enum {string}
              */
             category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+        };
+        SetMonitoredRequest: {
+            /** @description Whether the series should be actively tracked for new chapters. */
+            monitored: boolean;
+        };
+        ProviderRank: {
+            /**
+             * Format: uuid
+             * @description SeriesProvider UUID to update.
+             */
+            id: string;
+            /** @description New priority/quality rank (non-negative; higher = preferred). */
+            importance: number;
+        };
+        ReorderProvidersRequest: {
+            /** @description Ordered list of (provider id, importance) pairs to apply all-or-nothing. */
+            providers: components["schemas"]["ProviderRank"][];
         };
         Source: {
             /**
@@ -755,6 +817,114 @@ export interface operations {
                 };
             };
             /** @description Malformed id or invalid category. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setSeriesMonitored: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetMonitoredRequest"];
+            };
+        };
+        responses: {
+            /** @description Monitoring flag updated. Returns the updated series summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesSummary"];
+                };
+            };
+            /** @description Malformed id or missing monitored field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reorderSeriesProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderProvidersRequest"];
+            };
+        };
+        responses: {
+            /** @description Provider importances updated. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed id, invalid provider UUID, empty list, or provider not in series. */
             400: {
                 headers: {
                     [name: string]: unknown;

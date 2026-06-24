@@ -31,6 +31,8 @@ import (
 //   - /api/series (POST)                           — adopt / import manga (RequireOwner).
 //   - /api/series/:id                              — library detail (RequireOwner).
 //   - /api/series/:id/category                     — recategorize (RequireOwner).
+//   - /api/series/:id/monitored                    — toggle monitoring flag (RequireOwner).
+//   - /api/series/:id/providers                    — re-rank provider importances (RequireOwner).
 //   - /api/categories                              — per-category counts (RequireOwner).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
@@ -65,6 +67,8 @@ func registerRoutes(
 	authed.GET("/series", seriesH.List)
 	authed.GET("/series/:id", seriesH.Detail)
 	authed.PATCH("/series/:id/category", seriesH.SetCategory)
+	authed.PATCH("/series/:id/monitored", seriesH.SetMonitored)
+	authed.PATCH("/series/:id/providers", seriesH.ReorderProviders)
 	authed.GET("/categories", seriesH.Categories)
 
 	// Imports (discovery + adoption) API. The ingest is built here so it shares

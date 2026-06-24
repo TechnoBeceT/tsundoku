@@ -247,6 +247,42 @@ components:
           enum: [Manga, Manhwa, Manhua, Comic, Other]
           description: Target category to file the series under.
 
+    SetMonitoredRequest:
+      type: object
+      required:
+        - monitored
+      properties:
+        monitored:
+          type: boolean
+          description: Whether the series should be actively tracked for new chapters.
+
+    ProviderRank:
+      type: object
+      required:
+        - id
+        - importance
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: SeriesProvider UUID to update.
+        importance:
+          type: integer
+          minimum: 0
+          description: New priority/quality rank (non-negative; higher = preferred).
+
+    ReorderProvidersRequest:
+      type: object
+      required:
+        - providers
+      properties:
+        providers:
+          type: array
+          description: Ordered list of (provider id, importance) pairs to apply all-or-nothing.
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ProviderRank"
+
     Source:
       type: object
       required:
@@ -651,6 +687,111 @@ paths:
                 $ref: "#/components/schemas/SeriesSummary"
         "400":
           description: Malformed id or invalid category.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/monitored:
+    patch:
+      operationId: setSeriesMonitored
+      summary: Toggle series monitoring
+      description: |
+        Sets the monitored flag for a series. When monitored is true the download
+        ticker will pick up new chapters; when false the series is paused. Returns
+        the updated series summary so the caller sees the new state without a refetch (§16).
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetMonitoredRequest"
+      responses:
+        "200":
+          description: Monitoring flag updated. Returns the updated series summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesSummary"
+        "400":
+          description: Malformed id or missing monitored field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/providers:
+    patch:
+      operationId: reorderSeriesProviders
+      summary: Re-rank series providers
+      description: |
+        Updates the importance values for a series' providers in a single
+        all-or-nothing transaction. A higher importance means the provider is
+        preferred when selecting the best chapter source. Returns the updated
+        series detail so importances are reflected without a refetch (§16).
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReorderProvidersRequest"
+      responses:
+        "200":
+          description: Provider importances updated. Returns the updated series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Malformed id, invalid provider UUID, empty list, or provider not in series.
           content:
             application/json:
               schema:

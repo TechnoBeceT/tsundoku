@@ -57,6 +57,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.GET("/series", h.List)
 	authed.GET("/series/:id", h.Detail)
 	authed.PATCH("/series/:id/category", h.SetCategory)
+	authed.PATCH("/series/:id/monitored", h.SetMonitored)
+	authed.PATCH("/series/:id/providers", h.ReorderProviders)
 	authed.GET("/categories", h.Categories)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -324,12 +326,15 @@ func TestCategories_OK(t *testing.T) {
 // without a valid Bearer token (mandatory authz proof).
 func TestAuthz_AllRoutesReject401(t *testing.T) {
 	env := newTestEnv(t)
+	id := uuid.New().String()
 	cases := []struct {
 		method, target string
 	}{
 		{http.MethodGet, "/api/series"},
-		{http.MethodGet, "/api/series/" + uuid.New().String()},
-		{http.MethodPatch, "/api/series/" + uuid.New().String() + "/category"},
+		{http.MethodGet, "/api/series/" + id},
+		{http.MethodPatch, "/api/series/" + id + "/category"},
+		{http.MethodPatch, "/api/series/" + id + "/monitored"},
+		{http.MethodPatch, "/api/series/" + id + "/providers"},
 		{http.MethodGet, "/api/categories"},
 	}
 	for _, tc := range cases {
@@ -339,5 +344,158 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 				t.Fatalf("%s %s: want 401, got %d", tc.method, tc.target, rec.Code)
 			}
 		})
+	}
+}
+
+// TestSetMonitored_OK confirms PATCH /api/series/:id/monitored with monitored=false
+// returns 200 and the updated SeriesSummaryDTO with monitored=false, and that the
+// change is persisted (full round-trip per §16).
+func TestSetMonitored_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/monitored", `{"monitored":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetMonitored: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got seriessvc.SeriesSummaryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("SetMonitored: decode: %v", err)
+	}
+	if got.Monitored {
+		t.Fatalf("SetMonitored: response monitored want false, got true")
+	}
+
+	// Round-trip: DB must reflect the new value.
+	reread := env.client.Series.GetX(ctx, env.mangaID)
+	if reread.Monitored {
+		t.Fatalf("SetMonitored: DB monitored want false, got true")
+	}
+}
+
+// TestSetMonitored_NotFound checks that a missing series id yields 404.
+func TestSetMonitored_NotFound(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodPatch, "/api/series/"+uuid.New().String()+"/monitored", `{"monitored":false}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("SetMonitored missing: want 404, got %d", rec.Code)
+	}
+}
+
+// TestSetMonitored_BadBody checks that a missing or malformed body yields 400.
+func TestSetMonitored_BadBody(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty body", ""},
+		{"non-bool value", `{"monitored":"yes"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/monitored", tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("SetMonitored bad body (%s): want 400, got %d (%s)", tc.name, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// firstProviderID fetches the series detail and returns the first SeriesProvider ID.
+// It skips the test if no provider is present.
+func firstProviderID(t *testing.T, env *testEnv, seriesID string) string {
+	t.Helper()
+	rec := env.do(http.MethodGet, "/api/series/"+seriesID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("firstProviderID: get series: want 200, got %d", rec.Code)
+	}
+	var detail seriessvc.SeriesDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("firstProviderID: decode: %v", err)
+	}
+	if len(detail.Providers) == 0 {
+		t.Skip("no provider on series; nothing to re-rank")
+	}
+	return detail.Providers[0].ID
+}
+
+// assertProviderImportance checks that the SeriesDetailDTO response body contains
+// the given provider id with the expected importance value.
+func assertProviderImportance(t *testing.T, body []byte, provID string, want int) {
+	t.Helper()
+	var got seriessvc.SeriesDetailDTO
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("assertProviderImportance: decode: %v", err)
+	}
+	if len(got.Providers) == 0 {
+		t.Fatal("assertProviderImportance: no providers in response")
+	}
+	for _, p := range got.Providers {
+		if p.ID == provID && p.Importance == want {
+			return
+		}
+	}
+	t.Fatalf("assertProviderImportance: provider %s importance want %d in %+v", provID, want, got.Providers)
+}
+
+// TestReorderProviders_OK confirms PATCH /api/series/:id/providers updates provider
+// importance and returns the updated SeriesDetailDTO with the new importance value
+// (full round-trip per §16).
+func TestReorderProviders_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	body := `{"providers":[{"id":"` + provID + `","importance":5}]}`
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/providers", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ReorderProviders: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	assertProviderImportance(t, rec.Body.Bytes(), provID, 5)
+}
+
+// TestReorderProviders_WrongSeries checks that supplying a provider id from
+// another series yields 400 (ErrProviderNotInSeries → 400).
+func TestReorderProviders_WrongSeries(t *testing.T) {
+	env := newTestEnv(t)
+	env.seed(context.Background(), t)
+
+	// Use the manga series' provider id against the manhwa series.
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	body := `{"providers":[{"id":"` + provID + `","importance":5}]}`
+	rec := env.do(http.MethodPatch, "/api/series/"+env.manhwaID.String()+"/providers", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("ReorderProviders wrong-series: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReorderProviders_BadUUID checks that a malformed provider id yields 400.
+func TestReorderProviders_BadUUID(t *testing.T) {
+	env := newTestEnv(t)
+	env.seed(context.Background(), t)
+
+	body := `{"providers":[{"id":"not-a-uuid","importance":5}]}`
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/providers", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("ReorderProviders bad uuid: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReorderProviders_NotFound checks that a missing series id yields 404.
+func TestReorderProviders_NotFound(t *testing.T) {
+	env := newTestEnv(t)
+	body := `{"providers":[{"id":"` + uuid.New().String() + `","importance":5}]}`
+	rec := env.do(http.MethodPatch, "/api/series/"+uuid.New().String()+"/providers", body)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("ReorderProviders missing: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }

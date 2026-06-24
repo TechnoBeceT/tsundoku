@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	seriessvc "github.com/technobecet/tsundoku/internal/series"
 )
 
 // defaultLimit is the page size applied when ?limit is omitted (or 0). It bounds
@@ -101,4 +102,56 @@ func validateSetCategory(req SetCategoryRequest) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid category: "+req.Category)
 	}
 	return nil
+}
+
+// SetMonitoredRequest is the PATCH /api/series/{id}/monitored request body.
+type SetMonitoredRequest struct {
+	// Monitored indicates whether the series should be actively tracked for new chapters.
+	Monitored *bool `json:"monitored"`
+}
+
+// validateSetMonitored validates the PATCH body: the monitored field must be
+// explicitly present (a bool pointer so that omission is distinguishable from
+// false). A missing field yields a 400 echo.HTTPError.
+func validateSetMonitored(req SetMonitoredRequest) error {
+	if req.Monitored == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "monitored is required")
+	}
+	return nil
+}
+
+// ProviderRankBody is one entry in the ReorderProvidersRequest.Providers list.
+type ProviderRankBody struct {
+	// ID is the SeriesProvider UUID to update.
+	ID string `json:"id"`
+	// Importance is the new priority/quality rank (non-negative; higher = preferred).
+	Importance int `json:"importance"`
+}
+
+// ReorderProvidersRequest is the PATCH /api/series/{id}/providers request body.
+type ReorderProvidersRequest struct {
+	// Providers is the ordered list of (provider id, importance) pairs to apply.
+	// At least one entry is required; importances are updated all-or-nothing.
+	Providers []ProviderRankBody `json:"providers"`
+}
+
+// validateReorderProviders validates the PATCH body: at least one entry is required,
+// each id must parse as a valid UUID, and each importance must be non-negative.
+// Returns a []seriessvc.ProviderRank ready for the service, or a 400 echo.HTTPError.
+func validateReorderProviders(req ReorderProvidersRequest) ([]seriessvc.ProviderRank, error) {
+	if len(req.Providers) == 0 {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "providers must have at least one entry")
+	}
+	ranks := make([]seriessvc.ProviderRank, len(req.Providers))
+	for i, p := range req.Providers {
+		id, err := uuid.Parse(p.ID)
+		if err != nil {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid provider id: "+p.ID)
+		}
+		if p.Importance < 0 {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, "importance must be non-negative")
+		}
+		ranks[i] = seriessvc.ProviderRank{SeriesProviderID: id, Importance: p.Importance}
+	}
+	return ranks, nil
 }

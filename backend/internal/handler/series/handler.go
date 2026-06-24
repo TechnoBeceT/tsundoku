@@ -118,15 +118,97 @@ func (h *Handler) Categories(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// SetMonitored handles PATCH /api/series/:id/monitored.
+//
+// It parses the :id path param and the {monitored: bool} body, then sets the
+// series' monitored flag via the service. On success it returns 200 with the
+// updated SeriesSummaryDTO so the caller sees the new state without a refetch
+// (§16 full round-trip). A missing series yields 404; a missing/invalid body
+// yields 400.
+func (h *Handler) SetMonitored(c echo.Context) error {
+	id, err := validateID(c.Param("id"))
+	if err != nil {
+		return err
+	}
+
+	var req SetMonitoredRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := validateSetMonitored(req); err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := h.svc.SetMonitored(ctx, id, *req.Monitored); err != nil {
+		return mapServiceError(err)
+	}
+
+	// Return the updated summary so the response confirms the new monitored state.
+	updated, err := h.svc.GetSeries(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, seriessvc.SeriesSummaryDTO{
+		ID:            updated.ID,
+		Title:         updated.Title,
+		Slug:          updated.Slug,
+		Category:      updated.Category,
+		CoverURL:      updated.CoverURL,
+		Monitored:     updated.Monitored,
+		ChapterCounts: updated.ChapterCounts,
+	})
+}
+
+// ReorderProviders handles PATCH /api/series/:id/providers.
+//
+// It parses the :id path param and the {providers: [{id, importance}]} body,
+// validates each provider id is a valid UUID and the importance is non-negative,
+// then updates provider importances all-or-nothing via the service. On success it
+// returns 200 with the updated SeriesDetailDTO so importances are reflected in the
+// response without a refetch (§16 full round-trip). A missing series yields 404;
+// a provider that doesn't belong to the series yields 400; a bad UUID or empty
+// list yields 400.
+func (h *Handler) ReorderProviders(c echo.Context) error {
+	id, err := validateID(c.Param("id"))
+	if err != nil {
+		return err
+	}
+
+	var req ReorderProvidersRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	ranks, err := validateReorderProviders(req)
+	if err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := h.svc.ReorderProviders(ctx, id, ranks); err != nil {
+		return mapServiceError(err)
+	}
+
+	// Return the updated detail so the caller sees the new importances without a refetch.
+	updated, err := h.svc.GetSeries(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
 // mapServiceError translates a series.Service sentinel error into the matching
 // HTTP status, leaving any unexpected error to fall through to the central
-// middleware as a 500. ErrSeriesNotFound → 404; ErrInvalidCategory → 400.
+// middleware as a 500. ErrSeriesNotFound → 404; ErrInvalidCategory → 400;
+// ErrProviderNotInSeries → 400.
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, seriessvc.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "series not found")
 	case errors.Is(err, seriessvc.ErrInvalidCategory):
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid category")
+	case errors.Is(err, seriessvc.ErrProviderNotInSeries):
+		return echo.NewHTTPError(http.StatusBadRequest, "provider does not belong to series")
 	default:
 		return err
 	}
