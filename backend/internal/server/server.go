@@ -13,6 +13,7 @@ import (
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/sse"
+	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // New constructs and returns a configured Echo instance with all Tsundoku
@@ -28,12 +29,16 @@ import (
 // The central ErrorHandler (mw.ErrorHandler) is wired as Echo's HTTPErrorHandler
 // so that every returned error — from handlers, middleware, or Recover — is
 // rendered as a JSON ErrorResponse matching the OpenAPI contract.
+//
+// suwayomiClient is the typed Suwayomi interface used by the imports handler and
+// the ingest service. It is constructed in main.go before server.New is called.
 func New(
 	cfg *config.Config,
 	client *entpkg.Client,
 	authSvc *auth.Service,
 	hub *sse.Hub,
 	ownerH *owner.Handler,
+	suwayomiClient suwayomi.Client,
 ) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -56,6 +61,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient)
 	return e
 }

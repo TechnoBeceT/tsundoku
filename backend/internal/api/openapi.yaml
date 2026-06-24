@@ -247,6 +247,121 @@ components:
           enum: [Manga, Manhwa, Manhua, Comic, Other]
           description: Target category to file the series under.
 
+    Source:
+      type: object
+      required:
+        - id
+        - name
+        - lang
+      properties:
+        id:
+          type: string
+          description: Suwayomi source identifier (64-bit integer serialised as string).
+          example: "1998416842837112832"
+        name:
+          type: string
+          description: Human-readable source name (e.g. "MangaDex").
+          example: MangaDex
+        lang:
+          type: string
+          description: BCP-47 content language tag for this source (e.g. "en", "ko").
+          example: en
+
+    SearchCandidate:
+      type: object
+      required:
+        - source
+        - sourceName
+        - lang
+        - mangaId
+        - title
+        - thumbnailUrl
+      properties:
+        source:
+          type: string
+          description: Suwayomi source ID from which this candidate came.
+        sourceName:
+          type: string
+          description: Human-readable source name.
+        lang:
+          type: string
+          description: Content language of this source.
+        mangaId:
+          type: integer
+          description: Suwayomi-internal manga identifier within this source.
+        title:
+          type: string
+          description: Manga display title as returned by the source.
+        thumbnailUrl:
+          type: string
+          description: Cover image URL; empty string when not provided.
+
+    SearchGroup:
+      type: object
+      required:
+        - title
+        - candidates
+      properties:
+        title:
+          type: string
+          description: Representative display title chosen by the grouping logic.
+        candidates:
+          type: array
+          description: Every source hit that belongs to this group.
+          items:
+            $ref: "#/components/schemas/SearchCandidate"
+
+    ChapterInspect:
+      type: object
+      required:
+        - number
+        - name
+      properties:
+        number:
+          type: [number, "null"]
+          description: Parsed chapter number (e.g. 1.5); null when not available.
+        name:
+          type: string
+          description: Chapter display name (e.g. "Chapter 1").
+
+    AdoptProvider:
+      type: object
+      required:
+        - source
+        - mangaId
+        - importance
+      properties:
+        source:
+          type: string
+          description: Suwayomi source ID (e.g. "mangadex").
+        mangaId:
+          type: integer
+          description: Suwayomi-internal manga identifier within the source.
+        importance:
+          type: integer
+          minimum: 0
+          description: Provider rank for this series (higher = preferred).
+
+    AdoptRequest:
+      type: object
+      required:
+        - title
+        - providers
+      properties:
+        title:
+          type: string
+          description: Canonical series title; all providers attach to the series slug derived from this.
+        category:
+          type: string
+          enum: [Manga, Manhwa, Manhua, Comic, Other]
+          description: Optional target category; omit to use the schema default (Other).
+        providers:
+          type: array
+          description: Ordered list of (source, manga) pairs to adopt; must have at least one entry.
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AdoptProvider"
+
 paths:
   /health:
     get:
@@ -420,6 +535,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: adoptSeries
+      summary: Adopt / import a manga into the library
+      description: |
+        Groups one or more (source, manga) candidates under a single canonical title
+        and merges them into ONE Series with N importance-ranked providers, ingesting
+        all their chapters. On success, returns the full SeriesDetail of the newly
+        created series so the caller sees the persisted state without a refetch (§16).
+      tags:
+        - imports
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdoptRequest"
+      responses:
+        "201":
+          description: Series adopted. Returns the full series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Validation error (blank title, empty providers, invalid category, duplicate provider pair, negative importance).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/series/{id}:
     get:
@@ -534,6 +686,129 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/CategoryCount"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources:
+    get:
+      operationId: listSources
+      summary: List Suwayomi sources
+      description: Returns all installed Suwayomi sources (extensions) as a flat list.
+      tags:
+        - imports
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: All available sources.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Source"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/search:
+    get:
+      operationId: searchManga
+      summary: Multi-source manga search
+      description: |
+        Fans out a search query to all sources (or a named subset) in parallel,
+        groups results by title similarity, and returns []SearchGroup. Per-source
+        errors are logged and skipped — partial results are returned with a nil error
+        so a single misbehaving source does not block the whole response.
+      tags:
+        - imports
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query string; must be non-empty.
+          schema:
+            type: string
+        - name: sources
+          in: query
+          required: false
+          description: |
+            Comma-separated list of source IDs to restrict the search to.
+            Unknown IDs are silently dropped by the service.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Grouped search results.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchGroup"
+        "400":
+          description: Missing or empty q parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/manga/{mangaId}/chapters:
+    get:
+      operationId: inspectChapters
+      summary: Preview a manga's chapter list
+      description: |
+        Triggers a live chapter-list fetch from the source and returns a lightweight
+        preview as []ChapterInspect. This contacts the upstream provider and
+        populates Suwayomi's internal chapter cache — use before adopting to
+        confirm the chapter count.
+      tags:
+        - imports
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Suwayomi source ID.
+          schema:
+            type: string
+        - name: mangaId
+          in: path
+          required: true
+          description: Suwayomi-internal manga identifier (integer).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Chapter list for the manga.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChapterInspect"
+        "400":
+          description: Non-integer mangaId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing or invalid Bearer token.
           content:

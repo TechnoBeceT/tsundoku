@@ -2,6 +2,7 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,32 @@ import (
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/sse"
+	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
+
+// nullSuwayomiClient is a stub suwayomi.Client used by route-level tests that
+// do not exercise any imports paths; it panics if any method is called so
+// accidental invocations are immediately obvious in test output.
+type nullSuwayomiClient struct{}
+
+func (nullSuwayomiClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
+	panic("nullSuwayomiClient.Sources called in test")
+}
+func (nullSuwayomiClient) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
+	panic("nullSuwayomiClient.Search called in test")
+}
+func (nullSuwayomiClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
+	panic("nullSuwayomiClient.FetchChapters called in test")
+}
+func (nullSuwayomiClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
+	panic("nullSuwayomiClient.MangaChapters called in test")
+}
+func (nullSuwayomiClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
+	panic("nullSuwayomiClient.ChapterPages called in test")
+}
+func (nullSuwayomiClient) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
+	panic("nullSuwayomiClient.PageBytes called in test")
+}
 
 // newTestServer builds a server.New instance with stub dependencies and no
 // real DB, suitable for route-level unit tests that do not touch the database.
@@ -33,7 +59,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	// and ensure no test exercises a path that calls into the DB.
 	ownerH := owner.NewHandler(nil, authSvc)
 
-	return server.New(cfg, nil, authSvc, hub, ownerH), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

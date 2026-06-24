@@ -105,7 +105,14 @@ export interface paths {
          */
         get: operations["listSeries"];
         put?: never;
-        post?: never;
+        /**
+         * Adopt / import a manga into the library
+         * @description Groups one or more (source, manga) candidates under a single canonical title
+         *     and merges them into ONE Series with N importance-ranked providers, ingesting
+         *     all their chapters. On success, returns the full SeriesDetail of the newly
+         *     created series so the caller sees the persisted state without a refetch (§16).
+         */
+        post: operations["adoptSeries"];
         delete?: never;
         options?: never;
         head?: never;
@@ -166,6 +173,72 @@ export interface paths {
          * @description Returns one entry per category enum value (all five) with the number of series in each.
          */
         get: operations["listCategories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Suwayomi sources
+         * @description Returns all installed Suwayomi sources (extensions) as a flat list.
+         */
+        get: operations["listSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Multi-source manga search
+         * @description Fans out a search query to all sources (or a named subset) in parallel,
+         *     groups results by title similarity, and returns []SearchGroup. Per-source
+         *     errors are logged and skipped — partial results are returned with a nil error
+         *     so a single misbehaving source does not block the whole response.
+         */
+        get: operations["searchManga"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{sourceId}/manga/{mangaId}/chapters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview a manga's chapter list
+         * @description Triggers a live chapter-list fetch from the source and returns a lightweight
+         *     preview as []ChapterInspect. This contacts the upstream provider and
+         *     populates Suwayomi's internal chapter cache — use before adopting to
+         *     confirm the chapter count.
+         */
+        get: operations["inspectChapters"];
         put?: never;
         post?: never;
         delete?: never;
@@ -314,6 +387,68 @@ export interface components {
              * @enum {string}
              */
             category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+        };
+        Source: {
+            /**
+             * @description Suwayomi source identifier (64-bit integer serialised as string).
+             * @example 1998416842837112832
+             */
+            id: string;
+            /**
+             * @description Human-readable source name (e.g. "MangaDex").
+             * @example MangaDex
+             */
+            name: string;
+            /**
+             * @description BCP-47 content language tag for this source (e.g. "en", "ko").
+             * @example en
+             */
+            lang: string;
+        };
+        SearchCandidate: {
+            /** @description Suwayomi source ID from which this candidate came. */
+            source: string;
+            /** @description Human-readable source name. */
+            sourceName: string;
+            /** @description Content language of this source. */
+            lang: string;
+            /** @description Suwayomi-internal manga identifier within this source. */
+            mangaId: number;
+            /** @description Manga display title as returned by the source. */
+            title: string;
+            /** @description Cover image URL; empty string when not provided. */
+            thumbnailUrl: string;
+        };
+        SearchGroup: {
+            /** @description Representative display title chosen by the grouping logic. */
+            title: string;
+            /** @description Every source hit that belongs to this group. */
+            candidates: components["schemas"]["SearchCandidate"][];
+        };
+        ChapterInspect: {
+            /** @description Parsed chapter number (e.g. 1.5); null when not available. */
+            number: number | null;
+            /** @description Chapter display name (e.g. "Chapter 1"). */
+            name: string;
+        };
+        AdoptProvider: {
+            /** @description Suwayomi source ID (e.g. "mangadex"). */
+            source: string;
+            /** @description Suwayomi-internal manga identifier within the source. */
+            mangaId: number;
+            /** @description Provider rank for this series (higher = preferred). */
+            importance: number;
+        };
+        AdoptRequest: {
+            /** @description Canonical series title; all providers attach to the series slug derived from this. */
+            title: string;
+            /**
+             * @description Optional target category; omit to use the schema default (Other).
+             * @enum {string}
+             */
+            category?: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            /** @description Ordered list of (source, manga) pairs to adopt; must have at least one entry. */
+            providers: components["schemas"]["AdoptProvider"][];
         };
     };
     responses: never;
@@ -502,6 +637,48 @@ export interface operations {
             };
         };
     };
+    adoptSeries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptRequest"];
+            };
+        };
+        responses: {
+            /** @description Series adopted. Returns the full series detail. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Validation error (blank title, empty providers, invalid category, duplicate provider pair, negative importance). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getSeries: {
         parameters: {
             query?: never;
@@ -622,6 +799,124 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CategoryCount"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All available sources. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Source"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchManga: {
+        parameters: {
+            query: {
+                /** @description Search query string; must be non-empty. */
+                q: string;
+                /**
+                 * @description Comma-separated list of source IDs to restrict the search to.
+                 *     Unknown IDs are silently dropped by the service.
+                 */
+                sources?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grouped search results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchGroup"][];
+                };
+            };
+            /** @description Missing or empty q parameter. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    inspectChapters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Suwayomi source ID. */
+                sourceId: string;
+                /** @description Suwayomi-internal manga identifier (integer). */
+                mangaId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chapter list for the manga. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterInspect"][];
+                };
+            };
+            /** @description Non-integer mangaId. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Missing or invalid Bearer token. */
