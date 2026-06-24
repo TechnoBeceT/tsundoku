@@ -81,6 +81,12 @@ func (h *Handler) InspectChapters(c echo.Context) error {
 // then calls imports.Service.Adopt to ingest the series. On success it loads the
 // SeriesDetailDTO via series.Service.GetSeries and returns 201 so the caller
 // sees the full persisted state without a refetch (§16 full round-trip).
+//
+// Category validation is handled entirely by validateAdoptBody (via
+// entseries.CategoryValidator) before the service is ever called, so the service
+// never receives an invalid category from this handler. Any error from Adopt is a
+// genuine upstream/ingest/DB failure and surfaces through the central error
+// middleware unchanged.
 func (h *Handler) Adopt(c echo.Context) error {
 	var body adoptRequestBody
 	if err := c.Bind(&body); err != nil {
@@ -109,7 +115,7 @@ func (h *Handler) Adopt(c echo.Context) error {
 		Providers: providers,
 	})
 	if err != nil {
-		return mapServiceError(err)
+		return err
 	}
 
 	detail, err := h.series.GetSeries(ctx, id)
@@ -117,34 +123,4 @@ func (h *Handler) Adopt(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusCreated, detail)
-}
-
-// mapServiceError translates imports.Service sentinel errors into HTTP statuses.
-// An invalid category from the service (which validates early) maps to 400.
-// Any other error falls through to the central middleware as a 500.
-func mapServiceError(err error) error {
-	// imports.Service.validateCategory wraps entseries.CategoryValidator error.
-	// Surface it as 400 so the caller sees a meaningful status.
-	if err != nil && isInvalidCategoryError(err) {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid category")
-	}
-	return err
-}
-
-// isInvalidCategoryError returns true when err indicates a bad category value
-// from imports.Service.validateCategory. The service wraps the ent validator
-// error with "invalid category" in the message string.
-//
-// imports.Adopt returns fmt.Errorf("imports.Adopt: invalid category %q: %w", ...)
-// when the category fails the ent enum validator.
-func isInvalidCategoryError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return containsAny(err.Error(), "invalid category")
-}
-
-// containsAny is a simple substring check wrapper for readability.
-func containsAny(s, sub string) bool {
-	return strings.Contains(s, sub)
 }

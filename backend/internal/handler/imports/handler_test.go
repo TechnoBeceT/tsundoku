@@ -70,7 +70,7 @@ func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.C
 }
 
 func (f *fakeClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
-	return nil, nil
+	panic("MangaChapters must never be called by the imports service (use FetchChapters)")
 }
 func (f *fakeClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
 	return nil, nil
@@ -228,11 +228,6 @@ func TestSources_OK(t *testing.T) {
 	}
 	if got[1].ID != "src-b" || got[1].Lang != "ko" {
 		t.Errorf("Sources[1]: got %+v", got[1])
-	}
-	// Verify camelCase JSON keys are present in raw body.
-	body := rec.Body.String()
-	if !strings.Contains(body, `"sourceName"`) {
-		// sourceName is on SearchCandidateDTO, not SourceDTO — skip for Sources
 	}
 }
 
