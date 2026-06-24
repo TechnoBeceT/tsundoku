@@ -35,10 +35,8 @@ type SearchCandidateDTO struct {
 }
 
 // SearchGroupDTO bundles all per-source candidates for the same logical series.
-// The Title is the representative title — the longest raw title among all
-// candidates in the group (from the matcher).
 type SearchGroupDTO struct {
-	// Title is the representative title for this logical series group.
+	// Title is the representative display title chosen by the grouping logic.
 	Title string `json:"title"`
 	// Candidates holds every source hit that belongs to this group.
 	Candidates []SearchCandidateDTO `json:"candidates"`

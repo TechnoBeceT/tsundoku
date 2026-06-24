@@ -85,7 +85,14 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 	g, gctx := errgroup.WithContext(ctx)
 	for _, src := range sources {
 		g.Go(func() error {
-			sem <- struct{}{}
+			// Acquire a concurrency slot; respect context cancellation so that
+			// in-flight goroutines don't block indefinitely when the caller
+			// cancels while all slots are taken.
+			select {
+			case sem <- struct{}{}:
+			case <-gctx.Done():
+				return gctx.Err()
+			}
 			defer func() { <-sem }()
 
 			results, err := s.client.Search(gctx, src.ID, query)
@@ -119,8 +126,9 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 		})
 	}
 
-	// Wait for all goroutines. Since per-source errors are swallowed and
-	// returned nil, g.Wait() only propagates ctx cancellation.
+	// Wait for all goroutines. Per-source fetch errors are logged and skipped
+	// (goroutine returns nil), so partial results reach the caller. Context
+	// cancellation or deadline expiry is returned via the semaphore acquire.
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}

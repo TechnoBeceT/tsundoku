@@ -183,6 +183,41 @@ func TestService_Search_FilterSources(t *testing.T) {
 	if got[0].Candidates[0].Source != "a" {
 		t.Errorf("Candidate.Source: got %q, want %q", got[0].Candidates[0].Source, "a")
 	}
+	// SourceName and Lang must be propagated from the resolved source, not left zero.
+	if got[0].Candidates[0].SourceName != "A Source" {
+		t.Errorf("Candidate.SourceName: got %q, want %q", got[0].Candidates[0].SourceName, "A Source")
+	}
+	if got[0].Candidates[0].Lang != "en" {
+		t.Errorf("Candidate.Lang: got %q, want %q", got[0].Candidates[0].Lang, "en")
+	}
+}
+
+// TestService_Search_UnknownSourceID verifies that passing a sourceID that does
+// not match any client source silently produces an empty, non-nil result —
+// resolveSources filters unknown IDs out, so the fan-out has nothing to query.
+func TestService_Search_UnknownSourceID(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "real-src", Name: "Real Source", Lang: "en"},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"real-src": {{ID: 1, Title: "Some Manga"}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "anything", []string{"nonexistent-id"})
+	if err != nil {
+		t.Fatalf("Search: unexpected error for unknown source filter: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Search: result must be non-nil even when all requested source IDs are unknown")
+	}
+	if len(got) != 0 {
+		t.Errorf("Search: got %d groups, want 0 — unknown source IDs must be silently dropped", len(got))
+	}
 }
 
 // TestService_Search_Grouping verifies that two sources returning the same title
