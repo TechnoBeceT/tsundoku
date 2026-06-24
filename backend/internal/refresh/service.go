@@ -12,6 +12,7 @@ package refresh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -95,12 +96,16 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(s.concurrency)
 	for _, it := range items {
-		it := it
 		g.Go(func() error {
 			res, addErr := s.ingest.AddSeries(gctx, it.provider, it.mangaID, it.title)
 			mu.Lock()
 			defer mu.Unlock()
 			if addErr != nil {
+				// Context cancellation (shutdown/timeout) is not a provider error —
+				// skip counting and logging to avoid false error inflation on clean exit.
+				if errors.Is(addErr, context.Canceled) || errors.Is(addErr, context.DeadlineExceeded) {
+					return nil
+				}
 				// Partial success: log + count, never abort the sweep.
 				slog.ErrorContext(gctx, "refresh: provider re-fetch failed",
 					"series", it.title, "provider", it.provider, "err", addErr)
@@ -112,9 +117,8 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 			return nil
 		})
 	}
-	// Goroutines never return non-nil, so Wait never errors; the only way gctx
-	// cancels is parent-ctx cancellation, which surfaces as per-item AddSeries
-	// errors counted above.
+	// Goroutines never return non-nil, so Wait never errors; parent-ctx
+	// cancellation surfaces as context.Canceled in AddSeries and is skipped.
 	_ = g.Wait()
 
 	s.broadcast("refresh.done", RefreshEvent{

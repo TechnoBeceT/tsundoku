@@ -4,8 +4,10 @@ package refresh_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
@@ -185,5 +187,72 @@ func TestRefreshAll_PreservesImportance_And_NeverDeletes(t *testing.T) {
 	}
 	if n := db.ProviderChapter.Query().Where(entproviderchapter.SeriesProviderID(sp.ID)).CountX(ctx); n != 2 {
 		t.Errorf("provider chapters = %d, want 2 (dropped chapter must NOT be pruned)", n)
+	}
+}
+
+// TestRefreshAll_EmitsSSEEvents verifies that RefreshAll broadcasts the
+// expected SSE events to subscribers. It builds the hub explicitly (rather
+// than using newSvc) so the subscriber channel is reachable for assertions.
+// The test checks both event types and the monitored-count field on
+// refresh.start, ensuring that a future regression (missing broadcast call or
+// wrong payload) causes a clear test failure rather than a silent pass.
+func TestRefreshAll_EmitsSSEEvents(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
+		42: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}},
+	}}
+	seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
+
+	hub := sse.NewHub()
+	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), hub, 4)
+
+	// Subscribe before the sweep so both buffered events are captured.
+	events, unsub := hub.Subscribe()
+	defer unsub()
+
+	if _, err := svc.RefreshAll(ctx); err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+
+	// readEvent drains one event from the channel with a short timeout so a
+	// missing event fails fast rather than hanging the test suite.
+	readEvent := func(label string) sse.Event {
+		t.Helper()
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				t.Fatalf("%s: event channel closed unexpectedly", label)
+			}
+			return ev
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: timed out waiting for SSE event", label)
+			return sse.Event{} // unreachable; satisfies compiler
+		}
+	}
+
+	// --- refresh.start ---
+	startEv := readEvent("refresh.start")
+	if startEv.Type != "refresh.start" {
+		t.Errorf("first event type = %q, want %q", startEv.Type, "refresh.start")
+	}
+	var startPayload struct {
+		Monitored int `json:"monitored"`
+	}
+	raw, ok := startEv.Data.(json.RawMessage)
+	if !ok {
+		t.Fatalf("refresh.start Data is %T, want json.RawMessage", startEv.Data)
+	}
+	if err := json.Unmarshal([]byte(raw), &startPayload); err != nil {
+		t.Fatalf("unmarshal refresh.start payload: %v", err)
+	}
+	if startPayload.Monitored != 1 {
+		t.Errorf("refresh.start monitored = %d, want 1", startPayload.Monitored)
+	}
+
+	// --- refresh.done ---
+	doneEv := readEvent("refresh.done")
+	if doneEv.Type != "refresh.done" {
+		t.Errorf("second event type = %q, want %q", doneEv.Type, "refresh.done")
 	}
 }
