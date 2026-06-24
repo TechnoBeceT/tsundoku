@@ -338,6 +338,7 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPatch, "/api/series/" + id + "/category"},
 		{http.MethodPatch, "/api/series/" + id + "/monitored"},
 		{http.MethodPatch, "/api/series/" + id + "/providers"},
+		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
 		{http.MethodGet, "/api/categories"},
 	}
 	for _, tc := range cases {
