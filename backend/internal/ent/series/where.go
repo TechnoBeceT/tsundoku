@@ -81,6 +81,11 @@ func Status(v string) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldStatus, v))
 }
 
+// Monitored applies equality check predicate on the "monitored" field. It's identical to MonitoredEQ.
+func Monitored(v bool) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldMonitored, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCreatedAt, v))
@@ -434,6 +439,16 @@ func CategoryIn(vs ...Category) predicate.Series {
 // CategoryNotIn applies the NotIn predicate on the "category" field.
 func CategoryNotIn(vs ...Category) predicate.Series {
 	return predicate.Series(sql.FieldNotIn(FieldCategory, vs...))
+}
+
+// MonitoredEQ applies the EQ predicate on the "monitored" field.
+func MonitoredEQ(v bool) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldMonitored, v))
+}
+
+// MonitoredNEQ applies the NEQ predicate on the "monitored" field.
+func MonitoredNEQ(v bool) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldMonitored, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

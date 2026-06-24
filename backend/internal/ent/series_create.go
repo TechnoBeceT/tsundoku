@@ -91,6 +91,20 @@ func (_c *SeriesCreate) SetNillableCategory(v *series.Category) *SeriesCreate {
 	return _c
 }
 
+// SetMonitored sets the "monitored" field.
+func (_c *SeriesCreate) SetMonitored(v bool) *SeriesCreate {
+	_c.mutation.SetMonitored(v)
+	return _c
+}
+
+// SetNillableMonitored sets the "monitored" field if the given value is not nil.
+func (_c *SeriesCreate) SetNillableMonitored(v *bool) *SeriesCreate {
+	if v != nil {
+		_c.SetMonitored(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *SeriesCreate) SetCreatedAt(v time.Time) *SeriesCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -214,6 +228,10 @@ func (_c *SeriesCreate) defaults() {
 		v := series.DefaultCategory
 		_c.mutation.SetCategory(v)
 	}
+	if _, ok := _c.mutation.Monitored(); !ok {
+		v := series.DefaultMonitored
+		_c.mutation.SetMonitored(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := series.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -252,6 +270,9 @@ func (_c *SeriesCreate) check() error {
 		if err := series.CategoryValidator(v); err != nil {
 			return &ValidationError{Name: "category", err: fmt.Errorf(`ent: validator failed for field "Series.category": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.Monitored(); !ok {
+		return &ValidationError{Name: "monitored", err: errors.New(`ent: missing required field "Series.monitored"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "Series.created_at"`)}
@@ -317,6 +338,10 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Category(); ok {
 		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
 		_node.Category = value
+	}
+	if value, ok := _c.mutation.Monitored(); ok {
+		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
+		_node.Monitored = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(series.FieldCreatedAt, field.TypeTime, value)

@@ -30,6 +30,9 @@ func (Series) Fields() []ent.Field {
 		field.Enum("category").
 			Values("Manga", "Manhwa", "Manhua", "Comic", "Other").
 			Default("Other"),
+		// monitored gates the (M5) refresh poll; false = the owner is done with
+		// this series and it is excluded from new-chapter checks.
+		field.Bool("monitored").Default(true),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

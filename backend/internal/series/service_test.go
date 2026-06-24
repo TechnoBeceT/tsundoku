@@ -498,6 +498,92 @@ func TestSetCategoryNoDiskFolderUpdatesDBOnly(t *testing.T) {
 	}
 }
 
+// TestMonitoredDefaultsTrue verifies that a newly created series exposes
+// Monitored==true in both GetSeries (detail) and ListSeries (summary), and that
+// ProviderDTO.ID matches the SeriesProvider UUID (needed by Task 5/7 re-rank).
+func TestMonitoredDefaultsTrue(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	sr := client.Series.Create().
+		SetTitle("Watch Series").
+		SetSlug("watch-series").
+		SetCategory(entseries.CategoryManga).
+		SaveX(ctx)
+
+	sp := client.SeriesProvider.Create().
+		SetSeriesID(sr.ID).
+		SetProvider("mangadex").
+		SetScanlator("ScanGroup").
+		SetLanguage("en").
+		SetImportance(10).
+		SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir())
+
+	detail, err := svc.GetSeries(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if !detail.Monitored {
+		t.Fatalf("GetSeries: default Monitored want true, got false")
+	}
+	if len(detail.Providers) != 1 {
+		t.Fatalf("GetSeries: want 1 provider, got %d", len(detail.Providers))
+	}
+	if detail.Providers[0].ID != sp.ID.String() {
+		t.Fatalf("GetSeries: ProviderDTO.ID want %s, got %q", sp.ID.String(), detail.Providers[0].ID)
+	}
+
+	summaries, err := svc.ListSeries(ctx, series.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("ListSeries: want 1 series, got %d", len(summaries))
+	}
+	if !summaries[0].Monitored {
+		t.Fatalf("ListSeries: default Monitored want true, got false")
+	}
+}
+
+// TestMonitoredToggle verifies that after setting Monitored=false on the DB row
+// directly, both GetSeries and ListSeries report false — confirming the field
+// is read from the DB and not cached or hardcoded.
+func TestMonitoredToggle(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	sr := client.Series.Create().
+		SetTitle("Drop Series").
+		SetSlug("drop-series").
+		SetCategory(entseries.CategoryManga).
+		SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir())
+
+	client.Series.UpdateOneID(sr.ID).SetMonitored(false).ExecX(ctx)
+
+	detail, err := svc.GetSeries(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("GetSeries (after toggle): %v", err)
+	}
+	if detail.Monitored {
+		t.Fatalf("GetSeries: after toggle Monitored want false, got true")
+	}
+
+	summaries, err := svc.ListSeries(ctx, series.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListSeries (after toggle): %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("ListSeries: want 1 series, got %d", len(summaries))
+	}
+	if summaries[0].Monitored {
+		t.Fatalf("ListSeries: after toggle Monitored want false, got true")
+	}
+}
+
 // TestSetCategoryNotFound verifies an unknown series id yields ErrSeriesNotFound.
 func TestSetCategoryNotFound(t *testing.T) {
 	client := testdb.New(t)
@@ -507,6 +593,199 @@ func TestSetCategoryNotFound(t *testing.T) {
 	err := svc.SetCategory(ctx, uuid.New(), "Manga")
 	if !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("SetCategory(random): want ErrSeriesNotFound, got %v", err)
+	}
+}
+
+// TestSetMonitoredFlipsField verifies that SetMonitored(false) persists the value
+// and that a re-read via GetSeries reports the updated flag.
+func TestSetMonitoredFlipsField(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	sr := client.Series.Create().
+		SetTitle("Monitor Me").
+		SetSlug("monitor-me").
+		SetCategory(entseries.CategoryManga).
+		SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir())
+
+	// Default is true; flip to false.
+	if err := svc.SetMonitored(ctx, sr.ID, false); err != nil {
+		t.Fatalf("SetMonitored(false): %v", err)
+	}
+
+	detail, err := svc.GetSeries(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("GetSeries after SetMonitored: %v", err)
+	}
+	if detail.Monitored {
+		t.Fatalf("SetMonitored(false): GetSeries still reports Monitored=true")
+	}
+
+	// Flip back to true.
+	if err := svc.SetMonitored(ctx, sr.ID, true); err != nil {
+		t.Fatalf("SetMonitored(true): %v", err)
+	}
+
+	detail, err = svc.GetSeries(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("GetSeries after second SetMonitored: %v", err)
+	}
+	if !detail.Monitored {
+		t.Fatalf("SetMonitored(true): GetSeries still reports Monitored=false")
+	}
+}
+
+// TestSetMonitoredNotFound verifies that a random UUID yields ErrSeriesNotFound.
+func TestSetMonitoredNotFound(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	svc := series.NewService(client, t.TempDir())
+	err := svc.SetMonitored(ctx, uuid.New(), false)
+	if !errors.Is(err, series.ErrSeriesNotFound) {
+		t.Fatalf("SetMonitored(random): want ErrSeriesNotFound, got %v", err)
+	}
+}
+
+// seedProviders creates a series with two SeriesProviders (importances 5 and 8)
+// and a separate series with one provider. It returns the series IDs and the two
+// provider IDs of the first series, plus the foreign provider ID (from the second
+// series) for the cross-ownership test.
+type seededProviders struct {
+	seriesID          uuid.UUID
+	otherSeriesID     uuid.UUID
+	providerAID       uuid.UUID // importance 5
+	providerBID       uuid.UUID // importance 8
+	foreignProviderID uuid.UUID // belongs to otherSeriesID, not seriesID
+}
+
+func seedProviders(ctx context.Context, t *testing.T, client *ent.Client) seededProviders {
+	t.Helper()
+
+	sr := client.Series.Create().
+		SetTitle("Rank Me").
+		SetSlug("rank-me").
+		SetCategory(entseries.CategoryManga).
+		SaveX(ctx)
+
+	spA := client.SeriesProvider.Create().
+		SetSeriesID(sr.ID).
+		SetProvider("mangadex").
+		SetLanguage("en").
+		SetImportance(5).
+		SaveX(ctx)
+
+	spB := client.SeriesProvider.Create().
+		SetSeriesID(sr.ID).
+		SetProvider("asura").
+		SetLanguage("en").
+		SetImportance(8).
+		SaveX(ctx)
+
+	other := client.Series.Create().
+		SetTitle("Other Series").
+		SetSlug("other-series").
+		SetCategory(entseries.CategoryManhwa).
+		SaveX(ctx)
+
+	foreignSP := client.SeriesProvider.Create().
+		SetSeriesID(other.ID).
+		SetProvider("flame").
+		SetLanguage("en").
+		SetImportance(3).
+		SaveX(ctx)
+
+	return seededProviders{
+		seriesID:          sr.ID,
+		otherSeriesID:     other.ID,
+		providerAID:       spA.ID,
+		providerBID:       spB.ID,
+		foreignProviderID: foreignSP.ID,
+	}
+}
+
+// TestReorderProvidersUpdatesImportances verifies that ReorderProviders persists
+// the new importance values and that a re-read via GetSeries reflects them.
+func TestReorderProvidersUpdatesImportances(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	seed := seedProviders(ctx, t, client)
+
+	svc := series.NewService(client, t.TempDir())
+
+	ranks := []series.ProviderRank{
+		{SeriesProviderID: seed.providerAID, Importance: 20},
+		{SeriesProviderID: seed.providerBID, Importance: 10},
+	}
+	if err := svc.ReorderProviders(ctx, seed.seriesID, ranks); err != nil {
+		t.Fatalf("ReorderProviders: %v", err)
+	}
+
+	detail, err := svc.GetSeries(ctx, seed.seriesID)
+	if err != nil {
+		t.Fatalf("GetSeries after ReorderProviders: %v", err)
+	}
+	got := map[string]int{}
+	for _, p := range detail.Providers {
+		got[p.Provider] = p.Importance
+	}
+	if got["mangadex"] != 20 {
+		t.Fatalf("ReorderProviders: mangadex importance want 20, got %d", got["mangadex"])
+	}
+	if got["asura"] != 10 {
+		t.Fatalf("ReorderProviders: asura importance want 10, got %d", got["asura"])
+	}
+}
+
+// TestReorderProvidersNotFound verifies that a random series UUID yields ErrSeriesNotFound.
+func TestReorderProvidersNotFound(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	seed := seedProviders(ctx, t, client)
+
+	svc := series.NewService(client, t.TempDir())
+
+	ranks := []series.ProviderRank{
+		{SeriesProviderID: seed.providerAID, Importance: 99},
+	}
+	err := svc.ReorderProviders(ctx, uuid.New(), ranks)
+	if !errors.Is(err, series.ErrSeriesNotFound) {
+		t.Fatalf("ReorderProviders(random series): want ErrSeriesNotFound, got %v", err)
+	}
+}
+
+// TestReorderProvidersForeignProviderAllOrNothing verifies the all-or-nothing
+// invariant: a ProviderRank whose SeriesProviderID belongs to a DIFFERENT series
+// causes ErrProviderNotInSeries and NO importances are changed (the whole tx rolls
+// back, even for the valid provider rank that precedes the bad one).
+func TestReorderProvidersForeignProviderAllOrNothing(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	seed := seedProviders(ctx, t, client)
+
+	svc := series.NewService(client, t.TempDir())
+
+	// providerA is valid; foreignProviderID belongs to a different series — bad.
+	ranks := []series.ProviderRank{
+		{SeriesProviderID: seed.providerAID, Importance: 99},      // valid
+		{SeriesProviderID: seed.foreignProviderID, Importance: 1}, // foreign — should abort all
+	}
+	err := svc.ReorderProviders(ctx, seed.seriesID, ranks)
+	if !errors.Is(err, series.ErrProviderNotInSeries) {
+		t.Fatalf("ReorderProviders(foreign provider): want ErrProviderNotInSeries, got %v", err)
+	}
+
+	// ALL-OR-NOTHING: providerA's importance must still be 5 (original), not 99.
+	detail, getErr := svc.GetSeries(ctx, seed.seriesID)
+	if getErr != nil {
+		t.Fatalf("GetSeries after aborted ReorderProviders: %v", getErr)
+	}
+	for _, p := range detail.Providers {
+		if p.Provider == "mangadex" && p.Importance != 5 {
+			t.Fatalf("ReorderProviders(all-or-nothing): mangadex importance changed to %d; want 5 (rolled back)", p.Importance)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 )
 
 // ErrSeriesNotFound is returned by GetSeries when no series matches the given id.
@@ -22,6 +23,11 @@ var ErrSeriesNotFound = errors.New("series not found")
 // category is not one of the legal Series.category enum values. The HTTP handler
 // maps it to a 400.
 var ErrInvalidCategory = errors.New("invalid category")
+
+// ErrProviderNotInSeries is returned by ReorderProviders when a ProviderRank
+// references a SeriesProvider that does not belong to the given series. The HTTP
+// handler maps it to a 400.
+var ErrProviderNotInSeries = errors.New("provider does not belong to series")
 
 // Service is the library read service over the M0 entities. It owns the storage
 // root (unused by the read methods; the recategorize path that moves folders on
@@ -34,6 +40,95 @@ type Service struct {
 // NewService constructs a Service bound to an Ent client and the storage root.
 func NewService(client *ent.Client, storage string) *Service {
 	return &Service{client: client, storage: storage}
+}
+
+// ProviderRank pairs a SeriesProvider UUID with the desired importance value. Used
+// by ReorderProviders to update provider priority in a single transaction.
+type ProviderRank struct {
+	SeriesProviderID uuid.UUID
+	Importance       int
+}
+
+// SetMonitored updates the monitored flag for the series identified by id.
+// A missing id returns ErrSeriesNotFound; the HTTP handler maps it to a 404.
+func (s *Service) SetMonitored(ctx context.Context, id uuid.UUID, monitored bool) error {
+	err := s.client.Series.UpdateOneID(id).SetMonitored(monitored).Exec(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return ErrSeriesNotFound
+		}
+		// Defensive path: non-not-found update errors are only reachable on a DB-level
+		// failure (connection dropped / query error) — not forceable in a black-box test.
+		return fmt.Errorf("series.SetMonitored: update series %s: %w", id, err)
+	}
+	return nil
+}
+
+// ReorderProviders updates the importance values for a set of SeriesProviders in
+// a single all-or-nothing transaction.
+//
+// M4 ONLY PERSISTS importance — the upgrade re-evaluation that consumes the new
+// ranking is M5 / the next download ticker cycle. This method does NOT trigger
+// any re-evaluation or upgrade logic.
+//
+// Error semantics:
+//   - id not found → ErrSeriesNotFound (whole tx rolled back).
+//   - any rank's SeriesProviderID does not belong to id → ErrProviderNotInSeries
+//     (whole tx rolled back; importances are ALL-OR-NOTHING — no partial update).
+func (s *Service) ReorderProviders(ctx context.Context, id uuid.UUID, ranks []ProviderRank) error {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("series.ReorderProviders: begin tx: %w", err)
+	}
+
+	if err := reorderProvidersInTx(ctx, tx, id, ranks); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("series.ReorderProviders: commit tx: %w", err)
+	}
+	return nil
+}
+
+// reorderProvidersInTx is the transactional body of ReorderProviders. It confirms
+// the series exists, validates provider ownership for every rank, then applies all
+// importance updates. A single ownership failure rolls back the entire set.
+func reorderProvidersInTx(ctx context.Context, tx *ent.Tx, id uuid.UUID, ranks []ProviderRank) error {
+	// Confirm the series exists before touching any provider rows.
+	exists, err := tx.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return fmt.Errorf("series.ReorderProviders: check series %s: %w", id, err)
+	}
+	if !exists {
+		return ErrSeriesNotFound
+	}
+
+	for _, r := range ranks {
+		// Verify the provider exists AND belongs to this series.
+		owned, err := tx.SeriesProvider.Query().
+			Where(
+				entseriesprovider.IDEQ(r.SeriesProviderID),
+				entseriesprovider.SeriesID(id),
+			).
+			Exist(ctx)
+		if err != nil {
+			return fmt.Errorf("series.ReorderProviders: check provider %s: %w", r.SeriesProviderID, err)
+		}
+		if !owned {
+			return ErrProviderNotInSeries
+		}
+
+		if err := tx.SeriesProvider.UpdateOneID(r.SeriesProviderID).SetImportance(r.Importance).Exec(ctx); err != nil {
+			// Defensive path: the Exist check above confirmed the row exists and
+			// belongs to this series; an error here is only reachable on a
+			// concurrent delete or a DB-level failure — not forceable in a
+			// black-box test without tearing down the shared transaction.
+			return fmt.Errorf("series.ReorderProviders: update importance for provider %s: %w", r.SeriesProviderID, err)
+		}
+	}
+	return nil
 }
 
 // ListFilter selects and paginates a ListSeries call. Category, when set,
@@ -135,6 +230,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		Slug:          row.Slug,
 		Category:      row.Category.String(),
 		CoverURL:      row.CoverURL,
+		Monitored:     row.Monitored,
 		ChapterCounts: counts,
 		Chapters:      chapters,
 		Providers:     providers,
