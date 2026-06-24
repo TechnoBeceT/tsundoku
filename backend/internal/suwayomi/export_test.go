@@ -21,11 +21,6 @@ func SetCommandContext(pm *ProcessManager, fn CommandContextFunc) {
 	pm.commandContext = fn
 }
 
-// FindJarFile exposes the unexported findJarFile helper for direct testing.
-func FindJarFile(dir string) (string, error) {
-	return findJarFile(dir)
-}
-
 // CleanTmpDir exposes the unexported cleanTmpDir helper for direct testing.
 func CleanTmpDir(dir string, maxAge time.Duration) {
 	cleanTmpDir(dir, maxAge)

@@ -102,27 +102,13 @@ func levenshtein(a, b []rune) int {
 				curr[j] = prev[j-1] // characters match — no cost
 			} else {
 				// Minimum of: delete from a, insert into a, substitute.
-				curr[j] = 1 + min3(prev[j], curr[j-1], prev[j-1])
+				curr[j] = 1 + min(prev[j], curr[j-1], prev[j-1])
 			}
 		}
 		prev, curr = curr, prev // swap rows; prev now holds the completed row
 	}
 
 	return prev[lb]
-}
-
-// min3 returns the smallest of three integers.
-func min3(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
 }
 
 // areSimilar reports whether two raw titles refer to the same series.

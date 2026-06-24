@@ -306,24 +306,6 @@ func (pm *ProcessManager) Wait() error {
 	return err
 }
 
-// findJarFile searches dir for the first regular file whose name ends in ".jar"
-// (case-insensitive). It returns the absolute path to that file, or an error if
-// no such file exists or dir cannot be read.
-func findJarFile(dir string) (string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", fmt.Errorf("suwayomi.findJarFile: read %s: %w", dir, err)
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".jar") {
-			return filepath.Join(dir, entry.Name()), nil
-		}
-	}
-
-	return "", fmt.Errorf("suwayomi.findJarFile: no JAR file found in %s", dir)
-}
-
 // cleanTmpDir removes entries in dir whose modification time is older than
 // maxAge. Errors from individual removals are silently discarded — a stale tmp
 // file is cosmetic; it must not block startup.
