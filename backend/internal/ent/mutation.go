@@ -4455,6 +4455,7 @@ type SeriesMutation struct {
 	description      *string
 	status           *string
 	category         *series.Category
+	monitored        *bool
 	created_at       *time.Time
 	updated_at       *time.Time
 	clearedFields    map[string]struct{}
@@ -4789,6 +4790,42 @@ func (m *SeriesMutation) ResetCategory() {
 	m.category = nil
 }
 
+// SetMonitored sets the "monitored" field.
+func (m *SeriesMutation) SetMonitored(b bool) {
+	m.monitored = &b
+}
+
+// Monitored returns the value of the "monitored" field in the mutation.
+func (m *SeriesMutation) Monitored() (r bool, exists bool) {
+	v := m.monitored
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMonitored returns the old "monitored" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldMonitored(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMonitored is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMonitored requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMonitored: %w", err)
+	}
+	return oldValue.Monitored, nil
+}
+
+// ResetMonitored resets all changes to the "monitored" field.
+func (m *SeriesMutation) ResetMonitored() {
+	m.monitored = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *SeriesMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -5003,7 +5040,7 @@ func (m *SeriesMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesMutation) Fields() []string {
-	fields := make([]string, 0, 8)
+	fields := make([]string, 0, 9)
 	if m.title != nil {
 		fields = append(fields, series.FieldTitle)
 	}
@@ -5021,6 +5058,9 @@ func (m *SeriesMutation) Fields() []string {
 	}
 	if m.category != nil {
 		fields = append(fields, series.FieldCategory)
+	}
+	if m.monitored != nil {
+		fields = append(fields, series.FieldMonitored)
 	}
 	if m.created_at != nil {
 		fields = append(fields, series.FieldCreatedAt)
@@ -5048,6 +5088,8 @@ func (m *SeriesMutation) Field(name string) (ent.Value, bool) {
 		return m.Status()
 	case series.FieldCategory:
 		return m.Category()
+	case series.FieldMonitored:
+		return m.Monitored()
 	case series.FieldCreatedAt:
 		return m.CreatedAt()
 	case series.FieldUpdatedAt:
@@ -5073,6 +5115,8 @@ func (m *SeriesMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldStatus(ctx)
 	case series.FieldCategory:
 		return m.OldCategory(ctx)
+	case series.FieldMonitored:
+		return m.OldMonitored(ctx)
 	case series.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case series.FieldUpdatedAt:
@@ -5127,6 +5171,13 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCategory(v)
+		return nil
+	case series.FieldMonitored:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMonitored(v)
 		return nil
 	case series.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -5208,6 +5259,9 @@ func (m *SeriesMutation) ResetField(name string) error {
 		return nil
 	case series.FieldCategory:
 		m.ResetCategory()
+		return nil
+	case series.FieldMonitored:
+		m.ResetMonitored()
 		return nil
 	case series.FieldCreatedAt:
 		m.ResetCreatedAt()

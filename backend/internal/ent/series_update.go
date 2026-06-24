@@ -115,6 +115,20 @@ func (_u *SeriesUpdate) SetNillableCategory(v *series.Category) *SeriesUpdate {
 	return _u
 }
 
+// SetMonitored sets the "monitored" field.
+func (_u *SeriesUpdate) SetMonitored(v bool) *SeriesUpdate {
+	_u.mutation.SetMonitored(v)
+	return _u
+}
+
+// SetNillableMonitored sets the "monitored" field if the given value is not nil.
+func (_u *SeriesUpdate) SetNillableMonitored(v *bool) *SeriesUpdate {
+	if v != nil {
+		_u.SetMonitored(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesUpdate) SetUpdatedAt(v time.Time) *SeriesUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -273,6 +287,9 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Category(); ok {
 		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
+	}
+	if value, ok := _u.mutation.Monitored(); ok {
+		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)
@@ -471,6 +488,20 @@ func (_u *SeriesUpdateOne) SetNillableCategory(v *series.Category) *SeriesUpdate
 	return _u
 }
 
+// SetMonitored sets the "monitored" field.
+func (_u *SeriesUpdateOne) SetMonitored(v bool) *SeriesUpdateOne {
+	_u.mutation.SetMonitored(v)
+	return _u
+}
+
+// SetNillableMonitored sets the "monitored" field if the given value is not nil.
+func (_u *SeriesUpdateOne) SetNillableMonitored(v *bool) *SeriesUpdateOne {
+	if v != nil {
+		_u.SetMonitored(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesUpdateOne) SetUpdatedAt(v time.Time) *SeriesUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -659,6 +690,9 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	}
 	if value, ok := _u.mutation.Category(); ok {
 		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
+	}
+	if value, ok := _u.mutation.Monitored(); ok {
+		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)

@@ -498,6 +498,92 @@ func TestSetCategoryNoDiskFolderUpdatesDBOnly(t *testing.T) {
 	}
 }
 
+// TestMonitoredDefaultsTrue verifies that a newly created series exposes
+// Monitored==true in both GetSeries (detail) and ListSeries (summary), and that
+// ProviderDTO.ID matches the SeriesProvider UUID (needed by Task 5/7 re-rank).
+func TestMonitoredDefaultsTrue(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	sr := client.Series.Create().
+		SetTitle("Watch Series").
+		SetSlug("watch-series").
+		SetCategory(entseries.CategoryManga).
+		SaveX(ctx)
+
+	sp := client.SeriesProvider.Create().
+		SetSeriesID(sr.ID).
+		SetProvider("mangadex").
+		SetScanlator("ScanGroup").
+		SetLanguage("en").
+		SetImportance(10).
+		SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir())
+
+	detail, err := svc.GetSeries(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if !detail.Monitored {
+		t.Fatalf("GetSeries: default Monitored want true, got false")
+	}
+	if len(detail.Providers) != 1 {
+		t.Fatalf("GetSeries: want 1 provider, got %d", len(detail.Providers))
+	}
+	if detail.Providers[0].ID != sp.ID.String() {
+		t.Fatalf("GetSeries: ProviderDTO.ID want %s, got %q", sp.ID.String(), detail.Providers[0].ID)
+	}
+
+	summaries, err := svc.ListSeries(ctx, series.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("ListSeries: want 1 series, got %d", len(summaries))
+	}
+	if !summaries[0].Monitored {
+		t.Fatalf("ListSeries: default Monitored want true, got false")
+	}
+}
+
+// TestMonitoredToggle verifies that after setting Monitored=false on the DB row
+// directly, both GetSeries and ListSeries report false — confirming the field
+// is read from the DB and not cached or hardcoded.
+func TestMonitoredToggle(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	sr := client.Series.Create().
+		SetTitle("Drop Series").
+		SetSlug("drop-series").
+		SetCategory(entseries.CategoryManga).
+		SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir())
+
+	client.Series.UpdateOneID(sr.ID).SetMonitored(false).ExecX(ctx)
+
+	detail, err := svc.GetSeries(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("GetSeries (after toggle): %v", err)
+	}
+	if detail.Monitored {
+		t.Fatalf("GetSeries: after toggle Monitored want false, got true")
+	}
+
+	summaries, err := svc.ListSeries(ctx, series.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListSeries (after toggle): %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("ListSeries: want 1 series, got %d", len(summaries))
+	}
+	if summaries[0].Monitored {
+		t.Fatalf("ListSeries: after toggle Monitored want false, got true")
+	}
+}
+
 // TestSetCategoryNotFound verifies an unknown series id yields ErrSeriesNotFound.
 func TestSetCategoryNotFound(t *testing.T) {
 	client := testdb.New(t)

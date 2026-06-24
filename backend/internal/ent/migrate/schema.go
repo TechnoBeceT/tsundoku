@@ -151,6 +151,7 @@ var (
 		{Name: "description", Type: field.TypeString, Default: ""},
 		{Name: "status", Type: field.TypeString, Default: ""},
 		{Name: "category", Type: field.TypeEnum, Enums: []string{"Manga", "Manhwa", "Manhua", "Comic", "Other"}, Default: "Other"},
+		{Name: "monitored", Type: field.TypeBool, Default: true},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}

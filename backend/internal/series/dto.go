@@ -18,24 +18,26 @@ type ChapterCounts struct {
 }
 
 // SeriesSummaryDTO is the list-row shape for a single series: identity,
-// display metadata, and the chapter-state rollup.
+// display metadata, the chapter-state rollup, and the monitoring flag.
 type SeriesSummaryDTO struct {
 	ID            string        `json:"id"`
 	Title         string        `json:"title"`
 	Slug          string        `json:"slug"`
 	Category      string        `json:"category"`
 	CoverURL      string        `json:"coverUrl"`
+	Monitored     bool          `json:"monitored"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
 }
 
 // SeriesDetailDTO is the full series view: the summary fields plus the series'
-// chapters (ordered by number then chapter_key) and its providers.
+// chapters (ordered by number then chapter_key), its providers, and the monitoring flag.
 type SeriesDetailDTO struct {
 	ID            string        `json:"id"`
 	Title         string        `json:"title"`
 	Slug          string        `json:"slug"`
 	Category      string        `json:"category"`
 	CoverURL      string        `json:"coverUrl"`
+	Monitored     bool          `json:"monitored"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
 	Chapters      []ChapterDTO  `json:"chapters"`
 	Providers     []ProviderDTO `json:"providers"`
@@ -53,9 +55,11 @@ type ChapterDTO struct {
 	PageCount  *int     `json:"pageCount"`
 }
 
-// ProviderDTO is one SeriesProvider in a series-detail response. Importance is
-// the priority/quality rank (higher = preferred).
+// ProviderDTO is one SeriesProvider in a series-detail response. ID is the
+// SeriesProvider UUID (used by Task 5/7 re-rank). Importance is the
+// priority/quality rank (higher = preferred).
 type ProviderDTO struct {
+	ID         string `json:"id"`
 	Provider   string `json:"provider"`
 	Scanlator  string `json:"scanlator"`
 	Language   string `json:"language"`
@@ -78,6 +82,7 @@ func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
 		Slug:          s.Slug,
 		Category:      s.Category.String(),
 		CoverURL:      s.CoverURL,
+		Monitored:     s.Monitored,
 		ChapterCounts: counts,
 	}
 }
@@ -100,6 +105,7 @@ func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
 // newProviderDTO maps an ent.SeriesProvider into its detail DTO.
 func newProviderDTO(p *ent.SeriesProvider) ProviderDTO {
 	return ProviderDTO{
+		ID:         p.ID.String(),
 		Provider:   p.Provider,
 		Scanlator:  p.Scanlator,
 		Language:   p.Language,
