@@ -65,7 +65,9 @@ type RefreshResult struct {
 // after the sweep.
 func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	seriesList, err := s.client.Series.Query().
-		Where(entseries.Monitored(true)).
+		// Skip completed series: a finished series has no new chapters, so polling
+		// it is wasted work (and would freeze its sync state into false staleness).
+		Where(entseries.Monitored(true), entseries.Completed(false)).
 		WithProviders().
 		All(ctx)
 	if err != nil {

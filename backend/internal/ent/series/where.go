@@ -86,6 +86,11 @@ func Monitored(v bool) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldMonitored, v))
 }
 
+// Completed applies equality check predicate on the "completed" field. It's identical to CompletedEQ.
+func Completed(v bool) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCompleted, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCreatedAt, v))
@@ -449,6 +454,16 @@ func MonitoredEQ(v bool) predicate.Series {
 // MonitoredNEQ applies the NEQ predicate on the "monitored" field.
 func MonitoredNEQ(v bool) predicate.Series {
 	return predicate.Series(sql.FieldNEQ(FieldMonitored, v))
+}
+
+// CompletedEQ applies the EQ predicate on the "completed" field.
+func CompletedEQ(v bool) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCompleted, v))
+}
+
+// CompletedNEQ applies the NEQ predicate on the "completed" field.
+func CompletedNEQ(v bool) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldCompleted, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

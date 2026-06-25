@@ -47,6 +47,10 @@ type ProviderHealthInput struct {
 	SeriesMaxNumber *float64
 	// MultiSource is true when the series has more than one provider.
 	MultiSource bool
+	// Completed is true when the owner has marked the series finished. A
+	// completed series is excluded from health: its status is forced to
+	// HealthOK (it is done, not broken), never stale or erroring.
+	Completed bool
 }
 
 // providerMaxNumber returns the maximum non-nil Number across chs, or nil if
@@ -85,6 +89,16 @@ func countBehind(have map[string]struct{}, seriesKeys map[string]struct{}) int {
 	return n
 }
 
+// isStale reports whether a provider has genuinely fallen behind the series'
+// leading edge and remained there long enough to warrant a stale signal.
+// The multi-source guard is the caller's responsibility (single-source carve-out
+// belongs to ComputeProviderHealth, not here).
+func isStale(seriesMax *float64, providerMax *float64, newestChapterAt *time.Time, now time.Time, graceDays int) bool {
+	behindLeadingEdge := seriesMax != nil && providerMax != nil && *providerMax < *seriesMax
+	pastGrace := newestChapterAt != nil && newestChapterAt.Before(now.AddDate(0, 0, -graceDays))
+	return behindLeadingEdge && pastGrace
+}
+
 // ComputeProviderHealth derives one source's health from already-loaded data.
 // now and graceDays are passed in so the result is deterministic and testable.
 // Status precedence: erroring > stale > ok.
@@ -105,14 +119,18 @@ func ComputeProviderHealth(in ProviderHealthInput, now time.Time, graceDays int)
 	h.NewestChapterAt = newestUpload(in.ProviderChapters)
 	providerMax := providerMaxNumber(in.ProviderChapters)
 
+	// A completed series is done, not broken: surface the informational fields
+	// but never escalate to stale/erroring. One rule, reused by every caller.
+	if in.Completed {
+		return h
+	}
+
 	if h.LastError != "" {
 		h.Status = HealthErroring
 		return h
 	}
 
-	behindLeadingEdge := in.SeriesMaxNumber != nil && providerMax != nil && *providerMax < *in.SeriesMaxNumber
-	pastGrace := h.NewestChapterAt != nil && h.NewestChapterAt.Before(now.AddDate(0, 0, -graceDays))
-	if in.MultiSource && behindLeadingEdge && pastGrace {
+	if in.MultiSource && isStale(in.SeriesMaxNumber, providerMax, h.NewestChapterAt, now, graceDays) {
 		h.Status = HealthStale
 	}
 	return h

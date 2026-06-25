@@ -32,6 +32,8 @@ type Series struct {
 	Category series.Category `json:"category,omitempty"`
 	// Monitored holds the value of the "monitored" field.
 	Monitored bool `json:"monitored,omitempty"`
+	// Completed holds the value of the "completed" field.
+	Completed bool `json:"completed,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -76,7 +78,7 @@ func (*Series) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case series.FieldMonitored:
+		case series.FieldMonitored, series.FieldCompleted:
 			values[i] = new(sql.NullBool)
 		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus, series.FieldCategory:
 			values[i] = new(sql.NullString)
@@ -146,6 +148,12 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field monitored", values[i])
 			} else if value.Valid {
 				_m.Monitored = value.Bool
+			}
+		case series.FieldCompleted:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field completed", values[i])
+			} else if value.Valid {
+				_m.Completed = value.Bool
 			}
 		case series.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -225,6 +233,9 @@ func (_m *Series) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("monitored=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Monitored))
+	builder.WriteString(", ")
+	builder.WriteString("completed=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Completed))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

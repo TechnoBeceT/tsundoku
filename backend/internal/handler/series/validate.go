@@ -123,6 +123,22 @@ func validateSetMonitored(req SetMonitoredRequest) error {
 	return nil
 }
 
+// SetCompletedRequest is the PATCH /api/series/{id}/completed request body.
+type SetCompletedRequest struct {
+	// Completed indicates whether the series is finished (no more chapters expected).
+	Completed *bool `json:"completed"`
+}
+
+// validateSetCompleted validates the PATCH body: the completed field must be
+// explicitly present (a bool pointer so omission is distinguishable from false).
+// A missing field yields a 400 echo.HTTPError.
+func validateSetCompleted(req SetCompletedRequest) error {
+	if req.Completed == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "completed is required")
+	}
+	return nil
+}
+
 // ProviderRankBody is one entry in the ReorderProvidersRequest.Providers list.
 type ProviderRankBody struct {
 	// ID is the SeriesProvider UUID to update.

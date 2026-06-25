@@ -135,6 +135,27 @@ func TestComputeProviderHealth(t *testing.T) {
 	}
 }
 
+// TestComputeProviderHealth_CompletedForcesOK proves a completed series is never
+// flagged stale/erroring: even with a recorded LastError it returns ok, while the
+// informational fields stay populated. Non-vacuous: drop the Completed
+// short-circuit and this fails with Status == "erroring".
+func TestComputeProviderHealth_CompletedForcesOK(t *testing.T) {
+	now := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
+	in := series.ProviderHealthInput{
+		Completed: true,
+		SyncState: &ent.SuwayomiSyncState{LastError: "source offline"},
+	}
+
+	got := series.ComputeProviderHealth(in, now, 14)
+
+	if got.Status != series.HealthOK {
+		t.Fatalf("Status = %q, want %q (completed must force ok)", got.Status, series.HealthOK)
+	}
+	if got.LastError != "source offline" {
+		t.Errorf("LastError = %q, want it still surfaced for display", got.LastError)
+	}
+}
+
 func TestComputeProviderHealthCarriesSyncFields(t *testing.T) {
 	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
 	synced := now.AddDate(0, 0, -1)

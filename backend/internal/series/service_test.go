@@ -996,3 +996,29 @@ func TestCategoriesReturnsAllEnumValuesWithCounts(t *testing.T) {
 		t.Fatalf("Categories: missing enum values: %+v", want)
 	}
 }
+
+// TestSetCompleted proves the flag flips both ways and a missing id is reported.
+func TestSetCompleted(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	svc := series.NewService(db, t.TempDir(), 14)
+	s := db.Series.Create().SetTitle("Finale").SetSlug("finale").SaveX(ctx)
+
+	if err := svc.SetCompleted(ctx, s.ID, true); err != nil {
+		t.Fatalf("SetCompleted(true): %v", err)
+	}
+	if got := db.Series.GetX(ctx, s.ID); !got.Completed {
+		t.Fatal("Completed = false after SetCompleted(true)")
+	}
+
+	if err := svc.SetCompleted(ctx, s.ID, false); err != nil {
+		t.Fatalf("SetCompleted(false): %v", err)
+	}
+	if got := db.Series.GetX(ctx, s.ID); got.Completed {
+		t.Fatal("Completed = true after SetCompleted(false) — not reversible")
+	}
+
+	if err := svc.SetCompleted(ctx, uuid.New(), true); !errors.Is(err, series.ErrSeriesNotFound) {
+		t.Fatalf("SetCompleted(unknown id) err = %v, want ErrSeriesNotFound", err)
+	}
+}

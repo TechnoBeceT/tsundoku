@@ -32,6 +32,7 @@ import (
 //   - /api/series/:id                              — library detail (RequireOwner).
 //   - /api/series/:id/category                     — recategorize (RequireOwner).
 //   - /api/series/:id/monitored                    — toggle monitoring flag (RequireOwner).
+//   - /api/series/:id/completed                    — toggle completed (finished) flag (RequireOwner).
 //   - /api/series/:id/providers                    — re-rank provider importances (RequireOwner).
 //   - /api/series/:id/providers/:providerId        — remove a source (RequireOwner).
 //   - /api/categories                              — per-category counts (RequireOwner).
@@ -71,6 +72,7 @@ func registerRoutes(
 	authed.GET("/series/:id", seriesH.Detail)
 	authed.PATCH("/series/:id/category", seriesH.SetCategory)
 	authed.PATCH("/series/:id/monitored", seriesH.SetMonitored)
+	authed.PATCH("/series/:id/completed", seriesH.SetCompleted)
 	authed.PATCH("/series/:id/providers", seriesH.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", seriesH.RemoveProvider)
 	authed.GET("/categories", seriesH.Categories)

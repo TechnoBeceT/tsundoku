@@ -30,6 +30,8 @@ const (
 	FieldCategory = "category"
 	// FieldMonitored holds the string denoting the monitored field in the database.
 	FieldMonitored = "monitored"
+	// FieldCompleted holds the string denoting the completed field in the database.
+	FieldCompleted = "completed"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -66,6 +68,7 @@ var Columns = []string{
 	FieldStatus,
 	FieldCategory,
 	FieldMonitored,
+	FieldCompleted,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -89,6 +92,8 @@ var (
 	DefaultStatus string
 	// DefaultMonitored holds the default value on creation for the "monitored" field.
 	DefaultMonitored bool
+	// DefaultCompleted holds the default value on creation for the "completed" field.
+	DefaultCompleted bool
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
@@ -169,6 +174,11 @@ func ByCategory(opts ...sql.OrderTermOption) OrderOption {
 // ByMonitored orders the results by the monitored field.
 func ByMonitored(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMonitored, opts...).ToFunc()
+}
+
+// ByCompleted orders the results by the completed field.
+func ByCompleted(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCompleted, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

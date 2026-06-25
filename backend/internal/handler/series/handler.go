@@ -99,14 +99,7 @@ func (h *Handler) SetCategory(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
-	return c.JSON(http.StatusOK, seriessvc.SeriesSummaryDTO{
-		ID:            updated.ID,
-		Title:         updated.Title,
-		Slug:          updated.Slug,
-		Category:      updated.Category,
-		CoverURL:      updated.CoverURL,
-		ChapterCounts: updated.ChapterCounts,
-	})
+	return c.JSON(http.StatusOK, detailToSummary(updated))
 }
 
 // Categories handles GET /api/categories.
@@ -152,15 +145,37 @@ func (h *Handler) SetMonitored(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
-	return c.JSON(http.StatusOK, seriessvc.SeriesSummaryDTO{
-		ID:            updated.ID,
-		Title:         updated.Title,
-		Slug:          updated.Slug,
-		Category:      updated.Category,
-		CoverURL:      updated.CoverURL,
-		Monitored:     updated.Monitored,
-		ChapterCounts: updated.ChapterCounts,
-	})
+	return c.JSON(http.StatusOK, detailToSummary(updated))
+}
+
+// SetCompleted handles PATCH /api/series/:id/completed. It marks the series
+// finished (or re-opens it) and returns the updated summary so the response
+// confirms the new completed state.
+func (h *Handler) SetCompleted(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+
+	var req SetCompletedRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := validateSetCompleted(req); err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := h.svc.SetCompleted(ctx, id, *req.Completed); err != nil {
+		return mapServiceError(err)
+	}
+
+	// Return the updated summary so the response confirms the new completed state.
+	updated, err := h.svc.GetSeries(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, detailToSummary(updated))
 }
 
 // ReorderProviders handles PATCH /api/series/:id/providers.
@@ -239,6 +254,24 @@ func (h *Handler) LibraryHealth(c echo.Context) error {
 		return mapServiceError(err)
 	}
 	return c.JSON(http.StatusOK, res)
+}
+
+// detailToSummary is the single detail→summary projection used by every mutating
+// handler that returns an updated summary (SetCategory, SetMonitored, SetCompleted).
+// Centralising the mapping here ensures that every field of SeriesSummaryDTO is
+// always included — adding a new summary field only requires updating this one
+// function; it cannot be silently omitted from a subset of call sites (§16).
+func detailToSummary(d seriessvc.SeriesDetailDTO) seriessvc.SeriesSummaryDTO {
+	return seriessvc.SeriesSummaryDTO{
+		ID:            d.ID,
+		Title:         d.Title,
+		Slug:          d.Slug,
+		Category:      d.Category,
+		CoverURL:      d.CoverURL,
+		Monitored:     d.Monitored,
+		Completed:     d.Completed,
+		ChapterCounts: d.ChapterCounts,
+	}
 }
 
 // mapServiceError translates a series.Service sentinel error into the matching

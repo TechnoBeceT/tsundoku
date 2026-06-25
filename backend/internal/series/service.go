@@ -69,6 +69,23 @@ func (s *Service) SetMonitored(ctx context.Context, id uuid.UUID, monitored bool
 	return nil
 }
 
+// SetCompleted marks a series finished (or re-opens it). A completed series is
+// skipped by the refresh sweep and excluded from source-health. The flag is
+// reversible (completed=false resumes polling, e.g. a surprise new season).
+// A missing id yields ErrSeriesNotFound.
+func (s *Service) SetCompleted(ctx context.Context, id uuid.UUID, completed bool) error {
+	err := s.client.Series.UpdateOneID(id).SetCompleted(completed).Exec(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return ErrSeriesNotFound
+		}
+		// Defensive path: non-not-found update errors are only reachable on a DB-level
+		// failure (connection dropped / query error) — not forceable in a black-box test.
+		return fmt.Errorf("series.SetCompleted: update series %s: %w", id, err)
+	}
+	return nil
+}
+
 // ReorderProviders updates the importance values for a set of SeriesProviders in
 // a single all-or-nothing transaction.
 //
@@ -307,7 +324,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 	now := time.Now().UTC()
 	providers := make([]ProviderDTO, len(row.Edges.Providers))
 	for i, p := range row.Edges.Providers {
-		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, now))
+		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, now))
 	}
 
 	return SeriesDetailDTO{
@@ -317,6 +334,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		Category:      row.Category.String(),
 		CoverURL:      row.CoverURL,
 		Monitored:     row.Monitored,
+		Completed:     row.Completed,
 		ChapterCounts: counts,
 		Chapters:      chapters,
 		Providers:     providers,
@@ -338,13 +356,16 @@ func seriesHealthInputs(row *ent.Series) (keys map[string]struct{}, maxNumber *f
 }
 
 // providerHealth computes one provider's health within an already-loaded series.
-func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}, maxNumber *float64, multi bool, now time.Time) ProviderHealth {
+// completed is the series' completed flag — when true the source is reported ok
+// (excluded from staleness/erroring).
+func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}, maxNumber *float64, multi bool, completed bool, now time.Time) ProviderHealth {
 	return ComputeProviderHealth(ProviderHealthInput{
 		SyncState:         p.Edges.SyncState,
 		ProviderChapters:  p.Edges.ProviderChapters,
 		SeriesChapterKeys: keys,
 		SeriesMaxNumber:   maxNumber,
 		MultiSource:       multi,
+		Completed:         completed,
 	}, now, s.staleGraceDays)
 }
 
@@ -370,7 +391,7 @@ func (s *Service) sickSources(row *ent.Series, now time.Time) []ProviderDTO {
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	var sick []ProviderDTO
 	for _, p := range row.Edges.Providers {
-		h := s.providerHealth(p, keys, maxNumber, multi, now)
+		h := s.providerHealth(p, keys, maxNumber, multi, row.Completed, now)
 		if h.Status == HealthStale || h.Status == HealthErroring {
 			sick = append(sick, newProviderDTO(p, h))
 		}
