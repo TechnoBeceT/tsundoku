@@ -163,6 +163,45 @@ func (h *Handler) SetMonitored(c echo.Context) error {
 	})
 }
 
+// SetCompleted handles PATCH /api/series/:id/completed. It marks the series
+// finished (or re-opens it) and returns the updated summary so the response
+// confirms the new completed state.
+func (h *Handler) SetCompleted(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+
+	var req SetCompletedRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := validateSetCompleted(req); err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := h.svc.SetCompleted(ctx, id, *req.Completed); err != nil {
+		return mapServiceError(err)
+	}
+
+	// Return the updated summary so the response confirms the new completed state.
+	updated, err := h.svc.GetSeries(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, seriessvc.SeriesSummaryDTO{
+		ID:            updated.ID,
+		Title:         updated.Title,
+		Slug:          updated.Slug,
+		Category:      updated.Category,
+		CoverURL:      updated.CoverURL,
+		Monitored:     updated.Monitored,
+		Completed:     updated.Completed,
+		ChapterCounts: updated.ChapterCounts,
+	})
+}
+
 // ReorderProviders handles PATCH /api/series/:id/providers.
 //
 // It parses the :id path param and the {providers: [{id, importance}]} body,

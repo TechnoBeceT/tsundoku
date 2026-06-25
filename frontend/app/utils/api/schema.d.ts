@@ -183,6 +183,29 @@ export interface paths {
         patch: operations["setSeriesMonitored"];
         trace?: never;
     };
+    "/api/series/{id}/completed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Mark a series completed (finished)
+         * @description Sets the completed flag for a series. A completed series is excluded from
+         *     the refresh sweep and from source-health. Reversible (completed=false
+         *     re-opens it). Returns the updated series summary so the caller sees the new
+         *     state without a refetch (§16).
+         */
+        patch: operations["setSeriesCompleted"];
+        trace?: never;
+    };
     "/api/series/{id}/providers": {
         parameters: {
             query?: never;
@@ -412,6 +435,10 @@ export interface components {
             category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
             /** @description Cover image URL (may be empty). */
             coverUrl: string;
+            /** @description Whether the series is actively tracked for new chapters. */
+            monitored: boolean;
+            /** @description Whether the owner has marked the series finished (excluded from refresh + health). */
+            completed: boolean;
             chapterCounts: components["schemas"]["ChapterCounts"];
         };
         Chapter: {
@@ -474,6 +501,10 @@ export interface components {
             category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
             /** @description Cover image URL (may be empty). */
             coverUrl: string;
+            /** @description Whether the series is actively tracked for new chapters. */
+            monitored: boolean;
+            /** @description Whether the owner has marked the series finished (excluded from refresh + health). */
+            completed: boolean;
             chapterCounts: components["schemas"]["ChapterCounts"];
             /** @description The series' chapters, ordered by number then chapter key. */
             chapters: components["schemas"]["Chapter"][];
@@ -499,6 +530,10 @@ export interface components {
         SetMonitoredRequest: {
             /** @description Whether the series should be actively tracked for new chapters. */
             monitored: boolean;
+        };
+        SetCompletedRequest: {
+            /** @description Whether the series is finished (no more chapters expected). */
+            completed: boolean;
         };
         ProviderRank: {
             /**
@@ -944,6 +979,60 @@ export interface operations {
                 };
             };
             /** @description Malformed id or missing monitored field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setSeriesCompleted: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetCompletedRequest"];
+            };
+        };
+        responses: {
+            /** @description Completed flag updated. Returns the updated series summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesSummary"];
+                };
+            };
+            /** @description Malformed id or missing completed field. */
             400: {
                 headers: {
                     [name: string]: unknown;

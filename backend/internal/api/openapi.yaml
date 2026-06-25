@@ -109,6 +109,8 @@ components:
         - slug
         - category
         - coverUrl
+        - monitored
+        - completed
         - chapterCounts
       properties:
         id:
@@ -128,6 +130,12 @@ components:
         coverUrl:
           type: string
           description: Cover image URL (may be empty).
+        monitored:
+          type: boolean
+          description: Whether the series is actively tracked for new chapters.
+        completed:
+          type: boolean
+          description: Whether the owner has marked the series finished (excluded from refresh + health).
         chapterCounts:
           $ref: "#/components/schemas/ChapterCounts"
 
@@ -212,6 +220,8 @@ components:
         - slug
         - category
         - coverUrl
+        - monitored
+        - completed
         - chapterCounts
         - chapters
         - providers
@@ -233,6 +243,12 @@ components:
         coverUrl:
           type: string
           description: Cover image URL (may be empty).
+        monitored:
+          type: boolean
+          description: Whether the series is actively tracked for new chapters.
+        completed:
+          type: boolean
+          description: Whether the owner has marked the series finished (excluded from refresh + health).
         chapterCounts:
           $ref: "#/components/schemas/ChapterCounts"
         chapters:
@@ -278,6 +294,15 @@ components:
         monitored:
           type: boolean
           description: Whether the series should be actively tracked for new chapters.
+
+    SetCompletedRequest:
+      type: object
+      required:
+        - completed
+      properties:
+        completed:
+          type: boolean
+          description: Whether the series is finished (no more chapters expected).
 
     ProviderRank:
       type: object
@@ -787,6 +812,59 @@ paths:
                 $ref: "#/components/schemas/SeriesSummary"
         "400":
           description: Malformed id or missing monitored field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/completed:
+    patch:
+      operationId: setSeriesCompleted
+      summary: Mark a series completed (finished)
+      description: |
+        Sets the completed flag for a series. A completed series is excluded from
+        the refresh sweep and from source-health. Reversible (completed=false
+        re-opens it). Returns the updated series summary so the caller sees the new
+        state without a refetch (§16).
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetCompletedRequest"
+      responses:
+        "200":
+          description: Completed flag updated. Returns the updated series summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesSummary"
+        "400":
+          description: Malformed id or missing completed field.
           content:
             application/json:
               schema:
