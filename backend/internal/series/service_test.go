@@ -309,6 +309,55 @@ func TestGetSeriesChapterNameFromBestProvider(t *testing.T) {
 	}
 }
 
+// TestGetSeriesChapterNameFallsBackToNumber verifies the title-less display-name
+// fallback at the DTO boundary: a frozen 0-provider series (all sources removed
+// via M6) keeps its Chapter rows but has no provider feed to supply a title, so
+// ChapterDTO.Name must derive from the chapter number — integer 12 → "Chapter 12",
+// decimal 12.5 → "Chapter 12.5" — and stay blank when the number itself is nil.
+func TestGetSeriesChapterNameFallsBackToNumber(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	// No SeriesProvider / ProviderChapter rows: nothing can supply a title.
+	sr := client.Series.Create().
+		SetTitle("Frozen Archive").
+		SetSlug("frozen-archive").
+		SetCategory(entseries.CategoryManga).
+		SaveX(ctx)
+
+	intNum, decNum := 12.0, 12.5
+	client.Chapter.Create().
+		SetSeriesID(sr.ID).SetChapterKey("fa-int").SetNumber(intNum).
+		SetState(entchapter.StateDownloaded).SaveX(ctx)
+	client.Chapter.Create().
+		SetSeriesID(sr.ID).SetChapterKey("fa-dec").SetNumber(decNum).
+		SetState(entchapter.StateDownloaded).SaveX(ctx)
+	// No number at all → the fallback has nothing to format, name stays blank.
+	client.Chapter.Create().
+		SetSeriesID(sr.ID).SetChapterKey("fa-nil").
+		SetState(entchapter.StateDownloaded).SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir(), 14)
+	got, err := svc.GetSeries(ctx, sr.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+
+	names := map[string]string{}
+	for _, ch := range got.Chapters {
+		names[ch.ChapterKey] = ch.Name
+	}
+	if names["fa-int"] != "Chapter 12" {
+		t.Errorf("integer fallback: want %q, got %q", "Chapter 12", names["fa-int"])
+	}
+	if names["fa-dec"] != "Chapter 12.5" {
+		t.Errorf("decimal fallback: want %q, got %q", "Chapter 12.5", names["fa-dec"])
+	}
+	if names["fa-nil"] != "" {
+		t.Errorf("nil-number fallback: want blank, got %q", names["fa-nil"])
+	}
+}
+
 func TestGetSeriesNotFound(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()

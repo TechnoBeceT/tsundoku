@@ -305,4 +305,9 @@ func TestRefreshAll_PersistsSyncStateOnFailure(t *testing.T) {
 	if st.LastError == "" {
 		t.Error("LastError = empty, want a recorded error after a failed refresh")
 	}
+	// A failed refresh must NOT stamp the success timestamp — last_synced_at marks
+	// the last GOOD sync, so leaving it nil keeps the health calc honest.
+	if st.LastSyncedAt != nil {
+		t.Errorf("LastSyncedAt = %v, want nil after a failed refresh", st.LastSyncedAt)
+	}
 }

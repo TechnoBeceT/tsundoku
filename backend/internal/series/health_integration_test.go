@@ -44,7 +44,9 @@ func seedHealthFixture(t *testing.T, ctx context.Context, db *ent.Client) (stale
 func TestLibraryHealthReturnsOnlySickSeries(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	staleID, healthyID := seedHealthFixture(t, ctx, db)
+	// The fixture also seeds a healthy series; the len==1 + id==staleID checks
+	// below already prove it is absent from the scan, so its id is unused here.
+	staleID, _ := seedHealthFixture(t, ctx, db)
 
 	svc := series.NewService(db, t.TempDir(), 14)
 	res, err := svc.LibraryHealth(ctx)
@@ -57,9 +59,6 @@ func TestLibraryHealthReturnsOnlySickSeries(t *testing.T) {
 	got := res.Series[0]
 	if got.ID != staleID {
 		t.Fatalf("sick series id = %s, want %s", got.ID, staleID)
-	}
-	if got.ID == healthyID {
-		t.Fatal("healthy series must be absent from the scan")
 	}
 	// Only the stale source is listed.
 	if len(got.Sources) != 1 || got.Sources[0].Health != series.HealthStale {

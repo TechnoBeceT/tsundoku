@@ -80,12 +80,15 @@ func parseNonNegative(raw, name string) (int, error) {
 	return v, nil
 }
 
-// validateID parses the :id path param as a UUID. A malformed id yields a 400
-// echo.HTTPError so the central middleware renders {"message":...}.
-func validateID(raw string) (uuid.UUID, error) {
+// validateID parses a UUID path param. subject names which id is being parsed
+// ("series id", "provider id") so a malformed value yields a precise 400 body
+// ("invalid <subject>") rather than always blaming the series id — this helper is
+// reused for both the :id and :providerId params. The central middleware renders
+// the message as {"message":...}.
+func validateID(raw, subject string) (uuid.UUID, error) {
 	id, err := uuid.Parse(raw)
 	if err != nil {
-		return uuid.Nil, echo.NewHTTPError(http.StatusBadRequest, "invalid series id")
+		return uuid.Nil, echo.NewHTTPError(http.StatusBadRequest, "invalid "+subject)
 	}
 	return id, nil
 }

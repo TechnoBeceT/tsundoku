@@ -556,12 +556,31 @@ func TestRemoveProvider_RequiresOwner(t *testing.T) {
 	}
 }
 
-// TestRemoveProvider_BadIDs asserts a malformed series id is a 400.
+// TestRemoveProvider_BadIDs asserts a malformed series id and a malformed
+// provider id each yield a 400 whose body names the OFFENDING param — proving
+// validateID's subject label is threaded correctly (a malformed providerId must
+// not be mislabelled "invalid series id").
 func TestRemoveProvider_BadIDs(t *testing.T) {
 	env := newTestEnv(t)
-	rec := env.do(http.MethodDelete, "/api/series/not-a-uuid/providers/"+uuid.NewString(), "")
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
+	good := uuid.NewString()
+	cases := []struct {
+		name    string
+		target  string
+		wantMsg string
+	}{
+		{"bad series id", "/api/series/not-a-uuid/providers/" + good, "invalid series id"},
+		{"bad provider id", "/api/series/" + good + "/providers/not-a-uuid", "invalid provider id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := env.do(http.MethodDelete, tc.target, "")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantMsg) {
+				t.Errorf("body = %s, want message %q", rec.Body.String(), tc.wantMsg)
+			}
+		})
 	}
 }
 
