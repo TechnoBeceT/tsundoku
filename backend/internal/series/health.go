@@ -47,6 +47,10 @@ type ProviderHealthInput struct {
 	SeriesMaxNumber *float64
 	// MultiSource is true when the series has more than one provider.
 	MultiSource bool
+	// Completed is true when the owner has marked the series finished. A
+	// completed series is excluded from health: its status is forced to
+	// HealthOK (it is done, not broken), never stale or erroring.
+	Completed bool
 }
 
 // providerMaxNumber returns the maximum non-nil Number across chs, or nil if
@@ -104,6 +108,12 @@ func ComputeProviderHealth(in ProviderHealthInput, now time.Time, graceDays int)
 	h.ChaptersBehind = countBehind(have, in.SeriesChapterKeys)
 	h.NewestChapterAt = newestUpload(in.ProviderChapters)
 	providerMax := providerMaxNumber(in.ProviderChapters)
+
+	// A completed series is done, not broken: surface the informational fields
+	// but never escalate to stale/erroring. One rule, reused by every caller.
+	if in.Completed {
+		return h
+	}
 
 	if h.LastError != "" {
 		h.Status = HealthErroring
