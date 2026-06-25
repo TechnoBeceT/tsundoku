@@ -736,6 +736,84 @@ func TestSetCompleted_BadID(t *testing.T) {
 	}
 }
 
+// TestSetMonitored_CompletedPreserved is the §16 regression proof for the
+// detailToSummary mapper: if a series has completed=true and the owner patches
+// its monitored flag, the response must carry completed=true (not silently
+// zero-out the field). This test would FAIL against the old inline literal in
+// SetMonitored which omitted the Completed field.
+func TestSetMonitored_CompletedPreserved(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	// Mark the series as completed first so we can assert it survives the
+	// SetMonitored round-trip.
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/completed", `{"completed":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("setup SetCompleted: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Now toggle monitored — this is the call that used to drop completed.
+	rec = env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/monitored", `{"monitored":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetMonitored: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got seriessvc.SeriesSummaryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("SetMonitored: decode: %v", err)
+	}
+	if !got.Completed {
+		t.Fatalf("SetMonitored on completed series: response completed want true, got false (§16 dropped-field bug)")
+	}
+	if got.Monitored {
+		t.Fatalf("SetMonitored: response monitored want false, got true")
+	}
+}
+
+// TestSetCategory_CompletedPreserved is the §16 regression proof for the
+// detailToSummary mapper: if a series has completed=true and the owner changes
+// its category, the response must carry completed=true (not silently zero it).
+// This test would FAIL against the old inline literal in SetCategory.
+func TestSetCategory_CompletedPreserved(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	// Prepare the on-disk folder so SetCategory can move it.
+	const title = "Alpha Saga"
+	oldDir := disk.SeriesDir(env.storage, "Manga", title)
+	if err := os.MkdirAll(oldDir, 0o750); err != nil {
+		t.Fatalf("mkdir old dir: %v", err)
+	}
+	if err := disk.WriteSidecar(oldDir, disk.Sidecar{Title: title, Category: "Manga"}); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	// Mark the series as completed.
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/completed", `{"completed":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("setup SetCompleted: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Now change the category — this is the call that used to drop completed.
+	rec = env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/category", `{"category":"Manhwa"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetCategory: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got seriessvc.SeriesSummaryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("SetCategory: decode: %v", err)
+	}
+	if !got.Completed {
+		t.Fatalf("SetCategory on completed series: response completed want true, got false (§16 dropped-field bug)")
+	}
+	if got.Category != "Manhwa" {
+		t.Fatalf("SetCategory: response category want Manhwa, got %q", got.Category)
+	}
+}
+
 // TestLibraryHealth_EmptyLibrary asserts GET /api/health on an empty library
 // returns 200 with {"series":[]} (a non-null empty array, not null — see §series).
 func TestLibraryHealth_EmptyLibrary(t *testing.T) {
