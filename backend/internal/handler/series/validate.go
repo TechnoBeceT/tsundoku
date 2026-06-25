@@ -154,6 +154,23 @@ type ReorderProvidersRequest struct {
 	Providers []ProviderRankBody `json:"providers"`
 }
 
+// validateDeleteFiles parses the required deleteFiles query param for the series
+// DELETE. It must be explicitly "true" or "false" (no default) so an
+// irreversible delete always carries the owner's explicit intent. An empty or
+// non-boolean value yields a 400 echo.HTTPError.
+func validateDeleteFiles(raw string) (bool, error) {
+	switch raw {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	case "":
+		return false, echo.NewHTTPError(http.StatusBadRequest, "deleteFiles is required")
+	default:
+		return false, echo.NewHTTPError(http.StatusBadRequest, "deleteFiles must be true or false")
+	}
+}
+
 // validateReorderProviders validates the PATCH body: at least one entry is required,
 // each id must parse as a valid UUID, and each importance must be non-negative.
 // Returns a []seriessvc.ProviderRank ready for the service, or a 400 echo.HTTPError.

@@ -64,6 +64,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/series/:id/completed", h.SetCompleted)
 	authed.PATCH("/series/:id/providers", h.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", h.RemoveProvider)
+	authed.DELETE("/series/:id", h.DeleteSeries)
 	authed.GET("/categories", h.Categories)
 	authed.GET("/health", h.LibraryHealth)
 
@@ -343,6 +344,7 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPatch, "/api/series/" + id + "/completed"},
 		{http.MethodPatch, "/api/series/" + id + "/providers"},
 		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
+		{http.MethodDelete, "/api/series/" + id + "?deleteFiles=true"},
 		{http.MethodGet, "/api/categories"},
 		{http.MethodGet, "/api/health"},
 	}
@@ -811,6 +813,97 @@ func TestSetCategory_CompletedPreserved(t *testing.T) {
 	}
 	if got.Category != "Manhwa" {
 		t.Fatalf("SetCategory: response category want Manhwa, got %q", got.Category)
+	}
+}
+
+// TestDeleteSeries_OK_DeleteFiles proves DELETE /api/series/:id?deleteFiles=true
+// returns 204 and that the series row is gone from the DB (§16 round-trip).
+func TestDeleteSeries_OK_DeleteFiles(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	rec := env.do(http.MethodDelete, "/api/series/"+env.mangaID.String()+"?deleteFiles=true", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DeleteSeries deleteFiles=true: want 204, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// §16 round-trip: the series must no longer exist in the DB.
+	_, err := env.client.Series.Get(ctx, env.mangaID)
+	if err == nil {
+		t.Fatal("DeleteSeries deleteFiles=true: series row still present in DB after delete")
+	}
+}
+
+// TestDeleteSeries_OK_KeepFiles proves DELETE /api/series/:id?deleteFiles=false
+// returns 204 and removes the series row even when file deletion is skipped.
+func TestDeleteSeries_OK_KeepFiles(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	rec := env.do(http.MethodDelete, "/api/series/"+env.mangaID.String()+"?deleteFiles=false", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DeleteSeries deleteFiles=false: want 204, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// §16 round-trip: the series row must be gone.
+	_, err := env.client.Series.Get(ctx, env.mangaID)
+	if err == nil {
+		t.Fatal("DeleteSeries deleteFiles=false: series row still present in DB after delete")
+	}
+}
+
+// TestDeleteSeries_MissingDeleteFiles proves that omitting deleteFiles yields 400
+// "deleteFiles is required" (no default for an irreversible action).
+func TestDeleteSeries_MissingDeleteFiles(t *testing.T) {
+	env := newTestEnv(t)
+	env.seed(context.Background(), t)
+
+	rec := env.do(http.MethodDelete, "/api/series/"+env.mangaID.String(), "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("DeleteSeries missing param: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "deleteFiles is required") {
+		t.Errorf("body = %s, want message 'deleteFiles is required'", rec.Body.String())
+	}
+}
+
+// TestDeleteSeries_InvalidDeleteFiles proves that a non-boolean deleteFiles value
+// yields 400 "deleteFiles must be true or false".
+func TestDeleteSeries_InvalidDeleteFiles(t *testing.T) {
+	env := newTestEnv(t)
+	env.seed(context.Background(), t)
+
+	rec := env.do(http.MethodDelete, "/api/series/"+env.mangaID.String()+"?deleteFiles=maybe", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("DeleteSeries invalid param: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "deleteFiles must be true or false") {
+		t.Errorf("body = %s, want message 'deleteFiles must be true or false'", rec.Body.String())
+	}
+}
+
+// TestDeleteSeries_BadID proves a malformed :id yields 400 "invalid series id".
+func TestDeleteSeries_BadID(t *testing.T) {
+	env := newTestEnv(t)
+
+	rec := env.do(http.MethodDelete, "/api/series/not-a-uuid?deleteFiles=true", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("DeleteSeries bad id: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid series id") {
+		t.Errorf("body = %s, want message 'invalid series id'", rec.Body.String())
+	}
+}
+
+// TestDeleteSeries_NotFound proves an unknown but valid UUID yields 404.
+func TestDeleteSeries_NotFound(t *testing.T) {
+	env := newTestEnv(t)
+
+	rec := env.do(http.MethodDelete, "/api/series/"+uuid.New().String()+"?deleteFiles=true", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("DeleteSeries unknown id: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
