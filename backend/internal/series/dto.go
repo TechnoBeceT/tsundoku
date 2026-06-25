@@ -31,6 +31,7 @@ type SeriesSummaryDTO struct {
 	Category      string        `json:"category"`
 	CoverURL      string        `json:"coverUrl"`
 	Monitored     bool          `json:"monitored"`
+	Completed     bool          `json:"completed"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
 }
 
@@ -43,6 +44,7 @@ type SeriesDetailDTO struct {
 	Category      string        `json:"category"`
 	CoverURL      string        `json:"coverUrl"`
 	Monitored     bool          `json:"monitored"`
+	Completed     bool          `json:"completed"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
 	Chapters      []ChapterDTO  `json:"chapters"`
 	Providers     []ProviderDTO `json:"providers"`
@@ -110,6 +112,7 @@ func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
 		Category:      s.Category.String(),
 		CoverURL:      s.CoverURL,
 		Monitored:     s.Monitored,
+		Completed:     s.Completed,
 		ChapterCounts: counts,
 	}
 }

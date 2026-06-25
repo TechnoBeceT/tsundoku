@@ -80,6 +80,57 @@ func TestUnhealthyCount(t *testing.T) {
 	}
 }
 
+// TestLibraryHealthExcludesCompleted proves a completed series — even one whose
+// numbers would otherwise be stale — never appears in the library scan and never
+// counts as unhealthy. Non-vacuous: leave it un-completed and it IS reported.
+func TestLibraryHealthExcludesCompleted(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	staleID, _ := seedHealthFixture(t, ctx, db)
+	db.Series.UpdateOneID(uuid.MustParse(staleID)).SetCompleted(true).ExecX(ctx)
+
+	svc := series.NewService(db, t.TempDir(), 14)
+
+	res, err := svc.LibraryHealth(ctx)
+	if err != nil {
+		t.Fatalf("LibraryHealth: %v", err)
+	}
+	if len(res.Series) != 0 {
+		t.Fatalf("LibraryHealth returned %d series, want 0 (completed excluded)", len(res.Series))
+	}
+
+	n, err := svc.UnhealthyCount(ctx)
+	if err != nil {
+		t.Fatalf("UnhealthyCount: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("UnhealthyCount = %d, want 0 (completed excluded)", n)
+	}
+}
+
+// TestGetSeriesCompletedProvidersReportOK proves the detail endpoint shows a
+// completed series' providers as ok even when the numbers read stale.
+func TestGetSeriesCompletedProvidersReportOK(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	staleID, _ := seedHealthFixture(t, ctx, db)
+	db.Series.UpdateOneID(uuid.MustParse(staleID)).SetCompleted(true).ExecX(ctx)
+
+	svc := series.NewService(db, t.TempDir(), 14)
+	got, err := svc.GetSeries(ctx, uuid.MustParse(staleID))
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if !got.Completed {
+		t.Fatal("detail Completed = false, want true")
+	}
+	for _, p := range got.Providers {
+		if p.Health != series.HealthOK {
+			t.Errorf("provider %s Health = %q, want ok (series completed)", p.Provider, p.Health)
+		}
+	}
+}
+
 func TestGetSeriesEnrichesProviderHealth(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
