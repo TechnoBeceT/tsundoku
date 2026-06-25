@@ -12,6 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entlatestseries "github.com/technobecet/tsundoku/internal/ent/latestseries"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
@@ -227,6 +228,85 @@ func removeProviderInTx(ctx context.Context, tx *ent.Tx, id, providerID uuid.UUI
 	// 4. Delete the source row itself.
 	if err := tx.SeriesProvider.DeleteOneID(providerID).Exec(ctx); err != nil {
 		return fmt.Errorf("series.RemoveProvider: delete provider %s: %w", providerID, err)
+	}
+	return nil
+}
+
+// DeleteSeries permanently removes a whole series. It always deletes every DB
+// row for the series (the full cascade); it removes the series' downloaded CBZ
+// files + library folder from disk ONLY when deleteFiles is true. With
+// deleteFiles=false the files are left on disk (only DB tracking is removed; a
+// later disk.Reconcile can rebuild the series from the on-disk sidecar). This is
+// the 2nd sanctioned owner-initiated deletion path (after RemoveProvider) and the
+// first that can delete a CBZ — there is still no automatic deletion. A missing
+// id yields ErrSeriesNotFound.
+//
+// Disk and DB stay consistent: the folder removal (deleteFiles=true) runs before
+// the tx commits, and the tx is rolled back if removal fails, so a disk error
+// leaves the DB fully intact (retryable) and a success leaves no orphan folder
+// for a later reconcile to resurrect.
+func (s *Service) DeleteSeries(ctx context.Context, id uuid.UUID, deleteFiles bool) error {
+	row, err := s.client.Series.Get(ctx, id)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return ErrSeriesNotFound
+		}
+		return fmt.Errorf("series.DeleteSeries: load series %s: %w", id, err)
+	}
+
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("series.DeleteSeries: begin tx: %w", err)
+	}
+	if err := deleteSeriesInTx(ctx, tx, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if deleteFiles {
+		if err := disk.RemoveSeriesDir(s.storage, row.Category.String(), row.Title); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("series.DeleteSeries: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("series.DeleteSeries: commit tx: %w", err)
+	}
+	return nil
+}
+
+// deleteSeriesInTx removes every DB row owned by a series, FK-safe (children
+// before parents): the providers' chapter feeds + sync states, then the chapters
+// (whose satisfied_by references a provider), then the providers, then the
+// edge-less LatestSeries row, then the series itself.
+func deleteSeriesInTx(ctx context.Context, tx *ent.Tx, id uuid.UUID) error {
+	providerIDs, err := tx.SeriesProvider.Query().
+		Where(entseriesprovider.SeriesID(id)).IDs(ctx)
+	if err != nil {
+		return fmt.Errorf("series.DeleteSeries: list providers for %s: %w", id, err)
+	}
+
+	if _, err := tx.ProviderChapter.Delete().
+		Where(entproviderchapter.SeriesProviderIDIn(providerIDs...)).Exec(ctx); err != nil {
+		return fmt.Errorf("series.DeleteSeries: delete provider chapters for %s: %w", id, err)
+	}
+	if _, err := tx.SuwayomiSyncState.Delete().
+		Where(entsuwayomisyncstate.SeriesProviderIDIn(providerIDs...)).Exec(ctx); err != nil {
+		return fmt.Errorf("series.DeleteSeries: delete sync states for %s: %w", id, err)
+	}
+	if _, err := tx.Chapter.Delete().
+		Where(entchapter.SeriesID(id)).Exec(ctx); err != nil {
+		return fmt.Errorf("series.DeleteSeries: delete chapters for %s: %w", id, err)
+	}
+	if _, err := tx.SeriesProvider.Delete().
+		Where(entseriesprovider.SeriesID(id)).Exec(ctx); err != nil {
+		return fmt.Errorf("series.DeleteSeries: delete providers for %s: %w", id, err)
+	}
+	if _, err := tx.LatestSeries.Delete().
+		Where(entlatestseries.SeriesID(id)).Exec(ctx); err != nil {
+		return fmt.Errorf("series.DeleteSeries: delete latest-series for %s: %w", id, err)
+	}
+	if err := tx.Series.DeleteOneID(id).Exec(ctx); err != nil {
+		return fmt.Errorf("series.DeleteSeries: delete series %s: %w", id, err)
 	}
 	return nil
 }
