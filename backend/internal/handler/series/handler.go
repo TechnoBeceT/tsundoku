@@ -246,6 +246,24 @@ func (h *Handler) RemoveProvider(c echo.Context) error {
 	return c.JSON(http.StatusOK, updated)
 }
 
+// DeleteSeries handles DELETE /api/series/:id?deleteFiles=true|false. It hard-
+// deletes the whole series (all DB rows); when deleteFiles=true it also removes
+// the downloaded CBZs + library folder from disk. Returns 204 No Content.
+func (h *Handler) DeleteSeries(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+	deleteFiles, err := validateDeleteFiles(c.QueryParam("deleteFiles"))
+	if err != nil {
+		return err
+	}
+	if err := h.svc.DeleteSeries(c.Request().Context(), id, deleteFiles); err != nil {
+		return mapServiceError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // LibraryHealth handles GET /api/health — the library-wide source-health scan:
 // every series with at least one stale or erroring source.
 func (h *Handler) LibraryHealth(c echo.Context) error {

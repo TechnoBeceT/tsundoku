@@ -725,6 +725,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+    delete:
+      operationId: deleteSeries
+      summary: Delete a whole series
+      description: |
+        Permanently removes a series and all its tracking data (providers, chapter
+        feeds, sync state, chapters). When deleteFiles=true the downloaded CBZs and
+        the series' library folder are also removed from disk (permanent — recover
+        by re-adopting from source). When deleteFiles=false the CBZs are kept on
+        disk (only DB tracking is removed; a later reconcile can rebuild the series
+        from the on-disk sidecar). Returns 204 No Content.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: deleteFiles
+          in: query
+          required: true
+          description: Whether to also delete the downloaded CBZ files + folder from disk.
+          schema:
+            type: boolean
+      responses:
+        "204":
+          description: Series deleted.
+        "400":
+          description: Malformed id or missing/invalid deleteFiles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/series/{id}/category:
     patch:
       operationId: setSeriesCategory

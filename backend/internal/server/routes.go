@@ -29,7 +29,8 @@ import (
 //   - /api/sources/:sourceId/manga/:mangaId/chapters — chapter preview (RequireOwner).
 //   - /api/series (GET)                            — library list (RequireOwner).
 //   - /api/series (POST)                           — adopt / import manga (RequireOwner).
-//   - /api/series/:id                              — library detail (RequireOwner).
+//   - /api/series/:id (GET)                        — library detail (RequireOwner).
+//   - /api/series/:id (DELETE)                     — delete a whole series (?deleteFiles=) (RequireOwner).
 //   - /api/series/:id/category                     — recategorize (RequireOwner).
 //   - /api/series/:id/monitored                    — toggle monitoring flag (RequireOwner).
 //   - /api/series/:id/completed                    — toggle completed (finished) flag (RequireOwner).
@@ -75,6 +76,7 @@ func registerRoutes(
 	authed.PATCH("/series/:id/completed", seriesH.SetCompleted)
 	authed.PATCH("/series/:id/providers", seriesH.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", seriesH.RemoveProvider)
+	authed.DELETE("/series/:id", seriesH.DeleteSeries)
 	authed.GET("/categories", seriesH.Categories)
 	authed.GET("/health", seriesH.LibraryHealth)
 

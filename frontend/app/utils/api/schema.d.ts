@@ -133,7 +133,16 @@ export interface paths {
         get: operations["getSeries"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a whole series
+         * @description Permanently removes a series and all its tracking data (providers, chapter
+         *     feeds, sync state, chapters). When deleteFiles=true the downloaded CBZs and
+         *     the series' library folder are also removed from disk (permanent — recover
+         *     by re-adopting from source). When deleteFiles=false the CBZs are kept on
+         *     disk (only DB tracking is removed; a later reconcile can rebuild the series
+         *     from the on-disk sidecar). Returns 204 No Content.
+         */
+        delete: operations["deleteSeries"];
         options?: never;
         head?: never;
         patch?: never;
@@ -871,6 +880,57 @@ export interface operations {
                 };
             };
             /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteSeries: {
+        parameters: {
+            query: {
+                /** @description Whether to also delete the downloaded CBZ files + folder from disk. */
+                deleteFiles: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Series deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed id or missing/invalid deleteFiles. */
             400: {
                 headers: {
                     [name: string]: unknown;
