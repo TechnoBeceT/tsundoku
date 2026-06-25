@@ -33,6 +33,13 @@ func (Series) Fields() []ent.Field {
 		// monitored gates the (M5) refresh poll; false = the owner is done with
 		// this series and it is excluded from new-chapter checks.
 		field.Bool("monitored").Default(true),
+		// completed marks a finished series (story over, no more chapters
+		// expected). Distinct from monitored: completed is a permanent fact
+		// about the series; monitored=false is a temporary owner pause. The
+		// two are orthogonal. A completed series is skipped by the refresh
+		// sweep and excluded from source-health. Default false → existing rows
+		// backfill via the column default (no data migration).
+		field.Bool("completed").Default(false),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

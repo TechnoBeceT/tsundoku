@@ -152,12 +152,16 @@ func init() {
 	seriesDescMonitored := seriesFields[7].Descriptor()
 	// series.DefaultMonitored holds the default value on creation for the monitored field.
 	series.DefaultMonitored = seriesDescMonitored.Default.(bool)
+	// seriesDescCompleted is the schema descriptor for completed field.
+	seriesDescCompleted := seriesFields[8].Descriptor()
+	// series.DefaultCompleted holds the default value on creation for the completed field.
+	series.DefaultCompleted = seriesDescCompleted.Default.(bool)
 	// seriesDescCreatedAt is the schema descriptor for created_at field.
-	seriesDescCreatedAt := seriesFields[8].Descriptor()
+	seriesDescCreatedAt := seriesFields[9].Descriptor()
 	// series.DefaultCreatedAt holds the default value on creation for the created_at field.
 	series.DefaultCreatedAt = seriesDescCreatedAt.Default.(func() time.Time)
 	// seriesDescUpdatedAt is the schema descriptor for updated_at field.
-	seriesDescUpdatedAt := seriesFields[9].Descriptor()
+	seriesDescUpdatedAt := seriesFields[10].Descriptor()
 	// series.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	series.DefaultUpdatedAt = seriesDescUpdatedAt.Default.(func() time.Time)
 	// series.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
