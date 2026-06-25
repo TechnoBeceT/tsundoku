@@ -5,6 +5,7 @@
 package series
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -114,18 +115,34 @@ func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
 }
 
 // newChapterDTO maps an ent.Chapter into its detail DTO. The chapter's display
-// title lives on the provider feed, not the Chapter row, so name is resolved by
-// the caller (best-provider ProviderChapter.name) and passed in; an empty name is
-// legitimate when no provider supplies a title.
+// title lives on the provider feed, not the Chapter row, so the resolved name
+// (best-provider ProviderChapter.name) is passed in by the caller. When no
+// provider supplies a title we fall back to "Chapter N" derived from the chapter
+// number — a frozen 0-provider series (all sources removed via M6) keeps its CBZs
+// and Chapter rows but loses the title source, so the number is the only display
+// name left. If even the number is absent (a rare corner) the name stays blank.
 func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
 	return ChapterDTO{
 		ChapterKey: c.ChapterKey,
 		Number:     c.Number,
-		Name:       name,
+		Name:       chapterDisplayName(name, c.Number),
 		State:      c.State.String(),
 		Filename:   c.Filename,
 		PageCount:  c.PageCount,
 	}
+}
+
+// chapterDisplayName returns the chapter's display name: the provider-resolved
+// title if present, else "Chapter N" from number (minimally formatted so 12.0 →
+// "Chapter 12" and 12.5 → "Chapter 12.5"), else "" when there is no number.
+func chapterDisplayName(name string, number *float64) string {
+	if name != "" {
+		return name
+	}
+	if number != nil {
+		return "Chapter " + strconv.FormatFloat(*number, 'f', -1, 64)
+	}
+	return ""
 }
 
 // newProviderDTO maps an ent.SeriesProvider and its computed health into a

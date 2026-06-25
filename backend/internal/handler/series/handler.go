@@ -55,7 +55,7 @@ func (h *Handler) List(c echo.Context) error {
 // It parses the :id path param as a UUID (malformed → 400) and returns the
 // full SeriesDetailDTO for that series. A missing series yields 404.
 func (h *Handler) Detail(c echo.Context) error {
-	id, err := validateID(c.Param("id"))
+	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func (h *Handler) Detail(c echo.Context) error {
 // the caller sees the new state without a refetch (§16 full round-trip). A
 // missing series yields 404; an invalid category yields 400.
 func (h *Handler) SetCategory(c echo.Context) error {
-	id, err := validateID(c.Param("id"))
+	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func (h *Handler) Categories(c echo.Context) error {
 // (§16 full round-trip). A missing series yields 404; a missing/invalid body
 // yields 400.
 func (h *Handler) SetMonitored(c echo.Context) error {
-	id, err := validateID(c.Param("id"))
+	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func (h *Handler) SetMonitored(c echo.Context) error {
 // a provider that doesn't belong to the series yields 400; a bad UUID or empty
 // list yields 400.
 func (h *Handler) ReorderProviders(c echo.Context) error {
-	id, err := validateID(c.Param("id"))
+	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
 		return err
 	}
@@ -209,11 +209,11 @@ func (h *Handler) ReorderProviders(c echo.Context) error {
 // keeping every downloaded CBZ, and returns the updated series detail. It does
 // NOT trigger an auto-converge cycle — removal creates no wanted chapters (M6).
 func (h *Handler) RemoveProvider(c echo.Context) error {
-	id, err := validateID(c.Param("id"))
+	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
 		return err
 	}
-	providerID, err := validateID(c.Param("providerId"))
+	providerID, err := validateID(c.Param("providerId"), "provider id")
 	if err != nil {
 		return err
 	}
