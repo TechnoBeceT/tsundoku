@@ -311,3 +311,34 @@ func TestRefreshAll_PersistsSyncStateOnFailure(t *testing.T) {
 		t.Errorf("LastSyncedAt = %v, want nil after a failed refresh", st.LastSyncedAt)
 	}
 }
+
+// TestRefreshAll_SkipsCompleted proves a completed series is excluded from the
+// discovery sweep even while monitored, and returns to the sweep once it is
+// un-completed (non-vacuous: the second half fails if the predicate is dropped).
+func TestRefreshAll_SkipsCompleted(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{42: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}}}}
+	s, _ := seedMonitoredSeries(t, ctx, db, "done", "mangadex", 42)
+
+	// Mark completed → swept count is 0.
+	db.Series.UpdateOneID(s.ID).SetCompleted(true).ExecX(ctx)
+	svc := newSvc(t, db, fc)
+	res, err := svc.RefreshAll(ctx)
+	if err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+	if res.SeriesRefreshed != 0 {
+		t.Fatalf("completed series swept: SeriesRefreshed = %d, want 0", res.SeriesRefreshed)
+	}
+
+	// Un-complete → swept count is 1.
+	db.Series.UpdateOneID(s.ID).SetCompleted(false).ExecX(ctx)
+	res2, err := svc.RefreshAll(ctx)
+	if err != nil {
+		t.Fatalf("RefreshAll (re-opened): %v", err)
+	}
+	if res2.SeriesRefreshed != 1 {
+		t.Fatalf("re-opened series not swept: SeriesRefreshed = %d, want 1", res2.SeriesRefreshed)
+	}
+}
