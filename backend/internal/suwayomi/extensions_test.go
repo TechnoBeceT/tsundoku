@@ -171,6 +171,26 @@ func TestClient_SetExtensionState_PropagatesError(t *testing.T) {
 	}
 }
 
+// TestClient_SetExtensionState_UnknownActionGuard proves an unknown action is
+// rejected client-side BEFORE any network call: a non-nil error is returned and
+// the GraphQL server is never hit (so no empty/garbage patch is ever emitted).
+func TestClient_SetExtensionState_UnknownActionGuard(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	err := newTestClient(t, srv).SetExtensionState(context.Background(), "some.pkg", suwayomi.ExtensionAction("bogus"))
+	if err == nil {
+		t.Fatal("SetExtensionState(bogus): want error, got nil")
+	}
+	if hit {
+		t.Error("SetExtensionState(bogus): a GraphQL request was sent — the guard must reject before any network call")
+	}
+}
+
 // TestClient_FetchExtensions_MapsList proves the fetchExtensions mutation result
 // decodes into the typed list.
 func TestClient_FetchExtensions_MapsList(t *testing.T) {
