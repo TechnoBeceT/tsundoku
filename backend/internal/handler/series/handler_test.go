@@ -79,6 +79,21 @@ func (f *fakeSuwayomiClient) ServerSettings(ctx context.Context) (suwayomi.Suway
 func (f *fakeSuwayomiClient) SetServerSettings(ctx context.Context, patch suwayomi.SuwayomiSettingsPatch) error {
 	return nil
 }
+func (f *fakeSuwayomiClient) Extensions(ctx context.Context) ([]suwayomi.Extension, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) SetExtensionState(ctx context.Context, pkgName string, action suwayomi.ExtensionAction) error {
+	return nil
+}
+func (f *fakeSuwayomiClient) FetchExtensions(ctx context.Context) ([]suwayomi.Extension, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) ExtensionRepos(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) SetExtensionRepos(ctx context.Context, repos []string) error {
+	return nil
+}
 
 const testSecret = "series-handler-test-secret"
 

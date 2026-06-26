@@ -59,6 +59,15 @@ func (s *stubClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSetting
 func (s *stubClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
 	return nil
 }
+func (s *stubClient) Extensions(_ context.Context) ([]suwayomi.Extension, error) { return nil, nil }
+func (s *stubClient) SetExtensionState(_ context.Context, _ string, _ suwayomi.ExtensionAction) error {
+	return nil
+}
+func (s *stubClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
+	return nil, nil
+}
+func (s *stubClient) ExtensionRepos(_ context.Context) ([]string, error)    { return nil, nil }
+func (s *stubClient) SetExtensionRepos(_ context.Context, _ []string) error { return nil }
 
 // The remaining Client methods are unused by Fetcher; they panic loudly if
 // reached so a future code-change that calls them is caught immediately.
@@ -283,6 +292,21 @@ func (m *midLoopCancelClient) ServerSettings(_ context.Context) (suwayomi.Suwayo
 	return suwayomi.SuwayomiSettings{}, nil
 }
 func (m *midLoopCancelClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
+	return nil
+}
+func (m *midLoopCancelClient) Extensions(_ context.Context) ([]suwayomi.Extension, error) {
+	return nil, nil
+}
+func (m *midLoopCancelClient) SetExtensionState(_ context.Context, _ string, _ suwayomi.ExtensionAction) error {
+	return nil
+}
+func (m *midLoopCancelClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
+	return nil, nil
+}
+func (m *midLoopCancelClient) ExtensionRepos(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+func (m *midLoopCancelClient) SetExtensionRepos(_ context.Context, _ []string) error {
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	categoryh "github.com/technobecet/tsundoku/internal/handler/category"
 	downloadsh "github.com/technobecet/tsundoku/internal/handler/downloads"
+	extensionsh "github.com/technobecet/tsundoku/internal/handler/extensions"
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
@@ -56,6 +57,13 @@ import (
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
 //   - /api/suwayomi/settings (GET)                  — read Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
+//   - /api/suwayomi/extensions (GET)                — list Suwayomi extensions (RequireOwner).
+//   - /api/suwayomi/extensions/refresh (POST)       — refresh available extensions from repos (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName/install (POST) — install an extension (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName/update (POST)  — update an extension (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName (DELETE)    — uninstall an extension (RequireOwner).
+//   - /api/suwayomi/extensions/repos (GET)          — read extension repo URLs (RequireOwner).
+//   - /api/suwayomi/extensions/repos (PUT)          — replace extension repo URLs (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
@@ -116,6 +124,18 @@ func registerRoutes(
 	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient)
 	authed.GET("/suwayomi/settings", suwayomiSettingsH.Get)
 	authed.PATCH("/suwayomi/settings", suwayomiSettingsH.Update)
+
+	// Suwayomi extension (Sources & Extensions) management. Like the settings
+	// proxy, the handler holds the Suwayomi client directly and proxies its
+	// extension GraphQL surface; no Tsundoku state is involved.
+	extensionsH := extensionsh.NewHandler(suwayomiClient)
+	authed.GET("/suwayomi/extensions", extensionsH.List)
+	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
+	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
+	authed.PUT("/suwayomi/extensions/repos", extensionsH.SetRepos)
+	authed.POST("/suwayomi/extensions/:pkgName/install", extensionsH.Install)
+	authed.POST("/suwayomi/extensions/:pkgName/update", extensionsH.Update)
+	authed.DELETE("/suwayomi/extensions/:pkgName", extensionsH.Uninstall)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.

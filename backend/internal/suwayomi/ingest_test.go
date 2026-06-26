@@ -76,6 +76,21 @@ func (s *ingestStubClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiS
 func (s *ingestStubClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
 	panic("ingestStubClient.SetServerSettings: must not be called by Ingest")
 }
+func (s *ingestStubClient) Extensions(_ context.Context) ([]suwayomi.Extension, error) {
+	panic("ingestStubClient.Extensions: must not be called by Ingest")
+}
+func (s *ingestStubClient) SetExtensionState(_ context.Context, _ string, _ suwayomi.ExtensionAction) error {
+	panic("ingestStubClient.SetExtensionState: must not be called by Ingest")
+}
+func (s *ingestStubClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
+	panic("ingestStubClient.FetchExtensions: must not be called by Ingest")
+}
+func (s *ingestStubClient) ExtensionRepos(_ context.Context) ([]string, error) {
+	panic("ingestStubClient.ExtensionRepos: must not be called by Ingest")
+}
+func (s *ingestStubClient) SetExtensionRepos(_ context.Context, _ []string) error {
+	panic("ingestStubClient.SetExtensionRepos: must not be called by Ingest")
+}
 
 // --- helpers -----------------------------------------------------------------
 
@@ -553,6 +568,21 @@ func (s *metaClientStub) ServerSettings(_ context.Context) (suwayomi.SuwayomiSet
 }
 func (s *metaClientStub) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
 	panic("metaClientStub: SetServerSettings must not be called by Ingest")
+}
+func (s *metaClientStub) Extensions(_ context.Context) ([]suwayomi.Extension, error) {
+	panic("metaClientStub: Extensions must not be called by Ingest")
+}
+func (s *metaClientStub) SetExtensionState(_ context.Context, _ string, _ suwayomi.ExtensionAction) error {
+	panic("metaClientStub: SetExtensionState must not be called by Ingest")
+}
+func (s *metaClientStub) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
+	panic("metaClientStub: FetchExtensions must not be called by Ingest")
+}
+func (s *metaClientStub) ExtensionRepos(_ context.Context) ([]string, error) {
+	panic("metaClientStub: ExtensionRepos must not be called by Ingest")
+}
+func (s *metaClientStub) SetExtensionRepos(_ context.Context, _ []string) error {
+	panic("metaClientStub: SetExtensionRepos must not be called by Ingest")
 }
 
 // ptrStr returns a pointer to v.

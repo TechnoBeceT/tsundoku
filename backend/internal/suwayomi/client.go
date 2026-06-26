@@ -151,6 +151,31 @@ type Client interface {
 	// subset via the setSettings mutation: only the patch's non-nil fields are
 	// sent, so unset fields are never clobbered. See settings.go.
 	SetServerSettings(ctx context.Context, patch SuwayomiSettingsPatch) error
+
+	// Extensions lists every Suwayomi extension (installed + available) via the
+	// extensions query. Identity is pkgName; the install/nsfw/obsolete flags use
+	// the isInstalled/isNsfw/isObsolete casing. See extensions.go.
+	Extensions(ctx context.Context) ([]Extension, error)
+
+	// SetExtensionState installs / updates / uninstalls the extension identified
+	// by pkgName via the updateExtension mutation (action selects the single
+	// patch boolean). Re-read via Extensions for the authoritative state. See
+	// extensions.go.
+	SetExtensionState(ctx context.Context, pkgName string, action ExtensionAction) error
+
+	// FetchExtensions refreshes the available-extensions list from the configured
+	// repos ("check for updates") via the fetchExtensions mutation and returns the
+	// refreshed list. See extensions.go.
+	FetchExtensions(ctx context.Context) ([]Extension, error)
+
+	// ExtensionRepos reads the configured extension repo URL list (a SettingsType
+	// field). See extensions.go.
+	ExtensionRepos(ctx context.Context) ([]string, error)
+
+	// SetExtensionRepos REPLACES the extension repo URL list via a partial
+	// setSettings mutation carrying only extensionRepos (no other setting is
+	// clobbered). An empty slice clears all repos. See extensions.go.
+	SetExtensionRepos(ctx context.Context, repos []string) error
 }
 
 // --- Constructor -------------------------------------------------------------
