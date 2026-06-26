@@ -207,6 +207,43 @@ func TestSetStateLegalTransitionSucceeds(t *testing.T) {
 	}
 }
 
+// TestSetStateOwnerRetryEdges verifies the two owner-retry edges added for the
+// Downloads milestone: failed→wanted and permanently_failed→wanted both succeed
+// and persist (the only legal paths back to wanted; the auto-dispatcher never
+// uses them).
+func TestSetStateOwnerRetryEdges(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	s := client.Series.Create().SetTitle("Retry Edges").SetSlug("retry-edges").SaveX(ctx)
+
+	cases := []struct {
+		name string
+		key  string
+		from entchapter.State
+	}{
+		{"failed→wanted", "re-1", entchapter.StateFailed},
+		{"permanently_failed→wanted", "re-2", entchapter.StatePermanentlyFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ch := client.Chapter.Create().
+				SetSeries(s).
+				SetChapterKey(tc.key).
+				SetState(tc.from).
+				SaveX(ctx)
+
+			if err := chapter.SetState(ctx, client, ch.ID, entchapter.StateWanted); err != nil {
+				t.Fatalf("expected %s to succeed, got: %v", tc.name, err)
+			}
+			refreshed := client.Chapter.GetX(ctx, ch.ID)
+			if refreshed.State != entchapter.StateWanted {
+				t.Errorf("state not reset: want wanted, got %s", refreshed.State)
+			}
+		})
+	}
+}
+
 // TestIngestResultCounts verifies that IngestResult.NewChapters and
 // IngestResult.NewProviderChapters count genuinely new rows only.
 // A second ingest of the same list must report 0 new of each.

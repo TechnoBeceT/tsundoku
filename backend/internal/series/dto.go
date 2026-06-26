@@ -119,11 +119,11 @@ type CategoryCountDTO struct {
 }
 
 // newSummaryDTO maps an ent.Series plus its computed rollup into a summary DTO.
-// s.Edges.Providers must be eagerly loaded; metadataProvider + seriesDisplay
+// s.Edges.Providers must be eagerly loaded; MetadataProvider + SeriesDisplay
 // resolve DisplayName and CoverURL from the provider set.
 func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
-	meta := metadataProvider(s)
-	dispName, coverURL := seriesDisplay(s, meta)
+	meta := MetadataProvider(s)
+	dispName, coverURL := SeriesDisplay(s, meta)
 	return SeriesSummaryDTO{
 		ID:            s.ID.String(),
 		Title:         s.Title,
@@ -172,7 +172,7 @@ func chapterDisplayName(name string, number *float64) string {
 // detail DTO. seriesID and isMetadataSource are passed in by the caller after
 // resolving the series' metadata provider once for the whole provider slice.
 // CoverURL is the provider-level proxy path when the provider has a non-empty
-// cover_url, else "" (mirroring the series-level seriesDisplay behaviour so the
+// cover_url, else "" (mirroring the series-level SeriesDisplay behaviour so the
 // SPA never fires a cover fetch that would 404). Title is the provider's own
 // title for the series (set at ingest, may be "").
 func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID, isMetadataSource bool) ProviderDTO {

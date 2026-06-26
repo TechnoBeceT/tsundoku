@@ -356,6 +356,111 @@ components:
           items:
             $ref: "#/components/schemas/ProviderRank"
 
+    DownloadChapter:
+      type: object
+      required:
+        - id
+        - seriesId
+        - seriesTitle
+        - seriesCategory
+        - seriesCoverUrl
+        - chapterKey
+        - number
+        - name
+        - state
+        - provider
+        - retries
+        - nextAttemptAt
+        - lastError
+        - errorCategory
+        - filename
+        - pageCount
+        - downloadDate
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Chapter identifier.
+        seriesId:
+          type: string
+          format: uuid
+          description: Identifier of the series this chapter belongs to.
+        seriesTitle:
+          type: string
+          description: Resolved series display title (metadata-source title, falls back to canonical title).
+        seriesCategory:
+          type: string
+          enum: [Manga, Manhwa, Manhua, Comic, Other]
+          description: Library category of the series.
+        seriesCoverUrl:
+          type: string
+          description: Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover.
+        chapterKey:
+          type: string
+          description: Stable per-series chapter identity (never the number).
+        number:
+          type: [number, "null"]
+          description: Display/sort number; null when unknown. Never identity.
+        name:
+          type: string
+          description: Chapter display title from the best provider's feed (empty when no provider titles it).
+        state:
+          type: string
+          enum: [wanted, downloading, downloaded, upgrade_available, upgrading, failed, permanently_failed]
+          description: Chapter download state.
+        provider:
+          type: string
+          description: Source key (SeriesProvider.provider) of the satisfying source, else the series' top source.
+        retries:
+          type: integer
+          description: Number of download attempts so far (0 when never attempted or after a retry reset).
+        nextAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Scheduled next retry time; only set on failed chapters under backoff, else null.
+        lastError:
+          type: string
+          description: Last download error for this chapter (empty if none).
+        errorCategory:
+          type: string
+          description: Coarse error classification (e.g. "network"); empty if none.
+        filename:
+          type: string
+          description: Rendered CBZ filename (empty until downloaded).
+        pageCount:
+          type: [integer, "null"]
+          description: Page count; null until the chapter is downloaded.
+        downloadDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the chapter was downloaded; null until downloaded.
+
+    DownloadList:
+      type: object
+      required:
+        - total
+        - items
+      properties:
+        total:
+          type: integer
+          description: Total chapters matching the state filter across the whole library (not just the page).
+        items:
+          type: array
+          description: The requested page of enriched chapters.
+          items:
+            $ref: "#/components/schemas/DownloadChapter"
+
+    RetryAllResult:
+      type: object
+      required:
+        - retried
+      properties:
+        retried:
+          type: integer
+          description: Number of chapters reset back to wanted by the bulk retry.
+
     Source:
       type: object
       required:
@@ -1483,6 +1588,167 @@ paths:
                 $ref: "#/components/schemas/LibraryHealth"
         "401":
           description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/downloads:
+    get:
+      operationId: listDownloads
+      summary: Cross-library chapter activity by state
+      description: |
+        Returns a paginated list of chapters across the whole library filtered by
+        download state, each enriched with its series display title + cover and the
+        resolved chapter name + provider. The `state` parameter is a REQUIRED
+        comma-separated list of raw chapter states (multiple values = OR); the FE
+        composes the Active / Failed / Queued views from these raw states.
+      tags:
+        - downloads
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          description: Comma-separated chapter states to include (OR-matched). Required.
+          schema:
+            type: string
+          example: failed,permanently_failed
+        - name: limit
+          in: query
+          required: false
+          description: Page size (default 50, capped at 200).
+          schema:
+            type: integer
+            minimum: 0
+        - name: offset
+          in: query
+          required: false
+          description: Number of rows to skip.
+          schema:
+            type: integer
+            minimum: 0
+        - name: q
+          in: query
+          required: false
+          description: Free-text filter on the series title (case-insensitive contains).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: A page of enriched chapters plus the total matching count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadList"
+        "400":
+          description: Missing/empty or unknown state, or an invalid pagination value.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/downloads/retry-all:
+    post:
+      operationId: retryAllDownloads
+      summary: Bulk-reset failed chapters to wanted
+      description: |
+        Resets every chapter in the given retryable states back to wanted (clearing
+        last_error, error_category, retries and next_attempt_at) so the next download
+        cycle re-attempts them. `state` defaults to failed + permanently_failed when
+        omitted; supplying a non-retryable state is rejected. Optionally scoped to one
+        series. Returns the number of chapters reset.
+      tags:
+        - downloads
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: state
+          in: query
+          required: false
+          description: Comma-separated retryable states to reset (default failed,permanently_failed). A non-retryable state is rejected.
+          schema:
+            type: string
+          example: permanently_failed
+        - name: series_id
+          in: query
+          required: false
+          description: Restrict the reset to a single series.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The number of chapters reset to wanted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetryAllResult"
+        "400":
+          description: A non-retryable or unknown state, or an invalid series_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/chapters/{id}/retry:
+    post:
+      operationId: retryChapter
+      summary: Reset one failed chapter to wanted
+      description: |
+        Resets a single failed or permanently_failed chapter back to wanted so the
+        next download cycle re-attempts it, clearing the failure bookkeeping
+        (last_error, error_category, retries, next_attempt_at). This is a state reset,
+        never a delete (the never-auto-delete invariant holds — a failed chapter has no
+        downloaded file). Returns 409 when the chapter is not in a retryable state.
+      tags:
+        - downloads
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Chapter UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Chapter reset to wanted.
+        "400":
+          description: Malformed chapter id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No chapter with that id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Chapter is not in a retryable state (only failed/permanently_failed may be retried).
           content:
             application/json:
               schema:

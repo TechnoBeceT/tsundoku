@@ -4,7 +4,9 @@ package server
 import (
 	"github.com/labstack/echo/v4"
 	"github.com/technobecet/tsundoku/internal/config"
+	"github.com/technobecet/tsundoku/internal/downloads"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
+	downloadsh "github.com/technobecet/tsundoku/internal/handler/downloads"
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
@@ -42,6 +44,9 @@ import (
 //   - /api/series/:id/metadata-source              — pin metadata source (RequireOwner).
 //   - /api/categories                              — per-category counts (RequireOwner).
 //   - /api/health                                  — library source-health scan (RequireOwner).
+//   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
+//   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
+//   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
 func registerRoutes(
@@ -86,6 +91,15 @@ func registerRoutes(
 	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)
 	authed.GET("/categories", seriesH.Categories)
 	authed.GET("/health", seriesH.LibraryHealth)
+
+	// Downloads (cross-library chapter activity) API. The service reuses the
+	// exported series resolvers for name/display/cover enrichment, so it needs
+	// only the Ent client.
+	downloadsSvc := downloads.NewService(client)
+	downloadsH := downloadsh.NewHandler(downloadsSvc)
+	authed.GET("/downloads", downloadsH.List)
+	authed.POST("/downloads/retry-all", downloadsH.RetryAll)
+	authed.POST("/chapters/:id/retry", downloadsH.RetryChapter)
 
 	// Imports (discovery + adoption) API. The ingest is built here so it shares
 	// the same Ent client as the rest of the application; a single suwayomiClient

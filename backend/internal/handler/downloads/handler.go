@@ -1,0 +1,106 @@
+package downloads
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+
+	downloadssvc "github.com/technobecet/tsundoku/internal/downloads"
+)
+
+// Handler holds the dependencies for the download-activity HTTP handlers. All
+// business logic lives in the downloads.Service; the handler is thin.
+type Handler struct {
+	svc *downloadssvc.Service
+}
+
+// NewHandler constructs a Handler bound to a downloads.Service.
+func NewHandler(svc *downloadssvc.Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// List handles GET /api/downloads.
+//
+// It parses the REQUIRED ?state CSV (each token a legal chapter state; empty or
+// unknown → 400), the optional ?limit/?offset pagination (non-negative; limit
+// defaults to 50, capped at 200), and the optional ?q series-title filter, then
+// returns a DownloadListDTO: the total matching count plus the requested page of
+// enriched chapters.
+func (h *Handler) List(c echo.Context) error {
+	states, err := parseStates(c.QueryParam("state"))
+	if err != nil {
+		return err
+	}
+	limit, offset, err := validatePagination(c.QueryParam("limit"), c.QueryParam("offset"))
+	if err != nil {
+		return err
+	}
+
+	out, err := h.svc.List(c.Request().Context(), downloadssvc.ListFilter{
+		States: states,
+		Limit:  limit,
+		Offset: offset,
+		Query:  c.QueryParam("q"),
+	})
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// RetryChapter handles POST /api/chapters/:id/retry.
+//
+// It parses the :id path param as a UUID (malformed → 400) and resets that
+// chapter back to wanted (clearing the failure bookkeeping). Returns 204 on
+// success; a missing chapter yields 404; a non-retryable state yields 409.
+func (h *Handler) RetryChapter(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "chapter id")
+	if err != nil {
+		return err
+	}
+	if err := h.svc.RetryChapter(c.Request().Context(), id); err != nil {
+		return mapServiceError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// RetryAll handles POST /api/downloads/retry-all.
+//
+// It parses the optional ?state CSV (retryable states only — a non-retryable
+// state → 400; absent defaults to failed + permanently_failed) and the optional
+// ?series_id scope (malformed → 400), bulk-resets every matching chapter to
+// wanted, and returns 200 with {"retried": N} — the number of chapters reset.
+func (h *Handler) RetryAll(c echo.Context) error {
+	states, err := parseRetryStates(c.QueryParam("state"))
+	if err != nil {
+		return err
+	}
+	seriesID, err := parseOptionalID(c.QueryParam("series_id"), "series_id")
+	if err != nil {
+		return err
+	}
+
+	n, err := h.svc.RetryAll(c.Request().Context(), downloadssvc.RetryAllFilter{
+		States:   states,
+		SeriesID: seriesID,
+	})
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, downloadssvc.RetryAllResultDTO{Retried: n})
+}
+
+// mapServiceError translates a downloads.Service sentinel error into the matching
+// HTTP status, leaving any unexpected error to fall through to the central
+// middleware as a 500. ErrChapterNotFound → 404; ErrNotRetryable → 409.
+func mapServiceError(err error) error {
+	switch {
+	case errors.Is(err, downloadssvc.ErrChapterNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, "chapter not found")
+	case errors.Is(err, downloadssvc.ErrNotRetryable):
+		return echo.NewHTTPError(http.StatusConflict, "chapter is not in a retryable state")
+	default:
+		return err
+	}
+}
