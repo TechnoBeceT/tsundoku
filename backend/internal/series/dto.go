@@ -171,14 +171,20 @@ func chapterDisplayName(name string, number *float64) string {
 // newProviderDTO maps an ent.SeriesProvider and its computed health into a
 // detail DTO. seriesID and isMetadataSource are passed in by the caller after
 // resolving the series' metadata provider once for the whole provider slice.
-// CoverURL is always the provider-level proxy path; Title is the provider's own
+// CoverURL is the provider-level proxy path when the provider has a non-empty
+// cover_url, else "" (mirroring the series-level seriesDisplay behaviour so the
+// SPA never fires a cover fetch that would 404). Title is the provider's own
 // title for the series (set at ingest, may be "").
 func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID, isMetadataSource bool) ProviderDTO {
+	var coverURL string
+	if p.CoverURL != "" {
+		coverURL = "/api/series/" + seriesID.String() + "/providers/" + p.ID.String() + "/cover"
+	}
 	return ProviderDTO{
 		ID:               p.ID.String(),
 		Provider:         p.Provider,
 		Title:            p.Title,
-		CoverURL:         "/api/series/" + seriesID.String() + "/providers/" + p.ID.String() + "/cover",
+		CoverURL:         coverURL,
 		IsMetadataSource: isMetadataSource,
 		Scanlator:        p.Scanlator,
 		Language:         p.Language,

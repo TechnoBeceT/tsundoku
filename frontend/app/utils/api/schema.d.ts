@@ -1358,6 +1358,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Suwayomi failed to fetch the cover image. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     getProviderCover: {
@@ -1401,6 +1410,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Suwayomi failed to fetch the cover image. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     setSeriesMetadataSource: {
@@ -1428,7 +1446,7 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesDetail"];
                 };
             };
-            /** @description Malformed series id or malformed providerId UUID. */
+            /** @description Malformed series id, malformed providerId UUID, or providerId does not belong to the series. */
             400: {
                 headers: {
                     [name: string]: unknown;

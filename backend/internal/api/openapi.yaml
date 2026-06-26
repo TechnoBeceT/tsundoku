@@ -1116,6 +1116,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi failed to fetch the cover image.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/series/{id}/providers/{providerId}/cover:
     get:
@@ -1165,6 +1171,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi failed to fetch the cover image.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/series/{id}/metadata-source:
     patch:
@@ -1201,7 +1213,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/SeriesDetail"
         "400":
-          description: Malformed series id or malformed providerId UUID.
+          description: Malformed series id, malformed providerId UUID, or providerId does not belong to the series.
           content:
             application/json:
               schema:

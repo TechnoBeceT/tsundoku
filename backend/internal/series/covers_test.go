@@ -241,6 +241,52 @@ func TestProviderDTO_CoverURLPath(t *testing.T) {
 	}
 }
 
+// TestProviderDTO_CoverURL_Conditional proves that newProviderDTO conditionally
+// populates CoverURL: a provider with a non-empty cover_url gets the proxy path;
+// a provider with an empty cover_url gets "" so the SPA never fires a cover fetch
+// that would 404. This is the non-vacuous RED→GREEN test for the Fix 1 behaviour
+// change (old code always emitted the proxy path regardless of cover_url).
+func TestProviderDTO_CoverURL_Conditional(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	s := db.Series.Create().SetTitle("Cover Cond Test").SetSlug("cover-cond-test").SaveX(ctx)
+	withCover := db.SeriesProvider.Create().
+		SetSeriesID(s.ID).
+		SetProvider("src-with-cover").
+		SetCoverURL("/img/has-cover.jpg").
+		SetImportance(10).
+		SaveX(ctx)
+	noCover := db.SeriesProvider.Create().
+		SetSeriesID(s.ID).
+		SetProvider("src-no-cover").
+		// Deliberately omit SetCoverURL — defaults to "".
+		SetImportance(5).
+		SaveX(ctx)
+
+	svc := series.NewService(db, t.TempDir(), 14)
+	got, err := svc.GetSeries(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+
+	byID := make(map[string]series.ProviderDTO, len(got.Providers))
+	for _, p := range got.Providers {
+		byID[p.ID] = p
+	}
+
+	// Provider WITH cover_url → CoverURL must be the proxy path.
+	wantPath := "/api/series/" + s.ID.String() + "/providers/" + withCover.ID.String() + "/cover"
+	if got := byID[withCover.ID.String()].CoverURL; got != wantPath {
+		t.Errorf("provider with cover_url: CoverURL = %q, want %q", got, wantPath)
+	}
+
+	// Provider WITHOUT cover_url → CoverURL must be "".
+	if got := byID[noCover.ID.String()].CoverURL; got != "" {
+		t.Errorf("provider with empty cover_url: CoverURL = %q, want \"\"", got)
+	}
+}
+
 // TestListSeries_DisplayName proves that ListSeries populates DisplayName from
 // the highest-importance provider's title (no-N+1 shape must be preserved).
 func TestListSeries_DisplayName(t *testing.T) {
