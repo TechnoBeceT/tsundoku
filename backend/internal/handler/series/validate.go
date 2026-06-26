@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
 )
 
@@ -25,20 +24,17 @@ const maxLimit = 200
 
 // SetCategoryRequest is the PATCH /api/series/{id}/category request body.
 type SetCategoryRequest struct {
-	// Category is the target category enum value (Manga, Manhwa, Manhua, Comic, Other).
-	Category string `json:"category"`
+	// CategoryID is the target Category UUID to file the series under.
+	CategoryID string `json:"categoryId"`
 }
 
-// validateCategoryFilter validates the optional ?category list filter. An empty
-// string means "no filter" and yields (nil, nil). A non-empty value must be a
-// legal Series.category enum value, else a 400 echo.HTTPError is returned. On
-// success it returns a pointer to the validated value for series.ListFilter.
+// validateCategoryFilter validates the optional ?category filter. An empty
+// string means "no filter" and yields (nil, nil). A non-empty value is the
+// category NAME to filter by (categories are now user-defined, so there is no
+// fixed enum to validate against — an unknown name simply matches no series).
 func validateCategoryFilter(raw string) (*string, error) {
 	if raw == "" {
 		return nil, nil
-	}
-	if err := entseries.CategoryValidator(entseries.Category(raw)); err != nil {
-		return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid category: "+raw)
 	}
 	return &raw, nil
 }
@@ -93,18 +89,19 @@ func validateID(raw, subject string) (uuid.UUID, error) {
 	return id, nil
 }
 
-// validateSetCategory validates the PATCH body: category must be present and a
-// legal enum value. A missing or illegal value yields a 400 echo.HTTPError.
-// (The service re-validates the value defensively; validating here lets the
-// handler reject obviously-bad input before touching the service.)
-func validateSetCategory(req SetCategoryRequest) error {
-	if req.Category == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "category is required")
+// validateSetCategory validates the PATCH body: categoryId must be present and a
+// valid UUID. A missing or malformed value yields a 400 echo.HTTPError. (Whether
+// the category actually exists is checked by the service, which maps an unknown
+// category to a 400 via mapServiceError.)
+func validateSetCategory(req SetCategoryRequest) (uuid.UUID, error) {
+	if req.CategoryID == "" {
+		return uuid.Nil, echo.NewHTTPError(http.StatusBadRequest, "categoryId is required")
 	}
-	if err := entseries.CategoryValidator(entseries.Category(req.Category)); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid category: "+req.Category)
+	id, err := uuid.Parse(req.CategoryID)
+	if err != nil {
+		return uuid.Nil, echo.NewHTTPError(http.StatusBadRequest, "invalid categoryId: "+req.CategoryID)
 	}
-	return nil
+	return id, nil
 }
 
 // SetMonitoredRequest is the PATCH /api/series/{id}/monitored request body.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -88,12 +89,13 @@ func (h *Handler) SetCategory(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	if err := validateSetCategory(req); err != nil {
+	categoryID, err := validateSetCategory(req)
+	if err != nil {
 		return err
 	}
 
 	ctx := c.Request().Context()
-	if err := h.svc.SetCategory(ctx, id, req.Category); err != nil {
+	if err := h.svc.SetCategory(ctx, id, categoryID); err != nil {
 		return mapServiceError(err)
 	}
 
@@ -103,18 +105,6 @@ func (h *Handler) SetCategory(c echo.Context) error {
 		return mapServiceError(err)
 	}
 	return c.JSON(http.StatusOK, detailToSummary(updated))
-}
-
-// Categories handles GET /api/categories.
-//
-// It returns one CategoryCountDTO per Series.category enum value (all five,
-// including zero-count categories).
-func (h *Handler) Categories(c echo.Context) error {
-	out, err := h.svc.Categories(c.Request().Context())
-	if err != nil {
-		return mapServiceError(err)
-	}
-	return c.JSON(http.StatusOK, out)
 }
 
 // SetMonitored handles PATCH /api/series/:id/monitored.
@@ -331,14 +321,15 @@ func (h *Handler) SetMetadataSource(c echo.Context) error {
 
 // mapServiceError translates a series.Service sentinel error into the matching
 // HTTP status, leaving any unexpected error to fall through to the central
-// middleware as a 500. ErrSeriesNotFound → 404; ErrInvalidCategory → 400;
-// ErrProviderNotInSeries → 400; ErrNoCover → 404.
+// middleware as a 500. ErrSeriesNotFound → 404; ErrProviderNotInSeries → 400;
+// ErrNoCover → 404; category.ErrCategoryNotFound → 400 (an unknown categoryId in
+// a recategorize body is a bad request, not a missing resource on this route).
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, seriessvc.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "series not found")
-	case errors.Is(err, seriessvc.ErrInvalidCategory):
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid category")
+	case errors.Is(err, category.ErrCategoryNotFound):
+		return echo.NewHTTPError(http.StatusBadRequest, "unknown category")
 	case errors.Is(err, seriessvc.ErrProviderNotInSeries):
 		return echo.NewHTTPError(http.StatusBadRequest, "provider does not belong to series")
 	case errors.Is(err, seriessvc.ErrNoCover):

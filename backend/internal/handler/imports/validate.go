@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -133,7 +133,7 @@ func validateAdoptBody(req adoptRequestBody) error {
 		seenSource[p.Source] = true
 	}
 	if req.Category != "" {
-		if err := entseries.CategoryValidator(entseries.Category(req.Category)); err != nil {
+		if _, err := category.ValidateName(req.Category); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid category: "+req.Category)
 		}
 	}

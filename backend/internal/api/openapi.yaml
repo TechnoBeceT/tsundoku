@@ -129,8 +129,7 @@ components:
           description: Deterministic URL-safe series slug.
         category:
           type: string
-          enum: [Manga, Manhwa, Manhua, Comic, Other]
-          description: Library category the series is filed under.
+          description: Name of the user-defined category the series is filed under.
         coverUrl:
           type: string
           description: Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover.
@@ -263,8 +262,7 @@ components:
           description: Deterministic URL-safe series slug.
         category:
           type: string
-          enum: [Manga, Manhwa, Manhua, Comic, Other]
-          description: Library category the series is filed under.
+          description: Name of the user-defined category the series is filed under.
         coverUrl:
           type: string
           description: Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover.
@@ -287,29 +285,64 @@ components:
           items:
             $ref: "#/components/schemas/Provider"
 
-    CategoryCount:
+    Category:
       type: object
       required:
-        - category
+        - id
+        - name
+        - sortOrder
+        - protected
         - count
       properties:
-        category:
+        id:
           type: string
-          enum: [Manga, Manhwa, Manhua, Comic, Other]
-          description: Category enum value.
+          format: uuid
+          description: Category identifier.
+        name:
+          type: string
+          description: Display label and on-disk folder name.
+        sortOrder:
+          type: integer
+          description: Owner-chosen display order (ascending; ties break by name).
+        protected:
+          type: boolean
+          description: True only for the default "Other" — it cannot be renamed or deleted.
         count:
           type: integer
           description: Number of series filed under this category.
 
+    CreateCategoryRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: New category name (unique, filesystem-safe; becomes the folder name).
+        sortOrder:
+          type: integer
+          description: Optional display order (defaults to 0).
+
+    UpdateCategoryRequest:
+      type: object
+      description: At least one of name or sortOrder must be present.
+      properties:
+        name:
+          type: string
+          description: New name (renames the category and moves its on-disk folder).
+        sortOrder:
+          type: integer
+          description: New display order (DB-only, no disk change).
+
     SetCategoryRequest:
       type: object
       required:
-        - category
+        - categoryId
       properties:
-        category:
+        categoryId:
           type: string
-          enum: [Manga, Manhwa, Manhua, Comic, Other]
-          description: Target category to file the series under.
+          format: uuid
+          description: UUID of the target Category to file the series under.
 
     SetMonitoredRequest:
       type: object
@@ -974,7 +1007,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/SeriesSummary"
         "400":
-          description: Malformed id or invalid category.
+          description: Malformed id, malformed categoryId, or unknown category.
           content:
             application/json:
               schema:
@@ -1363,23 +1396,166 @@ paths:
   /api/categories:
     get:
       operationId: listCategories
-      summary: Category counts
-      description: Returns one entry per category enum value (all five) with the number of series in each.
+      summary: List categories
+      description: Returns every user-defined category ordered by sort order then name, each with its current series count.
       tags:
-        - series
+        - categories
       security:
         - BearerAuth: []
       responses:
         "200":
-          description: All category counts.
+          description: All categories.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/CategoryCount"
+                  $ref: "#/components/schemas/Category"
         "401":
           description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createCategory
+      summary: Create a category
+      description: Creates a new, empty category. The name must be unique and filesystem-safe (it becomes the on-disk folder name).
+      tags:
+        - categories
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryRequest"
+      responses:
+        "201":
+          description: Created. Returns the new category.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "400":
+          description: Invalid category name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A category with that name already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/categories/{id}:
+    patch:
+      operationId: updateCategory
+      summary: Rename and/or reorder a category
+      description: |
+        Renames the category (moving its on-disk folder, with compensation so DB
+        and disk never drift) and/or updates its sort order. At least one of name
+        or sortOrder must be present. The protected default ("Other") cannot be
+        renamed. Returns the updated category.
+      tags:
+        - categories
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Category UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCategoryRequest"
+      responses:
+        "200":
+          description: Updated. Returns the category.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "400":
+          description: Malformed id, empty body, invalid name, or the protected default.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No category with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Another category already uses that name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteCategory
+      summary: Delete an empty category
+      description: |
+        Deletes a category only when no series is filed under it. The protected
+        default ("Other") can never be deleted. No series or CBZ is removed.
+      tags:
+        - categories
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Category UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Deleted.
+        "400":
+          description: Malformed id or the protected default.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No category with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The category still has series filed under it.
           content:
             application/json:
               schema:

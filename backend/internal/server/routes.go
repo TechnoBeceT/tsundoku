@@ -3,9 +3,11 @@ package server
 
 import (
 	"github.com/labstack/echo/v4"
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/downloads"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
+	categoryh "github.com/technobecet/tsundoku/internal/handler/category"
 	downloadsh "github.com/technobecet/tsundoku/internal/handler/downloads"
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
@@ -42,7 +44,10 @@ import (
 //   - /api/series/:id/cover                        — metadata-source cover proxy (RequireOwner).
 //   - /api/series/:id/providers/:providerId/cover  — per-provider cover proxy (RequireOwner).
 //   - /api/series/:id/metadata-source              — pin metadata source (RequireOwner).
-//   - /api/categories                              — per-category counts (RequireOwner).
+//   - /api/categories (GET)                        — list categories with counts (RequireOwner).
+//   - /api/categories (POST)                       — create a category (RequireOwner).
+//   - /api/categories/:id (PATCH)                  — rename and/or reorder a category (RequireOwner).
+//   - /api/categories/:id (DELETE)                 — delete an empty category (RequireOwner).
 //   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
@@ -89,8 +94,16 @@ func registerRoutes(
 	authed.GET("/series/:id/cover", seriesH.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", seriesH.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)
-	authed.GET("/categories", seriesH.Categories)
 	authed.GET("/health", seriesH.LibraryHealth)
+
+	// Category CRUD API. The service owns the Ent client + storage root so a
+	// rename moves the on-disk category folder in lockstep with the DB.
+	categorySvc := category.NewService(client, cfg.Storage.Folder)
+	categoryH := categoryh.NewHandler(categorySvc)
+	authed.GET("/categories", categoryH.List)
+	authed.POST("/categories", categoryH.Create)
+	authed.PATCH("/categories/:id", categoryH.Update)
+	authed.DELETE("/categories/:id", categoryH.Delete)
 
 	// Downloads (cross-library chapter activity) API. The service reuses the
 	// exported series resolvers for name/display/cover enrichment, so it needs

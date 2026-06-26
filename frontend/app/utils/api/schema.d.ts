@@ -338,16 +338,48 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Category counts
-         * @description Returns one entry per category enum value (all five) with the number of series in each.
+         * List categories
+         * @description Returns every user-defined category ordered by sort order then name, each with its current series count.
          */
         get: operations["listCategories"];
         put?: never;
-        post?: never;
+        /**
+         * Create a category
+         * @description Creates a new, empty category. The name must be unique and filesystem-safe (it becomes the on-disk folder name).
+         */
+        post: operations["createCategory"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/categories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete an empty category
+         * @description Deletes a category only when no series is filed under it. The protected
+         *     default ("Other") can never be deleted. No series or CBZ is removed.
+         */
+        delete: operations["deleteCategory"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename and/or reorder a category
+         * @description Renames the category (moving its on-disk folder, with compensation so DB
+         *     and disk never drift) and/or updates its sort order. At least one of name
+         *     or sortOrder must be present. The protected default ("Other") cannot be
+         *     renamed. Returns the updated category.
+         */
+        patch: operations["updateCategory"];
         trace?: never;
     };
     "/api/sources": {
@@ -603,11 +635,8 @@ export interface components {
             displayName: string;
             /** @description Deterministic URL-safe series slug. */
             slug: string;
-            /**
-             * @description Library category the series is filed under.
-             * @enum {string}
-             */
-            category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            /** @description Name of the user-defined category the series is filed under. */
+            category: string;
             /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
             coverUrl: string;
             /** @description Whether the series is actively tracked for new chapters. */
@@ -682,11 +711,8 @@ export interface components {
             displayName: string;
             /** @description Deterministic URL-safe series slug. */
             slug: string;
-            /**
-             * @description Library category the series is filed under.
-             * @enum {string}
-             */
-            category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            /** @description Name of the user-defined category the series is filed under. */
+            category: string;
             /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
             coverUrl: string;
             /** @description Whether the series is actively tracked for new chapters. */
@@ -699,21 +725,40 @@ export interface components {
             /** @description The series' providers. */
             providers: components["schemas"]["Provider"][];
         };
-        CategoryCount: {
+        Category: {
             /**
-             * @description Category enum value.
-             * @enum {string}
+             * Format: uuid
+             * @description Category identifier.
              */
-            category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            id: string;
+            /** @description Display label and on-disk folder name. */
+            name: string;
+            /** @description Owner-chosen display order (ascending; ties break by name). */
+            sortOrder: number;
+            /** @description True only for the default "Other" — it cannot be renamed or deleted. */
+            protected: boolean;
             /** @description Number of series filed under this category. */
             count: number;
         };
+        CreateCategoryRequest: {
+            /** @description New category name (unique, filesystem-safe; becomes the folder name). */
+            name: string;
+            /** @description Optional display order (defaults to 0). */
+            sortOrder?: number;
+        };
+        /** @description At least one of name or sortOrder must be present. */
+        UpdateCategoryRequest: {
+            /** @description New name (renames the category and moves its on-disk folder). */
+            name?: string;
+            /** @description New display order (DB-only, no disk change). */
+            sortOrder?: number;
+        };
         SetCategoryRequest: {
             /**
-             * @description Target category to file the series under.
-             * @enum {string}
+             * Format: uuid
+             * @description UUID of the target Category to file the series under.
              */
-            category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            categoryId: string;
         };
         SetMonitoredRequest: {
             /** @description Whether the series should be actively tracked for new chapters. */
@@ -1247,7 +1292,7 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesSummary"];
                 };
             };
-            /** @description Malformed id or invalid category. */
+            /** @description Malformed id, malformed categoryId, or unknown category. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1655,17 +1700,188 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description All category counts. */
+            /** @description All categories. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CategoryCount"][];
+                    "application/json": components["schemas"]["Category"][];
                 };
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCategoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Created. Returns the new category. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            /** @description Invalid category name. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A category with that name already exists. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Category UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed id or the protected default. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No category with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The category still has series filed under it. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Category UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCategoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated. Returns the category. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            /** @description Malformed id, empty body, invalid name, or the protected default. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No category with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Another category already uses that name. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

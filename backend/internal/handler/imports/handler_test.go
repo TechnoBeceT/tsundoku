@@ -685,7 +685,9 @@ func TestAdopt_DuplicateSource_400(t *testing.T) {
 
 func TestAdopt_InvalidCategory_400(t *testing.T) {
 	env := newTestEnv(t, &fakeClient{})
-	body := `{"title":"Test","category":"NotValid","providers":[{"source":"a","mangaId":1,"importance":1}]}`
+	// Categories are user-defined now; "invalid" means filesystem-UNSAFE (it
+	// becomes a folder name), not "not in a fixed enum".
+	body := `{"title":"Test","category":"bad/name","providers":[{"source":"a","mangaId":1,"importance":1}]}`
 	rec := env.do(http.MethodPost, "/api/series", body)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Adopt invalid category: want 400, got %d", rec.Code)

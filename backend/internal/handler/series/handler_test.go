@@ -18,16 +18,25 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	handler "github.com/technobecet/tsundoku/internal/handler/series"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
+
+// catID resolves a seeded default category's id by name (testdb seeds them).
+func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
+	id, err := category.IDByName(ctx, db, name)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
 
 // fakeSuwayomiClient is a minimal suwayomi.Client implementation for tests.
 // Only PageBytes is exercised by the cover handlers; all other methods return
@@ -109,7 +118,6 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.GET("/series/:id/cover", h.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", h.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", h.SetMetadataSource)
-	authed.GET("/categories", h.Categories)
 	authed.GET("/health", h.LibraryHealth)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -130,7 +138,7 @@ func (env *testEnv) seed(ctx context.Context, t *testing.T) {
 		SetTitle("Alpha Saga").
 		SetSlug("alpha-saga").
 		SetCoverURL("https://example.test/alpha.jpg").
-		SetCategory(entseries.CategoryManga).
+		SetCategoryID(catID(ctx, env.client, "Manga")).
 		SaveX(ctx)
 	env.mangaID = manga.ID
 
@@ -153,7 +161,7 @@ func (env *testEnv) seed(ctx context.Context, t *testing.T) {
 	manhwa := env.client.Series.Create().
 		SetTitle("Beta Quest").
 		SetSlug("beta-quest").
-		SetCategory(entseries.CategoryManhwa).
+		SetCategoryID(catID(ctx, env.client, "Manhwa")).
 		SaveX(ctx)
 	env.manhwaID = manhwa.ID
 	env.client.Chapter.Create().
@@ -229,11 +237,22 @@ func TestList_CategoryFilter(t *testing.T) {
 	}
 }
 
-func TestList_BadCategory(t *testing.T) {
+func TestList_UnknownCategory(t *testing.T) {
 	env := newTestEnv(t)
-	rec := env.do(http.MethodGet, "/api/series?category=Bogus", "")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("List bad category: want 400, got %d", rec.Code)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	// Categories are user-defined; filtering by a name that matches no series is
+	// not an error — it returns an empty page (200).
+	rec := env.do(http.MethodGet, "/api/series?category=No+Such+Category", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List unknown category: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got []seriessvc.SeriesSummaryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("List unknown category: want empty, got %+v", got)
 	}
 }
 
@@ -304,7 +323,8 @@ func TestSetCategory_OK(t *testing.T) {
 		t.Fatalf("write sidecar: %v", err)
 	}
 
-	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/category", `{"category":"Manhwa"}`)
+	manhwaID := catID(ctx, env.client, "Manhwa")
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/category", `{"categoryId":"`+manhwaID.String()+`"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SetCategory: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -317,9 +337,8 @@ func TestSetCategory_OK(t *testing.T) {
 	}
 
 	// DB updated.
-	reread := env.client.Series.GetX(ctx, env.mangaID)
-	if reread.Category != entseries.CategoryManhwa {
-		t.Fatalf("SetCategory: DB category want Manhwa, got %s", reread.Category)
+	if name := env.client.Series.GetX(ctx, env.mangaID).QueryCategory().OnlyX(ctx).Name; name != "Manhwa" {
+		t.Fatalf("SetCategory: DB category want Manhwa, got %s", name)
 	}
 	// Disk moved: old gone, new exists.
 	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
@@ -331,45 +350,41 @@ func TestSetCategory_OK(t *testing.T) {
 	}
 }
 
-func TestSetCategory_Invalid(t *testing.T) {
+func TestSetCategory_UnknownCategory(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 	env.seed(ctx, t)
 
-	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/category", `{"category":"Bogus"}`)
+	// A well-formed but nonexistent category id is a bad request (400).
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/category", `{"categoryId":"`+uuid.New().String()+`"}`)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("SetCategory invalid: want 400, got %d", rec.Code)
+		t.Fatalf("SetCategory unknown category: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	// Nothing changed.
-	reread := env.client.Series.GetX(ctx, env.mangaID)
-	if reread.Category != entseries.CategoryManga {
-		t.Fatalf("SetCategory invalid: category should be unchanged, got %s", reread.Category)
+	if name := env.client.Series.GetX(ctx, env.mangaID).QueryCategory().OnlyX(ctx).Name; name != "Manga" {
+		t.Fatalf("SetCategory unknown: category should be unchanged, got %s", name)
+	}
+}
+
+func TestSetCategory_BadBody(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	// A malformed (non-UUID) categoryId is rejected at validation (400).
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/category", `{"categoryId":"not-a-uuid"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("SetCategory bad body: want 400, got %d", rec.Code)
 	}
 }
 
 func TestSetCategory_NotFound(t *testing.T) {
 	env := newTestEnv(t)
-	rec := env.do(http.MethodPatch, "/api/series/"+uuid.New().String()+"/category", `{"category":"Manhwa"}`)
+	ctx := context.Background()
+	manhwaID := catID(ctx, env.client, "Manhwa")
+	rec := env.do(http.MethodPatch, "/api/series/"+uuid.New().String()+"/category", `{"categoryId":"`+manhwaID.String()+`"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("SetCategory missing: want 404, got %d", rec.Code)
-	}
-}
-
-func TestCategories_OK(t *testing.T) {
-	env := newTestEnv(t)
-	ctx := context.Background()
-	env.seed(ctx, t)
-
-	rec := env.do(http.MethodGet, "/api/categories", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Categories: want 200, got %d", rec.Code)
-	}
-	var got []seriessvc.CategoryCountDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("Categories: decode: %v", err)
-	}
-	if len(got) != 5 {
-		t.Fatalf("Categories: want 5 entries, got %d", len(got))
 	}
 }
 
@@ -392,7 +407,6 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodGet, "/api/series/" + id + "/cover"},
 		{http.MethodGet, "/api/series/" + id + "/providers/" + id + "/cover"},
 		{http.MethodPatch, "/api/series/" + id + "/metadata-source"},
-		{http.MethodGet, "/api/categories"},
 		{http.MethodGet, "/api/health"},
 	}
 	for _, tc := range cases {
@@ -682,7 +696,7 @@ func TestLibraryHealthEndpoint(t *testing.T) {
 	// Seed a 2-source series with a stale source via the ent client directly.
 	old := time.Now().UTC().AddDate(0, 0, -40)
 	recent := time.Now().UTC().AddDate(0, 0, -1)
-	s := env.client.Series.Create().SetTitle("Sick").SetSlug("sick").SetCategory(entseries.CategoryManga).SaveX(ctx)
+	s := env.client.Series.Create().SetTitle("Sick").SetSlug("sick").SetCategoryID(catID(ctx, env.client, "Manga")).SaveX(ctx)
 	a := env.client.SeriesProvider.Create().SetSeriesID(s.ID).SetProvider("a").SetImportance(20).SaveX(ctx)
 	b := env.client.SeriesProvider.Create().SetSeriesID(s.ID).SetProvider("b").SetImportance(10).SaveX(ctx)
 	for _, k := range []struct {
@@ -846,7 +860,8 @@ func TestSetCategory_CompletedPreserved(t *testing.T) {
 	}
 
 	// Now change the category — this is the call that used to drop completed.
-	rec = env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/category", `{"category":"Manhwa"}`)
+	manhwaID := catID(ctx, env.client, "Manhwa")
+	rec = env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/category", `{"categoryId":"`+manhwaID.String()+`"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SetCategory: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -980,7 +995,7 @@ func TestLibraryHealth_EmptyLibrary(t *testing.T) {
 func seedWithCover(ctx context.Context, t *testing.T, env *testEnv, coverURL string) (seriesID, providerID uuid.UUID) {
 	t.Helper()
 	s := env.client.Series.Create().
-		SetTitle("Cover Test").SetSlug("cover-test").SetCategory(entseries.CategoryManga).
+		SetTitle("Cover Test").SetSlug("cover-test").SetCategoryID(catID(ctx, env.client, "Manga")).
 		SaveX(ctx)
 	p := env.client.SeriesProvider.Create().
 		SetSeriesID(s.ID).SetProvider("testprov").SetImportance(10).SetCoverURL(coverURL).
