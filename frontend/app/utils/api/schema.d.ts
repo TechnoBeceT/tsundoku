@@ -393,6 +393,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sources/{sourceId}/browse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browse a source's Popular/Latest catalog
+         * @description Returns one page of a single source's catalog listing (Popular or Latest)
+         *     as a flat BrowseResult. Unlike search there is no cross-source fan-out or
+         *     grouping — Popular/Latest are per-source listings. The result carries
+         *     hasNextPage so the client can paginate. Some sources do not support the
+         *     Latest listing; an upstream failure surfaces as 500.
+         */
+        get: operations["browseSource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sources/{sourceId}/manga/{mangaId}/chapters": {
         parameters: {
             query?: never;
@@ -668,8 +692,19 @@ export interface components {
             mangaId: number;
             /** @description Manga display title as returned by the source. */
             title: string;
+            /** @description Provider-canonical URL for this manga (powers the "View on source" link); empty string when not provided. */
+            url: string;
             /** @description Cover image URL; empty string when not provided. */
             thumbnailUrl: string;
+        };
+        /** @description One page of a source's catalog browse (Popular/Latest) — a flat candidate list in source order plus pagination metadata. */
+        BrowseResult: {
+            /** @description Candidates on this page, in source order. */
+            manga: components["schemas"]["SearchCandidate"][];
+            /** @description Whether another page exists (drives pagination). */
+            hasNextPage: boolean;
+            /** @description The 1-based page number returned. */
+            page: number;
         };
         SearchGroup: {
             /** @description Representative display title chosen by the grouping logic. */
@@ -1570,6 +1605,61 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    browseSource: {
+        parameters: {
+            query: {
+                /** @description Which catalog listing to fetch. */
+                type: "popular" | "latest";
+                /** @description 1-based page number; defaults to 1, must be >= 1. */
+                page?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Suwayomi source ID to browse. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the source's catalog browse. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowseResult"];
+                };
+            };
+            /** @description Missing/invalid type, or a non-integer / out-of-range page. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown source ID. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
