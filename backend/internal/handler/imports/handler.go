@@ -1,6 +1,7 @@
 package imports
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -71,6 +72,33 @@ func (h *Handler) InspectChapters(c echo.Context) error {
 
 	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, mangaID)
 	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// Browse handles GET /api/sources/:sourceId/browse?type=popular|latest&page=N.
+//
+// It resolves :sourceId from the path, validates the required ?type enum and the
+// optional ?page (default 1, must be >= 1), then returns one page of the source's
+// catalog listing as a BrowseResultDTO. An unknown source maps to 404; any other
+// service/upstream error surfaces through the central error middleware (500).
+func (h *Handler) Browse(c echo.Context) error {
+	sourceID := c.Param("sourceId")
+	browseType, err := parseBrowseType(c.QueryParam("type"))
+	if err != nil {
+		return err
+	}
+	page, err := parseBrowsePage(c.QueryParam("page"))
+	if err != nil {
+		return err
+	}
+
+	out, err := h.svc.Browse(c.Request().Context(), sourceID, browseType, page)
+	if err != nil {
+		if errors.Is(err, imports.ErrSourceNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "source not found")
+		}
 		return err
 	}
 	return c.JSON(http.StatusOK, out)

@@ -26,6 +26,7 @@ import (
 //   - /api/progress                                — SSE stream (RequireOwner).
 //   - /api/sources                                 — list Suwayomi sources (RequireOwner).
 //   - /api/search                                  — multi-source manga search (RequireOwner).
+//   - /api/sources/:sourceId/browse                — per-source Popular/Latest catalog browse (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/chapters — chapter preview (RequireOwner).
 //   - /api/series (GET)                            — library list (RequireOwner).
 //   - /api/series (POST)                           — adopt / import manga (RequireOwner).
@@ -94,6 +95,7 @@ func registerRoutes(
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
+	authed.GET("/sources/:sourceId/browse", importsH.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)
 	authed.POST("/series", importsH.Adopt)
 

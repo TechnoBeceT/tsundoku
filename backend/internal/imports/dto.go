@@ -29,9 +29,24 @@ type SearchCandidateDTO struct {
 	MangaID int `json:"mangaId"`
 	// Title is the manga's display title as returned by the source.
 	Title string `json:"title"`
+	// URL is the provider-canonical URL for this manga; powers the "View on
+	// source" external link. Empty string when the source does not provide one.
+	URL string `json:"url"`
 	// ThumbnailURL is the cover image URL; empty string when the source does
 	// not provide one.
 	ThumbnailURL string `json:"thumbnailUrl"`
+}
+
+// BrowseResultDTO is one page of a source's catalog browse (Popular/Latest).
+// Unlike the grouped search response, browse is single-source and returns a flat
+// candidate list in source order plus pagination metadata.
+type BrowseResultDTO struct {
+	// Manga holds the candidates on this page, in source order.
+	Manga []SearchCandidateDTO `json:"manga"`
+	// HasNextPage reports whether another page exists (drives FE pagination).
+	HasNextPage bool `json:"hasNextPage"`
+	// Page is the 1-based page number returned.
+	Page int `json:"page"`
 }
 
 // SearchGroupDTO bundles all per-source candidates for the same logical series.

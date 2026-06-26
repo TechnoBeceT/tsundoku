@@ -37,6 +37,8 @@ type fakeClient struct {
 	searchErrs       map[string]error
 	chaptersPerManga map[int][]suwayomi.Chapter
 	chapterErrs      map[int]error
+	browseResults    map[suwayomi.BrowseType]suwayomi.BrowseResult
+	browseErr        error
 }
 
 func (f *fakeClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
@@ -67,6 +69,16 @@ func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.C
 		return f.chaptersPerManga[mangaID], nil
 	}
 	return nil, nil
+}
+
+func (f *fakeClient) Browse(_ context.Context, _ string, t suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
+	if f.browseErr != nil {
+		return suwayomi.BrowseResult{}, f.browseErr
+	}
+	if f.browseResults != nil {
+		return f.browseResults[t], nil
+	}
+	return suwayomi.BrowseResult{}, nil
 }
 
 func (f *fakeClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
@@ -133,6 +145,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authed := e.Group("/api", middleware.RequireOwner(authSvc))
 	authed.GET("/sources", h.Sources)
 	authed.GET("/search", h.Search)
+	authed.GET("/sources/:sourceId/browse", h.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", h.InspectChapters)
 	authed.POST("/series", h.Adopt)
 
@@ -183,6 +196,14 @@ func TestSearch_Unauth(t *testing.T) {
 	rec := env.doUnauth(http.MethodGet, "/api/search?q=test")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("Search unauth: want 401, got %d", rec.Code)
+	}
+}
+
+func TestBrowse_Unauth(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	rec := env.doUnauth(http.MethodGet, "/api/sources/src/browse?type=popular")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("Browse unauth: want 401, got %d", rec.Code)
 	}
 }
 
@@ -366,6 +387,124 @@ func TestSearch_JSONShape(t *testing.T) {
 		if !strings.Contains(body, key) {
 			t.Errorf("Search shape: body missing key %q: %s", key, body)
 		}
+	}
+}
+
+// --- GET /api/sources/:sourceId/browse -----------------------------------------
+
+// browseEnv builds a test env whose source "src1" returns one Popular page with
+// a single candidate carrying a url, plus hasNextPage=true.
+func browseEnv(t *testing.T) *testEnv {
+	t.Helper()
+	fc := &fakeClient{
+		sources: []suwayomi.Source{{ID: "src1", Name: "Source One", Lang: "en"}},
+		browseResults: map[suwayomi.BrowseType]suwayomi.BrowseResult{
+			suwayomi.BrowsePopular: {
+				Mangas:      []suwayomi.Manga{{ID: 10, Title: "Solo Leveling", URL: "/manga/10", ThumbnailURL: ptrStr("http://t/10")}},
+				HasNextPage: true,
+			},
+			suwayomi.BrowseLatest: {
+				Mangas:      []suwayomi.Manga{{ID: 11, Title: "Berserk", URL: "/manga/11"}},
+				HasNextPage: false,
+			},
+		},
+	}
+	return newTestEnv(t, fc)
+}
+
+// TestBrowse_OK_FullRoundTrip is the §16 proof: the response body carries every
+// field the contract promises (manga[].url, hasNextPage, page) — asserted by
+// reading the JSON back, not just the status code.
+func TestBrowse_OK_FullRoundTrip(t *testing.T) {
+	env := browseEnv(t)
+	rec := env.do(http.MethodGet, "/api/sources/src1/browse?type=popular", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Browse OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got imports.BrowseResultDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Browse decode: %v", err)
+	}
+	if got.Page != 1 {
+		t.Errorf("Browse Page: got %d, want 1 (default)", got.Page)
+	}
+	if !got.HasNextPage {
+		t.Error("Browse HasNextPage: got false, want true")
+	}
+	if len(got.Manga) != 1 {
+		t.Fatalf("Browse Manga: got %d, want 1", len(got.Manga))
+	}
+	if c := got.Manga[0]; c.URL != "/manga/10" || c.Source != "src1" {
+		t.Errorf("Browse candidate: got %+v, want url /manga/10 source src1", c)
+	}
+
+	// Verify the camelCase keys the OpenAPI schema requires are present on the wire.
+	assertBodyHasKeys(t, rec.Body.String(), `"url"`, `"hasNextPage"`, `"page"`, `"thumbnailUrl"`)
+}
+
+// assertBodyHasKeys asserts the response body contains each of the given JSON
+// keys (the camelCase contract the OpenAPI schema promises).
+func assertBodyHasKeys(t *testing.T, body string, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		if !strings.Contains(body, key) {
+			t.Errorf("body missing key %q: %s", key, body)
+		}
+	}
+}
+
+// TestBrowse_Latest_Page verifies the Latest listing with an explicit page is
+// echoed back.
+func TestBrowse_Latest_Page(t *testing.T) {
+	env := browseEnv(t)
+	rec := env.do(http.MethodGet, "/api/sources/src1/browse?type=latest&page=4", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Browse latest: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got imports.BrowseResultDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Page != 4 {
+		t.Errorf("Browse latest Page: got %d, want 4", got.Page)
+	}
+	if got.HasNextPage {
+		t.Error("Browse latest HasNextPage: got true, want false")
+	}
+}
+
+func TestBrowse_MissingType_400(t *testing.T) {
+	env := browseEnv(t)
+	rec := env.do(http.MethodGet, "/api/sources/src1/browse", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Browse missing type: want 400, got %d", rec.Code)
+	}
+}
+
+func TestBrowse_BadType_400(t *testing.T) {
+	env := browseEnv(t)
+	rec := env.do(http.MethodGet, "/api/sources/src1/browse?type=trending", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Browse bad type: want 400, got %d", rec.Code)
+	}
+}
+
+func TestBrowse_BadPage_400(t *testing.T) {
+	env := browseEnv(t)
+	for _, p := range []string{"0", "-1", "abc"} {
+		rec := env.do(http.MethodGet, "/api/sources/src1/browse?type=popular&page="+p, "")
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Browse bad page %q: want 400, got %d", p, rec.Code)
+		}
+	}
+}
+
+func TestBrowse_UnknownSource_404(t *testing.T) {
+	env := browseEnv(t)
+	rec := env.do(http.MethodGet, "/api/sources/ghost/browse?type=popular", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Browse unknown source: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 

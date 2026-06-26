@@ -12,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // adoptProviderRequest is the per-provider element within AdoptRequestBody. It
@@ -66,6 +67,34 @@ func parseSourcesFilter(raw string) []string {
 		return nil
 	}
 	return out
+}
+
+// parseBrowseType maps the ?type query parameter to a suwayomi.BrowseType.
+// "popular" → POPULAR, "latest" → LATEST; any other value (including empty)
+// yields a 400 echo.HTTPError — type is a required closed enum.
+func parseBrowseType(raw string) (suwayomi.BrowseType, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "popular":
+		return suwayomi.BrowsePopular, nil
+	case "latest":
+		return suwayomi.BrowseLatest, nil
+	default:
+		return "", echo.NewHTTPError(http.StatusBadRequest, "type is required and must be one of: popular, latest")
+	}
+}
+
+// parseBrowsePage parses the optional ?page query parameter. An empty value
+// defaults to 1; a non-integer or a value < 1 yields a 400 echo.HTTPError
+// (mirrors the pagination-default discipline used elsewhere). page is 1-based.
+func parseBrowsePage(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 1, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 1 {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "page must be an integer >= 1")
+	}
+	return v, nil
 }
 
 // parseMangaID parses the :mangaId path parameter as a positive integer. A

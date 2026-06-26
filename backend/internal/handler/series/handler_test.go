@@ -43,6 +43,9 @@ func (f *fakeSuwayomiClient) Sources(ctx context.Context) ([]suwayomi.Source, er
 func (f *fakeSuwayomiClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
 	return nil, nil
 }
+func (f *fakeSuwayomiClient) Browse(ctx context.Context, sourceID string, t suwayomi.BrowseType, page int) (suwayomi.BrowseResult, error) {
+	return suwayomi.BrowseResult{}, nil
+}
 func (f *fakeSuwayomiClient) FetchChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
 	return nil, nil
 }

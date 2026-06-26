@@ -33,6 +33,9 @@ func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) { retur
 func (f *fakeClient) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
 	return nil, nil
 }
+func (f *fakeClient) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
+	return suwayomi.BrowseResult{}, nil
+}
 func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.Chapter, error) {
 	if f.failManga[mangaID] {
 		return nil, errors.New("source offline")

@@ -24,6 +24,9 @@ type Candidate struct {
 	MangaID int
 	// Title is the raw title as returned by the source.
 	Title string
+	// URL is the provider-canonical URL for this manga (powers the
+	// "View on source" external link); empty when the source omits it.
+	URL string
 	// ThumbnailURL is the cover image URL from the source.
 	ThumbnailURL string
 }
