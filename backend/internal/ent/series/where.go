@@ -81,6 +81,11 @@ func Status(v string) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldStatus, v))
 }
 
+// CategoryID applies equality check predicate on the "category_id" field. It's identical to CategoryIDEQ.
+func CategoryID(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCategoryID, v))
+}
+
 // Monitored applies equality check predicate on the "monitored" field. It's identical to MonitoredEQ.
 func Monitored(v bool) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldMonitored, v))
@@ -431,24 +436,34 @@ func StatusContainsFold(v string) predicate.Series {
 	return predicate.Series(sql.FieldContainsFold(FieldStatus, v))
 }
 
-// CategoryEQ applies the EQ predicate on the "category" field.
-func CategoryEQ(v Category) predicate.Series {
-	return predicate.Series(sql.FieldEQ(FieldCategory, v))
+// CategoryIDEQ applies the EQ predicate on the "category_id" field.
+func CategoryIDEQ(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCategoryID, v))
 }
 
-// CategoryNEQ applies the NEQ predicate on the "category" field.
-func CategoryNEQ(v Category) predicate.Series {
-	return predicate.Series(sql.FieldNEQ(FieldCategory, v))
+// CategoryIDNEQ applies the NEQ predicate on the "category_id" field.
+func CategoryIDNEQ(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldCategoryID, v))
 }
 
-// CategoryIn applies the In predicate on the "category" field.
-func CategoryIn(vs ...Category) predicate.Series {
-	return predicate.Series(sql.FieldIn(FieldCategory, vs...))
+// CategoryIDIn applies the In predicate on the "category_id" field.
+func CategoryIDIn(vs ...uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldIn(FieldCategoryID, vs...))
 }
 
-// CategoryNotIn applies the NotIn predicate on the "category" field.
-func CategoryNotIn(vs ...Category) predicate.Series {
-	return predicate.Series(sql.FieldNotIn(FieldCategory, vs...))
+// CategoryIDNotIn applies the NotIn predicate on the "category_id" field.
+func CategoryIDNotIn(vs ...uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldNotIn(FieldCategoryID, vs...))
+}
+
+// CategoryIDIsNil applies the IsNil predicate on the "category_id" field.
+func CategoryIDIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldCategoryID))
+}
+
+// CategoryIDNotNil applies the NotNil predicate on the "category_id" field.
+func CategoryIDNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldCategoryID))
 }
 
 // MonitoredEQ applies the EQ predicate on the "monitored" field.
@@ -639,6 +654,29 @@ func HasChapters() predicate.Series {
 func HasChaptersWith(preds ...predicate.Chapter) predicate.Series {
 	return predicate.Series(func(s *sql.Selector) {
 		step := newChaptersStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasCategory applies the HasEdge predicate on the "category" edge.
+func HasCategory() predicate.Series {
+	return predicate.Series(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, CategoryTable, CategoryColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasCategoryWith applies the HasEdge predicate on the "category" edge with a given conditions (other predicates).
+func HasCategoryWith(preds ...predicate.Category) predicate.Series {
+	return predicate.Series(func(s *sql.Selector) {
+		step := newCategoryStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

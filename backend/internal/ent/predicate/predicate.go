@@ -6,6 +6,9 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
+// Category is the predicate function for category builders.
+type Category func(*sql.Selector)
+
 // Chapter is the predicate function for chapter builders.
 type Chapter func(*sql.Selector)
 

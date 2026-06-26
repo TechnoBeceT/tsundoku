@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
@@ -77,16 +78,16 @@ func (_c *SeriesCreate) SetNillableStatus(v *string) *SeriesCreate {
 	return _c
 }
 
-// SetCategory sets the "category" field.
-func (_c *SeriesCreate) SetCategory(v series.Category) *SeriesCreate {
-	_c.mutation.SetCategory(v)
+// SetCategoryID sets the "category_id" field.
+func (_c *SeriesCreate) SetCategoryID(v uuid.UUID) *SeriesCreate {
+	_c.mutation.SetCategoryID(v)
 	return _c
 }
 
-// SetNillableCategory sets the "category" field if the given value is not nil.
-func (_c *SeriesCreate) SetNillableCategory(v *series.Category) *SeriesCreate {
+// SetNillableCategoryID sets the "category_id" field if the given value is not nil.
+func (_c *SeriesCreate) SetNillableCategoryID(v *uuid.UUID) *SeriesCreate {
 	if v != nil {
-		_c.SetCategory(*v)
+		_c.SetCategoryID(*v)
 	}
 	return _c
 }
@@ -205,6 +206,11 @@ func (_c *SeriesCreate) AddChapters(v ...*Chapter) *SeriesCreate {
 	return _c.AddChapterIDs(ids...)
 }
 
+// SetCategory sets the "category" edge to the Category entity.
+func (_c *SeriesCreate) SetCategory(v *Category) *SeriesCreate {
+	return _c.SetCategoryID(v.ID)
+}
+
 // Mutation returns the SeriesMutation object of the builder.
 func (_c *SeriesCreate) Mutation() *SeriesMutation {
 	return _c.mutation
@@ -252,10 +258,6 @@ func (_c *SeriesCreate) defaults() {
 		v := series.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
-	if _, ok := _c.mutation.Category(); !ok {
-		v := series.DefaultCategory
-		_c.mutation.SetCategory(v)
-	}
 	if _, ok := _c.mutation.Monitored(); !ok {
 		v := series.DefaultMonitored
 		_c.mutation.SetMonitored(v)
@@ -294,14 +296,6 @@ func (_c *SeriesCreate) check() error {
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Series.status"`)}
-	}
-	if _, ok := _c.mutation.Category(); !ok {
-		return &ValidationError{Name: "category", err: errors.New(`ent: missing required field "Series.category"`)}
-	}
-	if v, ok := _c.mutation.Category(); ok {
-		if err := series.CategoryValidator(v); err != nil {
-			return &ValidationError{Name: "category", err: fmt.Errorf(`ent: validator failed for field "Series.category": %w`, err)}
-		}
 	}
 	if _, ok := _c.mutation.Monitored(); !ok {
 		return &ValidationError{Name: "monitored", err: errors.New(`ent: missing required field "Series.monitored"`)}
@@ -370,10 +364,6 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
 		_node.Status = value
 	}
-	if value, ok := _c.mutation.Category(); ok {
-		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
-		_node.Category = value
-	}
 	if value, ok := _c.mutation.Monitored(); ok {
 		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
 		_node.Monitored = value
@@ -424,6 +414,23 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.CategoryIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   series.CategoryTable,
+			Columns: []string{series.CategoryColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(category.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.CategoryID = nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	return _node, _spec

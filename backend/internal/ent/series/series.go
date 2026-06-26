@@ -3,7 +3,6 @@
 package series
 
 import (
-	"fmt"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
@@ -26,8 +25,8 @@ const (
 	FieldDescription = "description"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
-	// FieldCategory holds the string denoting the category field in the database.
-	FieldCategory = "category"
+	// FieldCategoryID holds the string denoting the category_id field in the database.
+	FieldCategoryID = "category_id"
 	// FieldMonitored holds the string denoting the monitored field in the database.
 	FieldMonitored = "monitored"
 	// FieldCompleted holds the string denoting the completed field in the database.
@@ -42,6 +41,8 @@ const (
 	EdgeProviders = "providers"
 	// EdgeChapters holds the string denoting the chapters edge name in mutations.
 	EdgeChapters = "chapters"
+	// EdgeCategory holds the string denoting the category edge name in mutations.
+	EdgeCategory = "category"
 	// Table holds the table name of the series in the database.
 	Table = "series"
 	// ProvidersTable is the table that holds the providers relation/edge.
@@ -58,6 +59,13 @@ const (
 	ChaptersInverseTable = "chapters"
 	// ChaptersColumn is the table column denoting the chapters relation/edge.
 	ChaptersColumn = "series_id"
+	// CategoryTable is the table that holds the category relation/edge.
+	CategoryTable = "series"
+	// CategoryInverseTable is the table name for the Category entity.
+	// It exists in this package in order to avoid circular dependency with the "category" package.
+	CategoryInverseTable = "categories"
+	// CategoryColumn is the table column denoting the category relation/edge.
+	CategoryColumn = "category_id"
 )
 
 // Columns holds all SQL columns for series fields.
@@ -68,7 +76,7 @@ var Columns = []string{
 	FieldCoverURL,
 	FieldDescription,
 	FieldStatus,
-	FieldCategory,
+	FieldCategoryID,
 	FieldMonitored,
 	FieldCompleted,
 	FieldMetadataProviderID,
@@ -107,35 +115,6 @@ var (
 	DefaultID func() uuid.UUID
 )
 
-// Category defines the type for the "category" enum field.
-type Category string
-
-// CategoryOther is the default value of the Category enum.
-const DefaultCategory = CategoryOther
-
-// Category values.
-const (
-	CategoryManga  Category = "Manga"
-	CategoryManhwa Category = "Manhwa"
-	CategoryManhua Category = "Manhua"
-	CategoryComic  Category = "Comic"
-	CategoryOther  Category = "Other"
-)
-
-func (c Category) String() string {
-	return string(c)
-}
-
-// CategoryValidator is a validator for the "category" field enum values. It is called by the builders before save.
-func CategoryValidator(c Category) error {
-	switch c {
-	case CategoryManga, CategoryManhwa, CategoryManhua, CategoryComic, CategoryOther:
-		return nil
-	default:
-		return fmt.Errorf("series: invalid enum value for category field: %q", c)
-	}
-}
-
 // OrderOption defines the ordering options for the Series queries.
 type OrderOption func(*sql.Selector)
 
@@ -169,9 +148,9 @@ func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
 }
 
-// ByCategory orders the results by the category field.
-func ByCategory(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCategory, opts...).ToFunc()
+// ByCategoryID orders the results by the category_id field.
+func ByCategoryID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCategoryID, opts...).ToFunc()
 }
 
 // ByMonitored orders the results by the monitored field.
@@ -226,6 +205,13 @@ func ByChapters(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 		sqlgraph.OrderByNeighborTerms(s, newChaptersStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
 }
+
+// ByCategoryField orders the results by category field.
+func ByCategoryField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newCategoryStep(), sql.OrderByField(field, opts...))
+	}
+}
 func newProvidersStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -238,5 +224,12 @@ func newChaptersStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(ChaptersInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, ChaptersTable, ChaptersColumn),
+	)
+}
+func newCategoryStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(CategoryInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, true, CategoryTable, CategoryColumn),
 	)
 }

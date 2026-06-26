@@ -8,6 +8,21 @@ import (
 )
 
 var (
+	// CategoriesColumns holds the columns for the "categories" table.
+	CategoriesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "name", Type: field.TypeString, Unique: true},
+		{Name: "sort_order", Type: field.TypeInt, Default: 0},
+		{Name: "protected", Type: field.TypeBool, Default: false},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// CategoriesTable holds the schema information for the "categories" table.
+	CategoriesTable = &schema.Table{
+		Name:       "categories",
+		Columns:    CategoriesColumns,
+		PrimaryKey: []*schema.Column{CategoriesColumns[0]},
+	}
 	// ChaptersColumns holds the columns for the "chapters" table.
 	ChaptersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -150,18 +165,26 @@ var (
 		{Name: "cover_url", Type: field.TypeString, Default: ""},
 		{Name: "description", Type: field.TypeString, Default: ""},
 		{Name: "status", Type: field.TypeString, Default: ""},
-		{Name: "category", Type: field.TypeEnum, Enums: []string{"Manga", "Manhwa", "Manhua", "Comic", "Other"}, Default: "Other"},
 		{Name: "monitored", Type: field.TypeBool, Default: true},
 		{Name: "completed", Type: field.TypeBool, Default: false},
 		{Name: "metadata_provider_id", Type: field.TypeUUID, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "category_id", Type: field.TypeUUID, Nullable: true},
 	}
 	// SeriesTable holds the schema information for the "series" table.
 	SeriesTable = &schema.Table{
 		Name:       "series",
 		Columns:    SeriesColumns,
 		PrimaryKey: []*schema.Column{SeriesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "series_categories_series",
+				Columns:    []*schema.Column{SeriesColumns[11]},
+				RefColumns: []*schema.Column{CategoriesColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
+		},
 	}
 	// SeriesProvidersColumns holds the columns for the "series_providers" table.
 	SeriesProvidersColumns = []*schema.Column{
@@ -253,6 +276,7 @@ var (
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
+		CategoriesTable,
 		ChaptersTable,
 		EtagCachesTable,
 		ImportEntriesTable,
@@ -271,6 +295,7 @@ func init() {
 	ChaptersTable.ForeignKeys[0].RefTable = SeriesProvidersTable
 	ChaptersTable.ForeignKeys[1].RefTable = SeriesTable
 	ProviderChaptersTable.ForeignKeys[0].RefTable = SeriesProvidersTable
+	SeriesTable.ForeignKeys[0].RefTable = CategoriesTable
 	SeriesProvidersTable.ForeignKeys[0].RefTable = SeriesTable
 	SuwayomiSyncStatesTable.ForeignKeys[0].RefTable = SeriesProvidersTable
 }

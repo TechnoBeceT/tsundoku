@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/ent/series"
@@ -101,17 +102,23 @@ func (_u *SeriesUpdate) SetNillableStatus(v *string) *SeriesUpdate {
 	return _u
 }
 
-// SetCategory sets the "category" field.
-func (_u *SeriesUpdate) SetCategory(v series.Category) *SeriesUpdate {
-	_u.mutation.SetCategory(v)
+// SetCategoryID sets the "category_id" field.
+func (_u *SeriesUpdate) SetCategoryID(v uuid.UUID) *SeriesUpdate {
+	_u.mutation.SetCategoryID(v)
 	return _u
 }
 
-// SetNillableCategory sets the "category" field if the given value is not nil.
-func (_u *SeriesUpdate) SetNillableCategory(v *series.Category) *SeriesUpdate {
+// SetNillableCategoryID sets the "category_id" field if the given value is not nil.
+func (_u *SeriesUpdate) SetNillableCategoryID(v *uuid.UUID) *SeriesUpdate {
 	if v != nil {
-		_u.SetCategory(*v)
+		_u.SetCategoryID(*v)
 	}
+	return _u
+}
+
+// ClearCategoryID clears the value of the "category_id" field.
+func (_u *SeriesUpdate) ClearCategoryID() *SeriesUpdate {
+	_u.mutation.ClearCategoryID()
 	return _u
 }
 
@@ -199,6 +206,11 @@ func (_u *SeriesUpdate) AddChapters(v ...*Chapter) *SeriesUpdate {
 	return _u.AddChapterIDs(ids...)
 }
 
+// SetCategory sets the "category" edge to the Category entity.
+func (_u *SeriesUpdate) SetCategory(v *Category) *SeriesUpdate {
+	return _u.SetCategoryID(v.ID)
+}
+
 // Mutation returns the SeriesMutation object of the builder.
 func (_u *SeriesUpdate) Mutation() *SeriesMutation {
 	return _u.mutation
@@ -246,6 +258,12 @@ func (_u *SeriesUpdate) RemoveChapters(v ...*Chapter) *SeriesUpdate {
 	return _u.RemoveChapterIDs(ids...)
 }
 
+// ClearCategory clears the "category" edge to the Category entity.
+func (_u *SeriesUpdate) ClearCategory() *SeriesUpdate {
+	_u.mutation.ClearCategory()
+	return _u
+}
+
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (_u *SeriesUpdate) Save(ctx context.Context) (int, error) {
 	_u.defaults()
@@ -282,20 +300,7 @@ func (_u *SeriesUpdate) defaults() {
 	}
 }
 
-// check runs all checks and user-defined validators on the builder.
-func (_u *SeriesUpdate) check() error {
-	if v, ok := _u.mutation.Category(); ok {
-		if err := series.CategoryValidator(v); err != nil {
-			return &ValidationError{Name: "category", err: fmt.Errorf(`ent: validator failed for field "Series.category": %w`, err)}
-		}
-	}
-	return nil
-}
-
 func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
-	if err := _u.check(); err != nil {
-		return _node, err
-	}
 	_spec := sqlgraph.NewUpdateSpec(series.Table, series.Columns, sqlgraph.NewFieldSpec(series.FieldID, field.TypeUUID))
 	if ps := _u.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -318,9 +323,6 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := _u.mutation.Category(); ok {
-		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
 	}
 	if value, ok := _u.mutation.Monitored(); ok {
 		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
@@ -420,6 +422,35 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.CategoryCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   series.CategoryTable,
+			Columns: []string{series.CategoryColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(category.FieldID, field.TypeUUID),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.CategoryIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   series.CategoryTable,
+			Columns: []string{series.CategoryColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(category.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {
@@ -517,17 +548,23 @@ func (_u *SeriesUpdateOne) SetNillableStatus(v *string) *SeriesUpdateOne {
 	return _u
 }
 
-// SetCategory sets the "category" field.
-func (_u *SeriesUpdateOne) SetCategory(v series.Category) *SeriesUpdateOne {
-	_u.mutation.SetCategory(v)
+// SetCategoryID sets the "category_id" field.
+func (_u *SeriesUpdateOne) SetCategoryID(v uuid.UUID) *SeriesUpdateOne {
+	_u.mutation.SetCategoryID(v)
 	return _u
 }
 
-// SetNillableCategory sets the "category" field if the given value is not nil.
-func (_u *SeriesUpdateOne) SetNillableCategory(v *series.Category) *SeriesUpdateOne {
+// SetNillableCategoryID sets the "category_id" field if the given value is not nil.
+func (_u *SeriesUpdateOne) SetNillableCategoryID(v *uuid.UUID) *SeriesUpdateOne {
 	if v != nil {
-		_u.SetCategory(*v)
+		_u.SetCategoryID(*v)
 	}
+	return _u
+}
+
+// ClearCategoryID clears the value of the "category_id" field.
+func (_u *SeriesUpdateOne) ClearCategoryID() *SeriesUpdateOne {
+	_u.mutation.ClearCategoryID()
 	return _u
 }
 
@@ -615,6 +652,11 @@ func (_u *SeriesUpdateOne) AddChapters(v ...*Chapter) *SeriesUpdateOne {
 	return _u.AddChapterIDs(ids...)
 }
 
+// SetCategory sets the "category" edge to the Category entity.
+func (_u *SeriesUpdateOne) SetCategory(v *Category) *SeriesUpdateOne {
+	return _u.SetCategoryID(v.ID)
+}
+
 // Mutation returns the SeriesMutation object of the builder.
 func (_u *SeriesUpdateOne) Mutation() *SeriesMutation {
 	return _u.mutation
@@ -660,6 +702,12 @@ func (_u *SeriesUpdateOne) RemoveChapters(v ...*Chapter) *SeriesUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveChapterIDs(ids...)
+}
+
+// ClearCategory clears the "category" edge to the Category entity.
+func (_u *SeriesUpdateOne) ClearCategory() *SeriesUpdateOne {
+	_u.mutation.ClearCategory()
+	return _u
 }
 
 // Where appends a list predicates to the SeriesUpdate builder.
@@ -711,20 +759,7 @@ func (_u *SeriesUpdateOne) defaults() {
 	}
 }
 
-// check runs all checks and user-defined validators on the builder.
-func (_u *SeriesUpdateOne) check() error {
-	if v, ok := _u.mutation.Category(); ok {
-		if err := series.CategoryValidator(v); err != nil {
-			return &ValidationError{Name: "category", err: fmt.Errorf(`ent: validator failed for field "Series.category": %w`, err)}
-		}
-	}
-	return nil
-}
-
 func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err error) {
-	if err := _u.check(); err != nil {
-		return _node, err
-	}
 	_spec := sqlgraph.NewUpdateSpec(series.Table, series.Columns, sqlgraph.NewFieldSpec(series.FieldID, field.TypeUUID))
 	id, ok := _u.mutation.ID()
 	if !ok {
@@ -764,9 +799,6 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := _u.mutation.Category(); ok {
-		_spec.SetField(series.FieldCategory, field.TypeEnum, value)
 	}
 	if value, ok := _u.mutation.Monitored(); ok {
 		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
@@ -866,6 +898,35 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.CategoryCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   series.CategoryTable,
+			Columns: []string{series.CategoryColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(category.FieldID, field.TypeUUID),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.CategoryIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   series.CategoryTable,
+			Columns: []string{series.CategoryColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(category.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {

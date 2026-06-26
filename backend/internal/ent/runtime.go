@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
@@ -24,6 +25,30 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	categoryFields := schema.Category{}.Fields()
+	_ = categoryFields
+	// categoryDescSortOrder is the schema descriptor for sort_order field.
+	categoryDescSortOrder := categoryFields[2].Descriptor()
+	// category.DefaultSortOrder holds the default value on creation for the sort_order field.
+	category.DefaultSortOrder = categoryDescSortOrder.Default.(int)
+	// categoryDescProtected is the schema descriptor for protected field.
+	categoryDescProtected := categoryFields[3].Descriptor()
+	// category.DefaultProtected holds the default value on creation for the protected field.
+	category.DefaultProtected = categoryDescProtected.Default.(bool)
+	// categoryDescCreatedAt is the schema descriptor for created_at field.
+	categoryDescCreatedAt := categoryFields[4].Descriptor()
+	// category.DefaultCreatedAt holds the default value on creation for the created_at field.
+	category.DefaultCreatedAt = categoryDescCreatedAt.Default.(func() time.Time)
+	// categoryDescUpdatedAt is the schema descriptor for updated_at field.
+	categoryDescUpdatedAt := categoryFields[5].Descriptor()
+	// category.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	category.DefaultUpdatedAt = categoryDescUpdatedAt.Default.(func() time.Time)
+	// category.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	category.UpdateDefaultUpdatedAt = categoryDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// categoryDescID is the schema descriptor for id field.
+	categoryDescID := categoryFields[0].Descriptor()
+	// category.DefaultID holds the default value on creation for the id field.
+	category.DefaultID = categoryDescID.Default.(func() uuid.UUID)
 	chapterFields := schema.Chapter{}.Fields()
 	_ = chapterFields
 	// chapterDescFilename is the schema descriptor for filename field.
