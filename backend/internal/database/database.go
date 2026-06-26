@@ -17,6 +17,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/ent"
 )
@@ -94,5 +95,25 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*ent.Client, error) {
 		return nil, fmt.Errorf("database: run migration: %w", err)
 	}
 
+	if err := seedCategories(ctx, client, db); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+
 	return client, nil
+}
+
+// seedCategories seeds the five default categories then backfills any legacy
+// (enum-era) series onto the matching Category. It runs after migrate so a fresh
+// DB and an upgraded DB both end with the defaults present and every series
+// linked. No disk I/O happens here — the migration only changes the DB
+// representation, never moves a folder.
+func seedCategories(ctx context.Context, client *ent.Client, db *sql.DB) error {
+	if err := category.EnsureDefaults(ctx, client); err != nil {
+		return fmt.Errorf("database: seed default categories: %w", err)
+	}
+	if err := category.BackfillSeries(ctx, db); err != nil {
+		return fmt.Errorf("database: backfill series categories: %w", err)
+	}
+	return nil
 }
