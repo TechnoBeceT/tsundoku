@@ -460,6 +460,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cross-library chapter activity by state
+         * @description Returns a paginated list of chapters across the whole library filtered by
+         *     download state, each enriched with its series display title + cover and the
+         *     resolved chapter name + provider. The `state` parameter is a REQUIRED
+         *     comma-separated list of raw chapter states (multiple values = OR); the FE
+         *     composes the Active / Failed / Queued views from these raw states.
+         */
+        get: operations["listDownloads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/retry-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk-reset failed chapters to wanted
+         * @description Resets every chapter in the given retryable states back to wanted (clearing
+         *     last_error, error_category, retries and next_attempt_at) so the next download
+         *     cycle re-attempts them. `state` defaults to failed + permanently_failed when
+         *     omitted; supplying a non-retryable state is rejected. Optionally scoped to one
+         *     series. Returns the number of chapters reset.
+         */
+        post: operations["retryAllDownloads"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chapters/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset one failed chapter to wanted
+         * @description Resets a single failed or permanently_failed chapter back to wanted so the
+         *     next download cycle re-attempts it, clearing the failure bookkeeping
+         *     (last_error, error_category, retries, next_attempt_at). This is a state reset,
+         *     never a delete (the never-auto-delete invariant holds — a failed chapter has no
+         *     downloaded file). Returns 409 when the chapter is not in a retryable state.
+         */
+        post: operations["retryChapter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -663,6 +735,70 @@ export interface components {
         ReorderProvidersRequest: {
             /** @description Ordered list of (provider id, importance) pairs to apply all-or-nothing. */
             providers: components["schemas"]["ProviderRank"][];
+        };
+        DownloadChapter: {
+            /**
+             * Format: uuid
+             * @description Chapter identifier.
+             */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Identifier of the series this chapter belongs to.
+             */
+            seriesId: string;
+            /** @description Resolved series display title (metadata-source title, falls back to canonical title). */
+            seriesTitle: string;
+            /**
+             * @description Library category of the series.
+             * @enum {string}
+             */
+            seriesCategory: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
+            seriesCoverUrl: string;
+            /** @description Stable per-series chapter identity (never the number). */
+            chapterKey: string;
+            /** @description Display/sort number; null when unknown. Never identity. */
+            number: number | null;
+            /** @description Chapter display title from the best provider's feed (empty when no provider titles it). */
+            name: string;
+            /**
+             * @description Chapter download state.
+             * @enum {string}
+             */
+            state: "wanted" | "downloading" | "downloaded" | "upgrade_available" | "upgrading" | "failed" | "permanently_failed";
+            /** @description Source key (SeriesProvider.provider) of the satisfying source, else the series' top source. */
+            provider: string;
+            /** @description Number of download attempts so far (0 when never attempted or after a retry reset). */
+            retries: number;
+            /**
+             * Format: date-time
+             * @description Scheduled next retry time; only set on failed chapters under backoff, else null.
+             */
+            nextAttemptAt: string | null;
+            /** @description Last download error for this chapter (empty if none). */
+            lastError: string;
+            /** @description Coarse error classification (e.g. "network"); empty if none. */
+            errorCategory: string;
+            /** @description Rendered CBZ filename (empty until downloaded). */
+            filename: string;
+            /** @description Page count; null until the chapter is downloaded. */
+            pageCount: number | null;
+            /**
+             * Format: date-time
+             * @description When the chapter was downloaded; null until downloaded.
+             */
+            downloadDate: string | null;
+        };
+        DownloadList: {
+            /** @description Total chapters matching the state filter across the whole library (not just the page). */
+            total: number;
+            /** @description The requested page of enriched chapters. */
+            items: components["schemas"]["DownloadChapter"][];
+        };
+        RetryAllResult: {
+            /** @description Number of chapters reset back to wanted by the bulk retry. */
+            retried: number;
         };
         Source: {
             /**
@@ -1732,6 +1868,159 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listDownloads: {
+        parameters: {
+            query: {
+                /**
+                 * @description Comma-separated chapter states to include (OR-matched). Required.
+                 * @example failed,permanently_failed
+                 */
+                state: string;
+                /** @description Page size (default 50, capped at 200). */
+                limit?: number;
+                /** @description Number of rows to skip. */
+                offset?: number;
+                /** @description Free-text filter on the series title (case-insensitive contains). */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of enriched chapters plus the total matching count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadList"];
+                };
+            };
+            /** @description Missing/empty or unknown state, or an invalid pagination value. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    retryAllDownloads: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Comma-separated retryable states to reset (default failed,permanently_failed). A non-retryable state is rejected.
+                 * @example permanently_failed
+                 */
+                state?: string;
+                /** @description Restrict the reset to a single series. */
+                series_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The number of chapters reset to wanted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryAllResult"];
+                };
+            };
+            /** @description A non-retryable or unknown state, or an invalid series_id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    retryChapter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chapter UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chapter reset to wanted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed chapter id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No chapter with that id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Chapter is not in a retryable state (only failed/permanently_failed may be retried). */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
