@@ -283,6 +283,7 @@ func detailToSummary(d seriessvc.SeriesDetailDTO) seriessvc.SeriesSummaryDTO {
 	return seriessvc.SeriesSummaryDTO{
 		ID:            d.ID,
 		Title:         d.Title,
+		DisplayName:   d.DisplayName,
 		Slug:          d.Slug,
 		Category:      d.Category,
 		CoverURL:      d.CoverURL,

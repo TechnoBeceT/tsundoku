@@ -130,7 +130,10 @@ func TestListSeriesReturnsAllWithRollup(t *testing.T) {
 	}
 
 	alpha := got[0]
-	if alpha.Slug != "alpha-saga" || alpha.Category != "Manga" || alpha.CoverURL != "https://example.test/alpha.jpg" {
+	// CoverURL is the proxy path (empty: the mangadex provider has no cover_url).
+	// DisplayName falls back to the canonical Series.title (mangadex has no title).
+	// Category is separately exercised by TestListSeriesFiltersByCategory.
+	if alpha.Slug != "alpha-saga" || alpha.CoverURL != "" || alpha.DisplayName != "Alpha Saga" {
 		t.Fatalf("ListSeries: alpha summary mismatch: %+v", alpha)
 	}
 	// Non-vacuous rollup: 1 downloaded + 1 wanted = total 2.
