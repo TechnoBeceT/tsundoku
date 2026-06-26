@@ -13,7 +13,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
@@ -256,48 +255,55 @@ func TestReconcile_restores_category(t *testing.T) {
 		t.Fatal("SeriesUpserted = 0, want > 0")
 	}
 
-	got := client.Series.Query().OnlyX(ctx)
-	if got.Category != entseries.CategoryManhwa {
-		t.Errorf("restored Series.Category = %q, want %q (round-trip must preserve the recategorize)",
-			got.Category, entseries.CategoryManhwa)
+	got := client.Series.Query().WithCategory().OnlyX(ctx)
+	if name := got.QueryCategory().OnlyX(ctx).Name; name != disk.CategoryManhwa {
+		t.Errorf("restored Series category = %q, want %q (round-trip must preserve the recategorize)",
+			name, disk.CategoryManhwa)
 	}
 }
 
-// TestReconcile_orphan_no_category_defaults_other verifies that a series with no
-// sidecar category and no category folder (directly under the storage root)
-// reconciles without error and lands on the column default Other — the empty
-// SeriesFacts.Category case must never write an illegal empty enum value.
-func TestReconcile_orphan_no_category_defaults_other(t *testing.T) {
+// TestReconcile_user_named_category_round_trips is the dynamic-scanner safety
+// proof: a series rendered under a NON-default, user-named category folder
+// survives a total DB loss. After wiping the DB, Reconcile treats the folder as a
+// category, find-or-creates a Category row by that name, and links the rebuilt
+// series to it — so a user-defined category is never lost on a reconcile.
+func TestReconcile_user_named_category_round_trips(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	storage := t.TempDir()
 
-	// Orphan CBZ directly under storage root → SeriesFacts.Category == "".
-	seriesDir := filepath.Join(storage, "Rootless Series")
-	if err := os.MkdirAll(seriesDir, 0o750); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	const userCategory = "Webtoons I Love"
+	num := 1.0
+	max := 1.0
+	const title = "Custom Category Series"
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: title,
+			Category:    userCategory,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "1",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
 	}
-	ci := disk.ComicInfo{
-		Series:     "Rootless Series",
-		Number:     "1",
-		Provider:   "comick",
-		Importance: 1,
-		ChapterKey: "1",
-		PageCount:  1,
-	}
-	cbzPath := filepath.Join(seriesDir, "[comick][en] Rootless Series 1.cbz")
-	if err := disk.CreateCBZ(cbzPath, []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}}, ci); err != nil {
-		t.Fatalf("CreateCBZ: %v", err)
+	if _, err := disk.RenderChapter(req); err != nil {
+		t.Fatalf("RenderChapter: %v", err)
 	}
 
+	// No Category row exists for this user-named folder yet beyond the five
+	// seeded defaults — Reconcile must create it.
 	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	got := client.Series.Query().OnlyX(ctx)
-	if got.Category != entseries.CategoryOther {
-		t.Errorf("category = %q, want %q (empty disk category must default to Other)",
-			got.Category, entseries.CategoryOther)
+	got := client.Series.Query().WithCategory().OnlyX(ctx)
+	gotCat := got.QueryCategory().OnlyX(ctx)
+	if gotCat.Name != userCategory {
+		t.Errorf("restored category = %q, want %q (user-named category must round-trip)", gotCat.Name, userCategory)
 	}
 }
 

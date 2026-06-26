@@ -3,13 +3,13 @@ package disk
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/ent"
+	entcategory "github.com/technobecet/tsundoku/internal/ent/category"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
@@ -113,23 +113,22 @@ func reconcileSeries(ctx context.Context, client *ent.Client, sf SeriesFacts, re
 	return reconcileChapters(ctx, client, series.ID, providerIDs, sf.Chapters, result)
 }
 
-// upsertSeries finds the Series row by slug or creates it, restoring the
-// library category from disk so a reconcile after a recategorize is a no-op
-// (the M3 lossless-round-trip guarantee).
+// upsertSeries finds the Series row by slug or creates it, restoring the library
+// category from disk so a reconcile after a recategorize (or after a DB loss) is
+// a no-op (the M3 lossless-round-trip guarantee, now over the Category table).
 //
-// category is the on-disk category (folder name / sidecar), e.g. "Manhwa". It
-// is "" for an orphan series with no category folder and no sidecar category:
-// in that case the category is left untouched — on create the column default
-// (Other) applies; on update the existing value is preserved — so an unknown
-// disk category never clobbers a real one with an illegal empty enum. A
-// non-empty but invalid category (an unrecognised folder name) is treated the
-// same as empty: skipped with a logged warning, never failing the whole
-// reconcile over one bad folder.
+// category is the on-disk category (folder name / sidecar), e.g. "Manhwa". The
+// dynamic scanner reports EVERY top-level storage subdir as a category, so any
+// user-named folder round-trips: the category is find-or-created by name
+// (mirroring findOrCreateSeriesProvider) and linked via category_id. category is
+// "" only for an orphan series directly under the storage root (no category dir,
+// no sidecar category): on CREATE it defaults to "Other" (the protected
+// fallback) so a series is never left category-less; on UPDATE an empty disk
+// category is ignored so it never clobbers a real category with Other.
 //
 // Returns the existing or newly created row.
-func upsertSeries(ctx context.Context, client *ent.Client, title, category string) (*ent.Series, error) {
+func upsertSeries(ctx context.Context, client *ent.Client, title, diskCategory string) (*ent.Series, error) {
 	slug := Slugify(title)
-	cat, hasCat := validCategory(ctx, category)
 
 	series, err := client.Series.Query().
 		Where(entseries.Slug(slug)).
@@ -140,25 +139,18 @@ func upsertSeries(ctx context.Context, client *ent.Client, title, category strin
 		return nil, fmt.Errorf("disk.Reconcile: query series %q: %w", slug, err)
 	}
 	if ent.IsNotFound(err) {
-		create := client.Series.Create().
-			SetTitle(title).
-			SetSlug(slug)
-		if hasCat {
-			create = create.SetCategory(cat)
-		}
-		series, err = create.Save(ctx)
-		if err != nil {
-			// Defensive path: reachable only on DB connection loss or a concurrent
-			// INSERT that wins the slug unique constraint race.
-			return nil, fmt.Errorf("disk.Reconcile: create series %q: %w", slug, err)
-		}
-		return series, nil
+		return createSeriesFromDisk(ctx, client, title, slug, diskCategory)
 	}
 
-	// Update title (and category) in case they changed; slug stays fixed.
+	// Update title (and category, when the disk reports one) in case they
+	// changed; slug stays fixed.
 	update := client.Series.UpdateOne(series).SetTitle(title)
-	if hasCat {
-		update = update.SetCategory(cat)
+	if diskCategory != "" {
+		catID, cErr := resolveCategoryID(ctx, client, diskCategory)
+		if cErr != nil {
+			return nil, cErr
+		}
+		update = update.SetCategoryID(catID)
 	}
 	series, err = update.Save(ctx)
 	if err != nil {
@@ -168,25 +160,64 @@ func upsertSeries(ctx context.Context, client *ent.Client, title, category strin
 	return series, nil
 }
 
-// validCategory converts an on-disk category string into a typed enum value.
-// It returns (cat, true) only for a legal Series category; for an empty or
-// unrecognised string it returns (_, false) so the caller skips setting the
-// field. An invalid (non-empty, unrecognised) value is logged — not silently
-// swallowed (§16) and not fatal: one bad library folder must not abort the
-// whole reconcile.
-func validCategory(ctx context.Context, category string) (entseries.Category, bool) {
-	if category == "" {
-		return "", false
+// createSeriesFromDisk creates a new Series row, linking it to the disk category
+// (or the "Other" fallback when the series sits uncategorized directly under the
+// storage root) so every series always has a category.
+func createSeriesFromDisk(ctx context.Context, client *ent.Client, title, slug, diskCategory string) (*ent.Series, error) {
+	name := diskCategory
+	if name == "" {
+		name = CategoryOther
 	}
-	cat := entseries.Category(category)
-	if err := entseries.CategoryValidator(cat); err != nil {
-		slog.WarnContext(ctx, "disk.Reconcile: ignoring unrecognised series category on disk; leaving category at its default/current value",
-			"category", category,
-			"err", err,
-		)
-		return "", false
+	catID, err := resolveCategoryID(ctx, client, name)
+	if err != nil {
+		return nil, err
 	}
-	return cat, true
+	series, err := client.Series.Create().
+		SetTitle(title).
+		SetSlug(slug).
+		SetCategoryID(catID).
+		Save(ctx)
+	if err != nil {
+		// Defensive path: reachable only on DB connection loss or a concurrent
+		// INSERT that wins the slug unique constraint race.
+		return nil, fmt.Errorf("disk.Reconcile: create series %q: %w", slug, err)
+	}
+	return series, nil
+}
+
+// resolveCategoryID find-or-creates the Category for a disk folder name and
+// returns its id. This is the dynamic-scanner seam: any category folder present
+// on disk is materialised as a Category row so it survives a DB-loss reconcile.
+//
+// It find-or-creates the Category row directly via Ent (not through the category
+// domain service) so the disk package does NOT import internal/category — that
+// package imports disk for RenameCategory, and the dependency must stay
+// one-directional (category → disk). It mirrors findOrCreateSeriesProvider:
+// query-then-create, absorbing the unique-name race by re-querying.
+func resolveCategoryID(ctx context.Context, client *ent.Client, name string) (uuid.UUID, error) {
+	existing, err := client.Category.Query().Where(entcategory.Name(name)).First(ctx)
+	if err != nil && !ent.IsNotFound(err) {
+		// Defensive path: reachable only on DB connection loss or cancelled context.
+		return uuid.Nil, fmt.Errorf("disk.Reconcile: query category %q: %w", name, err)
+	}
+	if existing != nil {
+		return existing.ID, nil
+	}
+	created, err := client.Category.Create().SetName(name).Save(ctx)
+	if err == nil {
+		return created.ID, nil
+	}
+	if !ent.IsConstraintError(err) {
+		// Defensive path: reachable only on DB connection loss.
+		return uuid.Nil, fmt.Errorf("disk.Reconcile: create category %q: %w", name, err)
+	}
+	// Lost the unique-name race with a concurrent create — re-query.
+	row, qErr := client.Category.Query().Where(entcategory.Name(name)).Only(ctx)
+	if qErr != nil {
+		// Defensive path: reachable only on DB connection loss after the race.
+		return uuid.Nil, fmt.Errorf("disk.Reconcile: re-query category %q: %w", name, qErr)
+	}
+	return row.ID, nil
 }
 
 // upsertProviders builds a provider→SeriesProvider.ID map for all distinct

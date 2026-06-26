@@ -97,7 +97,7 @@ func rollbackRename(dst, src string, cause error) error {
 	if rbErr := os.Rename(dst, src); rbErr != nil {
 		return errors.Join(
 			cause,
-			fmt.Errorf("disk.MoveSeriesCategory: rollback rename %q -> %q failed (folder left at %q): %w", dst, src, dst, rbErr),
+			fmt.Errorf("disk: rollback rename %q -> %q failed (folder left at %q): %w", dst, src, dst, rbErr),
 		)
 	}
 	return cause
@@ -117,16 +117,17 @@ func requireSourceExists(src string) error {
 	return nil
 }
 
-// requireTargetAbsent confirms the target series dir does NOT already exist, so a
-// recategorize never overwrites another series. A genuine not-exist is the allowed
-// case; an existing dir is a collision error.
+// requireTargetAbsent confirms the target dir does NOT already exist, so a move
+// or rename never overwrites another series/category folder. A genuine not-exist
+// is the allowed case; an existing dir is a collision error. Shared by
+// MoveSeriesCategory and RenameCategory.
 func requireTargetAbsent(dst string) error {
 	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("disk.MoveSeriesCategory: target dir %q already exists", dst)
+		return fmt.Errorf("disk: target dir %q already exists", dst)
 	} else if !os.IsNotExist(err) {
 		// Defensive path: reachable only on OS-level stat failure (permission denied /
 		// fd exhausted) — a genuine not-exist is the expected, allowed case.
-		return fmt.Errorf("disk.MoveSeriesCategory: stat target: %w", err)
+		return fmt.Errorf("disk: stat target: %w", err)
 	}
 	return nil
 }
