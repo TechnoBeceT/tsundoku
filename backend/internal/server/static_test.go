@@ -53,6 +53,21 @@ func (nullSuwayomiClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSe
 func (nullSuwayomiClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
 	panic("nullSuwayomiClient.SetServerSettings called in test")
 }
+func (nullSuwayomiClient) Extensions(_ context.Context) ([]suwayomi.Extension, error) {
+	panic("nullSuwayomiClient.Extensions called in test")
+}
+func (nullSuwayomiClient) SetExtensionState(_ context.Context, _ string, _ suwayomi.ExtensionAction) error {
+	panic("nullSuwayomiClient.SetExtensionState called in test")
+}
+func (nullSuwayomiClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
+	panic("nullSuwayomiClient.FetchExtensions called in test")
+}
+func (nullSuwayomiClient) ExtensionRepos(_ context.Context) ([]string, error) {
+	panic("nullSuwayomiClient.ExtensionRepos called in test")
+}
+func (nullSuwayomiClient) SetExtensionRepos(_ context.Context, _ []string) error {
+	panic("nullSuwayomiClient.SetExtensionRepos called in test")
+}
 
 // newTestServer builds a server.New instance with stub dependencies and no
 // real DB, suitable for route-level unit tests that do not touch the database.

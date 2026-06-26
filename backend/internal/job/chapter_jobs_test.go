@@ -311,6 +311,13 @@ func (fakeSuwayomi) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, 
 func (fakeSuwayomi) SetServerSettings(context.Context, suwayomi.SuwayomiSettingsPatch) error {
 	return nil
 }
+func (fakeSuwayomi) Extensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
+func (fakeSuwayomi) SetExtensionState(context.Context, string, suwayomi.ExtensionAction) error {
+	return nil
+}
+func (fakeSuwayomi) FetchExtensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
+func (fakeSuwayomi) ExtensionRepos(context.Context) ([]string, error)              { return nil, nil }
+func (fakeSuwayomi) SetExtensionRepos(context.Context, []string) error             { return nil }
 
 // TestRunner_StartRefresh_DiscoversAndDownloads verifies the refresh ticker
 // re-fetches a monitored series (creating a wanted chapter) and then triggers a

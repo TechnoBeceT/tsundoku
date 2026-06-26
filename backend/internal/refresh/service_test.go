@@ -57,6 +57,13 @@ func (f *fakeClient) ServerSettings(context.Context) (suwayomi.SuwayomiSettings,
 func (f *fakeClient) SetServerSettings(context.Context, suwayomi.SuwayomiSettingsPatch) error {
 	return nil
 }
+func (f *fakeClient) Extensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
+func (f *fakeClient) SetExtensionState(context.Context, string, suwayomi.ExtensionAction) error {
+	return nil
+}
+func (f *fakeClient) FetchExtensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
+func (f *fakeClient) ExtensionRepos(context.Context) ([]string, error)              { return nil, nil }
+func (f *fakeClient) SetExtensionRepos(context.Context, []string) error             { return nil }
 
 // num returns a pointer to a float64 chapter number (Suwayomi's wire shape).
 func num(n float64) *float64 { return &n }
