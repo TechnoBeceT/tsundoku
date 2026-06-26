@@ -66,7 +66,7 @@ func (s *stubClient) SetExtensionState(_ context.Context, _ string, _ suwayomi.E
 func (s *stubClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
 	return nil, nil
 }
-func (s *stubClient) ExtensionRepos(_ context.Context) ([]string, error)  { return nil, nil }
+func (s *stubClient) ExtensionRepos(_ context.Context) ([]string, error)    { return nil, nil }
 func (s *stubClient) SetExtensionRepos(_ context.Context, _ []string) error { return nil }
 
 // The remaining Client methods are unused by Fetcher; they panic loudly if

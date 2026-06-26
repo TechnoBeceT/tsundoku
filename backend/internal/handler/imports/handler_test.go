@@ -106,7 +106,7 @@ func (f *fakeClient) SetExtensionState(_ context.Context, _ string, _ suwayomi.E
 func (f *fakeClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
 	return nil, nil
 }
-func (f *fakeClient) ExtensionRepos(_ context.Context) ([]string, error)  { return nil, nil }
+func (f *fakeClient) ExtensionRepos(_ context.Context) ([]string, error)    { return nil, nil }
 func (f *fakeClient) SetExtensionRepos(_ context.Context, _ []string) error { return nil }
 
 // makeChapters builds n stub chapters anchored to baseID.
