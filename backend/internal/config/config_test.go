@@ -643,3 +643,122 @@ func TestLoadAppliesHealthEnvOverride(t *testing.T) {
 		t.Fatalf("Health.StaleGraceDays env override = %d, want 30", cfg.Health.StaleGraceDays)
 	}
 }
+
+// TestSuwayomiDatabaseDefaultsBlank confirms the embedded-Suwayomi DB fields
+// default to blank, preserving the current H2 behaviour (zero surprise for
+// existing deploys).
+func TestSuwayomiDatabaseDefaultsBlank(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	s := cfg.Suwayomi
+	if s.DatabaseType != "" || s.DatabaseURL != "" || s.DatabaseUsername != "" || s.DatabasePassword != "" {
+		t.Errorf("embedded-Suwayomi DB fields should default blank, got type=%q url=%q user=%q passSet=%t",
+			s.DatabaseType, s.DatabaseURL, s.DatabaseUsername, s.DatabasePassword != "")
+	}
+}
+
+// TestLoadEnvSuwayomiDatabaseFields confirms all four embedded-Suwayomi DB
+// fields are settable via environment variables.
+func TestLoadEnvSuwayomiDatabaseFields(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASETYPE", "POSTGRESQL")
+	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASEURL", "postgresql://db:5432/suwayomi")
+	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASEUSERNAME", "suwa")
+	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASEPASSWORD", "s3cr3t")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	s := cfg.Suwayomi
+	if s.DatabaseType != "POSTGRESQL" {
+		t.Errorf("DatabaseType = %q, want POSTGRESQL", s.DatabaseType)
+	}
+	if s.DatabaseURL != "postgresql://db:5432/suwayomi" {
+		t.Errorf("DatabaseURL = %q, want postgresql://db:5432/suwayomi", s.DatabaseURL)
+	}
+	if s.DatabaseUsername != "suwa" {
+		t.Errorf("DatabaseUsername = %q, want suwa", s.DatabaseUsername)
+	}
+	if s.DatabasePassword != "s3cr3t" {
+		t.Errorf("DatabasePassword = %q, want s3cr3t", s.DatabasePassword)
+	}
+}
+
+// suwayomiDBConfig builds a Config valid except for the Suwayomi DB fields under
+// test, so validate() exercises only the DB-selection rule.
+func suwayomiDBConfig(dbType, dbURL string) *config.Config {
+	return &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{DatabaseType: dbType, DatabaseURL: dbURL},
+	}
+}
+
+// TestValidateSuwayomiDatabaseAccepts confirms validate() passes for the valid
+// DB selections: blank (default H2), explicit H2 (no URL needed), and POSTGRESQL
+// with a well-formed bare postgresql:// URL.
+func TestValidateSuwayomiDatabaseAccepts(t *testing.T) {
+	cases := []struct {
+		name, dbType, dbURL string
+	}{
+		{"blank-default-h2", "", ""},
+		{"explicit-h2-no-url", "H2", ""},
+		{"postgres-valid-url", "POSTGRESQL", "postgresql://localhost:5432/suwayomi"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := config.ExportValidateForTest(suwayomiDBConfig(tc.dbType, tc.dbURL)); err != nil {
+				t.Errorf("validate() rejected %s/%q, want accept: %v", tc.dbType, tc.dbURL, err)
+			}
+		})
+	}
+}
+
+// TestValidateSuwayomiDatabaseRejects confirms validate() fails closed for an
+// unrecognised DatabaseType, POSTGRESQL with a missing URL, and POSTGRESQL with
+// a malformed URL — including a jdbc:postgresql:// value (Suwayomi adds the
+// jdbc: prefix itself, so a jdbc-prefixed value must be rejected).
+func TestValidateSuwayomiDatabaseRejects(t *testing.T) {
+	cases := []struct {
+		name, dbType, dbURL, wantVar string
+	}{
+		{"unknown-type", "MYSQL", "", "TSUNDOKU_SUWAYOMI_DATABASETYPE"},
+		{"postgres-missing-url", "POSTGRESQL", "", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
+		{"postgres-jdbc-prefixed", "POSTGRESQL", "jdbc:postgresql://h:5432/db", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
+		{"postgres-wrong-scheme", "POSTGRESQL", "http://h:5432/db", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
+		{"postgres-no-host", "POSTGRESQL", "postgresql:///db", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
+		{"postgres-garbage-url", "POSTGRESQL", "://nope", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := config.ExportValidateForTest(suwayomiDBConfig(tc.dbType, tc.dbURL))
+			if err == nil {
+				t.Fatalf("validate() accepted %s/%q, want reject", tc.dbType, tc.dbURL)
+			}
+			if !strings.Contains(err.Error(), tc.wantVar) {
+				t.Errorf("error for %s/%q should name %s, got: %v", tc.dbType, tc.dbURL, tc.wantVar, err)
+			}
+		})
+	}
+}
+
+// TestLoadRejectsBadSuwayomiDatabase confirms the DB-selection rule is enforced
+// end-to-end through Load() (not just the exported validate()): a POSTGRESQL
+// type with no URL aborts startup.
+func TestLoadRejectsBadSuwayomiDatabase(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASETYPE", "POSTGRESQL")
+	// Deliberately omit TSUNDOKU_SUWAYOMI_DATABASEURL.
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected Load() to fail for POSTGRESQL without a DatabaseURL, got nil")
+	}
+}

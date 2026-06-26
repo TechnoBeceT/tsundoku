@@ -145,6 +145,31 @@ type SuwayomiConfig struct {
 	// Set via TSUNDOKU_SUWAYOMI_JAVAPATH.
 	// Example: /usr/lib/jvm/java-26-openjdk/bin/java
 	JavaPath string
+	// DatabaseType selects the embedded Suwayomi DB engine. Blank ⇒ Suwayomi's
+	// default H2 (unchanged behaviour). "POSTGRESQL" ⇒ launch() passes the
+	// Postgres -D system properties so the embedded JVM uses Postgres, whose
+	// transactional DDL makes a killed migration roll back cleanly (vs H2's
+	// auto-commit DDL → corruption-on-kill). EMBEDDED MODE ONLY — inert when
+	// ExternalURL is set (external mode never launches a JVM). Recognised
+	// tokens (confirmed against Suwayomi v2.2.2100 server-reference.conf):
+	// H2, POSTGRESQL. Set via TSUNDOKU_SUWAYOMI_DATABASETYPE.
+	DatabaseType string
+	// DatabaseURL is the Postgres connection URL for the embedded Suwayomi
+	// backend. Required when DatabaseType is POSTGRESQL; ignored for H2.
+	//
+	// IMPORTANT: this is the BARE postgresql:// form (e.g.
+	// postgresql://host:5432/suwayomi) with NO "jdbc:" prefix — Suwayomi
+	// prepends "jdbc:" itself (server-reference.conf default is
+	// "postgresql://localhost:5432/suwayomi"; DBManager.createHikariDataSource
+	// concatenates "jdbc:" + databaseUrl). Supplying a jdbc:postgresql:// value
+	// would double the prefix and break boot, so validate() rejects it.
+	// Set via TSUNDOKU_SUWAYOMI_DATABASEURL.
+	DatabaseURL string
+	// DatabaseUsername / DatabasePassword are the Postgres credentials for the
+	// embedded Suwayomi backend (separate fields, not embedded in DatabaseURL).
+	// Set via TSUNDOKU_SUWAYOMI_DATABASEUSERNAME / _DATABASEPASSWORD.
+	DatabaseUsername string
+	DatabasePassword string
 }
 
 // BaseURL returns the base HTTP URL for the Suwayomi server — the single
@@ -234,6 +259,13 @@ func defaults() map[string]any {
 		"suwayomi.starttimeout":        "2m",
 		"suwayomi.downloadtimeout":     "10m",
 		"suwayomi.javapath":            "java",
+		// Embedded-Suwayomi DB engine — all blank ⇒ disabled (Suwayomi's
+		// default H2, unchanged behaviour). Set DatabaseType=POSTGRESQL to
+		// opt the embedded JVM onto Postgres (kill-safe transactional DDL).
+		"suwayomi.databasetype":     "",
+		"suwayomi.databaseurl":      "",
+		"suwayomi.databaseusername": "",
+		"suwayomi.databasepassword": "",
 		// Jobs — background-job scheduler.
 		"jobs.downloadinterval":   "15m",
 		"jobs.refreshinterval":    "2h",
@@ -310,6 +342,10 @@ func Load() (*Config, error) {
 //	TSUNDOKU_SUWAYOMI_STARTTIMEOUT          → suwayomi.starttimeout
 //	TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT       → suwayomi.downloadtimeout
 //	TSUNDOKU_SUWAYOMI_JAVAPATH              → suwayomi.javapath
+//	TSUNDOKU_SUWAYOMI_DATABASETYPE          → suwayomi.databasetype
+//	TSUNDOKU_SUWAYOMI_DATABASEURL           → suwayomi.databaseurl
+//	TSUNDOKU_SUWAYOMI_DATABASEUSERNAME      → suwayomi.databaseusername
+//	TSUNDOKU_SUWAYOMI_DATABASEPASSWORD      → suwayomi.databasepassword
 //	TSUNDOKU_JOBS_DOWNLOADINTERVAL          → jobs.downloadinterval
 //	TSUNDOKU_JOBS_REFRESHINTERVAL           → jobs.refreshinterval
 //	TSUNDOKU_JOBS_REFRESHCONCURRENCY        → jobs.refreshconcurrency
@@ -348,6 +384,9 @@ const minAuthSecretLen = 16
 //   - Suwayomi.ExternalURL, when set (external mode), must be a well-formed
 //     absolute http/https URL — a malformed target aborts startup rather than
 //     silently retargeting the client at an unreachable address.
+//   - Suwayomi.DatabaseType, when set, must be H2 or POSTGRESQL; POSTGRESQL
+//     additionally requires a valid postgresql:// Suwayomi.DatabaseURL (blank
+//     ⇒ default H2, the unchanged behaviour).
 func (c *Config) validate() error {
 	var errs []string
 
@@ -363,6 +402,10 @@ func (c *Config) validate() error {
 	}
 
 	if err := validateExternalURL(c.Suwayomi.ExternalURL); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	if err := validateSuwayomiDatabase(c.Suwayomi); err != nil {
 		errs = append(errs, err.Error())
 	}
 
@@ -388,6 +431,66 @@ func validateExternalURL(raw string) error {
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf(
 			"TSUNDOKU_SUWAYOMI_EXTERNALURL %q must be an absolute http/https URL", raw,
+		)
+	}
+	return nil
+}
+
+// databaseTypeH2 and databaseTypePostgres are the two embedded-Suwayomi DB
+// engine tokens. Confirmed against the Suwayomi v2.2.2100 server-reference.conf
+// (server.databaseType = H2 # options: H2, POSTGRESQL).
+const (
+	databaseTypeH2       = "H2"
+	databaseTypePostgres = "POSTGRESQL"
+)
+
+// validateSuwayomiDatabase fails closed on a misconfigured embedded-Suwayomi DB
+// selection. A blank DatabaseType selects Suwayomi's default H2 and passes (the
+// check is skipped, so existing deploys are byte-for-byte unchanged). A non-blank
+// type must be one of the recognised tokens; POSTGRESQL additionally requires a
+// valid postgresql:// DatabaseURL. The fields are inert in external mode, but the
+// check runs unconditionally — it is cheap and a misconfiguration is worth
+// surfacing regardless of mode.
+func validateSuwayomiDatabase(s SuwayomiConfig) error {
+	switch s.DatabaseType {
+	case "":
+		return nil // blank ⇒ default H2 (unchanged behaviour).
+	case databaseTypeH2:
+		return nil // explicit H2 needs no URL.
+	case databaseTypePostgres:
+		return validatePostgresURL(s.DatabaseURL)
+	default:
+		return fmt.Errorf(
+			"TSUNDOKU_SUWAYOMI_DATABASETYPE %q is not recognised (want %s or %s)",
+			s.DatabaseType, databaseTypeH2, databaseTypePostgres,
+		)
+	}
+}
+
+// validatePostgresURL fails closed unless raw is a non-blank absolute
+// postgresql:// URL with a host.
+//
+// The value is the BARE Suwayomi databaseUrl form — NO "jdbc:" prefix: Suwayomi
+// v2.2.2100 prepends "jdbc:" itself (DBManager.createHikariDataSource does
+// "jdbc:" + databaseUrl; server-reference.conf default is
+// "postgresql://localhost:5432/suwayomi"). A jdbc:postgresql:// value would
+// double the prefix and break boot, so it is rejected here with a message
+// explaining the expected shape.
+func validatePostgresURL(raw string) error {
+	if raw == "" {
+		return errors.New(
+			"TSUNDOKU_SUWAYOMI_DATABASEURL must be set when " +
+				"TSUNDOKU_SUWAYOMI_DATABASETYPE=POSTGRESQL",
+		)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("TSUNDOKU_SUWAYOMI_DATABASEURL %q is not a valid URL: %w", raw, err)
+	}
+	if u.Scheme != "postgresql" || u.Host == "" {
+		return fmt.Errorf(
+			"TSUNDOKU_SUWAYOMI_DATABASEURL %q must be an absolute postgresql:// URL "+
+				"with a host (no jdbc: prefix — Suwayomi adds it)", raw,
 		)
 	}
 	return nil
