@@ -41,6 +41,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/server"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -79,6 +80,13 @@ func main() {
 	hub := sse.NewHub()
 	ownerH := owner.NewHandler(entClient, authSvc)
 
+	// Runtime-tunable settings overlay: env-config defaults (single boundary)
+	// overlaid by the Settings DB table for the allowlisted keys. Threaded into
+	// every consumer that reads a tunable at use-time (dispatcher retry policy,
+	// job tickers, refresh concurrency, series stale-grace) so an owner's change
+	// via the settings API applies on the next cycle without a restart.
+	settingsSvc := settings.NewService(entClient, defaultsFromConfig(cfg))
+
 	// Build the Suwayomi HTTP client and real ChapterFetcher now — these are
 	// just typed values and do not require Suwayomi to be running yet. They are
 	// passed to download.New immediately so the dispatcher is fully wired.
@@ -88,10 +96,9 @@ func main() {
 
 	dispatcher := download.New(entClient, suwayomiFetcher, hub, download.Config{
 		PerProviderConcurrency: 4,
-		MaxRetries:             5,
 		Storage:                cfg.Storage.Folder,
-	})
-	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder)
+	}, settingsSvc)
+	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
 	// Discovery sweep service (M5): re-fetches every monitored series' chapter
 	// list to find new releases. Its own ingest shares the same Ent client +
@@ -101,7 +108,7 @@ func main() {
 		entClient,
 		suwayomi.NewIngest(suwayomiClient, entClient),
 		hub,
-		cfg.Jobs.RefreshConcurrency,
+		settingsSvc,
 	)
 
 	// healthSvc is a stateless series.Service instance used only to supply the
@@ -109,14 +116,14 @@ func main() {
 	// safe — it shares no mutable state with the one constructed by
 	// registerRoutes; this follows the M5 precedent for a second
 	// suwayomi.NewIngest.
-	healthSvc := series.NewService(entClient, cfg.Storage.Folder, cfg.Health.StaleGraceDays)
+	healthSvc := series.NewServiceWithStaleGrace(entClient, cfg.Storage.Folder, settingsSvc.StaleGraceDays)
 
 	// Start the Suwayomi engine. pm is the embedded process manager (nil in
 	// external mode) — the shutdown path guards on pm != nil so Stop() is only
 	// called when tsundoku owns the process.
-	pm := startSuwayomiEngine(ctx, cfg, runner, refreshSvc, healthSvc.UnhealthyCount)
+	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 
@@ -146,6 +153,21 @@ func main() {
 	}
 }
 
+// defaultsFromConfig maps the env-resolved *config.Config into the settings
+// overlay's Defaults. This is the ONLY bridge between config and settings: the
+// settings layer never reads env, it receives these typed defaults, so the
+// single env boundary (internal/config) is preserved.
+func defaultsFromConfig(cfg *config.Config) settings.Defaults {
+	return settings.Defaults{
+		DownloadInterval:   cfg.Jobs.DownloadInterval,
+		RefreshInterval:    cfg.Jobs.RefreshInterval,
+		RefreshConcurrency: cfg.Jobs.RefreshConcurrency,
+		MaxRetries:         cfg.Jobs.MaxRetries,
+		RetryBackoff:       cfg.Jobs.RetryBackoff,
+		StaleGraceDays:     cfg.Health.StaleGraceDays,
+	}
+}
+
 // startSuwayomiEngine starts the download + refresh tickers under the configured
 // Suwayomi lifecycle mode and returns the embedded process manager (nil in
 // external mode). In EXTERNAL mode (cfg.Suwayomi.IsExternal()) a standalone
@@ -160,17 +182,20 @@ func main() {
 func startSuwayomiEngine(
 	ctx context.Context,
 	cfg *config.Config,
+	settingsSvc *settings.Service,
 	runner *job.Runner,
 	refreshSvc *refresh.Service,
 	unhealthyCount func(context.Context) (int, error),
 ) *suwayomi.ProcessManager {
 	startTickers := func() {
+		// Log the currently-resolved cadence (the loops re-read it each cycle, so
+		// these are the values in force right now, not a fixed schedule).
 		slog.Info("tsundoku: starting download + refresh tickers",
-			"download_interval", cfg.Jobs.DownloadInterval,
-			"refresh_interval", cfg.Jobs.RefreshInterval,
+			"download_interval", settingsSvc.DownloadInterval(ctx),
+			"refresh_interval", settingsSvc.RefreshInterval(ctx),
 		)
-		runner.Start(ctx, cfg.Jobs.DownloadInterval)
-		runner.StartRefresh(ctx, cfg.Jobs.RefreshInterval, refreshSvc, unhealthyCount)
+		runner.Start(ctx)
+		runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 	}
 
 	if cfg.Suwayomi.IsExternal() {

@@ -12,10 +12,12 @@ import (
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
+	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
 	"github.com/technobecet/tsundoku/internal/imports"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -49,6 +51,8 @@ import (
 //   - /api/categories/:id (PATCH)                  — rename and/or reorder a category (RequireOwner).
 //   - /api/categories/:id (DELETE)                 — delete an empty category (RequireOwner).
 //   - /api/health                                  — library source-health scan (RequireOwner).
+//   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
+//   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
@@ -62,6 +66,7 @@ func registerRoutes(
 	hub *sse.Hub,
 	ownerH *owner.Handler,
 	suwayomiClient suwayomi.Client,
+	settingsSvc *settings.Service,
 	trigger func(),
 ) {
 	// Infrastructure routes — no authentication required.
@@ -95,6 +100,12 @@ func registerRoutes(
 	authed.GET("/series/:id/providers/:providerId/cover", seriesH.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)
 	authed.GET("/health", seriesH.LibraryHealth)
+
+	// Settings (runtime tunables) API. The service is built in main.go (it shares
+	// the Ent client + carries the config-resolved defaults) and threaded in here.
+	settingsH := settingsh.NewHandler(settingsSvc)
+	authed.GET("/settings", settingsH.List)
+	authed.PATCH("/settings", settingsH.Update)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.

@@ -12,6 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -43,6 +44,7 @@ func New(
 	hub *sse.Hub,
 	ownerH *owner.Handler,
 	suwayomiClient suwayomi.Client,
+	settingsSvc *settings.Service,
 	trigger func(),
 ) *echo.Echo {
 	e := echo.New()
@@ -66,6 +68,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, trigger)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, trigger)
 	return e
 }
