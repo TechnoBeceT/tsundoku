@@ -24,7 +24,17 @@ import (
 //	upgrading          → downloaded      (success or failure; working copy retained)
 //	failed             → downloading
 //	failed             → permanently_failed
-//	permanently_failed → (terminal — no outgoing edges)
+//	failed             → wanted          (owner-retry-only — see below)
+//	permanently_failed → wanted          (owner-retry-only — the one terminal escape)
+//
+// Owner-retry edges (Downloads milestone): failed→wanted and
+// permanently_failed→wanted are the only edges that target wanted, and they are
+// reachable ONLY through the owner-initiated retry action (downloads.RetryChapter
+// / RetryAll). The automatic download dispatcher NEVER targets wanted, so the
+// auto-pipeline's terminal semantics are unchanged: in normal operation a chapter
+// only reaches wanted on first discovery (ingest). permanently_failed is no longer
+// strictly terminal — it has exactly one sanctioned owner escape hatch, mirroring
+// the never-auto-delete model (a state reset is an owner action, never automatic).
 var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	entchapter.StateWanted: {
 		entchapter.StateDownloading: {},
@@ -45,8 +55,11 @@ var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	entchapter.StateFailed: {
 		entchapter.StateDownloading:       {},
 		entchapter.StatePermanentlyFailed: {},
+		entchapter.StateWanted:            {}, // owner retry (clears failure fields)
 	},
-	// permanently_failed is terminal — no outgoing edges.
+	entchapter.StatePermanentlyFailed: {
+		entchapter.StateWanted: {}, // owner reset — the single terminal escape
+	},
 }
 
 // CanTransition reports whether a state transition from → to is permitted by the
