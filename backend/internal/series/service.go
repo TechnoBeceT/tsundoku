@@ -387,7 +387,7 @@ func (s *Service) ListSeries(ctx context.Context, filter ListFilter) ([]SeriesSu
 // GetSeries returns the full detail of one series: its summary fields, the
 // chapter-state rollup, its chapters (ordered by number then chapter_key), and
 // its providers. Each chapter's display Name is sourced from the best provider's
-// ProviderChapter title (see chapterTitles). A missing id yields ErrSeriesNotFound.
+// ProviderChapter title (see ChapterTitles). A missing id yields ErrSeriesNotFound.
 func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO, error) {
 	row, err := s.client.Series.Query().
 		Where(entseries.IDEQ(id)).
@@ -409,7 +409,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		return SeriesDetailDTO{}, fmt.Errorf("series.GetSeries: query series %s: %w", id, err)
 	}
 
-	titles := chapterTitles(row.Edges.Providers)
+	titles := ChapterTitles(row.Edges.Providers)
 
 	chapters := make([]ChapterDTO, len(row.Edges.Chapters))
 	counts := ChapterCounts{Total: len(row.Edges.Chapters)}
@@ -418,8 +418,8 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		addToCounts(&counts, ch.State)
 	}
 
-	metaProv := metadataProvider(row)
-	dispName, coverURL := seriesDisplay(row, metaProv)
+	metaProv := MetadataProvider(row)
+	dispName, coverURL := SeriesDisplay(row, metaProv)
 
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	now := time.Now().UTC()
@@ -492,7 +492,7 @@ func (s *Service) loadSeriesWithHealthData(ctx context.Context) ([]*ent.Series, 
 // or erroring (empty if the series is fully healthy).
 func (s *Service) sickSources(row *ent.Series, now time.Time) []ProviderDTO {
 	keys, maxNumber, multi := seriesHealthInputs(row)
-	metaProv := metadataProvider(row)
+	metaProv := MetadataProvider(row)
 	var sick []ProviderDTO
 	for _, p := range row.Edges.Providers {
 		h := s.providerHealth(p, keys, maxNumber, multi, row.Completed, now)
@@ -715,12 +715,14 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 	return out, nil
 }
 
-// metadataProvider returns the SeriesProvider that supplies the display metadata
+// MetadataProvider returns the SeriesProvider that supplies the display metadata
 // (title + cover) for a series. It honours the explicit metadata_provider_id pin
 // when set and the pointed-to provider is present in the loaded Providers slice;
 // otherwise it falls back to the highest-importance provider; otherwise nil.
-// row.Edges.Providers must be eagerly loaded by the caller.
-func metadataProvider(row *ent.Series) *ent.SeriesProvider {
+// row.Edges.Providers must be eagerly loaded by the caller. Exported so the
+// downloads domain can resolve a series' display name + cover without
+// duplicating the pin-then-importance resolution logic (§2 DRY).
+func MetadataProvider(row *ent.Series) *ent.SeriesProvider {
 	if row.MetadataProviderID != nil {
 		for _, p := range row.Edges.Providers {
 			if p.ID == *row.MetadataProviderID {
@@ -729,8 +731,17 @@ func metadataProvider(row *ent.Series) *ent.SeriesProvider {
 		}
 		// Pin is set but provider not in edges (removed): fall through to auto.
 	}
+	return HighestImportanceProvider(row.Edges.Providers)
+}
+
+// HighestImportanceProvider returns the SeriesProvider with the greatest
+// importance value (higher = preferred — the project-wide convention), or nil
+// when the slice is empty. It is the automatic metadata-source fallback and the
+// best-available source for the downloads list's provider field; exported so
+// both resolve "the series' top source" through one definition (§2 DRY).
+func HighestImportanceProvider(providers []*ent.SeriesProvider) *ent.SeriesProvider {
 	var best *ent.SeriesProvider
-	for _, p := range row.Edges.Providers {
+	for _, p := range providers {
 		if best == nil || p.Importance > best.Importance {
 			best = p
 		}
@@ -738,11 +749,12 @@ func metadataProvider(row *ent.Series) *ent.SeriesProvider {
 	return best
 }
 
-// seriesDisplay derives the display name and cover proxy URL for a series.
+// SeriesDisplay derives the display name and cover proxy URL for a series.
 // name is metaProv.Title when non-empty, else row.Title (canonical fallback).
 // coverURL is the series cover proxy path when metaProv has a non-empty
 // cover_url, else "" (the proxy endpoint would have nothing to serve).
-func seriesDisplay(row *ent.Series, metaProv *ent.SeriesProvider) (name, coverURL string) {
+// Exported so the downloads domain reuses the identical name+cover resolution.
+func SeriesDisplay(row *ent.Series, metaProv *ent.SeriesProvider) (name, coverURL string) {
 	name = row.Title
 	if metaProv != nil && metaProv.Title != "" {
 		name = metaProv.Title
@@ -789,14 +801,16 @@ func (s *Service) SetMetadataSource(ctx context.Context, id uuid.UUID, providerI
 	return nil
 }
 
-// chapterTitles builds a chapter_key → display title map from the series'
+// ChapterTitles builds a chapter_key → display title map from the series'
 // eagerly-loaded providers and their ProviderChapter feeds. For each chapter_key
 // it picks the name from the provider with the HIGHEST importance that supplies a
 // non-empty name (mirroring M1's best-provider rule: higher importance = higher
 // priority). An empty name never shadows a real one from a lower-importance
 // provider; a key no provider titles is simply absent (legitimately empty Name,
 // not a dropped field). Cost is one pass over the already-loaded rows — no N+1.
-func chapterTitles(providers []*ent.SeriesProvider) map[string]string {
+// Exported so the downloads list resolves chapter names through this one
+// best-provider definition (§2 DRY).
+func ChapterTitles(providers []*ent.SeriesProvider) map[string]string {
 	titles := make(map[string]string)
 	bestImportance := make(map[string]int)
 	for _, p := range providers {
@@ -830,7 +844,7 @@ func addToCounts(c *ChapterCounts, state entchapter.State) {
 // resolved metadata provider. Returns ErrSeriesNotFound when id is unknown,
 // ErrNoCover when the metadata provider has no stored cover (the proxy
 // endpoint would have nothing to fetch). Providers must be eagerly loaded for
-// metadataProvider resolution.
+// MetadataProvider resolution.
 func (s *Service) CoverURL(ctx context.Context, id uuid.UUID) (string, error) {
 	row, err := s.client.Series.Query().
 		Where(entseries.IDEQ(id)).
@@ -842,7 +856,7 @@ func (s *Service) CoverURL(ctx context.Context, id uuid.UUID) (string, error) {
 		}
 		return "", fmt.Errorf("series.CoverURL: load series %s: %w", id, err)
 	}
-	meta := metadataProvider(row)
+	meta := MetadataProvider(row)
 	if meta == nil || meta.CoverURL == "" {
 		return "", ErrNoCover
 	}
