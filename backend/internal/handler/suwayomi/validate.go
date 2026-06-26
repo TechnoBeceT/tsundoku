@@ -2,11 +2,11 @@ package suwayomi
 
 import (
 	"net/http"
-	"net/url"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/pkg/urlx"
 	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -121,13 +121,14 @@ func applySocks(sp *SocksProxyUpdate, patch *suwayomicli.SuwayomiSettingsPatch) 
 }
 
 // validateOptionalURL accepts an empty string (clears the URL) or a well-formed
-// absolute http/https URL with a host. Anything else is a 400.
+// absolute http/https URL with a host. Anything else is a 400. The
+// absolute-http(s) check is the shared urlx.IsAbsoluteHTTP kernel (reused by the
+// extension-repo validator) so the rule lives in exactly one place.
 func validateOptionalURL(raw string) error {
 	if raw == "" {
 		return nil
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+	if !urlx.IsAbsoluteHTTP(raw) {
 		return badRequest("flareSolverr.url must be a valid absolute http(s) URL")
 	}
 	return nil
