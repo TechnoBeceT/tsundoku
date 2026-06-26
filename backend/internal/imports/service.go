@@ -13,6 +13,7 @@ package imports
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -31,6 +32,10 @@ import (
 // searchConcurrency is the maximum number of sources queried in parallel during
 // Search. This bounds upstream load when many sources are installed.
 const searchConcurrency = 8
+
+// ErrSourceNotFound is returned by Browse when the requested sourceID is not in
+// the live source list (client.Sources). The HTTP handler maps it to 404.
+var ErrSourceNotFound = errors.New("source not found")
 
 // Service provides the import workflow over a Suwayomi backend: source
 // discovery, multi-source search with fuzzy grouping, and chapter inspection.
@@ -82,20 +87,44 @@ func (s *Service) searchOneSource(ctx context.Context, src suwayomi.Source, quer
 	// Map Manga results to Candidates tagged with source metadata.
 	out := make([]Candidate, 0, len(results))
 	for _, m := range results {
-		thumb := ""
-		if m.ThumbnailURL != nil {
-			thumb = *m.ThumbnailURL
-		}
-		out = append(out, Candidate{
-			Source:       src.ID,
-			SourceName:   src.Name,
-			Lang:         src.Lang,
-			MangaID:      m.ID,
-			Title:        m.Title,
-			ThumbnailURL: thumb,
-		})
+		out = append(out, newCandidate(src, m))
 	}
 	return out, nil
+}
+
+// newCandidate maps one suwayomi.Manga to a Candidate tagged with its source's
+// ID/name/lang. A nil ThumbnailURL becomes the empty string. Shared by the
+// Search fan-out (searchOneSource) and the single-source Browse path so the
+// Manga→Candidate mapping lives in exactly one place.
+func newCandidate(src suwayomi.Source, m suwayomi.Manga) Candidate {
+	thumb := ""
+	if m.ThumbnailURL != nil {
+		thumb = *m.ThumbnailURL
+	}
+	return Candidate{
+		Source:       src.ID,
+		SourceName:   src.Name,
+		Lang:         src.Lang,
+		MangaID:      m.ID,
+		Title:        m.Title,
+		URL:          m.URL,
+		ThumbnailURL: thumb,
+	}
+}
+
+// newSearchCandidateDTO maps a Candidate to its wire DTO. Shared by Search
+// (grouped) and Browse (flat) so the Candidate→DTO field copy is never
+// duplicated — a dropped field here would surface in both endpoints.
+func newSearchCandidateDTO(c Candidate) SearchCandidateDTO {
+	return SearchCandidateDTO{
+		Source:       c.Source,
+		SourceName:   c.SourceName,
+		Lang:         c.Lang,
+		MangaID:      c.MangaID,
+		Title:        c.Title,
+		URL:          c.URL,
+		ThumbnailURL: c.ThumbnailURL,
+	}
 }
 
 // Search fans out a query to all sources (or a subset when sourceIDs is
@@ -159,14 +188,7 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 	for i, grp := range groups {
 		cdtos := make([]SearchCandidateDTO, len(grp.Candidates))
 		for j, c := range grp.Candidates {
-			cdtos[j] = SearchCandidateDTO{
-				Source:       c.Source,
-				SourceName:   c.SourceName,
-				Lang:         c.Lang,
-				MangaID:      c.MangaID,
-				Title:        c.Title,
-				ThumbnailURL: c.ThumbnailURL,
-			}
+			cdtos[j] = newSearchCandidateDTO(c)
 		}
 		out[i] = SearchGroupDTO{Title: grp.Title, Candidates: cdtos}
 	}
@@ -199,6 +221,49 @@ func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suw
 		}
 	}
 	return filtered, nil
+}
+
+// Browse returns one page of a single source's catalog listing (Popular or
+// Latest) as a flat BrowseResultDTO. Unlike Search there is no cross-source
+// fan-out or grouping — Popular/Latest are per-source listings.
+//
+// It first resolves sourceID against the live source list (to obtain the
+// source's Name/Lang for tagging candidates); an unknown sourceID yields
+// ErrSourceNotFound (→ 404). A client.Browse failure is returned verbatim — the
+// request is single-source, so a source/upstream failure IS the whole request
+// (no partial-results carve-out like Search). page is 1-based.
+func (s *Service) Browse(ctx context.Context, sourceID string, t suwayomi.BrowseType, page int) (BrowseResultDTO, error) {
+	src, err := s.resolveSource(ctx, sourceID)
+	if err != nil {
+		return BrowseResultDTO{}, err
+	}
+
+	res, err := s.client.Browse(ctx, sourceID, t, page)
+	if err != nil {
+		return BrowseResultDTO{}, err
+	}
+
+	manga := make([]SearchCandidateDTO, len(res.Mangas))
+	for i, m := range res.Mangas {
+		manga[i] = newSearchCandidateDTO(newCandidate(src, m))
+	}
+	return BrowseResultDTO{Manga: manga, HasNextPage: res.HasNextPage, Page: page}, nil
+}
+
+// resolveSource returns the single source whose ID equals sourceID from the live
+// client source list, or ErrSourceNotFound when absent. Browse needs the
+// resolved source's Name/Lang to tag its candidates.
+func (s *Service) resolveSource(ctx context.Context, sourceID string) (suwayomi.Source, error) {
+	all, err := s.client.Sources(ctx)
+	if err != nil {
+		return suwayomi.Source{}, err
+	}
+	for _, src := range all {
+		if src.ID == sourceID {
+			return src, nil
+		}
+	}
+	return suwayomi.Source{}, ErrSourceNotFound
 }
 
 // InspectChapters fetches the live chapter list for mangaID from sourceID and

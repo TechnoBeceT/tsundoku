@@ -49,6 +49,10 @@ type fakeClient struct {
 	chaptersPerManga map[int][]suwayomi.Chapter
 	// chapterErrs maps mangaID → error (Task 4 per-manga error injection).
 	chapterErrs map[int]error
+	// browseResults maps BrowseType → result returned by Browse.
+	browseResults map[suwayomi.BrowseType]suwayomi.BrowseResult
+	// browseErr is the error returned by Browse (nil = success).
+	browseErr error
 }
 
 func (f *fakeClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
@@ -81,6 +85,16 @@ func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.C
 	}
 	// Flat fallback (Task 3).
 	return f.chapters, f.chaptersErr
+}
+
+func (f *fakeClient) Browse(_ context.Context, _ string, t suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
+	if f.browseErr != nil {
+		return suwayomi.BrowseResult{}, f.browseErr
+	}
+	if f.browseResults != nil {
+		return f.browseResults[t], nil
+	}
+	return suwayomi.BrowseResult{}, nil
 }
 
 // Remaining Client methods are unused by Service; return nil, nil.
@@ -499,6 +513,180 @@ func TestService_InspectChapters_Error(t *testing.T) {
 	_, err := svc.InspectChapters(context.Background(), "src", 99)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("InspectChapters error: got %v, want to wrap %v", err, sentinel)
+	}
+}
+
+// --- Browse tests ------------------------------------------------------------
+
+// TestService_Browse_Popular verifies the Popular happy path: the resolved
+// source's Name/Lang tag each candidate, the manga's url propagates, and
+// hasNextPage/page are echoed onto the DTO.
+func TestService_Browse_Popular(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
+		},
+		browseResults: map[suwayomi.BrowseType]suwayomi.BrowseResult{
+			suwayomi.BrowsePopular: {
+				Mangas: []suwayomi.Manga{
+					{ID: 1, Title: "Solo Leveling", URL: "/manga/1", ThumbnailURL: ptrStr("http://t/1")},
+					{ID: 2, Title: "Omniscient Reader", URL: "/manga/2", ThumbnailURL: nil},
+				},
+				HasNextPage: true,
+			},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Browse(context.Background(), "src-a", suwayomi.BrowsePopular, 1)
+	if err != nil {
+		t.Fatalf("Browse: unexpected error: %v", err)
+	}
+	if len(got.Manga) != 2 {
+		t.Fatalf("Browse: got %d candidates, want 2", len(got.Manga))
+	}
+	if !got.HasNextPage {
+		t.Error("Browse: HasNextPage = false, want true")
+	}
+	if got.Page != 1 {
+		t.Errorf("Browse: Page = %d, want 1", got.Page)
+	}
+	c0 := got.Manga[0]
+	assertCandidateTags(t, c0, "src-a", "Alpha Source", "en")
+	if c0.URL != "/manga/1" {
+		t.Errorf("Browse candidate[0].URL: got %q, want /manga/1", c0.URL)
+	}
+	if c0.ThumbnailURL != "http://t/1" {
+		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want http://t/1", c0.ThumbnailURL)
+	}
+	// Nil thumbnail → empty string.
+	if got.Manga[1].ThumbnailURL != "" {
+		t.Errorf("Browse candidate[1].ThumbnailURL: got %q, want empty", got.Manga[1].ThumbnailURL)
+	}
+}
+
+// assertCandidateTags asserts a candidate's source-identity fields (Source,
+// SourceName, Lang) — the per-source tags applied during candidate mapping.
+func assertCandidateTags(t *testing.T, c imports.SearchCandidateDTO, wantSource, wantName, wantLang string) {
+	t.Helper()
+	if c.Source != wantSource {
+		t.Errorf("candidate.Source: got %q, want %q", c.Source, wantSource)
+	}
+	if c.SourceName != wantName {
+		t.Errorf("candidate.SourceName: got %q, want %q", c.SourceName, wantName)
+	}
+	if c.Lang != wantLang {
+		t.Errorf("candidate.Lang: got %q, want %q", c.Lang, wantLang)
+	}
+}
+
+// TestService_Browse_Latest verifies the Latest listing dispatches on BrowseType
+// and echoes the requested page.
+func TestService_Browse_Latest(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "src-b", Name: "Beta Source", Lang: "ko"},
+		},
+		browseResults: map[suwayomi.BrowseType]suwayomi.BrowseResult{
+			suwayomi.BrowseLatest: {
+				Mangas:      []suwayomi.Manga{{ID: 9, Title: "Tower of God", URL: "/manga/9"}},
+				HasNextPage: false,
+			},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Browse(context.Background(), "src-b", suwayomi.BrowseLatest, 3)
+	if err != nil {
+		t.Fatalf("Browse latest: unexpected error: %v", err)
+	}
+	if got.Page != 3 {
+		t.Errorf("Browse latest: Page = %d, want 3", got.Page)
+	}
+	if got.HasNextPage {
+		t.Error("Browse latest: HasNextPage = true, want false")
+	}
+	if len(got.Manga) != 1 || got.Manga[0].URL != "/manga/9" {
+		t.Errorf("Browse latest candidates: got %+v", got.Manga)
+	}
+}
+
+// TestService_Browse_UnknownSource verifies that browsing a source absent from
+// the live source list returns ErrSourceNotFound.
+func TestService_Browse_UnknownSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{{ID: "real", Name: "Real", Lang: "en"}},
+	}
+	svc := newService(fc)
+
+	_, err := svc.Browse(context.Background(), "ghost", suwayomi.BrowsePopular, 1)
+	if !errors.Is(err, imports.ErrSourceNotFound) {
+		t.Errorf("Browse unknown source: err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+// TestService_Browse_UpstreamError verifies that a client.Browse failure
+// propagates verbatim — browse is single-source, so a failure is the whole
+// request (no partial-results carve-out).
+func TestService_Browse_UpstreamError(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("suwayomi: source offline")
+	fc := &fakeClient{
+		sources:   []suwayomi.Source{{ID: "src-a", Name: "Alpha", Lang: "en"}},
+		browseErr: sentinel,
+	}
+	svc := newService(fc)
+
+	_, err := svc.Browse(context.Background(), "src-a", suwayomi.BrowsePopular, 1)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("Browse upstream error: err = %v, want to wrap %v", err, sentinel)
+	}
+}
+
+// TestService_Browse_SourcesError verifies that a failure resolving the source
+// list (client.Sources) propagates.
+func TestService_Browse_SourcesError(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("client: no sources")
+	fc := &fakeClient{sourcesErr: sentinel}
+	svc := newService(fc)
+
+	_, err := svc.Browse(context.Background(), "any", suwayomi.BrowsePopular, 1)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("Browse sources error: err = %v, want to wrap %v", err, sentinel)
+	}
+}
+
+// TestService_Search_URLPopulated is the non-vacuous proof that Search now
+// surfaces the manga url on each candidate — removing the URL mapping fails it.
+func TestService_Search_URLPopulated(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{{ID: "s1", Name: "Source One", Lang: "en"}},
+		searchResults: map[string][]suwayomi.Manga{
+			"s1": {{ID: 42, Title: "Attack on Titan", URL: "/manga/42"}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "Attack on Titan", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	if len(got) == 0 || len(got[0].Candidates) == 0 {
+		t.Fatal("expected at least one group and candidate")
+	}
+	if got[0].Candidates[0].URL != "/manga/42" {
+		t.Errorf("Search candidate URL: got %q, want /manga/42", got[0].Candidates[0].URL)
 	}
 }
 
