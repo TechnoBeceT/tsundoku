@@ -262,6 +262,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Series cover image
+         * @description Streams the cover image for the series' resolved metadata source provider.
+         *     The image is fetched from Suwayomi and returned as a binary blob. Returns 404
+         *     when the series has no cover, 502 when Suwayomi fails to fetch it.
+         */
+        get: operations["getSeriesCover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/providers/{providerId}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Provider cover image
+         * @description Streams the cover image for a specific provider within a series. The image is
+         *     fetched from Suwayomi and returned as a binary blob. Returns 404 when the
+         *     provider has no cover or does not belong to the series, 502 on a Suwayomi
+         *     fetch failure.
+         */
+        get: operations["getProviderCover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/metadata-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Pin metadata source
+         * @description Pins the series' metadata source to the given provider (providerId non-null) or
+         *     resets to automatic resolution (highest-importance provider) when providerId is
+         *     null or absent. Returns the full series detail so isMetadataSource is reflected
+         *     without a refetch (§16).
+         */
+        patch: operations["setSeriesMetadataSource"];
+        trace?: never;
+    };
     "/api/categories": {
         parameters: {
             query?: never;
@@ -433,8 +501,10 @@ export interface components {
              * @description Series identifier.
              */
             id: string;
-            /** @description Series display title. */
+            /** @description Canonical series title (used for slug derivation and disk layout). */
             title: string;
+            /** @description Resolved display title from the metadata source provider (falls back to title). */
+            displayName: string;
             /** @description Deterministic URL-safe series slug. */
             slug: string;
             /**
@@ -442,7 +512,7 @@ export interface components {
              * @enum {string}
              */
             category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
-            /** @description Cover image URL (may be empty). */
+            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
             coverUrl: string;
             /** @description Whether the series is actively tracked for new chapters. */
             monitored: boolean;
@@ -465,8 +535,19 @@ export interface components {
             pageCount: number | null;
         };
         Provider: {
+            /**
+             * Format: uuid
+             * @description SeriesProvider UUID (used by re-rank and metadata-source pin).
+             */
+            id: string;
             /** @description Provider key (e.g. mangadex). */
             provider: string;
+            /** @description This provider's own title for the series (may be empty). */
+            title: string;
+            /** @description Provider-level cover proxy path ("/api/series/{id}/providers/{pid}/cover"); empty when no cover. */
+            coverUrl: string;
+            /** @description True for the provider currently supplying DisplayName and CoverURL for this series. */
+            isMetadataSource: boolean;
             /** @description Scanlation group (may be empty). */
             scanlator: string;
             /** @description Language code (e.g. en). */
@@ -499,8 +580,10 @@ export interface components {
              * @description Series identifier.
              */
             id: string;
-            /** @description Series display title. */
+            /** @description Canonical series title (used for slug derivation and disk layout). */
             title: string;
+            /** @description Resolved display title from the metadata source provider (falls back to title). */
+            displayName: string;
             /** @description Deterministic URL-safe series slug. */
             slug: string;
             /**
@@ -508,7 +591,7 @@ export interface components {
              * @enum {string}
              */
             category: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
-            /** @description Cover image URL (may be empty). */
+            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
             coverUrl: string;
             /** @description Whether the series is actively tracked for new chapters. */
             monitored: boolean;
@@ -618,6 +701,15 @@ export interface components {
             category?: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
             /** @description Ordered list of (source, manga) pairs to adopt; must have at least one entry. */
             providers: components["schemas"]["AdoptProvider"][];
+        };
+        SetMetadataSourceRequest: {
+            /**
+             * Format: uuid
+             * @description SeriesProvider UUID to pin as the metadata source, or null/absent to reset
+             *     to automatic resolution (highest-importance provider). A malformed UUID
+             *     yields 400.
+             */
+            providerId?: string | null;
         };
         LibraryHealth: {
             series: components["schemas"]["SeriesHealth"][];
@@ -1199,6 +1291,162 @@ export interface operations {
                 };
             };
             /** @description Malformed series or provider UUID, or provider not in series. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSeriesCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The cover image bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Series not found or no cover available. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi failed to fetch the cover image. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getProviderCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description SeriesProvider UUID. */
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The cover image bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Series or provider not found, or no cover available. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi failed to fetch the cover image. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setSeriesMetadataSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetMetadataSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Metadata source updated. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed series id, malformed providerId UUID, or providerId does not belong to the series. */
             400: {
                 headers: {
                     [name: string]: unknown;

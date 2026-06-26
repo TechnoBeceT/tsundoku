@@ -33,6 +33,10 @@ var ErrInvalidCategory = errors.New("invalid category")
 // handler maps it to a 400.
 var ErrProviderNotInSeries = errors.New("provider does not belong to series")
 
+// ErrNoCover is returned by CoverURL and ProviderCoverURL when the resolved
+// provider has no stored cover_url. The HTTP handler maps it to a 404.
+var ErrNoCover = errors.New("no cover available")
+
 // Service is the library read service over the M0 entities. It owns the storage
 // root (unused by the read methods; the recategorize path that moves folders on
 // disk will use it) so all library operations share one service.
@@ -202,6 +206,17 @@ func removeProviderInTx(ctx context.Context, tx *ent.Tx, id, providerID uuid.UUI
 		return ErrProviderNotInSeries
 	}
 
+	// Dangling-pointer guard: if the series' metadata_provider_id currently points
+	// at the provider being removed, clear it so the pointer never dangles after
+	// the row is gone. The predicate update is a no-op (0 rows) when the pointer
+	// is absent or points elsewhere — not an error.
+	if err := tx.Series.Update().
+		Where(entseries.IDEQ(id), entseries.MetadataProviderIDEQ(providerID)).
+		ClearMetadataProviderID().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("series.RemoveProvider: clear dangling metadata_provider_id for %s: %w", providerID, err)
+	}
+
 	// 1. Clear satisfied_by on chapters this source satisfied — keep the
 	//    satisfied_importance watermark (do NOT call ClearSatisfiedImportance).
 	if err := tx.Chapter.Update().
@@ -324,9 +339,12 @@ type ListFilter struct {
 // ListSeries returns a title-ASC page of series summaries. The per-series
 // chapter-state rollup is computed with a SINGLE grouped aggregate query
 // (GROUP BY series_id, state) over only the page's series ids — not one query
-// per series — so list cost stays constant in the number of series.
+// per series — so list cost stays constant in the number of series. Providers
+// are eagerly loaded in a single secondary query (no N+1) so DisplayName and
+// CoverURL can be resolved from the metadata source provider without extra
+// round-trips.
 func (s *Service) ListSeries(ctx context.Context, filter ListFilter) ([]SeriesSummaryDTO, error) {
-	q := s.client.Series.Query().Order(entseries.ByTitle())
+	q := s.client.Series.Query().Order(entseries.ByTitle()).WithProviders()
 
 	if filter.Category != nil {
 		cat := entseries.Category(*filter.Category)
@@ -400,19 +418,24 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		addToCounts(&counts, ch.State)
 	}
 
+	metaProv := metadataProvider(row)
+	dispName, coverURL := seriesDisplay(row, metaProv)
+
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	now := time.Now().UTC()
 	providers := make([]ProviderDTO, len(row.Edges.Providers))
 	for i, p := range row.Edges.Providers {
-		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, now))
+		isMetaSrc := metaProv != nil && p.ID == metaProv.ID
+		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, now), row.ID, isMetaSrc)
 	}
 
 	return SeriesDetailDTO{
 		ID:            row.ID.String(),
 		Title:         row.Title,
+		DisplayName:   dispName,
 		Slug:          row.Slug,
 		Category:      row.Category.String(),
-		CoverURL:      row.CoverURL,
+		CoverURL:      coverURL,
 		Monitored:     row.Monitored,
 		Completed:     row.Completed,
 		ChapterCounts: counts,
@@ -469,11 +492,13 @@ func (s *Service) loadSeriesWithHealthData(ctx context.Context) ([]*ent.Series, 
 // or erroring (empty if the series is fully healthy).
 func (s *Service) sickSources(row *ent.Series, now time.Time) []ProviderDTO {
 	keys, maxNumber, multi := seriesHealthInputs(row)
+	metaProv := metadataProvider(row)
 	var sick []ProviderDTO
 	for _, p := range row.Edges.Providers {
 		h := s.providerHealth(p, keys, maxNumber, multi, row.Completed, now)
 		if h.Status == HealthStale || h.Status == HealthErroring {
-			sick = append(sick, newProviderDTO(p, h))
+			isMetaSrc := metaProv != nil && p.ID == metaProv.ID
+			sick = append(sick, newProviderDTO(p, h, row.ID, isMetaSrc))
 		}
 	}
 	return sick
@@ -690,6 +715,80 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 	return out, nil
 }
 
+// metadataProvider returns the SeriesProvider that supplies the display metadata
+// (title + cover) for a series. It honours the explicit metadata_provider_id pin
+// when set and the pointed-to provider is present in the loaded Providers slice;
+// otherwise it falls back to the highest-importance provider; otherwise nil.
+// row.Edges.Providers must be eagerly loaded by the caller.
+func metadataProvider(row *ent.Series) *ent.SeriesProvider {
+	if row.MetadataProviderID != nil {
+		for _, p := range row.Edges.Providers {
+			if p.ID == *row.MetadataProviderID {
+				return p
+			}
+		}
+		// Pin is set but provider not in edges (removed): fall through to auto.
+	}
+	var best *ent.SeriesProvider
+	for _, p := range row.Edges.Providers {
+		if best == nil || p.Importance > best.Importance {
+			best = p
+		}
+	}
+	return best
+}
+
+// seriesDisplay derives the display name and cover proxy URL for a series.
+// name is metaProv.Title when non-empty, else row.Title (canonical fallback).
+// coverURL is the series cover proxy path when metaProv has a non-empty
+// cover_url, else "" (the proxy endpoint would have nothing to serve).
+func seriesDisplay(row *ent.Series, metaProv *ent.SeriesProvider) (name, coverURL string) {
+	name = row.Title
+	if metaProv != nil && metaProv.Title != "" {
+		name = metaProv.Title
+	}
+	if metaProv != nil && metaProv.CoverURL != "" {
+		coverURL = "/api/series/" + row.ID.String() + "/cover"
+	}
+	return name, coverURL
+}
+
+// SetMetadataSource pins the series' metadata source to the given provider
+// (providerID non-nil) or resets to automatic resolution (providerID nil).
+// When providerID is set it must belong to the series (ErrProviderNotInSeries);
+// a missing series id returns ErrSeriesNotFound.
+func (s *Service) SetMetadataSource(ctx context.Context, id uuid.UUID, providerID *uuid.UUID) error {
+	exists, err := s.client.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return fmt.Errorf("series.SetMetadataSource: check series %s: %w", id, err)
+	}
+	if !exists {
+		return ErrSeriesNotFound
+	}
+	upd := s.client.Series.UpdateOneID(id)
+	if providerID == nil {
+		upd = upd.ClearMetadataProviderID()
+	} else {
+		owned, err := s.client.SeriesProvider.Query().
+			Where(entseriesprovider.IDEQ(*providerID), entseriesprovider.SeriesID(id)).
+			Exist(ctx)
+		if err != nil {
+			return fmt.Errorf("series.SetMetadataSource: check provider %s: %w", *providerID, err)
+		}
+		if !owned {
+			return ErrProviderNotInSeries
+		}
+		upd = upd.SetMetadataProviderID(*providerID)
+	}
+	if err := upd.Exec(ctx); err != nil {
+		// Defensive path: the series exists (confirmed above) and the provider is
+		// owned (confirmed above); an error here is reachable only on a DB-level
+		// failure — not forceable in a black-box test.
+		return fmt.Errorf("series.SetMetadataSource: update %s: %w", id, err)
+	}
+	return nil
+}
+
 // chapterTitles builds a chapter_key → display title map from the series'
 // eagerly-loaded providers and their ProviderChapter feeds. For each chapter_key
 // it picks the name from the provider with the HIGHEST importance that supplies a
@@ -725,4 +824,54 @@ func addToCounts(c *ChapterCounts, state entchapter.State) {
 	case entchapter.StateFailed:
 		c.Failed++
 	}
+}
+
+// CoverURL returns the stored Suwayomi-relative cover_url of the series'
+// resolved metadata provider. Returns ErrSeriesNotFound when id is unknown,
+// ErrNoCover when the metadata provider has no stored cover (the proxy
+// endpoint would have nothing to fetch). Providers must be eagerly loaded for
+// metadataProvider resolution.
+func (s *Service) CoverURL(ctx context.Context, id uuid.UUID) (string, error) {
+	row, err := s.client.Series.Query().
+		Where(entseries.IDEQ(id)).
+		WithProviders().
+		Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return "", ErrSeriesNotFound
+		}
+		return "", fmt.Errorf("series.CoverURL: load series %s: %w", id, err)
+	}
+	meta := metadataProvider(row)
+	if meta == nil || meta.CoverURL == "" {
+		return "", ErrNoCover
+	}
+	return meta.CoverURL, nil
+}
+
+// ProviderCoverURL returns the stored Suwayomi-relative cover_url for the
+// given SeriesProvider. Returns ErrSeriesNotFound when the series is unknown,
+// ErrProviderNotInSeries when providerID does not belong to the series, and
+// ErrNoCover when the provider has no stored cover_url.
+func (s *Service) ProviderCoverURL(ctx context.Context, id, providerID uuid.UUID) (string, error) {
+	exists, err := s.client.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return "", fmt.Errorf("series.ProviderCoverURL: check series %s: %w", id, err)
+	}
+	if !exists {
+		return "", ErrSeriesNotFound
+	}
+	p, err := s.client.SeriesProvider.Query().
+		Where(entseriesprovider.IDEQ(providerID), entseriesprovider.SeriesID(id)).
+		Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return "", ErrProviderNotInSeries
+		}
+		return "", fmt.Errorf("series.ProviderCoverURL: load provider %s: %w", providerID, err)
+	}
+	if p.CoverURL == "" {
+		return "", ErrNoCover
+	}
+	return p.CoverURL, nil
 }

@@ -6,6 +6,7 @@ package series_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,7 +26,41 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
+
+// fakeSuwayomiClient is a minimal suwayomi.Client implementation for tests.
+// Only PageBytes is exercised by the cover handlers; all other methods return
+// zero values so they can be implemented with the interface without noise.
+type fakeSuwayomiClient struct {
+	// pageBytes, when set, is called by PageBytes instead of the default stub.
+	pageBytes func(ctx context.Context, url string) ([]byte, string, error)
+}
+
+func (f *fakeSuwayomiClient) Sources(ctx context.Context) ([]suwayomi.Source, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) FetchChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) MangaChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) ChapterPages(ctx context.Context, chapterID int) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) MangaMeta(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{}, nil
+}
+func (f *fakeSuwayomiClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
+	if f.pageBytes != nil {
+		return f.pageBytes(ctx, pageURL)
+	}
+	return nil, "", errors.New("PageBytes: not configured")
+}
 
 const testSecret = "series-handler-test-secret"
 
@@ -38,12 +73,14 @@ type testEnv struct {
 	mangaID   uuid.UUID
 	manhwaID  uuid.UUID
 	triggered *int
+	sw        *fakeSuwayomiClient
 }
 
 // newTestEnv stands up a fully-wired Echo: the series routes registered behind
 // RequireOwner (so the 401 proofs exercise the real middleware), a series.Service
 // over a fresh testdb client and a t.TempDir() storage root, and a valid owner
-// Bearer token minted from the same auth secret.
+// Bearer token minted from the same auth secret. A fakeSuwayomiClient is wired
+// for the cover proxy endpoints; set env.sw.pageBytes to control PageBytes behaviour.
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 
@@ -52,7 +89,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	authSvc := auth.NewService(testSecret)
 	svc := seriessvc.NewService(client, storage, 14)
 	triggered := new(int)
-	h := handler.NewHandler(svc, func() { *triggered++ })
+	sw := &fakeSuwayomiClient{}
+	h := handler.NewHandler(svc, func() { *triggered++ }, sw)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -65,6 +103,9 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/series/:id/providers", h.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", h.RemoveProvider)
 	authed.DELETE("/series/:id", h.DeleteSeries)
+	authed.GET("/series/:id/cover", h.SeriesCover)
+	authed.GET("/series/:id/providers/:providerId/cover", h.ProviderCover)
+	authed.PATCH("/series/:id/metadata-source", h.SetMetadataSource)
 	authed.GET("/categories", h.Categories)
 	authed.GET("/health", h.LibraryHealth)
 
@@ -73,7 +114,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatalf("Issue token: %v", err)
 	}
 
-	return &testEnv{e: e, client: client, token: token, storage: storage, triggered: triggered}
+	return &testEnv{e: e, client: client, token: token, storage: storage, triggered: triggered, sw: sw}
 }
 
 // seed populates two series (Alpha Saga/Manga, Beta Quest/Manhwa) with chapters
@@ -345,6 +386,9 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPatch, "/api/series/" + id + "/providers"},
 		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
 		{http.MethodDelete, "/api/series/" + id + "?deleteFiles=true"},
+		{http.MethodGet, "/api/series/" + id + "/cover"},
+		{http.MethodGet, "/api/series/" + id + "/providers/" + id + "/cover"},
+		{http.MethodPatch, "/api/series/" + id + "/metadata-source"},
 		{http.MethodGet, "/api/categories"},
 		{http.MethodGet, "/api/health"},
 	}
@@ -925,5 +969,185 @@ func TestLibraryHealth_EmptyLibrary(t *testing.T) {
 	}
 	if len(body.Series) != 0 {
 		t.Fatalf("empty library: want 0 series, got %d", len(body.Series))
+	}
+}
+
+// seedWithCover seeds the manga series with a provider that has a cover_url set.
+// Returns the series id and the provider id.
+func seedWithCover(ctx context.Context, t *testing.T, env *testEnv, coverURL string) (seriesID, providerID uuid.UUID) {
+	t.Helper()
+	s := env.client.Series.Create().
+		SetTitle("Cover Test").SetSlug("cover-test").SetCategory(entseries.CategoryManga).
+		SaveX(ctx)
+	p := env.client.SeriesProvider.Create().
+		SetSeriesID(s.ID).SetProvider("testprov").SetImportance(10).SetCoverURL(coverURL).
+		SaveX(ctx)
+	return s.ID, p.ID
+}
+
+// TestSeriesCover_OK seeds a series whose metadata provider has a cover_url, wires
+// the fake client to return PNG bytes, and asserts GET /api/series/:id/cover
+// returns 200 with Content-Type image/png and the correct body.
+func TestSeriesCover_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47} // PNG magic
+	env.sw.pageBytes = func(_ context.Context, _ string) ([]byte, string, error) {
+		return pngBytes, "png", nil
+	}
+
+	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SeriesCover OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
+		t.Errorf("SeriesCover OK: Content-Type want image/png, got %q", ct)
+	}
+	if string(rec.Body.Bytes()) != string(pngBytes) {
+		t.Errorf("SeriesCover OK: body mismatch")
+	}
+}
+
+// TestSeriesCover_NoCover asserts GET /api/series/:id/cover returns 404 when the
+// series has no provider with a cover_url (ErrNoCover → 404).
+func TestSeriesCover_NoCover(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	// Beta Quest has no cover_url on its provider (not seeded).
+	rec := env.do(http.MethodGet, "/api/series/"+env.manhwaID.String()+"/cover", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("SeriesCover NoCover: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSeriesCover_NotFound asserts a missing series id yields 404.
+func TestSeriesCover_NotFound(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodGet, "/api/series/"+uuid.New().String()+"/cover", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("SeriesCover NotFound: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSeriesCover_PageBytesFail asserts a Suwayomi fetch failure yields 502.
+func TestSeriesCover_PageBytesFail(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.sw.pageBytes = func(_ context.Context, _ string) ([]byte, string, error) {
+		return nil, "", errors.New("suwayomi down")
+	}
+	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("SeriesCover PageBytesFail: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestProviderCover_OK asserts GET /api/series/:id/providers/:providerId/cover
+// returns 200 with the correct Content-Type and body.
+func TestProviderCover_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47}
+	env.sw.pageBytes = func(_ context.Context, _ string) ([]byte, string, error) {
+		return pngBytes, "png", nil
+	}
+
+	seriesID, provID := seedWithCover(ctx, t, env, "/api/v1/manga/2/cover")
+	target := "/api/series/" + seriesID.String() + "/providers/" + provID.String() + "/cover"
+	rec := env.do(http.MethodGet, target, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ProviderCover OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
+		t.Errorf("ProviderCover OK: Content-Type want image/png, got %q", ct)
+	}
+}
+
+// TestProviderCover_NotInSeries asserts a provider from a different series yields 400.
+func TestProviderCover_NotInSeries(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	// Use a provider ID that does not belong to env.manhwaID.
+	mangaProvID := firstProviderID(t, env, env.mangaID.String())
+	target := "/api/series/" + env.manhwaID.String() + "/providers/" + mangaProvID + "/cover"
+	rec := env.do(http.MethodGet, target, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("ProviderCover NotInSeries: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSetMetadataSource_OK pins the metadata source to a provider and asserts the
+// response SeriesDetailDTO has that provider with isMetadataSource:true (§16).
+func TestSetMetadataSource_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	provID := firstProviderID(t, env, env.mangaID.String())
+	body := `{"providerId":"` + provID + `"}`
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/metadata-source", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetMetadataSource OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got seriessvc.SeriesDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("SetMetadataSource OK: decode: %v", err)
+	}
+	var found bool
+	for _, p := range got.Providers {
+		if p.ID == provID && p.IsMetadataSource {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("SetMetadataSource OK: provider %s not marked isMetadataSource:true in %+v", provID, got.Providers)
+	}
+}
+
+// TestSetMetadataSource_Null resets the metadata source pin and asserts the
+// response is 200 (auto-resolution resumes).
+func TestSetMetadataSource_Null(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	// First pin it.
+	provID := firstProviderID(t, env, env.mangaID.String())
+	env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/metadata-source", `{"providerId":"`+provID+`"}`)
+
+	// Then reset with null.
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/metadata-source", `{"providerId":null}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetMetadataSource Null: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSetMetadataSource_BadBody asserts a malformed providerId yields 400.
+func TestSetMetadataSource_BadBody(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/metadata-source", `{"providerId":"not-a-uuid"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("SetMetadataSource BadBody: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSetMetadataSource_NotFound asserts a missing series id yields 404.
+func TestSetMetadataSource_NotFound(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodPatch, "/api/series/"+uuid.New().String()+"/metadata-source", `{"providerId":null}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("SetMetadataSource NotFound: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }

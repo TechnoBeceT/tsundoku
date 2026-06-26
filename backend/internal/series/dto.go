@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/technobecet/tsundoku/internal/ent"
 )
 
@@ -24,9 +26,13 @@ type ChapterCounts struct {
 
 // SeriesSummaryDTO is the list-row shape for a single series: identity,
 // display metadata, the chapter-state rollup, and the monitoring flag.
+// DisplayName is the resolved display title from the metadata source provider
+// (falls back to the canonical Series.title). CoverURL is the series cover proxy
+// path ("/api/series/{id}/cover"), empty when no provider has a cover_url.
 type SeriesSummaryDTO struct {
 	ID            string        `json:"id"`
 	Title         string        `json:"title"`
+	DisplayName   string        `json:"displayName"`
 	Slug          string        `json:"slug"`
 	Category      string        `json:"category"`
 	CoverURL      string        `json:"coverUrl"`
@@ -36,10 +42,13 @@ type SeriesSummaryDTO struct {
 }
 
 // SeriesDetailDTO is the full series view: the summary fields plus the series'
-// chapters (ordered by number then chapter_key), its providers, and the monitoring flag.
+// chapters (ordered by number then chapter_key), its providers, and the
+// monitoring flag. DisplayName and CoverURL follow the same resolution as
+// SeriesSummaryDTO.
 type SeriesDetailDTO struct {
 	ID            string        `json:"id"`
 	Title         string        `json:"title"`
+	DisplayName   string        `json:"displayName"`
 	Slug          string        `json:"slug"`
 	Category      string        `json:"category"`
 	CoverURL      string        `json:"coverUrl"`
@@ -63,21 +72,27 @@ type ChapterDTO struct {
 }
 
 // ProviderDTO is one SeriesProvider in a series-detail response. ID is the
-// SeriesProvider UUID (used by Task 5/7 re-rank). Importance is the
-// priority/quality rank (higher = preferred). The health fields (Health,
-// ChaptersBehind, NewestChapterAt, LastSyncedAt, LastError) are derived on
-// read from the source's availability feed and sync state — never persisted.
+// SeriesProvider UUID (used by re-rank). Importance is the priority/quality rank
+// (higher = preferred). Title is this provider's own title for the series.
+// CoverURL is the provider-level cover proxy path
+// ("/api/series/{sid}/providers/{pid}/cover"). IsMetadataSource is true for the
+// resolved metadata provider (the one currently supplying DisplayName + CoverURL).
+// The health fields (Health, ChaptersBehind, NewestChapterAt, LastSyncedAt,
+// LastError) are derived on read — never persisted.
 type ProviderDTO struct {
-	ID              string     `json:"id"`
-	Provider        string     `json:"provider"`
-	Scanlator       string     `json:"scanlator"`
-	Language        string     `json:"language"`
-	Importance      int        `json:"importance"`
-	Health          string     `json:"health"`
-	ChaptersBehind  int        `json:"chaptersBehind"`
-	NewestChapterAt *time.Time `json:"newestChapterAt"`
-	LastSyncedAt    *time.Time `json:"lastSyncedAt"`
-	LastError       string     `json:"lastError"`
+	ID               string     `json:"id"`
+	Provider         string     `json:"provider"`
+	Title            string     `json:"title"`
+	CoverURL         string     `json:"coverUrl"`
+	IsMetadataSource bool       `json:"isMetadataSource"`
+	Scanlator        string     `json:"scanlator"`
+	Language         string     `json:"language"`
+	Importance       int        `json:"importance"`
+	Health           string     `json:"health"`
+	ChaptersBehind   int        `json:"chaptersBehind"`
+	NewestChapterAt  *time.Time `json:"newestChapterAt"`
+	LastSyncedAt     *time.Time `json:"lastSyncedAt"`
+	LastError        string     `json:"lastError"`
 }
 
 // LibraryHealthDTO is the library-wide source-health scan: only series that
@@ -104,13 +119,18 @@ type CategoryCountDTO struct {
 }
 
 // newSummaryDTO maps an ent.Series plus its computed rollup into a summary DTO.
+// s.Edges.Providers must be eagerly loaded; metadataProvider + seriesDisplay
+// resolve DisplayName and CoverURL from the provider set.
 func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
+	meta := metadataProvider(s)
+	dispName, coverURL := seriesDisplay(s, meta)
 	return SeriesSummaryDTO{
 		ID:            s.ID.String(),
 		Title:         s.Title,
+		DisplayName:   dispName,
 		Slug:          s.Slug,
 		Category:      s.Category.String(),
-		CoverURL:      s.CoverURL,
+		CoverURL:      coverURL,
 		Monitored:     s.Monitored,
 		Completed:     s.Completed,
 		ChapterCounts: counts,
@@ -149,18 +169,30 @@ func chapterDisplayName(name string, number *float64) string {
 }
 
 // newProviderDTO maps an ent.SeriesProvider and its computed health into a
-// detail DTO. h carries all derived health fields; they are never persisted.
-func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth) ProviderDTO {
+// detail DTO. seriesID and isMetadataSource are passed in by the caller after
+// resolving the series' metadata provider once for the whole provider slice.
+// CoverURL is the provider-level proxy path when the provider has a non-empty
+// cover_url, else "" (mirroring the series-level seriesDisplay behaviour so the
+// SPA never fires a cover fetch that would 404). Title is the provider's own
+// title for the series (set at ingest, may be "").
+func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID, isMetadataSource bool) ProviderDTO {
+	var coverURL string
+	if p.CoverURL != "" {
+		coverURL = "/api/series/" + seriesID.String() + "/providers/" + p.ID.String() + "/cover"
+	}
 	return ProviderDTO{
-		ID:              p.ID.String(),
-		Provider:        p.Provider,
-		Scanlator:       p.Scanlator,
-		Language:        p.Language,
-		Importance:      p.Importance,
-		Health:          h.Status,
-		ChaptersBehind:  h.ChaptersBehind,
-		NewestChapterAt: h.NewestChapterAt,
-		LastSyncedAt:    h.LastSyncedAt,
-		LastError:       h.LastError,
+		ID:               p.ID.String(),
+		Provider:         p.Provider,
+		Title:            p.Title,
+		CoverURL:         coverURL,
+		IsMetadataSource: isMetadataSource,
+		Scanlator:        p.Scanlator,
+		Language:         p.Language,
+		Importance:       p.Importance,
+		Health:           h.Status,
+		ChaptersBehind:   h.ChaptersBehind,
+		NewestChapterAt:  h.NewestChapterAt,
+		LastSyncedAt:     h.LastSyncedAt,
+		LastError:        h.LastError,
 	}
 }

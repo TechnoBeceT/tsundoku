@@ -29,6 +29,10 @@ func (SeriesProvider) Fields() []ent.Field {
 		field.String("status").Default(""),
 		field.Uint32("flags").Default(0),
 		field.Int("importance").Default(0),
+		// cover_url is this source's thumbnail path (Suwayomi server-relative),
+		// captured at ingest from the source manga. "" when none. Served via the
+		// cover proxy; never loaded directly by the browser.
+		field.String("cover_url").Default(""),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

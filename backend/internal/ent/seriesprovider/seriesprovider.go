@@ -37,6 +37,8 @@ const (
 	FieldFlags = "flags"
 	// FieldImportance holds the string denoting the importance field in the database.
 	FieldImportance = "importance"
+	// FieldCoverURL holds the string denoting the cover_url field in the database.
+	FieldCoverURL = "cover_url"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -95,6 +97,7 @@ var Columns = []string{
 	FieldStatus,
 	FieldFlags,
 	FieldImportance,
+	FieldCoverURL,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -126,6 +129,8 @@ var (
 	DefaultFlags uint32
 	// DefaultImportance holds the default value on creation for the "importance" field.
 	DefaultImportance int
+	// DefaultCoverURL holds the default value on creation for the "cover_url" field.
+	DefaultCoverURL string
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
@@ -197,6 +202,11 @@ func ByFlags(opts ...sql.OrderTermOption) OrderOption {
 // ByImportance orders the results by the importance field.
 func ByImportance(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldImportance, opts...).ToFunc()
+}
+
+// ByCoverURL orders the results by the cover_url field.
+func ByCoverURL(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCoverURL, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

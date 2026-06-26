@@ -91,6 +91,11 @@ func Completed(v bool) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCompleted, v))
 }
 
+// MetadataProviderID applies equality check predicate on the "metadata_provider_id" field. It's identical to MetadataProviderIDEQ.
+func MetadataProviderID(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldMetadataProviderID, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCreatedAt, v))
@@ -464,6 +469,56 @@ func CompletedEQ(v bool) predicate.Series {
 // CompletedNEQ applies the NEQ predicate on the "completed" field.
 func CompletedNEQ(v bool) predicate.Series {
 	return predicate.Series(sql.FieldNEQ(FieldCompleted, v))
+}
+
+// MetadataProviderIDEQ applies the EQ predicate on the "metadata_provider_id" field.
+func MetadataProviderIDEQ(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldMetadataProviderID, v))
+}
+
+// MetadataProviderIDNEQ applies the NEQ predicate on the "metadata_provider_id" field.
+func MetadataProviderIDNEQ(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldMetadataProviderID, v))
+}
+
+// MetadataProviderIDIn applies the In predicate on the "metadata_provider_id" field.
+func MetadataProviderIDIn(vs ...uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldIn(FieldMetadataProviderID, vs...))
+}
+
+// MetadataProviderIDNotIn applies the NotIn predicate on the "metadata_provider_id" field.
+func MetadataProviderIDNotIn(vs ...uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldNotIn(FieldMetadataProviderID, vs...))
+}
+
+// MetadataProviderIDGT applies the GT predicate on the "metadata_provider_id" field.
+func MetadataProviderIDGT(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldGT(FieldMetadataProviderID, v))
+}
+
+// MetadataProviderIDGTE applies the GTE predicate on the "metadata_provider_id" field.
+func MetadataProviderIDGTE(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldGTE(FieldMetadataProviderID, v))
+}
+
+// MetadataProviderIDLT applies the LT predicate on the "metadata_provider_id" field.
+func MetadataProviderIDLT(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldLT(FieldMetadataProviderID, v))
+}
+
+// MetadataProviderIDLTE applies the LTE predicate on the "metadata_provider_id" field.
+func MetadataProviderIDLTE(v uuid.UUID) predicate.Series {
+	return predicate.Series(sql.FieldLTE(FieldMetadataProviderID, v))
+}
+
+// MetadataProviderIDIsNil applies the IsNil predicate on the "metadata_provider_id" field.
+func MetadataProviderIDIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldMetadataProviderID))
+}
+
+// MetadataProviderIDNotNil applies the NotNil predicate on the "metadata_provider_id" field.
+func MetadataProviderIDNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldMetadataProviderID))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

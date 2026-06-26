@@ -36,6 +36,9 @@ import (
 //   - /api/series/:id/completed                    — toggle completed (finished) flag (RequireOwner).
 //   - /api/series/:id/providers                    — re-rank provider importances (RequireOwner).
 //   - /api/series/:id/providers/:providerId        — remove a source (RequireOwner).
+//   - /api/series/:id/cover                        — metadata-source cover proxy (RequireOwner).
+//   - /api/series/:id/providers/:providerId/cover  — per-provider cover proxy (RequireOwner).
+//   - /api/series/:id/metadata-source              — pin metadata source (RequireOwner).
 //   - /api/categories                              — per-category counts (RequireOwner).
 //   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
@@ -68,7 +71,7 @@ func registerRoutes(
 	// seriesSvc is shared: reused by both the series handler and the imports
 	// handler (to render SeriesDetailDTO after Adopt).
 	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays)
-	seriesH := seriesh.NewHandler(seriesSvc, trigger)
+	seriesH := seriesh.NewHandler(seriesSvc, trigger, suwayomiClient)
 	authed.GET("/series", seriesH.List)
 	authed.GET("/series/:id", seriesH.Detail)
 	authed.PATCH("/series/:id/category", seriesH.SetCategory)
@@ -77,6 +80,9 @@ func registerRoutes(
 	authed.PATCH("/series/:id/providers", seriesH.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", seriesH.RemoveProvider)
 	authed.DELETE("/series/:id", seriesH.DeleteSeries)
+	authed.GET("/series/:id/cover", seriesH.SeriesCover)
+	authed.GET("/series/:id/providers/:providerId/cover", seriesH.ProviderCover)
+	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)
 	authed.GET("/categories", seriesH.Categories)
 	authed.GET("/health", seriesH.LibraryHealth)
 

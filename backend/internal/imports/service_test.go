@@ -87,6 +87,9 @@ func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.C
 func (f *fakeClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	return nil, nil
 }
+func (f *fakeClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{}, nil
+}
 func (f *fakeClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
 	return nil, nil
 }

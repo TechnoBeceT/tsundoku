@@ -124,6 +124,12 @@ type Client interface {
 	// relative paths, not absolute URLs.
 	ChapterPages(ctx context.Context, chapterID int) ([]string, error)
 
+	// MangaMeta returns the stored metadata for the given mangaID using the
+	// manga(id: $id) query. It does NOT contact the upstream source; the manga
+	// must already exist in Suwayomi's library (added via Search/AddSeries).
+	// Returns the full Manga struct including ThumbnailURL (nil when absent).
+	MangaMeta(ctx context.Context, mangaID int) (Manga, error)
+
 	// PageBytes downloads the image at pageURL (an absolute URL) and returns
 	// the raw bytes and bare file extension (e.g. "jpg", "png") without a
 	// leading dot. Extension detection uses http.DetectContentType on the first
@@ -435,6 +441,47 @@ func (c *httpClient) MangaChapters(ctx context.Context, mangaID int) ([]Chapter,
 		return nil, err
 	}
 	return mapChapterNodes(data.Chapters.Nodes), nil
+}
+
+// --- MangaMeta ---------------------------------------------------------------
+
+// gqlMangaMetaData is the typed shape of the `data` field for the manga(id) query.
+type gqlMangaMetaData struct {
+	Manga struct {
+		ID           int     `json:"id"`
+		Title        string  `json:"title"`
+		URL          string  `json:"url"`
+		ThumbnailURL *string `json:"thumbnailUrl"`
+	} `json:"manga"`
+}
+
+const mangaMetaQuery = `
+query MangaMeta($id: Int!) {
+  manga(id: $id) {
+    id
+    title
+    url
+    thumbnailUrl
+  }
+}`
+
+// MangaMeta returns the stored metadata for the given mangaID via the
+// manga(id: $id) GraphQL query. The manga must already exist in Suwayomi's
+// library (added via Search / Ingest). ThumbnailURL is nil when the server
+// does not provide one.
+func (c *httpClient) MangaMeta(ctx context.Context, mangaID int) (Manga, error) {
+	vars := map[string]any{"id": mangaID}
+	var data gqlMangaMetaData
+	if err := c.doGraphQL(ctx, mangaMetaQuery, vars, &data); err != nil {
+		return Manga{}, err
+	}
+	n := data.Manga
+	return Manga{
+		ID:           n.ID,
+		Title:        n.Title,
+		URL:          n.URL,
+		ThumbnailURL: n.ThumbnailURL,
+	}, nil
 }
 
 // --- ChapterPages ------------------------------------------------------------

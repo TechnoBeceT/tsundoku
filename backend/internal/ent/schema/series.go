@@ -40,6 +40,11 @@ func (Series) Fields() []ent.Field {
 		// sweep and excluded from source-health. Default false → existing rows
 		// backfill via the column default (no data migration).
 		field.Bool("completed").Default(false),
+		// metadata_provider_id selects which SeriesProvider supplies the series'
+		// DISPLAY name + cover. Nil = auto (highest-importance provider). NEVER
+		// changes the canonical Series.title (slug/folder/Komga); display name +
+		// cover are resolved on read.
+		field.UUID("metadata_provider_id", uuid.UUID{}).Optional().Nillable(),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

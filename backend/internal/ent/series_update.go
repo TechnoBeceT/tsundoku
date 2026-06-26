@@ -143,6 +143,26 @@ func (_u *SeriesUpdate) SetNillableCompleted(v *bool) *SeriesUpdate {
 	return _u
 }
 
+// SetMetadataProviderID sets the "metadata_provider_id" field.
+func (_u *SeriesUpdate) SetMetadataProviderID(v uuid.UUID) *SeriesUpdate {
+	_u.mutation.SetMetadataProviderID(v)
+	return _u
+}
+
+// SetNillableMetadataProviderID sets the "metadata_provider_id" field if the given value is not nil.
+func (_u *SeriesUpdate) SetNillableMetadataProviderID(v *uuid.UUID) *SeriesUpdate {
+	if v != nil {
+		_u.SetMetadataProviderID(*v)
+	}
+	return _u
+}
+
+// ClearMetadataProviderID clears the value of the "metadata_provider_id" field.
+func (_u *SeriesUpdate) ClearMetadataProviderID() *SeriesUpdate {
+	_u.mutation.ClearMetadataProviderID()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesUpdate) SetUpdatedAt(v time.Time) *SeriesUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -307,6 +327,12 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Completed(); ok {
 		_spec.SetField(series.FieldCompleted, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.MetadataProviderID(); ok {
+		_spec.SetField(series.FieldMetadataProviderID, field.TypeUUID, value)
+	}
+	if _u.mutation.MetadataProviderIDCleared() {
+		_spec.ClearField(series.FieldMetadataProviderID, field.TypeUUID)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)
@@ -533,6 +559,26 @@ func (_u *SeriesUpdateOne) SetNillableCompleted(v *bool) *SeriesUpdateOne {
 	return _u
 }
 
+// SetMetadataProviderID sets the "metadata_provider_id" field.
+func (_u *SeriesUpdateOne) SetMetadataProviderID(v uuid.UUID) *SeriesUpdateOne {
+	_u.mutation.SetMetadataProviderID(v)
+	return _u
+}
+
+// SetNillableMetadataProviderID sets the "metadata_provider_id" field if the given value is not nil.
+func (_u *SeriesUpdateOne) SetNillableMetadataProviderID(v *uuid.UUID) *SeriesUpdateOne {
+	if v != nil {
+		_u.SetMetadataProviderID(*v)
+	}
+	return _u
+}
+
+// ClearMetadataProviderID clears the value of the "metadata_provider_id" field.
+func (_u *SeriesUpdateOne) ClearMetadataProviderID() *SeriesUpdateOne {
+	_u.mutation.ClearMetadataProviderID()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesUpdateOne) SetUpdatedAt(v time.Time) *SeriesUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -727,6 +773,12 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	}
 	if value, ok := _u.mutation.Completed(); ok {
 		_spec.SetField(series.FieldCompleted, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.MetadataProviderID(); ok {
+		_spec.SetField(series.FieldMetadataProviderID, field.TypeUUID, value)
+	}
+	if _u.mutation.MetadataProviderIDCleared() {
+		_spec.ClearField(series.FieldMetadataProviderID, field.TypeUUID)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)

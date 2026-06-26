@@ -780,6 +780,107 @@ func TestClient_MangaChapters_NullableFields(t *testing.T) {
 	}
 }
 
+// --- MangaMeta ---------------------------------------------------------------
+
+// TestClient_MangaMeta verifies that MangaMeta decodes a manga(id) GraphQL
+// response and maps all fields onto the returned Manga correctly.
+func TestClient_MangaMeta(t *testing.T) {
+	const (
+		mangaID      = 7
+		wantTitle    = "Src Title"
+		wantURL      = "/m/7"
+		wantThumbURL = "/api/v1/manga/7/thumbnail"
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/graphql" {
+			http.Error(w, "wrong endpoint", http.StatusNotFound)
+			return
+		}
+		resp := graphqlResponse(t, map[string]any{
+			"manga": map[string]any{
+				"id":           mangaID,
+				"title":        wantTitle,
+				"url":          wantURL,
+				"thumbnailUrl": wantThumbURL,
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	manga, err := client.MangaMeta(context.Background(), mangaID)
+	if err != nil {
+		t.Fatalf("MangaMeta() error = %v", err)
+	}
+	if manga.ID != mangaID {
+		t.Errorf("manga.ID = %d, want %d", manga.ID, mangaID)
+	}
+	if manga.Title != wantTitle {
+		t.Errorf("manga.Title = %q, want %q", manga.Title, wantTitle)
+	}
+	if manga.URL != wantURL {
+		t.Errorf("manga.URL = %q, want %q", manga.URL, wantURL)
+	}
+	if manga.ThumbnailURL == nil {
+		t.Fatal("manga.ThumbnailURL is nil, want non-nil")
+	}
+	if *manga.ThumbnailURL != wantThumbURL {
+		t.Errorf("manga.ThumbnailURL = %q, want %q", *manga.ThumbnailURL, wantThumbURL)
+	}
+}
+
+// TestClient_MangaMeta_NilThumbnail verifies that a null thumbnailUrl in the
+// GraphQL response produces a nil ThumbnailURL pointer on the returned Manga.
+func TestClient_MangaMeta_NilThumbnail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, map[string]any{
+			"manga": map[string]any{
+				"id":           42,
+				"title":        "No Cover",
+				"url":          "/m/42",
+				"thumbnailUrl": nil,
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	manga, err := client.MangaMeta(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("MangaMeta() error = %v", err)
+	}
+	if manga.ThumbnailURL != nil {
+		t.Errorf("manga.ThumbnailURL = %q, want nil", *manga.ThumbnailURL)
+	}
+}
+
+// TestClient_MangaMeta_GraphQLError verifies that GraphQL application errors
+// are propagated as Go errors from MangaMeta.
+func TestClient_MangaMeta_GraphQLError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, nil, []map[string]any{
+			{"message": "manga not found"},
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	_, err := client.MangaMeta(context.Background(), 999)
+	if err == nil {
+		t.Fatal("MangaMeta() with GraphQL errors: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "manga not found") {
+		t.Errorf("error %q should contain the GraphQL error message", err.Error())
+	}
+}
+
 // --- Interface seam ----------------------------------------------------------
 
 // TestClientIsInterface verifies that Client is an interface type and that the

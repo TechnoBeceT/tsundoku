@@ -153,6 +153,7 @@ var (
 		{Name: "category", Type: field.TypeEnum, Enums: []string{"Manga", "Manhwa", "Manhua", "Comic", "Other"}, Default: "Other"},
 		{Name: "monitored", Type: field.TypeBool, Default: true},
 		{Name: "completed", Type: field.TypeBool, Default: false},
+		{Name: "metadata_provider_id", Type: field.TypeUUID, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}
@@ -175,6 +176,7 @@ var (
 		{Name: "status", Type: field.TypeString, Default: ""},
 		{Name: "flags", Type: field.TypeUint32, Default: 0},
 		{Name: "importance", Type: field.TypeInt, Default: 0},
+		{Name: "cover_url", Type: field.TypeString, Default: ""},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 		{Name: "series_id", Type: field.TypeUUID},
@@ -187,7 +189,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "series_providers_series_providers",
-				Columns:    []*schema.Column{SeriesProvidersColumns[13]},
+				Columns:    []*schema.Column{SeriesProvidersColumns[14]},
 				RefColumns: []*schema.Column{SeriesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
