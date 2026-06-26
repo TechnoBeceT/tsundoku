@@ -179,6 +179,54 @@ func logPageURLFormat(t *testing.T, pageURL string) {
 	}
 }
 
+// TestShape4_BrowseEnumType validates the discover-browse shape assumption:
+// the GraphQL enum TYPE NAME `FetchSourceMangaType` is correct.
+//
+// Why this needs a real Suwayomi: the existing searchMutation hardcodes
+// `type: SEARCH` as an inline literal, so the type name was never declared as a
+// typed variable before. Browse introduces `$type: FetchSourceMangaType!` (see
+// browseMutation in client.go) — the FIRST time that enum type name crosses the
+// wire. The httptest fakes in client_test.go echo back canned JSON and so cannot
+// catch a wrong type name or a server-side schema rejection. Only a real
+// Suwayomi parses the GraphQL document and validates the declared variable type
+// against its schema.
+//
+// What this confirms: calling Browse(...BrowsePopular...) against the real
+// fixture returns NO error. A wrong `FetchSourceMangaType` (or a wrong enum
+// VALUE like POPULAR) would surface as a GraphQL schema/validation error from
+// doGraphQL — exactly the failure mode this test exists to catch. A zero-manga
+// result is acceptable: the point is that the enum/type name is accepted and
+// hasNextPage parses (BrowseResult decodes cleanly). We additionally exercise
+// BrowseLatest (LATEST reuses the same FetchSourceMangaType), but tolerate a
+// source-capability error there — the Local source may not support a "latest"
+// listing, and that is NOT a schema/type-name rejection.
+func TestShape4_BrowseEnumType(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	// POPULAR is the load-bearing assertion: it must be accepted as a value of
+	// FetchSourceMangaType. Any error here means the enum type name or value is
+	// wrong and must fail the test.
+	popular, err := client.Browse(ctx, testharness.LocalSourceID, suwayomi.BrowsePopular, 1)
+	if err != nil {
+		t.Fatalf("Browse(sourceId=%q, type=POPULAR, page=1): %v\n(check: is FetchSourceMangaType! the correct enum type name, and POPULAR a valid value?)", testharness.LocalSourceID, err)
+	}
+	t.Logf("CONFIRMED: FetchSourceMangaType! accepted with value POPULAR; got %d mangas, hasNextPage=%v", len(popular.Mangas), popular.HasNextPage)
+
+	// LATEST reuses the same FetchSourceMangaType. The Local source may not
+	// support a latest listing — tolerate a source-capability error, but still
+	// log the outcome so the test record shows whether LATEST round-tripped.
+	latest, err := client.Browse(ctx, testharness.LocalSourceID, suwayomi.BrowseLatest, 1)
+	if err != nil {
+		t.Logf("NOTE: Browse(type=LATEST) returned an error — tolerated as a possible source-capability limitation (NOT a type-name rejection): %v", err)
+	} else {
+		t.Logf("CONFIRMED: FetchSourceMangaType! accepted with value LATEST; got %d mangas, hasNextPage=%v", len(latest.Mangas), latest.HasNextPage)
+	}
+}
+
 // TestE2E_AddSeriesDispatchDownload is the Milestone 2 end-to-end proof:
 //
 //	real Suwayomi (local source) →
