@@ -96,9 +96,9 @@ func (i *Ingest) AddSeries(
 	}
 
 	// 3. Upsert the SeriesProvider row, keyed by (series_id, provider).
-	//    title is passed so that SeriesProvider.Title is populated for downstream
-	//    CBZ rendering (ComicInfo.Series → Komga series grouping).
-	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID, title)
+	//    MangaMeta is called inside upsertSeriesProvider to populate the source's
+	//    own title and cover URL — distinct from the canonical series title above.
+	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: upsert series provider %q for series %s: %w", sourceName, series.ID, err)
 	}
@@ -159,33 +159,46 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 }
 
 // upsertSeriesProvider finds the SeriesProvider row by (series_id, provider)
-// or creates it. On find it updates suwayomi_id and title in case they changed.
-// title is the manga display title from Suwayomi; it is stored so that downstream
-// CBZ rendering can populate ComicInfo.Series for Komga series grouping.
-// Returns the existing or newly created row.
+// or creates it. It fetches the source's own metadata via MangaMeta so that
+// each SeriesProvider row carries the title and cover URL as the source knows
+// them — independent of the canonical Series.title set by the caller. On find
+// it refreshes suwayomi_id, title, and cover_url in case the manga was updated
+// upstream. Returns the existing or newly created row.
 func (i *Ingest) upsertSeriesProvider(
 	ctx context.Context,
 	seriesID uuid.UUID,
 	provider string,
 	suwayomiMangaID int,
-	title string,
 ) (*ent.SeriesProvider, error) {
-	existing, err := i.db.SeriesProvider.Query().
+	// Fetch the source's own title and cover so SeriesProvider reflects what
+	// this specific source knows about the manga, not the canonical adopt title.
+	meta, err := i.client.MangaMeta(ctx, suwayomiMangaID)
+	if err != nil {
+		return nil, fmt.Errorf("manga meta (series=%s provider=%q manga=%d): %w", seriesID, provider, suwayomiMangaID, err)
+	}
+	srcTitle := meta.Title
+	cover := ""
+	if meta.ThumbnailURL != nil {
+		cover = *meta.ThumbnailURL
+	}
+
+	existing, existErr := i.db.SeriesProvider.Query().
 		Where(
 			entseriesprovider.SeriesID(seriesID),
 			entseriesprovider.Provider(provider),
 		).
 		First(ctx)
-	if err != nil && !ent.IsNotFound(err) {
+	if existErr != nil && !ent.IsNotFound(existErr) {
 		// Defensive path: reachable only on DB connection loss or cancelled context.
-		return nil, fmt.Errorf("query (series=%s provider=%q): %w", seriesID, provider, err)
+		return nil, fmt.Errorf("query (series=%s provider=%q): %w", seriesID, provider, existErr)
 	}
 	if existing != nil {
-		// Keep suwayomi_id and title fresh in case the manga was re-added from a
-		// different Suwayomi instance or the title has been corrected upstream.
+		// Keep suwayomi_id, source title and cover fresh in case the manga was
+		// re-added from a different Suwayomi instance or updated upstream.
 		updated, updateErr := i.db.SeriesProvider.UpdateOne(existing).
 			SetSuwayomiID(suwayomiMangaID).
-			SetTitle(title).
+			SetTitle(srcTitle).
+			SetCoverURL(cover).
 			Save(ctx)
 		if updateErr != nil {
 			// Defensive path: reachable only on DB connection loss mid-operation.
@@ -198,7 +211,8 @@ func (i *Ingest) upsertSeriesProvider(
 		SetSeriesID(seriesID).
 		SetProvider(provider).
 		SetSuwayomiID(suwayomiMangaID).
-		SetTitle(title).
+		SetTitle(srcTitle).
+		SetCoverURL(cover).
 		// importance=0 is the schema default; multi-source ranking is M3/M4.
 		Save(ctx)
 	if createErr != nil {

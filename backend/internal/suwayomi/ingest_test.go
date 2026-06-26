@@ -23,8 +23,9 @@ import (
 
 // --- stub Client for ingest tests --------------------------------------------
 
-// ingestStubClient implements suwayomi.Client with canned responses for Search
-// and FetchChapters. Other methods panic if called — Ingest must not call them.
+// ingestStubClient implements suwayomi.Client with canned responses for Search,
+// FetchChapters, and MangaMeta. Other methods panic if called — Ingest must not
+// call them.
 type ingestStubClient struct {
 	// searchResults is the slice returned by Search.
 	searchResults []suwayomi.Manga
@@ -34,6 +35,10 @@ type ingestStubClient struct {
 	chapters []suwayomi.Chapter
 	// chaptersErr is the error returned by FetchChapters (nil = success).
 	chaptersErr error
+	// mangaMeta is the Manga returned by MangaMeta.
+	mangaMeta suwayomi.Manga
+	// mangaMetaErr is the error returned by MangaMeta (nil = success).
+	mangaMetaErr error
 }
 
 func (s *ingestStubClient) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
@@ -44,15 +49,16 @@ func (s *ingestStubClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.C
 	return s.chapters, s.chaptersErr
 }
 
-// Ingest must never call these methods in M2; panic loudly if reached.
+func (s *ingestStubClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
+	return s.mangaMeta, s.mangaMetaErr
+}
+
+// Ingest must never call these methods; panic loudly if reached.
 func (s *ingestStubClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
 	panic("ingestStubClient.Sources: must not be called by Ingest")
 }
 func (s *ingestStubClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	panic("ingestStubClient.MangaChapters: must not be called by Ingest (use FetchChapters)")
-}
-func (s *ingestStubClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
-	panic("ingestStubClient.MangaMeta: must not be called by Ingest")
 }
 func (s *ingestStubClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
 	panic("ingestStubClient.ChapterPages: must not be called by Ingest")
@@ -198,6 +204,9 @@ func TestIngest_AddSeries_Basic(t *testing.T) {
 	sc := &ingestStubClient{
 		searchResults: []suwayomi.Manga{{ID: mangaID, Title: mangaTitle}},
 		chapters:      stubs,
+		// MangaMeta must return the source title — the same value as the adopt title
+		// here because this test does not distinguish canonical from source titles.
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
 	}
 
 	ing := suwayomi.NewIngest(sc, client)
@@ -235,7 +244,12 @@ func TestIngest_AddSeries_Idempotent(t *testing.T) {
 	)
 
 	stubs := makeChapters(k)
-	sc := &ingestStubClient{chapters: stubs}
+	sc := &ingestStubClient{
+		chapters: stubs,
+		// MangaMeta returns the same title on every call — idempotency test does
+		// not exercise per-source title divergence.
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
+	}
 	ing := suwayomi.NewIngest(sc, client)
 
 	// First call.
@@ -345,7 +359,10 @@ func TestIngest_AddSeries_UnnumberedChapter(t *testing.T) {
 			PageCount:  12,
 		},
 	}
-	sc := &ingestStubClient{chapters: stubs}
+	sc := &ingestStubClient{
+		chapters:  stubs,
+		mangaMeta: suwayomi.Manga{Title: "Special Series"},
+	}
 	ing := suwayomi.NewIngest(sc, client)
 
 	result, err := ing.AddSeries(ctx, "source", 55, "Special Series")
@@ -387,7 +404,12 @@ func TestIngest_AddSeries_TitleUpdate(t *testing.T) {
 	)
 
 	stubs := makeChapters(1)
-	sc := &ingestStubClient{chapters: stubs}
+	sc := &ingestStubClient{
+		chapters: stubs,
+		// MangaMeta returns a fixed source title — this test focuses on Series.Title
+		// (canonical) updating, not on per-source title divergence.
+		mangaMeta: suwayomi.Manga{Title: "source title"},
+	}
 	ing := suwayomi.NewIngest(sc, client)
 
 	// First call: creates the Series row.
@@ -419,49 +441,175 @@ func TestIngest_AddSeries_TitleUpdate(t *testing.T) {
 }
 
 // TestIngest_AddSeries_SeriesProviderTitle verifies that upsertSeriesProvider
-// stores the manga display title in SeriesProvider.Title on both the create and
-// the update path. A non-empty title is required so that downstream CBZ rendering
-// writes a non-empty ComicInfo.Series element for Komga series grouping.
+// stores the source's own title (from MangaMeta) in SeriesProvider.Title on
+// both the create and the update path — NOT the canonical adopt title.
+// A non-empty title is required so that downstream CBZ rendering writes a
+// non-empty ComicInfo.Series element for Komga series grouping.
 func TestIngest_AddSeries_SeriesProviderTitle(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 
 	const (
-		mangaID      = 77
-		initialTitle = "Dragon Reborn"
-		// updatedTitle differs only in casing so disk.Slugify produces the same
-		// slug ("dragon-reborn") — the upsertSeries call reuses the existing
-		// Series row and we get exactly one SeriesProvider to assert against.
-		updatedTitle = "DRAGON REBORN"
-		sourceName   = "test-source"
+		mangaID        = 77
+		canonicalTitle = "Dragon Reborn"
+		// sourceTitle is what the source (Suwayomi) knows the manga as — it can
+		// differ in casing or localisation from the canonical adopt title.
+		sourceTitle = "Dragon Reborn (Source)"
+		sourceName  = "test-source"
 	)
 
 	stubs := makeChapters(1)
-	sc := &ingestStubClient{chapters: stubs}
+	sc := &ingestStubClient{
+		chapters:  stubs,
+		mangaMeta: suwayomi.Manga{Title: sourceTitle},
+	}
 	ing := suwayomi.NewIngest(sc, client)
 
-	// ── Create path: title must be stored on first AddSeries ─────────────────
-	if _, err := ing.AddSeries(ctx, sourceName, mangaID, initialTitle); err != nil {
+	// ── Create path: source title must be stored on first AddSeries ──────────
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle); err != nil {
 		t.Fatalf("first AddSeries: %v", err)
 	}
 
 	sp := client.SeriesProvider.Query().OnlyX(ctx)
-	if sp.Title != initialTitle {
-		t.Errorf("SeriesProvider.Title after create: got %q, want %q", sp.Title, initialTitle)
+	if sp.Title != sourceTitle {
+		t.Errorf("SeriesProvider.Title after create: got %q, want %q (source title from MangaMeta)", sp.Title, sourceTitle)
+	}
+	// Series.Title must remain the canonical title, not the source title.
+	series := client.Series.Query().OnlyX(ctx)
+	if series.Title != canonicalTitle {
+		t.Errorf("Series.Title: got %q, want %q (canonical must not be changed by source title)", series.Title, canonicalTitle)
 	}
 
-	// ── Update path: title must be refreshed on re-add with a changed title ──
-	if _, err := ing.AddSeries(ctx, sourceName, mangaID, updatedTitle); err != nil {
-		t.Fatalf("second AddSeries (title change): %v", err)
+	// ── Update path: source title must be refreshed on re-add ────────────────
+	// Simulate a source title change by updating the stub.
+	updatedSourceTitle := "Dragon Reborn (Source v2)"
+	sc.mangaMeta = suwayomi.Manga{Title: updatedSourceTitle}
+
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle); err != nil {
+		t.Fatalf("second AddSeries: %v", err)
 	}
 
 	sp = client.SeriesProvider.Query().OnlyX(ctx)
-	if sp.Title != updatedTitle {
-		t.Errorf("SeriesProvider.Title after update: got %q, want %q", sp.Title, updatedTitle)
+	if sp.Title != updatedSourceTitle {
+		t.Errorf("SeriesProvider.Title after update: got %q, want %q", sp.Title, updatedSourceTitle)
 	}
 
 	// Only one SeriesProvider row must exist (idempotent upsert).
 	if n := len(client.SeriesProvider.Query().AllX(ctx)); n != 1 {
 		t.Errorf("SeriesProvider count: got %d, want 1", n)
+	}
+}
+
+// --- per-source metadata tests -----------------------------------------------
+
+// metaClientStub is a purpose-built stub for the per-source metadata tests.
+// Unlike ingestStubClient (which panics on MangaMeta), this stub returns
+// configurable values for MangaMeta, exercising the T3 code path.
+// Methods that Ingest must not call still panic — this keeps the invariant that
+// AddSeries only touches FetchChapters and MangaMeta.
+type metaClientStub struct {
+	chapters     []suwayomi.Chapter
+	chaptersErr  error
+	mangaMeta    suwayomi.Manga
+	mangaMetaErr error
+}
+
+func (s *metaClientStub) Sources(_ context.Context) ([]suwayomi.Source, error) {
+	panic("metaClientStub: Sources must not be called by Ingest")
+}
+func (s *metaClientStub) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
+	panic("metaClientStub: Search must not be called by Ingest")
+}
+func (s *metaClientStub) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
+	return s.chapters, s.chaptersErr
+}
+func (s *metaClientStub) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
+	panic("metaClientStub: MangaChapters must not be called by Ingest (use FetchChapters)")
+}
+func (s *metaClientStub) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
+	return s.mangaMeta, s.mangaMetaErr
+}
+func (s *metaClientStub) ChapterPages(_ context.Context, _ int) ([]string, error) {
+	panic("metaClientStub: ChapterPages must not be called by Ingest")
+}
+func (s *metaClientStub) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
+	panic("metaClientStub: PageBytes must not be called by Ingest")
+}
+
+// ptrStr returns a pointer to v.
+func ptrStr(v string) *string { return &v }
+
+// TestIngest_AddSeries_PerSourceMetadata verifies that AddSeries stores the
+// source's own title (from MangaMeta) on SeriesProvider.Title instead of the
+// canonical adopt title, and stores the source thumbnail as SeriesProvider.CoverURL.
+// Series.Title must remain the canonical adopt title, unchanged.
+func TestIngest_AddSeries_PerSourceMetadata(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID        = 7
+		canonicalTitle = "Canonical"
+		sourceTitle    = "Source-Specific Title"
+		sourceCover    = "/api/v1/manga/7/thumbnail"
+		sourceName     = "test-source"
+	)
+
+	sc := &metaClientStub{
+		chapters: makeChapters(1),
+		mangaMeta: suwayomi.Manga{
+			ID:           mangaID,
+			Title:        sourceTitle,
+			ThumbnailURL: ptrStr(sourceCover),
+		},
+	}
+
+	ing := suwayomi.NewIngest(sc, client)
+	_, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle)
+	if err != nil {
+		t.Fatalf("AddSeries: unexpected error: %v", err)
+	}
+
+	// Series.Title must be the canonical adopt title, not the source title.
+	series := client.Series.Query().OnlyX(ctx)
+	if series.Title != canonicalTitle {
+		t.Errorf("Series.Title: got %q, want %q (canonical must not be overwritten by source title)",
+			series.Title, canonicalTitle)
+	}
+
+	// SeriesProvider.Title must be the source-specific title from MangaMeta.
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Title != sourceTitle {
+		t.Errorf("SeriesProvider.Title: got %q, want %q (must use source title from MangaMeta, NOT canonical)",
+			sp.Title, sourceTitle)
+	}
+	// SeriesProvider.CoverURL must be the source thumbnail from MangaMeta.
+	if sp.CoverURL != sourceCover {
+		t.Errorf("SeriesProvider.CoverURL: got %q, want %q",
+			sp.CoverURL, sourceCover)
+	}
+}
+
+// TestIngest_AddSeries_MangaMetaError verifies that a MangaMeta client error is
+// propagated and no SeriesProvider row is created (the series row is created
+// first, but the provider/chapter rows must not be).
+func TestIngest_AddSeries_MangaMetaError(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	sentinel := errors.New("suwayomi: manga meta unavailable")
+	sc := &metaClientStub{
+		chapters:     makeChapters(1),
+		mangaMetaErr: sentinel,
+	}
+	ing := suwayomi.NewIngest(sc, client)
+
+	_, err := ing.AddSeries(ctx, "src", 7, "Some Series")
+	if !errors.Is(err, sentinel) {
+		t.Errorf("AddSeries: err got %v, want to wrap %v", err, sentinel)
+	}
+	// No SeriesProvider rows should have been created.
+	if n := len(client.SeriesProvider.Query().AllX(ctx)); n != 0 {
+		t.Errorf("SeriesProvider count after MangaMeta error: got %d, want 0", n)
 	}
 }
