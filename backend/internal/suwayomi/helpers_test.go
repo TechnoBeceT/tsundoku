@@ -51,6 +51,12 @@ func TestHelperProcess(t *testing.T) {
 		fmt.Println("You are running Javalin")
 		time.Sleep(10 * time.Second)
 
+	case "exit_before_ready":
+		// Exit immediately WITHOUT emitting the ready signal — simulates a boot
+		// crash (e.g. bad Postgres credentials/host). Non-zero so cmd.Wait reports
+		// an exit error, exercising the wrapped-error path in waitReady.
+		os.Exit(3)
+
 	case "never_ready":
 		// Never emit the ready signal — simulates a stuck startup.
 		time.Sleep(10 * time.Second)
@@ -92,6 +98,12 @@ func fakeNeverReady(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 // after readyDelay — used by the don't-kill-on-timeout test.
 func fakeReadyDelayed(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 	return helperCmd(ctx, "ready_delayed", "")
+}
+
+// fakeExitBeforeReady is a CommandContextFunc whose process exits immediately
+// without emitting the ready signal — used by the boot-crash test.
+func fakeExitBeforeReady(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+	return helperCmd(ctx, "exit_before_ready", "")
 }
 
 // ensure the CommandContextFunc type satisfies the seam expected by SetCommandContext.

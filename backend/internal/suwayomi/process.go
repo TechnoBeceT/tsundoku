@@ -206,8 +206,12 @@ func (pm *ProcessManager) launch(ctx context.Context, jarPath string) (<-chan st
 // rootDir/tmpdir args already use. The DatabaseURL is the bare postgresql://
 // form: Suwayomi prepends "jdbc:" itself (DBManager.createHikariDataSource).
 //
-// The password is part of the returned args (the JVM needs it) but is never
-// logged — launch() logs only the jar path and java executable.
+// The password is part of the returned args (the JVM needs it) and is never
+// logged — launch() logs only the jar path and java executable. NOTE the
+// residual: because it is passed as a JVM -D argument it is visible in the
+// process command line (ps / /proc/<pid>/cmdline) to local users. Acceptable
+// under the single-owner homelab threat model; writing it to server.conf
+// instead is a deferred hardening (see backend/CLAUDE.md deferred notes).
 func databaseArgs(cfg config.SuwayomiConfig) []string {
 	if cfg.DatabaseType == "" {
 		return nil
@@ -220,15 +224,19 @@ func databaseArgs(cfg config.SuwayomiConfig) []string {
 	}
 }
 
-// waitReady blocks until readyCh is closed (ready) or ctx is cancelled.
+// waitReady blocks until one of three outcomes:
+//   - readyCh is closed (the ready signal appeared) → returns nil;
+//   - the process exits before becoming ready (a boot crash, e.g. bad Postgres
+//     credentials/host) → returns an error (the process is already gone, so it is
+//     NOT killed); this surfaces the failure instead of blocking forever;
+//   - ctx is cancelled (a deliberate shutdown) → calls Stop and returns ctx.Err().
 //
-// StartTimeout is a SOFT WARN THRESHOLD, not a kill deadline: when it elapses
-// the process is NOT killed — waitReady logs one loud warning and keeps waiting
-// for the ready signal. A long startup is almost always an H2/Postgres schema
+// StartTimeout is a SOFT WARN THRESHOLD, not a kill deadline: when it elapses the
+// process is NOT killed — waitReady logs one loud warning and keeps waiting for
+// the ready signal. A long startup is almost always an H2/Postgres schema
 // migration, and killing the JVM mid-migration is the exact DB-corruption mode
 // this milestone eliminates (H2 auto-commits DDL, so a SIGKILL leaves a
-// half-applied schema). Only ctx cancellation — a deliberate shutdown — calls
-// Stop. ctx must be the same context passed to Start.
+// half-applied schema). ctx must be the same context passed to Start.
 func (pm *ProcessManager) waitReady(ctx context.Context, readyCh <-chan struct{}) error {
 	timeout := pm.cfg.StartTimeout
 	if timeout <= 0 {
@@ -237,8 +245,15 @@ func (pm *ProcessManager) waitReady(ctx context.Context, readyCh <-chan struct{}
 		timeout = 2 * time.Minute
 	}
 
+	// Capture the waiter channel before the loop (mirrors Stop). It is closed by
+	// the background waiter goroutine in launch() when cmd.Wait() returns, so this
+	// arm observes a process that exits before signalling ready.
+	pm.mu.Lock()
+	waitDone := pm.waitDone
+	pm.mu.Unlock()
+
 	// Single-shot timer: fires once to emit the warn, then never again — the
-	// loop falls through to wait on readyCh/ctx without a deadline.
+	// loop falls through to wait on the other arms without a deadline.
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
@@ -248,12 +263,18 @@ func (pm *ProcessManager) waitReady(ctx context.Context, readyCh <-chan struct{}
 			pm.markReady()
 			return nil
 
+		case <-waitDone:
+			// Process exited before the ready signal — a boot crash (e.g. bad
+			// Postgres credentials/host/port). Do NOT kill (already gone); surface
+			// it so Start's caller logs the error and tickers never start silently.
+			return pm.exitBeforeReadyErr()
+
 		case <-timer.C:
 			slog.Warn("suwayomi: startup exceeding threshold — a long H2/Postgres "+
 				"schema migration is the likely cause; NOT killing the process, "+
 				"continuing to wait (downloads suspended until ready)",
 				"threshold", timeout)
-			// Keep waiting: re-enter the select on readyCh/ctx only.
+			// Keep waiting: re-enter the select on readyCh/waitDone/ctx only.
 
 		case <-ctx.Done():
 			pm.Stop()
@@ -270,6 +291,22 @@ func (pm *ProcessManager) markReady() {
 	pm.running = true
 	pm.mu.Unlock()
 	slog.Info("suwayomi: ready")
+}
+
+// exitBeforeReadyErr builds the error returned when the process exits before
+// signalling ready. It reads the recorded exit error under the mutex and wraps
+// it; a nil exit error (a clean exit-0 before the ready signal) is still a
+// startup failure, so it gets an explicit message rather than a wrapped nil.
+func (pm *ProcessManager) exitBeforeReadyErr() error {
+	pm.mu.Lock()
+	exitErr := pm.waitErr
+	pm.mu.Unlock()
+
+	const msg = "suwayomi.ProcessManager.Start: process exited before becoming ready"
+	if exitErr == nil {
+		return fmt.Errorf("%s (clean exit before ready signal)", msg)
+	}
+	return fmt.Errorf("%s: %w", msg, exitErr)
 }
 
 // Stop sends SIGTERM to the running process and waits up to stopGracePeriod for

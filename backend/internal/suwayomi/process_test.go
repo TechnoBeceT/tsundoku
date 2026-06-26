@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -133,6 +134,41 @@ func TestProcessManager_CtxCancelledAfterWarn(t *testing.T) {
 	}
 	if pm.IsRunning() {
 		t.Fatal("IsRunning should be false: ctx cancel must stop the process")
+	}
+}
+
+// TestProcessManager_ExitBeforeReady verifies that when the process exits before
+// emitting the ready signal (a boot crash — the most likely Postgres-opt-in
+// failure mode), Start returns a non-nil error naming the cause instead of
+// blocking forever, and the manager is not running. Without the waitDone arm in
+// waitReady, Start would hang and downloads would be silently disabled — the 3s
+// guard below would then fire, so this test is non-vacuous.
+//
+// StartTimeout is deliberately generous (5s, longer than the 3s guard) so the
+// soft warn arm cannot be what ends the wait — only the process-exit arm can.
+func TestProcessManager_ExitBeforeReady(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := shortCfg(t, 5*time.Second)
+	pm := suwayomi.NewProcessManager(cfg)
+	suwayomi.SetCommandContext(pm, fakeExitBeforeReady)
+
+	done := make(chan error, 1)
+	go func() { done <- pm.Start(context.Background()) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Start: expected error when the process exits before ready, got nil")
+		}
+		if !strings.Contains(err.Error(), "exited before becoming ready") {
+			t.Fatalf("Start error = %v, want it to mention 'exited before becoming ready'", err)
+		}
+		if pm.IsRunning() {
+			t.Fatal("IsRunning should be false after a boot crash (tickers must not start)")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start hung after the process exited before ready — the waitDone arm is missing")
 	}
 }
 
