@@ -214,6 +214,20 @@ func (_u *SeriesProviderUpdate) AddImportance(v int) *SeriesProviderUpdate {
 	return _u
 }
 
+// SetCoverURL sets the "cover_url" field.
+func (_u *SeriesProviderUpdate) SetCoverURL(v string) *SeriesProviderUpdate {
+	_u.mutation.SetCoverURL(v)
+	return _u
+}
+
+// SetNillableCoverURL sets the "cover_url" field if the given value is not nil.
+func (_u *SeriesProviderUpdate) SetNillableCoverURL(v *string) *SeriesProviderUpdate {
+	if v != nil {
+		_u.SetCoverURL(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesProviderUpdate) SetUpdatedAt(v time.Time) *SeriesProviderUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -430,6 +444,9 @@ func (_u *SeriesProviderUpdate) sqlSave(ctx context.Context) (_node int, err err
 	}
 	if value, ok := _u.mutation.AddedImportance(); ok {
 		_spec.AddField(seriesprovider.FieldImportance, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CoverURL(); ok {
+		_spec.SetField(seriesprovider.FieldCoverURL, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(seriesprovider.FieldUpdatedAt, field.TypeTime, value)
@@ -783,6 +800,20 @@ func (_u *SeriesProviderUpdateOne) AddImportance(v int) *SeriesProviderUpdateOne
 	return _u
 }
 
+// SetCoverURL sets the "cover_url" field.
+func (_u *SeriesProviderUpdateOne) SetCoverURL(v string) *SeriesProviderUpdateOne {
+	_u.mutation.SetCoverURL(v)
+	return _u
+}
+
+// SetNillableCoverURL sets the "cover_url" field if the given value is not nil.
+func (_u *SeriesProviderUpdateOne) SetNillableCoverURL(v *string) *SeriesProviderUpdateOne {
+	if v != nil {
+		_u.SetCoverURL(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesProviderUpdateOne) SetUpdatedAt(v time.Time) *SeriesProviderUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -1029,6 +1060,9 @@ func (_u *SeriesProviderUpdateOne) sqlSave(ctx context.Context) (_node *SeriesPr
 	}
 	if value, ok := _u.mutation.AddedImportance(); ok {
 		_spec.AddField(seriesprovider.FieldImportance, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CoverURL(); ok {
+		_spec.SetField(seriesprovider.FieldCoverURL, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(seriesprovider.FieldUpdatedAt, field.TypeTime, value)

@@ -34,6 +34,8 @@ type Series struct {
 	Monitored bool `json:"monitored,omitempty"`
 	// Completed holds the value of the "completed" field.
 	Completed bool `json:"completed,omitempty"`
+	// MetadataProviderID holds the value of the "metadata_provider_id" field.
+	MetadataProviderID *uuid.UUID `json:"metadata_provider_id,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -78,6 +80,8 @@ func (*Series) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case series.FieldMetadataProviderID:
+			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
 		case series.FieldMonitored, series.FieldCompleted:
 			values[i] = new(sql.NullBool)
 		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus, series.FieldCategory:
@@ -154,6 +158,13 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field completed", values[i])
 			} else if value.Valid {
 				_m.Completed = value.Bool
+			}
+		case series.FieldMetadataProviderID:
+			if value, ok := values[i].(*sql.NullScanner); !ok {
+				return fmt.Errorf("unexpected type %T for field metadata_provider_id", values[i])
+			} else if value.Valid {
+				_m.MetadataProviderID = new(uuid.UUID)
+				*_m.MetadataProviderID = *value.S.(*uuid.UUID)
 			}
 		case series.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -236,6 +247,11 @@ func (_m *Series) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("completed=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Completed))
+	builder.WriteString(", ")
+	if v := _m.MetadataProviderID; v != nil {
+		builder.WriteString("metadata_provider_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

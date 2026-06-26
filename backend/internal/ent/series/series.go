@@ -32,6 +32,8 @@ const (
 	FieldMonitored = "monitored"
 	// FieldCompleted holds the string denoting the completed field in the database.
 	FieldCompleted = "completed"
+	// FieldMetadataProviderID holds the string denoting the metadata_provider_id field in the database.
+	FieldMetadataProviderID = "metadata_provider_id"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -69,6 +71,7 @@ var Columns = []string{
 	FieldCategory,
 	FieldMonitored,
 	FieldCompleted,
+	FieldMetadataProviderID,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -179,6 +182,11 @@ func ByMonitored(opts ...sql.OrderTermOption) OrderOption {
 // ByCompleted orders the results by the completed field.
 func ByCompleted(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCompleted, opts...).ToFunc()
+}
+
+// ByMetadataProviderID orders the results by the metadata_provider_id field.
+func ByMetadataProviderID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMetadataProviderID, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

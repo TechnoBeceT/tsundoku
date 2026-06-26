@@ -119,6 +119,20 @@ func (_c *SeriesCreate) SetNillableCompleted(v *bool) *SeriesCreate {
 	return _c
 }
 
+// SetMetadataProviderID sets the "metadata_provider_id" field.
+func (_c *SeriesCreate) SetMetadataProviderID(v uuid.UUID) *SeriesCreate {
+	_c.mutation.SetMetadataProviderID(v)
+	return _c
+}
+
+// SetNillableMetadataProviderID sets the "metadata_provider_id" field if the given value is not nil.
+func (_c *SeriesCreate) SetNillableMetadataProviderID(v *uuid.UUID) *SeriesCreate {
+	if v != nil {
+		_c.SetMetadataProviderID(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *SeriesCreate) SetCreatedAt(v time.Time) *SeriesCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -367,6 +381,10 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Completed(); ok {
 		_spec.SetField(series.FieldCompleted, field.TypeBool, value)
 		_node.Completed = value
+	}
+	if value, ok := _c.mutation.MetadataProviderID(); ok {
+		_spec.SetField(series.FieldMetadataProviderID, field.TypeUUID, value)
+		_node.MetadataProviderID = &value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(series.FieldCreatedAt, field.TypeTime, value)

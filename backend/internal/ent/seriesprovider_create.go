@@ -163,6 +163,20 @@ func (_c *SeriesProviderCreate) SetNillableImportance(v *int) *SeriesProviderCre
 	return _c
 }
 
+// SetCoverURL sets the "cover_url" field.
+func (_c *SeriesProviderCreate) SetCoverURL(v string) *SeriesProviderCreate {
+	_c.mutation.SetCoverURL(v)
+	return _c
+}
+
+// SetNillableCoverURL sets the "cover_url" field if the given value is not nil.
+func (_c *SeriesProviderCreate) SetNillableCoverURL(v *string) *SeriesProviderCreate {
+	if v != nil {
+		_c.SetCoverURL(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *SeriesProviderCreate) SetCreatedAt(v time.Time) *SeriesProviderCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -326,6 +340,10 @@ func (_c *SeriesProviderCreate) defaults() {
 		v := seriesprovider.DefaultImportance
 		_c.mutation.SetImportance(v)
 	}
+	if _, ok := _c.mutation.CoverURL(); !ok {
+		v := seriesprovider.DefaultCoverURL
+		_c.mutation.SetCoverURL(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := seriesprovider.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -371,6 +389,9 @@ func (_c *SeriesProviderCreate) check() error {
 	}
 	if _, ok := _c.mutation.Importance(); !ok {
 		return &ValidationError{Name: "importance", err: errors.New(`ent: missing required field "SeriesProvider.importance"`)}
+	}
+	if _, ok := _c.mutation.CoverURL(); !ok {
+		return &ValidationError{Name: "cover_url", err: errors.New(`ent: missing required field "SeriesProvider.cover_url"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "SeriesProvider.created_at"`)}
@@ -455,6 +476,10 @@ func (_c *SeriesProviderCreate) createSpec() (*SeriesProvider, *sqlgraph.CreateS
 	if value, ok := _c.mutation.Importance(); ok {
 		_spec.SetField(seriesprovider.FieldImportance, field.TypeInt, value)
 		_node.Importance = value
+	}
+	if value, ok := _c.mutation.CoverURL(); ok {
+		_spec.SetField(seriesprovider.FieldCoverURL, field.TypeString, value)
+		_node.CoverURL = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(seriesprovider.FieldCreatedAt, field.TypeTime, value)

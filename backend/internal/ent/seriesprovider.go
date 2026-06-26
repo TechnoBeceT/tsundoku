@@ -42,6 +42,8 @@ type SeriesProvider struct {
 	Flags uint32 `json:"flags,omitempty"`
 	// Importance holds the value of the "importance" field.
 	Importance int `json:"importance,omitempty"`
+	// CoverURL holds the value of the "cover_url" field.
+	CoverURL string `json:"cover_url,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -116,7 +118,7 @@ func (*SeriesProvider) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case seriesprovider.FieldSuwayomiID, seriesprovider.FieldFlags, seriesprovider.FieldImportance:
 			values[i] = new(sql.NullInt64)
-		case seriesprovider.FieldProvider, seriesprovider.FieldScanlator, seriesprovider.FieldLanguage, seriesprovider.FieldURL, seriesprovider.FieldTitle, seriesprovider.FieldStatus:
+		case seriesprovider.FieldProvider, seriesprovider.FieldScanlator, seriesprovider.FieldLanguage, seriesprovider.FieldURL, seriesprovider.FieldTitle, seriesprovider.FieldStatus, seriesprovider.FieldCoverURL:
 			values[i] = new(sql.NullString)
 		case seriesprovider.FieldCreatedAt, seriesprovider.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -208,6 +210,12 @@ func (_m *SeriesProvider) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field importance", values[i])
 			} else if value.Valid {
 				_m.Importance = int(value.Int64)
+			}
+		case seriesprovider.FieldCoverURL:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field cover_url", values[i])
+			} else if value.Valid {
+				_m.CoverURL = value.String
 			}
 		case seriesprovider.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -309,6 +317,9 @@ func (_m *SeriesProvider) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("importance=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Importance))
+	builder.WriteString(", ")
+	builder.WriteString("cover_url=")
+	builder.WriteString(_m.CoverURL)
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

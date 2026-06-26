@@ -4446,29 +4446,30 @@ func (m *ProviderChapterMutation) ResetEdge(name string) error {
 // SeriesMutation represents an operation that mutates the Series nodes in the graph.
 type SeriesMutation struct {
 	config
-	op               Op
-	typ              string
-	id               *uuid.UUID
-	title            *string
-	slug             *string
-	cover_url        *string
-	description      *string
-	status           *string
-	category         *series.Category
-	monitored        *bool
-	completed        *bool
-	created_at       *time.Time
-	updated_at       *time.Time
-	clearedFields    map[string]struct{}
-	providers        map[uuid.UUID]struct{}
-	removedproviders map[uuid.UUID]struct{}
-	clearedproviders bool
-	chapters         map[uuid.UUID]struct{}
-	removedchapters  map[uuid.UUID]struct{}
-	clearedchapters  bool
-	done             bool
-	oldValue         func(context.Context) (*Series, error)
-	predicates       []predicate.Series
+	op                   Op
+	typ                  string
+	id                   *uuid.UUID
+	title                *string
+	slug                 *string
+	cover_url            *string
+	description          *string
+	status               *string
+	category             *series.Category
+	monitored            *bool
+	completed            *bool
+	metadata_provider_id *uuid.UUID
+	created_at           *time.Time
+	updated_at           *time.Time
+	clearedFields        map[string]struct{}
+	providers            map[uuid.UUID]struct{}
+	removedproviders     map[uuid.UUID]struct{}
+	clearedproviders     bool
+	chapters             map[uuid.UUID]struct{}
+	removedchapters      map[uuid.UUID]struct{}
+	clearedchapters      bool
+	done                 bool
+	oldValue             func(context.Context) (*Series, error)
+	predicates           []predicate.Series
 }
 
 var _ ent.Mutation = (*SeriesMutation)(nil)
@@ -4863,6 +4864,55 @@ func (m *SeriesMutation) ResetCompleted() {
 	m.completed = nil
 }
 
+// SetMetadataProviderID sets the "metadata_provider_id" field.
+func (m *SeriesMutation) SetMetadataProviderID(u uuid.UUID) {
+	m.metadata_provider_id = &u
+}
+
+// MetadataProviderID returns the value of the "metadata_provider_id" field in the mutation.
+func (m *SeriesMutation) MetadataProviderID() (r uuid.UUID, exists bool) {
+	v := m.metadata_provider_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMetadataProviderID returns the old "metadata_provider_id" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldMetadataProviderID(ctx context.Context) (v *uuid.UUID, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMetadataProviderID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMetadataProviderID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMetadataProviderID: %w", err)
+	}
+	return oldValue.MetadataProviderID, nil
+}
+
+// ClearMetadataProviderID clears the value of the "metadata_provider_id" field.
+func (m *SeriesMutation) ClearMetadataProviderID() {
+	m.metadata_provider_id = nil
+	m.clearedFields[series.FieldMetadataProviderID] = struct{}{}
+}
+
+// MetadataProviderIDCleared returns if the "metadata_provider_id" field was cleared in this mutation.
+func (m *SeriesMutation) MetadataProviderIDCleared() bool {
+	_, ok := m.clearedFields[series.FieldMetadataProviderID]
+	return ok
+}
+
+// ResetMetadataProviderID resets all changes to the "metadata_provider_id" field.
+func (m *SeriesMutation) ResetMetadataProviderID() {
+	m.metadata_provider_id = nil
+	delete(m.clearedFields, series.FieldMetadataProviderID)
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *SeriesMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -5077,7 +5127,7 @@ func (m *SeriesMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesMutation) Fields() []string {
-	fields := make([]string, 0, 10)
+	fields := make([]string, 0, 11)
 	if m.title != nil {
 		fields = append(fields, series.FieldTitle)
 	}
@@ -5101,6 +5151,9 @@ func (m *SeriesMutation) Fields() []string {
 	}
 	if m.completed != nil {
 		fields = append(fields, series.FieldCompleted)
+	}
+	if m.metadata_provider_id != nil {
+		fields = append(fields, series.FieldMetadataProviderID)
 	}
 	if m.created_at != nil {
 		fields = append(fields, series.FieldCreatedAt)
@@ -5132,6 +5185,8 @@ func (m *SeriesMutation) Field(name string) (ent.Value, bool) {
 		return m.Monitored()
 	case series.FieldCompleted:
 		return m.Completed()
+	case series.FieldMetadataProviderID:
+		return m.MetadataProviderID()
 	case series.FieldCreatedAt:
 		return m.CreatedAt()
 	case series.FieldUpdatedAt:
@@ -5161,6 +5216,8 @@ func (m *SeriesMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldMonitored(ctx)
 	case series.FieldCompleted:
 		return m.OldCompleted(ctx)
+	case series.FieldMetadataProviderID:
+		return m.OldMetadataProviderID(ctx)
 	case series.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case series.FieldUpdatedAt:
@@ -5230,6 +5287,13 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCompleted(v)
 		return nil
+	case series.FieldMetadataProviderID:
+		v, ok := value.(uuid.UUID)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMetadataProviderID(v)
+		return nil
 	case series.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -5273,7 +5337,11 @@ func (m *SeriesMutation) AddField(name string, value ent.Value) error {
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *SeriesMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(series.FieldMetadataProviderID) {
+		fields = append(fields, series.FieldMetadataProviderID)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -5286,6 +5354,11 @@ func (m *SeriesMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *SeriesMutation) ClearField(name string) error {
+	switch name {
+	case series.FieldMetadataProviderID:
+		m.ClearMetadataProviderID()
+		return nil
+	}
 	return fmt.Errorf("unknown Series nullable field %s", name)
 }
 
@@ -5316,6 +5389,9 @@ func (m *SeriesMutation) ResetField(name string) error {
 		return nil
 	case series.FieldCompleted:
 		m.ResetCompleted()
+		return nil
+	case series.FieldMetadataProviderID:
+		m.ResetMetadataProviderID()
 		return nil
 	case series.FieldCreatedAt:
 		m.ResetCreatedAt()
@@ -5456,6 +5532,7 @@ type SeriesProviderMutation struct {
 	addflags                  *int32
 	importance                *int
 	addimportance             *int
+	cover_url                 *string
 	created_at                *time.Time
 	updated_at                *time.Time
 	clearedFields             map[string]struct{}
@@ -6048,6 +6125,42 @@ func (m *SeriesProviderMutation) ResetImportance() {
 	m.addimportance = nil
 }
 
+// SetCoverURL sets the "cover_url" field.
+func (m *SeriesProviderMutation) SetCoverURL(s string) {
+	m.cover_url = &s
+}
+
+// CoverURL returns the value of the "cover_url" field in the mutation.
+func (m *SeriesProviderMutation) CoverURL() (r string, exists bool) {
+	v := m.cover_url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCoverURL returns the old "cover_url" field's value of the SeriesProvider entity.
+// If the SeriesProvider object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesProviderMutation) OldCoverURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCoverURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCoverURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCoverURL: %w", err)
+	}
+	return oldValue.CoverURL, nil
+}
+
+// ResetCoverURL resets all changes to the "cover_url" field.
+func (m *SeriesProviderMutation) ResetCoverURL() {
+	m.cover_url = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *SeriesProviderMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -6328,7 +6441,7 @@ func (m *SeriesProviderMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesProviderMutation) Fields() []string {
-	fields := make([]string, 0, 13)
+	fields := make([]string, 0, 14)
 	if m.series != nil {
 		fields = append(fields, seriesprovider.FieldSeriesID)
 	}
@@ -6361,6 +6474,9 @@ func (m *SeriesProviderMutation) Fields() []string {
 	}
 	if m.importance != nil {
 		fields = append(fields, seriesprovider.FieldImportance)
+	}
+	if m.cover_url != nil {
+		fields = append(fields, seriesprovider.FieldCoverURL)
 	}
 	if m.created_at != nil {
 		fields = append(fields, seriesprovider.FieldCreatedAt)
@@ -6398,6 +6514,8 @@ func (m *SeriesProviderMutation) Field(name string) (ent.Value, bool) {
 		return m.Flags()
 	case seriesprovider.FieldImportance:
 		return m.Importance()
+	case seriesprovider.FieldCoverURL:
+		return m.CoverURL()
 	case seriesprovider.FieldCreatedAt:
 		return m.CreatedAt()
 	case seriesprovider.FieldUpdatedAt:
@@ -6433,6 +6551,8 @@ func (m *SeriesProviderMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldFlags(ctx)
 	case seriesprovider.FieldImportance:
 		return m.OldImportance(ctx)
+	case seriesprovider.FieldCoverURL:
+		return m.OldCoverURL(ctx)
 	case seriesprovider.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case seriesprovider.FieldUpdatedAt:
@@ -6522,6 +6642,13 @@ func (m *SeriesProviderMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetImportance(v)
+		return nil
+	case seriesprovider.FieldCoverURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCoverURL(v)
 		return nil
 	case seriesprovider.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -6666,6 +6793,9 @@ func (m *SeriesProviderMutation) ResetField(name string) error {
 		return nil
 	case seriesprovider.FieldImportance:
 		m.ResetImportance()
+		return nil
+	case seriesprovider.FieldCoverURL:
+		m.ResetCoverURL()
 		return nil
 	case seriesprovider.FieldCreatedAt:
 		m.ResetCreatedAt()
