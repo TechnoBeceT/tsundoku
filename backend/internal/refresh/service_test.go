@@ -16,6 +16,7 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/refresh"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -58,7 +59,7 @@ func num(n float64) *float64 { return &n }
 func newSvc(t *testing.T, db *ent.Client, fc *fakeClient) *refresh.Service {
 	t.Helper()
 	ingest := suwayomi.NewIngest(fc, db)
-	return refresh.NewService(db, ingest, sse.NewHub(), 4)
+	return refresh.NewService(db, ingest, sse.NewHub(), settings.Static{Concurrency: 4})
 }
 
 // seedMonitoredSeries creates a monitored series with one provider (suwayomiID),
@@ -212,7 +213,7 @@ func TestRefreshAll_EmitsSSEEvents(t *testing.T) {
 	seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
 
 	hub := sse.NewHub()
-	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), hub, 4)
+	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), hub, settings.Static{Concurrency: 4})
 
 	// Subscribe before the sweep so both buffered events are captured.
 	events, unsub := hub.Subscribe()

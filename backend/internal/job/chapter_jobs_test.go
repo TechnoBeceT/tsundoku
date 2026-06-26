@@ -17,6 +17,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/refresh"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -46,10 +47,10 @@ func TestRunner_DownloadCycle_DrainWanted(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		PerProviderConcurrency: 2,
-		MaxRetries:             3,
-		Storage:                storage,
-	})
-	r := job.NewRunner(d, client, hub, storage)
+
+		Storage: storage,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
 
 	if err := r.RunDownloadCycle(ctx); err != nil {
 		t.Fatalf("RunDownloadCycle: %v", err)
@@ -120,10 +121,10 @@ func TestRunner_DownloadCycle_UpgradePass(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		PerProviderConcurrency: 2,
-		MaxRetries:             3,
-		Storage:                storage,
-	})
-	r := job.NewRunner(d, client, hub, storage)
+
+		Storage: storage,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
 
 	// First cycle: download the chapter.
 	if err := r.RunDownloadCycle(ctx); err != nil {
@@ -177,10 +178,10 @@ func TestRunner_Start_TicksAndStopsCleanly(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             1,
-		Storage:                storage,
-	})
-	r := job.NewRunner(d, client, hub, storage)
+
+		Storage: storage,
+	}, settings.Static{Retries: 1, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: 20 * time.Millisecond})
 
 	// Subscribe to observe at least one cycle.start before cancelling.
 	events, unsub := hub.Subscribe()
@@ -191,7 +192,7 @@ func TestRunner_Start_TicksAndStopsCleanly(t *testing.T) {
 	base := runtime.NumGoroutine()
 
 	// Short interval so the ticker fires quickly in tests.
-	r.Start(ctx, 20*time.Millisecond)
+	r.Start(ctx)
 
 	// Wait for at least one tick (cycle.start event) within a reasonable deadline.
 	tickSeen := false
@@ -249,11 +250,11 @@ func TestRunner_Trigger_RunsCycle(t *testing.T) {
 		SetURL("https://x/ch-1").SetProviderIndex(0).SaveX(ctx)
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-1").SaveX(ctx)
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, MaxRetries: 3, Storage: storage})
-	r := job.NewRunner(d, client, hub, storage)
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
 
 	// Long interval so only the trigger can drive the cycle within the test.
-	r.Start(ctx, time.Hour)
+	r.Start(ctx)
 	r.Trigger()
 
 	// Poll for the chapter to reach downloaded (cycle runs async in the loop).
@@ -274,8 +275,8 @@ func TestRunner_Trigger_RunsCycle(t *testing.T) {
 func TestRunner_Trigger_Coalesces(t *testing.T) {
 	client := testdb.New(t)
 	r := job.NewRunner(
-		download.New(client, fake.New(), sse.NewHub(), download.Config{PerProviderConcurrency: 1, MaxRetries: 1, Storage: t.TempDir()}),
-		client, sse.NewHub(), t.TempDir(),
+		download.New(client, fake.New(), sse.NewHub(), download.Config{PerProviderConcurrency: 1, Storage: t.TempDir()}, settings.Static{Retries: 1, Backoff: time.Hour}),
+		client, sse.NewHub(), t.TempDir(), settings.Static{},
 	)
 	// No Start → nothing drains the channel. Many triggers must not block/panic.
 	for i := 0; i < 100; i++ {
@@ -320,14 +321,14 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 	client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(42).SetImportance(10).SaveX(ctx)
 
 	fc := fakeSuwayomi{}
-	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, 2)
+	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, settings.Static{Concurrency: 2})
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, MaxRetries: 3, Storage: storage})
-	r := job.NewRunner(d, client, hub, storage)
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour, Refresh: 100 * time.Millisecond})
 
-	r.Start(ctx, time.Hour) // download loop (trigger-driven here)
+	r.Start(ctx) // download loop (trigger-driven here)
 	// fast refresh tick for the test; healthCount is a no-op stub.
-	r.StartRefresh(ctx, 100*time.Millisecond, refreshSvc,
+	r.StartRefresh(ctx, refreshSvc,
 		func(context.Context) (int, error) { return 0, nil })
 
 	deadline := time.Now().Add(15 * time.Second)
@@ -357,15 +358,15 @@ func TestStartRefresh_BroadcastsHealthSummary(t *testing.T) {
 	defer unsub()
 
 	fc := fakeSuwayomi{}
-	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, 2)
+	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, settings.Static{Concurrency: 2})
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, MaxRetries: 3, Storage: storage})
-	r := job.NewRunner(d, client, hub, storage)
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Refresh: 50 * time.Millisecond})
 
 	// Stub the unhealthy count so the assertion is deterministic.
 	healthCount := func(context.Context) (int, error) { return 3, nil }
 
-	r.StartRefresh(ctx, 50*time.Millisecond, refreshSvc, healthCount)
+	r.StartRefresh(ctx, refreshSvc, healthCount)
 
 	// Drain events until health.summary (skipping refresh.start/done/cycle.*).
 	deadline := time.After(3 * time.Second)
@@ -424,10 +425,10 @@ func TestRunner_Reconcile_SmokesWrapper(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             1,
-		Storage:                storage,
-	})
-	r := job.NewRunner(d, client, hub, storage)
+
+		Storage: storage,
+	}, settings.Static{Retries: 1, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
 
 	result, err := r.Reconcile(ctx)
 	if err != nil {

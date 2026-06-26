@@ -55,6 +55,19 @@ type CycleEvent struct {
 	Error string `json:"error,omitempty"`
 }
 
+// Intervals supplies the runtime-tunable ticker periods. The Start / StartRefresh
+// loops read these at the TOP OF EACH ITERATION (a dynamic timer, not a captured
+// ticker), so an owner's change to the download/refresh cadence via the settings
+// API takes effect on the next cycle without a restart. *settings.Service and
+// settings.Static both satisfy it; reads happen from the ticker goroutines, so
+// implementations must be safe for concurrent use.
+type Intervals interface {
+	// DownloadInterval is the period between download/upgrade cycles.
+	DownloadInterval(ctx context.Context) time.Duration
+	// RefreshInterval is the period between discovery sweeps.
+	RefreshInterval(ctx context.Context) time.Duration
+}
+
 // Runner orchestrates the chapter download/upgrade cycle, the discovery refresh
 // sweep, and the on-demand disk reconciler. Create one with NewRunner.
 type Runner struct {
@@ -62,6 +75,7 @@ type Runner struct {
 	client     *ent.Client
 	hub        *sse.Hub
 	storage    string
+	intervals  Intervals
 	// trigger requests an immediate download cycle. Buffered (cap 1) so a
 	// request coalesces: if one is already pending, further Trigger() calls are
 	// dropped. Drained only by the Start loop, so all cycles run in one
@@ -78,13 +92,15 @@ type Runner struct {
 //   - Production (M2+): use suwayomi.NewFetcher (already wired in main.go).
 //
 // NewRunner does not start any background goroutines; call Start to begin
-// periodic download cycles.
-func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub, storage string) *Runner {
+// periodic download cycles. intervals supplies the runtime-tunable ticker
+// periods, read at the top of each loop iteration (hot reload).
+func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub, storage string, intervals Intervals) *Runner {
 	return &Runner{
 		dispatcher: dispatcher,
 		client:     client,
 		hub:        hub,
 		storage:    storage,
+		intervals:  intervals,
 		trigger:    make(chan struct{}, 1),
 	}
 }
@@ -163,40 +179,45 @@ func (r *Runner) upgradeAll(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-// Start launches a background goroutine that calls RunDownloadCycle every
-// interval until ctx is cancelled. Errors from individual cycles are logged but
-// do not stop the ticker — a transient DB or network failure should not kill
-// the runner permanently. Start returns immediately; the goroutine runs until
+// Start launches a background goroutine that calls RunDownloadCycle on a dynamic
+// timer until ctx is cancelled. Each iteration re-reads the CURRENT download
+// interval from the settings overlay (intervals.DownloadInterval) and waits that
+// long, so a runtime change to the cadence takes effect on the very next cycle —
+// no restart, no captured ticker. Errors from individual cycles are logged but
+// do not stop the loop — a transient DB or network failure should not kill the
+// runner permanently. Start returns immediately; the goroutine runs until
 // ctx.Done() is closed.
 //
 // In main.go, Start is called in a background goroutine after pm.Start
 // succeeds (Suwayomi is ready). If Suwayomi fails to start, downloads are
 // simply suspended; the API server continues running. Reconcile does not use
 // the fetcher and is live since M1.
-func (r *Runner) Start(ctx context.Context, interval time.Duration) {
+func (r *Runner) Start(ctx context.Context) {
 	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
 		for {
+			timer := time.NewTimer(r.intervals.DownloadInterval(ctx))
 			select {
 			case <-ctx.Done():
-				slog.InfoContext(ctx, "job.Runner: ticker stopped (context cancelled)")
+				timer.Stop()
+				slog.InfoContext(ctx, "job.Runner: download loop stopped (context cancelled)")
 				return
-			case <-ticker.C:
-				if err := r.RunDownloadCycle(ctx); err != nil {
-					slog.ErrorContext(ctx, "job.Runner: download cycle error",
-						"err", err,
-					)
-				}
+			case <-timer.C:
+				r.runDownloadCycleLogging(ctx, "download cycle error")
 			case <-r.trigger:
-				if err := r.RunDownloadCycle(ctx); err != nil {
-					slog.ErrorContext(ctx, "job.Runner: triggered download cycle error",
-						"err", err,
-					)
-				}
+				timer.Stop()
+				r.runDownloadCycleLogging(ctx, "triggered download cycle error")
 			}
 		}
 	}()
+}
+
+// runDownloadCycleLogging runs one download cycle and logs (without aborting the
+// loop) any hard error, tagged with the given message so triggered vs ticked
+// cycles are distinguishable in the logs.
+func (r *Runner) runDownloadCycleLogging(ctx context.Context, msg string) {
+	if err := r.RunDownloadCycle(ctx); err != nil {
+		slog.ErrorContext(ctx, "job.Runner: "+msg, "err", err)
+	}
 }
 
 // Trigger requests an immediate download cycle from the Start loop. It is
@@ -212,43 +233,52 @@ func (r *Runner) Trigger() {
 }
 
 // StartRefresh launches a background goroutine that runs the discovery sweep
-// (svc.RefreshAll) every interval until ctx is cancelled, then Triggers a
+// (svc.RefreshAll) on a dynamic timer until ctx is cancelled, then Triggers a
 // download cycle so newly-discovered chapters download promptly instead of
-// waiting for the download ticker. After each successful sweep it calls
-// healthCount to get the current number of unhealthy sources and broadcasts a
-// health.summary SSE event so UI badges stay current without a manual refresh.
-// If healthCount returns an error the broadcast is skipped for that cycle
-// (the error is logged). Sweep errors are logged and never stop the ticker.
-// Returns immediately.
-func (r *Runner) StartRefresh(ctx context.Context, interval time.Duration, svc *refresh.Service, healthCount func(context.Context) (int, error)) {
+// waiting for the download ticker. Each iteration re-reads the CURRENT refresh
+// interval from the settings overlay (intervals.RefreshInterval), so a runtime
+// change to the sweep cadence takes effect on the next cycle without a restart.
+// After each successful sweep it calls healthCount to get the current number of
+// unhealthy sources and broadcasts a health.summary SSE event so UI badges stay
+// current without a manual refresh. If healthCount returns an error the broadcast
+// is skipped for that cycle (the error is logged). Sweep errors are logged and
+// never stop the loop. Returns immediately.
+func (r *Runner) StartRefresh(ctx context.Context, svc *refresh.Service, healthCount func(context.Context) (int, error)) {
 	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
 		for {
+			timer := time.NewTimer(r.intervals.RefreshInterval(ctx))
 			select {
 			case <-ctx.Done():
-				slog.InfoContext(ctx, "job.Runner: refresh ticker stopped (context cancelled)")
+				timer.Stop()
+				slog.InfoContext(ctx, "job.Runner: refresh loop stopped (context cancelled)")
 				return
-			case <-ticker.C:
-				res, err := svc.RefreshAll(ctx)
-				if err != nil {
-					slog.ErrorContext(ctx, "job.Runner: refresh sweep error", "err", err)
-					continue
-				}
-				slog.InfoContext(ctx, "job.Runner: refresh sweep finished",
-					"series", res.SeriesRefreshed,
-					"new_chapters", res.NewChapters,
-					"errors", res.Errors,
-				)
-				r.Trigger()
-				if n, err := healthCount(ctx); err != nil {
-					slog.ErrorContext(ctx, "refresh: health summary count failed", "err", err)
-				} else {
-					r.broadcastHealthSummary(n)
-				}
+			case <-timer.C:
+				r.runRefreshSweep(ctx, svc, healthCount)
 			}
 		}
 	}()
+}
+
+// runRefreshSweep performs one discovery sweep, triggers a download cycle, and
+// broadcasts the health summary. Sweep / count errors are logged and swallowed so
+// the refresh loop survives transient failures.
+func (r *Runner) runRefreshSweep(ctx context.Context, svc *refresh.Service, healthCount func(context.Context) (int, error)) {
+	res, err := svc.RefreshAll(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "job.Runner: refresh sweep error", "err", err)
+		return
+	}
+	slog.InfoContext(ctx, "job.Runner: refresh sweep finished",
+		"series", res.SeriesRefreshed,
+		"new_chapters", res.NewChapters,
+		"errors", res.Errors,
+	)
+	r.Trigger()
+	if n, err := healthCount(ctx); err != nil {
+		slog.ErrorContext(ctx, "refresh: health summary count failed", "err", err)
+	} else {
+		r.broadcastHealthSummary(n)
+	}
 }
 
 // broadcastHealthSummary emits a health.summary SSE event with the count of

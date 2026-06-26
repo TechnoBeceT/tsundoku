@@ -29,42 +29,49 @@ import (
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
-// Config holds the tunable parameters for the Dispatcher.
+// Config holds the STRUCTURAL (env-only, restart-scoped) parameters for the
+// Dispatcher. The retry policy (max-retries + backoff base) is NOT here — it is
+// runtime-tunable and read from a RetrySettings at use-time so a settings change
+// takes effect on the next cycle without a restart.
 type Config struct {
 	// PerProviderConcurrency is the maximum number of chapters from the same
 	// provider that may be downloaded concurrently. Must be >= 1.
 	PerProviderConcurrency int
-
-	// MaxRetries is the maximum number of times a failed chapter is retried
-	// before it is transitioned to permanently_failed.
-	MaxRetries int
-
-	// Backoff returns the duration to wait before the next download attempt for
-	// a chapter that has already been tried attempt times. Nil uses a simple
-	// default exponential backoff.
-	Backoff func(attempt int) time.Duration
 
 	// Storage is the root library directory (e.g. "/data/library") passed to
 	// disk.RenderChapter.
 	Storage string
 }
 
-// defaultBackoff is the backoff function used when Config.Backoff is nil.
-// It doubles the delay for each attempt up to a maximum of 1 hour.
+// RetrySettings supplies the runtime-tunable retry policy. The Dispatcher reads
+// it per cycle / per fail-handling (never captured at construction) so an owner's
+// change to the max-retries or backoff base via the settings API takes effect on
+// the next download cycle. *settings.Service and settings.Static both satisfy it;
+// implementations must be safe for concurrent use (handleFailure runs in the
+// per-chapter goroutines).
+type RetrySettings interface {
+	// MaxRetries is the number of times a failed chapter is retried before it is
+	// parked in permanently_failed.
+	MaxRetries(ctx context.Context) int
+	// RetryBackoff is the BASE delay before the first retry; backoffCurve doubles
+	// it per attempt up to a 1h cap.
+	RetryBackoff(ctx context.Context) time.Duration
+}
+
+// backoffCurve returns the delay before the next attempt: base doubled once per
+// attempt, capped at 1 hour. A base of 0 yields 0 (immediate retry — used by
+// tests). It is the single backoff curve, now parameterised by the runtime base
+// instead of a hardcoded constant.
 //
-// Overflow analysis: base = 5 min = 3e11 ns. The hour cap fires at shift=4
-// (5min×2^4=80min>1h), so shift is capped at 12 as a conservative guard.
-// At shift=12: 5min×2^12 ≈ 1.2e15 ns — far below int64 max (≈9.2e18 ns).
-func defaultBackoff(attempt int) time.Duration {
-	base := 5 * time.Minute
+// Overflow analysis: shift is capped at 12 so base×2^12 stays well within int64
+// (even base=1h ⇒ 1h×4096 ≈ 1.5e16 ns << int64 max ≈9.2e18 ns); the hour ceiling
+// then clamps the result.
+func backoffCurve(base time.Duration, attempt int) time.Duration {
 	shift := attempt
-	// Cap shift at 12 so the multiplication stays well within int64 range.
-	// The hour ceiling already kicks in at shift=4; the cap prevents any
-	// theoretical overflow on very large attempt counts.
 	if shift > 12 {
 		shift = 12
 	}
-	d := base * (1 << uint(shift)) //nolint:gosec // shift is capped at 12; 5min×2^12 ≈ 1.2e15ns << int64 max.
+	d := base * (1 << uint(shift)) //nolint:gosec // shift is capped at 12; base×2^12 << int64 max.
 	if d > time.Hour {
 		d = time.Hour
 	}
@@ -92,26 +99,23 @@ type Dispatcher struct {
 	f      fetcher.ChapterFetcher
 	hub    *sse.Hub
 	cfg    Config
+	retry  RetrySettings
 }
 
 // New creates a Dispatcher configured with the given client, fetcher, SSE hub,
-// and Config. If cfg.Backoff is nil the default exponential backoff is used.
-// cfg.PerProviderConcurrency and cfg.MaxRetries must be >= 1.
-func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config) *Dispatcher {
+// structural Config, and runtime RetrySettings. cfg.PerProviderConcurrency must
+// be >= 1 (clamped if not). The retry policy (max-retries + backoff base) is read
+// from retry at use-time, never captured here.
+func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config, retry RetrySettings) *Dispatcher {
 	if cfg.PerProviderConcurrency < 1 {
 		cfg.PerProviderConcurrency = 1
-	}
-	if cfg.MaxRetries < 1 {
-		cfg.MaxRetries = 1
-	}
-	if cfg.Backoff == nil {
-		cfg.Backoff = defaultBackoff
 	}
 	return &Dispatcher{
 		client: client,
 		f:      f,
 		hub:    hub,
 		cfg:    cfg,
+		retry:  retry,
 	}
 }
 
@@ -124,7 +128,8 @@ func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config)
 // semaphore key and the actual fetch target are always the same provider
 // snapshot, preventing a TOCTOU skew if provider importance changes mid-run.
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
-	chapters, err := chapter.WantedChapters(ctx, d.client, 1000, d.cfg.MaxRetries)
+	// Read the retry budget at use-time so a settings change applies this cycle.
+	chapters, err := chapter.WantedChapters(ctx, d.client, 1000, d.retry.MaxRetries(ctx))
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.RunOnce: load chapters: %w", err)
 	}
@@ -301,14 +306,17 @@ func (d *Dispatcher) process(ctx context.Context, chapterID uuid.UUID, pc *ent.P
 // so ch.Retries reflects the value at Process entry and is not stale in practice.
 //
 // It increments the retry counter, stores the cause as last_error, computes
-// next_attempt_at via cfg.Backoff, then:
+// next_attempt_at via the runtime-tunable backoff base (read at use-time), then:
 //   - If newRetries >= MaxRetries: transitions to permanently_failed.
 //   - Otherwise: leaves the chapter in failed state (SetState downloading→failed).
 //
 // It always broadcasts a download.fail event and returns the original cause.
 func (d *Dispatcher) handleFailure(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cause error) error {
+	// Read the retry policy at use-time so a settings change applies immediately.
+	maxRetries := d.retry.MaxRetries(ctx)
+	backoffBase := d.retry.RetryBackoff(ctx)
 	newRetries := ch.Retries + 1
-	nextAttempt := time.Now().Add(d.cfg.Backoff(newRetries))
+	nextAttempt := time.Now().Add(backoffCurve(backoffBase, newRetries))
 
 	// Transition downloading → failed.
 	if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StateFailed); setErr != nil {
@@ -326,7 +334,7 @@ func (d *Dispatcher) handleFailure(ctx context.Context, ch *ent.Chapter, chapter
 		return fmt.Errorf("download.Dispatcher.handleFailure: update retry fields for chapter %s: %w", chapterID, err)
 	}
 
-	if newRetries >= d.cfg.MaxRetries {
+	if newRetries >= maxRetries {
 		if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StatePermanentlyFailed); setErr != nil {
 			// Defensive path: only reachable on DB failure between the failed
 			// transition and this permanent-failure escalation.

@@ -36,17 +36,28 @@ var ErrNoCover = errors.New("no cover available")
 
 // Service is the library read service over the M0 entities. It owns the storage
 // root (unused by the read methods; the recategorize path that moves folders on
-// disk will use it) so all library operations share one service.
+// disk will use it) so all library operations share one service. staleGrace
+// resolves the M7 source-health staleness grace AT USE-TIME so the value can be
+// runtime-tuned via the settings overlay without a restart.
 type Service struct {
-	client         *ent.Client
-	storage        string
-	staleGraceDays int
+	client     *ent.Client
+	storage    string
+	staleGrace func(ctx context.Context) int
 }
 
-// NewService builds the series library service. staleGraceDays tunes the M7
-// source-health staleness rule (see HealthConfig).
+// NewService builds the series library service with a FIXED stale-grace (the
+// common form for tests and any caller that does not need runtime tuning).
+// staleGraceDays tunes the M7 source-health staleness rule (see HealthConfig).
 func NewService(client *ent.Client, storage string, staleGraceDays int) *Service {
-	return &Service{client: client, storage: storage, staleGraceDays: staleGraceDays}
+	return NewServiceWithStaleGrace(client, storage, func(context.Context) int { return staleGraceDays })
+}
+
+// NewServiceWithStaleGrace builds the series library service whose stale-grace is
+// resolved at use-time from staleGrace (e.g. settings.Service.StaleGraceDays), so
+// an owner's change via the settings API takes effect on the next health read
+// without a restart. Production wires this variant; NewService is the fixed form.
+func NewServiceWithStaleGrace(client *ent.Client, storage string, staleGrace func(ctx context.Context) int) *Service {
+	return &Service{client: client, storage: storage, staleGrace: staleGrace}
 }
 
 // ProviderRank pairs a SeriesProvider UUID with the desired importance value. Used
@@ -421,10 +432,11 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	now := time.Now().UTC()
+	grace := s.staleGrace(ctx) // read at use-time (hot-reloadable)
 	providers := make([]ProviderDTO, len(row.Edges.Providers))
 	for i, p := range row.Edges.Providers {
 		isMetaSrc := metaProv != nil && p.ID == metaProv.ID
-		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, now), row.ID, isMetaSrc)
+		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, now, grace), row.ID, isMetaSrc)
 	}
 
 	return SeriesDetailDTO{
@@ -458,8 +470,9 @@ func seriesHealthInputs(row *ent.Series) (keys map[string]struct{}, maxNumber *f
 
 // providerHealth computes one provider's health within an already-loaded series.
 // completed is the series' completed flag — when true the source is reported ok
-// (excluded from staleness/erroring).
-func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}, maxNumber *float64, multi bool, completed bool, now time.Time) ProviderHealth {
+// (excluded from staleness/erroring). grace is the resolved (hot-reloadable)
+// stale-grace, passed in by the caller after one s.staleGrace(ctx) read.
+func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}, maxNumber *float64, multi bool, completed bool, now time.Time, grace int) ProviderHealth {
 	return ComputeProviderHealth(ProviderHealthInput{
 		SyncState:         p.Edges.SyncState,
 		ProviderChapters:  p.Edges.ProviderChapters,
@@ -467,7 +480,7 @@ func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}
 		SeriesMaxNumber:   maxNumber,
 		MultiSource:       multi,
 		Completed:         completed,
-	}, now, s.staleGraceDays)
+	}, now, grace)
 }
 
 // loadSeriesWithHealthData loads every series with the chapters, providers,
@@ -487,13 +500,14 @@ func (s *Service) loadSeriesWithHealthData(ctx context.Context) ([]*ent.Series, 
 }
 
 // sickSources returns the providers of one loaded series whose health is stale
-// or erroring (empty if the series is fully healthy).
-func (s *Service) sickSources(row *ent.Series, now time.Time) []ProviderDTO {
+// or erroring (empty if the series is fully healthy). grace is the resolved
+// stale-grace, read once by the caller (LibraryHealth / UnhealthyCount).
+func (s *Service) sickSources(row *ent.Series, now time.Time, grace int) []ProviderDTO {
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	metaProv := MetadataProvider(row)
 	var sick []ProviderDTO
 	for _, p := range row.Edges.Providers {
-		h := s.providerHealth(p, keys, maxNumber, multi, row.Completed, now)
+		h := s.providerHealth(p, keys, maxNumber, multi, row.Completed, now, grace)
 		if h.Status == HealthStale || h.Status == HealthErroring {
 			isMetaSrc := metaProv != nil && p.ID == metaProv.ID
 			sick = append(sick, newProviderDTO(p, h, row.ID, isMetaSrc))
@@ -510,9 +524,10 @@ func (s *Service) LibraryHealth(ctx context.Context) (LibraryHealthDTO, error) {
 		return LibraryHealthDTO{}, err
 	}
 	now := time.Now().UTC()
+	grace := s.staleGrace(ctx) // read once at use-time (hot-reloadable)
 	out := LibraryHealthDTO{Series: []SeriesHealthDTO{}}
 	for _, row := range rows {
-		if sick := s.sickSources(row, now); len(sick) > 0 {
+		if sick := s.sickSources(row, now, grace); len(sick) > 0 {
 			out.Series = append(out.Series, SeriesHealthDTO{
 				ID: row.ID.String(), Title: row.Title, Slug: row.Slug, Sources: sick,
 			})
@@ -529,9 +544,10 @@ func (s *Service) UnhealthyCount(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	now := time.Now().UTC()
+	grace := s.staleGrace(ctx) // read once at use-time (hot-reloadable)
 	n := 0
 	for _, row := range rows {
-		if len(s.sickSources(row, now)) > 0 {
+		if len(s.sickSources(row, now, grace)) > 0 {
 			n++
 		}
 	}
