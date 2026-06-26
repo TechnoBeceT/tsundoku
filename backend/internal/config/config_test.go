@@ -575,6 +575,43 @@ func TestJobsRefreshDefaults(t *testing.T) {
 	}
 }
 
+// TestJobsRetryConfig confirms the retry-policy fields are read from env vars.
+func TestJobsRetryConfig(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_JOBS_MAXRETRIES", "7")
+	t.Setenv("TSUNDOKU_JOBS_RETRYBACKOFF", "30s")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Jobs.MaxRetries != 7 {
+		t.Errorf("Jobs.MaxRetries = %d, want 7", cfg.Jobs.MaxRetries)
+	}
+	if cfg.Jobs.RetryBackoff != 30*time.Second {
+		t.Errorf("Jobs.RetryBackoff = %v, want 30s", cfg.Jobs.RetryBackoff)
+	}
+}
+
+// TestJobsRetryDefaults confirms sensible defaults (3 retries, 1m backoff) when
+// the retry env vars are unset.
+func TestJobsRetryDefaults(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Jobs.MaxRetries != 3 {
+		t.Errorf("Jobs.MaxRetries default = %d, want 3", cfg.Jobs.MaxRetries)
+	}
+	if cfg.Jobs.RetryBackoff != time.Minute {
+		t.Errorf("Jobs.RetryBackoff default = %v, want 1m", cfg.Jobs.RetryBackoff)
+	}
+}
+
 // TestLoadDefaultsHealthStaleGrace confirms that Load() applies the default
 // value (14) for Health.StaleGraceDays when TSUNDOKU_HEALTH_STALEGRACEDAYS
 // is not set.
