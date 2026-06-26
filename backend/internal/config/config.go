@@ -107,6 +107,13 @@ const suwayomiDownloadURLTemplate = "https://github.com/Suwayomi/Suwayomi-Server
 // Suwayomi manga server. M0 fields (Host, Port, BasePath) are preserved;
 // M2 adds provisioning and timeout fields.
 type SuwayomiConfig struct {
+	// ExternalURL selects the Suwayomi lifecycle mode (fleet "blank-disables"
+	// pattern). Blank ⇒ EMBEDDED mode: tsundoku provisions, runs, and stops its
+	// own Suwayomi JAR. Set ⇒ EXTERNAL mode: the client targets this HTTP base
+	// URL verbatim (e.g. a homelab Suwayomi) and tsundoku owns no process. When
+	// set it must be a well-formed absolute http/https URL (validate() fails
+	// closed otherwise). Set via TSUNDOKU_SUWAYOMI_EXTERNALURL.
+	ExternalURL string
 	// Host is the Suwayomi server host (default "localhost").
 	// Set via TSUNDOKU_SUWAYOMI_HOST.
 	Host string
@@ -140,11 +147,22 @@ type SuwayomiConfig struct {
 	JavaPath string
 }
 
-// BaseURL returns the base HTTP URL for the Suwayomi server in the form
-// http://Host:Port. BasePath is not included; callers append the path they need.
+// BaseURL returns the base HTTP URL for the Suwayomi server — the single
+// resolution point for both lifecycle modes. In EXTERNAL mode (ExternalURL set)
+// it returns ExternalURL with any trailing slash trimmed, so callers get a clean
+// baseURL + path join. In EMBEDDED mode it returns the local http://Host:Port.
+// BasePath is not included; callers append the path they need.
 func (s SuwayomiConfig) BaseURL() string {
+	if s.ExternalURL != "" {
+		return strings.TrimRight(s.ExternalURL, "/")
+	}
 	return "http://" + s.Host + ":" + s.Port
 }
+
+// IsExternal reports whether tsundoku should target an external Suwayomi
+// (ExternalURL set) rather than provisioning and running its own embedded JAR.
+// main.go branches on this to skip the ProcessManager in external mode.
+func (s SuwayomiConfig) IsExternal() bool { return s.ExternalURL != "" }
 
 // JobsConfig holds background-job scheduler settings.
 type JobsConfig struct {
@@ -193,6 +211,8 @@ func defaults() map[string]any {
 		"database.sslmode":  "disable",
 		"auth.secret":       "",
 		// Suwayomi — M0 fields preserved; M2 fields added below.
+		// externalurl blank ⇒ embedded mode (provision + run own JAR).
+		"suwayomi.externalurl":         "",
 		"suwayomi.host":                "localhost",
 		"suwayomi.port":                "4567",
 		"suwayomi.basepath":            "/api",
@@ -267,6 +287,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_DATABASE_HOST                  → database.host
 //	TSUNDOKU_DATABASE_PASSWORD              → database.password
 //	TSUNDOKU_DATABASE_SSLMODE               → database.sslmode
+//	TSUNDOKU_SUWAYOMI_EXTERNALURL           → suwayomi.externalurl
 //	TSUNDOKU_SUWAYOMI_HOST                  → suwayomi.host
 //	TSUNDOKU_SUWAYOMI_BASEPATH              → suwayomi.basepath
 //	TSUNDOKU_SUWAYOMI_VERSION               → suwayomi.version
@@ -308,6 +329,9 @@ const minAuthSecretLen = 16
 //   - Database.Password must be set — never run against a passwordless DB.
 //   - Auth.Secret must be at least 16 characters — an empty or short HMAC
 //     secret makes all tokens forgeable (flagged by Task 5 adversarial review).
+//   - Suwayomi.ExternalURL, when set (external mode), must be a well-formed
+//     absolute http/https URL — a malformed target aborts startup rather than
+//     silently retargeting the client at an unreachable address.
 func (c *Config) validate() error {
 	var errs []string
 
@@ -322,8 +346,33 @@ func (c *Config) validate() error {
 		))
 	}
 
+	if err := validateExternalURL(c.Suwayomi.ExternalURL); err != nil {
+		errs = append(errs, err.Error())
+	}
+
 	if len(errs) > 0 {
 		return errors.New("config: invalid configuration: " + strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// validateExternalURL fails closed on a malformed Suwayomi external target.
+// A blank value selects embedded mode and passes (the check is skipped). A
+// non-blank value must parse as an absolute URL with an http/https scheme and a
+// non-empty host; otherwise an error naming the bad value is returned so the
+// operator sees exactly what was rejected.
+func validateExternalURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("TSUNDOKU_SUWAYOMI_EXTERNALURL %q is not a valid URL: %w", raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf(
+			"TSUNDOKU_SUWAYOMI_EXTERNALURL %q must be an absolute http/https URL", raw,
+		)
 	}
 	return nil
 }

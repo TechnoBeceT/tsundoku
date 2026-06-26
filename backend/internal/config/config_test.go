@@ -363,6 +363,119 @@ func TestSuwayomiBaseURL(t *testing.T) {
 	}
 }
 
+// TestSuwayomiBaseURLEmbedded confirms BaseURL() returns the local
+// http://host:port when ExternalURL is blank (embedded mode). Non-vacuous:
+// setting ExternalURL would change the result (see TestSuwayomiBaseURLExternal).
+func TestSuwayomiBaseURLEmbedded(t *testing.T) {
+	s := config.SuwayomiConfig{Host: "127.0.0.1", Port: "4567"}
+	got := s.BaseURL()
+	want := "http://127.0.0.1:4567"
+	if got != want {
+		t.Errorf("BaseURL() embedded = %q, want %q", got, want)
+	}
+}
+
+// TestSuwayomiBaseURLExternal confirms BaseURL() returns the external URL
+// (overriding host:port) and trims a trailing slash for a clean path join.
+func TestSuwayomiBaseURLExternal(t *testing.T) {
+	s := config.SuwayomiConfig{
+		Host:        "127.0.0.1",
+		Port:        "4567",
+		ExternalURL: "https://suwayomi.homelab.example/",
+	}
+	got := s.BaseURL()
+	want := "https://suwayomi.homelab.example"
+	if got != want {
+		t.Errorf("BaseURL() external = %q, want %q", got, want)
+	}
+}
+
+// TestSuwayomiIsExternal confirms IsExternal() reflects whether ExternalURL
+// is set — the branch main.go uses to skip the embedded ProcessManager.
+func TestSuwayomiIsExternal(t *testing.T) {
+	if (config.SuwayomiConfig{}).IsExternal() {
+		t.Error("IsExternal() = true for blank ExternalURL, want false")
+	}
+	if !(config.SuwayomiConfig{ExternalURL: "http://x:4567"}).IsExternal() {
+		t.Error("IsExternal() = false for set ExternalURL, want true")
+	}
+}
+
+// TestValidateAcceptsExternalURL confirms a well-formed http/https external URL
+// passes validate() (and that blank — embedded mode — also passes).
+func TestValidateAcceptsExternalURL(t *testing.T) {
+	for _, raw := range []string{"", "http://localhost:4567", "https://suwayomi.example/api"} {
+		cfg := &config.Config{
+			Database: config.DatabaseConfig{Password: "somepassword"},
+			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+			Suwayomi: config.SuwayomiConfig{ExternalURL: raw},
+		}
+		if err := config.ExportValidateForTest(cfg); err != nil {
+			t.Errorf("validate() rejected ExternalURL %q, want accept: %v", raw, err)
+		}
+	}
+}
+
+// TestValidateRejectsMalformedExternalURL confirms validate() fails closed on a
+// malformed or scheme-less external URL, and that the error names the bad value.
+func TestValidateRejectsMalformedExternalURL(t *testing.T) {
+	for _, raw := range []string{"not a url", "ftp://x", "://x", "http://"} {
+		cfg := &config.Config{
+			Database: config.DatabaseConfig{Password: "somepassword"},
+			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+			Suwayomi: config.SuwayomiConfig{ExternalURL: raw},
+		}
+		err := config.ExportValidateForTest(cfg)
+		if err == nil {
+			t.Errorf("validate() accepted malformed ExternalURL %q, want reject", raw)
+			continue
+		}
+		if !strings.Contains(err.Error(), "TSUNDOKU_SUWAYOMI_EXTERNALURL") {
+			t.Errorf("error for %q should name TSUNDOKU_SUWAYOMI_EXTERNALURL, got: %v", raw, err)
+		}
+	}
+}
+
+// TestLoadEnvSuwayomiExternalURL confirms TSUNDOKU_SUWAYOMI_EXTERNALURL
+// populates SuwayomiConfig.ExternalURL and flips the resolved mode.
+func TestLoadEnvSuwayomiExternalURL(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SUWAYOMI_EXTERNALURL", "http://homelab:4567")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Suwayomi.ExternalURL != "http://homelab:4567" {
+		t.Errorf("Suwayomi.ExternalURL = %q, want %q", cfg.Suwayomi.ExternalURL, "http://homelab:4567")
+	}
+	if !cfg.Suwayomi.IsExternal() {
+		t.Error("IsExternal() = false after setting TSUNDOKU_SUWAYOMI_EXTERNALURL, want true")
+	}
+	if cfg.Suwayomi.BaseURL() != "http://homelab:4567" {
+		t.Errorf("BaseURL() = %q, want %q", cfg.Suwayomi.BaseURL(), "http://homelab:4567")
+	}
+}
+
+// TestSuwayomiExternalURLDefaultBlank confirms the default is blank (embedded
+// mode) so existing deploys are byte-for-byte unchanged.
+func TestSuwayomiExternalURLDefaultBlank(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Suwayomi.ExternalURL != "" {
+		t.Errorf("Suwayomi.ExternalURL default = %q, want empty (embedded)", cfg.Suwayomi.ExternalURL)
+	}
+	if cfg.Suwayomi.IsExternal() {
+		t.Error("IsExternal() = true by default, want false (embedded)")
+	}
+}
+
 // TestJobsConfig confirms that JobsConfig fields are read from env vars
 // and that a sane default is applied when the var is absent.
 func TestJobsConfig(t *testing.T) {
