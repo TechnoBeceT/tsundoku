@@ -8,11 +8,15 @@
 //  5. owner.NewHandler — assembles the claim/login handler.
 //  6. download.New + job.NewRunner — assembles the dispatcher and chapter job runner
 //     with the real Suwayomi ChapterFetcher (M2).
-//  7. Background goroutine: provisions the Suwayomi JAR, starts the Suwayomi
-//     process, then calls runner.Start. If provisioning or launch fails, the
-//     error is logged and the goroutine exits cleanly — the HTTP server continues
-//     serving the API and reconcile; downloads simply will not run until Suwayomi
-//     is available.
+//  7. Suwayomi engine, branched on cfg.Suwayomi.IsExternal():
+//     - EXTERNAL mode (TSUNDOKU_SUWAYOMI_EXTERNALURL set): no ProcessManager is
+//     constructed; the download + refresh tickers start immediately against
+//     the external HTTP target. An unreachable server degrades gracefully.
+//     - EMBEDDED mode (default): a background goroutine provisions the Suwayomi
+//     JAR, starts the process, then starts the tickers. If provisioning or
+//     launch fails, the error is logged and the goroutine exits cleanly — the
+//     HTTP server keeps serving the API and reconcile; downloads simply will
+//     not run until Suwayomi is available.
 //  8. server.New — wires middleware + routes, returns a ready Echo instance.
 //  9. Graceful shutdown on SIGINT / SIGTERM with a 15-second drain timeout.
 package main
@@ -100,42 +104,17 @@ func main() {
 		cfg.Jobs.RefreshConcurrency,
 	)
 
-	// pm is the embedded Suwayomi process manager. It is initialised here so
-	// that the shutdown path can call pm.Stop() unconditionally — Stop is
-	// idempotent and a no-op when the process was never started.
-	pm := suwayomi.NewProcessManager(cfg.Suwayomi)
+	// healthSvc is a stateless series.Service instance used only to supply the
+	// UnhealthyCount function to StartRefresh. A second stateless instance is
+	// safe — it shares no mutable state with the one constructed by
+	// registerRoutes; this follows the M5 precedent for a second
+	// suwayomi.NewIngest.
+	healthSvc := series.NewService(entClient, cfg.Storage.Folder, cfg.Health.StaleGraceDays)
 
-	// Launch Suwayomi and start the download ticker in a background goroutine so
-	// the HTTP server (and reconcile) become available immediately, even when the
-	// JVM startup takes minutes or when Suwayomi is unavailable entirely.
-	go func() {
-		slog.Info("tsundoku: starting embedded Suwayomi")
-		if err := pm.Start(ctx); err != nil {
-			// Suwayomi failed to start (no JVM, bad JAR, network error during
-			// provisioning, etc.). Log clearly and exit the goroutine — the API
-			// server keeps running; downloads will not proceed until the process
-			// is available. On context cancellation during startup the error is
-			// ctx.Err() which is not alarming.
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				slog.Info("tsundoku: Suwayomi start cancelled", "reason", err)
-			} else {
-				slog.Error("tsundoku: Suwayomi failed to start — downloads disabled", "err", err)
-			}
-			return
-		}
-		slog.Info("tsundoku: Suwayomi ready — starting download + refresh tickers",
-			"download_interval", cfg.Jobs.DownloadInterval,
-			"refresh_interval", cfg.Jobs.RefreshInterval,
-		)
-		// healthSvc is a stateless series.Service instance used only to
-		// supply the UnhealthyCount function to StartRefresh. A second
-		// stateless instance is safe — it shares no mutable state with the
-		// one constructed by registerRoutes; this follows the M5 precedent
-		// for a second suwayomi.NewIngest.
-		healthSvc := series.NewService(entClient, cfg.Storage.Folder, cfg.Health.StaleGraceDays)
-		runner.Start(ctx, cfg.Jobs.DownloadInterval)
-		runner.StartRefresh(ctx, cfg.Jobs.RefreshInterval, refreshSvc, healthSvc.UnhealthyCount)
-	}()
+	// Start the Suwayomi engine. pm is the embedded process manager (nil in
+	// external mode) — the shutdown path guards on pm != nil so Stop() is only
+	// called when tsundoku owns the process.
+	pm := startSuwayomiEngine(ctx, cfg, runner, refreshSvc, healthSvc.UnhealthyCount)
 
 	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, runner.Trigger)
 
@@ -154,12 +133,69 @@ func main() {
 	<-ctx.Done()
 	log.Println("tsundoku: shutdown signal received — draining requests")
 
-	// Stop the Suwayomi process before draining HTTP — idempotent if it never started.
-	pm.Stop()
+	// Stop the embedded Suwayomi process before draining HTTP. pm is nil in
+	// external mode (tsundoku owns no process), so guard the call.
+	if pm != nil {
+		pm.Stop()
+	}
 
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := e.Shutdown(shutCtx); err != nil {
 		log.Printf("tsundoku: graceful shutdown: %v", err)
 	}
+}
+
+// startSuwayomiEngine starts the download + refresh tickers under the configured
+// Suwayomi lifecycle mode and returns the embedded process manager (nil in
+// external mode). In EXTERNAL mode (cfg.Suwayomi.IsExternal()) a standalone
+// Suwayomi is assumed already running at BaseURL(): no process is owned and the
+// tickers start immediately — an unreachable server degrades gracefully (per-
+// cycle errors are logged, downloads just don't progress). In EMBEDDED mode the
+// Suwayomi JAR is provisioned + launched in a background goroutine so the HTTP
+// server stays available during JVM startup; the tickers start once the process
+// is ready, and a launch failure is logged without taking the API down.
+// The returned *ProcessManager is nil in external mode, so callers must guard
+// Stop() with a nil check.
+func startSuwayomiEngine(
+	ctx context.Context,
+	cfg *config.Config,
+	runner *job.Runner,
+	refreshSvc *refresh.Service,
+	unhealthyCount func(context.Context) (int, error),
+) *suwayomi.ProcessManager {
+	startTickers := func() {
+		slog.Info("tsundoku: starting download + refresh tickers",
+			"download_interval", cfg.Jobs.DownloadInterval,
+			"refresh_interval", cfg.Jobs.RefreshInterval,
+		)
+		runner.Start(ctx, cfg.Jobs.DownloadInterval)
+		runner.StartRefresh(ctx, cfg.Jobs.RefreshInterval, refreshSvc, unhealthyCount)
+	}
+
+	if cfg.Suwayomi.IsExternal() {
+		slog.Info("tsundoku: using external Suwayomi", "url", cfg.Suwayomi.BaseURL())
+		startTickers()
+		return nil
+	}
+
+	pm := suwayomi.NewProcessManager(cfg.Suwayomi)
+	go func() {
+		slog.Info("tsundoku: starting embedded Suwayomi")
+		if err := pm.Start(ctx); err != nil {
+			// Suwayomi failed to start (no JVM, bad JAR, provisioning network
+			// error, etc.). Log and exit the goroutine — the API keeps serving;
+			// downloads won't proceed until the process is available. A context
+			// cancellation during startup is expected (ctx.Err()), not alarming.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				slog.Info("tsundoku: Suwayomi start cancelled", "reason", err)
+			} else {
+				slog.Error("tsundoku: Suwayomi failed to start — downloads disabled", "err", err)
+			}
+			return
+		}
+		slog.Info("tsundoku: embedded Suwayomi ready")
+		startTickers()
+	}()
+	return pm
 }
