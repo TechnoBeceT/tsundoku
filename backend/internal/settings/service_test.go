@@ -202,6 +202,24 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	if list[0].Key != settings.KeyDownloadInterval {
 		t.Errorf("List[0].Key = %q, want %q", list[0].Key, settings.KeyDownloadInterval)
 	}
+	assertAllRowsAtDefault(t, list)
+
+	if err := svc.Set(ctx, settings.KeyDownloadInterval, "45m"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	dl := findSetting(t, svc.List(ctx), settings.KeyDownloadInterval)
+	if dl.Value != "45m0s" {
+		t.Errorf("download_interval value = %q, want 45m0s", dl.Value)
+	}
+	if dl.Default != "15m0s" {
+		t.Errorf("download_interval default = %q, want 15m0s", dl.Default)
+	}
+}
+
+// assertAllRowsAtDefault fails if any row's current value differs from its
+// default or is missing type/unit metadata.
+func assertAllRowsAtDefault(t *testing.T, list []settings.SettingDTO) {
+	t.Helper()
 	for _, row := range list {
 		if row.Value != row.Default {
 			t.Errorf("%s: current %q != default %q before any override", row.Key, row.Value, row.Default)
@@ -210,20 +228,18 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 			t.Errorf("%s: missing type %q / unit %q", row.Key, row.Type, row.Unit)
 		}
 	}
+}
 
-	if err := svc.Set(ctx, settings.KeyDownloadInterval, "45m"); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-	for _, row := range svc.List(ctx) {
-		if row.Key == settings.KeyDownloadInterval {
-			if row.Value != "45m0s" {
-				t.Errorf("download_interval value = %q, want 45m0s", row.Value)
-			}
-			if row.Default != "15m0s" {
-				t.Errorf("download_interval default = %q, want 15m0s", row.Default)
-			}
+// findSetting returns the row with the given key (failing the test if absent).
+func findSetting(t *testing.T, list []settings.SettingDTO, key string) settings.SettingDTO {
+	t.Helper()
+	for _, row := range list {
+		if row.Key == key {
+			return row
 		}
 	}
+	t.Fatalf("setting %q not found in list", key)
+	return settings.SettingDTO{}
 }
 
 // TestStaticProviderReturnsFixedValues proves the Static provider satisfies the
