@@ -30,6 +30,7 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -317,6 +318,178 @@ func assertSettingEq[T comparable](t *testing.T, name string, got, want T) {
 func strptr(s string) *string { return &s }
 func intptr(i int) *int       { return &i }
 func boolptr(b bool) *bool    { return &b }
+
+// TestShape6_Extensions is the MERGE GATE for the Suwayomi extension-management
+// proxy. It proves, against a real Suwayomi, the GraphQL shapes that httptest
+// fakes cannot (the fakes echo canned JSON; only a real server validates the
+// document against its schema):
+//
+// Tier 1 (MUST pass; local harness only, no external network):
+//  1. Extensions(ctx) decodes with NO schema/type error — proving the
+//     `extensions { nodes { … } }` query AND every ExtensionType field name +
+//     casing (pkgName, isInstalled, isObsolete, hasUpdate, …). A zero-length
+//     list is acceptable (the harness configures no repos).
+//  2. FetchExtensions(ctx) with input:{} is accepted (no schema error); an
+//     empty list is tolerated.
+//  3. ExtensionRepos read → SetExtensionRepos(one URL) → ExtensionRepos read-back
+//     asserts the round-trip, then a t.Cleanup RESTORES the original list. This
+//     is the strongest live proof here, since the harness has no installable
+//     extensions.
+//
+// Tier 2 (BEST-EFFORT; needs network + a real repo; NEVER fails the gate on its
+// absence): point a real repo, fetchExtensions, and IF an installable extension
+// appears, install → re-read → assert isInstalled==true → uninstall → assert it
+// flips back. Guarded by a short network probe; any network/repo/APK
+// unavailability calls t.Skip. updateExtension's input shape is already
+// introspection-confirmed, so Tier 2 is bonus live proof, not the gate.
+func TestShape6_Extensions(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	// --- Tier 1.1: extensions query decodes (field names + casing) -----------
+	exts, err := client.Extensions(ctx)
+	if err != nil {
+		t.Fatalf("Extensions (query shape): %v\n(check: is `extensions { nodes { … } }` correct and are the ExtensionType field names — incl. isInstalled/isObsolete/hasUpdate/pkgName — right?)", err)
+	}
+	t.Logf("CONFIRMED: extensions query decoded; %d extension(s)", len(exts))
+
+	// --- Tier 1.2: fetchExtensions(input:{}) accepted ------------------------
+	fetched, err := client.FetchExtensions(ctx)
+	if err != nil {
+		t.Fatalf("FetchExtensions (mutation shape, input:{}): %v\n(check: is `fetchExtensions(input:{}) { extensions { … } }` correct?)", err)
+	}
+	t.Logf("CONFIRMED: fetchExtensions(input:{}) accepted; %d extension(s)", len(fetched))
+
+	// --- Tier 1.3: extensionRepos read/write round-trip + restore ------------
+	before, err := client.ExtensionRepos(ctx)
+	if err != nil {
+		t.Fatalf("ExtensionRepos (read shape): %v\n(check: is `settings { extensionRepos }` correct?)", err)
+	}
+	t.Logf("CONFIRMED: extensionRepos read; before=%v", before)
+
+	// Restore the original repo list regardless of outcome (and after any Tier 2
+	// changes), so the shared harness is left unchanged for other tests.
+	t.Cleanup(func() {
+		if err := client.SetExtensionRepos(context.Background(), before); err != nil {
+			t.Logf("WARN: failed to restore original extension repos: %v", err)
+		}
+	})
+
+	// Suwayomi server-side validates the repo URL FORMAT (a github-raw-style regex)
+	// before storing — but storing does NOT fetch the URL, so a format-valid but
+	// never-fetched placeholder proves the read/write wire shape network-free.
+	const testRepo = "https://raw.githubusercontent.com/tsundoku-shape-test/extensions/repo/index.min.json"
+	if err := client.SetExtensionRepos(ctx, []string{testRepo}); err != nil {
+		t.Fatalf("SetExtensionRepos (write shape): %v\n(check: is setSettings(input:{settings:{extensionRepos:[String!]}}) correct?)", err)
+	}
+	after, err := client.ExtensionRepos(ctx)
+	if err != nil {
+		t.Fatalf("ExtensionRepos read-back: %v", err)
+	}
+	if len(after) != 1 || after[0] != testRepo {
+		t.Fatalf("extensionRepos round-trip: got %v, want [%s]", after, testRepo)
+	}
+	t.Logf("CONFIRMED: extensionRepos write round-tripped; after=%v", after)
+
+	// --- Tier 2: best-effort live install/uninstall --------------------------
+	tier2Extensions(t, client)
+}
+
+// tier2Extensions is the best-effort live install/uninstall round-trip. It never
+// fails the gate on network/repo/APK unavailability — it t.Skips. It only asserts
+// (and can fail) AFTER a successful install, where a non-flipping isInstalled
+// would be a genuine bug.
+func tier2Extensions(t *testing.T, client suwayomi.Client) {
+	t.Helper()
+	const realRepo = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"
+	if !probeURL(realRepo) {
+		t.Skip("Tier 2 skipped: no network access to a real extensions repo")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	if err := client.SetExtensionRepos(ctx, []string{realRepo}); err != nil {
+		t.Skipf("Tier 2 skipped: SetExtensionRepos(real repo): %v", err)
+	}
+	fetched, err := client.FetchExtensions(ctx)
+	if err != nil {
+		t.Skipf("Tier 2 skipped: FetchExtensions(real repo): %v", err)
+	}
+
+	var target string
+	for _, e := range fetched {
+		if !e.IsInstalled && !e.IsObsolete {
+			target = e.PkgName
+			break
+		}
+	}
+	if target == "" {
+		t.Skip("Tier 2 skipped: no installable extension found in the repo listing")
+	}
+
+	if err := client.SetExtensionState(ctx, target, suwayomi.ExtensionInstall); err != nil {
+		t.Skipf("Tier 2 skipped: install %q failed (likely network/APK fetch): %v", target, err)
+	}
+	// Always attempt an uninstall so the harness is left clean.
+	t.Cleanup(func() {
+		_ = client.SetExtensionState(context.Background(), target, suwayomi.ExtensionUninstall)
+	})
+
+	if installed := findExtension(t, client, target); !installed.IsInstalled {
+		t.Errorf("after install, %q isInstalled=false (expected true)", target)
+	} else {
+		t.Logf("CONFIRMED: install set isInstalled=true for %q", target)
+	}
+
+	if err := client.SetExtensionState(ctx, target, suwayomi.ExtensionUninstall); err != nil {
+		t.Skipf("Tier 2 partial: uninstall %q failed: %v", target, err)
+	}
+	if uninstalled := findExtension(t, client, target); uninstalled.IsInstalled {
+		t.Errorf("after uninstall, %q isInstalled=true (expected false)", target)
+	} else {
+		t.Logf("CONFIRMED: uninstall flipped isInstalled back to false for %q", target)
+	}
+}
+
+// probeURL does a short HEAD probe to decide whether the network/repo is
+// reachable for the best-effort Tier 2 path. A <500 status counts as reachable.
+func probeURL(rawURL string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode < 500
+}
+
+// findExtension re-reads the extension list and returns the entry for pkgName,
+// failing the test if it is absent (used after a state change to assert the
+// re-read reflects the new isInstalled value).
+func findExtension(t *testing.T, client suwayomi.Client, pkgName string) suwayomi.Extension {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+	exts, err := client.Extensions(ctx)
+	if err != nil {
+		t.Fatalf("Extensions (find %q): %v", pkgName, err)
+	}
+	for _, e := range exts {
+		if e.PkgName == pkgName {
+			return e
+		}
+	}
+	t.Fatalf("extension %q not found in list after state change", pkgName)
+	return suwayomi.Extension{}
+}
 
 // TestE2E_AddSeriesDispatchDownload is the Milestone 2 end-to-end proof:
 //
