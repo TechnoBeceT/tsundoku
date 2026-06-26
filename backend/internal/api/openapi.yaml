@@ -669,6 +669,52 @@ components:
           items:
             $ref: "#/components/schemas/Provider"
 
+    Setting:
+      type: object
+      required: [key, value, default, type, unit]
+      properties:
+        key:
+          type: string
+          description: The tunable key (an allowlisted dotted key).
+          example: jobs.download_interval
+        value:
+          type: string
+          description: The current resolved value (DB override if set, else the default).
+          example: 15m0s
+        default:
+          type: string
+          description: The env-config default for this key.
+          example: 15m0s
+        type:
+          type: string
+          description: Value representation — "duration" (Go duration string) or "int".
+          enum: [duration, int]
+        unit:
+          type: string
+          description: Semantic unit hint for the UI (e.g. "duration", "count", "days").
+          example: duration
+
+    SettingsUpdateRequest:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          type: array
+          description: |
+            Batch of key/value updates applied all-or-nothing — an unknown key or an
+            out-of-bounds value rejects the whole batch with 400 naming the bad key.
+          minItems: 1
+          items:
+            type: object
+            required: [key, value]
+            properties:
+              key:
+                type: string
+                example: jobs.download_interval
+              value:
+                type: string
+                example: 30m
+
 paths:
   /health:
     get:
@@ -1925,6 +1971,76 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Chapter is not in a retryable state (only failed/permanently_failed may be retried).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/settings:
+    get:
+      operationId: listSettings
+      summary: List runtime-tunable settings
+      description: |
+        Returns the closed allowlist of runtime-tunable settings, each with its
+        current resolved value (DB override if set, else the env-config default),
+        the default, and type + unit metadata for the UI. Structural settings
+        (storage, DB, auth, Suwayomi) are env-only and not listed here.
+      tags:
+        - settings
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The tunable allowlist in stable order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Setting"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateSettings
+      summary: Update runtime-tunable settings
+      description: |
+        Applies a batch of key/value updates to the runtime tunables, all-or-nothing:
+        an unknown key (outside the allowlist) or an out-of-bounds value rejects the
+        whole batch with 400 naming the offending key — no partial write lands. A
+        change takes effect on the next cycle without a restart (read-at-use). Returns
+        the updated settings list so the caller sees the persisted values without a
+        refetch (§16).
+      tags:
+        - settings
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsUpdateRequest"
+      responses:
+        "200":
+          description: Settings updated. Returns the full updated settings list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Setting"
+        "400":
+          description: An unknown key, an out-of-bounds value, or an empty batch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
           content:
             application/json:
               schema:

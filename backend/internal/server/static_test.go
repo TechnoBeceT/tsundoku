@@ -13,6 +13,7 @@ import (
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/server"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -65,7 +66,8 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	// and ensure no test exercises a path that calls into the DB.
 	ownerH := owner.NewHandler(nil, authSvc)
 
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, func() {}), authSvc
+	settingsSvc := settings.NewService(nil, settings.Defaults{})
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, func() {}), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

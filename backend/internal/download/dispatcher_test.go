@@ -23,6 +23,7 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -69,9 +70,9 @@ func TestDispatcher_HappyPath(t *testing.T) {
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 2,
-		MaxRetries:             3,
-		Storage:                storageDir,
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -151,11 +152,9 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 	f := fake.New(fake.WithFailFirst())
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             3,
-		Storage:                storageDir,
-		// Use zero backoff so the second RunOnce processes immediately.
-		Backoff: func(_ int) time.Duration { return 0 },
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: 0})
 
 	// First run: should fail.
 	if err := d.RunOnce(ctx); err != nil {
@@ -208,10 +207,9 @@ func TestDispatcher_PermanentFailure(t *testing.T) {
 	f := fake.New(fake.WithError(alwaysErr))
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             1, // single attempt before permanently_failed
-		Storage:                storageDir,
-		Backoff:                func(_ int) time.Duration { return 0 },
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 1, Backoff: 0})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -280,9 +278,9 @@ func TestDispatcher_PerProviderConcurrency(t *testing.T) {
 	cf := &countingFetcher{base: base}
 	d := download.New(client, cf, hub, download.Config{
 		PerProviderConcurrency: cap,
-		MaxRetries:             3,
-		Storage:                storageDir,
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -317,9 +315,9 @@ func TestDispatcher_SSEEvents(t *testing.T) {
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             3,
-		Storage:                storageDir,
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -373,9 +371,9 @@ func TestDispatcher_BestProviderPicked(t *testing.T) {
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             3,
-		Storage:                storageDir,
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -421,10 +419,9 @@ func TestDispatcher_SSEFail(t *testing.T) {
 	f := fake.New(fake.WithError(alwaysErr))
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             1,
-		Storage:                storageDir,
-		Backoff:                func(_ int) time.Duration { return 0 },
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 1, Backoff: 0})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -482,10 +479,9 @@ func TestDispatcher_NoChapterStrandedInDownloading(t *testing.T) {
 	f := fake.New(fake.WithError(errors.New("forced failure")))
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             2,
-		Storage:                storageDir,
-		Backoff:                func(_ int) time.Duration { return 0 },
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 2, Backoff: 0})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -535,9 +531,9 @@ func TestDispatcher_ZeroPadding(t *testing.T) {
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             3,
-		Storage:                storageDir,
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -578,9 +574,9 @@ func TestDispatcher_NoProviderStaysWanted(t *testing.T) {
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             3,
-		Storage:                storageDir,
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -654,9 +650,9 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 	cf := &fetchRefCapture{}
 	d := download.New(client, cf, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             3,
-		Storage:                storageDir,
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -700,9 +696,9 @@ func TestDispatcher_RendersToSeriesCategory(t *testing.T) {
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
 		PerProviderConcurrency: 1,
-		MaxRetries:             3,
-		Storage:                storageDir,
-	})
+
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)

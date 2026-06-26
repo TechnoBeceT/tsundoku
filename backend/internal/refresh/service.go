@@ -28,21 +28,28 @@ import (
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
+// Concurrency supplies the runtime-tunable parallel-refetch bound. RefreshAll
+// reads it at the START of each sweep so an owner's change via the settings API
+// applies to the next sweep without a restart. *settings.Service and
+// settings.Static both satisfy it.
+type Concurrency interface {
+	// RefreshConcurrency is the maximum number of provider re-fetches that may run
+	// in parallel in one sweep.
+	RefreshConcurrency(ctx context.Context) int
+}
+
 // Service runs the discovery sweep. Create one with NewService and call
 // RefreshAll on a schedule (job.Runner.StartRefresh) or on demand.
 type Service struct {
 	client      *ent.Client
 	ingest      *suwayomi.Ingest
 	hub         *sse.Hub
-	concurrency int
+	concurrency Concurrency
 }
 
-// NewService constructs a Service. concurrency bounds parallel provider
-// re-fetches (each is a live upstream call); values < 1 are clamped to 1.
-func NewService(client *ent.Client, ingest *suwayomi.Ingest, hub *sse.Hub, concurrency int) *Service {
-	if concurrency < 1 {
-		concurrency = 1
-	}
+// NewService constructs a Service. concurrency supplies the runtime-tunable
+// parallel-refetch bound, read at the start of every sweep (hot reload).
+func NewService(client *ent.Client, ingest *suwayomi.Ingest, hub *sse.Hub, concurrency Concurrency) *Service {
 	return &Service{client: client, ingest: ingest, hub: hub, concurrency: concurrency}
 }
 
@@ -100,7 +107,9 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	result := RefreshResult{SeriesRefreshed: len(seriesList)}
 
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(s.concurrency)
+	// Read the parallel-refetch bound at use-time so a settings change applies to
+	// this sweep (clamped >= 1 — a 0 limit would deadlock errgroup).
+	g.SetLimit(s.refreshLimit(ctx))
 	for _, it := range items {
 		g.Go(func() error {
 			res, addErr := s.ingest.AddSeries(gctx, it.provider, it.mangaID, it.title)
@@ -142,6 +151,15 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 		Errors:             result.Errors,
 	})
 	return result, nil
+}
+
+// refreshLimit resolves the runtime-tunable parallel-refetch bound at use-time,
+// clamped to >= 1 (a 0 limit would deadlock the errgroup).
+func (s *Service) refreshLimit(ctx context.Context) int {
+	if limit := s.concurrency.RefreshConcurrency(ctx); limit >= 1 {
+		return limit
+	}
+	return 1
 }
 
 // upsertSyncState records the outcome of refreshing one provider into its

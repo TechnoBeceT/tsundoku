@@ -181,6 +181,18 @@ type JobsConfig struct {
 	// sources than the in-process search fan-out. Set via
 	// TSUNDOKU_JOBS_REFRESHCONCURRENCY.
 	RefreshConcurrency int
+
+	// MaxRetries is how many times a failed chapter download is retried before it
+	// is parked in permanently_failed. Default 3. This is the env-sourced DEFAULT
+	// the runtime settings overlay (internal/settings) can override per-deployment
+	// without a restart. Set via TSUNDOKU_JOBS_MAXRETRIES.
+	MaxRetries int
+
+	// RetryBackoff is the BASE delay before the first retry of a failed chapter;
+	// the dispatcher doubles it per attempt (capped at 1h). Default 1m. Like
+	// MaxRetries it is the env default behind the runtime settings overlay. Set
+	// via TSUNDOKU_JOBS_RETRYBACKOFF.
+	RetryBackoff time.Duration
 }
 
 // HealthConfig tunes the M7 source-health computation.
@@ -226,6 +238,8 @@ func defaults() map[string]any {
 		"jobs.downloadinterval":   "15m",
 		"jobs.refreshinterval":    "2h",
 		"jobs.refreshconcurrency": 4,
+		"jobs.maxretries":         3,
+		"jobs.retrybackoff":       "1m",
 		// Health — M7 source-health computation.
 		"health.stalegracedays": 14,
 		"storage.folder":        "/data/manga",
@@ -299,6 +313,8 @@ func Load() (*Config, error) {
 //	TSUNDOKU_JOBS_DOWNLOADINTERVAL          → jobs.downloadinterval
 //	TSUNDOKU_JOBS_REFRESHINTERVAL           → jobs.refreshinterval
 //	TSUNDOKU_JOBS_REFRESHCONCURRENCY        → jobs.refreshconcurrency
+//	TSUNDOKU_JOBS_MAXRETRIES                → jobs.maxretries
+//	TSUNDOKU_JOBS_RETRYBACKOFF              → jobs.retrybackoff
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //
 // Convention: after stripping the prefix the first "_" separates the

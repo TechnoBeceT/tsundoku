@@ -564,6 +564,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List runtime-tunable settings
+         * @description Returns the closed allowlist of runtime-tunable settings, each with its
+         *     current resolved value (DB override if set, else the env-config default),
+         *     the default, and type + unit metadata for the UI. Structural settings
+         *     (storage, DB, auth, Suwayomi) are env-only and not listed here.
+         */
+        get: operations["listSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update runtime-tunable settings
+         * @description Applies a batch of key/value updates to the runtime tunables, all-or-nothing:
+         *     an unknown key (outside the allowlist) or an out-of-bounds value rejects the
+         *     whole batch with 400 naming the offending key — no partial write lands. A
+         *     change takes effect on the next cycle without a restart (read-at-use). Returns
+         *     the updated settings list so the caller sees the persisted values without a
+         *     refetch (§16).
+         */
+        patch: operations["updateSettings"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -936,6 +968,45 @@ export interface components {
             title: string;
             slug: string;
             sources: components["schemas"]["Provider"][];
+        };
+        Setting: {
+            /**
+             * @description The tunable key (an allowlisted dotted key).
+             * @example jobs.download_interval
+             */
+            key: string;
+            /**
+             * @description The current resolved value (DB override if set, else the default).
+             * @example 15m0s
+             */
+            value: string;
+            /**
+             * @description The env-config default for this key.
+             * @example 15m0s
+             */
+            default: string;
+            /**
+             * @description Value representation — "duration" (Go duration string) or "int".
+             * @enum {string}
+             */
+            type: "duration" | "int";
+            /**
+             * @description Semantic unit hint for the UI (e.g. "duration", "count", "days").
+             * @example duration
+             */
+            unit: string;
+        };
+        SettingsUpdateRequest: {
+            /**
+             * @description Batch of key/value updates applied all-or-nothing — an unknown key or an
+             *     out-of-bounds value rejects the whole batch with 400 naming the bad key.
+             */
+            settings: {
+                /** @example jobs.download_interval */
+                key: string;
+                /** @example 30m */
+                value: string;
+            }[];
         };
     };
     responses: never;
@@ -2237,6 +2308,77 @@ export interface operations {
             };
             /** @description Chapter is not in a retryable state (only failed/permanently_failed may be retried). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tunable allowlist in stable order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Setting"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Settings updated. Returns the full updated settings list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Setting"][];
+                };
+            };
+            /** @description An unknown key, an out-of-bounds value, or an empty batch. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
