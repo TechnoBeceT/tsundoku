@@ -53,6 +53,13 @@ func (s *stubClient) PageBytes(_ context.Context, pageURL string) ([]byte, strin
 	panic("stubClient.PageBytes: unexpected URL: " + pageURL)
 }
 
+func (s *stubClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
+	return suwayomi.SuwayomiSettings{}, nil
+}
+func (s *stubClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
+	return nil
+}
+
 // The remaining Client methods are unused by Fetcher; they panic loudly if
 // reached so a future code-change that calls them is caught immediately.
 func (s *stubClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
@@ -270,6 +277,13 @@ func (m *midLoopCancelClient) PageBytes(_ context.Context, _ string) ([]byte, st
 		m.cancel()
 	}
 	return []byte{0xFF}, "jpg", nil
+}
+
+func (m *midLoopCancelClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
+	return suwayomi.SuwayomiSettings{}, nil
+}
+func (m *midLoopCancelClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
+	return nil
 }
 
 func (m *midLoopCancelClient) Sources(_ context.Context) ([]suwayomi.Source, error) {

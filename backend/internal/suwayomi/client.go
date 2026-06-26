@@ -142,6 +142,15 @@ type Client interface {
 	// leading dot. Extension detection uses http.DetectContentType on the first
 	// 512 bytes of the response body.
 	PageBytes(ctx context.Context, pageURL string) (data []byte, ext string, err error)
+
+	// ServerSettings returns the FlareSolverr + SOCKS-proxy subset of Suwayomi's
+	// server-global settings via the settings GraphQL query. See settings.go.
+	ServerSettings(ctx context.Context) (SuwayomiSettings, error)
+
+	// SetServerSettings applies a PARTIAL update of the FlareSolverr + SOCKS
+	// subset via the setSettings mutation: only the patch's non-nil fields are
+	// sent, so unset fields are never clobbered. See settings.go.
+	SetServerSettings(ctx context.Context, patch SuwayomiSettingsPatch) error
 }
 
 // --- Constructor -------------------------------------------------------------

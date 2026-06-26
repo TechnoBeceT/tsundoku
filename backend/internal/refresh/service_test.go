@@ -51,6 +51,12 @@ func (f *fakeClient) MangaMeta(context.Context, int) (suwayomi.Manga, error) {
 }
 func (f *fakeClient) ChapterPages(context.Context, int) ([]string, error)       { return nil, nil }
 func (f *fakeClient) PageBytes(context.Context, string) ([]byte, string, error) { return nil, "", nil }
+func (f *fakeClient) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {
+	return suwayomi.SuwayomiSettings{}, nil
+}
+func (f *fakeClient) SetServerSettings(context.Context, suwayomi.SuwayomiSettingsPatch) error {
+	return nil
+}
 
 // num returns a pointer to a float64 chapter number (Suwayomi's wire shape).
 func num(n float64) *float64 { return &n }

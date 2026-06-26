@@ -47,6 +47,12 @@ func (nullSuwayomiClient) ChapterPages(_ context.Context, _ int) ([]string, erro
 func (nullSuwayomiClient) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
 	panic("nullSuwayomiClient.PageBytes called in test")
 }
+func (nullSuwayomiClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
+	panic("nullSuwayomiClient.ServerSettings called in test")
+}
+func (nullSuwayomiClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
+	panic("nullSuwayomiClient.SetServerSettings called in test")
+}
 
 // newTestServer builds a server.New instance with stub dependencies and no
 // real DB, suitable for route-level unit tests that do not touch the database.
