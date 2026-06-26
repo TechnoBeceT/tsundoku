@@ -171,6 +171,29 @@ func validateDeleteFiles(raw string) (bool, error) {
 	}
 }
 
+// SetMetadataSourceRequest is the PATCH /api/series/{id}/metadata-source request body.
+// ProviderID nil or "" means "auto" (reset to the highest-importance provider).
+type SetMetadataSourceRequest struct {
+	// ProviderID is the SeriesProvider UUID to pin as the metadata source,
+	// or null/absent to reset to automatic resolution.
+	ProviderID *string `json:"providerId"`
+}
+
+// validateSetMetadataSource parses the PATCH body for SetMetadataSource. A nil
+// or empty providerId resets to auto-resolution (returns nil pointer). A non-empty
+// providerId must parse as a valid UUID — a malformed value yields a 400. Returns
+// the UUID pointer ready for the service.
+func validateSetMetadataSource(req SetMetadataSourceRequest) (*uuid.UUID, error) {
+	if req.ProviderID == nil || *req.ProviderID == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(*req.ProviderID)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid provider id: "+*req.ProviderID)
+	}
+	return &id, nil
+}
+
 // validateReorderProviders validates the PATCH body: at least one entry is required,
 // each id must parse as a valid UUID, and each importance must be non-negative.
 // Returns a []seriessvc.ProviderRank ready for the service, or a 400 echo.HTTPError.

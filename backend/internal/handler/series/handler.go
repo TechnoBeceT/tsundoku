@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // Handler holds the dependencies for the library (series) HTTP handlers.
@@ -14,13 +15,15 @@ import (
 type Handler struct {
 	svc     *seriessvc.Service
 	trigger func()
+	sw      suwayomi.Client
 }
 
-// NewHandler constructs a Handler bound to a series.Service and an auto-converge
+// NewHandler constructs a Handler bound to a series.Service, an auto-converge
 // trigger (called after a successful provider re-rank to re-evaluate upgrades
-// immediately — M5; other routes do not use it).
-func NewHandler(svc *seriessvc.Service, trigger func()) *Handler {
-	return &Handler{svc: svc, trigger: trigger}
+// immediately — M5; other routes do not use it), and a suwayomi.Client (used
+// by the cover proxy endpoints to fetch cover images from Suwayomi).
+func NewHandler(svc *seriessvc.Service, trigger func(), sw suwayomi.Client) *Handler {
+	return &Handler{svc: svc, trigger: trigger, sw: sw}
 }
 
 // List handles GET /api/series.
@@ -293,10 +296,43 @@ func detailToSummary(d seriessvc.SeriesDetailDTO) seriessvc.SeriesSummaryDTO {
 	}
 }
 
+// SetMetadataSource handles PATCH /api/series/:id/metadata-source. It pins
+// the series' metadata source to a given provider (or resets to automatic
+// resolution when providerId is null/absent). On success it returns 200 with
+// the full SeriesDetailDTO so the caller sees the new isMetadataSource flag
+// without a refetch (§16).
+func (h *Handler) SetMetadataSource(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+
+	var req SetMetadataSourceRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	providerID, err := validateSetMetadataSource(req)
+	if err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := h.svc.SetMetadataSource(ctx, id, providerID); err != nil {
+		return mapServiceError(err)
+	}
+
+	// Return the updated detail so the caller sees isMetadataSource without a refetch (§16).
+	updated, err := h.svc.GetSeries(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
 // mapServiceError translates a series.Service sentinel error into the matching
 // HTTP status, leaving any unexpected error to fall through to the central
 // middleware as a 500. ErrSeriesNotFound → 404; ErrInvalidCategory → 400;
-// ErrProviderNotInSeries → 400.
+// ErrProviderNotInSeries → 400; ErrNoCover → 404.
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, seriessvc.ErrSeriesNotFound):
@@ -305,6 +341,8 @@ func mapServiceError(err error) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid category")
 	case errors.Is(err, seriessvc.ErrProviderNotInSeries):
 		return echo.NewHTTPError(http.StatusBadRequest, "provider does not belong to series")
+	case errors.Is(err, seriessvc.ErrNoCover):
+		return echo.NewHTTPError(http.StatusNotFound, "no cover available")
 	default:
 		return err
 	}

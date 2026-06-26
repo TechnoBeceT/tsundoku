@@ -33,6 +33,10 @@ var ErrInvalidCategory = errors.New("invalid category")
 // handler maps it to a 400.
 var ErrProviderNotInSeries = errors.New("provider does not belong to series")
 
+// ErrNoCover is returned by CoverURL and ProviderCoverURL when the resolved
+// provider has no stored cover_url. The HTTP handler maps it to a 404.
+var ErrNoCover = errors.New("no cover available")
+
 // Service is the library read service over the M0 entities. It owns the storage
 // root (unused by the read methods; the recategorize path that moves folders on
 // disk will use it) so all library operations share one service.
@@ -820,4 +824,54 @@ func addToCounts(c *ChapterCounts, state entchapter.State) {
 	case entchapter.StateFailed:
 		c.Failed++
 	}
+}
+
+// CoverURL returns the stored Suwayomi-relative cover_url of the series'
+// resolved metadata provider. Returns ErrSeriesNotFound when id is unknown,
+// ErrNoCover when the metadata provider has no stored cover (the proxy
+// endpoint would have nothing to fetch). Providers must be eagerly loaded for
+// metadataProvider resolution.
+func (s *Service) CoverURL(ctx context.Context, id uuid.UUID) (string, error) {
+	row, err := s.client.Series.Query().
+		Where(entseries.IDEQ(id)).
+		WithProviders().
+		Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return "", ErrSeriesNotFound
+		}
+		return "", fmt.Errorf("series.CoverURL: load series %s: %w", id, err)
+	}
+	meta := metadataProvider(row)
+	if meta == nil || meta.CoverURL == "" {
+		return "", ErrNoCover
+	}
+	return meta.CoverURL, nil
+}
+
+// ProviderCoverURL returns the stored Suwayomi-relative cover_url for the
+// given SeriesProvider. Returns ErrSeriesNotFound when the series is unknown,
+// ErrProviderNotInSeries when providerID does not belong to the series, and
+// ErrNoCover when the provider has no stored cover_url.
+func (s *Service) ProviderCoverURL(ctx context.Context, id, providerID uuid.UUID) (string, error) {
+	exists, err := s.client.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return "", fmt.Errorf("series.ProviderCoverURL: check series %s: %w", id, err)
+	}
+	if !exists {
+		return "", ErrSeriesNotFound
+	}
+	p, err := s.client.SeriesProvider.Query().
+		Where(entseriesprovider.IDEQ(providerID), entseriesprovider.SeriesID(id)).
+		Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return "", ErrProviderNotInSeries
+		}
+		return "", fmt.Errorf("series.ProviderCoverURL: load provider %s: %w", providerID, err)
+	}
+	if p.CoverURL == "" {
+		return "", ErrNoCover
+	}
+	return p.CoverURL, nil
 }

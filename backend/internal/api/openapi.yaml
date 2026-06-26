@@ -106,6 +106,7 @@ components:
       required:
         - id
         - title
+        - displayName
         - slug
         - category
         - coverUrl
@@ -119,7 +120,10 @@ components:
           description: Series identifier.
         title:
           type: string
-          description: Series display title.
+          description: Canonical series title (used for slug derivation and disk layout).
+        displayName:
+          type: string
+          description: Resolved display title from the metadata source provider (falls back to title).
         slug:
           type: string
           description: Deterministic URL-safe series slug.
@@ -129,7 +133,7 @@ components:
           description: Library category the series is filed under.
         coverUrl:
           type: string
-          description: Cover image URL (may be empty).
+          description: Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover.
         monitored:
           type: boolean
           description: Whether the series is actively tracked for new chapters.
@@ -171,7 +175,11 @@ components:
     Provider:
       type: object
       required:
+        - id
         - provider
+        - title
+        - coverUrl
+        - isMetadataSource
         - scanlator
         - language
         - importance
@@ -179,9 +187,22 @@ components:
         - chaptersBehind
         - lastError
       properties:
+        id:
+          type: string
+          format: uuid
+          description: SeriesProvider UUID (used by re-rank and metadata-source pin).
         provider:
           type: string
           description: Provider key (e.g. mangadex).
+        title:
+          type: string
+          description: This provider's own title for the series (may be empty).
+        coverUrl:
+          type: string
+          description: Provider-level cover proxy path ("/api/series/{id}/providers/{pid}/cover"); empty when no cover.
+        isMetadataSource:
+          type: boolean
+          description: True for the provider currently supplying DisplayName and CoverURL for this series.
         scanlator:
           type: string
           description: Scanlation group (may be empty).
@@ -217,6 +238,7 @@ components:
       required:
         - id
         - title
+        - displayName
         - slug
         - category
         - coverUrl
@@ -232,7 +254,10 @@ components:
           description: Series identifier.
         title:
           type: string
-          description: Series display title.
+          description: Canonical series title (used for slug derivation and disk layout).
+        displayName:
+          type: string
+          description: Resolved display title from the metadata source provider (falls back to title).
         slug:
           type: string
           description: Deterministic URL-safe series slug.
@@ -242,7 +267,7 @@ components:
           description: Library category the series is filed under.
         coverUrl:
           type: string
-          description: Cover image URL (may be empty).
+          description: Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover.
         monitored:
           type: boolean
           description: Whether the series is actively tracked for new chapters.
@@ -445,6 +470,17 @@ components:
           minItems: 1
           items:
             $ref: "#/components/schemas/AdoptProvider"
+
+    SetMetadataSourceRequest:
+      type: object
+      properties:
+        providerId:
+          type: [string, "null"]
+          format: uuid
+          description: |
+            SeriesProvider UUID to pin as the metadata source, or null/absent to reset
+            to automatic resolution (highest-importance provider). A malformed UUID
+            yields 400.
 
     LibraryHealth:
       type: object
@@ -1023,6 +1059,149 @@ paths:
                 $ref: "#/components/schemas/SeriesDetail"
         "400":
           description: Malformed series or provider UUID, or provider not in series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/cover:
+    get:
+      operationId: getSeriesCover
+      summary: Series cover image
+      description: |
+        Streams the cover image for the series' resolved metadata source provider.
+        The image is fetched from Suwayomi and returned as a binary blob. Returns 404
+        when the series has no cover, 502 when Suwayomi fails to fetch it.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The cover image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Series not found or no cover available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/providers/{providerId}/cover:
+    get:
+      operationId: getProviderCover
+      summary: Provider cover image
+      description: |
+        Streams the cover image for a specific provider within a series. The image is
+        fetched from Suwayomi and returned as a binary blob. Returns 404 when the
+        provider has no cover or does not belong to the series, 502 on a Suwayomi
+        fetch failure.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: providerId
+          in: path
+          required: true
+          description: SeriesProvider UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The cover image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Series or provider not found, or no cover available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/metadata-source:
+    patch:
+      operationId: setSeriesMetadataSource
+      summary: Pin metadata source
+      description: |
+        Pins the series' metadata source to the given provider (providerId non-null) or
+        resets to automatic resolution (highest-importance provider) when providerId is
+        null or absent. Returns the full series detail so isMetadataSource is reflected
+        without a refetch (§16).
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetMetadataSourceRequest"
+      responses:
+        "200":
+          description: Metadata source updated. Returns the updated series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Malformed series id or malformed providerId UUID.
           content:
             application/json:
               schema:
