@@ -1041,3 +1041,39 @@ func TestClientIsInterface(_ *testing.T) {
 	// this would not compile if Client were a concrete struct, not an interface.
 	var _ suwayomi.Client = suwayomi.NewClient(config.SuwayomiConfig{}, http.DefaultClient)
 }
+
+// TestClient_ExternalURL_TargetsExternalBase confirms a client built from a
+// SuwayomiConfig with ExternalURL set (external mode) sends its requests to that
+// external base — the only new behaviour: BaseURL() resolution. The request path
+// is unchanged. Non-vacuous: a regression that ignored ExternalURL (falling back
+// to Host:Port) would never hit srv and the test would fail on the unset flag.
+func TestClient_ExternalURL_TargetsExternalBase(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/graphql" {
+			http.Error(w, "wrong path", http.StatusNotFound)
+			return
+		}
+		hit = true
+		resp := graphqlResponse(t, map[string]any{
+			"sources": map[string]any{"nodes": []map[string]any{}},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	// Host/Port point at a dead address; only ExternalURL should be honoured.
+	cfg := config.SuwayomiConfig{
+		Host:        "127.0.0.1",
+		Port:        "1",
+		ExternalURL: srv.URL,
+	}
+	client := suwayomi.NewClient(cfg, srv.Client())
+	if _, err := client.Sources(context.Background()); err != nil {
+		t.Fatalf("Sources() via ExternalURL: %v", err)
+	}
+	if !hit {
+		t.Fatal("request did not reach the external base URL — ExternalURL not honoured")
+	}
+}
