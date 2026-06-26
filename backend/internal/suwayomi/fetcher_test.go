@@ -67,6 +67,9 @@ func (s *stubClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter
 func (s *stubClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	panic("stubClient.MangaChapters: must not be called by Fetcher")
 }
+func (s *stubClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
+	panic("stubClient.MangaMeta: must not be called by Fetcher")
+}
 
 // --- helpers -----------------------------------------------------------------
 
@@ -277,4 +280,7 @@ func (m *midLoopCancelClient) FetchChapters(_ context.Context, _ int) ([]suwayom
 }
 func (m *midLoopCancelClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	panic("midLoopCancelClient.MangaChapters: must not be called")
+}
+func (m *midLoopCancelClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
+	panic("midLoopCancelClient.MangaMeta: must not be called")
 }

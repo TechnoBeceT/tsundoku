@@ -296,6 +296,7 @@ func (fakeSuwayomi) FetchChapters(context.Context, int) ([]suwayomi.Chapter, err
 	return []suwayomi.Chapter{{ID: 1, Index: 0, Number: &n, URL: "u1"}}, nil
 }
 func (fakeSuwayomi) MangaChapters(context.Context, int) ([]suwayomi.Chapter, error) { return nil, nil }
+func (fakeSuwayomi) MangaMeta(context.Context, int) (suwayomi.Manga, error)         { return suwayomi.Manga{}, nil }
 func (fakeSuwayomi) ChapterPages(context.Context, int) ([]string, error)            { return nil, nil }
 func (fakeSuwayomi) PageBytes(context.Context, string) ([]byte, string, error)      { return nil, "", nil }
 

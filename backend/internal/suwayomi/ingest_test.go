@@ -51,6 +51,9 @@ func (s *ingestStubClient) Sources(_ context.Context) ([]suwayomi.Source, error)
 func (s *ingestStubClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	panic("ingestStubClient.MangaChapters: must not be called by Ingest (use FetchChapters)")
 }
+func (s *ingestStubClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
+	panic("ingestStubClient.MangaMeta: must not be called by Ingest")
+}
 func (s *ingestStubClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
 	panic("ingestStubClient.ChapterPages: must not be called by Ingest")
 }
