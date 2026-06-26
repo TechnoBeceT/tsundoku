@@ -627,6 +627,143 @@ export interface paths {
         patch: operations["updateSuwayomiSettings"];
         trace?: never;
     };
+    "/api/suwayomi/extensions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Suwayomi extensions
+         * @description Returns every Suwayomi extension (installed + available). A pure
+         *     passthrough — Tsundoku stores none of this. An upstream Suwayomi failure
+         *     is a 502.
+         */
+        get: operations["listExtensions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suwayomi/extensions/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh available extensions from repos
+         * @description Re-fetches the available-extensions list from the configured repos
+         *     ("check for updates") and returns the refreshed list. An upstream
+         *     Suwayomi failure is a 502.
+         */
+        post: operations["refreshExtensions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suwayomi/extensions/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read extension repo URLs
+         * @description Returns the configured extension repo URL list.
+         */
+        get: operations["getExtensionRepos"];
+        /**
+         * Replace extension repo URLs
+         * @description REPLACES the extension repo URL list (replace, not merge). An empty array
+         *     clears all repos. Each entry must be an absolute http(s) URL. The list is
+         *     RE-READ after the write and returned (§16). A validation failure is a 400;
+         *     an upstream Suwayomi failure is a 502.
+         */
+        put: operations["setExtensionRepos"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suwayomi/extensions/{pkgName}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install an extension
+         * @description Installs the extension identified by pkgName, then RE-READS and returns
+         *     the full extension list so the caller observes the post-mutation state
+         *     (§16). A blank pkgName is a 400; an upstream Suwayomi failure is a 502.
+         */
+        post: operations["installExtension"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suwayomi/extensions/{pkgName}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update an extension
+         * @description Updates the installed extension identified by pkgName, then RE-READS and
+         *     returns the full extension list (§16). A blank pkgName is a 400; an
+         *     upstream Suwayomi failure is a 502.
+         */
+        post: operations["updateExtension"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suwayomi/extensions/{pkgName}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Uninstall an extension
+         * @description Uninstalls the extension identified by pkgName, then RE-READS and returns
+         *     the full extension list (§16) — the uninstalled entry may drop out. A
+         *     blank pkgName is a 400; an upstream Suwayomi failure is a 502.
+         */
+        delete: operations["uninstallExtension"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1127,6 +1264,69 @@ export interface components {
             port?: string;
             username?: string;
             password?: string;
+        };
+        /**
+         * @description A Suwayomi extension (a Tachiyomi/Mihon source plugin), proxied verbatim
+         *     from the active Suwayomi (embed or external). Tsundoku stores none of
+         *     this. The identity is pkgName (there is no numeric id); the install/nsfw/
+         *     obsolete flags use Suwayomi's isInstalled/isNsfw/isObsolete naming.
+         */
+        Extension: {
+            /**
+             * @description The extension package name — its stable identity.
+             * @example eu.kanade.tachiyomi.extension.en.mangadex
+             */
+            pkgName: string;
+            /**
+             * @description Human-readable display name.
+             * @example MangaDex
+             */
+            name: string;
+            /**
+             * @description BCP-47 language tag the extension serves.
+             * @example en
+             */
+            lang: string;
+            /**
+             * @description Human-readable version string.
+             * @example 1.4.2
+             */
+            versionName: string;
+            /**
+             * @description Integer version code.
+             * @example 42
+             */
+            versionCode: number;
+            /** @description Raw Suwayomi icon URL (no Tsundoku proxy in v1). */
+            iconUrl: string;
+            /** @description Source repo URL this extension came from; "" when null. */
+            repo: string;
+            /** @description Whether the extension is currently installed. */
+            isInstalled: boolean;
+            /** @description Whether an installed extension has a newer version available. */
+            hasUpdate: boolean;
+            /** @description Whether the extension is flagged not-safe-for-work. */
+            isNsfw: boolean;
+            /** @description Whether the extension is orphaned (no longer in any repo). */
+            isObsolete: boolean;
+        };
+        /** @description The configured extension repo URL list. */
+        ExtensionRepos: {
+            /** @description Extension repo URLs (empty array when none configured). */
+            repos: string[];
+        };
+        /**
+         * @description REPLACES the extension repo URL list (PUT = replace, not merge). repos
+         *     must be present (a JSON array); an empty array clears all repos. Each
+         *     entry must be an absolute http(s) URL with a host.
+         */
+        ExtensionReposUpdate: {
+            /**
+             * @example [
+             *       "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"
+             *     ]
+             */
+            repos: string[];
         };
     };
     responses: never;
@@ -2569,6 +2769,321 @@ export interface operations {
                 };
             };
             /** @description A validation failure (bad SOCKS version/port, malformed URL, or empty body). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listExtensions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The full extension list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Extension"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    refreshExtensions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The refreshed extension list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Extension"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getExtensionRepos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The configured repo URL list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionRepos"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setExtensionRepos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtensionReposUpdate"];
+            };
+        };
+        responses: {
+            /** @description Repos replaced. Returns the refreshed repo URL list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionRepos"];
+                };
+            };
+            /** @description A validation failure (missing/null repos, blank or non-absolute URL). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    installExtension: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Installed. Returns the refreshed extension list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Extension"][];
+                };
+            };
+            /** @description A blank pkgName. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateExtension: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated. Returns the refreshed extension list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Extension"][];
+                };
+            };
+            /** @description A blank pkgName. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    uninstallExtension: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Uninstalled. Returns the refreshed extension list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Extension"][];
+                };
+            };
+            /** @description A blank pkgName. */
             400: {
                 headers: {
                     [name: string]: unknown;

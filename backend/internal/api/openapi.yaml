@@ -833,6 +833,92 @@ components:
         password:
           type: string
 
+    Extension:
+      type: object
+      description: |
+        A Suwayomi extension (a Tachiyomi/Mihon source plugin), proxied verbatim
+        from the active Suwayomi (embed or external). Tsundoku stores none of
+        this. The identity is pkgName (there is no numeric id); the install/nsfw/
+        obsolete flags use Suwayomi's isInstalled/isNsfw/isObsolete naming.
+      required:
+        - pkgName
+        - name
+        - lang
+        - versionName
+        - versionCode
+        - iconUrl
+        - repo
+        - isInstalled
+        - hasUpdate
+        - isNsfw
+        - isObsolete
+      properties:
+        pkgName:
+          type: string
+          description: The extension package name — its stable identity.
+          example: eu.kanade.tachiyomi.extension.en.mangadex
+        name:
+          type: string
+          description: Human-readable display name.
+          example: MangaDex
+        lang:
+          type: string
+          description: BCP-47 language tag the extension serves.
+          example: en
+        versionName:
+          type: string
+          description: Human-readable version string.
+          example: 1.4.2
+        versionCode:
+          type: integer
+          description: Integer version code.
+          example: 42
+        iconUrl:
+          type: string
+          description: Raw Suwayomi icon URL (no Tsundoku proxy in v1).
+        repo:
+          type: string
+          description: Source repo URL this extension came from; "" when null.
+        isInstalled:
+          type: boolean
+          description: Whether the extension is currently installed.
+        hasUpdate:
+          type: boolean
+          description: Whether an installed extension has a newer version available.
+        isNsfw:
+          type: boolean
+          description: Whether the extension is flagged not-safe-for-work.
+        isObsolete:
+          type: boolean
+          description: Whether the extension is orphaned (no longer in any repo).
+
+    ExtensionRepos:
+      type: object
+      description: The configured extension repo URL list.
+      required: [repos]
+      properties:
+        repos:
+          type: array
+          description: Extension repo URLs (empty array when none configured).
+          items:
+            type: string
+
+    ExtensionReposUpdate:
+      type: object
+      description: |
+        REPLACES the extension repo URL list (PUT = replace, not merge). repos
+        must be present (a JSON array); an empty array clears all repos. Each
+        entry must be an absolute http(s) URL with a host.
+      required: [repos]
+      properties:
+        repos:
+          type: array
+          items:
+            type: string
+            description: Absolute http(s) URL.
+          example:
+            - https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json
+
 paths:
   /health:
     get:
@@ -2224,6 +2310,281 @@ paths:
                 $ref: "#/components/schemas/SuwayomiSettings"
         "400":
           description: A validation failure (bad SOCKS version/port, malformed URL, or empty body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/suwayomi/extensions:
+    get:
+      operationId: listExtensions
+      summary: List Suwayomi extensions
+      description: |
+        Returns every Suwayomi extension (installed + available). A pure
+        passthrough — Tsundoku stores none of this. An upstream Suwayomi failure
+        is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The full extension list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Extension"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/suwayomi/extensions/refresh:
+    post:
+      operationId: refreshExtensions
+      summary: Refresh available extensions from repos
+      description: |
+        Re-fetches the available-extensions list from the configured repos
+        ("check for updates") and returns the refreshed list. An upstream
+        Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The refreshed extension list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Extension"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/suwayomi/extensions/repos:
+    get:
+      operationId: getExtensionRepos
+      summary: Read extension repo URLs
+      description: Returns the configured extension repo URL list.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The configured repo URL list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtensionRepos"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: setExtensionRepos
+      summary: Replace extension repo URLs
+      description: |
+        REPLACES the extension repo URL list (replace, not merge). An empty array
+        clears all repos. Each entry must be an absolute http(s) URL. The list is
+        RE-READ after the write and returned (§16). A validation failure is a 400;
+        an upstream Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtensionReposUpdate"
+      responses:
+        "200":
+          description: Repos replaced. Returns the refreshed repo URL list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtensionRepos"
+        "400":
+          description: A validation failure (missing/null repos, blank or non-absolute URL).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/suwayomi/extensions/{pkgName}/install:
+    post:
+      operationId: installExtension
+      summary: Install an extension
+      description: |
+        Installs the extension identified by pkgName, then RE-READS and returns
+        the full extension list so the caller observes the post-mutation state
+        (§16). A blank pkgName is a 400; an upstream Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: pkgName
+          in: path
+          required: true
+          description: The extension package name (its identity).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Installed. Returns the refreshed extension list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Extension"
+        "400":
+          description: A blank pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/suwayomi/extensions/{pkgName}/update:
+    post:
+      operationId: updateExtension
+      summary: Update an extension
+      description: |
+        Updates the installed extension identified by pkgName, then RE-READS and
+        returns the full extension list (§16). A blank pkgName is a 400; an
+        upstream Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: pkgName
+          in: path
+          required: true
+          description: The extension package name (its identity).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated. Returns the refreshed extension list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Extension"
+        "400":
+          description: A blank pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/suwayomi/extensions/{pkgName}:
+    delete:
+      operationId: uninstallExtension
+      summary: Uninstall an extension
+      description: |
+        Uninstalls the extension identified by pkgName, then RE-READS and returns
+        the full extension list (§16) — the uninstalled entry may drop out. A
+        blank pkgName is a 400; an upstream Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: pkgName
+          in: path
+          required: true
+          description: The extension package name (its identity).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Uninstalled. Returns the refreshed extension list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Extension"
+        "400":
+          description: A blank pkgName.
           content:
             application/json:
               schema:
