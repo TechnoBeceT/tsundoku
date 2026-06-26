@@ -42,6 +42,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/suwayomi/testharness"
@@ -306,8 +307,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 	dispatcher := download.New(db, fetcher, hub, download.Config{
 		Storage:                storageDir,
 		PerProviderConcurrency: 1,
-		MaxRetries:             1,
-	})
+	}, settings.Static{Retries: 1, Backoff: 0})
 
 	if err := dispatcher.RunOnce(ctx); err != nil {
 		t.Fatalf("Step 4 — RunOnce: %v", err)
