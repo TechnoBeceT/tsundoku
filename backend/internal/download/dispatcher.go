@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -223,7 +224,7 @@ func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
 func (d *Dispatcher) process(ctx context.Context, chapterID uuid.UUID, pc *ent.ProviderChapter, importance int) error {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
-		WithSeries().
+		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
 		Only(ctx)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.process: load chapter %s: %w", chapterID, err)
@@ -374,19 +375,21 @@ func (d *Dispatcher) broadcast(eventType string, data DownloadEvent) {
 // Acceptable for M1.
 func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesProvider, maxChapter *float64) disk.RenderMeta {
 	seriesTitle := ""
-	// Default to Other when the series edge is unloaded/absent (same guard as the
-	// title): a downloaded chapter must still render somewhere valid.
-	category := disk.CategoryOther
+	// Default to Other when the series edge (or its category edge) is
+	// unloaded/absent: a downloaded chapter must still render somewhere valid.
+	categoryName := disk.CategoryOther
 	if ch.Edges.Series != nil {
 		seriesTitle = ch.Edges.Series.Title
-		category = disk.Category(ch.Edges.Series.Category.String())
+		if name := category.NameOf(ch.Edges.Series); name != "" {
+			categoryName = name
+		}
 	}
 	return disk.RenderMeta{
 		Provider:            sp.Provider,
 		Scanlator:           sp.Scanlator,
 		Language:            sp.Language,
 		SeriesTitle:         seriesTitle,
-		Category:            category,
+		Category:            categoryName,
 		Number:              pc.Number,
 		MaxChapter:          maxChapter,
 		ChapterName:         pc.Name,

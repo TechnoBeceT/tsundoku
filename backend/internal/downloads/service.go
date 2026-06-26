@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
@@ -98,7 +99,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 		Order(entchapter.ByNumber(), entchapter.ByChapterKey()).
 		Limit(filter.Limit).
 		Offset(filter.Offset).
-		WithSeries().
+		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
 		All(ctx)
 	if err != nil {
 		return DownloadListDTO{}, fmt.Errorf("downloads.List: query chapters: %w", err)
@@ -116,7 +117,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 		res := resolutions[ch.SeriesID]
 		items[i] = newDownloadChapterDTO(
 			ch,
-			seriesByID[ch.SeriesID].Category.String(),
+			category.NameOf(seriesByID[ch.SeriesID]),
 			res,
 			chapterProvider(ch, provByID, res.bestSource),
 		)

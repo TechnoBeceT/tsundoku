@@ -20,7 +20,7 @@ import (
 // storage. Returns the series id.
 func seedFullSeries(t *testing.T, ctx context.Context, db *ent.Client, storage string) uuid.UUID {
 	t.Helper()
-	s := db.Series.Create().SetTitle("Doomed").SetSlug("doomed").SetCategory(entseries.CategoryManhwa).SaveX(ctx)
+	s := db.Series.Create().SetTitle("Doomed").SetSlug("doomed").SetCategoryID(catID(ctx, db, "Manhwa")).SaveX(ctx)
 	p := db.SeriesProvider.Create().SetSeriesID(s.ID).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
 	db.ProviderChapter.Create().SetSeriesProviderID(p.ID).SetChapterKey("c1").SetNumber(1).SaveX(ctx)
 	db.SuwayomiSyncState.Create().SetSeriesProviderID(p.ID).SetState("ok").SaveX(ctx)
@@ -105,7 +105,7 @@ func TestDeleteSeries_NoFolderDeleteFilesTrue(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	storage := t.TempDir()
-	s := db.Series.Create().SetTitle("Nofiles").SetSlug("nofiles").SetCategory(entseries.CategoryOther).SaveX(ctx)
+	s := db.Series.Create().SetTitle("Nofiles").SetSlug("nofiles").SetCategoryID(catID(ctx, db, "Other")).SaveX(ctx)
 	svc := series.NewService(db, storage, 14)
 	if err := svc.DeleteSeries(ctx, s.ID, true); err != nil {
 		t.Fatalf("DeleteSeries (no folder) = %v, want nil", err)
@@ -124,7 +124,7 @@ func TestDeleteSeries_DiskFailureRollsBack(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	storage := t.TempDir()
-	s := db.Series.Create().SetTitle("Stuck").SetSlug("stuck").SetCategory(entseries.CategoryOther).SaveX(ctx)
+	s := db.Series.Create().SetTitle("Stuck").SetSlug("stuck").SetCategoryID(catID(ctx, db, "Other")).SaveX(ctx)
 	// Make <storage>/Other a FILE, so RemoveSeriesDir(storage,"Other","Stuck") fails.
 	if err := os.WriteFile(storage+"/Other", []byte("x"), 0o600); err != nil {
 		t.Fatalf("seed blocking file: %v", err)

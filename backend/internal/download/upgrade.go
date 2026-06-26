@@ -145,7 +145,7 @@ func maxImportanceForChapter(ctx context.Context, client *ent.Client, ch *ent.Ch
 func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
-		WithSeries().
+		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
 		Only(ctx)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.Upgrade: load chapter %s: %w", chapterID, err)

@@ -5,12 +5,14 @@ package series_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -20,6 +22,21 @@ import (
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/series"
 )
+
+// catID resolves a seeded default category's id by name (testdb seeds the five
+// defaults), for linking a fixture series to a category via SetCategoryID.
+func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
+	id, err := category.IDByName(ctx, db, name)
+	if err != nil {
+		panic(fmt.Sprintf("catID %q: %v", name, err))
+	}
+	return id
+}
+
+// seriesCategoryName reads a series' linked category name via the edge.
+func seriesCategoryName(ctx context.Context, db *ent.Client, id uuid.UUID) string {
+	return db.Series.Query().Where(entseries.IDEQ(id)).QueryCategory().OnlyX(ctx).Name
+}
 
 // seededLibrary holds the ids of the fixture series so tests can target them.
 type seededLibrary struct {
@@ -39,7 +56,7 @@ func seedLibrary(ctx context.Context, t *testing.T, client *ent.Client) seededLi
 		SetTitle("Alpha Saga").
 		SetSlug("alpha-saga").
 		SetCoverURL("https://example.test/alpha.jpg").
-		SetCategory(entseries.CategoryManga).
+		SetCategoryID(catID(ctx, client, "Manga")).
 		SaveX(ctx)
 
 	num1, num2 := 1.0, 2.0
@@ -70,7 +87,7 @@ func seedLibrary(ctx context.Context, t *testing.T, client *ent.Client) seededLi
 	manhwa := client.Series.Create().
 		SetTitle("Beta Quest").
 		SetSlug("beta-quest").
-		SetCategory(entseries.CategoryManhwa).
+		SetCategoryID(catID(ctx, client, "Manhwa")).
 		SaveX(ctx)
 
 	bnum1, bnum2, bnum3 := 1.0, 2.0, 3.0
@@ -169,21 +186,22 @@ func TestListSeriesFiltersByCategory(t *testing.T) {
 	}
 }
 
-// TestListSeriesInvalidCategory verifies that an illegal category filter is
-// rejected with ErrInvalidCategory rather than silently returning an empty page.
-func TestListSeriesInvalidCategory(t *testing.T) {
+// TestListSeriesUnknownCategory verifies that filtering by a category name that
+// matches no series returns an empty page (categories are now user-defined, so
+// an unknown name is not an error — it simply matches nothing).
+func TestListSeriesUnknownCategory(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 	seedLibrary(ctx, t, client)
 
 	svc := series.NewService(client, t.TempDir(), 14)
-	bogus := "Bogus"
-	got, err := svc.ListSeries(ctx, series.ListFilter{Category: &bogus})
-	if !errors.Is(err, series.ErrInvalidCategory) {
-		t.Fatalf("ListSeries(Bogus): want ErrInvalidCategory, got %v", err)
+	unknown := "No Such Category"
+	got, err := svc.ListSeries(ctx, series.ListFilter{Category: &unknown})
+	if err != nil {
+		t.Fatalf("ListSeries(unknown): unexpected error %v", err)
 	}
-	if got != nil {
-		t.Fatalf("ListSeries(Bogus): want nil result, got %+v", got)
+	if len(got) != 0 {
+		t.Fatalf("ListSeries(unknown): want empty page, got %+v", got)
 	}
 }
 
@@ -261,7 +279,7 @@ func TestGetSeriesChapterNameFromBestProvider(t *testing.T) {
 	sr := client.Series.Create().
 		SetTitle("Tower Climb").
 		SetSlug("tower-climb").
-		SetCategory(entseries.CategoryManhwa).
+		SetCategoryID(catID(ctx, client, "Manhwa")).
 		SaveX(ctx)
 
 	// Two chapters sharing keys across two providers.
@@ -325,7 +343,7 @@ func TestGetSeriesChapterNameFallsBackToNumber(t *testing.T) {
 	sr := client.Series.Create().
 		SetTitle("Frozen Archive").
 		SetSlug("frozen-archive").
-		SetCategory(entseries.CategoryManga).
+		SetCategoryID(catID(ctx, client, "Manga")).
 		SaveX(ctx)
 
 	intNum, decNum := 12.0, 12.5
@@ -423,28 +441,27 @@ func TestSetCategoryMovesDiskAndUpdatesDB(t *testing.T) {
 	row := client.Series.Create().
 		SetTitle(title).
 		SetSlug("solo-leveling").
-		SetCategory(entseries.CategoryOther).
+		SetCategoryID(catID(ctx, client, "Other")).
 		SaveX(ctx)
 
-	cbzBytes := seedSeriesDir(t, storage, string(entseries.CategoryOther), title)
+	cbzBytes := seedSeriesDir(t, storage, "Other", title)
 
 	svc := series.NewService(client, storage, 14)
-	if err := svc.SetCategory(ctx, row.ID, "Manhwa"); err != nil {
+	if err := svc.SetCategory(ctx, row.ID, catID(ctx, client, "Manhwa")); err != nil {
 		t.Fatalf("SetCategory: %v", err)
 	}
 
 	// DB side: category updated.
-	reread := client.Series.GetX(ctx, row.ID)
-	if reread.Category != entseries.CategoryManhwa {
-		t.Fatalf("SetCategory: DB category want Manhwa, got %s", reread.Category)
+	if got := seriesCategoryName(ctx, client, row.ID); got != "Manhwa" {
+		t.Fatalf("SetCategory: DB category want Manhwa, got %s", got)
 	}
 
 	// Disk side: folder moved to the new category, old folder gone, CBZ intact.
-	oldDir := disk.SeriesDir(storage, string(entseries.CategoryOther), title)
+	oldDir := disk.SeriesDir(storage, "Other", title)
 	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
 		t.Fatalf("SetCategory: old dir %q should be gone, stat err = %v", oldDir, err)
 	}
-	newDir := disk.SeriesDir(storage, string(entseries.CategoryManhwa), title)
+	newDir := disk.SeriesDir(storage, "Manhwa", title)
 	if _, err := os.Stat(newDir); err != nil {
 		t.Fatalf("SetCategory: new dir %q should exist: %v", newDir, err)
 	}
@@ -462,7 +479,7 @@ func TestSetCategoryMovesDiskAndUpdatesDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetCategory: read moved sidecar: %v", err)
 	}
-	if sidecar == nil || sidecar.Category != string(entseries.CategoryManhwa) {
+	if sidecar == nil || sidecar.Category != "Manhwa" {
 		t.Fatalf("SetCategory: moved sidecar category want Manhwa, got %+v", sidecar)
 	}
 }
@@ -478,26 +495,27 @@ func TestSetCategorySameCategoryNoOp(t *testing.T) {
 	row := client.Series.Create().
 		SetTitle(title).
 		SetSlug("solo-leveling").
-		SetCategory(entseries.CategoryManhwa).
+		SetCategoryID(catID(ctx, client, "Manhwa")).
 		SaveX(ctx)
-	seedSeriesDir(t, storage, string(entseries.CategoryManhwa), title)
+	seedSeriesDir(t, storage, "Manhwa", title)
 
 	svc := series.NewService(client, storage, 14)
-	if err := svc.SetCategory(ctx, row.ID, "Manhwa"); err != nil {
+	if err := svc.SetCategory(ctx, row.ID, catID(ctx, client, "Manhwa")); err != nil {
 		t.Fatalf("SetCategory(same): %v", err)
 	}
 
-	if client.Series.GetX(ctx, row.ID).Category != entseries.CategoryManhwa {
-		t.Fatalf("SetCategory(same): category changed")
+	if got := seriesCategoryName(ctx, client, row.ID); got != "Manhwa" {
+		t.Fatalf("SetCategory(same): category changed to %s", got)
 	}
-	if _, err := os.Stat(disk.SeriesDir(storage, string(entseries.CategoryManhwa), title)); err != nil {
+	if _, err := os.Stat(disk.SeriesDir(storage, "Manhwa", title)); err != nil {
 		t.Fatalf("SetCategory(same): dir should be untouched: %v", err)
 	}
 }
 
-// TestSetCategoryInvalidCategory verifies an illegal enum value is rejected with
-// ErrInvalidCategory and nothing changes on either DB or disk.
-func TestSetCategoryInvalidCategory(t *testing.T) {
+// TestSetCategoryUnknownCategory verifies that recategorizing to a category id
+// that does not exist is rejected with category.ErrCategoryNotFound and nothing
+// changes on either DB or disk.
+func TestSetCategoryUnknownCategory(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 	storage := t.TempDir()
@@ -506,21 +524,21 @@ func TestSetCategoryInvalidCategory(t *testing.T) {
 	row := client.Series.Create().
 		SetTitle(title).
 		SetSlug("solo-leveling").
-		SetCategory(entseries.CategoryOther).
+		SetCategoryID(catID(ctx, client, "Other")).
 		SaveX(ctx)
-	seedSeriesDir(t, storage, string(entseries.CategoryOther), title)
+	seedSeriesDir(t, storage, "Other", title)
 
 	svc := series.NewService(client, storage, 14)
-	err := svc.SetCategory(ctx, row.ID, "Bogus")
-	if !errors.Is(err, series.ErrInvalidCategory) {
-		t.Fatalf("SetCategory(Bogus): want ErrInvalidCategory, got %v", err)
+	err := svc.SetCategory(ctx, row.ID, uuid.New())
+	if !errors.Is(err, category.ErrCategoryNotFound) {
+		t.Fatalf("SetCategory(unknown): want ErrCategoryNotFound, got %v", err)
 	}
 
-	if client.Series.GetX(ctx, row.ID).Category != entseries.CategoryOther {
-		t.Fatalf("SetCategory(Bogus): DB category changed")
+	if got := seriesCategoryName(ctx, client, row.ID); got != "Other" {
+		t.Fatalf("SetCategory(unknown): DB category changed to %s", got)
 	}
-	if _, err := os.Stat(disk.SeriesDir(storage, string(entseries.CategoryOther), title)); err != nil {
-		t.Fatalf("SetCategory(Bogus): dir should be untouched: %v", err)
+	if _, err := os.Stat(disk.SeriesDir(storage, "Other", title)); err != nil {
+		t.Fatalf("SetCategory(unknown): dir should be untouched: %v", err)
 	}
 }
 
@@ -535,19 +553,19 @@ func TestSetCategoryNoDiskFolderUpdatesDBOnly(t *testing.T) {
 	row := client.Series.Create().
 		SetTitle("No Downloads Yet").
 		SetSlug("no-downloads-yet").
-		SetCategory(entseries.CategoryOther).
+		SetCategoryID(catID(ctx, client, "Other")).
 		SaveX(ctx)
 
 	svc := series.NewService(client, storage, 14)
-	if err := svc.SetCategory(ctx, row.ID, "Manhua"); err != nil {
+	if err := svc.SetCategory(ctx, row.ID, catID(ctx, client, "Manhua")); err != nil {
 		t.Fatalf("SetCategory(no folder): %v", err)
 	}
 
-	if client.Series.GetX(ctx, row.ID).Category != entseries.CategoryManhua {
-		t.Fatalf("SetCategory(no folder): DB category want Manhua")
+	if got := seriesCategoryName(ctx, client, row.ID); got != "Manhua" {
+		t.Fatalf("SetCategory(no folder): DB category want Manhua, got %s", got)
 	}
 	// No folder was ever created on either side.
-	if _, err := os.Stat(disk.SeriesDir(storage, string(entseries.CategoryManhua), "No Downloads Yet")); !os.IsNotExist(err) {
+	if _, err := os.Stat(disk.SeriesDir(storage, "Manhua", "No Downloads Yet")); !os.IsNotExist(err) {
 		t.Fatalf("SetCategory(no folder): no dir should have been created, stat err = %v", err)
 	}
 }
@@ -562,7 +580,7 @@ func TestMonitoredDefaultsTrue(t *testing.T) {
 	sr := client.Series.Create().
 		SetTitle("Watch Series").
 		SetSlug("watch-series").
-		SetCategory(entseries.CategoryManga).
+		SetCategoryID(catID(ctx, client, "Manga")).
 		SaveX(ctx)
 
 	sp := client.SeriesProvider.Create().
@@ -611,7 +629,7 @@ func TestMonitoredToggle(t *testing.T) {
 	sr := client.Series.Create().
 		SetTitle("Drop Series").
 		SetSlug("drop-series").
-		SetCategory(entseries.CategoryManga).
+		SetCategoryID(catID(ctx, client, "Manga")).
 		SaveX(ctx)
 
 	svc := series.NewService(client, t.TempDir(), 14)
@@ -644,7 +662,7 @@ func TestSetCategoryNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	svc := series.NewService(client, t.TempDir(), 14)
-	err := svc.SetCategory(ctx, uuid.New(), "Manga")
+	err := svc.SetCategory(ctx, uuid.New(), catID(ctx, client, "Manga"))
 	if !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("SetCategory(random): want ErrSeriesNotFound, got %v", err)
 	}
@@ -659,7 +677,7 @@ func TestSetMonitoredFlipsField(t *testing.T) {
 	sr := client.Series.Create().
 		SetTitle("Monitor Me").
 		SetSlug("monitor-me").
-		SetCategory(entseries.CategoryManga).
+		SetCategoryID(catID(ctx, client, "Manga")).
 		SaveX(ctx)
 
 	svc := series.NewService(client, t.TempDir(), 14)
@@ -721,7 +739,7 @@ func seedProviders(ctx context.Context, t *testing.T, client *ent.Client) seeded
 	sr := client.Series.Create().
 		SetTitle("Rank Me").
 		SetSlug("rank-me").
-		SetCategory(entseries.CategoryManga).
+		SetCategoryID(catID(ctx, client, "Manga")).
 		SaveX(ctx)
 
 	spA := client.SeriesProvider.Create().
@@ -741,7 +759,7 @@ func seedProviders(ctx context.Context, t *testing.T, client *ent.Client) seeded
 	other := client.Series.Create().
 		SetTitle("Other Series").
 		SetSlug("other-series").
-		SetCategory(entseries.CategoryManhwa).
+		SetCategoryID(catID(ctx, client, "Manhwa")).
 		SaveX(ctx)
 
 	foreignSP := client.SeriesProvider.Create().
@@ -950,53 +968,6 @@ func TestRemoveProvider_UnknownSeries(t *testing.T) {
 	svc := series.NewService(db, t.TempDir(), 14)
 	if err := svc.RemoveProvider(ctx, uuid.New(), uuid.New()); !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("err = %v, want ErrSeriesNotFound", err)
-	}
-}
-
-// TestCategoriesReturnsAllEnumValuesWithCounts verifies Categories reports exactly
-// the five enum values (including zero-count ones) with correct counts.
-func TestCategoriesReturnsAllEnumValuesWithCounts(t *testing.T) {
-	client := testdb.New(t)
-	ctx := context.Background()
-	storage := t.TempDir()
-
-	// Two series: one Manga, one Other (then moved to Manhwa below).
-	manga := client.Series.Create().
-		SetTitle("Alpha Saga").SetSlug("alpha-saga").
-		SetCategory(entseries.CategoryManga).SaveX(ctx)
-	_ = manga
-	other := client.Series.Create().
-		SetTitle("Solo Leveling").SetSlug("solo-leveling").
-		SetCategory(entseries.CategoryOther).SaveX(ctx)
-	seedSeriesDir(t, storage, string(entseries.CategoryOther), "Solo Leveling")
-
-	svc := series.NewService(client, storage, 14)
-	if err := svc.SetCategory(ctx, other.ID, "Manhwa"); err != nil {
-		t.Fatalf("SetCategory: %v", err)
-	}
-
-	got, err := svc.Categories(ctx)
-	if err != nil {
-		t.Fatalf("Categories: %v", err)
-	}
-
-	if len(got) != 5 {
-		t.Fatalf("Categories: want 5 entries, got %d (%+v)", len(got), got)
-	}
-
-	want := map[string]int{"Manga": 1, "Manhwa": 1, "Manhua": 0, "Comic": 0, "Other": 0}
-	for _, c := range got {
-		exp, ok := want[c.Category]
-		if !ok {
-			t.Fatalf("Categories: unexpected category %q", c.Category)
-		}
-		if c.Count != exp {
-			t.Fatalf("Categories: %s count want %d, got %d", c.Category, exp, c.Count)
-		}
-		delete(want, c.Category)
-	}
-	if len(want) != 0 {
-		t.Fatalf("Categories: missing enum values: %+v", want)
 	}
 }
 

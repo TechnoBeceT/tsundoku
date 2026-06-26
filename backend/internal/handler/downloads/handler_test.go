@@ -15,17 +15,26 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	downloadssvc "github.com/technobecet/tsundoku/internal/downloads"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	handler "github.com/technobecet/tsundoku/internal/handler/downloads"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 )
 
 const testSecret = "downloads-handler-test-secret"
+
+// catID resolves a seeded default category's id by name (testdb seeds them).
+func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
+	id, err := category.IDByName(ctx, db, name)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
 
 type testEnv struct {
 	e        *echo.Echo
@@ -66,7 +75,7 @@ func (env *testEnv) seed(ctx context.Context, t *testing.T) {
 
 	s := env.client.Series.Create().
 		SetTitle("Solo Leveling").SetSlug("solo-leveling").
-		SetCategory(entseries.CategoryManhwa).SaveX(ctx)
+		SetCategoryID(catID(ctx, env.client, "Manhwa")).SaveX(ctx)
 	prov := env.client.SeriesProvider.Create().
 		SetSeriesID(s.ID).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
 	env.client.ProviderChapter.Create().

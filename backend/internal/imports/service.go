@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
@@ -329,10 +330,16 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 		return uuid.UUID{}, err
 	}
 
-	// 5. Apply category when requested.
+	// 5. Apply category when requested. ingest.AddSeries already linked the new
+	//    series to the "Other" fallback on create, so an empty req.Category keeps
+	//    that default; a named category is find-or-created (a brand-new owner
+	//    category lands here) and linked by id.
 	if req.Category != "" {
-		cat := entseries.Category(req.Category)
-		if err := s.db.Series.UpdateOneID(series.ID).SetCategory(cat).Exec(ctx); err != nil {
+		cat, err := category.FindOrCreate(ctx, s.db, req.Category)
+		if err != nil {
+			return uuid.UUID{}, fmt.Errorf("imports.Adopt: resolve category %q for series %s: %w", req.Category, series.ID, err)
+		}
+		if err := s.db.Series.UpdateOneID(series.ID).SetCategoryID(cat.ID).Exec(ctx); err != nil {
 			return uuid.UUID{}, fmt.Errorf("imports.Adopt: set category %q for series %s: %w", req.Category, series.ID, err)
 		}
 	}
@@ -340,14 +347,14 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 	return series.ID, nil
 }
 
-// validateCategory returns nil when cat is empty (meaning "keep default") or
-// when it is one of the legal entseries.Category enum values. A non-empty
-// invalid value yields a wrapped error naming the invalid string.
+// validateCategory returns nil when cat is empty (meaning "keep the Other
+// default") or when it is a filesystem-safe category name (it becomes a folder).
+// A non-empty invalid value yields a wrapped error naming the invalid string.
 func validateCategory(cat string) error {
 	if cat == "" {
 		return nil
 	}
-	if err := entseries.CategoryValidator(entseries.Category(cat)); err != nil {
+	if _, err := category.ValidateName(cat); err != nil {
 		return fmt.Errorf("imports.Adopt: invalid category %q: %w", cat, err)
 	}
 	return nil

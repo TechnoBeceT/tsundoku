@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -135,9 +136,18 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 		return nil, fmt.Errorf("query by slug %q: %w", slug, err)
 	}
 	if ent.IsNotFound(err) {
+		// Link a freshly-created series to the protected "Other" fallback so the
+		// app invariant (every series has a category) holds even before an adopt
+		// caller pins a specific category. A re-fetch of an existing series keeps
+		// whatever category it already has.
+		cat, catErr := category.FindOrCreate(ctx, i.db, category.DefaultCategoryName)
+		if catErr != nil {
+			return nil, fmt.Errorf("resolve default category for series %q: %w", slug, catErr)
+		}
 		created, createErr := i.db.Series.Create().
 			SetTitle(title).
 			SetSlug(slug).
+			SetCategoryID(cat.ID).
 			Save(ctx)
 		if createErr != nil {
 			// Defensive path: reachable on DB connection loss or a concurrent

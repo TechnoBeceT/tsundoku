@@ -14,7 +14,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -951,8 +950,8 @@ func TestService_Adopt_Category(t *testing.T) {
 		}
 
 		s := db.Series.Query().OnlyX(ctx)
-		if s.Category != entseries.CategoryManga {
-			t.Errorf("Series.Category: got %q, want Manga", s.Category)
+		if name := s.QueryCategory().OnlyX(ctx).Name; name != "Manga" {
+			t.Errorf("Series category: got %q, want Manga", name)
 		}
 	})
 
@@ -978,8 +977,8 @@ func TestService_Adopt_Category(t *testing.T) {
 		}
 
 		s := db.Series.Query().OnlyX(ctx)
-		if s.Category != entseries.CategoryOther {
-			t.Errorf("Series.Category: got %q, want Other", s.Category)
+		if name := s.QueryCategory().OnlyX(ctx).Name; name != "Other" {
+			t.Errorf("Series category: got %q, want Other", name)
 		}
 	})
 }
@@ -1057,8 +1056,10 @@ func TestService_Adopt_InvalidCategory(t *testing.T) {
 	svc := newServiceDB(t, fc)
 
 	_, err := svc.Adopt(ctx, imports.AdoptRequest{
-		Title:    "One Piece",
-		Category: "NotACategory",
+		Title: "One Piece",
+		// Categories are user-defined; "invalid" now means filesystem-unsafe (it
+		// becomes a folder name), not "not in a fixed enum".
+		Category: "bad/name",
 		Providers: []imports.AdoptProvider{
 			{Source: "mangadex", MangaID: 701, Importance: 1},
 		},
