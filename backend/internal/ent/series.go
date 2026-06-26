@@ -10,6 +10,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 )
 
@@ -28,8 +29,8 @@ type Series struct {
 	Description string `json:"description,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
-	// Category holds the value of the "category" field.
-	Category series.Category `json:"category,omitempty"`
+	// CategoryID holds the value of the "category_id" field.
+	CategoryID uuid.UUID `json:"category_id,omitempty"`
 	// Monitored holds the value of the "monitored" field.
 	Monitored bool `json:"monitored,omitempty"`
 	// Completed holds the value of the "completed" field.
@@ -52,9 +53,11 @@ type SeriesEdges struct {
 	Providers []*SeriesProvider `json:"providers,omitempty"`
 	// Chapters holds the value of the chapters edge.
 	Chapters []*Chapter `json:"chapters,omitempty"`
+	// Category holds the value of the category edge.
+	Category *Category `json:"category,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [2]bool
+	loadedTypes [3]bool
 }
 
 // ProvidersOrErr returns the Providers value or an error if the edge
@@ -75,6 +78,17 @@ func (e SeriesEdges) ChaptersOrErr() ([]*Chapter, error) {
 	return nil, &NotLoadedError{edge: "chapters"}
 }
 
+// CategoryOrErr returns the Category value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e SeriesEdges) CategoryOrErr() (*Category, error) {
+	if e.Category != nil {
+		return e.Category, nil
+	} else if e.loadedTypes[2] {
+		return nil, &NotFoundError{label: category.Label}
+	}
+	return nil, &NotLoadedError{edge: "category"}
+}
+
 // scanValues returns the types for scanning values from sql.Rows.
 func (*Series) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
@@ -84,11 +98,11 @@ func (*Series) scanValues(columns []string) ([]any, error) {
 			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
 		case series.FieldMonitored, series.FieldCompleted:
 			values[i] = new(sql.NullBool)
-		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus, series.FieldCategory:
+		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus:
 			values[i] = new(sql.NullString)
 		case series.FieldCreatedAt, series.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
-		case series.FieldID:
+		case series.FieldID, series.FieldCategoryID:
 			values[i] = new(uuid.UUID)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -141,11 +155,11 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Status = value.String
 			}
-		case series.FieldCategory:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field category", values[i])
-			} else if value.Valid {
-				_m.Category = series.Category(value.String)
+		case series.FieldCategoryID:
+			if value, ok := values[i].(*uuid.UUID); !ok {
+				return fmt.Errorf("unexpected type %T for field category_id", values[i])
+			} else if value != nil {
+				_m.CategoryID = *value
 			}
 		case series.FieldMonitored:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -201,6 +215,11 @@ func (_m *Series) QueryChapters() *ChapterQuery {
 	return NewSeriesClient(_m.config).QueryChapters(_m)
 }
 
+// QueryCategory queries the "category" edge of the Series entity.
+func (_m *Series) QueryCategory() *CategoryQuery {
+	return NewSeriesClient(_m.config).QueryCategory(_m)
+}
+
 // Update returns a builder for updating this Series.
 // Note that you need to call Series.Unwrap() before calling this method if this Series
 // was returned from a transaction, and the transaction was committed or rolled back.
@@ -239,8 +258,8 @@ func (_m *Series) String() string {
 	builder.WriteString("status=")
 	builder.WriteString(_m.Status)
 	builder.WriteString(", ")
-	builder.WriteString("category=")
-	builder.WriteString(fmt.Sprintf("%v", _m.Category))
+	builder.WriteString("category_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CategoryID))
 	builder.WriteString(", ")
 	builder.WriteString("monitored=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Monitored))

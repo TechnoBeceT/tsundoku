@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/ent"
 )
 
@@ -110,17 +111,10 @@ type SeriesHealthDTO struct {
 	Sources []ProviderDTO `json:"sources"`
 }
 
-// CategoryCountDTO is one row of the /api/categories response: a category enum
-// value and the number of series currently filed under it. Every enum value is
-// reported, including those with a zero count.
-type CategoryCountDTO struct {
-	Category string `json:"category"`
-	Count    int    `json:"count"`
-}
-
 // newSummaryDTO maps an ent.Series plus its computed rollup into a summary DTO.
-// s.Edges.Providers must be eagerly loaded; MetadataProvider + SeriesDisplay
-// resolve DisplayName and CoverURL from the provider set.
+// s.Edges.Providers AND s.Edges.Category must be eagerly loaded; MetadataProvider
+// + SeriesDisplay resolve DisplayName and CoverURL from the provider set, and
+// category.NameOf resolves the category name from the edge.
 func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
 	meta := MetadataProvider(s)
 	dispName, coverURL := SeriesDisplay(s, meta)
@@ -129,7 +123,7 @@ func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
 		Title:         s.Title,
 		DisplayName:   dispName,
 		Slug:          s.Slug,
-		Category:      s.Category.String(),
+		Category:      category.NameOf(s),
 		CoverURL:      coverURL,
 		Monitored:     s.Monitored,
 		Completed:     s.Completed,

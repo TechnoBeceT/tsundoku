@@ -24,12 +24,22 @@ func (Series) Fields() []ent.Field {
 		field.String("cover_url").Default(""),
 		field.String("description").Default(""),
 		field.String("status").Default(""),
-		// category drives the on-disk library layout (one top-level folder per
-		// category, e.g. Manhwa/<Title>/) and Komga organisation. "Other" is the
-		// safe default so existing rows and new imports need no data migration.
-		field.Enum("category").
-			Values("Manga", "Manhwa", "Manhua", "Comic", "Other").
-			Default("Other"),
+		// category_id is the FK to the series' Category (the inverse side of the
+		// category edge below). It drives the on-disk library layout (one
+		// top-level folder per category, e.g. Manhwa/<Title>/) and Komga
+		// organisation.
+		//
+		// MIGRATION SAFETY — this column is intentionally OPTIONAL (nullable) at
+		// the DB level even though every series MUST have a category by app
+		// invariant. A required NOT NULL FK cannot be added to an already-populated
+		// series table without a static default (categories have random UUIDs), so
+		// it would break Ent auto-migration on an existing DB. Instead the column
+		// is added nullable, then the startup seed+backfill (category.EnsureDefaults
+		// + category.BackfillSeries) links every legacy row to its same-named
+		// Category, and every create path (ingest, adopt, reconcile) always sets a
+		// category. The invariant is therefore enforced in code, not by a NOT NULL
+		// constraint that would make the migration unsafe.
+		field.UUID("category_id", uuid.UUID{}).Optional(),
 		// monitored gates the (M5) refresh poll; false = the owner is done with
 		// this series and it is excluded from new-chapter checks.
 		field.Bool("monitored").Default(true),
@@ -55,5 +65,14 @@ func (Series) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.To("providers", SeriesProvider.Type),
 		edge.To("chapters", Chapter.Type),
+		// category is the (app-)required link to the series' Category. Modelled as
+		// the inverse of Category.series, storing the FK in category_id. Unique
+		// (a series has exactly one category) but NOT .Required() at the schema
+		// level — see the category_id field comment for the migration-safety
+		// reasoning that keeps it nullable in the DB.
+		edge.From("category", Category.Type).
+			Ref("series").
+			Field("category_id").
+			Unique(),
 	}
 }

@@ -10,12 +10,21 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/downloads"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 )
+
+// catID resolves a seeded default category's id by name (testdb seeds them).
+func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
+	id, err := category.IDByName(ctx, db, name)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
 
 // seeded holds the ids the assertions target.
 type seeded struct {
@@ -42,10 +51,10 @@ func seedLibrary(ctx context.Context, t *testing.T, client *ent.Client) seeded {
 
 	alpha := client.Series.Create().
 		SetTitle("Alpha Saga").SetSlug("alpha-saga").
-		SetCategory(entseries.CategoryManga).SaveX(ctx)
+		SetCategoryID(catID(ctx, client, "Manga")).SaveX(ctx)
 	beta := client.Series.Create().
 		SetTitle("Beta Quest").SetSlug("beta-quest").
-		SetCategory(entseries.CategoryManhwa).SaveX(ctx)
+		SetCategoryID(catID(ctx, client, "Manhwa")).SaveX(ctx)
 
 	provHigh := client.SeriesProvider.Create().
 		SetSeriesID(alpha.ID).SetProvider("mangadex").SetLanguage("en").

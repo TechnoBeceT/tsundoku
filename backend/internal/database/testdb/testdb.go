@@ -14,6 +14,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/ent"
 )
 
@@ -23,6 +24,16 @@ import (
 //
 // It must only be called from test binaries.
 func New(t *testing.T) *ent.Client {
+	t.Helper()
+	client, _ := NewWithSQL(t)
+	return client
+}
+
+// NewWithSQL is New but also returns the underlying *sql.DB so tests that need
+// raw SQL (e.g. the category-migration backfill, which reads the legacy enum
+// column that no longer exists in the Ent schema) can run it. The same lifecycle
+// guarantees apply — both handles are closed via t.Cleanup.
+func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -55,6 +66,17 @@ func New(t *testing.T) *ent.Client {
 		t.Fatalf("testdb: run ent migration: %v", err)
 	}
 
+	// Mirror production startup (database.Open): seed the default categories so
+	// integration tests have the five defaults available and series can be linked
+	// to a real Category (the app invariant). BackfillSeries is a no-op on the
+	// fresh schema (no rows, no legacy column) but is run for parity.
+	if err := category.EnsureDefaults(ctx, client); err != nil {
+		t.Fatalf("testdb: seed default categories: %v", err)
+	}
+	if err := category.BackfillSeries(ctx, db); err != nil {
+		t.Fatalf("testdb: backfill series categories: %v", err)
+	}
+
 	t.Cleanup(func() {
 		_ = client.Close()
 		_ = db.Close()
@@ -65,5 +87,5 @@ func New(t *testing.T) *ent.Client {
 		}
 	})
 
-	return client
+	return client, db
 }

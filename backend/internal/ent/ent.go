@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
@@ -83,6 +84,7 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
+			category.Table:          category.ValidColumn,
 			chapter.Table:           chapter.ValidColumn,
 			etagcache.Table:         etagcache.ValidColumn,
 			importentry.Table:       importentry.ValidColumn,

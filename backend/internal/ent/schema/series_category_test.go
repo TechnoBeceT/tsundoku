@@ -4,59 +4,68 @@ import (
 	"context"
 	"testing"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
-	"github.com/technobecet/tsundoku/internal/ent/series"
+	entcategory "github.com/technobecet/tsundoku/internal/ent/category"
 )
 
-// TestSeriesCategoryDefaultsToOther verifies that a Series created without an
-// explicit category reads back the schema default of "Other" — so existing rows
-// and new imports need no data migration to gain the field.
-func TestSeriesCategoryDefaultsToOther(t *testing.T) {
+// TestSeriesCategoryEdgeLinksToCategory verifies that a Series created with a
+// category_id resolves its category edge to the linked Category row — the
+// schema-level replacement for the former fixed category enum.
+func TestSeriesCategoryEdgeLinksToCategory(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 
-	s := client.Series.Create().
-		SetTitle("Defaulted Series").
-		SetSlug("defaulted-series").
-		SaveX(ctx)
+	// testdb seeds the five defaults; link a series to "Manhwa".
+	manhwa := client.Category.Query().Where(entcategory.Name("Manhwa")).OnlyX(ctx)
 
-	got := client.Series.GetX(ctx, s.ID)
-	if got.Category != series.CategoryOther {
-		t.Fatalf("expected default category %q, got %q", series.CategoryOther, got.Category)
-	}
-}
-
-// TestSeriesCategoryExplicitValue verifies that an explicitly set enum constant
-// (Manhwa) round-trips through the database unchanged.
-func TestSeriesCategoryExplicitValue(t *testing.T) {
-	ctx := context.Background()
-	client := testdb.New(t)
-
-	s := client.Series.Create().
+	client.Series.Create().
 		SetTitle("Manhwa Series").
 		SetSlug("manhwa-series").
-		SetCategory(series.CategoryManhwa).
+		SetCategoryID(manhwa.ID).
 		SaveX(ctx)
 
-	got := client.Series.GetX(ctx, s.ID)
-	if got.Category != series.CategoryManhwa {
-		t.Fatalf("expected category %q, got %q", series.CategoryManhwa, got.Category)
+	got := client.Series.Query().WithCategory().OnlyX(ctx)
+	if got.Edges.Category == nil || got.Edges.Category.Name != "Manhwa" {
+		t.Fatalf("expected category edge Manhwa, got %+v", got.Edges.Category)
 	}
 }
 
-// TestSeriesCategoryRejectsInvalidValue verifies that Ent's generated enum
-// validator fires on save for a value outside the legal set, so the database
-// can never hold an illegal category.
-func TestSeriesCategoryRejectsInvalidValue(t *testing.T) {
+// TestCategoryNameIsUnique verifies the Category.name unique constraint: a second
+// row with the same name must fail to save.
+func TestCategoryNameIsUnique(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 
-	_, err := client.Series.Create().
-		SetTitle("Bogus Series").
-		SetSlug("bogus-series").
-		SetCategory(series.Category("Bogus")).
-		Save(ctx)
-	if err == nil {
-		t.Fatal("expected validation error for invalid category, got nil")
+	// "Manga" already exists from the seed; creating it again must violate the
+	// unique-name constraint.
+	if err := client.Category.Create().SetName("Manga").Exec(ctx); err == nil {
+		t.Fatal("expected unique-name constraint violation for duplicate category, got nil")
+	}
+}
+
+// TestEnsureDefaultsSeedsFiveProtectedOther verifies the seed: exactly the five
+// defaults exist with "Other" protected, and EnsureDefaults is idempotent.
+func TestEnsureDefaultsSeedsFiveProtectedOther(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	// testdb already seeded; running EnsureDefaults again must remain idempotent.
+	if err := category.EnsureDefaults(ctx, client); err != nil {
+		t.Fatalf("EnsureDefaults (2nd run): %v", err)
+	}
+
+	if n := client.Category.Query().CountX(ctx); n != 5 {
+		t.Fatalf("expected 5 seeded categories, got %d", n)
+	}
+	other := client.Category.Query().Where(entcategory.Name("Other")).OnlyX(ctx)
+	if !other.Protected {
+		t.Fatal("expected the Other category to be protected")
+	}
+	for _, name := range []string{"Manga", "Manhwa", "Manhua", "Comic"} {
+		c := client.Category.Query().Where(entcategory.Name(name)).OnlyX(ctx)
+		if c.Protected {
+			t.Errorf("category %q should not be protected", name)
+		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/ent/series"
@@ -28,6 +29,7 @@ type SeriesQuery struct {
 	predicates    []predicate.Series
 	withProviders *SeriesProviderQuery
 	withChapters  *ChapterQuery
+	withCategory  *CategoryQuery
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -101,6 +103,28 @@ func (_q *SeriesQuery) QueryChapters() *ChapterQuery {
 			sqlgraph.From(series.Table, series.FieldID, selector),
 			sqlgraph.To(chapter.Table, chapter.FieldID),
 			sqlgraph.Edge(sqlgraph.O2M, false, series.ChaptersTable, series.ChaptersColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryCategory chains the current query on the "category" edge.
+func (_q *SeriesQuery) QueryCategory() *CategoryQuery {
+	query := (&CategoryClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(series.Table, series.FieldID, selector),
+			sqlgraph.To(category.Table, category.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, series.CategoryTable, series.CategoryColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -302,6 +326,7 @@ func (_q *SeriesQuery) Clone() *SeriesQuery {
 		predicates:    append([]predicate.Series{}, _q.predicates...),
 		withProviders: _q.withProviders.Clone(),
 		withChapters:  _q.withChapters.Clone(),
+		withCategory:  _q.withCategory.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
@@ -327,6 +352,17 @@ func (_q *SeriesQuery) WithChapters(opts ...func(*ChapterQuery)) *SeriesQuery {
 		opt(query)
 	}
 	_q.withChapters = query
+	return _q
+}
+
+// WithCategory tells the query-builder to eager-load the nodes that are connected to
+// the "category" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *SeriesQuery) WithCategory(opts ...func(*CategoryQuery)) *SeriesQuery {
+	query := (&CategoryClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withCategory = query
 	return _q
 }
 
@@ -408,9 +444,10 @@ func (_q *SeriesQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Serie
 	var (
 		nodes       = []*Series{}
 		_spec       = _q.querySpec()
-		loadedTypes = [2]bool{
+		loadedTypes = [3]bool{
 			_q.withProviders != nil,
 			_q.withChapters != nil,
+			_q.withCategory != nil,
 		}
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
@@ -442,6 +479,12 @@ func (_q *SeriesQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Serie
 		if err := _q.loadChapters(ctx, query, nodes,
 			func(n *Series) { n.Edges.Chapters = []*Chapter{} },
 			func(n *Series, e *Chapter) { n.Edges.Chapters = append(n.Edges.Chapters, e) }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withCategory; query != nil {
+		if err := _q.loadCategory(ctx, query, nodes, nil,
+			func(n *Series, e *Category) { n.Edges.Category = e }); err != nil {
 			return nil, err
 		}
 	}
@@ -508,6 +551,35 @@ func (_q *SeriesQuery) loadChapters(ctx context.Context, query *ChapterQuery, no
 	}
 	return nil
 }
+func (_q *SeriesQuery) loadCategory(ctx context.Context, query *CategoryQuery, nodes []*Series, init func(*Series), assign func(*Series, *Category)) error {
+	ids := make([]uuid.UUID, 0, len(nodes))
+	nodeids := make(map[uuid.UUID][]*Series)
+	for i := range nodes {
+		fk := nodes[i].CategoryID
+		if _, ok := nodeids[fk]; !ok {
+			ids = append(ids, fk)
+		}
+		nodeids[fk] = append(nodeids[fk], nodes[i])
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	query.Where(category.IDIn(ids...))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		nodes, ok := nodeids[n.ID]
+		if !ok {
+			return fmt.Errorf(`unexpected foreign-key "category_id" returned %v`, n.ID)
+		}
+		for i := range nodes {
+			assign(nodes[i], n)
+		}
+	}
+	return nil
+}
 
 func (_q *SeriesQuery) sqlCount(ctx context.Context) (int, error) {
 	_spec := _q.querySpec()
@@ -533,6 +605,9 @@ func (_q *SeriesQuery) querySpec() *sqlgraph.QuerySpec {
 			if fields[i] != series.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
+		}
+		if _q.withCategory != nil {
+			_spec.Node.AddColumnOnce(series.FieldCategoryID)
 		}
 	}
 	if ps := _q.predicates; len(ps) > 0 {

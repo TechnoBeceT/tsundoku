@@ -16,10 +16,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/download"
+	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -35,6 +36,15 @@ func mustTempDir(t *testing.T) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
+}
+
+// catID resolves a seeded default category's id by name (testdb seeds them).
+func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
+	id, err := category.IDByName(ctx, db, name)
+	if err != nil {
+		panic(fmt.Sprintf("catID %q: %v", name, err))
+	}
+	return id
 }
 
 // TestDispatcher_HappyPath verifies that RunOnce on a single wanted chapter
@@ -676,7 +686,7 @@ func TestDispatcher_RendersToSeriesCategory(t *testing.T) {
 	s := client.Series.Create().
 		SetTitle("Category Series").
 		SetSlug("category-series").
-		SetCategory(entseries.CategoryManhwa).
+		SetCategoryID(catID(ctx, client, "Manhwa")).
 		SaveX(ctx)
 	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
 	client.ProviderChapter.Create().

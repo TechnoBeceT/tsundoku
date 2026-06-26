@@ -9,16 +9,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/chapter"
 )
 
-// knownCategories is the ordered set of top-level category directory names
-// recognised by ScanLibrary.
-var knownCategories = []string{
-	CategoryManga,
-	CategoryManhwa,
-	CategoryManhua,
-	CategoryComic,
-	CategoryOther,
-}
-
 // SeriesFacts holds the on-disk facts for one series directory as reported
 // by ScanLibrary. It is the input to Reconcile.
 type SeriesFacts struct {
@@ -72,9 +62,13 @@ type seriesCandidate struct {
 // ScanLibrary walks the storage root and returns one SeriesFacts per series
 // directory found.
 //
-// Layout expected: <storage>/<Category>/<SeriesTitle>/ where Category ∈
-// {Manga, Manhwa, Manhua, Comic, Other}. Series directories found directly
-// under storage (uncategorized) are also included.
+// Layout expected: <storage>/<Category>/<SeriesTitle>/. The scanner is DYNAMIC —
+// EVERY top-level subdirectory of storage is treated as a category (the storage
+// root contains only category dirs by the Komga contract), so a user-created
+// category folder is discovered without any hardcoded list. Hidden entries
+// (dot-prefixed) and non-directory entries at either level are skipped. This is
+// what lets a user-named category survive a DB-loss reconcile: Reconcile
+// find-or-creates a Category row from each folder name it reports here.
 //
 // For each series directory:
 //   - If tsundoku.json exists it is the primary source: ChapterFacts are built
@@ -103,82 +97,52 @@ func ScanLibrary(storage string) ([]SeriesFacts, error) {
 	return results, nil
 }
 
-// collectCandidates enumerates all series directories under storage.
-// It walks each known category subdirectory, then adds any non-category
-// directory directly under storage as an uncategorized candidate.
+// collectCandidates enumerates all series directories under storage by treating
+// every top-level subdirectory as a category and every subdirectory within it as
+// a series. Hidden (dot-prefixed) and non-directory entries are skipped at both
+// levels. A missing storage root yields no candidates (not an error).
 func collectCandidates(storage string) ([]seriesCandidate, error) {
-	var candidates []seriesCandidate
-
-	catCandidates, err := categoryCandidates(storage)
+	catEntries, err := os.ReadDir(storage)
 	if err != nil {
-		return nil, err
-	}
-	candidates = append(candidates, catCandidates...)
-
-	uncatCandidates, err := uncategorizedCandidates(storage)
-	if err != nil {
-		return nil, err
-	}
-	candidates = append(candidates, uncatCandidates...)
-
-	return candidates, nil
-}
-
-// categoryCandidates returns candidates from the known category subdirectories.
-func categoryCandidates(storage string) ([]seriesCandidate, error) {
-	var candidates []seriesCandidate
-	for _, cat := range knownCategories {
-		catDir := filepath.Join(storage, cat)
-		entries, err := os.ReadDir(catDir)
 		if os.IsNotExist(err) {
-			continue
+			return nil, nil
 		}
-		if err != nil {
-			// Defensive path: reachable only on OS-level I/O failure (permission denied /
-			// fd exhausted) after ErrNotExist is already handled above.
-			return nil, fmt.Errorf("disk.ScanLibrary: read category dir %q: %w", catDir, err)
-		}
-		for _, e := range entries {
-			if e.IsDir() {
-				candidates = append(candidates, seriesCandidate{
-					category:  cat,
-					seriesDir: filepath.Join(catDir, e.Name()),
-				})
-			}
-		}
-	}
-	return candidates, nil
-}
-
-// uncategorizedCandidates returns candidates for directories directly under
-// storage that are not known category directories.
-func uncategorizedCandidates(storage string) ([]seriesCandidate, error) {
-	storageEntries, err := os.ReadDir(storage)
-	if err != nil && !os.IsNotExist(err) {
 		// Defensive path: reachable only on OS-level I/O failure (permission denied /
 		// fd exhausted) when the storage root itself cannot be listed.
 		return nil, fmt.Errorf("disk.ScanLibrary: read storage dir: %w", err)
 	}
 
-	catSet := make(map[string]struct{}, len(knownCategories))
-	for _, c := range knownCategories {
-		catSet[c] = struct{}{}
-	}
-
 	var candidates []seriesCandidate
-	for _, e := range storageEntries {
-		if !e.IsDir() {
+	for _, catEntry := range catEntries {
+		if !catEntry.IsDir() || isHidden(catEntry.Name()) {
 			continue
 		}
-		if _, isKnownCat := catSet[e.Name()]; isKnownCat {
-			continue
+		catName := catEntry.Name()
+		catDir := filepath.Join(storage, catName)
+		seriesEntries, err := os.ReadDir(catDir)
+		if err != nil {
+			// Defensive path: reachable only on OS-level I/O failure after the
+			// category dir was just successfully listed at the top level.
+			return nil, fmt.Errorf("disk.ScanLibrary: read category dir %q: %w", catDir, err)
 		}
-		candidates = append(candidates, seriesCandidate{
-			category:  "",
-			seriesDir: filepath.Join(storage, e.Name()),
-		})
+		for _, e := range seriesEntries {
+			if !e.IsDir() || isHidden(e.Name()) {
+				continue
+			}
+			candidates = append(candidates, seriesCandidate{
+				category:  catName,
+				seriesDir: filepath.Join(catDir, e.Name()),
+			})
+		}
 	}
 	return candidates, nil
+}
+
+// isHidden reports whether a directory entry name is hidden (dot-prefixed) and
+// must be skipped — e.g. a stray .DS_Store dir or a VCS folder is never a
+// category or a series.
+func isHidden(name string) bool {
+	return strings.HasPrefix(name, ".")
 }
 
 // scanSeriesDir scans a single series directory and returns SeriesFacts.

@@ -9,8 +9,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
+	entcategory "github.com/technobecet/tsundoku/internal/ent/category"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entlatestseries "github.com/technobecet/tsundoku/internal/ent/latestseries"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
@@ -22,11 +24,6 @@ import (
 // ErrSeriesNotFound is returned by GetSeries when no series matches the given id.
 // The HTTP handler maps it to a 404.
 var ErrSeriesNotFound = errors.New("series not found")
-
-// ErrInvalidCategory is returned by SetCategory and ListSeries when the requested
-// category is not one of the legal Series.category enum values. The HTTP handler
-// maps it to a 400.
-var ErrInvalidCategory = errors.New("invalid category")
 
 // ErrProviderNotInSeries is returned by ReorderProviders when a ProviderRank
 // references a SeriesProvider that does not belong to the given series. The HTTP
@@ -261,7 +258,10 @@ func removeProviderInTx(ctx context.Context, tx *ent.Tx, id, providerID uuid.UUI
 // leaves the DB fully intact (retryable) and a success leaves no orphan folder
 // for a later reconcile to resurrect.
 func (s *Service) DeleteSeries(ctx context.Context, id uuid.UUID, deleteFiles bool) error {
-	row, err := s.client.Series.Get(ctx, id)
+	row, err := s.client.Series.Query().
+		Where(entseries.IDEQ(id)).
+		WithCategory().
+		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return ErrSeriesNotFound
@@ -278,7 +278,7 @@ func (s *Service) DeleteSeries(ctx context.Context, id uuid.UUID, deleteFiles bo
 		return err
 	}
 	if deleteFiles {
-		if err := disk.RemoveSeriesDir(s.storage, row.Category.String(), row.Title); err != nil {
+		if err := disk.RemoveSeriesDir(s.storage, category.NameOf(row), row.Title); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("series.DeleteSeries: %w", err)
 		}
@@ -344,16 +344,13 @@ type ListFilter struct {
 // CoverURL can be resolved from the metadata source provider without extra
 // round-trips.
 func (s *Service) ListSeries(ctx context.Context, filter ListFilter) ([]SeriesSummaryDTO, error) {
-	q := s.client.Series.Query().Order(entseries.ByTitle()).WithProviders()
+	q := s.client.Series.Query().Order(entseries.ByTitle()).WithProviders().WithCategory()
 
 	if filter.Category != nil {
-		cat := entseries.Category(*filter.Category)
-		// Reject an unknown category instead of silently returning an empty page
-		// (an invalid filter applied as a predicate would just match nothing).
-		if err := entseries.CategoryValidator(cat); err != nil {
-			return nil, fmt.Errorf("series.ListSeries: %q: %w", *filter.Category, ErrInvalidCategory)
-		}
-		q = q.Where(entseries.CategoryEQ(cat))
+		// Filter by category NAME via the edge. An unknown name simply matches
+		// no series (an empty page) — categories are now user-defined, so there is
+		// no fixed enum to validate against.
+		q = q.Where(entseries.HasCategoryWith(entcategory.Name(*filter.Category)))
 	}
 	if filter.Offset > 0 {
 		q = q.Offset(filter.Offset)
@@ -401,6 +398,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		WithProviders(func(pq *ent.SeriesProviderQuery) {
 			pq.WithProviderChapters().WithSyncState()
 		}).
+		WithCategory().
 		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
@@ -434,7 +432,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		Title:         row.Title,
 		DisplayName:   dispName,
 		Slug:          row.Slug,
-		Category:      row.Category.String(),
+		Category:      category.NameOf(row),
 		CoverURL:      coverURL,
 		Monitored:     row.Monitored,
 		Completed:     row.Completed,
@@ -540,17 +538,18 @@ func (s *Service) UnhealthyCount(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// SetCategory recategorizes a series, keeping the DB and disk consistent.
+// SetCategory recategorizes a series to the category identified by categoryID,
+// keeping the DB and disk consistent.
 //
-// It validates newCat is a legal enum value (else ErrInvalidCategory), loads the
-// series for its current category + title (missing → ErrSeriesNotFound), and:
-//   - if newCat == the current category → a no-op, returns nil.
-//   - otherwise moves the series folder on disk FIRST, then updates the DB, with
-//     compensation, so DB and disk never end in disagreement (either both old,
-//     both new, or a surfaced error):
+// It resolves the target category (missing → category.ErrCategoryNotFound), loads
+// the series for its current category + title (missing → ErrSeriesNotFound), and:
+//   - if the target equals the current category → a no-op, returns nil.
+//   - otherwise moves the series folder on disk FIRST (by the two category
+//     NAMES), then updates the DB FK, with compensation, so DB and disk never end
+//     in disagreement (either both old, both new, or a surfaced error):
 //   - disk.MoveSeriesCategory relocates <storage>/<old>/<title> to
 //     <storage>/<new>/<title> and rewrites the sidecar.
-//   - on a successful move the DB category is updated; if that DB update fails
+//   - on a successful move the DB category_id is updated; if that DB update fails
 //     the folder is moved back (compensation) and the DB error is returned
 //     (joined with any compensation failure so nothing is swallowed).
 //
@@ -561,13 +560,19 @@ func (s *Service) UnhealthyCount(ctx context.Context) (int, error) {
 // "no folder" — the folder exists, so MoveSeriesCategory runs and its error
 // propagates. This keeps the DB-only path strictly limited to series with no
 // rendered chapters.
-func (s *Service) SetCategory(ctx context.Context, id uuid.UUID, newCat string) error {
-	cat := entseries.Category(newCat)
-	if err := entseries.CategoryValidator(cat); err != nil {
-		return fmt.Errorf("series.SetCategory: %q: %w", newCat, ErrInvalidCategory)
+func (s *Service) SetCategory(ctx context.Context, id, categoryID uuid.UUID) error {
+	target, err := s.client.Category.Get(ctx, categoryID)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return category.ErrCategoryNotFound
+		}
+		return fmt.Errorf("series.SetCategory: load category %s: %w", categoryID, err)
 	}
 
-	row, err := s.client.Series.Get(ctx, id)
+	row, err := s.client.Series.Query().
+		Where(entseries.IDEQ(id)).
+		WithCategory().
+		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return ErrSeriesNotFound
@@ -578,12 +583,12 @@ func (s *Service) SetCategory(ctx context.Context, id uuid.UUID, newCat string) 
 		return fmt.Errorf("series.SetCategory: load series %s: %w", id, err)
 	}
 
-	current := row.Category
-	if cat == current {
+	if row.CategoryID == categoryID {
 		return nil
 	}
+	currentName := category.NameOf(row)
 
-	moved, err := s.moveSeriesFolder(string(current), newCat, row.Title)
+	moved, err := s.moveSeriesFolder(currentName, target.Name, row.Title)
 	if err != nil {
 		return err
 	}
@@ -594,7 +599,7 @@ func (s *Service) SetCategory(ctx context.Context, id uuid.UUID, newCat string) 
 	// failure, which the standard says to document rather than wire a production
 	// seam for. The compensation logic itself is exercised in reverse by the happy
 	// move test (it is the same MoveSeriesCategory call with swapped categories).
-	if err := s.client.Series.UpdateOneID(id).SetCategory(cat).Exec(ctx); err != nil {
+	if err := s.client.Series.UpdateOneID(id).SetCategoryID(categoryID).Exec(ctx); err != nil {
 		dbErr := fmt.Errorf("series.SetCategory: update DB category for %s: %w", id, err)
 		if !moved {
 			return dbErr
@@ -602,7 +607,7 @@ func (s *Service) SetCategory(ctx context.Context, id uuid.UUID, newCat string) 
 		// Compensate: the folder already moved but the DB update failed. Move it
 		// back so disk matches the still-old DB state. If the compensation also
 		// fails, surface BOTH errors — never swallow either (§16).
-		if cErr := disk.MoveSeriesCategory(s.storage, newCat, string(current), row.Title); cErr != nil {
+		if cErr := disk.MoveSeriesCategory(s.storage, target.Name, currentName, row.Title); cErr != nil {
 			return errors.Join(dbErr, fmt.Errorf("series.SetCategory: compensating move-back failed: %w", cErr))
 		}
 		return dbErr
@@ -633,44 +638,6 @@ func (s *Service) moveSeriesFolder(oldCat, newCat, title string) (moved bool, er
 		return false, fmt.Errorf("series.SetCategory: move folder: %w", err)
 	}
 	return true, nil
-}
-
-// Categories returns one CategoryCountDTO per Series.category enum value — all
-// five, including zero-count categories — in the enum's declared order. The
-// counts come from a SINGLE grouped aggregate (GROUP BY category); enum values
-// with no series are then filled in with a zero count so the response is complete
-// and deterministic.
-func (s *Service) Categories(ctx context.Context) ([]CategoryCountDTO, error) {
-	var rows []struct {
-		Category entseries.Category `json:"category"`
-		Count    int                `json:"count"`
-	}
-	err := s.client.Series.Query().
-		GroupBy(entseries.FieldCategory).
-		Aggregate(ent.Count()).
-		Scan(ctx, &rows)
-	if err != nil {
-		return nil, fmt.Errorf("series.Categories: aggregate series by category: %w", err)
-	}
-
-	counts := make(map[entseries.Category]int, len(rows))
-	for _, r := range rows {
-		counts[r.Category] = r.Count
-	}
-
-	// Declared enum order — deterministic, matches the schema definition.
-	order := []entseries.Category{
-		entseries.CategoryManga,
-		entseries.CategoryManhwa,
-		entseries.CategoryManhua,
-		entseries.CategoryComic,
-		entseries.CategoryOther,
-	}
-	out := make([]CategoryCountDTO, len(order))
-	for i, c := range order {
-		out[i] = CategoryCountDTO{Category: string(c), Count: counts[c]}
-	}
-	return out, nil
 }
 
 // chapterRollupRow is the scan target for the grouped chapter-count aggregate.
