@@ -61,6 +61,9 @@ func (s *stubClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
 func (s *stubClient) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
 	panic("stubClient.Search: must not be called by Fetcher")
 }
+func (s *stubClient) Browse(_ context.Context, _ string, _ suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
+	panic("stubClient.Browse: must not be called by Fetcher")
+}
 func (s *stubClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	panic("stubClient.FetchChapters: must not be called by Fetcher")
 }
@@ -274,6 +277,9 @@ func (m *midLoopCancelClient) Sources(_ context.Context) ([]suwayomi.Source, err
 }
 func (m *midLoopCancelClient) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
 	panic("midLoopCancelClient.Search: must not be called")
+}
+func (m *midLoopCancelClient) Browse(_ context.Context, _ string, _ suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
+	panic("midLoopCancelClient.Browse: must not be called")
 }
 func (m *midLoopCancelClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	panic("midLoopCancelClient.FetchChapters: must not be called")

@@ -45,6 +45,10 @@ func (s *ingestStubClient) Search(_ context.Context, _, _ string) ([]suwayomi.Ma
 	return s.searchResults, s.searchErr
 }
 
+func (s *ingestStubClient) Browse(_ context.Context, _ string, _ suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
+	return suwayomi.BrowseResult{}, nil
+}
+
 func (s *ingestStubClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	return s.chapters, s.chaptersErr
 }
@@ -516,6 +520,9 @@ type metaClientStub struct {
 
 func (s *metaClientStub) Sources(_ context.Context) ([]suwayomi.Source, error) {
 	panic("metaClientStub: Sources must not be called by Ingest")
+}
+func (s *metaClientStub) Browse(_ context.Context, _ string, _ suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
+	panic("metaClientStub: Browse must not be called by Ingest")
 }
 func (s *metaClientStub) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
 	panic("metaClientStub: Search must not be called by Ingest")

@@ -86,6 +86,7 @@ type Chapter struct {
 // Method overview:
 //   - Sources: list installed Suwayomi extensions/sources.
 //   - Search: search a source for manga by query string.
+//   - Browse: list a source's Popular/Latest catalog page (no query).
 //   - FetchChapters: trigger a live chapter-list fetch from the source and return results.
 //   - MangaChapters: list already-cached chapters for a manga (read-only; no source fetch).
 //   - ChapterPages: trigger page-fetch and return the ordered page URLs.
@@ -97,6 +98,12 @@ type Client interface {
 	// Search searches sourceID for manga matching query and returns the first
 	// page of results.
 	Search(ctx context.Context, sourceID, query string) ([]Manga, error)
+
+	// Browse fetches one page of a source's catalog listing (Popular or Latest)
+	// via the fetchSourceManga mutation with type=POPULAR|LATEST. Unlike Search
+	// it carries no query and returns a BrowseResult that includes hasNextPage
+	// for pagination. page is 1-based.
+	Browse(ctx context.Context, sourceID string, t BrowseType, page int) (BrowseResult, error)
 
 	// FetchChapters triggers the Suwayomi fetchChapters mutation, which fetches
 	// the live chapter list from the source and populates Suwayomi's internal
@@ -321,6 +328,89 @@ func (c *httpClient) Search(ctx context.Context, sourceID, query string) ([]Mang
 		}
 	}
 	return out, nil
+}
+
+// --- Browse ------------------------------------------------------------------
+
+// BrowseType selects which of a source's catalog listings to fetch.
+type BrowseType string
+
+const (
+	// BrowsePopular fetches a source's most-popular listing.
+	BrowsePopular BrowseType = "POPULAR"
+	// BrowseLatest fetches a source's latest-updated listing.
+	BrowseLatest BrowseType = "LATEST"
+)
+
+// BrowseResult is one page of a source's catalog browse (Popular/Latest).
+type BrowseResult struct {
+	// Mangas holds the candidates on this page, in source order.
+	Mangas []Manga
+	// HasNextPage reports whether another page exists (drives FE pagination).
+	HasNextPage bool
+}
+
+// gqlBrowseData is the typed shape of the `data` field for the browse
+// fetchSourceManga mutation. It mirrors gqlSearchData but additionally selects
+// hasNextPage so the caller can paginate.
+type gqlBrowseData struct {
+	FetchSourceManga struct {
+		Mangas []struct {
+			ID           int     `json:"id"`
+			Title        string  `json:"title"`
+			URL          string  `json:"url"`
+			ThumbnailURL *string `json:"thumbnailUrl"`
+		} `json:"mangas"`
+		HasNextPage bool `json:"hasNextPage"`
+	} `json:"fetchSourceManga"`
+}
+
+// browseMutation calls the same fetchSourceManga mutation as searchMutation but
+// drives it by listing $type (POPULAR/LATEST) instead of a SEARCH query, and
+// additionally selects hasNextPage for pagination. There is no $query variable —
+// browse is a query-less catalog listing.
+const browseMutation = `
+mutation BrowseSource($sourceId: LongString!, $type: FetchSourceMangaType!, $page: Int!) {
+  fetchSourceManga(input: {
+    source: $sourceId
+    type: $type
+    page: $page
+  }) {
+    mangas {
+      id
+      title
+      url
+      thumbnailUrl
+    }
+    hasNextPage
+  }
+}`
+
+// Browse calls the fetchSourceManga GraphQL mutation with type=POPULAR|LATEST to
+// fetch one page of sourceID's catalog listing. Unlike Search it carries no query
+// string and returns a BrowseResult that includes hasNextPage so callers can
+// paginate. page is 1-based.
+func (c *httpClient) Browse(ctx context.Context, sourceID string, t BrowseType, page int) (BrowseResult, error) {
+	vars := map[string]any{
+		"sourceId": sourceID,
+		"type":     string(t),
+		"page":     page,
+	}
+	var data gqlBrowseData
+	if err := c.doGraphQL(ctx, browseMutation, vars, &data); err != nil {
+		return BrowseResult{}, err
+	}
+	nodes := data.FetchSourceManga.Mangas
+	out := make([]Manga, len(nodes))
+	for i, n := range nodes {
+		out[i] = Manga{
+			ID:           n.ID,
+			Title:        n.Title,
+			URL:          n.URL,
+			ThumbnailURL: n.ThumbnailURL,
+		}
+	}
+	return BrowseResult{Mangas: out, HasNextPage: data.FetchSourceManga.HasNextPage}, nil
 }
 
 // --- Chapter conversion helper -----------------------------------------------

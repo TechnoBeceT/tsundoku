@@ -291,6 +291,9 @@ func (fakeSuwayomi) Sources(context.Context) ([]suwayomi.Source, error) { return
 func (fakeSuwayomi) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
 	return nil, nil
 }
+func (fakeSuwayomi) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
+	return suwayomi.BrowseResult{}, nil
+}
 func (fakeSuwayomi) FetchChapters(context.Context, int) ([]suwayomi.Chapter, error) {
 	n := 1.0
 	return []suwayomi.Chapter{{ID: 1, Index: 0, Number: &n, URL: "u1"}}, nil

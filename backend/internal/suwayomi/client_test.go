@@ -186,6 +186,155 @@ func TestClient_Search_GraphQLError(t *testing.T) {
 	}
 }
 
+// --- Browse ------------------------------------------------------------------
+
+// decodeGraphQLVars reads a GraphQL request body and returns its variables map.
+// Used by the Browse tests to assert the wire request carries type=POPULAR and
+// no query field.
+func decodeGraphQLVars(t *testing.T, r *http.Request) map[string]any {
+	t.Helper()
+	var req struct {
+		Query     string         `json:"query"`
+		Variables map[string]any `json:"variables"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	return req.Variables
+}
+
+// TestClient_Browse_Popular verifies that Browse drives fetchSourceManga with
+// type=POPULAR (and no query variable), and that mangas (incl. url) + hasNextPage
+// round-trip onto the BrowseResult.
+func TestClient_Browse_Popular(t *testing.T) {
+	const sourceID = "1234567890"
+
+	var gotVars map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/graphql" {
+			http.Error(w, "wrong endpoint", http.StatusNotFound)
+			return
+		}
+		gotVars = decodeGraphQLVars(t, r)
+		resp := graphqlResponse(t, map[string]any{
+			"fetchSourceManga": map[string]any{
+				"mangas": []map[string]any{
+					{"id": 42, "title": "One Piece", "url": "/manga/42", "thumbnailUrl": "/thumbnail/42"},
+					{"id": 43, "title": "One Punch Man", "url": "/manga/43", "thumbnailUrl": nil},
+				},
+				"hasNextPage": true,
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	res, err := client.Browse(context.Background(), sourceID, suwayomi.BrowsePopular, 1)
+	if err != nil {
+		t.Fatalf("Browse() error = %v", err)
+	}
+
+	// The wire request must carry type=POPULAR and NO query variable.
+	assertBrowseTypeVar(t, gotVars, "POPULAR")
+
+	if len(res.Mangas) != 2 {
+		t.Fatalf("Browse() got %d mangas, want 2", len(res.Mangas))
+	}
+	assertManga(t, res.Mangas[0], 42, "One Piece", "/manga/42")
+	if !res.HasNextPage {
+		t.Error("HasNextPage = false, want true")
+	}
+}
+
+// assertBrowseTypeVar asserts the browse request carried type=want and no query
+// variable (browse is a query-less catalog listing).
+func assertBrowseTypeVar(t *testing.T, vars map[string]any, want string) {
+	t.Helper()
+	if vars["type"] != want {
+		t.Errorf("request type var = %v, want %s", vars["type"], want)
+	}
+	if _, hasQuery := vars["query"]; hasQuery {
+		t.Errorf("browse request must not carry a query variable, got %v", vars["query"])
+	}
+}
+
+// assertManga asserts a Manga's ID, Title, and URL fields.
+func assertManga(t *testing.T, m suwayomi.Manga, wantID int, wantTitle, wantURL string) {
+	t.Helper()
+	if m.ID != wantID {
+		t.Errorf("manga.ID = %d, want %d", m.ID, wantID)
+	}
+	if m.Title != wantTitle {
+		t.Errorf("manga.Title = %q, want %q", m.Title, wantTitle)
+	}
+	if m.URL != wantURL {
+		t.Errorf("manga.URL = %q, want %q", m.URL, wantURL)
+	}
+}
+
+// TestClient_Browse_Latest verifies that BrowseLatest sends type=LATEST and that
+// hasNextPage=false round-trips.
+func TestClient_Browse_Latest(t *testing.T) {
+	var gotVars map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotVars = decodeGraphQLVars(t, r)
+		resp := graphqlResponse(t, map[string]any{
+			"fetchSourceManga": map[string]any{
+				"mangas": []map[string]any{
+					{"id": 7, "title": "Berserk", "url": "/manga/7", "thumbnailUrl": "/t/7"},
+				},
+				"hasNextPage": false,
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	res, err := client.Browse(context.Background(), "src", suwayomi.BrowseLatest, 2)
+	if err != nil {
+		t.Fatalf("Browse() error = %v", err)
+	}
+	if gotVars["type"] != "LATEST" {
+		t.Errorf("request type var = %v, want LATEST", gotVars["type"])
+	}
+	// page is serialised as a JSON number (float64 after decode).
+	if gotVars["page"] != float64(2) {
+		t.Errorf("request page var = %v, want 2", gotVars["page"])
+	}
+	if len(res.Mangas) != 1 || res.Mangas[0].URL != "/manga/7" {
+		t.Errorf("Mangas = %+v, want one entry with url /manga/7", res.Mangas)
+	}
+	if res.HasNextPage {
+		t.Error("HasNextPage = true, want false")
+	}
+}
+
+// TestClient_Browse_GraphQLError verifies that a GraphQL application error (e.g.
+// a source that does not support LATEST) is propagated as a Go error.
+func TestClient_Browse_GraphQLError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, nil, []map[string]any{
+			{"message": "source does not support latest"},
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	_, err := client.Browse(context.Background(), "bad-source", suwayomi.BrowseLatest, 1)
+	if err == nil {
+		t.Fatal("Browse() with GraphQL errors: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "source does not support latest") {
+		t.Errorf("error %q should contain the GraphQL error message", err.Error())
+	}
+}
+
 // --- MangaChapters -----------------------------------------------------------
 
 // cannedChaptersServer builds an httptest.Server returning two canned chapters.

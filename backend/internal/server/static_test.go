@@ -28,6 +28,9 @@ func (nullSuwayomiClient) Sources(_ context.Context) ([]suwayomi.Source, error) 
 func (nullSuwayomiClient) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
 	panic("nullSuwayomiClient.Search called in test")
 }
+func (nullSuwayomiClient) Browse(_ context.Context, _ string, _ suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
+	panic("nullSuwayomiClient.Browse called in test")
+}
 func (nullSuwayomiClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	panic("nullSuwayomiClient.FetchChapters called in test")
 }
