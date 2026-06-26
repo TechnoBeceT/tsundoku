@@ -596,6 +596,37 @@ export interface paths {
         patch: operations["updateSettings"];
         trace?: never;
     };
+    "/api/suwayomi/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Suwayomi FlareSolverr/SOCKS settings
+         * @description Returns the FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of the
+         *     active Suwayomi's server-global settings. A pure passthrough — Tsundoku
+         *     stores none of these values. An upstream Suwayomi failure is a 502.
+         */
+        get: operations["getSuwayomiSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Suwayomi FlareSolverr/SOCKS settings
+         * @description Applies a PARTIAL update of the FlareSolverr + SOCKS subset: only the
+         *     provided fields are sent to Suwayomi, so no unset setting is clobbered.
+         *     The settings are RE-READ after the write and returned so the caller sees
+         *     the persisted values without a refetch (§16). A validation failure
+         *     (bad SOCKS version/port, malformed URL, empty body) is a 400; an upstream
+         *     Suwayomi failure is a 502.
+         */
+        patch: operations["updateSuwayomiSettings"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1007,6 +1038,95 @@ export interface components {
                 /** @example 30m */
                 value: string;
             }[];
+        };
+        /**
+         * @description The FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of Suwayomi's
+         *     server-global settings, proxied verbatim from the active Suwayomi (embed
+         *     or external). Tsundoku stores none of these values.
+         */
+        SuwayomiSettings: {
+            flareSolverr: components["schemas"]["FlareSolverrSettings"];
+            socksProxy: components["schemas"]["SocksProxySettings"];
+        };
+        FlareSolverrSettings: {
+            /** @description Toggles the FlareSolverr Cloudflare-bypass proxy. */
+            enabled: boolean;
+            /**
+             * @description The FlareSolverr endpoint (e.g. http://host:8191).
+             * @example http://localhost:8191
+             */
+            url: string;
+            /**
+             * @description Per-request timeout in seconds.
+             * @example 60
+             */
+            timeout: number;
+            /** @description The FlareSolverr session identifier. */
+            sessionName: string;
+            /**
+             * @description Session time-to-live in minutes.
+             * @example 15
+             */
+            sessionTtl: number;
+            /** @description Use FlareSolverr only as a fallback for blocked requests. */
+            asResponseFallback: boolean;
+        };
+        SocksProxySettings: {
+            /** @description Toggles routing source traffic through the SOCKS proxy. */
+            enabled: boolean;
+            /**
+             * @description SOCKS protocol version (4 or 5).
+             * @example 5
+             * @enum {integer}
+             */
+            version: 4 | 5;
+            /** @description Proxy hostname or IP. */
+            host: string;
+            /**
+             * @description Proxy port (numeric string; Suwayomi types it as a String).
+             * @example 1080
+             */
+            port: string;
+            /** @description Optional proxy username. */
+            username: string;
+            /** @description Optional proxy password. */
+            password: string;
+        };
+        /**
+         * @description A PARTIAL update of the FlareSolverr + SOCKS subset. Both groups and every
+         *     field within them are optional: an omitted group or field is left
+         *     untouched, so no unset setting is clobbered. At least one field must be
+         *     present (an empty body is a 400).
+         */
+        SuwayomiSettingsUpdate: {
+            flareSolverr?: components["schemas"]["FlareSolverrUpdate"];
+            socksProxy?: components["schemas"]["SocksProxyUpdate"];
+        };
+        /** @description Partial FlareSolverr group; omitted fields are untouched. */
+        FlareSolverrUpdate: {
+            enabled?: boolean;
+            /** @description Absolute http(s) URL, or empty string to clear. */
+            url?: string;
+            /** @description Per-request timeout in seconds (non-negative). */
+            timeout?: number;
+            sessionName?: string;
+            /** @description Session TTL in minutes (non-negative). */
+            sessionTtl?: number;
+            asResponseFallback?: boolean;
+        };
+        /** @description Partial SOCKS-proxy group; omitted fields are untouched. */
+        SocksProxyUpdate: {
+            enabled?: boolean;
+            /**
+             * @description SOCKS protocol version (4 or 5).
+             * @enum {integer}
+             */
+            version?: 4 | 5;
+            host?: string;
+            /** @description Numeric string in 1..65535. */
+            port?: string;
+            username?: string;
+            password?: string;
         };
     };
     responses: never;
@@ -2379,6 +2499,95 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSuwayomiSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current FlareSolverr + SOCKS settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuwayomiSettings"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateSuwayomiSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuwayomiSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Settings updated. Returns the refreshed FlareSolverr + SOCKS settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuwayomiSettings"];
+                };
+            };
+            /** @description A validation failure (bad SOCKS version/port, malformed URL, or empty body). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

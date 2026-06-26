@@ -715,6 +715,124 @@ components:
                 type: string
                 example: 30m
 
+    SuwayomiSettings:
+      type: object
+      description: |
+        The FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of Suwayomi's
+        server-global settings, proxied verbatim from the active Suwayomi (embed
+        or external). Tsundoku stores none of these values.
+      required: [flareSolverr, socksProxy]
+      properties:
+        flareSolverr:
+          $ref: "#/components/schemas/FlareSolverrSettings"
+        socksProxy:
+          $ref: "#/components/schemas/SocksProxySettings"
+
+    FlareSolverrSettings:
+      type: object
+      required: [enabled, url, timeout, sessionName, sessionTtl, asResponseFallback]
+      properties:
+        enabled:
+          type: boolean
+          description: Toggles the FlareSolverr Cloudflare-bypass proxy.
+        url:
+          type: string
+          description: The FlareSolverr endpoint (e.g. http://host:8191).
+          example: http://localhost:8191
+        timeout:
+          type: integer
+          description: Per-request timeout in seconds.
+          example: 60
+        sessionName:
+          type: string
+          description: The FlareSolverr session identifier.
+        sessionTtl:
+          type: integer
+          description: Session time-to-live in minutes.
+          example: 15
+        asResponseFallback:
+          type: boolean
+          description: Use FlareSolverr only as a fallback for blocked requests.
+
+    SocksProxySettings:
+      type: object
+      required: [enabled, version, host, port, username, password]
+      properties:
+        enabled:
+          type: boolean
+          description: Toggles routing source traffic through the SOCKS proxy.
+        version:
+          type: integer
+          description: SOCKS protocol version (4 or 5).
+          enum: [4, 5]
+          example: 5
+        host:
+          type: string
+          description: Proxy hostname or IP.
+        port:
+          type: string
+          description: Proxy port (numeric string; Suwayomi types it as a String).
+          example: "1080"
+        username:
+          type: string
+          description: Optional proxy username.
+        password:
+          type: string
+          description: Optional proxy password.
+
+    SuwayomiSettingsUpdate:
+      type: object
+      description: |
+        A PARTIAL update of the FlareSolverr + SOCKS subset. Both groups and every
+        field within them are optional: an omitted group or field is left
+        untouched, so no unset setting is clobbered. At least one field must be
+        present (an empty body is a 400).
+      properties:
+        flareSolverr:
+          $ref: "#/components/schemas/FlareSolverrUpdate"
+        socksProxy:
+          $ref: "#/components/schemas/SocksProxyUpdate"
+
+    FlareSolverrUpdate:
+      type: object
+      description: Partial FlareSolverr group; omitted fields are untouched.
+      properties:
+        enabled:
+          type: boolean
+        url:
+          type: string
+          description: Absolute http(s) URL, or empty string to clear.
+        timeout:
+          type: integer
+          description: Per-request timeout in seconds (non-negative).
+        sessionName:
+          type: string
+        sessionTtl:
+          type: integer
+          description: Session TTL in minutes (non-negative).
+        asResponseFallback:
+          type: boolean
+
+    SocksProxyUpdate:
+      type: object
+      description: Partial SOCKS-proxy group; omitted fields are untouched.
+      properties:
+        enabled:
+          type: boolean
+        version:
+          type: integer
+          description: SOCKS protocol version (4 or 5).
+          enum: [4, 5]
+        host:
+          type: string
+        port:
+          type: string
+          description: Numeric string in 1..65535.
+        username:
+          type: string
+        password:
+          type: string
+
 paths:
   /health:
     get:
@@ -2041,6 +2159,83 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/suwayomi/settings:
+    get:
+      operationId: getSuwayomiSettings
+      summary: Read Suwayomi FlareSolverr/SOCKS settings
+      description: |
+        Returns the FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of the
+        active Suwayomi's server-global settings. A pure passthrough — Tsundoku
+        stores none of these values. An upstream Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The current FlareSolverr + SOCKS settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuwayomiSettings"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateSuwayomiSettings
+      summary: Update Suwayomi FlareSolverr/SOCKS settings
+      description: |
+        Applies a PARTIAL update of the FlareSolverr + SOCKS subset: only the
+        provided fields are sent to Suwayomi, so no unset setting is clobbered.
+        The settings are RE-READ after the write and returned so the caller sees
+        the persisted values without a refetch (§16). A validation failure
+        (bad SOCKS version/port, malformed URL, empty body) is a 400; an upstream
+        Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SuwayomiSettingsUpdate"
+      responses:
+        "200":
+          description: Settings updated. Returns the refreshed FlareSolverr + SOCKS settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuwayomiSettings"
+        "400":
+          description: A validation failure (bad SOCKS version/port, malformed URL, or empty body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
           content:
             application/json:
               schema:
