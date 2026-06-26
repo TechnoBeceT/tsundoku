@@ -73,6 +73,12 @@ func (f *fakeSuwayomiClient) PageBytes(ctx context.Context, pageURL string) ([]b
 	}
 	return nil, "", errors.New("PageBytes: not configured")
 }
+func (f *fakeSuwayomiClient) ServerSettings(ctx context.Context) (suwayomi.SuwayomiSettings, error) {
+	return suwayomi.SuwayomiSettings{}, nil
+}
+func (f *fakeSuwayomiClient) SetServerSettings(ctx context.Context, patch suwayomi.SuwayomiSettingsPatch) error {
+	return nil
+}
 
 const testSecret = "series-handler-test-secret"
 

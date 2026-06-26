@@ -93,6 +93,12 @@ func (f *fakeClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
 func (f *fakeClient) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
 	return nil, "", nil
 }
+func (f *fakeClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
+	return suwayomi.SuwayomiSettings{}, nil
+}
+func (f *fakeClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
+	return nil
+}
 
 // makeChapters builds n stub chapters anchored to baseID.
 func makeChapters(baseID, n int) []suwayomi.Chapter {

@@ -13,6 +13,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
+	suwayomih "github.com/technobecet/tsundoku/internal/handler/suwayomi"
 	"github.com/technobecet/tsundoku/internal/imports"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
@@ -53,6 +54,8 @@ import (
 //   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
+//   - /api/suwayomi/settings (GET)                  — read Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
+//   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
@@ -106,6 +109,13 @@ func registerRoutes(
 	settingsH := settingsh.NewHandler(settingsSvc)
 	authed.GET("/settings", settingsH.List)
 	authed.PATCH("/settings", settingsH.Update)
+
+	// Suwayomi server-settings proxy (FlareSolverr + SOCKS). The handler holds
+	// the Suwayomi client directly and proxies its server-global settings; no
+	// Tsundoku state is involved.
+	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient)
+	authed.GET("/suwayomi/settings", suwayomiSettingsH.Get)
+	authed.PATCH("/suwayomi/settings", suwayomiSettingsH.Update)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.

@@ -228,6 +228,96 @@ func TestShape4_BrowseEnumType(t *testing.T) {
 	}
 }
 
+// TestShape5_ServerSettings is the MERGE GATE for the Suwayomi settings-proxy.
+// It proves, against a real Suwayomi, that:
+//
+//  1. the `settings` query + the FlareSolverr/SOCKS field NAMES are correct
+//     (ServerSettings decodes with no schema/type error), and
+//  2. the `setSettings` mutation + PartialSettingsTypeInput shape are correct,
+//     including the partial-input no-clobber contract and socksProxyPort being a
+//     String on the wire (SetServerSettings sends "1081" and it round-trips).
+//
+// It captures the original values, applies a distinctive partial patch, reads it
+// back, asserts the round-trip, then RESTORES the original values so the shared
+// harness is left unchanged for other tests. No enabled flags route real traffic
+// during the test window (the Local source reads from disk, not the network), so
+// toggling the values is side-effect-free here.
+func TestShape5_ServerSettings(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	before, err := client.ServerSettings(ctx)
+	if err != nil {
+		t.Fatalf("ServerSettings (query shape): %v\n(check: is `settings` the query and are the FlareSolverr/SOCKS field names correct?)", err)
+	}
+	t.Logf("CONFIRMED: settings query decoded; before=%+v", before)
+
+	// Distinctive values, including a numeric STRING port (proves socksProxyPort
+	// is a String! on the wire) and a flipped bool (proves Boolean round-trip).
+	wantURL := "http://shape5.test:8191"
+	wantTimeout := 42
+	wantVersion := 4
+	wantHost := "shape5-host"
+	wantPort := "1081"
+	wantFallback := !before.FlareSolverrAsResponseFallback
+
+	patch := suwayomi.SuwayomiSettingsPatch{
+		FlareSolverrURL:                strptr(wantURL),
+		FlareSolverrTimeout:            intptr(wantTimeout),
+		FlareSolverrAsResponseFallback: boolptr(wantFallback),
+		SocksProxyVersion:              intptr(wantVersion),
+		SocksProxyHost:                 strptr(wantHost),
+		SocksProxyPort:                 strptr(wantPort),
+	}
+	if err := client.SetServerSettings(ctx, patch); err != nil {
+		t.Fatalf("SetServerSettings (mutation shape): %v\n(check: is setSettings(input:{settings:PartialSettingsTypeInput!}) correct and socksProxyPort a String?)", err)
+	}
+
+	after, err := client.ServerSettings(ctx)
+	if err != nil {
+		t.Fatalf("ServerSettings read-back: %v", err)
+	}
+
+	// Restore the original values regardless of assertion outcome.
+	t.Cleanup(func() {
+		restore := suwayomi.SuwayomiSettingsPatch{
+			FlareSolverrURL:                strptr(before.FlareSolverrURL),
+			FlareSolverrTimeout:            intptr(before.FlareSolverrTimeout),
+			FlareSolverrAsResponseFallback: boolptr(before.FlareSolverrAsResponseFallback),
+			SocksProxyVersion:              intptr(before.SocksProxyVersion),
+			SocksProxyHost:                 strptr(before.SocksProxyHost),
+			SocksProxyPort:                 strptr(before.SocksProxyPort),
+		}
+		if err := client.SetServerSettings(context.Background(), restore); err != nil {
+			t.Logf("WARN: failed to restore original Suwayomi settings: %v", err)
+		}
+	})
+
+	assertSettingEq(t, "flareSolverrUrl", after.FlareSolverrURL, wantURL)
+	assertSettingEq(t, "flareSolverrTimeout", after.FlareSolverrTimeout, wantTimeout)
+	assertSettingEq(t, "flareSolverrAsResponseFallback", after.FlareSolverrAsResponseFallback, wantFallback)
+	assertSettingEq(t, "socksProxyVersion", after.SocksProxyVersion, wantVersion)
+	assertSettingEq(t, "socksProxyHost", after.SocksProxyHost, wantHost)
+	assertSettingEq(t, "socksProxyPort (String! on the wire)", after.SocksProxyPort, wantPort)
+	t.Logf("CONFIRMED: setSettings partial update round-tripped; after=%+v", after)
+}
+
+// assertSettingEq fails the test with a named message when got != want.
+func assertSettingEq[T comparable](t *testing.T, name string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s: got %v, want %v", name, got, want)
+	}
+}
+
+// strptr / intptr / boolptr are pointer helpers for building a partial patch.
+func strptr(s string) *string { return &s }
+func intptr(i int) *int       { return &i }
+func boolptr(b bool) *bool    { return &b }
+
 // TestE2E_AddSeriesDispatchDownload is the Milestone 2 end-to-end proof:
 //
 //	real Suwayomi (local source) →

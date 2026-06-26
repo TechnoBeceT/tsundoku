@@ -70,6 +70,12 @@ func (s *ingestStubClient) ChapterPages(_ context.Context, _ int) ([]string, err
 func (s *ingestStubClient) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
 	panic("ingestStubClient.PageBytes: must not be called by Ingest")
 }
+func (s *ingestStubClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
+	panic("ingestStubClient.ServerSettings: must not be called by Ingest")
+}
+func (s *ingestStubClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
+	panic("ingestStubClient.SetServerSettings: must not be called by Ingest")
+}
 
 // --- helpers -----------------------------------------------------------------
 
@@ -541,6 +547,12 @@ func (s *metaClientStub) ChapterPages(_ context.Context, _ int) ([]string, error
 }
 func (s *metaClientStub) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
 	panic("metaClientStub: PageBytes must not be called by Ingest")
+}
+func (s *metaClientStub) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
+	panic("metaClientStub: ServerSettings must not be called by Ingest")
+}
+func (s *metaClientStub) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
+	panic("metaClientStub: SetServerSettings must not be called by Ingest")
 }
 
 // ptrStr returns a pointer to v.
