@@ -10,6 +10,12 @@
  *   - `placeholder`: the empty-state hint text.
  *   - `disabled`: blocks input + dims the field.
  *   - `mono`: renders the value in the monospace font (URLs / tokens / IDs).
+ *   - `autocomplete`: the native `autocomplete` token (e.g. 'username',
+ *     'current-password') so the browser can offer + store credential autofill.
+ *   - `name`: the native input `name` (paired with `autocomplete` so password
+ *     managers can associate the field).
+ *   - `compact`: a fixed-width inline variant for the Settings integer rows —
+ *     the input shrinks to a number-sized box instead of label-above-full-width.
  *
  * Emits `update:modelValue` on every keystroke and `enter` when Enter is pressed.
  */
@@ -26,10 +32,17 @@ withDefaults(defineProps<{
   disabled?: boolean
   /** Render the value in the monospace font. */
   mono?: boolean
+  /** Native `autocomplete` token for browser/password-manager autofill. */
+  autocomplete?: string
+  /** Native input `name` (pair with `autocomplete` for credential autofill). */
+  name?: string
+  /** Fixed-width inline variant (Settings integer rows) instead of full-width. */
+  compact?: boolean
 }>(), {
   type: 'text',
   disabled: false,
   mono: false,
+  compact: false,
 })
 
 const emit = defineEmits<{
@@ -46,7 +59,7 @@ function onInput(event: Event) {
 </script>
 
 <template>
-  <label class="field">
+  <label class="field" :class="{ 'field--compact': compact }">
     <span v-if="label" class="field__label">{{ label }}</span>
     <input
       class="field__input"
@@ -55,6 +68,8 @@ function onInput(event: Event) {
       :value="modelValue"
       :placeholder="placeholder"
       :disabled="disabled"
+      :autocomplete="autocomplete"
+      :name="name"
       @input="onInput"
       @keydown.enter="emit('enter')"
     >
@@ -66,6 +81,17 @@ function onInput(event: Event) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+/* Inline fixed-width variant: a number-sized box (matches the Settings
+   integer rows) instead of stretching to the container width. */
+.field--compact {
+  width: max-content;
+}
+
+.field--compact .field__input {
+  width: 80px;
+  padding: 9px 11px;
 }
 
 .field__label {

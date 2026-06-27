@@ -9,6 +9,8 @@
  *   - `label` (required): the field name shown beside the lock icon.
  *   - `value` (required): the read-only value, rendered monospace.
  *   - `muted` (default false): dim the value (e.g. a masked secret `••••••••`).
+ *   - `plain` (default false): drop the padlock glyph — a bare label + mono value
+ *     row (the Suwayomi DB info rows, which aren't deploy-time-locked facts).
  */
 withDefaults(defineProps<{
   /** Field name shown beside the lock icon. */
@@ -17,16 +19,21 @@ withDefaults(defineProps<{
   value: string
   /** Dim the value (for masked/placeholder values). */
   muted?: boolean
+  /** Render without the padlock icon (bare label + value). */
+  plain?: boolean
 }>(), {
   muted: false,
+  plain: false,
 })
 </script>
 
 <template>
   <div class="lrow">
     <span class="lrow__label">
-      <!-- Inline padlock glyph, tinted via currentColor (the muted label colour). -->
+      <!-- Inline padlock glyph, tinted via currentColor (the muted label colour).
+           Dropped in `plain` mode (rows that aren't deploy-time-locked). -->
       <svg
+        v-if="!plain"
         class="lrow__lock"
         width="15"
         height="15"

@@ -13,6 +13,7 @@ const meta = {
     label: { control: { type: 'text' } },
     value: { control: { type: 'text' } },
     muted: { control: { type: 'boolean' } },
+    plain: { control: { type: 'boolean' } },
   },
   args: { label: 'Storage folder', value: '/data/library' },
   decorators: [
@@ -29,6 +30,11 @@ export const Default: Story = {}
 /** A masked/dimmed value (e.g. a secret). */
 export const Muted: Story = {
   args: { label: 'Password', value: '••••••••', muted: true },
+}
+
+/** Plain mode — no padlock (the Suwayomi DB info rows). */
+export const Plain: Story = {
+  args: { label: 'Database type', value: 'POSTGRESQL', plain: true },
 }
 
 /** Several rows stacked, as in a System / Engine card. */

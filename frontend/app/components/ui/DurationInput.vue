@@ -27,11 +27,12 @@ const emit = defineEmits<{
   'update:modelValue': [value: DurationValue]
 }>()
 
-// The unit dropdown's options — stable order h → m → s.
+// The unit dropdown's options — stable order h → m → s, short labels to match
+// the prototype's compact "2 h" / "30 m" presentation.
 const unitOptions: SelectOption[] = [
-  { value: 'h', label: 'hours' },
-  { value: 'm', label: 'minutes' },
-  { value: 's', label: 'seconds' },
+  { value: 'h', label: 'h' },
+  { value: 'm', label: 'm' },
+  { value: 's', label: 's' },
 ]
 
 // Clamp the raw input to a non-negative integer (NaN / negatives → 0).

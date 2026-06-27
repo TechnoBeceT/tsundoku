@@ -7,8 +7,9 @@ const SAMPLE = `data:image/svg+xml;utf8,${encodeURIComponent(
 )}`
 
 /**
- * Stories for CoverImage. The three meaningful states are covered: a real image,
- * the brand placeholder (no src), and the initial-letter placeholder. Each is
+ * Stories for CoverImage. The meaningful states are covered: a real image, the
+ * brand placeholder (no src), the initial-letter placeholder, an aspect override,
+ * and the small clickable thumbnail (shrunken BrandMark + button root). Each is
  * rendered inside a fixed-width frame so the portrait box is visible. Flip the
  * theme toolbar to confirm the placeholder tile holds in both themes.
  */
@@ -17,6 +18,9 @@ const meta = {
   component: CoverImage,
   argTypes: {
     placeholder: { control: { type: 'inline-radio' }, options: ['brand', 'initial'] },
+    markSize: { control: { type: 'number' } },
+    radius: { control: { type: 'text' } },
+    clickable: { control: { type: 'boolean' } },
   },
   args: { alt: 'Sample Series', placeholder: 'brand', aspect: '0.72' },
   render: (args) => ({
@@ -47,4 +51,14 @@ export const InitialPlaceholder: Story = {
 /** A wider aspect override (landscape-ish). */
 export const CustomAspect: Story = {
   args: { src: '', placeholder: 'initial', initial: 'W', alt: 'Wide', aspect: '1.4' },
+}
+
+/** A small clickable thumbnail — shrunken BrandMark, button root, tighter radius. */
+export const ClickableThumbnail: Story = {
+  args: { src: '', placeholder: 'brand', clickable: true, markSize: 22, radius: 'var(--radius-md)' },
+  render: (args) => ({
+    components: { CoverImage },
+    setup: () => ({ args }),
+    template: '<div style="width:60px"><CoverImage v-bind="args" @click="() => {}" /></div>',
+  }),
 }
