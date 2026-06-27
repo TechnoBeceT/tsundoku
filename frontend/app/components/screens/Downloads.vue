@@ -28,12 +28,21 @@ const props = withDefaults(defineProps<{
   cycleActive?: boolean
   /** Minutes until the next cycle, for the idle banner ("~14 min"); null hides it. */
   nextCycleMinutes?: number | null
+  /** Chapter ids with a single retry in flight — disables that row + shows a spinner. */
+  retryingIds?: string[]
+  /** A bulk retry/reset in flight (its scope), or null when idle. */
+  retryingAll?: RetryAllState | null
+  /** A surfaced retry failure — rendered as a dismissible banner, never swallowed (§16). */
+  retryError?: string
   /** When true, render skeleton rows instead of content. */
   loading?: boolean
 }>(), {
   activeTab: 'active',
   cycleActive: false,
   nextCycleMinutes: null,
+  retryingIds: () => [],
+  retryingAll: null,
+  retryError: '',
   loading: false,
 })
 
@@ -46,6 +55,8 @@ const emit = defineEmits<{
   'retry-all': [state: RetryAllState]
   /** A row was clicked — open that series' detail view. */
   'open-series': [seriesId: string]
+  /** Dismiss the surfaced retry-error banner. */
+  'dismiss-error': []
 }>()
 
 // ---- Local view state (presentation only, never round-trips) ----------------
@@ -96,6 +107,9 @@ const toRow = (item: DownloadItem): DownloadRow => ({
 // The meta line under the title: "#147 · Chapter 147" (number dropped when null).
 const metaLine = (row: DownloadRow): string =>
   [row.numberLabel, row.name].filter(Boolean).join(' · ')
+
+// Whether a single chapter's retry is currently in flight (§16 in-flight state).
+const isRetrying = (chapterId: string): boolean => props.retryingIds.includes(chapterId)
 
 // ---- Filtering --------------------------------------------------------------
 const byState = (states: DownloadState[]): DownloadItem[] =>
@@ -258,21 +272,37 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           <span class="tab__count" :class="{ 'tab__count--active': failSubTab === t.key }">{{ t.n }}</span>
         </button>
         <div class="subhead__actions">
-          <button type="button" class="mini-btn" :disabled="counts.failed === 0" @click="openConfirm('failed', counts.failed)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <button type="button" class="mini-btn" :disabled="counts.failed === 0 || retryingAll !== null" @click="openConfirm('failed', counts.failed)">
+            <span v-if="retryingAll === 'failed'" class="btn-spinner" aria-hidden="true" />
+            <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21 12a9 9 0 1 1-2.6-6.4" />
               <path d="M21 3v6h-6" />
             </svg>
-            Retry all retryable
+            {{ retryingAll === 'failed' ? 'Retrying…' : 'Retry all retryable' }}
           </button>
-          <button type="button" class="mini-btn" :disabled="counts.terminal === 0" @click="openConfirm('permanently_failed', counts.terminal)">
-            Reset all terminal
+          <button type="button" class="mini-btn" :disabled="counts.terminal === 0 || retryingAll !== null" @click="openConfirm('permanently_failed', counts.terminal)">
+            <span v-if="retryingAll === 'permanently_failed'" class="btn-spinner" aria-hidden="true" />
+            {{ retryingAll === 'permanently_failed' ? 'Resetting…' : 'Reset all terminal' }}
           </button>
         </div>
       </div>
 
       <div class="searchbar">
         <input v-model="search" type="search" class="searchbar__input" placeholder="Search series…">
+      </div>
+
+      <!-- Surfaced retry failure — visible + dismissible, never a console-only error (§16). -->
+      <div v-if="retryError" class="error-banner" role="alert">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <path d="M12 9v4M12 17h.01" />
+        </svg>
+        <span class="error-banner__msg">{{ retryError }}</span>
+        <button type="button" class="error-banner__close" aria-label="Dismiss error" @click="emit('dismiss-error')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
       </div>
 
       <div v-if="failedRows.length === 0" class="empty">
@@ -301,7 +331,10 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             <span v-if="row.hasRetries" class="retry-badge">Retry #{{ row.retries }}</span>
             <span v-if="row.nextAttempt" class="next-attempt">{{ row.nextAttempt }}</span>
             <span class="badge" :class="row.badge.cls"><span class="badge__dot" />{{ row.badge.label }}</span>
-            <button type="button" class="row-btn" @click="emit('retry', row.chapterId)">{{ row.retryLabel }}</button>
+            <button type="button" class="row-btn" :disabled="isRetrying(row.chapterId)" @click="emit('retry', row.chapterId)">
+              <span v-if="isRetrying(row.chapterId)" class="btn-spinner" aria-hidden="true" />
+              {{ isRetrying(row.chapterId) ? 'Retrying…' : row.retryLabel }}
+            </button>
           </div>
 
           <div v-if="row.lastError" class="dl-card__error">
@@ -796,9 +829,63 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   transition: all 0.15s;
 }
 
-.row-btn:hover {
+.row-btn:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accentBright);
+}
+
+.row-btn:disabled {
+  color: var(--faint);
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* In-button spinner (per-row retry + bulk retry/reset in-flight state, §16). */
+.btn-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  animation: dl-spin 0.8s linear infinite;
+}
+
+/* ---- Surfaced retry-error banner (§16 — visible, dismissible) ------------- */
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.error-banner__msg {
+  flex: 1;
+  min-width: 0;
+}
+
+.error-banner__close {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: none;
+  border: none;
+  color: var(--danger-text);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.error-banner__close:hover {
+  color: var(--danger-bright);
 }
 
 /* ---- Expandable error ----------------------------------------------------- */

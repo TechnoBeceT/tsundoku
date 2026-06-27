@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, h, reactive, ref, watch } from 'vue'
 import type { VNode } from 'vue'
+import { ADD_ACTION_ID } from './settings.types'
 import type {
   DurationValue,
   EngineInfo,
@@ -10,6 +11,7 @@ import type {
   LibrarySettings,
   Repo,
   ReorderDirection,
+  RowActionState,
   SaveState,
   SettingsCategory,
   SettingsPane,
@@ -50,8 +52,8 @@ const props = withDefaults(defineProps<{
   librarySave?: SaveState
   /** The user-defined category list (2b). */
   categories: SettingsCategory[]
-  /** Whether a category move (rename/delete reassign) is in flight. */
-  categoryBusy?: boolean
+  /** §16 state of category mutations (add/rename/reorder/delete): busy row + error. */
+  categoryAction?: RowActionState
   /** Read-only engine status (2c). */
   engine: EngineInfo
   /** The upgrade stepper's steps (SSE-driven); empty = no upgrade started. */
@@ -68,6 +70,10 @@ const props = withDefaults(defineProps<{
   availableExtensions: Extension[]
   /** Extension repository URLs (2e). */
   repos: Repo[]
+  /** §16 state of extension mutations (install/update/uninstall): busy pkgName + error. */
+  extensionAction?: RowActionState
+  /** §16 state of repo mutations (add/remove/reorder): busy id + error. */
+  repoAction?: RowActionState
   /** Background extension update-check cadence (2e). */
   extCheckInterval: DurationValue
   /** Whether a "check for updates" call is in flight. */
@@ -77,10 +83,12 @@ const props = withDefaults(defineProps<{
 }>(), {
   activePane: 'library',
   librarySave: () => ({ status: 'idle' }),
-  categoryBusy: false,
+  categoryAction: () => ({ busyId: null }),
   upgradeSteps: () => [],
   upgrading: false,
   suwayomiSave: () => ({ status: 'idle' }),
+  extensionAction: () => ({ busyId: null }),
+  repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
   loading: false,
 })
@@ -226,11 +234,25 @@ const categoryError = ref('')
 const renameId = ref<string | null>(null)
 const renameVal = ref('')
 
-/** Confirm modal for a category move (rename/delete that touches series folders). */
+/**
+ * Confirm modal for a destructive/folder-moving action: a category rename or
+ * delete (both physically move series folders) or an extension uninstall (brief
+ * §2e requires a confirm). One shell serves all three.
+ */
 type ConfirmModal =
   | { kind: 'rename', id: string, name: string, from: string, count: number }
   | { kind: 'delete', id: string, name: string, count: number, targetId: string }
+  | { kind: 'uninstall', id: string, name: string }
 const confirmModal = ref<ConfirmModal | null>(null)
+
+// The category-pane inline error = local client validation OR the parent's
+// backend failure (categoryAction.error) — one line, whichever is set.
+const categoryErrorMsg = computed(() => {
+  if (categoryError.value) return categoryError.value
+  return props.categoryAction.error ?? ''
+})
+// Per-row busy: the single category whose mutation the parent flagged in flight.
+const categoryRowBusy = (id: string): boolean => props.categoryAction.busyId === id
 
 const nameTaken = (name: string, exceptId?: string): boolean =>
   props.categories.some((c) => c.id !== exceptId && c.name.toLowerCase() === name.toLowerCase())
@@ -317,35 +339,54 @@ const setTarget = (e: Event): void => {
   }
 }
 
+// Whether the open confirm's target action is in flight — drives the confirm
+// button's spinner + the close-on-completion watcher. A rename/delete reads the
+// category action; an uninstall reads the extension action.
+const confirmBusy = computed(() => {
+  const c = confirmModal.value
+  if (!c) return false
+  return c.kind === 'uninstall'
+    ? props.extensionAction.busyId === c.id
+    : props.categoryAction.busyId === c.id
+})
+
 const confirmMove = (): void => {
   const c = confirmModal.value
-  if (!c || props.categoryBusy) return
+  if (!c || confirmBusy.value) return
   if (c.kind === 'rename') emit('rename-category', { id: c.id, name: c.name })
-  else emit('delete-category', { id: c.id, targetId: c.targetId })
+  else if (c.kind === 'delete') emit('delete-category', { id: c.id, targetId: c.targetId })
+  else emit('uninstall-extension', c.id)
   // With no async wiring (e.g. Storybook) close immediately; otherwise the
-  // categoryBusy false-edge watcher below closes it when the move completes.
-  if (!props.categoryBusy) confirmModal.value = null
+  // confirmBusy false-edge watcher below closes it once the action completes.
+  if (!confirmBusy.value) confirmModal.value = null
 }
 const cancelConfirm = (): void => {
   confirmModal.value = null
 }
-watch(() => props.categoryBusy, (busy, prev) => {
+watch(confirmBusy, (busy, prev) => {
   if (prev && !busy) confirmModal.value = null
 })
 
 const confirmTitle = computed(() => {
   const c = confirmModal.value
   if (!c) return ''
-  return c.kind === 'rename' ? `Rename “${c.from}” → “${c.name}”?` : `Delete “${c.name}”?`
+  if (c.kind === 'rename') return `Rename “${c.from}” → “${c.name}”?`
+  if (c.kind === 'delete') return `Delete “${c.name}”?`
+  return `Uninstall “${c.name}”?`
 })
 const confirmMessage = computed(() => {
   const c = confirmModal.value
   if (!c) return ''
+  if (c.kind === 'uninstall') {
+    return 'This removes the source extension from the engine. Downloaded chapters stay on disk.'
+  }
   const plural = c.count > 1 ? 's' : ''
   return c.kind === 'rename'
     ? `This physically moves ${c.count} series folder${plural} on disk and rewrites their sidecars.`
     : `Choose where its ${c.count} series go — their folders move on disk. CBZ files are never deleted.`
 })
+// The confirm's primary button reads red for an uninstall (destructive).
+const confirmIsDestructive = computed(() => confirmModal.value?.kind === 'uninstall')
 
 // ---- Engine -----------------------------------------------------------------
 const upgradeShown = computed(() => props.upgradeSteps.length > 0)
@@ -362,6 +403,17 @@ const extTabs = computed(() => [
   { key: 'repos' as const, label: 'Repositories', n: props.repos.length },
 ])
 
+// Per-row busy flags (the parent flags the single in-flight pkgName / repo id).
+const extensionRowBusy = (id: string): boolean => props.extensionAction.busyId === id
+const repoRowBusy = (id: string): boolean => props.repoAction.busyId === id
+const repoAddBusy = computed(() => props.repoAction.busyId === ADD_ACTION_ID)
+
+// Uninstall is destructive (brief §2e) — route it through the confirm modal
+// instead of emitting straight from the row button.
+const startUninstall = (e: Extension): void => {
+  confirmModal.value = { kind: 'uninstall', id: e.id, name: e.name }
+}
+
 interface RepoRow extends Repo {
   canMoveUp: boolean
   canMoveDown: boolean
@@ -376,6 +428,11 @@ const repoRows = computed<RepoRow[]>(() =>
 
 const newRepo = ref('')
 const repoError = ref('')
+// One inline repo error = local URL validation OR the parent's backend failure.
+const repoErrorMsg = computed(() => {
+  if (repoError.value) return repoError.value
+  return props.repoAction.error ?? ''
+})
 const addRepo = (): void => {
   const url = newRepo.value.trim()
   if (!url) return
@@ -533,12 +590,12 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             <h2 class="card__title">Categories</h2>
             <p class="card__sub">User-defined. Renaming or deleting moves series folders on disk — CBZ files are never deleted.</p>
 
-            <div v-for="c in categoryRows" :key="c.id" class="cat-row">
+            <div v-for="c in categoryRows" :key="c.id" class="cat-row" :class="{ 'cat-row--busy': categoryRowBusy(c.id) }">
               <div class="reorder">
-                <button type="button" class="reorder__btn" :disabled="!c.canMoveUp" aria-label="Move up" @click="emit('reorder-category', { id: c.id, direction: -1 })">
+                <button type="button" class="reorder__btn" :disabled="!c.canMoveUp || categoryRowBusy(c.id)" aria-label="Move up" @click="emit('reorder-category', { id: c.id, direction: -1 })">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 15l-6-6-6 6" /></svg>
                 </button>
-                <button type="button" class="reorder__btn" :disabled="!c.canMoveDown" aria-label="Move down" @click="emit('reorder-category', { id: c.id, direction: 1 })">
+                <button type="button" class="reorder__btn" :disabled="!c.canMoveDown || categoryRowBusy(c.id)" aria-label="Move down" @click="emit('reorder-category', { id: c.id, direction: 1 })">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
                 </button>
               </div>
@@ -560,23 +617,25 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
                 <span class="chip">{{ c.name }}</span>
                 <span class="cat-count">{{ c.count }} series</span>
                 <span v-if="c.isDefault" class="pill">DEFAULT</span>
+                <span v-if="categoryRowBusy(c.id)" class="row-busy"><span class="spinner spinner--dark" aria-hidden="true" />Working…</span>
                 <div class="cat-actions">
-                  <button v-if="!c.protected && !c.isDefault" type="button" class="text-btn" @click="emit('set-default-category', c.id)">Set default</button>
-                  <button v-if="!c.protected" type="button" class="icon-btn" aria-label="Rename" @click="startRename(c)">
+                  <button v-if="!c.protected && !c.isDefault" type="button" class="text-btn" :disabled="categoryRowBusy(c.id)" @click="emit('set-default-category', c.id)">Set default</button>
+                  <button v-if="!c.protected" type="button" class="icon-btn" aria-label="Rename" :disabled="categoryRowBusy(c.id)" @click="startRename(c)">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
                   </button>
-                  <button v-if="!c.protected" type="button" class="icon-btn icon-btn--danger" aria-label="Delete" @click="startDelete(c)">
+                  <button v-if="!c.protected" type="button" class="icon-btn icon-btn--danger" aria-label="Delete" :disabled="categoryRowBusy(c.id)" @click="startDelete(c)">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>
                   </button>
                 </div>
               </div>
             </div>
 
-            <p v-if="categoryError" class="form-error">{{ categoryError }}</p>
+            <p v-if="categoryErrorMsg" class="form-error">{{ categoryErrorMsg }}</p>
             <div class="add-row">
-              <input v-model="newCategory" class="input add-row__input" placeholder="New category name…" @keydown.enter="addCategory">
-              <button type="button" class="primary-btn" @click="addCategory">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+              <input v-model="newCategory" class="input add-row__input" placeholder="New category name…" :disabled="categoryRowBusy('__add__')" @keydown.enter="addCategory">
+              <button type="button" class="primary-btn" :disabled="categoryRowBusy('__add__')" @click="addCategory">
+                <span v-if="categoryRowBusy('__add__')" class="spinner" aria-hidden="true" />
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 Add
               </button>
             </div>
@@ -750,16 +809,19 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             </button>
           </div>
 
+          <!-- A failed extension mutation is surfaced inline for the whole pane. -->
+          <p v-if="extensionAction.error" class="form-error form-error--pane">{{ extensionAction.error }}</p>
+
           <!-- Installed -->
           <template v-if="extTab === 'installed'">
             <div class="ext-actions">
-              <button type="button" class="mini-btn" @click="emit('check-updates')">
+              <button type="button" class="mini-btn" :disabled="checkingUpdates" @click="emit('check-updates')">
                 <span v-if="checkingUpdates" class="spinner spinner--dark" aria-hidden="true" />
                 Check for updates
               </button>
             </div>
             <div class="ext-grid">
-              <div v-for="e in extensions" :key="e.id" class="ext-card">
+              <div v-for="e in extensions" :key="e.id" class="ext-card" :class="{ 'ext-card--busy': extensionRowBusy(e.id) }">
                 <span class="ext-card__avatar" :style="{ background: `hsl(${provHue(e.id)} 55% 30%)` }" />
                 <div class="ext-card__body">
                   <div class="ext-card__titleline">
@@ -769,8 +831,14 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
                   </div>
                   <div class="ext-card__version">v{{ e.version }}</div>
                 </div>
-                <button v-if="e.hasUpdate" type="button" class="solid-btn" @click="emit('update-extension', e.id)">Update</button>
-                <button type="button" class="ghost-btn ghost-btn--danger" @click="emit('uninstall-extension', e.id)">Uninstall</button>
+                <button v-if="e.hasUpdate" type="button" class="solid-btn" :disabled="extensionRowBusy(e.id)" @click="emit('update-extension', e.id)">
+                  <span v-if="extensionRowBusy(e.id)" class="spinner" aria-hidden="true" />
+                  Update
+                </button>
+                <button type="button" class="ghost-btn ghost-btn--danger" :disabled="extensionRowBusy(e.id)" @click="startUninstall(e)">
+                  <span v-if="extensionRowBusy(e.id)" class="spinner spinner--dark" aria-hidden="true" />
+                  Uninstall
+                </button>
               </div>
             </div>
           </template>
@@ -778,7 +846,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           <!-- Available -->
           <template v-else-if="extTab === 'available'">
             <div class="ext-grid">
-              <div v-for="e in availableExtensions" :key="e.id" class="ext-card">
+              <div v-for="e in availableExtensions" :key="e.id" class="ext-card" :class="{ 'ext-card--busy': extensionRowBusy(e.id) }">
                 <span class="ext-card__avatar" :style="{ background: `hsl(${provHue(e.id)} 55% 30%)` }" />
                 <div class="ext-card__body">
                   <div class="ext-card__titleline">
@@ -787,8 +855,9 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
                   </div>
                   <div class="ext-card__version">v{{ e.version }}</div>
                 </div>
-                <button type="button" class="mini-btn" @click="emit('install-extension', e.id)">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                <button type="button" class="mini-btn" :disabled="extensionRowBusy(e.id)" @click="emit('install-extension', e.id)">
+                  <span v-if="extensionRowBusy(e.id)" class="spinner spinner--dark" aria-hidden="true" />
+                  <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                   Install
                 </button>
               </div>
@@ -797,26 +866,30 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
           <!-- Repositories -->
           <template v-else>
-            <div v-for="r in repoRows" :key="r.id" class="repo-row">
+            <div v-for="r in repoRows" :key="r.id" class="repo-row" :class="{ 'repo-row--busy': repoRowBusy(r.id) }">
               <div class="reorder">
-                <button type="button" class="reorder__btn" :disabled="!r.canMoveUp" aria-label="Move up" @click="emit('reorder-repo', { id: r.id, direction: -1 })">
+                <button type="button" class="reorder__btn" :disabled="!r.canMoveUp || repoRowBusy(r.id)" aria-label="Move up" @click="emit('reorder-repo', { id: r.id, direction: -1 })">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 15l-6-6-6 6" /></svg>
                 </button>
-                <button type="button" class="reorder__btn" :disabled="!r.canMoveDown" aria-label="Move down" @click="emit('reorder-repo', { id: r.id, direction: 1 })">
+                <button type="button" class="reorder__btn" :disabled="!r.canMoveDown || repoRowBusy(r.id)" aria-label="Move down" @click="emit('reorder-repo', { id: r.id, direction: 1 })">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
                 </button>
               </div>
               <span class="repo-row__url">{{ r.url }}</span>
               <span v-if="r.isDefault" class="pill">DEFAULT</span>
-              <button type="button" class="icon-btn icon-btn--danger" aria-label="Remove" @click="emit('remove-repo', r.id)">
+              <span v-if="repoRowBusy(r.id)" class="spinner spinner--dark" aria-hidden="true" />
+              <button type="button" class="icon-btn icon-btn--danger" aria-label="Remove" :disabled="repoRowBusy(r.id)" @click="emit('remove-repo', r.id)">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>
               </button>
             </div>
 
-            <p v-if="repoError" class="form-error">{{ repoError }}</p>
+            <p v-if="repoErrorMsg" class="form-error">{{ repoErrorMsg }}</p>
             <div class="add-row">
-              <input v-model="newRepo" class="input add-row__input add-row__input--mono" placeholder="https://…/index.min.json" @keydown.enter="addRepo">
-              <button type="button" class="primary-btn" @click="addRepo">Add repo</button>
+              <input v-model="newRepo" class="input add-row__input add-row__input--mono" placeholder="https://…/index.min.json" :disabled="repoAddBusy" @keydown.enter="addRepo">
+              <button type="button" class="primary-btn" :disabled="repoAddBusy" @click="addRepo">
+                <span v-if="repoAddBusy" class="spinner" aria-hidden="true" />
+                Add repo
+              </button>
             </div>
 
             <div class="srow srow--bordered">
@@ -836,7 +909,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
       </div>
     </div>
 
-    <!-- Category move confirm modal -->
+    <!-- Confirm modal: category rename/delete (folder move) or extension uninstall. -->
     <div v-if="confirmModal" class="modal">
       <div class="modal__card">
         <div class="modal__title">{{ confirmTitle }}</div>
@@ -848,10 +921,10 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           </select>
         </div>
         <div class="modal__actions">
-          <button type="button" class="ghost-btn" @click="cancelConfirm">Cancel</button>
-          <button type="button" class="primary-btn" @click="confirmMove">
-            <span v-if="categoryBusy" class="spinner" aria-hidden="true" />
-            Confirm &amp; move
+          <button type="button" class="ghost-btn" :disabled="confirmBusy" @click="cancelConfirm">Cancel</button>
+          <button type="button" class="primary-btn" :class="{ 'primary-btn--danger': confirmIsDestructive }" :disabled="confirmBusy" @click="confirmMove">
+            <span v-if="confirmBusy" class="spinner" aria-hidden="true" />
+            {{ confirmIsDestructive ? 'Uninstall' : 'Confirm & move' }}
           </button>
         </div>
       </div>
@@ -1151,6 +1224,35 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   cursor: default;
 }
 
+/* Destructive confirm (extension uninstall) — red primary. */
+.primary-btn--danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.primary-btn--danger:disabled {
+  background: var(--surface3);
+  color: var(--faint);
+}
+
+/* Any in-flight row dims + blocks pointer input while its mutation runs (§16). */
+.cat-row--busy,
+.ext-card--busy,
+.repo-row--busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* The small "Working…" marker shown beside a busy category row. */
+.row-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: var(--muted);
+}
+
 /* ---- Categories ----------------------------------------------------------- */
 .cat-row {
   display: flex;
@@ -1381,6 +1483,15 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   color: var(--danger-text);
+}
+
+/* Pane-level error banner (extension actions) — sits above the tab content. */
+.form-error--pane {
+  margin: 0 0 12px;
+  padding: 9px 13px;
+  border-radius: var(--radius-md);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
 }
 
 /* ---- Engine --------------------------------------------------------------- */

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { ref } from 'vue'
 import Downloads from './Downloads.vue'
-import { downloadItems } from '../../fixtures/downloads'
+import { downloadItems, failedItems } from '../../fixtures/downloads'
 import type { DownloadTab } from './downloads.types'
 // Load this screen's state-badge tokens directly: index.css does not @import them
 // yet (a coordinator wires that line to avoid parallel-worker conflicts), so the
@@ -54,6 +54,20 @@ export const Failed: Story = {
 /** Queued tab — wanted + upgrade_available rows, with the upgrades-only toggle. */
 export const Scheduled: Story = {
   render: () => interactive('queued'),
+}
+
+/**
+ * Failed tab mid-retry: one row's retry is in flight (button shows "Retrying…")
+ * and a previous attempt surfaced an error banner — the §16 loading + error
+ * states made visible, never fired into the void.
+ */
+export const FailedRetrying: Story = {
+  args: {
+    items: failedItems,
+    activeTab: 'failed',
+    retryingIds: ['c-0010'],
+    retryError: 'Couldn\'t requeue chapter — Suwayomi returned 502. Try again in a moment.',
+  },
 }
 
 /** Empty library — no chapter activity at all; each tab shows its own empty state. */

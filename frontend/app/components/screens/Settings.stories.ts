@@ -91,3 +91,36 @@ export const SuwayomiConfig: Story = {
 export const Extensions: Story = {
   render: () => withPane('extensions'),
 }
+
+/**
+ * Extensions §16: one row mid-update (busy spinner + disabled) and a pane-level
+ * failure banner — the per-row mutation no longer fires into the void.
+ */
+export const ExtensionsBusy: Story = {
+  render: () => withPane('extensions', {
+    extensionAction: { busyId: 'asurascans', error: 'Update failed — 502 from the extension repository.' },
+  }),
+}
+
+/**
+ * Categories §16: one row mid-mutation (busy spinner + disabled controls) plus a
+ * failed-move error surfaced inline, not just a silent spinner.
+ */
+export const CategoriesBusy: Story = {
+  render: () => withPane('categories', {
+    categoryAction: { busyId: 'cat-manhwa', error: 'Folder move failed — the target name already exists on disk.' },
+  }),
+}
+
+/**
+ * Uninstall confirmation (brief §2e): the play fn clicks the first "Uninstall"
+ * to open the destructive (red) confirm modal — uninstall never fires directly.
+ */
+export const ExtensionsUninstallConfirm: Story = {
+  render: () => withPane('extensions'),
+  play: ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const btn = [...canvasElement.querySelectorAll('button')]
+      .find((b) => b.textContent?.trim() === 'Uninstall')
+    btn?.click()
+  },
+}

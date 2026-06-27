@@ -179,16 +179,24 @@ const onPickMeta = (id: string): void => {
 
 // ---- Delete dialog (required choice) ---------------------------------------
 const deleteOpen = ref(false)
-const deleteChoice = ref<DeleteChoice>('keep')
+// Starts null: the owner MUST explicitly pick keep-or-wipe — the confirm button
+// stays disabled until then (the brief forbids proceeding without a choice).
+const deleteChoice = ref<DeleteChoice | null>(null)
 const openDelete = (): void => {
-  deleteChoice.value = 'keep'
+  deleteChoice.value = null
   deleteOpen.value = true
 }
 const closeDelete = (): void => {
   if (!props.deleteBusy) deleteOpen.value = false
 }
-const confirmDelete = (): void => emit('deleteSeries', deleteChoice.value === 'wipe')
-const deleteBtnLabel = computed(() => (deleteChoice.value === 'wipe' ? 'Delete + files' : 'Un-manage'))
+const confirmDelete = (): void => {
+  if (deleteChoice.value) emit('deleteSeries', deleteChoice.value === 'wipe')
+}
+const deleteBtnLabel = computed(() => {
+  if (deleteChoice.value === 'wipe') return 'Delete + files'
+  if (deleteChoice.value === 'keep') return 'Un-manage'
+  return 'Delete'
+})
 
 // ---- Remove-source dialog --------------------------------------------------
 const removeOpen = ref(false)
@@ -494,7 +502,7 @@ const removeName = computed(
             type="button"
             class="btn-confirm"
             :class="{ 'btn-confirm--danger': deleteChoice === 'wipe' }"
-            :disabled="deleteBusy"
+            :disabled="deleteBusy || deleteChoice === null"
             @click="confirmDelete"
           >
             <span v-if="deleteBusy" class="spinner" />
@@ -575,8 +583,8 @@ const removeName = computed(
 }
 
 .chip--category {
-  background: var(--accentSoft);
-  color: var(--accentBright);
+  background: var(--surface3);
+  color: var(--muted);
 }
 
 .chip--planned {
@@ -796,7 +804,7 @@ const removeName = computed(
   width: 19px;
   height: 19px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--cover-text);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   transition: left 0.2s;
 }
@@ -1133,7 +1141,7 @@ const removeName = computed(
 
 .rank--top {
   background: var(--accent);
-  color: #fff;
+  color: var(--cover-text);
 }
 
 .source__main {
@@ -1397,7 +1405,7 @@ const removeName = computed(
   border-radius: var(--radius-md);
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--cover-text);
   font-size: var(--text-base);
   font-weight: var(--weight-bold);
   cursor: pointer;
@@ -1415,7 +1423,7 @@ const removeName = computed(
 .spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid #fff;
+  border: 2px solid var(--cover-text);
   border-right-color: transparent;
   border-radius: 50%;
   display: inline-block;

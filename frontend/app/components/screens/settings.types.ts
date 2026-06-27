@@ -35,6 +35,23 @@ export interface SaveState {
   message?: string
 }
 
+/**
+ * RowActionState — the §16 state of per-row mutations on a list pane (categories,
+ * extensions, repos). `busyId` is the id of the single row whose action is in
+ * flight (its control spins + disables); `error` is a human-readable failure
+ * surfaced inline. A create action (add category / add repo) reports its in-flight
+ * row as `ADD_ACTION_ID`, since the new row has no id yet.
+ */
+export interface RowActionState {
+  /** Id of the row currently mutating (or `ADD_ACTION_ID` for a create); null when idle. */
+  busyId?: string | null
+  /** A human-readable failure surfaced inline; empty/absent when none. */
+  error?: string
+}
+
+/** Sentinel `RowActionState.busyId` for an in-flight create (add) action. */
+export const ADD_ACTION_ID = '__add__'
+
 /* ---- 2a. Library / app settings ------------------------------------------- */
 
 /**
