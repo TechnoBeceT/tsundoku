@@ -10,6 +10,10 @@
 @import './tokens/elevation.css';
 @import './tokens/cover.css';
 @import './tokens/status.css';
+@import './tokens/auth.css';
+@import './tokens/seriesDetail.css';
+@import './tokens/discover.css';
+@import './tokens/downloads.css';
 
 /* Globals + utilities (reference tokens only). */
 @import './base.css';
