@@ -1,0 +1,18 @@
+/* discover.css — cover chrome specific to the Discover browse cards.
+ *
+ * The Discover card and its hover-preview popup show a big faint "initial letter"
+ * behind the cover (the prototype's signature placeholder identity) and a deeper
+ * scrim under the popup's larger cover. Like cover.css these tints sit ON dark,
+ * photographic cover content, so they are THEME-INDEPENDENT (held on :root, not
+ * re-declared per theme) — keeping every Discover card referencing one `var(--…)`
+ * and never an inline cover hex.
+ *
+ * Source of truth: the Claude Design prototype's `disc-card` / `disc-pop`. */
+:root {
+  /* Faint white initial letter behind a grid card's cover. */
+  --disc-initial: rgba(255, 255, 255, 0.13);
+  /* Slightly stronger initial letter behind the larger popup cover. */
+  --disc-initial-lg: rgba(255, 255, 255, 0.15);
+  /* Deeper bottom-up scrim under the popup's taller cover (vs --cover-scrim). */
+  --disc-pop-scrim: linear-gradient(to top, rgba(0, 0, 0, 0.88), transparent 62%);
+}

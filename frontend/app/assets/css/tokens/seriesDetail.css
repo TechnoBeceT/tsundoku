@@ -1,0 +1,68 @@
+/* seriesDetail.css — the chapter-state + provider-health badge palettes used by
+ * the Series Detail screen.
+ *
+ * Each badge is a (foreground text, soft background, solid dot) triple. Like
+ * status.css/cover.css these hues are THEME-INDEPENDENT (held on :root, not
+ * re-declared per theme) — a soft-tinted status chip reads correctly on both the
+ * dark and light surfaces, so factoring them here keeps every badge referencing
+ * one `var(--…)` and never an inline status hex. Source of truth: the Claude
+ * Design prototype's `STATES` + `HEALTH` maps. (status.css already covers the
+ * shared rose/amber chrome; these are the extra emerald/sky/violet badge hues
+ * the detail screen needs.) */
+:root {
+  /* ---- Chapter-state badges (7 states) ---------------------------------- */
+  /* wanted — neutral grey: identified but not yet downloaded. */
+  --sd-st-wanted-fg: #b3b1c4;
+  --sd-st-wanted-bg: rgba(150, 148, 176, 0.16);
+  --sd-st-wanted-dot: #9a98ae;
+
+  /* downloading — violet (live): download in progress. */
+  --sd-st-downloading-fg: #c4b5fd;
+  --sd-st-downloading-bg: rgba(139, 92, 246, 0.2);
+  --sd-st-downloading-dot: #a78bfa;
+
+  /* downloaded — emerald: CBZ on disk. */
+  --sd-st-downloaded-fg: #6ee7b7;
+  --sd-st-downloaded-bg: rgba(16, 185, 129, 0.16);
+  --sd-st-downloaded-dot: #34d399;
+
+  /* upgrade_available — amber: a better source is now available. */
+  --sd-st-upgrade-fg: #fcd34d;
+  --sd-st-upgrade-bg: rgba(245, 158, 11, 0.16);
+  --sd-st-upgrade-dot: #fbbf24;
+
+  /* upgrading — sky (live): re-downloading from the better source. */
+  --sd-st-upgrading-fg: #7dd3fc;
+  --sd-st-upgrading-bg: rgba(56, 189, 248, 0.16);
+  --sd-st-upgrading-dot: #38bdf8;
+
+  /* failed — rose: download failed, will retry. */
+  --sd-st-failed-fg: #fda4af;
+  --sd-st-failed-bg: rgba(244, 63, 94, 0.16);
+  --sd-st-failed-dot: #fb7185;
+
+  /* permanently_failed — deep red: terminal, no further attempts. */
+  --sd-st-permfailed-fg: #f87171;
+  --sd-st-permfailed-bg: rgba(239, 68, 68, 0.22);
+  --sd-st-permfailed-dot: #ef4444;
+
+  /* ---- Provider-health badges (3 states) -------------------------------- */
+  /* ok — emerald: source is current and healthy. */
+  --sd-hl-ok-fg: #6ee7b7;
+  --sd-hl-ok-bg: rgba(16, 185, 129, 0.14);
+  --sd-hl-ok-dot: #34d399;
+
+  /* stale — amber: not synced recently. */
+  --sd-hl-stale-fg: #fcd34d;
+  --sd-hl-stale-bg: rgba(245, 158, 11, 0.14);
+  --sd-hl-stale-dot: #fbbf24;
+
+  /* erroring — rose: last refresh resulted in an error. */
+  --sd-hl-erroring-fg: #fda4af;
+  --sd-hl-erroring-bg: rgba(244, 63, 94, 0.15);
+  --sd-hl-erroring-dot: #fb7185;
+
+  /* ---- Header stat accents ---------------------------------------------- */
+  /* "On disk" count — emerald (matches the downloaded state). */
+  --sd-stat-disk: #34d399;
+}

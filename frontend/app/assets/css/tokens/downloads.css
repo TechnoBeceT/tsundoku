@@ -1,0 +1,48 @@
+/* downloads.css — the download-state badge palette for the Downloads screen.
+ *
+ * One colour triple (text / soft background / status dot) per `Chapter.state`
+ * the Downloads screen surfaces, plus the failed-row error pill and the
+ * "no failures" success circle. THEME-INDEPENDENT (held on :root like
+ * status.css / cover.css): each badge sits on a card surface and reads
+ * correctly in BOTH dark and light, so the hues live here once and every badge
+ * references a `var(--…)` — never an inline state hex.
+ *
+ * Source of truth: the Claude Design prototype's `STATES` map. */
+:root {
+  /* wanted — neutral grey (queued, never downloaded). */
+  --dl-wanted-text: #b3b1c4;
+  --dl-wanted-bg: rgba(150, 148, 176, 0.16);
+  --dl-wanted-dot: #9a98ae;
+
+  /* downloading — accent violet (in flight). */
+  --dl-downloading-text: #c4b5fd;
+  --dl-downloading-bg: rgba(139, 92, 246, 0.2);
+  --dl-downloading-dot: #a78bfa;
+
+  /* upgrading — sky (in flight, replacing an existing file). */
+  --dl-upgrading-text: #7dd3fc;
+  --dl-upgrading-bg: rgba(56, 189, 248, 0.16);
+  --dl-upgrading-dot: #38bdf8;
+
+  /* upgrade-ready / queued amber — also reused by the UPGRADE tag + retry badge. */
+  --dl-queued-text: #fcd34d;
+  --dl-queued-bg: rgba(245, 158, 11, 0.16);
+  --dl-queued-dot: #fbbf24;
+
+  /* failed — rose (retryable). */
+  --dl-failed-text: #fda4af;
+  --dl-failed-bg: rgba(244, 63, 94, 0.16);
+  --dl-failed-dot: #fb7185;
+
+  /* permanently failed — red (terminal). */
+  --dl-terminal-text: #f87171;
+  --dl-terminal-bg: rgba(239, 68, 68, 0.22);
+  --dl-terminal-dot: #ef4444;
+
+  /* The error-category pill behind a failed row's last-error line. */
+  --dl-error-pill-bg: rgba(244, 63, 94, 0.12);
+
+  /* The "no failed downloads" success circle. */
+  --dl-ok-bg: rgba(16, 185, 129, 0.14);
+  --dl-ok-icon: #34d399;
+}

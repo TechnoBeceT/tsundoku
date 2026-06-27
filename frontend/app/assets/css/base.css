@@ -1,0 +1,119 @@
+/* base.css — global resets, the document defaults sourced from tokens, the
+ * custom scrollbar, and the animation keyframes — all mirroring the prototype's
+ * <head> globals (canonical source). No raw hex here: colours come from tokens/. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Form controls inherit the UI font (prototype reset). */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* The Nuxt SPA mounts into #__nuxt — let it fill the viewport so full-height
+ * layouts work. (#storybook-root lives in .storybook/preview-head.html, never
+ * here — it does not exist in the running app.) */
+#__nuxt {
+  min-height: 100vh;
+}
+
+/* ---- Custom scrollbar (accent-tinted, from the prototype) ----------------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--accentSoft);
+  border-radius: var(--radius-sm);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accentSoftHover);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- Keyframes (mirror the prototype's <head> animations) ----------------- */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulseO {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(360%);
+  }
+}
+
+/* shimmer — the skeleton-placeholder sweep: a soft highlight band swept across
+ * a masked surface. Paired with an `::after` overlay that starts at
+ * translateX(-100%); this drives it off the right edge. (Screens previously
+ * each declared a local copy — `categories-shimmer` / `dl-shimmer` / etc.;
+ * this is the canonical one the `Skeleton` atom uses.) */
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}

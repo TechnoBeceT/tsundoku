@@ -1,0 +1,31 @@
+/* cover.css — overlay primitives for series-cover cards.
+ *
+ * A series cover is dark, photographic content (a real image, or the brand
+ * placeholder behind an empty `coverUrl`). The card's title / progress / meta
+ * are overlaid in white on a bottom scrim, so they read correctly in BOTH
+ * themes — these values are therefore THEME-INDEPENDENT (held on :root, not
+ * re-declared per theme). Factoring them here keeps every card referencing one
+ * `var(--…)` and never an inline cover hex.
+ *
+ * Source of truth: the Claude Design prototype's library card. */
+:root {
+  /* Bottom-up scrim that darkens the lower cover so overlaid text stays legible
+   * over any image. Applied to real images AND the placeholder. */
+  --cover-scrim: linear-gradient(to top, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.05) 52%);
+
+  /* Fixed dark gradient behind the empty-cover placeholder. Theme-independent
+   * so the white BrandMark + overlaid text read in light mode too. */
+  --cover-placeholder: linear-gradient(150deg, #2a2342, #140f20);
+
+  /* Text + chrome that sit ON the cover. */
+  --cover-text: #ffffff;
+  --cover-text-soft: rgba(255, 255, 255, 0.85);
+  --cover-track: rgba(255, 255, 255, 0.2);
+  --cover-frost: rgba(0, 0, 0, 0.5);
+
+  /* On-cover status-badge tints (completed = green, failed-count = rose);
+   * brighter than page-level status text so they hold up over a cover. */
+  --cover-done: #6ee7b7;
+  --cover-done-bg: rgba(16, 185, 129, 0.28);
+  --cover-fail: #fda4af;
+}

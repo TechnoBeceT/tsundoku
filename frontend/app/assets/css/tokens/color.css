@@ -1,0 +1,70 @@
+/* color.css — the Tsundoku palette. Mirrors the Claude Design prototype's `PAL`
+ * (dark/light surfaces) + `ACCENTS` (accent triples); this file is the canonical
+ * source for those values.
+ *
+ * Theme is selected by `data-theme="dark|light"` on <html> (set by
+ * @nuxtjs/color-mode in the app, and by the Storybook decorator). DARK is the
+ * default. Every other file references these `var(--…)` tokens — NO raw hex
+ * lives outside this tokens/ directory.
+ *
+ * Accent = the future per-user brand colour. Violet is the active default; the
+ * four alternates are kept as a documented seam (a switcher would swap the
+ * `:root` accent block — do NOT build one in Phase 0). */
+
+/* ---- Accent (Violet — active default) -------------------------------------
+ * Held on :root so it is theme-independent; --accentSoft is overridden per
+ * theme below (the focus-ring tint reads differently on dark vs light). */
+:root {
+  --accent: #8b5cf6;
+  --accentBright: #a78bfa;
+  --accentDeep: #6d28d9;
+  --accentSoft: rgba(139, 92, 246, 0.16);
+  /* Hover state for the accent-tinted scrollbar thumb. */
+  --accentSoftHover: rgba(139, 92, 246, 0.5);
+
+  /* Brand gradient stops for the product mark (prototype lockup gradient). */
+  --brandGradFrom: #b89dff;
+  --brandGradTo: #6d28d9;
+}
+
+/* ---- Accent alternates (future user preference — NOT wired) ----------------
+ * Swap the :root block above to one of these triples to re-tint the whole app.
+ *   Blue    --accent:#3b82f6; --accentBright:#60a5fa; --accentDeep:#2563eb;
+ *   Rose    --accent:#f43f5e; --accentBright:#fb7185; --accentDeep:#be123c;
+ *   Amber   --accent:#f59e0b; --accentBright:#fbbf24; --accentDeep:#b45309;
+ *   Emerald --accent:#10b981; --accentBright:#34d399; --accentDeep:#047857;
+ * (matching --accentSoft = the same rgb at .16 dark / .12 light.) */
+
+/* ---- Dark theme (default) -------------------------------------------------- */
+[data-theme='dark'] {
+  --bg: #0b0910;
+  --bg2: #0e0b15;
+  --rail: #100d18;
+  --surface: #15121f;
+  --surface2: #1b1727;
+  --surface3: #241f33;
+  --border: rgba(255, 255, 255, 0.08);
+  --border2: rgba(255, 255, 255, 0.14);
+  --text: #ece9f3;
+  --muted: #9b97ac;
+  --faint: #706c84;
+  --shadow: 0 18px 44px -18px rgba(0, 0, 0, 0.75);
+  --accentSoft: rgba(139, 92, 246, 0.16);
+}
+
+/* ---- Light theme ----------------------------------------------------------- */
+[data-theme='light'] {
+  --bg: #f4f2f8;
+  --bg2: #ffffff;
+  --rail: #ffffff;
+  --surface: #ffffff;
+  --surface2: #f4f1fa;
+  --surface3: #eae5f4;
+  --border: rgba(24, 16, 46, 0.1);
+  --border2: rgba(24, 16, 46, 0.17);
+  --text: #1b1626;
+  --muted: #5d586d;
+  --faint: #8b8699;
+  --shadow: 0 18px 44px -20px rgba(70, 46, 120, 0.32);
+  --accentSoft: rgba(139, 92, 246, 0.12);
+}

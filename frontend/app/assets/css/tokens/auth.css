@@ -1,0 +1,22 @@
+/* auth.css — backdrop tokens for the pre-boot Auth screen (first-run Claim +
+ * Login). The auth card floats on a two-glow radial backdrop: a violet glow
+ * (derived from the brand accent so it re-tints with a future accent swap) and a
+ * subtle cyan counter-glow in the opposite corner.
+ *
+ * These are THEME-INDEPENDENT (held on :root, not re-declared per theme) — the
+ * pre-boot screen reads the same dramatic backdrop in dark and light, exactly
+ * like the prototype. Source: the Claude Design prototype's `notBooted` block.
+ *
+ * The cyan stop is the only colour here NOT already in the palette, which is why
+ * the auth backdrop earns its own token file. */
+:root {
+  /* Violet primary glow — the accent at low opacity (re-tints with the accent). */
+  --auth-glow-violet: color-mix(in srgb, var(--accent) 22%, transparent);
+  /* Cyan counter-glow — a faint sky tint in the opposite corner. */
+  --auth-glow-cyan: rgba(56, 189, 248, 0.1);
+
+  /* The composed full-screen backdrop behind the auth card. */
+  --auth-backdrop:
+    radial-gradient(1100px 620px at 80% -12%, var(--auth-glow-violet), transparent 60%),
+    radial-gradient(820px 520px at 8% 112%, var(--auth-glow-cyan), transparent 55%);
+}

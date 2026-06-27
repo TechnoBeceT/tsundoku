@@ -1,0 +1,69 @@
+/* status.css — semantic status palette (attention/danger = rose, warning =
+ * amber) used by the app shell chrome: the rail nav badges, the rail-bottom
+ * download-activity indicators, and the header "need attention" pill.
+ *
+ * These hues are THEME-INDEPENDENT (held on :root, not re-declared per theme),
+ * exactly like cover.css — a rose/amber status reads correctly on both the dark
+ * and light surfaces, so factoring them here keeps every status chip referencing
+ * one `var(--…)` and never an inline status hex. Source: the Claude Design
+ * prototype's rail badges + header attention pill. */
+:root {
+  /* Danger / attention (rose). */
+  --danger: #f43f5e;
+  --danger-bright: #fb7185;
+  --danger-text: #fda4af;
+  --danger-bg: rgba(244, 63, 94, 0.13);
+  --danger-bg-hover: rgba(244, 63, 94, 0.2);
+  --danger-border: rgba(244, 63, 94, 0.32);
+  --on-danger: #ffffff;
+
+  /* Warning (amber) — e.g. the failed-downloads count. */
+  --warn: #f59e0b;
+  --on-warn: #1b1300;
+
+  /* ---- Canonical chapter-state badge palette (7 states) ------------------
+   * The ONE source of truth for the chapter-state badge colours, consumed by
+   * the `StatusBadge` atom. Each state is a (foreground text, soft background,
+   * solid dot) triple named `--state-<state>-{fg,bg,dot}`, keyed by the exact
+   * `Chapter.state` enum value. THEME-INDEPENDENT (held on :root, not
+   * re-declared per theme) like the rose/amber chrome above — each soft-tinted
+   * chip reads correctly on both the dark and light surfaces. Source palette:
+   * the Claude Design prototype's `STATES` map (the seriesDetail/downloads
+   * token files carry the same hues under per-screen names; this is the
+   * unified set). */
+
+  /* wanted — neutral grey: identified but not yet downloaded. */
+  --state-wanted-fg: #b3b1c4;
+  --state-wanted-bg: rgba(150, 148, 176, 0.16);
+  --state-wanted-dot: #9a98ae;
+
+  /* downloading — violet (live): download in progress. */
+  --state-downloading-fg: #c4b5fd;
+  --state-downloading-bg: rgba(139, 92, 246, 0.2);
+  --state-downloading-dot: #a78bfa;
+
+  /* downloaded — emerald: CBZ on disk. */
+  --state-downloaded-fg: #6ee7b7;
+  --state-downloaded-bg: rgba(16, 185, 129, 0.16);
+  --state-downloaded-dot: #34d399;
+
+  /* upgrade_available — amber: a better source is now available. */
+  --state-upgrade_available-fg: #fcd34d;
+  --state-upgrade_available-bg: rgba(245, 158, 11, 0.16);
+  --state-upgrade_available-dot: #fbbf24;
+
+  /* upgrading — sky (live): re-downloading from the better source. */
+  --state-upgrading-fg: #7dd3fc;
+  --state-upgrading-bg: rgba(56, 189, 248, 0.16);
+  --state-upgrading-dot: #38bdf8;
+
+  /* failed — rose: download failed, will retry. */
+  --state-failed-fg: #fda4af;
+  --state-failed-bg: rgba(244, 63, 94, 0.16);
+  --state-failed-dot: #fb7185;
+
+  /* permanently_failed — deep red: terminal, no further automatic attempts. */
+  --state-permanently_failed-fg: #f87171;
+  --state-permanently_failed-bg: rgba(239, 68, 68, 0.22);
+  --state-permanently_failed-dot: #ef4444;
+}

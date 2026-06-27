@@ -14,6 +14,7 @@ frontend/.pnpm-store/
 # Superpowers scratch (agent working files — not for VCS)
 .superpowers/
 docs/superpowers/reports/
+Prototype/
 
 # Environment / secrets
 .env

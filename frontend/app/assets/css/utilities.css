@@ -1,0 +1,20 @@
+/* utilities.css — global utility classes.
+ *
+ * The prototype styles everything inline (no global utility-class system), so
+ * this stays intentionally minimal: a real component's styling belongs in its
+ * SFC <style scoped>, not here. The one class kept is a genuinely-shared a11y
+ * primitive. Add a utility here ONLY when it is used across many components and
+ * is truly global; otherwise it belongs in the component. */
+
+/* Visually-hidden but screen-reader-accessible (icon-only buttons etc.). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

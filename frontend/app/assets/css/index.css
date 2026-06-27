@@ -1,0 +1,21 @@
+/* index.css — the SINGLE design-system entry (wired in nuxt.config `css` and
+ * imported by Storybook's preview). Import order matters: tokens first (they
+ * define the `var(--…)` values), then base (consumes tokens for global
+ * resets/scrollbar/keyframes), then utilities. */
+
+/* Tokens — the only place raw colour/size/radius values live. */
+@import './tokens/color.css';
+@import './tokens/typography.css';
+@import './tokens/radius.css';
+@import './tokens/elevation.css';
+@import './tokens/cover.css';
+@import './tokens/status.css';
+@import './tokens/auth.css';
+@import './tokens/seriesDetail.css';
+@import './tokens/discover.css';
+@import './tokens/downloads.css';
+@import './tokens/settings.css';
+
+/* Globals + utilities (reference tokens only). */
+@import './base.css';
+@import './utilities.css';

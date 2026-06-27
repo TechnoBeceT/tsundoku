@@ -1,0 +1,11 @@
+<!-- Storybook-only globals. @nuxt/fonts is excluded under STORYBOOK, so the
+     three webfonts are loaded here directly (weights mirror the prototype). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link
+  href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+  rel="stylesheet"
+>
+<!-- Storybook full-height host. NEVER put #storybook-root in the app's base.css
+     (it does not exist in the running app) — it lives only here. -->
+<style>html, body, #storybook-root { height: 100% }</style>

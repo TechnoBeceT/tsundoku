@@ -1,0 +1,14 @@
+/* radius.css — corner-radius scale extracted from the prototype's recurring
+ * border-radius values (8/10/12/14/16/18px, plus the pill). Cards sit at
+ * --radius-lg/--radius-2xl; inputs and buttons at --radius-lg; chips/badges at
+ * --radius-pill. Reference these instead of hardcoding px radii. */
+:root {
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
+  --radius-pill: 999px;
+}
