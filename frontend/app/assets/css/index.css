@@ -8,6 +8,7 @@
 @import './tokens/typography.css';
 @import './tokens/radius.css';
 @import './tokens/elevation.css';
+@import './tokens/cover.css';
 
 /* Globals + utilities (reference tokens only). */
 @import './base.css';

@@ -1,6 +1,6 @@
 /* base.css — global resets, the document defaults sourced from tokens, the
- * custom scrollbar, and the animation keyframes — all ported from the
- * prototype's <head> globals. No raw hex here: colours come from tokens/. */
+ * custom scrollbar, and the animation keyframes — all mirroring the prototype's
+ * <head> globals (canonical source). No raw hex here: colours come from tokens/. */
 
 *,
 *::before,
@@ -59,7 +59,7 @@ textarea {
   background: transparent;
 }
 
-/* ---- Keyframes (ported verbatim from the prototype) ----------------------- */
+/* ---- Keyframes (mirror the prototype's <head> animations) ----------------- */
 @keyframes spin {
   to {
     transform: rotate(360deg);

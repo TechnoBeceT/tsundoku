@@ -1,5 +1,6 @@
-/* color.css — the Tsundoku palette, ported verbatim from the Claude Design
- * prototype (its `PAL` dark/light surfaces + `ACCENTS` accent triples).
+/* color.css — the Tsundoku palette. Mirrors the Claude Design prototype's `PAL`
+ * (dark/light surfaces) + `ACCENTS` (accent triples); this file is the canonical
+ * source for those values.
  *
  * Theme is selected by `data-theme="dark|light"` on <html> (set by
  * @nuxtjs/color-mode in the app, and by the Storybook decorator). DARK is the

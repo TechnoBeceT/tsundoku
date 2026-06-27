@@ -33,13 +33,9 @@ const preview: Preview = {
     },
   ],
   parameters: {
-    backgrounds: {
-      default: 'dark',
-      values: [
-        { name: 'dark', value: '#0b0910' },
-        { name: 'light', value: '#f4f2f8' },
-      ],
-    },
+    // No hardcoded `backgrounds` block: the decorator paints `var(--bg)` from the
+    // tokens, so the canvas follows the theme toolbar and can never drift from the
+    // `--bg` token the running app uses.
     controls: { matchers: { color: /(background|color)$/i, date: /Date$/i } },
   },
 }
