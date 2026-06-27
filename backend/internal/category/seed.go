@@ -120,6 +120,28 @@ func otherCategoryID(ctx context.Context, db *sql.DB) (string, error) {
 	return id, nil
 }
 
+// DropLegacyColumn drops the superseded `category` enum column from the series
+// table (the final CONSUME-THEN-DROP step of the category migration).
+//
+// It is safe and idempotent because:
+//   - it runs at startup AFTER BackfillSeries, which in the SAME startup has
+//     already copied every legacy row's category value into the new category_id
+//     FK — so the column carries no information that is not already migrated, and
+//     dropping it loses nothing;
+//   - `DROP COLUMN IF EXISTS` is a no-op when the column is already gone (a second
+//     startup, or a fresh DB that never had the column), so the whole
+//     EnsureDefaults → BackfillSeries → DropLegacyColumn sequence is order-robust
+//     and re-runnable across restarts.
+//
+// It takes the raw *sql.DB because the column no longer exists in the Ent schema
+// and so cannot be dropped through the typed client. It does ZERO disk I/O.
+func DropLegacyColumn(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `ALTER TABLE series DROP COLUMN IF EXISTS category`); err != nil {
+		return fmt.Errorf("category.DropLegacyColumn: drop legacy column: %w", err)
+	}
+	return nil
+}
+
 // legacyCategoryColumnExists reports whether the series table still carries the
 // pre-migration `category` enum column. Ent's auto-migration never drops it (it
 // only adds the new category_id), so on an upgraded DB it is present and the
