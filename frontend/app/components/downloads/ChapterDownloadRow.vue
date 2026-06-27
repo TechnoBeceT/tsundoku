@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import BrandMark from '../ui/BrandMark.vue'
 import Chip from '../ui/Chip.vue'
+import CoverImage from '../ui/CoverImage.vue'
 import StatusBadge from '../ui/StatusBadge.vue'
 import type { DownloadItem } from '../screens/downloads.types'
 
@@ -42,15 +42,16 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
 
 <template>
   <div class="dl-row" :class="{ 'dl-row--bare': bare }">
-    <button
-      type="button"
+    <CoverImage
       class="dl-row__cover"
-      :aria-label="`Open ${item.seriesTitle}`"
+      :src="item.coverUrl"
+      :alt="`${item.seriesTitle} cover`"
+      clickable
+      :mark-size="18"
+      radius="var(--radius-xs)"
+      aspect="40 / 54"
       @click="emit('open-series', item.seriesId)"
-    >
-      <img v-if="item.coverUrl" class="dl-row__img" :src="item.coverUrl" :alt="`${item.seriesTitle} cover`" loading="lazy">
-      <span v-else class="dl-row__ph"><BrandMark :size="18" tone="inverse" /></span>
-    </button>
+    />
 
     <button type="button" class="dl-row__info" @click="emit('open-series', item.seriesId)">
       <div class="dl-row__titleline">
@@ -85,31 +86,12 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
   padding: 0;
 }
 
+/* The 40×54 thumb is a <CoverImage clickable>; it owns the surface, radius,
+   placeholder, and lazy <img>. This wrapper only fixes the box width — the
+   atom derives the 54px height from `aspect="40 / 54"`. */
 .dl-row__cover {
   width: 40px;
-  height: 54px;
-  border-radius: var(--radius-xs);
-  overflow: hidden;
-  position: relative;
   flex: none;
-  padding: 0;
-  border: none;
-  cursor: pointer;
-  background: var(--cover-placeholder);
-}
-
-.dl-row__img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.dl-row__ph {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .dl-row__info {

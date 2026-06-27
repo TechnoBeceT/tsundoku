@@ -8,10 +8,11 @@ import type { SearchCandidate } from '../screens/import.types'
  * <CoverImage>) beside the source name + language code. Presentation-only — the
  * candidate arrives via the `candidate` prop and the pill emits nothing.
  *
- * The cover is a mini fixed-width box; <CoverImage>'s placeholder/lazy-image
- * logic is reused and tuned to the pill's small radius + initial size via the
- * scoped `:deep` overrides below (CoverImage is built for full grid covers).
- * Token-only colours → both themes work.
+ * The cover is a mini fixed-width box: <CoverImage>'s placeholder/lazy-image
+ * logic is reused, with the pill's small corner via the public `radius` prop.
+ * The only remaining tune is the smaller initial-glyph size — CoverImage exposes
+ * no prop for it (its `markSize` only sizes the brand placeholder), so that one
+ * stays a scoped `:deep` override below. Token-only colours → both themes work.
  */
 defineProps<{
   /** The per-source candidate this pill represents. */
@@ -28,6 +29,7 @@ defineProps<{
         placeholder="initial"
         :initial="candidate.title"
         aspect="26 / 34"
+        radius="5px"
       />
     </span>
     <span class="pill__meta">
@@ -53,11 +55,8 @@ defineProps<{
   flex: none;
 }
 
-/* Tune the shared CoverImage to the pill's mini cover (small radius + glyph). */
-.pill__cover :deep(.cover) {
-  border-radius: 5px;
-}
-
+/* The pill's small radius now rides CoverImage's `radius` prop; only the smaller
+   initial glyph still needs a tune (CoverImage has no prop for its size). */
 .pill__cover :deep(.cover__initial) {
   font-size: var(--text-lg);
 }

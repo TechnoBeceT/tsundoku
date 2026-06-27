@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import LockedRow from '../ui/LockedRow.vue'
 import Stepper from '../ui/Stepper.vue'
+import SurfaceCard from '../ui/SurfaceCard.vue'
+import SettingRow from './SettingRow.vue'
 import type { StepItem } from '../ui/nav.types'
 import type { EngineInfo, UpgradeStep } from '../screens/settings.types'
 
@@ -38,6 +40,12 @@ const emit = defineEmits<{
 
 const upgradeShown = computed(() => props.upgradeSteps.length > 0)
 
+// The header sub-line depends on the lifecycle mode (external = unmanaged).
+const headerSub = computed(() =>
+  props.engine.mode === 'external'
+    ? 'Pointing at an external instance — Tsundoku does not manage its lifecycle.'
+    : 'Tsundoku provisions and runs its own engine JAR.')
+
 // Adapt the per-step status array to the Stepper atom's {steps, current} shape:
 // the atom paints everything before `current` done, the match active, the rest
 // todo — which reproduces the monotonic Stop → Backup → … sequence. `current` is
@@ -57,30 +65,23 @@ function startUpgrade() {
 </script>
 
 <template>
-  <section class="card">
-    <div class="card__head-row">
-      <h2 class="card__title">Suwayomi engine</h2>
+  <SurfaceCard title="Suwayomi engine" :sub="headerSub">
+    <template #actions>
       <span class="mode-badge">{{ engine.mode === 'embedded' ? 'Embedded' : 'External' }}</span>
-    </div>
+    </template>
 
     <template v-if="engine.mode === 'external'">
-      <p class="card__sub">Pointing at an external instance — Tsundoku does not manage its lifecycle.</p>
       <LockedRow label="External URL" :value="engine.externalUrl" />
     </template>
 
     <template v-else>
-      <p class="card__sub">Tsundoku provisions and runs its own engine JAR.</p>
-      <div class="srow">
-        <div class="srow__label">
-          <div class="srow__name">Running version</div>
-          <div class="srow__hint">pinned target {{ engine.pinnedVersion }}</div>
-        </div>
+      <SettingRow name="Running version" :hint="`pinned target ${engine.pinnedVersion}`">
         <div class="status-line">
           <span class="status-dot" />
           <span class="status-text">{{ engine.status }}</span>
           <span class="mono">{{ engine.runningVersion }}</span>
         </div>
-      </div>
+      </SettingRow>
       <LockedRow label="Runtime dir" :value="engine.runtimeDir" />
       <LockedRow label="Java path" :value="engine.javaPath" />
 
@@ -99,58 +100,10 @@ function startUpgrade() {
         <Stepper v-if="upgradeShown" class="stepper-block" orientation="vertical" :steps="stepperSteps" :current="currentStep" />
       </div>
     </template>
-  </section>
+  </SurfaceCard>
 </template>
 
 <style scoped>
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2xl);
-  padding: 20px;
-}
-
-.card__title {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-lg);
-  color: var(--text);
-  margin: 0;
-}
-
-.card__head-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.card__sub {
-  font-size: 12.5px;
-  color: var(--faint);
-  margin: 2px 0 8px;
-}
-
-.srow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 13px 0;
-  border-top: 1px solid var(--border);
-}
-
-.srow__name {
-  font-size: 13.5px;
-  font-weight: var(--weight-bold);
-  color: var(--text);
-}
-
-.srow__hint {
-  font-size: 11.5px;
-  color: var(--faint);
-}
-
 .mode-badge {
   padding: 4px 11px;
   border-radius: var(--radius-pill);

@@ -2,7 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
+import FormError from '../ui/FormError.vue'
 import SelectField from '../ui/SelectField.vue'
+import SurfaceCard from '../ui/SurfaceCard.vue'
 import CategoryRow from './CategoryRow.vue'
 import type { MoveDirection } from '../ui/controls.types'
 import {
@@ -199,10 +201,10 @@ function onMove(id: string, direction: MoveDirection) {
 </script>
 
 <template>
-  <section class="card">
-    <h2 class="card__title">Categories</h2>
-    <p class="card__sub">User-defined. Renaming or deleting moves series folders on disk — CBZ files are never deleted.</p>
-
+  <SurfaceCard
+    title="Categories"
+    sub="User-defined. Renaming or deleting moves series folders on disk — CBZ files are never deleted."
+  >
     <CategoryRow
       v-for="c in rows"
       :key="c.id"
@@ -221,7 +223,9 @@ function onMove(id: string, direction: MoveDirection) {
       @start-delete="startDelete(c)"
     />
 
-    <p v-if="categoryErrorMsg" class="form-error">{{ categoryErrorMsg }}</p>
+    <div v-if="categoryErrorMsg" class="cat-error">
+      <FormError :message="categoryErrorMsg" />
+    </div>
     <div class="add-row">
       <input v-model="newCategory" class="add-row__input" placeholder="New category name…" :disabled="addBusy" @keydown.enter="addCategory">
       <AppButton variant="primary" size="md" :loading="addBusy" @click="addCategory">
@@ -231,7 +235,7 @@ function onMove(id: string, direction: MoveDirection) {
         Add
       </AppButton>
     </div>
-  </section>
+  </SurfaceCard>
 
   <!-- Folder-moving confirm: category rename or delete. -->
   <ConfirmModal
@@ -256,27 +260,6 @@ function onMove(id: string, direction: MoveDirection) {
 </template>
 
 <style scoped>
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2xl);
-  padding: 20px;
-}
-
-.card__title {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-lg);
-  color: var(--text);
-  margin: 0;
-}
-
-.card__sub {
-  font-size: 12.5px;
-  color: var(--faint);
-  margin: 2px 0 8px;
-}
-
 /* ---- Add row + inline form error ------------------------------------------ */
 .add-row {
   display: flex;
@@ -311,11 +294,10 @@ function onMove(id: string, direction: MoveDirection) {
   cursor: default;
 }
 
-.form-error {
-  margin: 6px 0 0;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  color: var(--danger-text);
+/* Inline validation/backend error — the shared FormError atom, nudged below the
+   category list (the old bespoke line carried this 6px top margin itself). */
+.cat-error {
+  margin-top: 6px;
 }
 
 /* ---- Confirm modal reassign-target field ---------------------------------- */

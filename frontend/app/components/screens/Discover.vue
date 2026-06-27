@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import SelectField from '../ui/SelectField.vue'
 import SegmentedToggle from '../ui/SegmentedToggle.vue'
+import AppButton from '../ui/AppButton.vue'
+import Spinner from '../ui/Spinner.vue'
 import DiscoverCard from '../discover/DiscoverCard.vue'
 import type { SegmentOption } from '../ui/controls.types'
 import type { SelectOption } from '../ui/forms.types'
@@ -144,13 +146,13 @@ const loadMore = (): void => emit('page', props.result.page + 1)
 
     <!-- Loading-more spinner row -->
     <div v-if="isLoadingMore" class="discover__more-loading">
-      <span class="spinner" aria-hidden="true" />
+      <Spinner :size="15" tone="accent" />
       Loading more…
     </div>
 
     <!-- Load more -->
     <div v-if="hasMore" class="discover__more">
-      <button type="button" class="more-btn" @click="loadMore">Load more</button>
+      <AppButton variant="mini" size="md" @click="loadMore">Load more</AppButton>
     </div>
 
     <!-- End of list -->
@@ -289,44 +291,10 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   font-size: var(--text-base);
 }
 
-.spinner {
-  width: 15px;
-  height: 15px;
-  border: 2px solid var(--accent);
-  border-right-color: transparent;
-  border-radius: 50%;
-  display: inline-block;
-  animation: disc-spin 0.8s linear infinite;
-}
-
-@keyframes disc-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .discover__more {
   display: flex;
   justify-content: center;
   margin-top: 26px;
-}
-
-.more-btn {
-  padding: 11px 22px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border2);
-  background: var(--surface);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.more-btn:hover {
-  border-color: var(--accent);
-  color: var(--accentBright);
 }
 
 .discover__end {

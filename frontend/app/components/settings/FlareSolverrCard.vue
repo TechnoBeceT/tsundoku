@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import DurationInput from '../ui/DurationInput.vue'
+import SurfaceCard from '../ui/SurfaceCard.vue'
 import TextField from '../ui/TextField.vue'
 import Toggle from '../ui/Toggle.vue'
 import type { FlareSolverrConfig } from '../screens/settings.types'
@@ -31,14 +32,10 @@ function patch(part: Partial<FlareSolverrConfig>) {
 </script>
 
 <template>
-  <section class="card">
-    <div class="card__head-row">
-      <div>
-        <h2 class="card__title">Cloudflare bypass (FlareSolverr)</h2>
-        <p class="card__sub card__sub--tight">Solve Cloudflare challenges for protected sources</p>
-      </div>
+  <SurfaceCard title="Cloudflare bypass (FlareSolverr)" sub="Solve Cloudflare challenges for protected sources">
+    <template #actions>
       <Toggle :model-value="modelValue.enabled" aria-label="Enable FlareSolverr" @update:model-value="patch({ enabled: $event })" />
-    </div>
+    </template>
     <div v-if="modelValue.enabled" class="flare-body">
       <TextField class="field--block" label="Server URL" :model-value="modelValue.url" @update:model-value="patch({ url: $event })" />
       <div class="field-grid">
@@ -57,43 +54,10 @@ function patch(part: Partial<FlareSolverrConfig>) {
         </div>
       </div>
     </div>
-  </section>
+  </SurfaceCard>
 </template>
 
 <style scoped>
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2xl);
-  padding: 20px;
-  margin-bottom: 16px;
-}
-
-.card__title {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-lg);
-  color: var(--text);
-  margin: 0;
-}
-
-.card__head-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.card__sub {
-  font-size: 12.5px;
-  color: var(--faint);
-  margin: 2px 0 8px;
-}
-
-.card__sub--tight {
-  margin-bottom: 0;
-}
-
 .flare-body {
   margin-top: 16px;
 }

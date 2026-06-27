@@ -67,6 +67,9 @@ const cta = computed(() => (isClaim.value ? 'Create owner account' : 'Sign in'))
 const switchText = computed(() =>
   isClaim.value ? 'Already set up? Sign in instead' : 'First run? Claim this install',
 )
+// Claim mints a brand-new credential (`new-password` keeps managers from
+// offering the old one); login recalls the stored one (`current-password`).
+const passwordAutocomplete = computed(() => (isClaim.value ? 'new-password' : 'current-password'))
 
 // The server error takes precedence; otherwise show any client-side guard message.
 const displayedError = computed(() => props.error || localError.value)
@@ -119,6 +122,8 @@ const onSwitch = (): void => {
           class="auth__field"
           label="Username"
           placeholder="owner"
+          autocomplete="username"
+          name="username"
           :disabled="loading"
         />
 
@@ -128,6 +133,8 @@ const onSwitch = (): void => {
           label="Password"
           type="password"
           placeholder="••••••••"
+          :autocomplete="passwordAutocomplete"
+          name="password"
           :disabled="loading"
         />
 

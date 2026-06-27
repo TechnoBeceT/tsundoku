@@ -3,9 +3,11 @@ import { computed, ref, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
 import DurationInput from '../ui/DurationInput.vue'
+import FormError from '../ui/FormError.vue'
 import SegmentedTabs from '../ui/SegmentedTabs.vue'
 import ExtensionRow from './ExtensionRow.vue'
 import RepoRow from './RepoRow.vue'
+import SettingRow from './SettingRow.vue'
 import type { MoveDirection } from '../ui/controls.types'
 import {
   ADD_ACTION_ID,
@@ -138,7 +140,7 @@ function onRepoMove(id: string, direction: MoveDirection) {
   </div>
 
   <!-- A failed extension mutation is surfaced inline for the whole pane. -->
-  <p v-if="extensionAction.error" class="form-error form-error--pane">{{ extensionAction.error }}</p>
+  <p v-if="extensionAction.error" class="form-error--pane">{{ extensionAction.error }}</p>
 
   <!-- Installed -->
   <template v-if="extTab === 'installed'">
@@ -184,19 +186,17 @@ function onRepoMove(id: string, direction: MoveDirection) {
       @remove="emit('remove-repo', r.id)"
     />
 
-    <p v-if="repoErrorMsg" class="form-error">{{ repoErrorMsg }}</p>
+    <div v-if="repoErrorMsg" class="repo-error">
+      <FormError :message="repoErrorMsg" />
+    </div>
     <div class="add-row">
       <input v-model="newRepo" class="add-row__input add-row__input--mono" placeholder="https://…/index.min.json" :disabled="repoAddBusy" @keydown.enter="addRepo">
       <AppButton variant="primary" size="md" :loading="repoAddBusy" @click="addRepo">Add repo</AppButton>
     </div>
 
-    <div class="srow srow--bordered">
-      <div class="srow__label">
-        <div class="srow__name">Extension update check</div>
-        <div class="srow__hint">How often to auto-check for extension updates</div>
-      </div>
+    <SettingRow spaced name="Extension update check" hint="How often to auto-check for extension updates">
       <DurationInput :model-value="extCheckInterval" disabled />
-    </div>
+    </SettingRow>
   </template>
 
   <!-- Destructive uninstall confirm (brief §2e). -->
@@ -267,45 +267,23 @@ function onRepoMove(id: string, direction: MoveDirection) {
   cursor: default;
 }
 
-.form-error {
-  margin: 6px 0 0;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  color: var(--danger-text);
+/* Inline repo validation/backend error — the shared FormError atom, nudged below
+   the repo list (the old bespoke line carried this 6px top margin itself). */
+.repo-error {
+  margin-top: 6px;
 }
 
-/* Pane-level error banner (extension actions) — sits above the tab content. */
+/* Pane-level error banner (a failed extension mutation) — a boxed danger panel
+   above the tab content; distinct from the inline FormError line, so kept
+   bespoke here (a future ErrorBanner-style atom could absorb it). */
 .form-error--pane {
   margin: 0 0 12px;
   padding: 9px 13px;
   border-radius: var(--radius-md);
   background: var(--danger-bg);
   border: 1px solid var(--danger-border);
-}
-
-/* ---- Setting row (the read-only update-check cadence) --------------------- */
-.srow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 13px 0;
-  border-top: 1px solid var(--border);
-}
-
-.srow--bordered {
-  margin-top: 16px;
-  padding-top: 14px;
-}
-
-.srow__name {
-  font-size: 13.5px;
-  font-weight: var(--weight-bold);
-  color: var(--text);
-}
-
-.srow__hint {
-  font-size: 11.5px;
-  color: var(--faint);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--danger-text);
 }
 </style>

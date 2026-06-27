@@ -3,6 +3,9 @@ import { computed, reactive, ref, watch } from 'vue'
 import DurationInput from '../ui/DurationInput.vue'
 import LockedRow from '../ui/LockedRow.vue'
 import SaveFooter from '../ui/SaveFooter.vue'
+import SurfaceCard from '../ui/SurfaceCard.vue'
+import TextField from '../ui/TextField.vue'
+import SettingRow from './SettingRow.vue'
 import type { LibrarySettings, SaveState, SystemInfo } from '../screens/settings.types'
 
 /**
@@ -69,147 +72,61 @@ function onSave() {
 </script>
 
 <template>
-  <section class="card">
-    <h2 class="card__title">Schedules &amp; Behavior</h2>
-    <p class="card__sub">Runtime-editable timing. The job schedulers re-read these on the next tick.</p>
+  <div class="pane-stack">
+    <SurfaceCard
+      title="Schedules & Behavior"
+      sub="Runtime-editable timing. The job schedulers re-read these on the next tick."
+    >
+      <SettingRow name="Refresh interval" hint="How often to poll titles for new chapters">
+        <DurationInput v-model="lib.refreshInterval" />
+      </SettingRow>
 
-    <div class="srow">
-      <div class="srow__label">
-        <div class="srow__name">Refresh interval</div>
-        <div class="srow__hint">How often to poll titles for new chapters</div>
+      <SettingRow name="Download interval" hint="Queue-drain & upgrade-swap cadence">
+        <DurationInput v-model="lib.downloadInterval" />
+      </SettingRow>
+
+      <SettingRow name="Chapter retry backoff" hint="Wait before retrying a failed chapter">
+        <DurationInput v-model="lib.retryBackoff" />
+      </SettingRow>
+
+      <SettingRow name="Chapter max retries" hint="Attempts before a chapter is permanently failed">
+        <TextField compact type="number" :model-value="String(lib.maxRetries)" @update:model-value="lib.maxRetries = clampInt($event)" />
+      </SettingRow>
+
+      <SettingRow name="Stale-grace days" hint="Health threshold before a source counts as stale">
+        <TextField compact type="number" :model-value="String(lib.staleGraceDays)" @update:model-value="lib.staleGraceDays = clampInt($event)" />
+      </SettingRow>
+
+      <div class="advanced">
+        <button type="button" class="advanced__toggle" @click="advancedOpen = !advancedOpen">
+          <svg class="advanced__chev" :class="{ 'advanced__chev--open': advancedOpen }" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
+          Advanced
+        </button>
+        <SettingRow v-if="advancedOpen" flush name="Refresh concurrency" hint="Parallel source fetches — be gentle on sources">
+          <TextField compact type="number" :model-value="String(lib.refreshConcurrency)" @update:model-value="lib.refreshConcurrency = clampInt($event)" />
+        </SettingRow>
       </div>
-      <DurationInput v-model="lib.refreshInterval" />
-    </div>
 
-    <div class="srow">
-      <div class="srow__label">
-        <div class="srow__name">Download interval</div>
-        <div class="srow__hint">Queue-drain &amp; upgrade-swap cadence</div>
-      </div>
-      <DurationInput v-model="lib.downloadInterval" />
-    </div>
+      <SaveFooter :state="footerState" :dirty="dirty" label="Save changes" @save="onSave" />
+    </SurfaceCard>
 
-    <div class="srow">
-      <div class="srow__label">
-        <div class="srow__name">Chapter retry backoff</div>
-        <div class="srow__hint">Wait before retrying a failed chapter</div>
-      </div>
-      <DurationInput v-model="lib.retryBackoff" />
-    </div>
-
-    <div class="srow">
-      <div class="srow__label">
-        <div class="srow__name">Chapter max retries</div>
-        <div class="srow__hint">Attempts before a chapter is permanently failed</div>
-      </div>
-      <input class="num-input" type="number" min="0" :value="lib.maxRetries" @input="lib.maxRetries = clampInt(($event.target as HTMLInputElement).value)">
-    </div>
-
-    <div class="srow">
-      <div class="srow__label">
-        <div class="srow__name">Stale-grace days</div>
-        <div class="srow__hint">Health threshold before a source counts as stale</div>
-      </div>
-      <input class="num-input" type="number" min="0" :value="lib.staleGraceDays" @input="lib.staleGraceDays = clampInt(($event.target as HTMLInputElement).value)">
-    </div>
-
-    <div class="advanced">
-      <button type="button" class="advanced__toggle" @click="advancedOpen = !advancedOpen">
-        <svg class="advanced__chev" :class="{ 'advanced__chev--open': advancedOpen }" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
-        Advanced
-      </button>
-      <div v-if="advancedOpen" class="srow srow--advanced">
-        <div class="srow__label">
-          <div class="srow__name">Refresh concurrency</div>
-          <div class="srow__hint">Parallel source fetches — be gentle on sources</div>
-        </div>
-        <input class="num-input" type="number" min="0" :value="lib.refreshConcurrency" @input="lib.refreshConcurrency = clampInt(($event.target as HTMLInputElement).value)">
-      </div>
-    </div>
-
-    <SaveFooter :state="footerState" :dirty="dirty" label="Save changes" @save="onSave" />
-  </section>
-
-  <section class="card">
-    <h2 class="card__title">System</h2>
-    <p class="card__sub">Set at deploy time via environment variables — read-only here.</p>
-    <LockedRow label="Storage folder" :value="system.storageFolder" />
-    <LockedRow label="Server port" :value="system.serverPort" />
-    <LockedRow label="Database" :value="system.database" />
-  </section>
+    <SurfaceCard
+      title="System"
+      sub="Set at deploy time via environment variables — read-only here."
+    >
+      <LockedRow label="Storage folder" :value="system.storageFolder" />
+      <LockedRow label="Server port" :value="system.serverPort" />
+      <LockedRow label="Database" :value="system.database" />
+    </SurfaceCard>
+  </div>
 </template>
 
 <style scoped>
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2xl);
-  padding: 20px;
-  margin-bottom: 16px;
-}
-
-.card:last-child {
-  margin-bottom: 0;
-}
-
-.card__title {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-lg);
-  color: var(--text);
-  margin: 0;
-}
-
-.card__sub {
-  font-size: 12.5px;
-  color: var(--faint);
-  margin: 2px 0 8px;
-}
-
-/* ---- Setting row (label + control) ---------------------------------------- */
-.srow {
+/* The pane stacks two cards with the shared 16px inter-card rhythm. */
+.pane-stack {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 16px;
-  padding: 13px 0;
-  border-top: 1px solid var(--border);
-}
-
-.srow--advanced {
-  border-top: none;
-  padding: 13px 0 2px;
-}
-
-.srow__name {
-  font-size: 13.5px;
-  font-weight: var(--weight-bold);
-  color: var(--text);
-}
-
-.srow__hint {
-  font-size: 11.5px;
-  color: var(--faint);
-}
-
-/* ---- Bare integer input (inline, fixed-width) ----------------------------- */
-.num-input {
-  width: 80px;
-  flex: none;
-  padding: 9px 11px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border2);
-  background: var(--bg2);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.num-input:focus {
-  border-color: var(--accent);
-  box-shadow: var(--ring-focus);
 }
 
 /* ---- Advanced disclosure -------------------------------------------------- */

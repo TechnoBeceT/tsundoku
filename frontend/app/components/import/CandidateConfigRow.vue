@@ -16,6 +16,10 @@ import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
  *
  * Presentation-only — the candidate + its row state arrive via props; the row
  * emits `toggle` (select), `inspect` (load chapters), and `move` (re-rank).
+ *
+ * The tiny cover reuses <CoverImage> with the row's small corner via the public
+ * `radius` prop; only the smaller initial-glyph size still needs a scoped
+ * `:deep` override (CoverImage exposes no prop for the initial-letter size).
  */
 defineProps<{
   /** The candidate this row represents. */
@@ -69,6 +73,7 @@ const emit = defineEmits<{
           placeholder="initial"
           :initial="candidate.title"
           aspect="30 / 40"
+          radius="var(--radius-xs)"
         />
       </span>
 
@@ -150,11 +155,8 @@ const emit = defineEmits<{
   flex: none;
 }
 
-/* Tune the shared CoverImage to the row's mini cover (small radius + glyph). */
-.cand__cover :deep(.cover) {
-  border-radius: var(--radius-xs);
-}
-
+/* The row's small radius now rides CoverImage's `radius` prop; only the smaller
+   initial glyph still needs a tune (CoverImage has no prop for its size). */
 .cand__cover :deep(.cover__initial) {
   font-size: var(--text-xl);
 }

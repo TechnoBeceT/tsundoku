@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
+import LockedRow from '../ui/LockedRow.vue'
 import SaveFooter from '../ui/SaveFooter.vue'
+import SurfaceCard from '../ui/SurfaceCard.vue'
 import ProxyConfigCard from './ProxyConfigCard.vue'
 import FlareSolverrCard from './FlareSolverrCard.vue'
 import type { FlareSolverrConfig, SaveState, SocksProxyConfig, SuwayomiConfig } from '../screens/settings.types'
@@ -68,72 +70,28 @@ function onSave() {
 </script>
 
 <template>
-  <section class="card">
-    <h2 class="card__title">Database</h2>
-    <p class="card__sub">The engine's DB backend — a deploy concern, read-only here.</p>
-    <div class="lrow"><span class="lrow__label-plain">Type</span><span class="lrow__val">{{ config.database.type }}</span></div>
-    <div class="lrow"><span class="lrow__label-plain">URL</span><span class="lrow__val">{{ config.database.url }}</span></div>
-    <div class="lrow"><span class="lrow__label-plain">Username</span><span class="lrow__val">{{ config.database.username }}</span></div>
-    <div class="lrow"><span class="lrow__label-plain">Password</span><span class="lrow__val lrow__val--muted">••••••••</span></div>
-  </section>
+  <div class="pane-stack">
+    <SurfaceCard title="Database" sub="The engine's DB backend — a deploy concern, read-only here.">
+      <LockedRow plain label="Type" :value="config.database.type" />
+      <LockedRow plain label="URL" :value="config.database.url" />
+      <LockedRow plain label="Username" :value="config.database.username" />
+      <LockedRow plain muted label="Password" value="••••••••" />
+    </SurfaceCard>
 
-  <ProxyConfigCard v-model="socks" />
+    <ProxyConfigCard v-model="socks" />
 
-  <FlareSolverrCard v-model="flare" />
+    <FlareSolverrCard v-model="flare" />
 
-  <SaveFooter class="suwa-foot" :state="footerState" :dirty="dirty" label="Save engine settings" @save="onSave" />
+    <SaveFooter :state="footerState" :dirty="dirty" label="Save engine settings" @save="onSave" />
+  </div>
 </template>
 
 <style scoped>
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2xl);
-  padding: 20px;
-  margin-bottom: 16px;
-}
-
-.card__title {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-lg);
-  color: var(--text);
-  margin: 0;
-}
-
-.card__sub {
-  font-size: 12.5px;
-  color: var(--faint);
-  margin: 2px 0 8px;
-}
-
-/* ---- Read-only DB rows (plain label, no padlock) -------------------------- */
-.lrow {
+/* The pane stacks the DB card, the two gated cards, and the SaveFooter with the
+   shared 16px inter-card rhythm. */
+.pane-stack {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 16px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-}
-
-.lrow__label-plain {
-  font-size: var(--text-base);
-  color: var(--muted);
-}
-
-.lrow__val {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--text);
-}
-
-.lrow__val--muted {
-  color: var(--muted);
-}
-
-/* SaveFooter sits a touch lower under the cards (matches the original 16px gap). */
-.suwa-foot {
-  margin-top: 16px;
 }
 </style>

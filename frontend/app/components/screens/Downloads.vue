@@ -5,6 +5,7 @@ import EmptyState from '../ui/EmptyState.vue'
 import ErrorBanner from '../ui/ErrorBanner.vue'
 import SearchInput from '../ui/SearchInput.vue'
 import SegmentedTabs from '../ui/SegmentedTabs.vue'
+import ProgressBar from '../ui/ProgressBar.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import Toggle from '../ui/Toggle.vue'
 import ChapterDownloadRow from '../downloads/ChapterDownloadRow.vue'
@@ -188,7 +189,9 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @open-series="emit('open-series', $event)"
         >
           <template #before-badge>
-            <div class="progress" aria-hidden="true"><div class="progress__bar" /></div>
+            <div class="downloads__progress">
+              <ProgressBar tone="linear-gradient(90deg, var(--accent), var(--accentBright))" />
+            </div>
           </template>
         </ChapterDownloadRow>
       </div>
@@ -398,21 +401,12 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 }
 
 /* ---- Indeterminate progress (active rows) --------------------------------- */
-.progress {
+/* The bar itself is the shared <ProgressBar> atom (indeterminate, gradient tone);
+   this wrapper just pins the prototype's 90px thumb width since the atom is
+   full-width by default. */
+.downloads__progress {
   width: 90px;
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--surface3);
-  overflow: hidden;
   flex: none;
-}
-
-.progress__bar {
-  height: 100%;
-  width: 42%;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, var(--accent), var(--accentBright));
-  animation: dl-slide 1.2s ease-in-out infinite;
 }
 
 /* ---- Upgrade tag (queued) ------------------------------------------------- */
@@ -427,11 +421,5 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   border-radius: var(--radius-pill);
   background: var(--dl-queued-bg);
   color: var(--dl-queued-text);
-}
-
-/* ---- Keyframes ------------------------------------------------------------ */
-@keyframes dl-slide {
-  0% { transform: translateX(-120%); }
-  100% { transform: translateX(320%); }
 }
 </style>
