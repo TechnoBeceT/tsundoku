@@ -81,9 +81,11 @@ export default defineNuxtConfig({
   // Component auto-import — every component registers by its bare PascalCase
   // name (`pathPrefix: false`) regardless of domain folder (`<BrandMark>`,
   // `<BrandLockup>`). Matches the house convention (one plain name per
-  // component) and how templates actually reference them.
+  // component) and how templates actually reference them. `types.ts` files are
+  // shared prop/data types, NOT components — ignore them so two domain folders'
+  // `types.ts` don't both register as a "Types" component (a name collision).
   components: [
-    { path: '~/components', pathPrefix: false },
+    { path: '~/components', pathPrefix: false, ignore: ['**/types.ts'] },
   ],
 
   app: {
