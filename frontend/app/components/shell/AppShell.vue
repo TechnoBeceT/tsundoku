@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import BrandMark from '../ui/BrandMark.vue'
+import AppButton from '../ui/AppButton.vue'
+import ProgressBar from '../ui/ProgressBar.vue'
+import Spinner from '../ui/Spinner.vue'
+import NavRailItem from './NavRailItem.vue'
+import RailActivityIndicator from './RailActivityIndicator.vue'
 import type { NavItem } from './types'
 
 /**
@@ -84,57 +89,32 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
 
       <!-- Primary nav -->
       <nav class="rail__nav" aria-label="Primary">
-        <button
+        <NavRailItem
           v-for="item in topItems"
           :key="item.key"
-          type="button"
-          class="rail__item"
-          :class="{ 'rail__item--active': item.key === activeRoute }"
-          :title="item.label"
-          :aria-label="item.label"
-          :aria-current="item.key === activeRoute ? 'page' : undefined"
-          @click="emit('navigate', item.key)"
-        >
-          <Icon :name="`lucide:${item.icon}`" class="rail__icon" />
-          <span
-            v-if="item.badge && item.badge.count > 0"
-            class="rail__badge"
-            :class="`rail__badge--${item.badge.tone ?? 'danger'}`"
-          >{{ item.badge.count }}</span>
-        </button>
+          :icon="item.icon"
+          :label="item.label"
+          :active="item.key === activeRoute"
+          :badge="item.badge"
+          @select="emit('navigate', item.key)"
+        />
       </nav>
 
       <!-- Bottom-pinned controls -->
       <div class="rail__foot">
         <!-- Live download-activity indicators -->
-        <div v-if="activeDownloads > 0" class="rail__activity rail__activity--active" :title="`${activeDownloads} active downloads`">
-          <Icon name="lucide:download" class="rail__activity-icon" />
-          <span class="rail__activity-count">{{ activeDownloads }}</span>
-        </div>
-        <div v-if="failedDownloads > 0" class="rail__activity rail__activity--failed" :title="`${failedDownloads} failed downloads`">
-          <Icon name="lucide:triangle-alert" class="rail__activity-icon" />
-          <span class="rail__activity-count">{{ failedDownloads }}</span>
-        </div>
+        <RailActivityIndicator :active="activeDownloads" :failed="failedDownloads" />
 
         <!-- Pinned nav (e.g. Settings) -->
-        <button
+        <NavRailItem
           v-for="item in pinnedItems"
           :key="item.key"
-          type="button"
-          class="rail__item"
-          :class="{ 'rail__item--active': item.key === activeRoute }"
-          :title="item.label"
-          :aria-label="item.label"
-          :aria-current="item.key === activeRoute ? 'page' : undefined"
-          @click="emit('navigate', item.key)"
-        >
-          <Icon :name="`lucide:${item.icon}`" class="rail__icon" />
-          <span
-            v-if="item.badge && item.badge.count > 0"
-            class="rail__badge"
-            :class="`rail__badge--${item.badge.tone ?? 'danger'}`"
-          >{{ item.badge.count }}</span>
-        </button>
+          :icon="item.icon"
+          :label="item.label"
+          :active="item.key === activeRoute"
+          :badge="item.badge"
+          @select="emit('navigate', item.key)"
+        />
 
         <!-- Theme toggle (glyph reflects the current theme) -->
         <button type="button" class="rail__ctl" :title="themeLabel" :aria-label="themeLabel" @click="emit('toggle-theme')">
@@ -162,7 +142,7 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
           <div class="head__actions">
             <!-- Sync indicator (announces politely while busy) -->
             <div v-if="syncing" class="head__sync" role="status" aria-live="polite" aria-busy="true">
-              <span class="head__spinner" aria-hidden="true" />
+              <Spinner :size="13" aria-hidden="true" />
               {{ syncLabel }}
             </div>
 
@@ -173,16 +153,16 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
             </button>
 
             <!-- Adopt a series -->
-            <button type="button" class="head__adopt" @click="emit('open-adopt')">
-              <Icon name="lucide:plus" class="head__adopt-icon" />
+            <AppButton variant="primary" @click="emit('open-adopt')">
+              <template #icon><Icon name="lucide:plus" class="head__adopt-icon" /></template>
               Adopt series
-            </button>
+            </AppButton>
           </div>
         </div>
 
         <!-- Indeterminate mutation bar pinned to the header's bottom edge -->
         <div v-if="mutating" class="head__progress" aria-hidden="true">
-          <div class="head__progress-bar" />
+          <ProgressBar track="transparent" tone="var(--accentBright)" />
         </div>
       </header>
 
@@ -239,68 +219,10 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
   gap: 9px;
 }
 
-.rail__item {
-  position: relative;
-  width: 46px;
-  height: 46px;
-  border-radius: var(--radius-xl);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.rail__item:hover {
-  color: var(--text);
-  background: var(--surface2);
-}
-
-.rail__item--active {
-  border-color: var(--border2);
-  background: var(--accentSoft);
-  color: var(--accentBright);
-}
-
-.rail__item:focus-visible,
 .rail__ctl:focus-visible,
 .rail__brand:focus-visible {
   outline: none;
   box-shadow: var(--ring-focus);
-}
-
-.rail__icon {
-  width: 22px;
-  height: 22px;
-}
-
-.rail__badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius-pill);
-  font-size: 10.5px;
-  font-weight: var(--weight-extrabold);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid var(--rail);
-}
-
-.rail__badge--danger {
-  background: var(--danger);
-  color: var(--on-danger);
-}
-
-.rail__badge--warn {
-  background: var(--warn);
-  color: var(--on-warn);
 }
 
 .rail__foot {
@@ -309,32 +231,6 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
   flex-direction: column;
   align-items: center;
   gap: 10px;
-}
-
-.rail__activity {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-}
-
-.rail__activity--active {
-  color: var(--accentBright);
-}
-
-.rail__activity--failed {
-  color: var(--warn);
-}
-
-.rail__activity-icon {
-  width: 20px;
-  height: 20px;
-  animation: pulseO 1.4s ease-in-out infinite;
-}
-
-.rail__activity-count {
-  font-size: var(--text-xs);
-  font-weight: var(--weight-extrabold);
 }
 
 .rail__ctl {
@@ -440,16 +336,6 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
   font-weight: var(--weight-semibold);
 }
 
-.head__spinner {
-  width: 13px;
-  height: 13px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: var(--radius-pill);
-  display: inline-block;
-  animation: spin 0.8s linear infinite;
-}
-
 .head__attention {
   display: flex;
   align-items: center;
@@ -477,37 +363,20 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
   animation: pulseO 1.6s ease-in-out infinite;
 }
 
-.head__adopt {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 17px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, var(--accent), var(--accentDeep));
-  border: none;
-  color: var(--cover-text);
-  font-size: var(--text-base);
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  box-shadow: var(--shadow-accent);
-  transition: filter 0.15s;
-}
-
-.head__adopt:hover {
-  filter: brightness(1.08);
-}
-
-.head__adopt:focus-visible,
 .head__attention:focus-visible {
   outline: none;
   box-shadow: var(--ring-focus);
 }
 
+/* The Adopt CTA is an AppButton; this only sizes the lucide glyph in its
+   #icon slot (slotted content compiles in this parent scope). */
 .head__adopt-icon {
   width: 16px;
   height: 16px;
 }
 
+/* Layout-only wrapper that pins the indeterminate mutation bar (a ProgressBar)
+   to the header's bottom edge and clips it to a 2px hairline. */
 .head__progress {
   position: absolute;
   left: 0;
@@ -515,13 +384,6 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
   height: 2px;
   width: 100%;
   overflow: hidden;
-}
-
-.head__progress-bar {
-  height: 100%;
-  width: 30%;
-  background: var(--accentBright);
-  animation: slide 1.1s ease-in-out infinite;
 }
 
 /* ── Screen content ────────────────────────────────────────────────────── */

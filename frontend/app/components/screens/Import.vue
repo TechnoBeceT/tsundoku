@@ -1,5 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import AppButton from '../ui/AppButton.vue'
+import Chip from '../ui/Chip.vue'
+import SearchInput from '../ui/SearchInput.vue'
+import Spinner from '../ui/Spinner.vue'
+import Stepper from '../ui/Stepper.vue'
+import CandidateConfigRow from '../import/CandidateConfigRow.vue'
+import ReviewSourceRow from '../import/ReviewSourceRow.vue'
+import SearchGroupCard from '../import/SearchGroupCard.vue'
+import type { StepItem } from '../ui/nav.types'
 import type {
   AdoptRequest,
   ChapterInspect,
@@ -10,8 +19,11 @@ import type {
 
 /**
  * Import — the three-stage Adopt flow (Search → Configure → Adopt) for adding a
- * new series to the library. The screen OWNS its step + selection state via refs;
- * data (sources, search results, inspect chapters) arrives by props and every
+ * new series to the library. This is a THIN container: it owns the flow's step +
+ * selection state via refs, composes the shared atoms (<Stepper>, <SearchInput>,
+ * <Chip>, <AppButton>, <Spinner>) + the import organisms (<SearchGroupCard>,
+ * <CandidateConfigRow>, <ReviewSourceRow>), and keeps only the flow/layout CSS.
+ * Data (sources, search results, inspect chapters) arrives by props and every
  * outward action (search, inspect, adopt, cancel) is emitted — no fetching,
  * routing, or stores. It references only design tokens, so it reads correctly in
  * both themes.
@@ -92,18 +104,13 @@ watch(() => props.inspectChapters, value => {
   if (value != null) inspecting.value = false
 })
 
-// ---- Stage indicator -------------------------------------------------------
-const steps = [
-  { n: 1, label: 'Search' },
-  { n: 2, label: 'Configure' },
-  { n: 3, label: 'Adopt' },
-] as const
-
-// A step's pill is "current" when active; its number is filled once reached.
-const stepState = (n: number): 'current' | 'done' | 'todo' => {
-  if (stage.value === n) return 'current'
-  return stage.value > n ? 'done' : 'todo'
-}
+// ---- Stage indicator (drives the shared <Stepper>) -------------------------
+const stepItems: StepItem[] = [
+  { key: '1', label: 'Search' },
+  { key: '2', label: 'Configure' },
+  { key: '3', label: 'Adopt' },
+]
+const currentStep = computed(() => String(stage.value))
 
 // ---- Stage 1: search -------------------------------------------------------
 const groups = computed(() => props.searchResults)
@@ -120,10 +127,6 @@ const toggleFilter = (id: string): void => {
 const runSearch = (): void => {
   hasSearched.value = true
   emit('search', { q: query.value.trim(), sources: [...srcFilter.value] })
-}
-
-const onQueryKey = (e: KeyboardEvent): void => {
-  if (e.key === 'Enter') runSearch()
 }
 
 // Picking a group seeds Stage 2: all candidates selected, in source order.
@@ -153,6 +156,7 @@ interface CandRow {
   canUp: boolean
   canDown: boolean
   inspected: boolean
+  loadingInspect: boolean
 }
 
 const candRows = computed<CandRow[]>(() => {
@@ -170,6 +174,7 @@ const candRows = computed<CandRow[]>(() => {
       canUp: idx > 0,
       canDown: idx >= 0 && idx < sel.length - 1,
       inspected: inspectKey.value === key && props.inspectChapters != null && !inspecting.value,
+      loadingInspect: inspectKey.value === key && inspecting.value,
     }
   })
 })
@@ -244,16 +249,6 @@ const submit = (): void => {
   }
   emit('adopt', request)
 }
-
-// ---- Presentation helpers --------------------------------------------------
-/** The big faint placeholder letter behind a candidate cover. */
-const initial = (text: string): string => (text.trim()[0] ?? '?').toUpperCase()
-
-/** Chapter-row label: "Ch. <number> · <name>" with graceful gaps. */
-const chapterLabel = (ch: ChapterInspect): string => {
-  const num = ch.number == null ? '—' : String(ch.number)
-  return ch.name ? `Ch. ${num} · ${ch.name}` : `Ch. ${num}`
-}
 </script>
 
 <template>
@@ -261,12 +256,7 @@ const chapterLabel = (ch: ChapterInspect): string => {
     <div class="import__shell">
       <!-- Stepper: Search → Configure → Adopt -->
       <div class="import__steps">
-        <template v-for="(s, i) in steps" :key="s.n">
-          <div class="imp-step" :class="`imp-step--${stepState(s.n)}`">
-            <span class="imp-step__num">{{ s.n }}</span>{{ s.label }}
-          </div>
-          <div v-if="i < steps.length - 1" class="import__steps-line" />
-        </template>
+        <Stepper :steps="stepItems" :current="currentStep" orientation="horizontal" />
       </div>
 
       <div class="import__panel">
@@ -276,20 +266,22 @@ const chapterLabel = (ch: ChapterInspect): string => {
         <!-- ================= Stage 1 — Search ================= -->
         <section v-if="stage === 1" class="imp-stage">
           <div class="imp-search">
-            <input
+            <SearchInput
               v-model="query"
-              class="imp-search__input"
-              type="text"
+              class="imp-search__field"
+              :clearable="false"
               placeholder="Search a title across sources…"
-              @keydown="onQueryKey"
-            >
-            <button type="button" class="imp-btn imp-btn--primary" @click="runSearch">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M21 21l-4.3-4.3" />
-              </svg>
+              @enter="runSearch"
+            />
+            <AppButton variant="primary" @click="runSearch">
+              <template #icon>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M21 21l-4.3-4.3" />
+                </svg>
+              </template>
               Search
-            </button>
+            </AppButton>
           </div>
 
           <!-- Source filter chips -->
@@ -309,7 +301,7 @@ const chapterLabel = (ch: ChapterInspect): string => {
 
           <!-- Searching / empty / prompt states (§16) -->
           <div v-if="searching" class="imp-loading">
-            <span class="imp-spinner" aria-hidden="true" />
+            <Spinner :size="16" tone="accent" />
             Searching sources…
           </div>
           <p v-else-if="noResults" class="imp-note imp-note--center">No matches found. Try another title.</p>
@@ -319,34 +311,16 @@ const chapterLabel = (ch: ChapterInspect): string => {
 
           <!-- Grouped results -->
           <div v-if="!searching && groups.length" class="imp-groups">
-            <button
+            <SearchGroupCard
               v-for="g in groups"
               :key="g.title"
-              type="button"
-              class="imp-group"
-              @click="pickGroup(g)"
-            >
-              <div class="imp-group__head">
-                <span class="imp-group__title">{{ g.title }}</span>
-                <span class="imp-group__count">{{ g.candidates.length }} sources · choose →</span>
-              </div>
-              <div class="imp-group__cands">
-                <div v-for="c in g.candidates" :key="candKey(c)" class="imp-pill">
-                  <span class="imp-pill__cover">
-                    <img v-if="c.thumbnailUrl" class="imp-pill__img" :src="c.thumbnailUrl" :alt="`${c.title} cover`" loading="lazy">
-                    <span v-else class="imp-pill__initial">{{ initial(c.title) }}</span>
-                  </span>
-                  <span class="imp-pill__meta">
-                    <span class="imp-pill__source">{{ c.sourceName }}</span>
-                    <span class="imp-pill__lang">{{ c.lang.toUpperCase() }}</span>
-                  </span>
-                </div>
-              </div>
-            </button>
+              :group="g"
+              @pick="pickGroup"
+            />
           </div>
 
           <div class="imp-actions imp-actions--start">
-            <button type="button" class="imp-btn imp-btn--ghost" @click="emit('cancel')">Cancel</button>
+            <AppButton variant="ghost" @click="emit('cancel')">Cancel</AppButton>
           </div>
         </section>
 
@@ -367,114 +341,57 @@ const chapterLabel = (ch: ChapterInspect): string => {
 
           <p class="imp-eyebrow">Sources to adopt · use arrows to rank priority</p>
 
-          <div
+          <CandidateConfigRow
             v-for="row in candRows"
             :key="row.key"
-            class="imp-cand"
-            :class="{ 'imp-cand--on': row.selected }"
-          >
-            <div class="imp-cand__row">
-              <button
-                type="button"
-                class="imp-check"
-                :class="{ 'imp-check--on': row.selected }"
-                :aria-pressed="row.selected"
-                :aria-label="`Toggle ${row.candidate.sourceName}`"
-                @click="toggleCand(row.key)"
-              >
-                <svg v-if="row.selected" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-              </button>
-
-              <span class="imp-cand__cover">
-                <img v-if="row.candidate.thumbnailUrl" class="imp-cand__img" :src="row.candidate.thumbnailUrl" :alt="`${row.candidate.title} cover`" loading="lazy">
-                <span v-else class="imp-cand__initial">{{ initial(row.candidate.title) }}</span>
-              </span>
-
-              <span class="imp-cand__meta">
-                <span class="imp-cand__source">{{ row.candidate.sourceName }}</span>
-                <span class="imp-cand__lang">{{ row.candidate.lang.toUpperCase() }}</span>
-              </span>
-
-              <button type="button" class="imp-inspect" @click="onInspect(row.candidate)">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-                Inspect
-              </button>
-
-              <div v-if="row.selected" class="imp-rank">
-                <button type="button" class="imp-rank__arrow" :disabled="!row.canUp" :aria-label="`Raise ${row.candidate.sourceName}`" @click="moveCand(row.key, -1)">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M18 15l-6-6-6 6" />
-                  </svg>
-                </button>
-                <span class="imp-rank__num" :class="{ 'imp-rank__num--top': row.rank === 1 }">{{ row.rank }}</span>
-                <button type="button" class="imp-rank__arrow" :disabled="!row.canDown" :aria-label="`Lower ${row.candidate.sourceName}`" @click="moveCand(row.key, 1)">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <!-- Inspect preview: loading spinner → chapter list (§16) -->
-            <div v-if="inspectKey === row.key && inspecting" class="imp-inspect-panel imp-inspect-panel--loading">
-              <span class="imp-spinner" aria-hidden="true" />
-              Loading chapters…
-            </div>
-            <div v-else-if="row.inspected" class="imp-inspect-panel">
-              <p class="imp-inspect-panel__count">{{ (inspectChapters ?? []).length }} chapters available</p>
-              <ul class="imp-inspect-panel__list">
-                <li v-for="(ch, ci) in inspectChapters ?? []" :key="ci" class="imp-inspect-panel__item">
-                  {{ chapterLabel(ch) }}
-                </li>
-              </ul>
-            </div>
-          </div>
+            :candidate="row.candidate"
+            :selected="row.selected"
+            :rank="row.rank"
+            :can-up="row.canUp"
+            :can-down="row.canDown"
+            :inspecting="row.loadingInspect"
+            :inspected="row.inspected"
+            :chapters="inspectChapters ?? []"
+            @toggle="toggleCand(row.key)"
+            @inspect="onInspect(row.candidate)"
+            @move="moveCand(row.key, $event)"
+          />
 
           <div class="imp-actions imp-actions--between">
-            <button type="button" class="imp-btn imp-btn--ghost" @click="back">Back</button>
-            <button
-              type="button"
-              class="imp-btn imp-btn--primary"
-              :disabled="selectedCount === 0"
-              @click="toStage3"
-            >
+            <AppButton variant="ghost" @click="back">Back</AppButton>
+            <AppButton variant="primary" :disabled="selectedCount === 0" @click="toStage3">
               Review →
-            </button>
+            </AppButton>
           </div>
         </section>
 
         <!-- ================= Stage 3 — Adopt ================= -->
         <section v-else class="imp-stage">
           <div class="imp-review-head">
-            <span class="imp-review-cat">{{ category }}</span>
+            <Chip variant="accent">{{ category }}</Chip>
             <span class="imp-review-title">{{ title || (group ? group.title : '') }}</span>
           </div>
 
           <p class="imp-eyebrow">Sources · higher importance is preferred</p>
 
-          <div v-for="s in reviewSources" :key="s.key" class="imp-review-row">
-            <span class="imp-rank__num" :class="{ 'imp-rank__num--top': s.preferred }">{{ s.rank }}</span>
-            <span class="imp-review-row__source">{{ s.candidate.sourceName }}</span>
-            <span class="imp-review-row__lang">{{ s.candidate.lang.toUpperCase() }}</span>
-            <span v-if="s.preferred" class="imp-review-row__preferred">PREFERRED</span>
-            <span class="imp-review-row__imp">importance {{ s.importance }}</span>
-          </div>
+          <ReviewSourceRow
+            v-for="s in reviewSources"
+            :key="s.key"
+            :candidate="s.candidate"
+            :rank="s.rank"
+            :importance="s.importance"
+            :preferred="s.preferred"
+          />
 
           <p class="imp-note imp-explainer">
             All chapters from the preferred source will be queued as <b>wanted</b> and downloaded automatically.
           </p>
 
           <div class="imp-actions imp-actions--between">
-            <button type="button" class="imp-btn imp-btn--ghost" @click="back">Back</button>
-            <button type="button" class="imp-btn imp-btn--primary imp-btn--lg" :disabled="adopting" @click="submit">
-              <span v-if="adopting" class="imp-spinner imp-spinner--on-accent" aria-hidden="true" />
+            <AppButton variant="ghost" @click="back">Back</AppButton>
+            <AppButton variant="primary" size="lg" :loading="adopting" @click="submit">
               Adopt series
-            </button>
+            </AppButton>
           </div>
         </section>
       </div>
@@ -496,53 +413,7 @@ const chapterLabel = (ch: ChapterInspect): string => {
 
 /* ---- Stepper -------------------------------------------------------------- */
 .import__steps {
-  display: flex;
-  align-items: center;
-  gap: 4px;
   margin-bottom: 24px;
-}
-
-.import__steps-line {
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
-.imp-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 13px;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--text-base);
-  font-weight: var(--weight-bold);
-  white-space: nowrap;
-}
-
-.imp-step--current {
-  background: var(--accentSoft);
-  color: var(--accentBright);
-}
-
-.imp-step__num {
-  width: 21px;
-  height: 21px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-extrabold);
-  background: var(--surface3);
-  color: var(--faint);
-}
-
-.imp-step--current .imp-step__num,
-.imp-step--done .imp-step__num {
-  background: var(--accent);
-  color: var(--cover-text);
 }
 
 /* ---- Panel --------------------------------------------------------------- */
@@ -568,57 +439,6 @@ const chapterLabel = (ch: ChapterInspect): string => {
   display: block;
 }
 
-/* ---- Buttons (shared) ----------------------------------------------------- */
-.imp-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--font-sans);
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  transition: filter 0.15s, border-color 0.15s, color 0.15s;
-}
-
-.imp-btn--primary {
-  padding: 12px 18px;
-  border-radius: var(--radius-lg);
-  border: none;
-  background: linear-gradient(135deg, var(--accent), var(--accentDeep));
-  color: var(--cover-text);
-  font-size: 13.5px;
-}
-
-.imp-btn--primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-.imp-btn--lg {
-  padding: 12px 24px;
-  font-size: var(--text-md);
-  box-shadow: var(--shadow-accent);
-}
-
-.imp-btn--primary:disabled {
-  background: var(--surface3);
-  color: var(--faint);
-  cursor: default;
-  box-shadow: none;
-}
-
-.imp-btn--ghost {
-  padding: 10px 18px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border2);
-  background: transparent;
-  color: var(--text);
-  font-size: var(--text-base);
-}
-
-.imp-btn--ghost:hover {
-  border-color: var(--accent);
-  color: var(--accentBright);
-}
-
 /* ---- Actions row ---------------------------------------------------------- */
 .imp-actions {
   display: flex;
@@ -640,21 +460,9 @@ const chapterLabel = (ch: ChapterInspect): string => {
   margin-bottom: 15px;
 }
 
-.imp-search__input {
+/* The shared <SearchInput> fills the row beside the Search button. */
+.imp-search__field {
   flex: 1;
-  padding: 12px 15px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border2);
-  background: var(--bg2);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: var(--text-md);
-  outline: none;
-}
-
-.imp-search__input:focus {
-  border-color: var(--accent);
-  box-shadow: var(--ring-focus);
 }
 
 .imp-filter {
@@ -696,104 +504,6 @@ const chapterLabel = (ch: ChapterInspect): string => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.imp-group {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  padding: 15px;
-  cursor: pointer;
-  background: var(--surface2);
-  transition: border-color 0.15s;
-}
-
-.imp-group:hover {
-  border-color: var(--accent);
-}
-
-.imp-group__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 11px;
-}
-
-.imp-group__title {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-lg);
-  color: var(--text);
-}
-
-.imp-group__count {
-  font-size: var(--text-xs);
-  color: var(--accentBright);
-  font-weight: var(--weight-bold);
-  white-space: nowrap;
-}
-
-.imp-group__cands {
-  display: flex;
-  gap: 9px;
-  flex-wrap: wrap;
-}
-
-.imp-pill {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 11px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-
-.imp-pill__cover {
-  width: 26px;
-  height: 34px;
-  border-radius: 5px;
-  overflow: hidden;
-  position: relative;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--cover-placeholder);
-}
-
-.imp-pill__img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.imp-pill__initial {
-  font-family: var(--font-display);
-  font-weight: var(--weight-black);
-  font-size: var(--text-lg);
-  color: var(--disc-initial);
-}
-
-.imp-pill__meta {
-  display: flex;
-  flex-direction: column;
-}
-
-.imp-pill__source {
-  font-size: 12.5px;
-  font-weight: var(--weight-semibold);
-  color: var(--text);
-}
-
-.imp-pill__lang {
-  font-size: 10.5px;
-  color: var(--faint);
 }
 
 /* ---- Stage 2: configure --------------------------------------------------- */
@@ -857,209 +567,6 @@ const chapterLabel = (ch: ChapterInspect): string => {
   color: var(--faint);
 }
 
-/* ---- Candidate rows ------------------------------------------------------- */
-.imp-cand {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 11px 13px;
-  margin-bottom: 10px;
-  background: var(--surface2);
-  transition: all 0.15s;
-}
-
-.imp-cand--on {
-  border-color: var(--accent);
-  background: var(--accentSoft);
-}
-
-.imp-cand__row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.imp-check {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-xs);
-  border: 1.5px solid var(--border2);
-  background: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex: none;
-  color: var(--cover-text);
-  padding: 0;
-}
-
-.imp-check--on {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.imp-cand__cover {
-  width: 30px;
-  height: 40px;
-  border-radius: var(--radius-xs);
-  overflow: hidden;
-  position: relative;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--cover-placeholder);
-}
-
-.imp-cand__img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.imp-cand__initial {
-  font-family: var(--font-display);
-  font-weight: var(--weight-black);
-  font-size: var(--text-xl);
-  color: var(--disc-initial);
-}
-
-.imp-cand__meta {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.imp-cand__source {
-  font-size: 13.5px;
-  font-weight: var(--weight-bold);
-  color: var(--text);
-}
-
-.imp-cand__lang {
-  font-size: var(--text-xs);
-  color: var(--faint);
-}
-
-.imp-inspect {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border2);
-  background: var(--surface);
-  color: var(--muted);
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  flex: none;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.imp-inspect:hover {
-  color: var(--accentBright);
-  border-color: var(--accent);
-}
-
-/* ---- Rank stepper --------------------------------------------------------- */
-.imp-rank {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  flex: none;
-}
-
-.imp-rank__arrow {
-  width: 24px;
-  height: 18px;
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
-}
-
-.imp-rank__arrow:disabled {
-  color: var(--faint);
-  opacity: 0.4;
-  cursor: default;
-}
-
-.imp-rank__num {
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-extrabold);
-  background: var(--surface3);
-  color: var(--muted);
-}
-
-.imp-rank__num--top {
-  background: var(--accent);
-  color: var(--cover-text);
-}
-
-/* ---- Inspect preview panel ------------------------------------------------ */
-.imp-inspect-panel {
-  margin-top: 11px;
-  padding: 11px 13px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.imp-inspect-panel--loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: var(--text-base);
-}
-
-.imp-inspect-panel__count {
-  margin: 0 0 8px;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-label);
-  color: var(--accentBright);
-}
-
-.imp-inspect-panel__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 4px 14px;
-  max-height: 168px;
-  overflow-y: auto;
-}
-
-.imp-inspect-panel__item {
-  font-size: var(--text-sm);
-  color: var(--muted);
-  line-height: 1.5;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* ---- Stage 3: review ------------------------------------------------------ */
 .imp-review-head {
   display: flex;
@@ -1069,63 +576,11 @@ const chapterLabel = (ch: ChapterInspect): string => {
   flex-wrap: wrap;
 }
 
-.imp-review-cat {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 11px;
-  border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  color: var(--accentBright);
-  background: var(--accentSoft);
-}
-
 .imp-review-title {
   font-family: var(--font-display);
   font-weight: var(--weight-black);
   font-size: var(--text-3xl);
   color: var(--text);
-}
-
-.imp-review-row {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 11px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  margin-bottom: 8px;
-  background: var(--surface2);
-}
-
-.imp-review-row__source {
-  font-weight: var(--weight-bold);
-  font-size: var(--text-md);
-  color: var(--text);
-}
-
-.imp-review-row__lang {
-  font-size: 10px;
-  font-weight: var(--weight-bold);
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: var(--surface3);
-  color: var(--muted);
-}
-
-.imp-review-row__preferred {
-  font-size: 9.5px;
-  font-weight: var(--weight-extrabold);
-  padding: 2px 7px;
-  border-radius: var(--radius-pill);
-  background: var(--accentSoft);
-  color: var(--accentBright);
-}
-
-.imp-review-row__imp {
-  margin-left: auto;
-  font-size: var(--text-xs);
-  color: var(--faint);
 }
 
 .imp-explainer {
@@ -1167,28 +622,5 @@ const chapterLabel = (ch: ChapterInspect): string => {
   padding: 40px 0;
   color: var(--muted);
   font-size: var(--text-base);
-}
-
-.imp-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--accent);
-  border-right-color: transparent;
-  border-radius: 50%;
-  display: inline-block;
-  animation: imp-spin 0.8s linear infinite;
-}
-
-.imp-spinner--on-accent {
-  width: 15px;
-  height: 15px;
-  border-color: var(--cover-text);
-  border-right-color: transparent;
-}
-
-@keyframes imp-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>
