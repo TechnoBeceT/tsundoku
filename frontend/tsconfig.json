@@ -1,0 +1,13 @@
+{
+  // https://nuxt.com/docs/guide/concepts/typescript
+  // Nuxt generates the real project configs under .nuxt/ (run `nuxi prepare`).
+  // This root config only wires the references so `vue-tsc -p tsconfig.json`
+  // and `nuxt typecheck` resolve the app, server, shared and node projects.
+  "files": [],
+  "references": [
+    { "path": "./.nuxt/tsconfig.app.json" },
+    { "path": "./.nuxt/tsconfig.server.json" },
+    { "path": "./.nuxt/tsconfig.shared.json" },
+    { "path": "./.nuxt/tsconfig.node.json" }
+  ]
+}

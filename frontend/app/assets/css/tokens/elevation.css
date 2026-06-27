@@ -1,0 +1,13 @@
+/* elevation.css — shadows + the accent glow/focus-ring extracted from the
+ * prototype. `--shadow` itself is theme-specific (defined in color.css, since
+ * its rgba differs dark vs light). The accent-tinted elevations below are the
+ * recurring button glow and the focus ring used on inputs. */
+:root {
+  /* Focus ring — wraps inputs/controls on :focus (prototype uses this exact
+   * 3px accent-soft halo). */
+  --ring-focus: 0 0 0 3px var(--accentSoft);
+
+  /* Accent glow under primary buttons / the brand tile. */
+  --shadow-accent: 0 8px 20px -8px var(--accent);
+  --shadow-accent-sm: 0 7px 16px -6px var(--accent);
+}
