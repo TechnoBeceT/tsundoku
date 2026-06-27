@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PanelCard from './PanelCard.vue'
 import AppButton from '../ui/AppButton.vue'
 import ProviderRow from './ProviderRow.vue'
 import type { MoveDirection } from '../ui/controls.types'
@@ -10,6 +11,9 @@ import type { Provider } from '../screens/seriesDetail.types'
  * list (preferred first) or an empty note when nothing is tracked.
  * Presentation-only — the (already-sorted) providers arrive via props; the panel
  * re-emits each row's `move`/`remove` (keyed by source id) plus `addSource`.
+ * Wraps the shared PanelCard shell: the count pill rides the header-left `lead`
+ * slot (grouped with the title), the Add button the header-right `actions` slot,
+ * and the provider list the full-bleed body.
  */
 defineProps<{
   /** The sources to list, importance-descending (preferred first). */
@@ -29,12 +33,11 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <section class="panel">
-    <div class="panel__head">
-      <div class="panel__headleft">
-        <span class="panel__title">Sources</span>
-        <span class="count-pill">{{ providers.length }}</span>
-      </div>
+  <PanelCard title="Sources">
+    <template #lead>
+      <span class="count-pill">{{ providers.length }}</span>
+    </template>
+    <template #actions>
       <AppButton variant="mini" size="sm" @click="emit('addSource')">
         <template #icon>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
@@ -43,7 +46,7 @@ const emit = defineEmits<{
         </template>
         Add
       </AppButton>
-    </div>
+    </template>
 
     <div class="panel__body">
       <div v-if="providers.length > 0" class="panel__eyebrow">Preferred first</div>
@@ -65,40 +68,10 @@ const emit = defineEmits<{
         No sources tracked. The series stays in your library.
       </div>
     </div>
-  </section>
+  </PanelCard>
 </template>
 
 <style scoped>
-.panel {
-  border-radius: var(--radius-2xl);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  overflow: hidden;
-  min-width: 0;
-}
-
-.panel__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 9px;
-  padding: 15px 18px;
-  border-bottom: 1px solid var(--border);
-}
-
-.panel__headleft {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.panel__title {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  font-size: 15px;
-  color: var(--text);
-}
-
 .count-pill {
   padding: 1px 8px;
   border-radius: var(--radius-pill);
