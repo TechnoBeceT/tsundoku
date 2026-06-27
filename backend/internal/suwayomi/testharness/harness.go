@@ -202,7 +202,7 @@ func launch(javaPath string) (*Instance, error) {
 	// via -Dsuwayomi.tachidesk.config.server.rootDir). Suwayomi reads its
 	// config from rootDir/server.conf, NOT from the rootDir/Suwayomi/ subdir
 	// (that subdir holds the JAR only).
-	if err := writeServerConf(runtimeDir, localSourcePath); err != nil {
+	if err := writeServerConf(runtimeDir, localSourcePath, "14567"); err != nil {
 		return nil, fmt.Errorf("write server.conf: %w", err)
 	}
 
@@ -224,9 +224,8 @@ func launch(javaPath string) (*Instance, error) {
 	// Pass context.Background() so the process lives until pm.Stop() is called
 	// explicitly by GlobalCleanup(). Do NOT use a timeout context here: when the
 	// context passed to exec.CommandContext is cancelled, Go sends SIGKILL to the
-	// child process. The cfg.StartTimeout is enforced internally by pm.Start via a
-	// time.After — the ctx.Done path in waitReady is a cancellation escape hatch,
-	// not the primary timeout mechanism.
+	// child process. cfg.StartTimeout is only a soft warn threshold inside
+	// pm.Start (it never kills); ctx cancellation is the sole stop trigger.
 	if err := pm.Start(context.Background()); err != nil {
 		return nil, fmt.Errorf("start Suwayomi: %w", err)
 	}
@@ -249,6 +248,72 @@ func launch(javaPath string) (*Instance, error) {
 	}
 
 	return &Instance{client: client, baseURL: baseURL, pm: pm}, nil
+}
+
+// LaunchOneOff provisions and starts a fresh, NON-shared Suwayomi process from
+// the given config and returns an Instance bound to it. Unlike Shared (one H2
+// instance per test binary), this is for tests that need a bespoke config — e.g.
+// the engine-hardening gate, which boots Suwayomi on Postgres to prove the
+// database -D system properties actually take effect.
+//
+// The caller owns cfg (host/port/RuntimeDir/DB fields). The Suwayomi JAR is
+// reused from the shared cache by symlink so no ~170 MB re-download happens; a
+// local-source fixture + a port-matched server.conf are seeded into
+// cfg.RuntimeDir. The process is stopped automatically via t.Cleanup.
+//
+// It fails the test (not skips) on any setup error — callers gate Docker/Java
+// availability BEFORE calling, so reaching here means launch is expected to work.
+func LaunchOneOff(t *testing.T, cfg config.SuwayomiConfig) *Instance {
+	t.Helper()
+
+	if err := linkCachedJAR(cfg.RuntimeDir, cfg.Version); err != nil {
+		t.Fatalf("LaunchOneOff: link cached JAR: %v", err)
+	}
+
+	localSourcePath := filepath.Join(cfg.RuntimeDir, "local_source")
+	if err := seedFixture(localSourcePath); err != nil {
+		t.Fatalf("LaunchOneOff: seed fixture: %v", err)
+	}
+	if err := writeServerConf(cfg.RuntimeDir, localSourcePath, cfg.Port); err != nil {
+		t.Fatalf("LaunchOneOff: write server.conf: %v", err)
+	}
+
+	pm := suwayomi.NewProcessManager(cfg)
+	if err := pm.Start(context.Background()); err != nil {
+		t.Fatalf("LaunchOneOff: start Suwayomi: %v", err)
+	}
+	t.Cleanup(pm.Stop)
+
+	baseURL := cfg.BaseURL()
+	client := suwayomi.NewClient(cfg, &http.Client{Timeout: 60 * time.Second})
+
+	httpReadyCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	if err := waitHTTPReady(httpReadyCtx, baseURL+"/api/graphql"); err != nil {
+		t.Fatalf("LaunchOneOff: Suwayomi HTTP not ready: %v", err)
+	}
+
+	return &Instance{client: client, baseURL: baseURL, pm: pm}
+}
+
+// linkCachedJAR symlinks the cached Suwayomi JAR from sharedRuntimeDir into
+// runtimeDir/Suwayomi so EnsureJAR's stat check finds it and skips the ~170 MB
+// download. If the cached JAR is absent (no prior shared run), it is a no-op and
+// EnsureJAR downloads into runtimeDir as usual.
+func linkCachedJAR(runtimeDir, version string) error {
+	cached := filepath.Join(sharedRuntimeDir, "Suwayomi", suwayomi.JARFileName(version))
+	if _, err := os.Stat(cached); err != nil {
+		return nil // no cache available — let EnsureJAR download.
+	}
+	dstDir := filepath.Join(runtimeDir, "Suwayomi")
+	if err := os.MkdirAll(dstDir, 0o750); err != nil {
+		return err
+	}
+	dst := filepath.Join(dstDir, suwayomi.JARFileName(version))
+	if _, err := os.Lstat(dst); err == nil {
+		return nil // already linked.
+	}
+	return os.Symlink(cached, dst)
 }
 
 // consecutiveSuccessesRequired is the number of consecutive successful HTTP
@@ -367,22 +432,26 @@ func writeTinyPNG(path string, index int) error {
 // directory passed to Suwayomi via -Dsuwayomi.tachidesk.config.server.rootDir).
 // Suwayomi reads server.conf from rootDir/server.conf (not from the
 // rootDir/Suwayomi/ subdirectory). It overrides the default conf to:
-//   - bind on 127.0.0.1:14567 (harness port)
+//   - bind on 127.0.0.1:<port> (caller-chosen harness port)
 //   - disable authentication and the system tray
 //   - disable the initial browser-open
 //   - disable CEF/WebView (kcefEnabled = false) — not available headlessly
 //   - point localSourcePath at the fixture tree
 //   - enable downloadAsCbz = true
 //
+// It does NOT set server.databaseType — the DB engine is selected at launch via
+// the JVM -D system properties (config.SuwayomiConfig.DatabaseType), which the
+// engine-hardening gate relies on to prove the -D keys actually take effect.
+//
 // Enum values (authMode, webUIFlavor, etc.) must be written without quotes —
 // Suwayomi's HOCON-like parser treats bare identifiers as enum constants.
 //
 // The config is written before the process starts so that Suwayomi picks it
 // up on first launch without creating its own default.
-func writeServerConf(rootDir, localSourcePath string) error {
+func writeServerConf(rootDir, localSourcePath, port string) error {
 	conf := fmt.Sprintf(`# Harness-generated server.conf for Tsundoku integration tests.
 server.ip = "127.0.0.1"
-server.port = 14567
+server.port = %s
 
 # downloader
 server.downloadAsCbz = true
@@ -418,7 +487,7 @@ server.kcefEnabled = false
 
 # local source — point at the fixture directory
 server.localSourcePath = %q
-`, localSourcePath)
+`, port, localSourcePath)
 
 	confPath := filepath.Join(rootDir, "server.conf")
 	return os.WriteFile(confPath, []byte(conf), 0o600) //nolint:gosec

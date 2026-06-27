@@ -29,6 +29,7 @@ package suwayomi_test
 import (
 	"archive/zip"
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -37,7 +38,11 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for the Postgres-boot verification query
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+
 	"github.com/technobecet/tsundoku/internal/chapter"
+	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/download"
@@ -730,4 +735,118 @@ func retryUntil(ctx context.Context, timeout time.Duration, fn func() error) err
 		}
 	}
 	return fmt.Errorf("timeout after %s: %w", timeout, lastErr)
+}
+
+// TestEngineHardening_PostgresBoot is the MERGE GATE for the embedded
+// Suwayomi→Postgres opt-in. It proves end-to-end — against a real embedded
+// Suwayomi JVM and an ephemeral testcontainer Postgres — that the database
+// -D system properties launch() passes are CORRECT: a wrong key would silently
+// fall back to H2 (leaving the Postgres DB empty) or fail to boot.
+//
+// The proof is two-pronged:
+//  1. The server reaches the ready signal and serves a trivial GraphQL read
+//     (ServerSettings) — it booted with the supplied DB config.
+//  2. The Postgres database actually contains Suwayomi's tables — proving
+//     Postgres, not H2, is the live backend (the -D keys took effect).
+//
+// Discovery note (verified against Suwayomi v2.2.2100 server-reference.conf +
+// DBManager.createHikariDataSource): the databaseUrl is the BARE postgresql://
+// form; Suwayomi prepends "jdbc:" itself. Keys: server.databaseType /
+// databaseUrl / databaseUsername / databasePassword under the
+// suwayomi.tachidesk.config. override prefix.
+//
+// Skips LOUDLY (never silently passes) when Docker is unavailable; Java
+// availability is already gated by TestMain (whole binary skips without Java 21+).
+func TestEngineHardening_PostgresBoot(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	const (
+		dbName = "suwayomi"
+		dbUser = "suwayomi"
+		dbPass = "suwayomi"
+	)
+
+	pg, err := postgres.Run(ctx, "postgres:17-alpine",
+		postgres.BasicWaitStrategies(),
+		postgres.WithDatabase(dbName),
+		postgres.WithUsername(dbUser),
+		postgres.WithPassword(dbPass),
+	)
+	if err != nil {
+		t.Skipf("engine-hardening gate: Docker/Postgres unavailable, SKIPPING (not a pass): %v", err)
+	}
+	t.Cleanup(func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer stopCancel()
+		if termErr := pg.Terminate(stopCtx); termErr != nil {
+			t.Logf("engine-hardening gate: terminate postgres container: %v", termErr)
+		}
+	})
+
+	host, err := pg.Host(ctx)
+	if err != nil {
+		t.Fatalf("postgres host: %v", err)
+	}
+	mappedPort, err := pg.MappedPort(ctx, "5432/tcp")
+	if err != nil {
+		t.Fatalf("postgres mapped port: %v", err)
+	}
+
+	// Bare postgresql:// form (no jdbc: prefix — Suwayomi adds it). Credentials
+	// are passed as separate fields, not embedded in the URL.
+	dbURL := fmt.Sprintf("postgresql://%s:%s/%s", host, mappedPort.Port(), dbName)
+
+	javaPath, err := testharness.FindJava21()
+	if err != nil {
+		t.Skipf("engine-hardening gate: %v", err)
+	}
+
+	cfg := config.SuwayomiConfig{
+		Host:                "127.0.0.1",
+		Port:                "24567", // distinct from the shared harness (14567)
+		RuntimeDir:          t.TempDir(),
+		Version:             "v2.2.2100",
+		DownloadURLTemplate: "https://github.com/Suwayomi/Suwayomi-Server/releases/download/%s/Suwayomi-Server-%s.jar",
+		StartTimeout:        5 * time.Minute,
+		DownloadTimeout:     15 * time.Minute,
+		JavaPath:            javaPath,
+		DatabaseType:        "POSTGRESQL",
+		DatabaseURL:         dbURL,
+		DatabaseUsername:    dbUser,
+		DatabasePassword:    dbPass,
+	}
+
+	inst := testharness.LaunchOneOff(t, cfg)
+
+	// Prong 1: the server booted and serves GraphQL.
+	if _, err := inst.Client().ServerSettings(ctx); err != nil {
+		t.Fatalf("ServerSettings after Postgres boot: %v", err)
+	}
+
+	// Prong 2: prove Postgres is the live backend (a wrong -D key ⇒ silent H2
+	// fallback ⇒ this DB would have zero Suwayomi tables).
+	verifyURL := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, host, mappedPort.Port(), dbName)
+	db, err := sql.Open("pgx", verifyURL)
+	if err != nil {
+		t.Fatalf("open postgres for verification: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Count tables across ALL user schemas, not just public: Suwayomi
+	// (Exposed + a username-named DB) creates its tables in the "$user"
+	// schema — here the schema named after dbUser — so restricting to public
+	// would spuriously report zero. Excluding only the two system schemas is
+	// robust to whichever schema Suwayomi lands in.
+	var tableCount int
+	const q = "SELECT count(*) FROM information_schema.tables " +
+		"WHERE table_schema NOT IN ('pg_catalog', 'information_schema')"
+	if err := db.QueryRowContext(ctx, q).Scan(&tableCount); err != nil {
+		t.Fatalf("count Suwayomi tables in Postgres: %v", err)
+	}
+	if tableCount == 0 {
+		t.Fatal("Postgres backend has 0 tables — embedded Suwayomi did NOT use Postgres " +
+			"(the -D databaseType/databaseUrl keys are wrong or ineffective)")
+	}
+	t.Logf("CONFIRMED: embedded Suwayomi booted on Postgres via -D props; %d Suwayomi tables in the Postgres DB", tableCount)
 }

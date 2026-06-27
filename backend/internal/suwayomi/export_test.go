@@ -9,6 +9,8 @@ import (
 	"context"
 	"os/exec"
 	"time"
+
+	"github.com/technobecet/tsundoku/internal/config"
 )
 
 // CommandContextFunc is the signature of the injectable command-construction
@@ -24,6 +26,12 @@ func SetCommandContext(pm *ProcessManager, fn CommandContextFunc) {
 // CleanTmpDir exposes the unexported cleanTmpDir helper for direct testing.
 func CleanTmpDir(dir string, maxAge time.Duration) {
 	cleanTmpDir(dir, maxAge)
+}
+
+// DatabaseArgs exposes the unexported databaseArgs helper so black-box tests can
+// assert the embedded-Suwayomi DB -D system properties without launching a JVM.
+func DatabaseArgs(cfg config.SuwayomiConfig) []string {
+	return databaseArgs(cfg)
 }
 
 // KillProcess sends SIGKILL to the process managed by pm without going through

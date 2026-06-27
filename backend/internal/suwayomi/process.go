@@ -66,11 +66,16 @@ func NewProcessManager(cfg config.SuwayomiConfig) *ProcessManager {
 }
 
 // Start provisions the Suwayomi JAR (via EnsureJAR), then launches it under a
-// Java process and blocks until one of three outcomes:
+// Java process and blocks until one of two outcomes:
 //   - the ready signal ("You are running Javalin") appears on stdout → returns nil,
 //     IsRunning() becomes true;
-//   - cfg.StartTimeout elapses → Stop is called, returns a timeout error;
 //   - ctx is cancelled → Stop is called, returns ctx.Err().
+//
+// cfg.StartTimeout is a SOFT WARN THRESHOLD, not a kill deadline: if it elapses
+// before the ready signal, Start logs one loud warning and keeps waiting (a long
+// startup is most likely a schema migration — killing it mid-migration is the
+// corruption this milestone avoids). Tickers therefore start when ready fires,
+// however late.
 //
 // Stdout and stderr are forwarded to the structured logger at debug level.
 // Start is not safe to call concurrently or while the process is already running.
@@ -109,8 +114,12 @@ func (pm *ProcessManager) launch(ctx context.Context, jarPath string) (<-chan st
 	args := []string{
 		fmt.Sprintf("-Dsuwayomi.tachidesk.config.server.rootDir=%s", pm.cfg.RuntimeDir),
 		fmt.Sprintf("-Djava.io.tmpdir=%s", tmpDir),
-		"-jar", jarPath,
 	}
+	// Optionally point the embedded JVM at an explicit DB engine (Postgres) —
+	// empty when DatabaseType is blank (Suwayomi's default H2). All -D props
+	// must precede -jar.
+	args = append(args, databaseArgs(pm.cfg)...)
+	args = append(args, "-jar", jarPath)
 
 	// Use the configured java executable (defaults to "java" on PATH).
 	// Override via cfg.JavaPath when the system default JVM is too old
@@ -186,33 +195,118 @@ func (pm *ProcessManager) launch(ctx context.Context, jarPath string) (<-chan st
 	return readyCh, nil
 }
 
-// waitReady blocks until readyCh is closed (ready), the start timeout elapses,
-// or ctx is cancelled. On timeout or cancellation, Stop is called before
-// returning the error. ctx must be the same context passed to Start.
+// databaseArgs returns the JVM -D system properties that point the embedded
+// Suwayomi JVM at an explicit DB engine, or nil when DatabaseType is blank
+// (Suwayomi's default H2 — unchanged behaviour). Keeping it a small pure helper
+// makes the DB-selection logic unit-testable without launching a JVM.
+//
+// Keys CONFIRMED against Suwayomi v2.2.2100 server-reference.conf
+// (server.databaseType / .databaseUrl / .databaseUsername / .databasePassword);
+// the JVM override prefix is "suwayomi.tachidesk.config." — the same prefix the
+// rootDir/tmpdir args already use. The DatabaseURL is the bare postgresql://
+// form: Suwayomi prepends "jdbc:" itself (DBManager.createHikariDataSource).
+//
+// The password is part of the returned args (the JVM needs it) and is never
+// logged — launch() logs only the jar path and java executable. NOTE the
+// residual: because it is passed as a JVM -D argument it is visible in the
+// process command line (ps / /proc/<pid>/cmdline) to local users. Acceptable
+// under the single-owner homelab threat model; writing it to server.conf
+// instead is a deferred hardening (see backend/CLAUDE.md deferred notes).
+func databaseArgs(cfg config.SuwayomiConfig) []string {
+	if cfg.DatabaseType == "" {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf("-Dsuwayomi.tachidesk.config.server.databaseType=%s", cfg.DatabaseType),
+		fmt.Sprintf("-Dsuwayomi.tachidesk.config.server.databaseUrl=%s", cfg.DatabaseURL),
+		fmt.Sprintf("-Dsuwayomi.tachidesk.config.server.databaseUsername=%s", cfg.DatabaseUsername),
+		fmt.Sprintf("-Dsuwayomi.tachidesk.config.server.databasePassword=%s", cfg.DatabasePassword),
+	}
+}
+
+// waitReady blocks until one of three outcomes:
+//   - readyCh is closed (the ready signal appeared) → returns nil;
+//   - the process exits before becoming ready (a boot crash, e.g. bad Postgres
+//     credentials/host) → returns an error (the process is already gone, so it is
+//     NOT killed); this surfaces the failure instead of blocking forever;
+//   - ctx is cancelled (a deliberate shutdown) → calls Stop and returns ctx.Err().
+//
+// StartTimeout is a SOFT WARN THRESHOLD, not a kill deadline: when it elapses the
+// process is NOT killed — waitReady logs one loud warning and keeps waiting for
+// the ready signal. A long startup is almost always an H2/Postgres schema
+// migration, and killing the JVM mid-migration is the exact DB-corruption mode
+// this milestone eliminates (H2 auto-commits DDL, so a SIGKILL leaves a
+// half-applied schema). ctx must be the same context passed to Start.
 func (pm *ProcessManager) waitReady(ctx context.Context, readyCh <-chan struct{}) error {
 	timeout := pm.cfg.StartTimeout
 	if timeout <= 0 {
 		// Defensive path: StartTimeout is validated by config.Load; this guard
-		// ensures the process never hangs indefinitely if a zero value slips through.
+		// keeps the warn threshold sane if a zero value ever slips through.
 		timeout = 2 * time.Minute
 	}
 
-	select {
-	case <-readyCh:
-		pm.mu.Lock()
-		pm.running = true
-		pm.mu.Unlock()
-		slog.Info("suwayomi: ready")
-		return nil
+	// Capture the waiter channel before the loop (mirrors Stop). It is closed by
+	// the background waiter goroutine in launch() when cmd.Wait() returns, so this
+	// arm observes a process that exits before signalling ready.
+	pm.mu.Lock()
+	waitDone := pm.waitDone
+	pm.mu.Unlock()
 
-	case <-time.After(timeout):
-		pm.Stop()
-		return fmt.Errorf("suwayomi.ProcessManager.Start: did not become ready within %s", timeout)
+	// Single-shot timer: fires once to emit the warn, then never again — the
+	// loop falls through to wait on the other arms without a deadline.
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
-	case <-ctx.Done():
-		pm.Stop()
-		return ctx.Err()
+	for {
+		select {
+		case <-readyCh:
+			pm.markReady()
+			return nil
+
+		case <-waitDone:
+			// Process exited before the ready signal — a boot crash (e.g. bad
+			// Postgres credentials/host/port). Do NOT kill (already gone); surface
+			// it so Start's caller logs the error and tickers never start silently.
+			return pm.exitBeforeReadyErr()
+
+		case <-timer.C:
+			slog.Warn("suwayomi: startup exceeding threshold — a long H2/Postgres "+
+				"schema migration is the likely cause; NOT killing the process, "+
+				"continuing to wait (downloads suspended until ready)",
+				"threshold", timeout)
+			// Keep waiting: re-enter the select on readyCh/waitDone/ctx only.
+
+		case <-ctx.Done():
+			pm.Stop()
+			return ctx.Err()
+		}
 	}
+}
+
+// markReady flips the manager into the running state and logs readiness. It is
+// extracted from waitReady so the ready path stays a single statement inside the
+// select loop.
+func (pm *ProcessManager) markReady() {
+	pm.mu.Lock()
+	pm.running = true
+	pm.mu.Unlock()
+	slog.Info("suwayomi: ready")
+}
+
+// exitBeforeReadyErr builds the error returned when the process exits before
+// signalling ready. It reads the recorded exit error under the mutex and wraps
+// it; a nil exit error (a clean exit-0 before the ready signal) is still a
+// startup failure, so it gets an explicit message rather than a wrapped nil.
+func (pm *ProcessManager) exitBeforeReadyErr() error {
+	pm.mu.Lock()
+	exitErr := pm.waitErr
+	pm.mu.Unlock()
+
+	const msg = "suwayomi.ProcessManager.Start: process exited before becoming ready"
+	if exitErr == nil {
+		return fmt.Errorf("%s (clean exit before ready signal)", msg)
+	}
+	return fmt.Errorf("%s: %w", msg, exitErr)
 }
 
 // Stop sends SIGTERM to the running process and waits up to stopGracePeriod for

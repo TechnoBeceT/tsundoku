@@ -20,6 +20,11 @@ import (
 // helperEnvKey is the env-var that selects which helper scenario to run.
 const helperEnvKey = "GO_SUWAYOMI_TEST_HELPER"
 
+// readyDelay is how long the "ready_delayed" scenario waits before emitting the
+// ready signal. It is deliberately longer than the short StartTimeout used by
+// the don't-kill-on-timeout test so the warn-then-keep-waiting path is exercised.
+const readyDelay = 400 * time.Millisecond
+
 // TestHelperProcess is not a real test — it is the subprocess that the injected
 // fake commands re-exec into. go test runs it when GO_SUWAYOMI_TEST_HELPER is
 // set; otherwise it exits immediately so it does not appear as a test failure.
@@ -36,6 +41,21 @@ func TestHelperProcess(t *testing.T) {
 		// Suwayomi that stays running).
 		fmt.Println("You are running Javalin")
 		time.Sleep(10 * time.Second)
+
+	case "ready_delayed":
+		// Sleep past a short StartTimeout, THEN emit the ready signal. Simulates
+		// a slow startup (e.g. a long schema migration): the warn threshold must
+		// elapse WITHOUT killing the process, then ready arrives and Start
+		// succeeds. Stay alive afterwards so IsRunning can be asserted.
+		time.Sleep(readyDelay)
+		fmt.Println("You are running Javalin")
+		time.Sleep(10 * time.Second)
+
+	case "exit_before_ready":
+		// Exit immediately WITHOUT emitting the ready signal — simulates a boot
+		// crash (e.g. bad Postgres credentials/host). Non-zero so cmd.Wait reports
+		// an exit error, exercising the wrapped-error path in waitReady.
+		os.Exit(3)
 
 	case "never_ready":
 		// Never emit the ready signal — simulates a stuck startup.
@@ -72,6 +92,18 @@ func fakeReady(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 // fakeNeverReady is a CommandContextFunc that never emits the ready signal.
 func fakeNeverReady(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 	return helperCmd(ctx, "never_ready", "")
+}
+
+// fakeReadyDelayed is a CommandContextFunc that emits the ready signal only
+// after readyDelay — used by the don't-kill-on-timeout test.
+func fakeReadyDelayed(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+	return helperCmd(ctx, "ready_delayed", "")
+}
+
+// fakeExitBeforeReady is a CommandContextFunc whose process exits immediately
+// without emitting the ready signal — used by the boot-crash test.
+func fakeExitBeforeReady(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+	return helperCmd(ctx, "exit_before_ready", "")
 }
 
 // ensure the CommandContextFunc type satisfies the seam expected by SetCommandContext.

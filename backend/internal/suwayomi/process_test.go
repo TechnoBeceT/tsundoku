@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -74,25 +75,142 @@ func TestProcessManager_StartReady(t *testing.T) {
 	pm.Stop()
 }
 
-// TestProcessManager_StartTimeout verifies that when the fake process never
-// emits the ready signal, Start returns an error after StartTimeout, the
-// process is stopped, and IsRunning is false.
-func TestProcessManager_StartTimeout(t *testing.T) {
+// TestProcessManager_DontKillOnTimeout verifies the milestone's core safety
+// property: when startup exceeds StartTimeout the process is NOT killed — Start
+// keeps waiting and still returns nil once the (late) ready signal arrives.
+//
+// The fake emits ready only after readyDelay (400ms), well past the 150ms
+// StartTimeout. Under the OLD kill-on-timeout behaviour Start would have called
+// Stop at 150ms and returned an error; under the new behaviour it warns once and
+// waits, so Start returns nil and IsRunning is true. That nil return — after an
+// elapsed time past the threshold — is the proof the timeout did not kill.
+func TestProcessManager_DontKillOnTimeout(t *testing.T) {
 	t.Parallel()
 
-	cfg, _ := shortCfg(t, 200*time.Millisecond)
+	cfg, _ := shortCfg(t, 150*time.Millisecond)
 	pm := suwayomi.NewProcessManager(cfg)
+	suwayomi.SetCommandContext(pm, fakeReadyDelayed)
 
-	// Inject a fake command that never prints the ready signal.
+	start := time.Now()
+	if err := pm.Start(context.Background()); err != nil {
+		t.Fatalf("Start: expected nil (timeout must not kill), got: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if !pm.IsRunning() {
+		t.Fatal("IsRunning should be true: the process survived the soft timeout and became ready")
+	}
+	if elapsed < 300*time.Millisecond {
+		t.Fatalf("Start returned in %v — expected it to wait past the soft timeout for the delayed ready signal", elapsed)
+	}
+
+	pm.Stop()
+}
+
+// TestProcessManager_CtxCancelledAfterWarn verifies that a ctx cancellation that
+// arrives AFTER the soft warn threshold has elapsed still stops the process and
+// returns ctx.Err(). This exercises the post-warn wait loop: the timer has
+// already fired (warn logged, not killed) and only ctx.Done can now end the wait.
+func TestProcessManager_CtxCancelledAfterWarn(t *testing.T) {
+	t.Parallel()
+
+	// 100ms soft timeout; cancel at ~300ms so the warn fires first.
+	cfg, _ := shortCfg(t, 100*time.Millisecond)
+	pm := suwayomi.NewProcessManager(cfg)
 	suwayomi.SetCommandContext(pm, fakeNeverReady)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+
 	err := pm.Start(ctx)
 	if err == nil {
-		t.Fatal("Start: expected error on timeout, got nil")
+		t.Fatal("Start: expected ctx error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start: expected context.Canceled in error chain, got: %v", err)
 	}
 	if pm.IsRunning() {
-		t.Fatal("IsRunning should be false after a timeout")
+		t.Fatal("IsRunning should be false: ctx cancel must stop the process")
+	}
+}
+
+// TestProcessManager_ExitBeforeReady verifies that when the process exits before
+// emitting the ready signal (a boot crash — the most likely Postgres-opt-in
+// failure mode), Start returns a non-nil error naming the cause instead of
+// blocking forever, and the manager is not running. Without the waitDone arm in
+// waitReady, Start would hang and downloads would be silently disabled — the 3s
+// guard below would then fire, so this test is non-vacuous.
+//
+// StartTimeout is deliberately generous (5s, longer than the 3s guard) so the
+// soft warn arm cannot be what ends the wait — only the process-exit arm can.
+func TestProcessManager_ExitBeforeReady(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := shortCfg(t, 5*time.Second)
+	pm := suwayomi.NewProcessManager(cfg)
+	suwayomi.SetCommandContext(pm, fakeExitBeforeReady)
+
+	done := make(chan error, 1)
+	go func() { done <- pm.Start(context.Background()) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Start: expected error when the process exits before ready, got nil")
+		}
+		if !strings.Contains(err.Error(), "exited before becoming ready") {
+			t.Fatalf("Start error = %v, want it to mention 'exited before becoming ready'", err)
+		}
+		if pm.IsRunning() {
+			t.Fatal("IsRunning should be false after a boot crash (tickers must not start)")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start hung after the process exited before ready — the waitDone arm is missing")
+	}
+}
+
+// TestDatabaseArgs_Blank verifies that a blank DatabaseType yields no -D DB
+// properties, so the embedded JVM keeps Suwayomi's default H2 (unchanged
+// behaviour for existing deploys).
+func TestDatabaseArgs_Blank(t *testing.T) {
+	t.Parallel()
+
+	if got := suwayomi.DatabaseArgs(config.SuwayomiConfig{}); len(got) != 0 {
+		t.Fatalf("DatabaseArgs(blank) = %v, want empty", got)
+	}
+}
+
+// TestDatabaseArgs_Postgres verifies that a POSTGRESQL DatabaseType yields the
+// four expected -D system properties with the configured values substituted.
+// The exact keys are the confirmed Suwayomi v2.2.2100 server.conf keys under the
+// suwayomi.tachidesk.config. override prefix.
+func TestDatabaseArgs_Postgres(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.SuwayomiConfig{
+		DatabaseType:     "POSTGRESQL",
+		DatabaseURL:      "postgresql://db:5432/suwayomi",
+		DatabaseUsername: "suwa",
+		DatabasePassword: "s3cr3t",
+	}
+	got := suwayomi.DatabaseArgs(cfg)
+
+	want := []string{
+		"-Dsuwayomi.tachidesk.config.server.databaseType=POSTGRESQL",
+		"-Dsuwayomi.tachidesk.config.server.databaseUrl=postgresql://db:5432/suwayomi",
+		"-Dsuwayomi.tachidesk.config.server.databaseUsername=suwa",
+		"-Dsuwayomi.tachidesk.config.server.databasePassword=s3cr3t",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("DatabaseArgs(postgres) length = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("DatabaseArgs[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 
