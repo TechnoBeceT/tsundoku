@@ -66,15 +66,19 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 		t.Fatalf("testdb: run ent migration: %v", err)
 	}
 
-	// Mirror production startup (database.Open): seed the default categories so
-	// integration tests have the five defaults available and series can be linked
-	// to a real Category (the app invariant). BackfillSeries is a no-op on the
-	// fresh schema (no rows, no legacy column) but is run for parity.
+	// Mirror production startup (database.Open seedCategories): seed the default
+	// categories so integration tests have the five defaults available and series
+	// can be linked to a real Category (the app invariant). BackfillSeries and
+	// DropLegacyColumn are both no-ops on the fresh schema (no rows, no legacy
+	// `category` column) but are run for parity with the production seed sequence.
 	if err := category.EnsureDefaults(ctx, client); err != nil {
 		t.Fatalf("testdb: seed default categories: %v", err)
 	}
 	if err := category.BackfillSeries(ctx, db); err != nil {
 		t.Fatalf("testdb: backfill series categories: %v", err)
+	}
+	if err := category.DropLegacyColumn(ctx, db); err != nil {
+		t.Fatalf("testdb: drop legacy category column: %v", err)
 	}
 
 	t.Cleanup(func() {

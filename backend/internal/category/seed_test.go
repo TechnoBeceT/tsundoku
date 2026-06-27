@@ -2,12 +2,14 @@ package category_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
 	entcategory "github.com/technobecet/tsundoku/internal/ent/category"
 )
 
@@ -99,6 +101,102 @@ func TestBackfillSeriesNoLegacyColumnDefaultsOther(t *testing.T) {
 	got := client.Series.Query().WithCategory().OnlyX(ctx)
 	if got.Edges.Category == nil || got.Edges.Category.Name != "Other" {
 		t.Fatalf("backfill default: series category = %+v, want Other", got.Edges.Category)
+	}
+}
+
+// mustSeedSequence runs the full production startup category sequence
+// (EnsureDefaults → BackfillSeries → DropLegacyColumn) and fails the test on any
+// error. It mirrors database.seedCategories so the migration is exercised exactly
+// as production runs it.
+func mustSeedSequence(ctx context.Context, t *testing.T, client *ent.Client, db *sql.DB) {
+	t.Helper()
+	if err := category.EnsureDefaults(ctx, client); err != nil {
+		t.Fatalf("EnsureDefaults: %v", err)
+	}
+	if err := category.BackfillSeries(ctx, db); err != nil {
+		t.Fatalf("BackfillSeries: %v", err)
+	}
+	if err := category.DropLegacyColumn(ctx, db); err != nil {
+		t.Fatalf("DropLegacyColumn: %v", err)
+	}
+}
+
+// seriesColumnExists reports whether the series table has a column named col.
+func seriesColumnExists(ctx context.Context, t *testing.T, db *sql.DB, col string) bool {
+	t.Helper()
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'series' AND column_name = $1
+		)`, col).Scan(&exists)
+	if err != nil {
+		t.Fatalf("probe series column %q: %v", col, err)
+	}
+	return exists
+}
+
+// TestDropLegacyColumnConsumeThenDrop is the CONSUME-THEN-DROP migration proof.
+// It simulates an upgraded enum-era DB (a legacy `category` column value with a
+// NULL category_id), runs the full startup sequence, and asserts:
+//
+//	(a) category_id is linked to the same-named Category (the value was consumed);
+//	(b) the legacy `category` column no longer exists (it was dropped);
+//	(c) a SECOND full run is a clean no-op (idempotent + order-robust).
+func TestDropLegacyColumnConsumeThenDrop(t *testing.T) {
+	ctx := context.Background()
+	client, db := testdb.NewWithSQL(t)
+
+	// Re-create the legacy enum-era column the new schema no longer models (testdb
+	// setup already dropped it; Ent never models it). This mimics an upgraded DB
+	// that still carries a pre-migration value.
+	if _, err := db.ExecContext(ctx, `ALTER TABLE series ADD COLUMN category varchar NOT NULL DEFAULT 'Other'`); err != nil {
+		t.Fatalf("add legacy column: %v", err)
+	}
+	s := client.Series.Create().SetTitle("Drop Me").SetSlug("drop-me").SaveX(ctx)
+	if _, err := db.ExecContext(ctx, `UPDATE series SET category = 'Manhua', category_id = NULL WHERE id = $1`, s.ID); err != nil {
+		t.Fatalf("set legacy value + null id: %v", err)
+	}
+
+	// First full run: consume the legacy value into category_id, then drop the column.
+	mustSeedSequence(ctx, t, client, db)
+
+	// (a) The legacy value was consumed — series is linked to the same-named category.
+	got := client.Series.Query().WithCategory().OnlyX(ctx)
+	if got.Edges.Category == nil || got.Edges.Category.Name != "Manhua" {
+		t.Fatalf("link: series category = %+v, want Manhua", got.Edges.Category)
+	}
+	// (b) The legacy column is gone.
+	if seriesColumnExists(ctx, t, db, "category") {
+		t.Fatal("legacy `category` column still exists after DropLegacyColumn")
+	}
+
+	// (c) A second full run is a clean no-op: the IF EXISTS drop and the
+	// already-linked rows make the whole sequence re-runnable.
+	mustSeedSequence(ctx, t, client, db)
+	if seriesColumnExists(ctx, t, db, "category") {
+		t.Fatal("legacy `category` column reappeared on the second run")
+	}
+	got2 := client.Series.Query().WithCategory().OnlyX(ctx)
+	if got2.Edges.Category == nil || got2.Edges.Category.Name != "Manhua" {
+		t.Fatalf("second run changed the link: %+v", got2.Edges.Category)
+	}
+}
+
+// TestDropLegacyColumnIdempotentOnFreshSchema verifies DropLegacyColumn is a
+// no-op (no error) on a schema that never had the legacy column, run twice — the
+// fresh-DB / already-dropped path the IF EXISTS guard covers.
+func TestDropLegacyColumnIdempotentOnFreshSchema(t *testing.T) {
+	ctx := context.Background()
+	_, db := testdb.NewWithSQL(t)
+
+	for i := 0; i < 2; i++ {
+		if err := category.DropLegacyColumn(ctx, db); err != nil {
+			t.Fatalf("DropLegacyColumn run %d on fresh schema: %v", i, err)
+		}
+	}
+	if seriesColumnExists(ctx, t, db, "category") {
+		t.Fatal("fresh schema unexpectedly has a legacy `category` column")
 	}
 }
 

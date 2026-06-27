@@ -103,17 +103,23 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*ent.Client, error) {
 	return client, nil
 }
 
-// seedCategories seeds the five default categories then backfills any legacy
-// (enum-era) series onto the matching Category. It runs after migrate so a fresh
-// DB and an upgraded DB both end with the defaults present and every series
-// linked. No disk I/O happens here — the migration only changes the DB
-// representation, never moves a folder.
+// seedCategories seeds the five default categories, backfills any legacy
+// (enum-era) series onto the matching Category, then drops the now-consumed legacy
+// `category` enum column. It runs after migrate so a fresh DB and an upgraded DB
+// both end with the defaults present and every series linked. The fixed order —
+// EnsureDefaults → BackfillSeries → DropLegacyColumn — is what makes the drop safe:
+// the column is only dropped AFTER its values have been migrated into category_id
+// in the same startup. No disk I/O happens here — the migration only changes the
+// DB representation, never moves a folder.
 func seedCategories(ctx context.Context, client *ent.Client, db *sql.DB) error {
 	if err := category.EnsureDefaults(ctx, client); err != nil {
 		return fmt.Errorf("database: seed default categories: %w", err)
 	}
 	if err := category.BackfillSeries(ctx, db); err != nil {
 		return fmt.Errorf("database: backfill series categories: %w", err)
+	}
+	if err := category.DropLegacyColumn(ctx, db); err != nil {
+		return fmt.Errorf("database: drop legacy category column: %w", err)
 	}
 	return nil
 }

@@ -1,6 +1,12 @@
 package category
 
-import "github.com/technobecet/tsundoku/internal/ent"
+import (
+	"log/slog"
+
+	"github.com/google/uuid"
+
+	"github.com/technobecet/tsundoku/internal/ent"
+)
 
 // CategoryDTO is the wire shape for one library category: its identity, name,
 // owner-chosen sort order, the protected flag (true only for the default
@@ -25,14 +31,31 @@ func newCategoryDTO(c *ent.Category, count int) CategoryDTO {
 	}
 }
 
-// NameOf returns a series' category folder name from its eagerly-loaded
-// category edge, or "" when the edge is absent (an unlinked legacy row before
-// backfill, or a query that did not load the edge). Exported so the download
-// and downloads domains resolve the on-disk category through one definition
-// (§2 DRY) instead of reaching into row.Edges.Category themselves.
+// NameOf returns a series' category folder name from its eagerly-loaded category
+// edge, or "" when the series genuinely has no category (an unlinked legacy row
+// before backfill). Exported so the download and downloads domains resolve the
+// on-disk category through one definition (§2 DRY) instead of reaching into
+// row.Edges.Category themselves.
+//
+// FOOTGUN GUARD: if the scalar category_id IS set but the edge was not loaded,
+// the series DOES have a category and the caller simply forgot WithCategory().
+// Returning "" silently in that case would mislocate the series on disk (it would
+// fall back to "Other"), so NameOf emits a LOUD slog.Warn before returning "" —
+// surfacing the missing eager-load instead of swallowing it. A truly category-less
+// row (category_id == uuid.Nil) returns "" silently, which is the legitimate
+// pre-backfill case and not a bug.
 func NameOf(s *ent.Series) string {
-	if s != nil && s.Edges.Category != nil {
+	if s == nil {
+		return ""
+	}
+	if s.Edges.Category != nil {
 		return s.Edges.Category.Name
+	}
+	if s.CategoryID != uuid.Nil {
+		slog.Warn("category.NameOf: category_id is set but the Category edge was not eager-loaded — caller must use WithCategory(); returning empty name",
+			"series_id", s.ID,
+			"category_id", s.CategoryID,
+		)
 	}
 	return ""
 }

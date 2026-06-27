@@ -1,11 +1,9 @@
 package suwayomi
 
 import (
-	"net/http"
 	"strconv"
 
-	"github.com/labstack/echo/v4"
-
+	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/pkg/urlx"
 	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -65,7 +63,7 @@ func validateUpdate(req UpdateRequest) (suwayomicli.SuwayomiSettingsPatch, error
 	}
 	// IsEmpty rejects an absent or all-empty body (e.g. {} or {"socksProxy":{}}).
 	if patch.IsEmpty() {
-		return patch, badRequest("at least one setting must be provided")
+		return patch, httperr.BadRequest("at least one setting must be provided")
 	}
 	return patch, nil
 }
@@ -83,10 +81,10 @@ func applyFlareSolverr(fs *FlareSolverrUpdate, patch *suwayomicli.SuwayomiSettin
 		}
 	}
 	if fs.Timeout != nil && *fs.Timeout < 0 {
-		return badRequest("flareSolverr.timeout must be non-negative")
+		return httperr.BadRequest("flareSolverr.timeout must be non-negative")
 	}
 	if fs.SessionTTL != nil && *fs.SessionTTL < 0 {
-		return badRequest("flareSolverr.sessionTtl must be non-negative")
+		return httperr.BadRequest("flareSolverr.sessionTtl must be non-negative")
 	}
 	patch.FlareSolverrEnabled = fs.Enabled
 	patch.FlareSolverrURL = fs.URL
@@ -104,7 +102,7 @@ func applySocks(sp *SocksProxyUpdate, patch *suwayomicli.SuwayomiSettingsPatch) 
 		return nil
 	}
 	if sp.Version != nil && *sp.Version != 4 && *sp.Version != 5 {
-		return badRequest("socksProxy.version must be 4 or 5")
+		return httperr.BadRequest("socksProxy.version must be 4 or 5")
 	}
 	if sp.Port != nil {
 		if err := validatePort(*sp.Port); err != nil {
@@ -129,7 +127,7 @@ func validateOptionalURL(raw string) error {
 		return nil
 	}
 	if !urlx.IsAbsoluteHTTP(raw) {
-		return badRequest("flareSolverr.url must be a valid absolute http(s) URL")
+		return httperr.BadRequest("flareSolverr.url must be a valid absolute http(s) URL")
 	}
 	return nil
 }
@@ -139,13 +137,7 @@ func validateOptionalURL(raw string) error {
 func validatePort(raw string) error {
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 || n > maxPort {
-		return badRequest("socksProxy.port must be a number in 1..65535")
+		return httperr.BadRequest("socksProxy.port must be a number in 1..65535")
 	}
 	return nil
-}
-
-// badRequest builds a 400 echo.HTTPError with the given message (surfaced
-// verbatim by the central error middleware as {"message": …}).
-func badRequest(msg string) error {
-	return echo.NewHTTPError(http.StatusBadRequest, msg)
 }

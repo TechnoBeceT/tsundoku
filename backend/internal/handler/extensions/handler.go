@@ -17,6 +17,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -37,7 +38,7 @@ func NewHandler(sw suwayomicli.Client) *Handler {
 func (h *Handler) List(c echo.Context) error {
 	exts, err := h.sw.Extensions(c.Request().Context())
 	if err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toExtensionDTOs(exts))
 }
@@ -48,7 +49,7 @@ func (h *Handler) List(c echo.Context) error {
 func (h *Handler) Refresh(c echo.Context) error {
 	exts, err := h.sw.FetchExtensions(c.Request().Context())
 	if err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toExtensionDTOs(exts))
 }
@@ -82,11 +83,11 @@ func (h *Handler) setState(c echo.Context, action suwayomicli.ExtensionAction) e
 	}
 	ctx := c.Request().Context()
 	if err := h.sw.SetExtensionState(ctx, pkgName, action); err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	exts, err := h.sw.Extensions(ctx)
 	if err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toExtensionDTOs(exts))
 }
@@ -96,7 +97,7 @@ func (h *Handler) setState(c echo.Context, action suwayomicli.ExtensionAction) e
 func (h *Handler) GetRepos(c echo.Context) error {
 	repos, err := h.sw.ExtensionRepos(c.Request().Context())
 	if err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toReposDTO(repos))
 }
@@ -108,7 +109,7 @@ func (h *Handler) GetRepos(c echo.Context) error {
 func (h *Handler) SetRepos(c echo.Context) error {
 	var req ReposUpdateRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+		return httperr.BadRequest("invalid request body")
 	}
 	repos, err := validateRepos(req)
 	if err != nil {
@@ -116,19 +117,11 @@ func (h *Handler) SetRepos(c echo.Context) error {
 	}
 	ctx := c.Request().Context()
 	if err := h.sw.SetExtensionRepos(ctx, repos); err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	current, err := h.sw.ExtensionRepos(ctx)
 	if err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toReposDTO(current))
-}
-
-// upstreamError maps any Suwayomi-client failure (transport error or GraphQL
-// rejection) to a 502 Bad Gateway, mirroring the settings-proxy. The proxied
-// Suwayomi is an upstream dependency, so its failure is a gateway error rather
-// than an internal one — and no false-200 is ever returned.
-func upstreamError(err error) error {
-	return echo.NewHTTPError(http.StatusBadGateway, "suwayomi: "+err.Error())
 }
