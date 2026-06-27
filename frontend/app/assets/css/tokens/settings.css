@@ -1,0 +1,21 @@
+/* settings.css — the Settings screen's two extra status palettes: the engine
+ * "running / healthy / migration-done" emerald and the extension "update
+ * available" amber. Mirrors the Claude Design prototype's engine status dot +
+ * UPDATE badge.
+ *
+ * THEME-INDEPENDENT (held on :root, not re-declared per theme) — exactly like
+ * status.css/cover.css, since an emerald "running" dot and an amber "update"
+ * badge read correctly on both the dark and light surfaces. Factoring them here
+ * keeps every settings status chip referencing one `var(--…)` and never an
+ * inline hex. The destructive (delete/uninstall) rose reuses the shared
+ * status.css `--danger-*` tokens; no settings-specific danger token is needed. */
+:root {
+  /* Engine "running" / "up to date" / upgrade-step "done" (emerald). */
+  --set-ok-text: #6ee7b7;
+  --set-ok-dot: #34d399;
+  --set-ok-bg: rgba(16, 185, 129, 0.18);
+
+  /* Extension "update available" badge (amber). */
+  --set-update-text: #fcd34d;
+  --set-update-bg: rgba(245, 158, 11, 0.16);
+}

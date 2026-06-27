@@ -14,6 +14,7 @@
 @import './tokens/seriesDetail.css';
 @import './tokens/discover.css';
 @import './tokens/downloads.css';
+@import './tokens/settings.css';
 
 /* Globals + utilities (reference tokens only). */
 @import './base.css';
