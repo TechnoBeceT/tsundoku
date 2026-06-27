@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import AppButton from '../ui/AppButton.vue'
 import BrandLockup from '../ui/BrandLockup.vue'
+import FormError from '../ui/FormError.vue'
+import TextField from '../ui/TextField.vue'
 
 /**
  * Auth — the bare, pre-boot authentication card shown before the app shell
@@ -13,8 +16,13 @@ import BrandLockup from '../ui/BrandLockup.vue'
  * username; non-empty password; password ≥ 8 in claim mode) and, when they pass,
  * emits `submit` with the credentials for the parent to POST. Server-side
  * outcomes arrive back via the `loading` + `error` props (§16): the submit
- * button shows an in-flight spinner and the error renders as an aria-live
- * message. `switch-mode` toggles between claim and login (parent owns `mode`).
+ * button shows an in-flight spinner and the error renders as an inline message.
+ * `switch-mode` toggles between claim and login (parent owns `mode`).
+ *
+ * Composes the shared atoms: `TextField` (credential inputs), `AppButton`
+ * (primary submit with its own loading spinner), `FormError` (the inline guard /
+ * server message), `BrandLockup` (header). Only the screen-unique backdrop + card
+ * layout lives here.
  *
  * Endpoints (parent wiring, here for reference): claim → POST /api/owner/claim
  * (409 ⇒ owner exists ⇒ switch to login); login → POST /api/owner/login
@@ -67,6 +75,7 @@ const displayedError = computed(() => props.error || localError.value)
 const clearLocalError = (): void => {
   localError.value = ''
 }
+watch([username, password], clearLocalError)
 
 // Run the same guards as the prototype, then emit. Claim enforces an 8-char
 // minimum password "visually" by surfacing the rule as the error message.
@@ -105,50 +114,31 @@ const onSwitch = (): void => {
       <p class="auth__sub">{{ subtitle }}</p>
 
       <form class="auth__form" novalidate @submit.prevent="onSubmit">
-        <div class="field">
-          <label class="field__label" for="auth-username">Username</label>
-          <input
-            id="auth-username"
-            v-model="username"
-            class="field__input"
-            type="text"
-            autocomplete="username"
-            placeholder="owner"
-            :disabled="loading"
-            @input="clearLocalError"
-          >
+        <TextField
+          v-model="username"
+          class="auth__field"
+          label="Username"
+          placeholder="owner"
+          :disabled="loading"
+        />
+
+        <TextField
+          v-model="password"
+          class="auth__field"
+          label="Password"
+          type="password"
+          placeholder="••••••••"
+          :disabled="loading"
+        />
+
+        <!-- Reserved region so the surfacing error never shifts the button. -->
+        <div class="auth__error">
+          <FormError v-if="displayedError" :message="displayedError" />
         </div>
 
-        <div class="field">
-          <label class="field__label" for="auth-password">Password</label>
-          <input
-            id="auth-password"
-            v-model="password"
-            class="field__input"
-            type="password"
-            :autocomplete="isClaim ? 'new-password' : 'current-password'"
-            placeholder="••••••••"
-            :disabled="loading"
-            @input="clearLocalError"
-          >
-        </div>
-
-        <!-- Error region: always present so the aria-live announcement fires. -->
-        <p class="auth__error" role="alert" aria-live="polite">
-          <template v-if="displayedError">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 8v4" />
-              <path d="M12 16h.01" />
-            </svg>
-            {{ displayedError }}
-          </template>
-        </p>
-
-        <button class="auth__submit" type="submit" :disabled="loading">
-          <span v-if="loading" class="auth__spinner" aria-hidden="true" />
+        <AppButton class="auth__submit" type="submit" variant="primary" size="lg" :loading="loading">
           {{ cta }}
-        </button>
+        </AppButton>
       </form>
 
       <div class="auth__switch">
@@ -217,101 +207,20 @@ const onSwitch = (): void => {
   flex-direction: column;
 }
 
-.field {
+.auth__field {
   margin-bottom: 14px;
-}
-
-.field__label {
-  display: block;
-  margin-bottom: 7px;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
-.field__input {
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border2);
-  background: var(--bg2);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: var(--text-md);
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.field__input::placeholder {
-  color: var(--faint);
-}
-
-.field__input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accentSoft);
-}
-
-.field__input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 /* ---- Error ---------------------------------------------------------------- */
 .auth__error {
-  display: flex;
-  align-items: center;
-  gap: 7px;
   min-height: 19px;
-  margin: 6px 0 0;
-  font-size: var(--text-sm);
-  color: var(--danger-text);
+  margin-top: 6px;
 }
 
 /* ---- Submit --------------------------------------------------------------- */
 .auth__submit {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
   width: 100%;
   margin-top: 18px;
-  padding: 13px;
-  border: none;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, var(--accent), var(--accentDeep));
-  color: var(--cover-text);
-  font-family: var(--font-sans);
-  font-size: 14.5px;
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  box-shadow: 0 8px 20px -8px var(--accent);
-  transition: filter 0.15s;
-}
-
-.auth__submit:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-.auth__submit:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accentSoft), 0 8px 20px -8px var(--accent);
-}
-
-.auth__submit:disabled {
-  cursor: progress;
-  opacity: 0.85;
-}
-
-.auth__spinner {
-  width: 15px;
-  height: 15px;
-  border: 2px solid var(--cover-text);
-  border-right-color: transparent;
-  border-radius: var(--radius-pill);
-  /* `spin` is a global keyframe (base.css). */
-  animation: spin 0.8s linear infinite;
 }
 
 /* ---- Mode switch ---------------------------------------------------------- */
