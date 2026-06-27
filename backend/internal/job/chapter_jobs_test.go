@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -232,6 +233,105 @@ loop:
 	}
 	t.Errorf("Start goroutine did not exit within 2s after context cancel: goroutines now=%d, base=%d",
 		runtime.NumGoroutine(), base)
+}
+
+// countingIntervals is a goroutine-safe job.Intervals double that records how
+// many times DownloadInterval has been read and the last value it returned, and
+// lets the test mutate the returned interval mid-run. It proves the Start loop
+// re-reads the interval at the top of EACH iteration (the dynamic-timer /
+// hot-reload contract) instead of capturing it once at construction.
+type countingIntervals struct {
+	mu           sync.Mutex
+	download     time.Duration
+	refresh      time.Duration
+	reads        int
+	lastReturned time.Duration
+}
+
+// DownloadInterval records the read and returns the current (possibly mutated)
+// download interval.
+func (c *countingIntervals) DownloadInterval(context.Context) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reads++
+	c.lastReturned = c.download
+	return c.download
+}
+
+// RefreshInterval returns the fixed refresh interval (unused by these tests but
+// required to satisfy job.Intervals).
+func (c *countingIntervals) RefreshInterval(context.Context) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refresh
+}
+
+// setDownload mutates the download interval the next read will observe.
+func (c *countingIntervals) setDownload(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.download = d
+}
+
+// readCount returns how many times DownloadInterval has been read so far.
+func (c *countingIntervals) readCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads
+}
+
+// lastDownload returns the value the most recent DownloadInterval read returned.
+func (c *countingIntervals) lastDownload() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastReturned
+}
+
+// TestRunner_Start_ReReadsIntervalPerIteration proves the Start loop reads the
+// download interval AT THE TOP OF EACH ITERATION (hot reload), not once at
+// construction. It (1) waits until the double has been read several times across
+// successive cycles, then (2) mutates the returned interval mid-run and asserts
+// the loop observes the NEW value on its next pass. If someone refactors Start to
+// capture the interval once (e.g. a single time.NewTicker), the read count would
+// stay at 1 and step (1) fails — the test is the teeth behind the dynamic timer.
+func TestRunner_Start_ReReadsIntervalPerIteration(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	// Short interval so cycles fire quickly; no chapters exist, so each cycle is a
+	// fast no-op and the loop spins back to re-read the interval.
+	intervals := &countingIntervals{download: 10 * time.Millisecond, refresh: time.Hour}
+
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 1, Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, intervals)
+
+	r.Start(ctx)
+
+	// (1) The loop must re-read the interval multiple times — proof it reads per
+	// iteration rather than capturing once.
+	deadline := time.Now().Add(5 * time.Second)
+	for intervals.readCount() < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("Start re-read the download interval only %d time(s) in 5s — expected per-iteration reads (>=3); did it capture the interval once?", intervals.readCount())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// (2) Mutate the interval; the loop must pick up the NEW value on its next pass.
+	newVal := 25 * time.Millisecond
+	intervals.setDownload(newVal)
+
+	deadline = time.Now().Add(5 * time.Second)
+	for intervals.lastDownload() != newVal {
+		if time.Now().After(deadline) {
+			t.Fatalf("Start did not re-read the mutated interval within 5s (last returned %v, want %v) — the loop captured the old value", intervals.lastDownload(), newVal)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // TestRunner_Trigger_RunsCycle verifies Trigger() causes the running download

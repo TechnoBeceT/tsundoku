@@ -1,11 +1,9 @@
 package extensions
 
 import (
-	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
-
+	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/pkg/urlx"
 )
 
@@ -23,7 +21,7 @@ type ReposUpdateRequest struct {
 func validatePkgName(raw string) (string, error) {
 	pkgName := strings.TrimSpace(raw)
 	if pkgName == "" {
-		return "", badRequest("pkgName required")
+		return "", httperr.BadRequest("pkgName required")
 	}
 	return pkgName, nil
 }
@@ -38,24 +36,18 @@ func validatePkgName(raw string) (string, error) {
 // It returns the trimmed list on success.
 func validateRepos(req ReposUpdateRequest) ([]string, error) {
 	if req.Repos == nil {
-		return nil, badRequest("repos must be a JSON array")
+		return nil, httperr.BadRequest("repos must be a JSON array")
 	}
 	out := make([]string, 0, len(req.Repos))
 	for _, raw := range req.Repos {
 		repo := strings.TrimSpace(raw)
 		if repo == "" {
-			return nil, badRequest("repos must not contain a blank URL")
+			return nil, httperr.BadRequest("repos must not contain a blank URL")
 		}
 		if !urlx.IsAbsoluteHTTP(repo) {
-			return nil, badRequest("repos must contain only absolute http(s) URLs")
+			return nil, httperr.BadRequest("repos must contain only absolute http(s) URLs")
 		}
 		out = append(out, repo)
 	}
 	return out, nil
-}
-
-// badRequest builds a 400 echo.HTTPError with the given message (surfaced
-// verbatim by the central error middleware as {"message": …}).
-func badRequest(msg string) error {
-	return echo.NewHTTPError(http.StatusBadRequest, msg)
 }

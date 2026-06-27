@@ -53,14 +53,16 @@ type RetrySettings interface {
 	// MaxRetries is the number of times a failed chapter is retried before it is
 	// parked in permanently_failed.
 	MaxRetries(ctx context.Context) int
-	// RetryBackoff is the BASE delay before the first retry; backoffCurve doubles
-	// it per attempt up to a 1h cap.
+	// RetryBackoff is the BASE delay fed to backoffCurve. The delay before retry
+	// attempt n is base×2^n (capped at 1h): attempt 0 = base, the first retry
+	// (n=1) = 2×base, n=2 = 4×base, and so on.
 	RetryBackoff(ctx context.Context) time.Duration
 }
 
-// backoffCurve returns the delay before the next attempt: base doubled once per
-// attempt, capped at 1 hour. A base of 0 yields 0 (immediate retry — used by
-// tests). It is the single backoff curve, now parameterised by the runtime base
+// backoffCurve returns the delay for the given attempt: base×2^attempt, capped at
+// 1 hour. So attempt 0 yields base, the first retry (attempt=1) yields 2×base,
+// attempt=2 yields 4×base, and so on. A base of 0 yields 0 (immediate retry — used
+// by tests). It is the single backoff curve, parameterised by the runtime base
 // instead of a hardcoded constant.
 //
 // Overflow analysis: shift is capped at 12 so base×2^12 stays well within int64

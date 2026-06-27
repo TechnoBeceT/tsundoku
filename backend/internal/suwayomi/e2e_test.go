@@ -435,6 +435,18 @@ func tier2Extensions(t *testing.T, client suwayomi.Client) {
 		t.Skip("Tier 2 skipped: no installable extension found in the repo listing")
 	}
 
+	tier2InstallUninstallRoundTrip(t, ctx, client, target)
+}
+
+// tier2InstallUninstallRoundTrip performs the live install → assert isInstalled →
+// uninstall → assert not-installed round-trip for an already-resolved target
+// package. It t.Skips on an install/uninstall transport failure (network/APK
+// unavailability) and only t.Errors on a non-flipping isInstalled — the one
+// genuine bug this tier can catch. Extracted from tier2Extensions to keep both
+// functions within the cyclop complexity budget.
+func tier2InstallUninstallRoundTrip(t *testing.T, ctx context.Context, client suwayomi.Client, target string) {
+	t.Helper()
+
 	if err := client.SetExtensionState(ctx, target, suwayomi.ExtensionInstall); err != nil {
 		t.Skipf("Tier 2 skipped: install %q failed (likely network/APK fetch): %v", target, err)
 	}
@@ -646,21 +658,7 @@ func assertKomgaValidCBZ(t *testing.T, cbzPath string, wantSeriesTitle string) {
 	}
 	defer func() { _ = r.Close() }()
 
-	hasComicInfo := false
-	pageCount := 0
-	for _, f := range r.File {
-		name := strings.ToLower(f.Name)
-		if name == "comicinfo.xml" {
-			hasComicInfo = true
-			continue
-		}
-		ext := filepath.Ext(name)
-		switch ext {
-		case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bin":
-			pageCount++
-		}
-	}
-
+	hasComicInfo, pageCount := countCBZEntries(r.File)
 	if !hasComicInfo {
 		t.Errorf("missing ComicInfo.xml (not Komga-valid)")
 	}
@@ -668,23 +666,47 @@ func assertKomgaValidCBZ(t *testing.T, cbzPath string, wantSeriesTitle string) {
 		t.Errorf("no image pages found (empty chapter)")
 	}
 
-	// Use disk.ReadComicInfoFromCBZ for a full parse round-trip.
+	assertComicInfoSeries(t, cbzPath, wantSeriesTitle)
+
+	t.Logf("CBZ valid: ComicInfo=%v pages=%d", hasComicInfo, pageCount)
+}
+
+// countCBZEntries scans a CBZ's entries once and reports whether a ComicInfo.xml
+// is present and how many image pages (jpg/jpeg/png/webp/gif/avif/bin) it carries.
+func countCBZEntries(files []*zip.File) (hasComicInfo bool, pageCount int) {
+	for _, f := range files {
+		name := strings.ToLower(f.Name)
+		if name == "comicinfo.xml" {
+			hasComicInfo = true
+			continue
+		}
+		switch filepath.Ext(name) {
+		case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bin":
+			pageCount++
+		}
+	}
+	return hasComicInfo, pageCount
+}
+
+// assertComicInfoSeries parses the CBZ's ComicInfo.xml via disk.ReadComicInfoFromCBZ
+// (a full round-trip) and asserts ComicInfo.Series is non-empty and equals
+// wantSeriesTitle — the field Komga uses to group chapters under the correct series.
+func assertComicInfoSeries(t *testing.T, cbzPath string, wantSeriesTitle string) {
+	t.Helper()
+
 	ci, err := disk.ReadComicInfoFromCBZ(cbzPath)
 	if err != nil {
 		t.Errorf("parse ComicInfo.xml: %v", err)
 	}
-	if ci != nil {
-		t.Logf("ComicInfo: series=%q chapter=%q pages=%d", ci.Series, ci.Number, ci.PageCount)
-		// ComicInfo.Series must be non-empty and match the expected title so that
-		// Komga can group chapters under the correct series.
-		if ci.Series == "" {
-			t.Errorf("ComicInfo.Series is empty — Komga cannot group this chapter into a series")
-		} else if ci.Series != wantSeriesTitle {
-			t.Errorf("ComicInfo.Series: got %q, want %q", ci.Series, wantSeriesTitle)
-		}
+	if ci == nil {
+		return
 	}
-
-	t.Logf("CBZ valid: ComicInfo=%v pages=%d", hasComicInfo, pageCount)
+	t.Logf("ComicInfo: series=%q chapter=%q pages=%d", ci.Series, ci.Number, ci.PageCount)
+	if ci.Series == "" {
+		t.Errorf("ComicInfo.Series is empty — Komga cannot group this chapter into a series")
+	} else if ci.Series != wantSeriesTitle {
+		t.Errorf("ComicInfo.Series: got %q, want %q", ci.Series, wantSeriesTitle)
+	}
 }
 
 // assertProvenance queries the DB for downloaded chapters and verifies they

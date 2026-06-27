@@ -59,11 +59,13 @@ import (
 //   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/suwayomi/extensions (GET)                — list Suwayomi extensions (RequireOwner).
 //   - /api/suwayomi/extensions/refresh (POST)       — refresh available extensions from repos (RequireOwner).
+//     The static /repos routes are registered BEFORE the dynamic /:pkgName routes
+//     (Echo matches static before param, so /repos never collides with :pkgName).
+//   - /api/suwayomi/extensions/repos (GET)          — read extension repo URLs (RequireOwner).
+//   - /api/suwayomi/extensions/repos (PUT)          — replace extension repo URLs (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/install (POST) — install an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/update (POST)  — update an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName (DELETE)    — uninstall an extension (RequireOwner).
-//   - /api/suwayomi/extensions/repos (GET)          — read extension repo URLs (RequireOwner).
-//   - /api/suwayomi/extensions/repos (PUT)          — replace extension repo URLs (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).

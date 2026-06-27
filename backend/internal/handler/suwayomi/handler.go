@@ -14,6 +14,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -35,7 +36,7 @@ func NewHandler(sw suwayomicli.Client) *Handler {
 func (h *Handler) Get(c echo.Context) error {
 	settings, err := h.sw.ServerSettings(c.Request().Context())
 	if err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toDTO(settings))
 }
@@ -49,7 +50,7 @@ func (h *Handler) Get(c echo.Context) error {
 func (h *Handler) Update(c echo.Context) error {
 	var req UpdateRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+		return httperr.BadRequest("invalid request body")
 	}
 	patch, err := validateUpdate(req)
 	if err != nil {
@@ -58,19 +59,11 @@ func (h *Handler) Update(c echo.Context) error {
 
 	ctx := c.Request().Context()
 	if err := h.sw.SetServerSettings(ctx, patch); err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	settings, err := h.sw.ServerSettings(ctx)
 	if err != nil {
-		return upstreamError(err)
+		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toDTO(settings))
-}
-
-// upstreamError maps any Suwayomi-client failure (transport error or GraphQL
-// rejection) to a 502 Bad Gateway, mirroring the cover proxy's PageBytes-fail
-// handling. The proxied Suwayomi is an upstream dependency, so its failure is a
-// gateway error rather than an internal one — and no false-200 is ever returned.
-func upstreamError(err error) error {
-	return echo.NewHTTPError(http.StatusBadGateway, "suwayomi: "+err.Error())
 }
