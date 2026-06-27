@@ -106,3 +106,14 @@ textarea {
     transform: translateX(360%);
   }
 }
+
+/* shimmer — the skeleton-placeholder sweep: a soft highlight band swept across
+ * a masked surface. Paired with an `::after` overlay that starts at
+ * translateX(-100%); this drives it off the right edge. (Screens previously
+ * each declared a local copy — `categories-shimmer` / `dl-shimmer` / etc.;
+ * this is the canonical one the `Skeleton` atom uses.) */
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
