@@ -91,3 +91,25 @@ func TestValidate_ExpiredToken(t *testing.T) {
 		t.Error("Validate: expected error for expired token, got nil")
 	}
 }
+
+func TestService_ShouldRenew(t *testing.T) {
+	svc := auth.NewService("0123456789abcdef0123456789abcdef")
+	id := uuid.New()
+	tok, err := svc.Issue(id)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	claims, err := svc.Validate(tok)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	// Fresh token: not past half-life.
+	if svc.ShouldRenew(claims, claims.IssuedAt.Add(time.Hour)) {
+		t.Fatal("fresh token should not need renewal")
+	}
+	// Past the 15-day half-life: needs renewal.
+	if !svc.ShouldRenew(claims, claims.IssuedAt.Add(16*24*time.Hour)) {
+		t.Fatal("token past half-life should need renewal")
+	}
+}

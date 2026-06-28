@@ -14,7 +14,8 @@
     "storybook": "STORYBOOK=1 storybook dev -p 6006 --no-open",
     "build-storybook": "STORYBOOK=1 storybook build",
     "gen:api": "bunx openapi-typescript ../backend/internal/api/openapi.yaml -o app/utils/api/schema.d.ts",
-    "check:api-drift": "bun run gen:api && git diff --exit-code app/utils/api/"
+    "check:api-drift": "bun run gen:api && git diff --exit-code app/utils/api/",
+    "build:app": "bash scripts/build-into-backend.sh"
   },
   "dependencies": {
     "@nuxt/fonts": "^0.14.0",

@@ -762,3 +762,32 @@ func TestLoadRejectsBadSuwayomiDatabase(t *testing.T) {
 		t.Fatal("expected Load() to fail for POSTGRESQL without a DatabaseURL, got nil")
 	}
 }
+
+// TestAuthConfig_CookieSecureDefaultsTrue confirms that Load() applies the default
+// value (true) for Auth.CookieSecure when TSUNDOKU_AUTH_COOKIESECURE is not set.
+func TestAuthConfig_CookieSecureDefaultsTrue(t *testing.T) {
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Auth.CookieSecure {
+		t.Fatalf("CookieSecure: want true by default, got false")
+	}
+}
+
+// TestAuthConfig_CookieSecureEnvOverride confirms that TSUNDOKU_AUTH_COOKIESECURE
+// overrides the built-in default for Auth.CookieSecure.
+func TestAuthConfig_CookieSecureEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+	t.Setenv("TSUNDOKU_AUTH_COOKIESECURE", "false")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.CookieSecure {
+		t.Fatalf("CookieSecure: want false from env, got true")
+	}
+}

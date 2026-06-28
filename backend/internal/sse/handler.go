@@ -25,9 +25,11 @@ import (
 // Authentication is enforced by the RequireOwner middleware wired in
 // RegisterRoutes; the handler itself does not re-validate the token.
 //
-// Frontend note (QCAT-018): the browser SSE client MUST use fetch (not native
-// EventSource) to send the Authorization: Bearer header. Native EventSource
-// cannot set custom headers, so it is not used.
+// Frontend note (QCAT-018): the browser SSE client uses native EventSource
+// ('/api/progress'). Authentication is carried by the HttpOnly tsundoku_session
+// cookie, which the browser attaches automatically — no custom header is needed.
+// The Authorization: Bearer fallback is still accepted by RequireOwner (for
+// scripts/curl) but the frontend no longer sends it for the SSE stream.
 func ProgressHandler(hub *Hub) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		w := c.Response()
@@ -101,9 +103,9 @@ func writeSSEFrame(w interface{ Write([]byte) (int, error) }, event Event) error
 // group behind the RequireOwner middleware.
 //
 // Callers (typically internal/server/routes.go, Task 9) should pass the
-// authenticated API group so the route inherits the Bearer-auth middleware:
+// authenticated API group so the route inherits the auth middleware:
 //
-//	api := e.Group("/api", middleware.RequireOwner(authSvc))
+//	api := e.Group("/api", middleware.RequireOwner(authSvc, cfg.Auth.CookieSecure))
 //	sse.RegisterRoutes(api, hub)
 func RegisterRoutes(g *echo.Group, hub *Hub) {
 	g.GET("/progress", ProgressHandler(hub))

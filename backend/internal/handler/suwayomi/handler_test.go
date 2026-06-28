@@ -99,7 +99,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
-	authed := e.Group("/api", middleware.RequireOwner(authSvc))
+	authed := e.Group("/api", middleware.RequireOwner(authSvc, false))
 	authed.GET("/suwayomi/settings", h.Get)
 	authed.PATCH("/suwayomi/settings", h.Update)
 

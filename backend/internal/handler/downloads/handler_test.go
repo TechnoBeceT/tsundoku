@@ -56,7 +56,7 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
-	authed := e.Group("/api", middleware.RequireOwner(authSvc))
+	authed := e.Group("/api", middleware.RequireOwner(authSvc, false))
 	authed.GET("/downloads", h.List)
 	authed.POST("/downloads/retry-all", h.RetryAll)
 	authed.POST("/chapters/:id/retry", h.RetryChapter)

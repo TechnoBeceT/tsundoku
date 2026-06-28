@@ -42,3 +42,9 @@ type TokenResponse struct {
 	// Token is a signed Bearer token for the authenticated owner.
 	Token string `json:"token"`
 }
+
+// MeResponse is the response body for GET /api/owner/me.
+type MeResponse struct {
+	// OwnerID is the authenticated owner's UUID.
+	OwnerID string `json:"ownerId"`
+}

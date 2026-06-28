@@ -127,7 +127,7 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
-	authed := e.Group("/api", middleware.RequireOwner(authSvc))
+	authed := e.Group("/api", middleware.RequireOwner(authSvc, false))
 	authed.GET("/series", h.List)
 	authed.GET("/series/:id", h.Detail)
 	authed.PATCH("/series/:id/category", h.SetCategory)
