@@ -158,12 +158,15 @@ export function useCategories() {
 
   /**
    * Deletes a category. When `targetId` is non-empty, the category still has members
-   * and they must be moved first: each series is PATCHed to `targetId`, then the
-   * now-empty category is deleted.
+   * and they must be moved first: series are fetched page-by-page (limit 200) and
+   * PATCHed to `targetId` until a fetch returns 0 results, then the now-empty
+   * category is deleted.
    *
    * Member series are fetched by category NAME — GET /api/series?category=<name>
-   * filters by name (string), not UUID. The limit is capped at 200 (the API maximum);
-   * a personal library is expected to stay well under that per category.
+   * filters by name (string), not UUID. Re-fetching page-zero each pass works
+   * because a reassigned series leaves the category filter, so the page shrinks
+   * with every iteration. The loop is guaranteed to terminate (each pass removes
+   * up to 200 series from the result set).
    *
    * When `targetId` is empty ("") the category is already empty and we DELETE directly.
    * Backend returns 409 if it still has members, surfaced via categoryAction.error.
@@ -174,19 +177,23 @@ export function useCategories() {
         const cat = rawDtos.value.find(c => c.id === id)
         if (!cat) throw new Error('Category not found')
 
-        const seriesRes = await apiClient.GET('/api/series', {
-          params: { query: { category: cat.name, limit: 200 } },
-        })
-        if (seriesRes.error || !seriesRes.data) {
-          throw new Error(seriesRes.error ? seriesRes.error.message : 'Failed to load series')
-        }
-
-        for (const s of seriesRes.data) {
-          const r = await apiClient.PATCH('/api/series/{id}/category', {
-            params: { path: { id: s.id } },
-            body: { categoryId: targetId },
+        // Drain: reassigned series leave the category filter, so re-fetching
+        // page-zero repeatedly drains the category batch-by-batch.
+        for (;;) {
+          const seriesRes = await apiClient.GET('/api/series', {
+            params: { query: { category: cat.name, limit: 200 } },
           })
-          if (r.error) throw new Error(r.error.message)
+          if (seriesRes.error || !seriesRes.data) {
+            throw new Error(seriesRes.error ? seriesRes.error.message : 'Failed to load series')
+          }
+          if (seriesRes.data.length === 0) break
+          for (const s of seriesRes.data) {
+            const r = await apiClient.PATCH('/api/series/{id}/category', {
+              params: { path: { id: s.id } },
+              body: { categoryId: targetId },
+            })
+            if (r.error) throw new Error(r.error.message)
+          }
         }
       }
 
