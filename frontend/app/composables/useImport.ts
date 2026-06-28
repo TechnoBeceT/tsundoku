@@ -82,6 +82,14 @@ export function useImport() {
   // ---- Wizard state ----------------------------------------------------------
   const sources = ref<Source[]>([])
   const categories = ref<string[]>([])
+  /**
+   * First category name by sortOrder (the order GET /api/categories returns).
+   * Set once on the initial load; provides the adopt-form category picker default
+   * so the owner sees the first category pre-selected rather than a hardcoded
+   * 'Other'. Empty string until categories load or when the list is empty.
+   * (Owner resolution 4: first category is the adopt default.)
+   */
+  const defaultCategory = ref('')
   const searchResults = ref<SearchGroup[]>([])
   const searching = ref(false)
   const searched = ref(false)
@@ -102,6 +110,11 @@ export function useImport() {
     }
     if (catRes.data) {
       categories.value = catRes.data.map((c) => c.name)
+      // Owner resolution 4: seed defaultCategory to the first category by sortOrder
+      // on the initial load (guard: only set once, skip when list is empty).
+      if (defaultCategory.value === '' && categories.value.length > 0) {
+        defaultCategory.value = categories.value[0] ?? ''
+      }
     }
   }
 
@@ -182,6 +195,7 @@ export function useImport() {
   return {
     sources,
     categories,
+    defaultCategory,
     searchResults,
     searching,
     searched,
