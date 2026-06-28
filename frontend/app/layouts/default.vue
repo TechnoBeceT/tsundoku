@@ -3,6 +3,10 @@ import type { NavItem } from '~/components/shell/types'
 
 const route = useRoute()
 
+// Live backend progress stream — connects once on mount, drives shell indicators.
+const { connect, unhealthyCount, syncing } = useProgressStream()
+onMounted(connect)
+
 // Nav items — keys match AppShell's internal references. The 'health' key is
 // hardcoded inside AppShell's attention-pill click handler, so it MUST be
 // exactly 'health'. Order matches the storybook contract.
@@ -73,8 +77,8 @@ function handleOpenAdopt(): void {
     :active-route="activeRoute"
     :theme="theme"
     :header-title="headerTitle"
-    :unhealthy="0"
-    :syncing="false"
+    :unhealthy="unhealthyCount"
+    :syncing="syncing"
     :active-downloads="0"
     :failed-downloads="0"
     @navigate="handleNavigate"
@@ -82,7 +86,9 @@ function handleOpenAdopt(): void {
     @lock="handleLock"
     @open-adopt="handleOpenAdopt"
   >
-    <!-- TODO(task-12): wire :unhealthy, :syncing, :active-downloads, :failed-downloads from useProgressStream -->
+    <!-- active-downloads / failed-downloads stay 0: download.* events carry no running
+         total in their payload, so a reliable per-event count cannot be maintained here.
+         Authoritative counts come from the Downloads screen (Milestone B). -->
     <slot />
   </AppShell>
 </template>
