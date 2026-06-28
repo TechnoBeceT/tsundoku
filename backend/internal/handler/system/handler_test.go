@@ -6,10 +6,39 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/handler/system"
+	"github.com/technobecet/tsundoku/internal/middleware"
+	"github.com/technobecet/tsundoku/internal/pkg/auth"
 )
+
+// TestGetSystem_Unauthorized proves GET /api/system is behind RequireOwner.
+// No Docker/testdb needed — the 401 fires in middleware before any handler logic.
+func TestGetSystem_Unauthorized(t *testing.T) {
+	const testSecret = "system-handler-test-secret"
+	authSvc := auth.NewService(testSecret)
+	cfg := &config.Config{}
+	h := system.NewHandler(cfg)
+
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	grp := e.Group("/api", middleware.RequireOwner(authSvc, false))
+	grp.GET("/system", h.Get)
+
+	// Issue a valid token just to confirm the route exists; we send NO token below.
+	if _, err := authSvc.Issue(uuid.New()); err != nil {
+		t.Fatalf("Issue token: %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/api/system", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/system without token: want 401, got %d", rec.Code)
+	}
+}
 
 func TestGetSystem_ReturnsConfigValues(t *testing.T) {
 	cfg := &config.Config{}
