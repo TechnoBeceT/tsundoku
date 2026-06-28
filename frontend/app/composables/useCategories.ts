@@ -1,19 +1,43 @@
 /**
- * useCategories — data layer for the categories overview screen.
+ * useCategories — data layer for the categories overview screen AND the
+ * Settings → Categories pane.
  *
- * Fetches GET /api/categories and maps each Category DTO onto the screen's
- * CategorySummary type. Wraps useAsyncResource for the standard
- * { data, pending, error, refresh } pattern.
+ * Fetches GET /api/categories and exposes two mapped surfaces:
  *
- * Mapping:
+ *   categories         — CategorySummary[] for the read-only overview grid (Part 1,
+ *                        unchanged from the original implementation).
+ *   settingsCategories — SettingsCategory[] for the CRUD pane (Part 2).
+ *
+ * Mapping (Part 1):
  *   category ← name   (Category.name is the display label and folder name)
  *   count    ← count  (series count; direct)
+ *
+ * Mapping (Part 2 / SettingsCategory):
+ *   id        ← dto.id
+ *   name      ← dto.name
+ *   count     ← dto.count
+ *   protected ← dto.protected
+ *   isDefault ← dto.protected  (presentational alias — the backend has no separate
+ *                               "default" concept; the protected "Other" category is
+ *                               the uncategorised-series landing, so protected ≡ isDefault)
+ *
+ * CRUD mutations (§16 pattern — busy flag + inline error via categoryAction):
+ *   addCategory(name)             POST /api/categories {name}
+ *   renameCategory({id, name})    PATCH /api/categories/{id} {name}
+ *   reorderCategory({id, dir})    swap sortOrder with neighbor; PATCH both sequentially
+ *   deleteCategory({id,targetId}) reassign members (if any) then DELETE
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useAsyncResource } from '~/composables/useAsyncResource'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { CategorySummary } from '~/components/screens/types'
+import {
+  ADD_ACTION_ID,
+  type ReorderDirection,
+  type RowActionState,
+  type SettingsCategory,
+} from '~/components/screens/settings.types'
 
 type CategoryDTO = components['schemas']['Category']
 
@@ -24,14 +48,167 @@ function mapCategory(dto: CategoryDTO): CategorySummary {
   }
 }
 
+// isDefault = protected (presentational alias — the backend has no separate
+// "default" concept; the protected "Other" category is the uncategorised-series
+// landing, making it the de-facto default).
+function mapSettingsCategory(dto: CategoryDTO): SettingsCategory {
+  return {
+    id: dto.id,
+    name: dto.name,
+    count: dto.count,
+    protected: dto.protected,
+    isDefault: dto.protected,
+  }
+}
+
 export function useCategories() {
+  // Holds the raw CategoryDTO list from each GET /api/categories fetch. Used by
+  // settingsCategories (projection) and reorderCategory (adjacency lookup).
+  const rawDtos = ref<CategoryDTO[]>([])
+
   const { data: raw, pending, error, refresh } = useAsyncResource(async () => {
     const { data, error: fetchError } = await apiClient.GET('/api/categories')
     if (fetchError || !data) throw new Error('Failed to load categories')
+    rawDtos.value = data
     return data.map(mapCategory)
   })
 
+  // ── Part 1: read-only overview grid (existing consumers – DO NOT change) ──────
   const categories = computed(() => raw.value ?? [])
 
-  return { categories, pending, error, refresh }
+  // ── Part 2: Settings pane projection ─────────────────────────────────────────
+  const settingsCategories = computed<SettingsCategory[]>(() =>
+    rawDtos.value.map(mapSettingsCategory),
+  )
+
+  // §16 per-row mutation state: busyId flags the in-flight row; error carries any
+  // backend failure message surfaced inline by the pane.
+  const categoryAction = ref<RowActionState>({ busyId: null })
+
+  /**
+   * Internal helper — set busy, run fn, refetch on success, clear state.
+   * Any thrown error (including backend {message}) surfaces in categoryAction.error.
+   */
+  async function categoryMutate(busyId: string, fn: () => Promise<void>): Promise<void> {
+    categoryAction.value = { busyId }
+    try {
+      await fn()
+      await refresh()
+      categoryAction.value = { busyId: null }
+    }
+    catch (e) {
+      categoryAction.value = {
+        busyId: null,
+        error: e instanceof Error ? e.message : 'Action failed',
+      }
+    }
+  }
+
+  /** Adds a new category. busyId is ADD_ACTION_ID during the call (no row id yet). */
+  async function addCategory(name: string): Promise<void> {
+    await categoryMutate(ADD_ACTION_ID, async () => {
+      const res = await apiClient.POST('/api/categories', { body: { name } })
+      if (res.error) throw new Error(res.error.message)
+    })
+  }
+
+  /** Renames a category. The backend moves the on-disk folder atomically. */
+  async function renameCategory({ id, name }: { id: string, name: string }): Promise<void> {
+    await categoryMutate(id, async () => {
+      const res = await apiClient.PATCH('/api/categories/{id}', {
+        params: { path: { id } },
+        body: { name },
+      })
+      if (res.error) throw new Error(res.error.message)
+    })
+  }
+
+  /**
+   * Reorders a category by swapping its sortOrder with the adjacent neighbor in the
+   * given direction (−1 = up, +1 = down in the current list). No-ops silently when
+   * already at the list edge (the pane's canMoveUp/canMoveDown flags prevent this
+   * from the UI, but the guard is here for safety). Both rows are PATCHed sequentially
+   * so the sorted view reflects the full swap on refetch.
+   */
+  async function reorderCategory({ id, direction }: { id: string, direction: ReorderDirection }): Promise<void> {
+    const list = rawDtos.value
+    const idx = list.findIndex(c => c.id === id)
+    if (idx === -1) return
+    const neighborIdx = idx + direction
+    if (neighborIdx < 0 || neighborIdx >= list.length) return
+
+    const target = list[idx]
+    const neighbor = list[neighborIdx]
+
+    await categoryMutate(id, async () => {
+      // Give target the neighbor's sortOrder, then give neighbor the target's old value.
+      const r1 = await apiClient.PATCH('/api/categories/{id}', {
+        params: { path: { id: target.id } },
+        body: { sortOrder: neighbor.sortOrder },
+      })
+      if (r1.error) throw new Error(r1.error.message)
+
+      const r2 = await apiClient.PATCH('/api/categories/{id}', {
+        params: { path: { id: neighbor.id } },
+        body: { sortOrder: target.sortOrder },
+      })
+      if (r2.error) throw new Error(r2.error.message)
+    })
+  }
+
+  /**
+   * Deletes a category. When `targetId` is non-empty, the category still has members
+   * and they must be moved first: each series is PATCHed to `targetId`, then the
+   * now-empty category is deleted.
+   *
+   * Member series are fetched by category NAME — GET /api/series?category=<name>
+   * filters by name (string), not UUID. The limit is capped at 200 (the API maximum);
+   * a personal library is expected to stay well under that per category.
+   *
+   * When `targetId` is empty ("") the category is already empty and we DELETE directly.
+   * Backend returns 409 if it still has members, surfaced via categoryAction.error.
+   */
+  async function deleteCategory({ id, targetId }: { id: string, targetId: string }): Promise<void> {
+    await categoryMutate(id, async () => {
+      if (targetId) {
+        const cat = rawDtos.value.find(c => c.id === id)
+        if (!cat) throw new Error('Category not found')
+
+        const seriesRes = await apiClient.GET('/api/series', {
+          params: { query: { category: cat.name, limit: 200 } },
+        })
+        if (seriesRes.error || !seriesRes.data) {
+          throw new Error(seriesRes.error ? seriesRes.error.message : 'Failed to load series')
+        }
+
+        for (const s of seriesRes.data) {
+          const r = await apiClient.PATCH('/api/series/{id}/category', {
+            params: { path: { id: s.id } },
+            body: { categoryId: targetId },
+          })
+          if (r.error) throw new Error(r.error.message)
+        }
+      }
+
+      const delRes = await apiClient.DELETE('/api/categories/{id}', {
+        params: { path: { id } },
+      })
+      if (delRes.error) throw new Error(delRes.error.message)
+    })
+  }
+
+  return {
+    // ── Part 1: read-only surface (existing consumers, unchanged) ─────────────
+    categories,
+    pending,
+    error,
+    refresh,
+    // ── Part 2: Settings CRUD surface (additive) ──────────────────────────────
+    settingsCategories,
+    categoryAction,
+    addCategory,
+    renameCategory,
+    reorderCategory,
+    deleteCategory,
+  }
 }
