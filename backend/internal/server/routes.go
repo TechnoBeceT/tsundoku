@@ -31,6 +31,8 @@ import (
 //   - /docs, /docs/…                               — Scalar API reference + raw OpenAPI spec (no auth).
 //   - /api/owner/claim                             — first-run owner creation (no auth; fail-closed).
 //   - /api/owner/login                             — owner login (no auth).
+//   - /api/owner/logout                            — revoke session cookie (RequireOwner).
+//   - /api/owner/me                                — return current owner identity (RequireOwner).
 //   - /api/progress                                — SSE stream (RequireOwner).
 //   - /api/sources                                 — list Suwayomi sources (RequireOwner).
 //   - /api/search                                  — multi-source manga search (RequireOwner).
@@ -91,8 +93,10 @@ func registerRoutes(
 	api.POST("/owner/claim", ownerH.Claim)
 	api.POST("/owner/login", ownerH.Login)
 
-	// Authenticated API group — all routes require a valid Bearer token.
-	authed := e.Group("/api", mw.RequireOwner(authSvc, false)) // TODO(task-6): replace false with cfg.Auth.CookieSecure
+	// Authenticated API group — all routes require a valid owner session.
+	authed := e.Group("/api", mw.RequireOwner(authSvc, cfg.Auth.CookieSecure))
+	authed.POST("/owner/logout", ownerH.Logout)
+	authed.GET("/owner/me", ownerH.Me)
 	sse.RegisterRoutes(authed, hub)
 
 	// Library (series) API. The service owns the Ent client and the storage root
