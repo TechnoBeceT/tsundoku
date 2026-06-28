@@ -65,7 +65,7 @@ function openImport(candidate: DiscoverCandidate): void {
       @retry="retry"
       @inspect="openImport"
       @adopt="openImport"
-      @open-source-link="(c: DiscoverCandidate) => window.open(c.url, '_blank', 'noopener')"
+      @open-source-link="(c: DiscoverCandidate) => { if (isHttpUrl(c.url)) window.open(c.url, '_blank', 'noopener') }"
     />
   </div>
 </template>
