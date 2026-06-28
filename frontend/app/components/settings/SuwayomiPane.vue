@@ -6,16 +6,15 @@ import FlareSolverrCard from './FlareSolverrCard.vue'
 import type { FlareSolverrConfig, SaveState, SocksProxyConfig, SuwayomiConfig } from '../screens/settings.types'
 
 /**
- * SuwayomiPane — the proxied Suwayomi server config pane: the read-only Database
- * card (a deploy concern) plus the two editable, toggle-gated cards (SOCKS proxy
- * + FlareSolverr) and a §16 SaveFooter.
+ * SuwayomiPane — the proxied Suwayomi server config pane: two editable,
+ * toggle-gated cards (SOCKS proxy + FlareSolverr) and a §16 SaveFooter.
  *
  * Keeps LOCAL editable copies of the SOCKS + FlareSolverr config seeded from
- * `config`; Save emits the merged config (read-only DB passed through unchanged),
- * and the copies re-seed when the parent reflects the persisted value back (§16
- * round-trip). The Save button disables until something is dirty.
+ * `config`; Save emits the merged config, and the copies re-seed when the parent
+ * reflects the persisted value back (§16 round-trip). The Save button disables
+ * until something is dirty.
  *
- *   - `config`: the whole proxied Suwayomi config (read-only DB + two editables).
+ *   - `config`: the whole proxied Suwayomi config (SOCKS proxy + FlareSolverr).
  *   - `save`: the §16 save lifecycle (loading / success / error).
  *
  * Emits `save` with the full merged config.
@@ -78,8 +77,8 @@ function onSave() {
 </template>
 
 <style scoped>
-/* The pane stacks the DB card, the two gated cards, and the SaveFooter with the
-   shared 16px inter-card rhythm. */
+/* The pane stacks the two gated cards and the SaveFooter with the shared 16px
+   inter-card rhythm. */
 .pane-stack {
   display: flex;
   flex-direction: column;
