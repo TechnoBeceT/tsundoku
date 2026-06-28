@@ -12,8 +12,14 @@
  *   @load-more → loadMore (appends next page)
  *
  * §16: pending true during fetch; error shown as a dismissible ErrorBanner.
+ *
+ * Initial-category: if the page is opened with ?category=<name> (e.g. by
+ * clicking a category card on the Categories page) the library pre-filters
+ * to that category on first load without an extra round-trip.
  */
-const { series, categories, total, pending, error, activeCategory, setCategory, loadMore } = useLibrary()
+const route = useRoute()
+const initialCategory = typeof route.query.category === 'string' ? route.query.category : null
+const { series, categories, total, pending, error, activeCategory, setCategory, loadMore } = useLibrary({ initialCategory })
 </script>
 
 <template>

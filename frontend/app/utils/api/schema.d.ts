@@ -1151,11 +1151,8 @@ export interface components {
         AdoptRequest: {
             /** @description Canonical series title; all providers attach to the series slug derived from this. */
             title: string;
-            /**
-             * @description Optional target category; omit to use the schema default (Other).
-             * @enum {string}
-             */
-            category?: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+            /** @description Target category by NAME (user-defined; free string). */
+            category?: string;
             /** @description Ordered list of (source, manga) pairs to adopt; must have at least one entry. */
             providers: components["schemas"]["AdoptProvider"][];
         };
