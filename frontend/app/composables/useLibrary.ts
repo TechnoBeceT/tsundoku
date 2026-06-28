@@ -93,7 +93,10 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
 
       // Read the exact server total from the X-Total-Count header; fall back to
       // the current series length when the header is absent or non-numeric.
-      const headerTotal = Number(s.response.headers.get('X-Total-Count'))
+      // Null-guard is load-bearing: Number(null) === 0 (a finite value), so an
+      // absent header would otherwise pin total to 0 and break pagination.
+      const raw = s.response.headers.get('X-Total-Count')
+      const headerTotal = Number(raw ?? NaN)
       total.value = Number.isFinite(headerTotal) ? headerTotal : series.value.length
 
       if (c?.data) {

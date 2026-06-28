@@ -29,16 +29,20 @@ const makeRow = (n: number) => ({
 
 const FIVE_ROWS = Array.from({ length: 5 }, (_, i) => makeRow(i + 1))
 
+// A mutable header value the mock reads, so each test can choose whether the
+// /api/series response carries an X-Total-Count header (string) or none (null).
+let seriesTotalHeader: string | null = '137'
+
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
     GET: vi.fn().mockImplementation((path: string) => {
       if (path === '/api/series') {
+        const headers =
+          seriesTotalHeader === null ? {} : { 'X-Total-Count': seriesTotalHeader }
         return Promise.resolve({
           data: FIVE_ROWS,
           error: null,
-          response: new Response(null, {
-            headers: { 'X-Total-Count': '137' },
-          }),
+          response: new Response(null, { headers }),
         })
       }
       // /api/categories — return an empty list
@@ -54,11 +58,24 @@ vi.mock('~/utils/api/client', () => ({
 
 describe('useLibrary – exact total from X-Total-Count', () => {
   it('reads total from the response header, not the sentinel', async () => {
+    seriesTotalHeader = '137'
     const { total } = useLibrary()
 
     // The initial load fires as a fire-and-forget void; wait until it settles.
     await vi.waitFor(() => {
       expect(total.value).toBe(137)
+    })
+  })
+
+  it('falls back to the page length when the header is absent', async () => {
+    // Guards the null-guard: Number(null) === 0 (finite), so without the guard
+    // an absent header would pin total to 0 and break pagination. With 5 rows
+    // and no header, total must fall back to series.value.length === 5.
+    seriesTotalHeader = null
+    const { total } = useLibrary()
+
+    await vi.waitFor(() => {
+      expect(total.value).toBe(5)
     })
   })
 })
