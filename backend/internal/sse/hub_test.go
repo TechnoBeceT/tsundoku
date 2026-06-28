@@ -284,7 +284,7 @@ func TestProgressRouteRequiresOwner(t *testing.T) {
 	// Hide Echo's default error handler output in tests.
 	e.HideBanner = true
 
-	api := e.Group("/api", middleware.RequireOwner(authSvc))
+	api := e.Group("/api", middleware.RequireOwner(authSvc, false))
 	sse.RegisterRoutes(api, hub)
 
 	t.Run("unauthenticated returns 401", func(t *testing.T) {

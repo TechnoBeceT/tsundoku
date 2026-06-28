@@ -157,7 +157,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
-	authed := e.Group("/api", middleware.RequireOwner(authSvc))
+	authed := e.Group("/api", middleware.RequireOwner(authSvc, false))
 	authed.GET("/sources", h.Sources)
 	authed.GET("/search", h.Search)
 	authed.GET("/sources/:sourceId/browse", h.Browse)

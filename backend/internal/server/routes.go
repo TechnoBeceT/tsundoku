@@ -92,7 +92,7 @@ func registerRoutes(
 	api.POST("/owner/login", ownerH.Login)
 
 	// Authenticated API group — all routes require a valid Bearer token.
-	authed := e.Group("/api", mw.RequireOwner(authSvc))
+	authed := e.Group("/api", mw.RequireOwner(authSvc, false)) // TODO(task-6): replace false with cfg.Auth.CookieSecure
 	sse.RegisterRoutes(authed, hub)
 
 	// Library (series) API. The service owns the Ent client and the storage root
