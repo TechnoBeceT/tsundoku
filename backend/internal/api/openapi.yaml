@@ -70,6 +70,16 @@ components:
           description: Signed Bearer JWT for the authenticated owner.
           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 
+    MeResponse:
+      type: object
+      required:
+        - ownerId
+      properties:
+        ownerId:
+          type: string
+          format: uuid
+          description: The authenticated owner's UUID.
+
     ErrorResponse:
       type: object
       required:
@@ -988,7 +998,12 @@ paths:
               $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
-          description: Credentials accepted. Returns a signed Bearer token.
+          description: Credentials accepted. Returns a signed Bearer token and sets an HttpOnly session cookie.
+          headers:
+            Set-Cookie:
+              description: HttpOnly session cookie (tsundoku_session).
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1001,6 +1016,46 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/owner/logout:
+    post:
+      operationId: logoutOwner
+      summary: Clear the owner session cookie.
+      tags:
+        - owner
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: Logged out (session cookie cleared).
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/owner/me:
+    get:
+      operationId: getOwner
+      summary: The authenticated owner's identity.
+      tags:
+        - owner
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The authenticated owner.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+        "401":
+          description: Missing or invalid Bearer token.
           content:
             application/json:
               schema:
