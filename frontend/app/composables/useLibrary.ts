@@ -6,10 +6,9 @@
  * SeriesSummary[] / CategorySummary[] types, and exposes a paginated, reactive
  * surface for <LibraryList>.
  *
- * Pagination note: GET /api/series returns a plain SeriesSummary[] array with
- * no pagination envelope and no total field. We use page.length === PAGE as a
- * "possibly more results" sentinel — a full page bumps total by 1 so hasMore
- * stays true; a short page closes the affordance.
+ * Pagination: GET /api/series includes an X-Total-Count response header with
+ * the exact server-side total. We read that header and fall back to
+ * series.value.length only when it is absent or non-numeric.
  */
 import { ref, computed } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -92,9 +91,10 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
       const page = s.data.map(mapSeriesItem)
       series.value = append ? [...series.value, ...page] : page
 
-      // Compute a sentinel total: if we got a full page there might be more;
-      // a short page means we've reached the end.
-      total.value = series.value.length + (page.length === PAGE ? 1 : 0)
+      // Read the exact server total from the X-Total-Count header; fall back to
+      // the current series length when the header is absent or non-numeric.
+      const headerTotal = Number(s.response.headers.get('X-Total-Count'))
+      total.value = Number.isFinite(headerTotal) ? headerTotal : series.value.length
 
       if (c?.data) {
         categories.value = c.data.map(mapCategoryItem)
