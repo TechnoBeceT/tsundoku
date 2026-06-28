@@ -122,6 +122,8 @@ const emit = defineEmits<{
   'remove-repo': [id: string]
   /** Move a repository up (−1) or down (+1) in the list. */
   'reorder-repo': [payload: { id: string, direction: ReorderDirection }]
+  /** The extension update-check cadence was changed by the user. */
+  'update:ext-check-interval': [DurationValue]
 }>()
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
@@ -188,6 +190,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @add-repo="emit('add-repo', $event)"
           @remove-repo="emit('remove-repo', $event)"
           @reorder-repo="emit('reorder-repo', $event)"
+          @update:ext-check-interval="emit('update:ext-check-interval', $event)"
         />
       </div>
     </div>

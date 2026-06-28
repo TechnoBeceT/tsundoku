@@ -1,9 +1,10 @@
 /**
- * useSettings — data layer for the Settings → Library pane.
+ * useSettings — data layer for the Settings → Library pane + standalone tunables.
  *
  * Fetches GET /api/settings and GET /api/system in parallel; maps the backend
- * Setting[] and System DTO onto LibrarySettings and SystemInfo. Exposes
- * saveLibrary() with the §16 SaveState lifecycle: idle → saving → success/error.
+ * Setting[] and System DTO onto LibrarySettings, SystemInfo, and the standalone
+ * extensionCheckInterval tunable. Exposes saveLibrary() and saveExtensionCheckInterval()
+ * with the §16 SaveState lifecycle: idle → saving → success/error.
  *
  * Duration helpers (exported for testability):
  *   parseGoDuration("2h0m0s") → { value: 2, unit: 'h' }
@@ -14,12 +15,15 @@
  * is accepted by Go's time.ParseDuration without modification.
  *
  * Key mapping (backend key → LibrarySettings field):
- *   jobs.refresh_interval    → refreshInterval  (DurationValue)
- *   jobs.download_interval   → downloadInterval (DurationValue)
- *   jobs.retry_backoff       → retryBackoff     (DurationValue)
- *   jobs.max_retries         → maxRetries       (number)
- *   health.stale_grace_days  → staleGraceDays   (number)
- *   jobs.refresh_concurrency → refreshConcurrency (number)
+ *   jobs.refresh_interval         → refreshInterval  (DurationValue)
+ *   jobs.download_interval        → downloadInterval (DurationValue)
+ *   jobs.retry_backoff            → retryBackoff     (DurationValue)
+ *   jobs.max_retries              → maxRetries       (number)
+ *   health.stale_grace_days       → staleGraceDays   (number)
+ *   jobs.refresh_concurrency      → refreshConcurrency (number)
+ *
+ * Standalone tunables (not part of LibrarySettings — live in other panes):
+ *   jobs.extension_check_interval → extensionCheckInterval (DurationValue)
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -75,6 +79,9 @@ const DEFAULTS: LibrarySettings = {
   refreshConcurrency: 4,
 }
 
+// Default for the standalone extension-check-interval tunable (Extensions pane).
+const EXT_CHECK_DEFAULT: DurationValue = { value: 24, unit: 'h' }
+
 // ── DTO mappers ───────────────────────────────────────────────────────────────
 
 function mapSettings(settings: SettingDTO[]): LibrarySettings {
@@ -121,6 +128,11 @@ export function useSettings() {
   })
   const system = ref<SystemInfo>({ storageFolder: '', serverPort: '', database: '' })
   const librarySave = ref<SaveState>({ status: 'idle' })
+
+  // Standalone tunable: extension-check cadence (Extensions pane, not LibrarySettings).
+  const extensionCheckInterval = ref<DurationValue>({ ...EXT_CHECK_DEFAULT })
+  const extSave = ref<SaveState>({ status: 'idle' })
+
   const pending = ref(false)
   const error = ref<string | null>(null)
 
@@ -136,6 +148,11 @@ export function useSettings() {
       if (systemRes.error || !systemRes.data) throw new Error('Failed to load system info')
       library.value = mapSettings(settingsRes.data)
       system.value = mapSystem(systemRes.data)
+      // Standalone: extract extension-check interval from the same settings list.
+      const rawExtCheck = settingsRes.data.find(s => s.key === 'jobs.extension_check_interval')?.value
+      extensionCheckInterval.value = rawExtCheck !== undefined
+        ? parseGoDuration(rawExtCheck)
+        : { ...EXT_CHECK_DEFAULT }
     }
     catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load settings'
@@ -185,15 +202,49 @@ export function useSettings() {
     }
   }
 
+  /**
+   * §16 save for the standalone extension-check-interval tunable. Sends a
+   * single-key PATCH, drives extSave through the SaveState lifecycle, and
+   * reseeds extensionCheckInterval from the authoritative response.
+   */
+  async function saveExtensionCheckInterval(d: DurationValue): Promise<void> {
+    extSave.value = { status: 'saving' }
+    try {
+      const res = await apiClient.PATCH('/api/settings', {
+        body: {
+          settings: [{ key: 'jobs.extension_check_interval', value: formatGoDuration(d) }],
+        },
+      })
+      if (res.error) {
+        const msg = (res.error as { message?: string }).message ?? 'Save failed'
+        extSave.value = { status: 'error', message: msg }
+        return
+      }
+      // §16: reseed from the authoritative response body.
+      if (res.data) {
+        const raw = res.data.find(s => s.key === 'jobs.extension_check_interval')?.value
+        extensionCheckInterval.value = raw !== undefined ? parseGoDuration(raw) : { ...EXT_CHECK_DEFAULT }
+      }
+      extSave.value = { status: 'success' }
+    }
+    catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      extSave.value = { status: 'error', message: msg }
+    }
+  }
+
   void refresh()
 
   return {
     library,
     system,
     librarySave,
+    extensionCheckInterval,
+    extSave,
     pending,
     error,
     saveLibrary,
+    saveExtensionCheckInterval,
     refresh,
   }
 }

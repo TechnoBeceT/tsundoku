@@ -68,6 +68,8 @@ const emit = defineEmits<{
   'remove-repo': [id: string]
   /** Move a repository up (−1) or down (+1). */
   'reorder-repo': [payload: { id: string, direction: ReorderDirection }]
+  /** The extension update-check cadence was changed by the user. */
+  'update:extCheckInterval': [DurationValue]
 }>()
 
 const extTab = ref<ExtensionTab>('installed')
@@ -195,7 +197,7 @@ function onRepoMove(id: string, direction: MoveDirection) {
     </div>
 
     <SettingRow spaced name="Extension update check" hint="How often to auto-check for extension updates">
-      <DurationInput :model-value="extCheckInterval" disabled />
+      <DurationInput :model-value="extCheckInterval" @update:model-value="emit('update:extCheckInterval', $event)" />
     </SettingRow>
   </template>
 

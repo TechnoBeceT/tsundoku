@@ -46,6 +46,7 @@ const NAMED_EVENTS = [
   'refresh.start',
   'refresh.done',
   'health.summary',
+  'extensions.checked',
 ] as const
 
 function emit(event: string, data: unknown): void {
