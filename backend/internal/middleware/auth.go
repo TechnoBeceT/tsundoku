@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -37,9 +38,13 @@ func RequireOwner(svc *auth.Service, cookieSecure bool) echo.MiddlewareFunc {
 			c.Set(OwnerIDKey, claims.OwnerID)
 
 			// Sliding renewal: re-issue + re-set the cookie past half-life.
+			// Failure is best-effort: log and continue — the existing session
+			// remains valid for the rest of its lifetime.
 			if svc.ShouldRenew(claims, time.Now()) {
 				if fresh, err := svc.Issue(claims.OwnerID); err == nil {
 					c.SetCookie(authcookie.New(fresh, cookieSecure))
+				} else {
+					log.Printf("owner session renewal failed (continuing): %v", err)
 				}
 			}
 			return next(c)

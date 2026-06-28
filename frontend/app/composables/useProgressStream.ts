@@ -68,7 +68,13 @@ export function useProgressStream() {
         // through to the generic Event overload and must be asserted. The string
         // generic makes .data typed as string (not any) to satisfy strict rules.
         const raw: string = (ev as MessageEvent<string>).data
-        const data: unknown = JSON.parse(raw)
+        let data: unknown
+        try {
+          data = JSON.parse(raw)
+        } catch {
+          console.warn('[useProgressStream] unparseable SSE payload on', name, raw)
+          return
+        }
 
         if (name === 'health.summary' && typeof (data as { unhealthy?: unknown }).unhealthy === 'number') {
           unhealthyCount.value = (data as { unhealthy: number }).unhealthy
