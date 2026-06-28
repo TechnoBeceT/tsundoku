@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import LockedRow from '../ui/LockedRow.vue'
 import SaveFooter from '../ui/SaveFooter.vue'
-import SurfaceCard from '../ui/SurfaceCard.vue'
 import ProxyConfigCard from './ProxyConfigCard.vue'
 import FlareSolverrCard from './FlareSolverrCard.vue'
 import type { FlareSolverrConfig, SaveState, SocksProxyConfig, SuwayomiConfig } from '../screens/settings.types'
@@ -71,13 +69,6 @@ function onSave() {
 
 <template>
   <div class="pane-stack">
-    <SurfaceCard title="Database" sub="The engine's DB backend — a deploy concern, read-only here.">
-      <LockedRow plain label="Type" :value="config.database.type" />
-      <LockedRow plain label="URL" :value="config.database.url" />
-      <LockedRow plain label="Username" :value="config.database.username" />
-      <LockedRow plain muted label="Password" value="••••••••" />
-    </SurfaceCard>
-
     <ProxyConfigCard v-model="socks" />
 
     <FlareSolverrCard v-model="flare" />
