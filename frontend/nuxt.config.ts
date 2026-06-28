@@ -102,4 +102,15 @@ export default defineNuxtConfig({
       ],
     },
   },
+
+  // Dev only: proxy /api to the running Go backend so the SPA stays same-origin
+  // (the session cookie is first-party). The backend default port is 9833 —
+  // match TSUNDOKU_SERVER_PORT if overridden.
+  $development: {
+    nitro: {
+      devProxy: {
+        '/api': { target: 'http://localhost:9833/api', changeOrigin: true, cookieDomainRewrite: 'localhost' },
+      },
+    },
+  },
 })
