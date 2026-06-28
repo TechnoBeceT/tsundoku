@@ -223,6 +223,13 @@ type JobsConfig struct {
 	// MaxRetries it is the env default behind the runtime settings overlay. Set
 	// via TSUNDOKU_JOBS_RETRYBACKOFF.
 	RetryBackoff time.Duration
+
+	// ExtensionCheckInterval is the tick period for the extension auto-check job,
+	// which calls FetchExtensions and broadcasts the count of available updates via
+	// an extensions.checked SSE event. Default 24h. Set to 0 to disable the job
+	// (no extensions are checked until a non-zero interval is configured at
+	// runtime via the settings API). Set via TSUNDOKU_JOBS_EXTENSIONCHECKINTERVAL.
+	ExtensionCheckInterval time.Duration
 }
 
 // HealthConfig tunes the M7 source-health computation.
@@ -273,11 +280,12 @@ func defaults() map[string]any {
 		"suwayomi.databaseusername": "",
 		"suwayomi.databasepassword": "",
 		// Jobs — background-job scheduler.
-		"jobs.downloadinterval":   "15m",
-		"jobs.refreshinterval":    "2h",
-		"jobs.refreshconcurrency": 4,
-		"jobs.maxretries":         3,
-		"jobs.retrybackoff":       "1m",
+		"jobs.downloadinterval":       "15m",
+		"jobs.refreshinterval":        "2h",
+		"jobs.refreshconcurrency":     4,
+		"jobs.maxretries":             3,
+		"jobs.retrybackoff":           "1m",
+		"jobs.extensioncheckinterval": "24h",
 		// Health — M7 source-health computation.
 		"health.stalegracedays": 14,
 		"storage.folder":        "/data/manga",
@@ -359,6 +367,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_JOBS_REFRESHCONCURRENCY        → jobs.refreshconcurrency
 //	TSUNDOKU_JOBS_MAXRETRIES                → jobs.maxretries
 //	TSUNDOKU_JOBS_RETRYBACKOFF              → jobs.retrybackoff
+//	TSUNDOKU_JOBS_EXTENSIONCHECKINTERVAL    → jobs.extensioncheckinterval
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //
 // Convention: after stripping the prefix the first "_" separates the

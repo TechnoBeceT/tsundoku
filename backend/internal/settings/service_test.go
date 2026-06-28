@@ -15,12 +15,13 @@ import (
 // testDefaults mirrors the config defaults so resolution tests are meaningful.
 func testDefaults() settings.Defaults {
 	return settings.Defaults{
-		DownloadInterval:   15 * time.Minute,
-		RefreshInterval:    2 * time.Hour,
-		RefreshConcurrency: 4,
-		MaxRetries:         3,
-		RetryBackoff:       time.Minute,
-		StaleGraceDays:     14,
+		DownloadInterval:       15 * time.Minute,
+		RefreshInterval:        2 * time.Hour,
+		RefreshConcurrency:     4,
+		MaxRetries:             3,
+		RetryBackoff:           time.Minute,
+		StaleGraceDays:         14,
+		ExtensionCheckInterval: 24 * time.Hour,
 	}
 }
 
@@ -195,8 +196,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 6 {
-		t.Fatalf("List len = %d, want 6", len(list))
+	if len(list) != 7 {
+		t.Fatalf("List len = %d, want 7", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -249,10 +250,69 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 	s := settings.Static{
 		Download: time.Second, Refresh: 2 * time.Second, Concurrency: 2,
 		Retries: 5, Backoff: 3 * time.Second, StaleGrace: 7,
+		ExtCheck: 12 * time.Hour,
 	}
 	if s.DownloadInterval(ctx) != time.Second || s.RefreshInterval(ctx) != 2*time.Second ||
 		s.RefreshConcurrency(ctx) != 2 || s.MaxRetries(ctx) != 5 ||
-		s.RetryBackoff(ctx) != 3*time.Second || s.StaleGraceDays(ctx) != 7 {
+		s.RetryBackoff(ctx) != 3*time.Second || s.StaleGraceDays(ctx) != 7 ||
+		s.ExtensionCheckInterval(ctx) != 12*time.Hour {
 		t.Errorf("Static returned unexpected values: %+v", s)
+	}
+}
+
+// TestExtensionCheckIntervalValidation proves the extension_check_interval key
+// accepts 0 (disabled) and >= 1h, and rejects positive values below 1h.
+func TestExtensionCheckIntervalValidation(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	// 0 / "0s" = disabled; must be accepted and canonicalize to "0s".
+	if err := svc.Set(ctx, settings.KeyExtensionCheckInterval, "0"); err != nil {
+		t.Fatalf("Set 0: %v", err)
+	}
+	if got := svc.ExtensionCheckInterval(ctx); got != 0 {
+		t.Errorf("ExtensionCheckInterval after Set 0 = %v, want 0", got)
+	}
+
+	// "0s" is also valid (canonical form).
+	if err := svc.Set(ctx, settings.KeyExtensionCheckInterval, "0s"); err != nil {
+		t.Fatalf("Set 0s: %v", err)
+	}
+	if got := svc.ExtensionCheckInterval(ctx); got != 0 {
+		t.Errorf("ExtensionCheckInterval after Set 0s = %v, want 0", got)
+	}
+
+	// Below 1h (but non-zero) must be rejected.
+	if err := svc.Set(ctx, settings.KeyExtensionCheckInterval, "30m"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 30m: want ErrInvalidSetting, got %v", err)
+	}
+
+	// Exactly 1h must be accepted.
+	if err := svc.Set(ctx, settings.KeyExtensionCheckInterval, "1h"); err != nil {
+		t.Fatalf("Set 1h: %v", err)
+	}
+	if got := svc.ExtensionCheckInterval(ctx); got != time.Hour {
+		t.Errorf("ExtensionCheckInterval after Set 1h = %v, want 1h", got)
+	}
+
+	// 24h must be accepted.
+	if err := svc.Set(ctx, settings.KeyExtensionCheckInterval, "24h"); err != nil {
+		t.Fatalf("Set 24h: %v", err)
+	}
+	if got := svc.ExtensionCheckInterval(ctx); got != 24*time.Hour {
+		t.Errorf("ExtensionCheckInterval after Set 24h = %v, want 24h", got)
+	}
+}
+
+// TestExtensionCheckIntervalDefaultAccessor proves ExtensionCheckInterval returns
+// the config default (24h) when no DB override exists.
+func TestExtensionCheckIntervalDefaultAccessor(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.ExtensionCheckInterval(ctx); got != 24*time.Hour {
+		t.Errorf("ExtensionCheckInterval default = %v, want 24h", got)
 	}
 }

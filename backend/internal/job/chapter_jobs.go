@@ -35,6 +35,7 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/sse"
+	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // CycleEvent is the SSE payload broadcast at the start and end of every
@@ -55,17 +56,21 @@ type CycleEvent struct {
 	Error string `json:"error,omitempty"`
 }
 
-// Intervals supplies the runtime-tunable ticker periods. The Start / StartRefresh
-// loops read these at the TOP OF EACH ITERATION (a dynamic timer, not a captured
-// ticker), so an owner's change to the download/refresh cadence via the settings
-// API takes effect on the next cycle without a restart. *settings.Service and
-// settings.Static both satisfy it; reads happen from the ticker goroutines, so
+// Intervals supplies the runtime-tunable ticker periods. The Start / StartRefresh /
+// StartExtensionCheck loops read these at the TOP OF EACH ITERATION (a dynamic
+// timer, not a captured ticker), so an owner's change to the cadence via the
+// settings API takes effect on the next cycle without a restart. *settings.Service
+// and settings.Static both satisfy it; reads happen from the ticker goroutines, so
 // implementations must be safe for concurrent use.
 type Intervals interface {
 	// DownloadInterval is the period between download/upgrade cycles.
 	DownloadInterval(ctx context.Context) time.Duration
 	// RefreshInterval is the period between discovery sweeps.
 	RefreshInterval(ctx context.Context) time.Duration
+	// ExtensionCheckInterval is the period between extension availability checks.
+	// 0 = disabled (the job idles and re-reads the interval on its next pass for
+	// hot-reload — no restart needed to re-enable it).
+	ExtensionCheckInterval(ctx context.Context) time.Duration
 }
 
 // Runner orchestrates the chapter download/upgrade cycle, the discovery refresh
@@ -292,6 +297,69 @@ func (r *Runner) broadcastHealthSummary(unhealthy int) {
 		return
 	}
 	r.hub.Broadcast(sse.Event{Type: "health.summary", Data: json.RawMessage(raw)})
+}
+
+// StartExtensionCheck launches a background goroutine that periodically refreshes
+// the Suwayomi extension catalog so available updates surface without a manual
+// refresh. An interval of 0 disables the job — the goroutine idles for a fixed
+// fallback period and then re-reads the setting, enabling hot-reload (setting a
+// non-zero interval at runtime resumes the job without a restart). Mirrors
+// StartRefresh's dynamic-timer (re-reads the interval at the top of each pass).
+// Returns immediately.
+func (r *Runner) StartExtensionCheck(ctx context.Context, sw suwayomi.Client) {
+	go func() {
+		const disabledRecheck = time.Hour
+		for {
+			iv := r.intervals.ExtensionCheckInterval(ctx)
+			wait := iv
+			if iv <= 0 {
+				wait = disabledRecheck // disabled: idle, re-read later (hot reload)
+			}
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				slog.InfoContext(ctx, "job.Runner: extension-check loop stopped (context cancelled)")
+				return
+			case <-timer.C:
+				if iv <= 0 {
+					continue // still disabled; re-read interval on the next pass
+				}
+				r.runExtensionCheck(ctx, sw)
+			}
+		}
+	}()
+}
+
+// runExtensionCheck calls FetchExtensions and broadcasts an extensions.checked SSE
+// event with the count of extensions that have updates available. A FetchExtensions
+// error is logged and the broadcast is skipped for that cycle.
+func (r *Runner) runExtensionCheck(ctx context.Context, sw suwayomi.Client) {
+	exts, err := sw.FetchExtensions(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "job.Runner: extension check failed", "err", err)
+		return
+	}
+	updates := 0
+	for _, e := range exts {
+		if e.HasUpdate {
+			updates++
+		}
+	}
+	r.broadcastExtensionsChecked(updates)
+}
+
+// broadcastExtensionsChecked emits an extensions.checked SSE event carrying the
+// count of extensions with an available update.
+func (r *Runner) broadcastExtensionsChecked(updates int) {
+	raw, err := json.Marshal(struct {
+		UpdatesAvailable int `json:"updatesAvailable"`
+	}{UpdatesAvailable: updates})
+	if err != nil {
+		// Defensive path: a single int field cannot fail to marshal.
+		return
+	}
+	r.hub.Broadcast(sse.Event{Type: "extensions.checked", Data: json.RawMessage(raw)})
 }
 
 // Reconcile wraps disk.Reconcile: it scans the storage root and idempotently

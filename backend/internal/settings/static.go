@@ -17,6 +17,7 @@ type Static struct {
 	Retries     int
 	Backoff     time.Duration
 	StaleGrace  int
+	ExtCheck    time.Duration
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -36,3 +37,6 @@ func (s Static) RetryBackoff(context.Context) time.Duration { return s.Backoff }
 
 // StaleGraceDays returns the fixed source-health stale threshold.
 func (s Static) StaleGraceDays(context.Context) int { return s.StaleGrace }
+
+// ExtensionCheckInterval returns the fixed extension-check ticker period; 0 = disabled.
+func (s Static) ExtensionCheckInterval(context.Context) time.Duration { return s.ExtCheck }
