@@ -11,17 +11,20 @@ import (
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	entowner "github.com/technobecet/tsundoku/internal/ent/owner"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/pkg/authcookie"
 )
 
 // Handler holds the dependencies for the owner HTTP handlers.
 type Handler struct {
-	client *entpkg.Client
-	auth   *auth.Service
+	client       *entpkg.Client
+	auth         *auth.Service
+	cookieSecure bool
 }
 
-// NewHandler constructs a Handler with the given Ent client and auth service.
-func NewHandler(client *entpkg.Client, authSvc *auth.Service) *Handler {
-	return &Handler{client: client, auth: authSvc}
+// NewHandler constructs a Handler with the given Ent client, auth service, and
+// cookie-secure flag (pass cfg.Auth.CookieSecure in production).
+func NewHandler(client *entpkg.Client, authSvc *auth.Service, cookieSecure bool) *Handler {
+	return &Handler{client: client, auth: authSvc, cookieSecure: cookieSecure}
 }
 
 // Claim handles POST /api/owner/claim.
@@ -46,6 +49,7 @@ func (h *Handler) Claim(c echo.Context) error {
 		return err
 	}
 
+	c.SetCookie(authcookie.New(tok, h.cookieSecure))
 	return c.JSON(http.StatusOK, TokenResponse{Token: tok})
 }
 
@@ -117,6 +121,7 @@ func (h *Handler) Login(c echo.Context) error {
 		return err
 	}
 
+	c.SetCookie(authcookie.New(tok, h.cookieSecure))
 	return c.JSON(http.StatusOK, TokenResponse{Token: tok})
 }
 

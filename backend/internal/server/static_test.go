@@ -85,7 +85,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 
 	// NewHandler requires a real *ent.Client; for route-level tests we pass nil
 	// and ensure no test exercises a path that calls into the DB.
-	ownerH := owner.NewHandler(nil, authSvc)
+	ownerH := owner.NewHandler(nil, authSvc, false)
 
 	settingsSvc := settings.NewService(nil, settings.Defaults{})
 	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, func() {}), authSvc

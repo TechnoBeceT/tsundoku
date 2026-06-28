@@ -22,7 +22,7 @@ func newHandlerWithClient(t *testing.T) (*owner.Handler, *echo.Echo, *entpkg.Cli
 	t.Helper()
 	client := testdb.New(t)
 	svc := auth.NewService("handler-test-secret")
-	h := owner.NewHandler(client, svc)
+	h := owner.NewHandler(client, svc, true)
 	e := echo.New()
 	return h, e, client
 }

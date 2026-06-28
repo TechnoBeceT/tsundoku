@@ -78,7 +78,7 @@ func main() {
 
 	authSvc := auth.NewService(cfg.Auth.Secret)
 	hub := sse.NewHub()
-	ownerH := owner.NewHandler(entClient, authSvc)
+	ownerH := owner.NewHandler(entClient, authSvc, cfg.Auth.CookieSecure)
 
 	// Runtime-tunable settings overlay: env-config defaults (single boundary)
 	// overlaid by the Settings DB table for the allowlisted keys. Threaded into
