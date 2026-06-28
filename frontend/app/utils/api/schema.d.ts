@@ -1572,8 +1572,8 @@ export interface operations {
     listSeries: {
         parameters: {
             query?: {
-                /** @description Restrict to a single category enum value. */
-                category?: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
+                /** @description Restrict to a single category by NAME (user-defined; free string). */
+                category?: string;
                 /** @description Page size (default 50, capped at 200). */
                 limit?: number;
                 /** @description Number of rows to skip. */

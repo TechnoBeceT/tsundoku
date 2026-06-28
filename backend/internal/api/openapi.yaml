@@ -1108,10 +1108,9 @@ paths:
         - name: category
           in: query
           required: false
-          description: Restrict to a single category enum value.
+          description: Restrict to a single category by NAME (user-defined; free string).
           schema:
             type: string
-            enum: [Manga, Manhwa, Manhua, Comic, Other]
         - name: limit
           in: query
           required: false

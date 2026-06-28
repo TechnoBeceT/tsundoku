@@ -10,11 +10,6 @@
  * no pagination envelope and no total field. We use page.length === PAGE as a
  * "possibly more results" sentinel — a full page bumps total by 1 so hasMore
  * stays true; a short page closes the affordance.
- *
- * Category note: the generated schema types the ?category= param as the legacy
- * enum ("Manga"|"Manhwa"|...). M11 made categories user-definable free strings,
- * but the OpenAPI spec has not yet been updated. The cast below is safe at
- * runtime — any category name the backend stored is accepted by the backend.
  */
 import { ref, computed } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -23,10 +18,6 @@ import type { SeriesSummary, CategorySummary } from '~/components/screens/types'
 
 type SeriesSummaryDTO = components['schemas']['SeriesSummary']
 type CategoryDTO = components['schemas']['Category']
-
-// The generated schema still reflects the original fixed-enum set. We widen to
-// string & {} to allow user-defined category names without a hard cast.
-type CategoryParam = 'Manga' | 'Manhwa' | 'Manhua' | 'Comic' | 'Other'
 
 const PAGE = 50
 
@@ -86,9 +77,7 @@ export function useLibrary() {
         apiClient.GET('/api/series', {
           params: {
             query: {
-              // Cast required: generated schema still uses the legacy fixed enum;
-              // M11 user-defined categories are free strings at runtime.
-              category: (activeCategory.value ?? undefined) as CategoryParam | undefined,
+              category: activeCategory.value ?? undefined,
               limit: PAGE,
               offset: offset.value,
             },
