@@ -3,10 +3,10 @@ package system_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
-	"github.com/stretchr/testify/require"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/handler/system"
 )
@@ -25,14 +25,29 @@ func TestGetSystem_ReturnsConfigValues(t *testing.T) {
 	h := system.NewHandler(cfg)
 	req := httptest.NewRequest(http.MethodGet, "/api/system", nil)
 	rec := httptest.NewRecorder()
-	require.NoError(t, h.Get(e.NewContext(req, rec)))
+	if err := h.Get(e.NewContext(req, rec)); err != nil {
+		t.Fatalf("Get: unexpected error: %v", err)
+	}
 
-	require.Equal(t, http.StatusOK, rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Get: want 200, got %d", rec.Code)
+	}
+
 	body := rec.Body.String()
-	require.Contains(t, body, "/library")
-	require.Contains(t, body, "9833")
-	require.Contains(t, body, "db:5432/tsundoku")
+	if !strings.Contains(body, "/library") {
+		t.Errorf("body missing storage folder: %s", body)
+	}
+	if !strings.Contains(body, "9833") {
+		t.Errorf("body missing server port: %s", body)
+	}
+	if !strings.Contains(body, "db:5432/tsundoku") {
+		t.Errorf("body missing database DSN: %s", body)
+	}
 	// SECURITY: credentials must never leak
-	require.NotContains(t, body, "secretpw")
-	require.NotContains(t, body, "secretuser")
+	if strings.Contains(body, "secretpw") {
+		t.Errorf("body must not contain database password: %s", body)
+	}
+	if strings.Contains(body, "secretuser") {
+		t.Errorf("body must not contain database user: %s", body)
+	}
 }
