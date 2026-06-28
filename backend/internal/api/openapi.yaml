@@ -634,8 +634,7 @@ components:
           description: Canonical series title; all providers attach to the series slug derived from this.
         category:
           type: string
-          enum: [Manga, Manhwa, Manhua, Comic, Other]
-          description: Optional target category; omit to use the schema default (Other).
+          description: Target category by NAME (user-defined; free string).
         providers:
           type: array
           description: Ordered list of (source, manga) pairs to adopt; must have at least one entry.
