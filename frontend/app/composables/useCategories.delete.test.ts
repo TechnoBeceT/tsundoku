@@ -80,6 +80,23 @@ describe('useCategories – deleteCategory drain loop', () => {
     deleteCount = 0
   })
 
+  it('rejects immediately when targetId === id and never calls GET /api/series or DELETE', async () => {
+    const { deleteCategory, pending, categoryAction } = useCategories()
+
+    // Wait for the initial GET /api/categories to settle.
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    // Call with the same id for both source and target.
+    await deleteCategory({ id: CATEGORY.id, targetId: CATEGORY.id })
+
+    // The guard must fire before any drain GET or DELETE.
+    expect(seriesGetCount).toBe(0)
+    expect(deleteCount).toBe(0)
+
+    // The thrown error must surface in categoryAction.error.
+    expect(categoryAction.value.error).toBe('Target category must differ from the source category')
+  })
+
   it('loops GET /api/series until empty, PATCHes 250 times, then DELETEs once', async () => {
     const { deleteCategory, pending, categoryAction } = useCategories()
 

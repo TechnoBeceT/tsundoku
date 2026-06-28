@@ -174,6 +174,8 @@ export function useCategories() {
   async function deleteCategory({ id, targetId }: { id: string, targetId: string }): Promise<void> {
     await categoryMutate(id, async () => {
       if (targetId) {
+        if (targetId === id) throw new Error('Target category must differ from the source category')
+
         const cat = rawDtos.value.find(c => c.id === id)
         if (!cat) throw new Error('Category not found')
 

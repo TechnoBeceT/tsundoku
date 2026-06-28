@@ -29,7 +29,7 @@ import {
  *   - `extensions` / `availableExtensions`: installed + installable sets.
  *   - `repos`: the repository URL list.
  *   - `extensionAction` / `repoAction`: the §16 per-row mutation state.
- *   - `extCheckInterval`: the (read-only here) update-check cadence.
+ *   - `extCheckInterval`: the update-check cadence; editable via the Repositories tab — changes are emitted as `update:ext-check-interval`.
  *   - `checkingUpdates`: whether a check-for-updates call is in flight.
  */
 const props = withDefaults(defineProps<{
@@ -43,7 +43,7 @@ const props = withDefaults(defineProps<{
   extensionAction?: RowActionState
   /** §16 state of repo mutations (busy id + error). */
   repoAction?: RowActionState
-  /** Background extension update-check cadence (read-only here). */
+  /** Background extension update-check cadence; editable — changes are emitted as `update:ext-check-interval`. */
   extCheckInterval: DurationValue
   /** Whether a check-for-updates call is in flight. */
   checkingUpdates?: boolean
@@ -69,7 +69,7 @@ const emit = defineEmits<{
   /** Move a repository up (−1) or down (+1). */
   'reorder-repo': [payload: { id: string, direction: ReorderDirection }]
   /** The extension update-check cadence was changed by the user. */
-  'update:extCheckInterval': [DurationValue]
+  'update:ext-check-interval': [DurationValue]
 }>()
 
 const extTab = ref<ExtensionTab>('installed')
@@ -197,7 +197,7 @@ function onRepoMove(id: string, direction: MoveDirection) {
     </div>
 
     <SettingRow spaced name="Extension update check" hint="How often to auto-check for extension updates">
-      <DurationInput :model-value="extCheckInterval" @update:model-value="emit('update:extCheckInterval', $event)" />
+      <DurationInput :model-value="extCheckInterval" @update:model-value="emit('update:ext-check-interval', $event)" />
     </SettingRow>
   </template>
 
