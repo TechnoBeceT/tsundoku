@@ -3,6 +3,7 @@ package series
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 
@@ -51,6 +52,13 @@ func (h *Handler) List(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+
+	total, err := h.svc.CountSeries(c.Request().Context(), seriessvc.ListFilter{Category: category})
+	if err != nil {
+		return mapServiceError(err)
+	}
+	c.Response().Header().Set("X-Total-Count", strconv.Itoa(total))
+
 	return c.JSON(http.StatusOK, out)
 }
 

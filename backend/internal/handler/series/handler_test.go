@@ -258,6 +258,30 @@ func TestList_CategoryFilter(t *testing.T) {
 	}
 }
 
+func TestList_SetsTotalCountHeader(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t) // seeds 2 series: Alpha Saga (Manga) + Beta Quest (Manhwa)
+
+	// Unfiltered: header must equal the total series count.
+	rec := env.do(http.MethodGet, "/api/series", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Total-Count"); got != "2" {
+		t.Fatalf("X-Total-Count: want %q, got %q", "2", got)
+	}
+
+	// Filtered by category: header must reflect the filtered count, not the grand total.
+	rec = env.do(http.MethodGet, "/api/series?category=Manga", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List filtered: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Total-Count"); got != "1" {
+		t.Fatalf("X-Total-Count filtered: want %q, got %q", "1", got)
+	}
+}
+
 func TestList_UnknownCategory(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()

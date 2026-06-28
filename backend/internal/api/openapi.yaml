@@ -1146,6 +1146,11 @@ paths:
       responses:
         "200":
           description: A page of series summaries.
+          headers:
+            X-Total-Count:
+              description: Total number of series matching the filter (across all pages).
+              schema:
+                type: integer
           content:
             application/json:
               schema:
