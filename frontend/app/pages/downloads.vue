@@ -15,6 +15,10 @@
  *   :retrying-all     — bulk retry scope in flight, or null
  *   :retry-error      — surfaced retry/load failure (dismissible banner)
  *   :loading          — true during the initial fetch
+ *   :counts           — exact per-state server counts for badges + bulk gating
+ *   :total            — server total for the active tab (load-more affordance)
+ *   :has-more         — whether more pages exist for the active tab
+ *   :loading-more     — whether a load-more fetch is in flight
  *
  * Emit wiring:
  *   @set-tab        → setTab(tab)
@@ -22,17 +26,23 @@
  *   @retry-all      → retryAll(state)
  *   @open-series    → navigateTo('/series/' + id)
  *   @dismiss-error  → dismissError()
+ *   @load-more      → loadMore()
  */
 const {
   items,
   activeTab,
   loading,
+  total,
+  hasMore,
+  loadingMore,
+  counts,
   retryingIds,
   retryingAll,
   retryError,
   cycleActive,
   nextCycleMinutes,
   setTab,
+  loadMore,
   retry,
   retryAll,
   dismissError,
@@ -50,11 +60,16 @@ const {
       :retrying-all="retryingAll"
       :retry-error="retryError"
       :loading="loading"
+      :counts="counts"
+      :total="total"
+      :has-more="hasMore"
+      :loading-more="loadingMore"
       @set-tab="setTab"
       @retry="retry"
       @retry-all="retryAll"
       @open-series="(id: string) => navigateTo(`/series/${id}`)"
       @dismiss-error="dismissError"
+      @load-more="loadMore"
     />
   </div>
 </template>

@@ -45,6 +45,17 @@ const props = withDefaults(defineProps<{
   retryError?: string
   /** When true, render skeleton rows instead of content. */
   loading?: boolean
+  /**
+   * Exact per-state server counts for tab badges + bulk-action gating. Defaulted to zeros
+   * so existing Storybook stories that omit this prop still render without errors.
+   */
+  counts?: { active: number; failed: number; terminal: number; queued: number }
+  /** Server total for the active tab — drives the load-more affordance. */
+  total?: number
+  /** Whether more pages exist for the active tab (items.length < server total). */
+  hasMore?: boolean
+  /** Whether a load-more fetch is in flight — disables the load-more button. */
+  loadingMore?: boolean
 }>(), {
   activeTab: 'active',
   cycleActive: false,
@@ -53,6 +64,10 @@ const props = withDefaults(defineProps<{
   retryingAll: null,
   retryError: '',
   loading: false,
+  counts: () => ({ active: 0, failed: 0, terminal: 0, queued: 0 }),
+  total: 0,
+  hasMore: false,
+  loadingMore: false,
 })
 
 const emit = defineEmits<{
@@ -66,6 +81,8 @@ const emit = defineEmits<{
   'open-series': [seriesId: string]
   /** Dismiss the surfaced retry-error banner. */
   'dismiss-error': []
+  /** Load the next page of the active tab and append the results. */
+  'load-more': []
 }>()
 
 // ---- Local view state (presentation only, never round-trips) ----------------
@@ -87,13 +104,10 @@ const applySearch = (list: DownloadItem[]): DownloadItem[] => {
   return q ? list.filter((i) => i.seriesTitle.toLowerCase().includes(q)) : list
 }
 
-// ---- Counts (drive the tab badges, always from the full unfiltered set) -----
-const counts = computed(() => ({
-  active: byState(['downloading', 'upgrading']).length,
-  failed: byState(['failed']).length,
-  terminal: byState(['permanently_failed']).length,
-  queued: byState(['wanted', 'upgrade_available']).length,
-}))
+// ---- Counts (exact server totals received via props) ------------------------
+// Computed alias so the template + mainTabs/failTabs accesses (counts.value.x /
+// counts.x) continue to work without further change throughout the file.
+const counts = computed(() => props.counts)
 
 const mainTabs = computed(() => [
   { key: 'active', label: 'Active', count: counts.value.active },
@@ -307,6 +321,14 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
       </div>
     </template>
 
+    <!-- Load more — shown when the active tab has more pages (client search works
+         over the loaded page subset; server-side q= is a deliberate future add). -->
+    <div v-if="hasMore" class="downloads__more">
+      <AppButton variant="mini" size="sm" :loading="loadingMore" @click="emit('load-more')">
+        Load more · {{ items.length }} of {{ total }}
+      </AppButton>
+    </div>
+
     <!-- Requeue-confirm modal -->
     <RequeueConfirmModal
       :open="confirm !== null"
@@ -407,6 +429,13 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 .downloads__progress {
   width: 90px;
   flex: none;
+}
+
+/* ---- Load more (pagination) ----------------------------------------------- */
+.downloads__more {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
 }
 
 /* ---- Upgrade tag (queued) ------------------------------------------------- */

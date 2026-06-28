@@ -58,6 +58,12 @@ func (s *Service) StaleGraceDays(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyStaleGraceDays)
 }
 
+// ExtensionCheckInterval is the extension auto-check ticker period; 0 = disabled
+// (DB override else default).
+func (s *Service) ExtensionCheckInterval(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeyExtensionCheckInterval)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

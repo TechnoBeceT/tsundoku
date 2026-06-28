@@ -392,6 +392,16 @@ func (s *Service) ListSeries(ctx context.Context, filter ListFilter) ([]SeriesSu
 	return out, nil
 }
 
+// CountSeries returns the total number of series matching the filter's category
+// (ignoring Limit/Offset) — used for the GET /api/series X-Total-Count header.
+func (s *Service) CountSeries(ctx context.Context, filter ListFilter) (int, error) {
+	q := s.client.Series.Query()
+	if filter.Category != nil {
+		q = q.Where(entseries.HasCategoryWith(entcategory.Name(*filter.Category)))
+	}
+	return q.Count(ctx)
+}
+
 // GetSeries returns the full detail of one series: its summary fields, the
 // chapter-state rollup, its chapters (ordered by number then chapter_key), and
 // its providers. Each chapter's display Name is sourced from the best provider's

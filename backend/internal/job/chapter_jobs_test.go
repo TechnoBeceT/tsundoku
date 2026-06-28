@@ -266,6 +266,12 @@ func (c *countingIntervals) RefreshInterval(context.Context) time.Duration {
 	return c.refresh
 }
 
+// ExtensionCheckInterval returns a fixed disabled interval (unused by these tests
+// but required to satisfy job.Intervals after the interface widening).
+func (c *countingIntervals) ExtensionCheckInterval(context.Context) time.Duration {
+	return 0
+}
+
 // setDownload mutates the download interval the next read will observe.
 func (c *countingIntervals) setDownload(d time.Duration) {
 	c.mu.Lock()
@@ -454,6 +460,84 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 			t.Fatal("refresh tick did not discover + download the chapter within 15s")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// extCheckFake is a suwayomi.Client double used exclusively by
+// TestRunner_StartExtensionCheck_FetchesAndBroadcasts. It embeds the Client
+// interface (nil — any method other than FetchExtensions would panic, but
+// StartExtensionCheck only calls FetchExtensions) and overrides FetchExtensions
+// to return a deterministic extension list and count its calls.
+type extCheckFake struct {
+	suwayomi.Client
+	mu    sync.Mutex
+	calls int
+}
+
+func (f *extCheckFake) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+	return []suwayomi.Extension{
+		{HasUpdate: true},
+		{HasUpdate: true},
+		{HasUpdate: false},
+	}, nil
+}
+
+func (f *extCheckFake) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// TestRunner_StartExtensionCheck_FetchesAndBroadcasts verifies that
+// StartExtensionCheck calls FetchExtensions and broadcasts an extensions.checked
+// SSE event with updatesAvailable equal to the count of extensions whose
+// HasUpdate field is true.
+func TestRunner_StartExtensionCheck_FetchesAndBroadcasts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+	events, unsub := hub.Subscribe()
+	defer unsub()
+
+	swFake := &extCheckFake{}
+
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 1, Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
+	// Short ExtCheck so the job fires quickly in the test.
+	r := job.NewRunner(d, client, hub, storage, settings.Static{ExtCheck: 20 * time.Millisecond})
+
+	r.StartExtensionCheck(ctx, swFake)
+
+	// Wait for the extensions.checked SSE event and verify its payload.
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type != "extensions.checked" {
+				continue
+			}
+			raw, _ := ev.Data.(json.RawMessage)
+			var p struct {
+				UpdatesAvailable int `json:"updatesAvailable"`
+			}
+			if err := json.Unmarshal([]byte(raw), &p); err != nil {
+				t.Fatalf("unmarshal extensions.checked: %v", err)
+			}
+			if p.UpdatesAvailable != 2 {
+				t.Fatalf("updatesAvailable = %d, want 2", p.UpdatesAvailable)
+			}
+			if swFake.callCount() == 0 {
+				t.Error("FetchExtensions was never called")
+			}
+			return
+		case <-deadline:
+			t.Fatalf("timed out waiting for extensions.checked; FetchExtensions called %d time(s)", swFake.callCount())
+		}
 	}
 }
 

@@ -1626,6 +1626,8 @@ export interface operations {
             /** @description A page of series summaries. */
             200: {
                 headers: {
+                    /** @description Total number of series matching the filter (across all pages). */
+                    "X-Total-Count"?: number;
                     [name: string]: unknown;
                 };
                 content: {

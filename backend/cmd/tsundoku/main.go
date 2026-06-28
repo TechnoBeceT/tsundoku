@@ -121,7 +121,7 @@ func main() {
 	// Start the Suwayomi engine. pm is the embedded process manager (nil in
 	// external mode) — the shutdown path guards on pm != nil so Stop() is only
 	// called when tsundoku owns the process.
-	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount)
+	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient)
 
 	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, runner.Trigger)
 
@@ -159,12 +159,13 @@ func main() {
 // single env boundary (internal/config) is preserved.
 func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 	return settings.Defaults{
-		DownloadInterval:   cfg.Jobs.DownloadInterval,
-		RefreshInterval:    cfg.Jobs.RefreshInterval,
-		RefreshConcurrency: cfg.Jobs.RefreshConcurrency,
-		MaxRetries:         cfg.Jobs.MaxRetries,
-		RetryBackoff:       cfg.Jobs.RetryBackoff,
-		StaleGraceDays:     cfg.Health.StaleGraceDays,
+		DownloadInterval:       cfg.Jobs.DownloadInterval,
+		RefreshInterval:        cfg.Jobs.RefreshInterval,
+		RefreshConcurrency:     cfg.Jobs.RefreshConcurrency,
+		MaxRetries:             cfg.Jobs.MaxRetries,
+		RetryBackoff:           cfg.Jobs.RetryBackoff,
+		StaleGraceDays:         cfg.Health.StaleGraceDays,
+		ExtensionCheckInterval: cfg.Jobs.ExtensionCheckInterval,
 	}
 }
 
@@ -186,16 +187,19 @@ func startSuwayomiEngine(
 	runner *job.Runner,
 	refreshSvc *refresh.Service,
 	unhealthyCount func(context.Context) (int, error),
+	swClient suwayomi.Client,
 ) *suwayomi.ProcessManager {
 	startTickers := func() {
 		// Log the currently-resolved cadence (the loops re-read it each cycle, so
 		// these are the values in force right now, not a fixed schedule).
-		slog.Info("tsundoku: starting download + refresh tickers",
+		slog.Info("tsundoku: starting download + refresh + extension-check tickers",
 			"download_interval", settingsSvc.DownloadInterval(ctx),
 			"refresh_interval", settingsSvc.RefreshInterval(ctx),
+			"extension_check_interval", settingsSvc.ExtensionCheckInterval(ctx),
 		)
 		runner.Start(ctx)
 		runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
+		runner.StartExtensionCheck(ctx, swClient)
 	}
 
 	if cfg.Suwayomi.IsExternal() {

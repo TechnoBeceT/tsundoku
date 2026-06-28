@@ -54,6 +54,9 @@ const (
 	KeyRetryBackoff = "jobs.retry_backoff"
 	// KeyStaleGraceDays tunes the M7 source-health stale threshold (int, 0..365).
 	KeyStaleGraceDays = "health.stale_grace_days"
+	// KeyExtensionCheckInterval is the extension auto-check ticker period
+	// (duration, 0 = disabled or >= 1h).
+	KeyExtensionCheckInterval = "jobs.extension_check_interval"
 )
 
 // Defaults carries the config-resolved default for every tunable key. main
@@ -61,12 +64,13 @@ const (
 // it into NewService, so the settings layer never touches os.Getenv — the single
 // env boundary stays in internal/config.
 type Defaults struct {
-	DownloadInterval   time.Duration
-	RefreshInterval    time.Duration
-	RefreshConcurrency int
-	MaxRetries         int
-	RetryBackoff       time.Duration
-	StaleGraceDays     int
+	DownloadInterval       time.Duration
+	RefreshInterval        time.Duration
+	RefreshConcurrency     int
+	MaxRetries             int
+	RetryBackoff           time.Duration
+	StaleGraceDays         int
+	ExtensionCheckInterval time.Duration
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -92,6 +96,7 @@ var tunableOrder = []string{
 	KeyMaxRetries,
 	KeyRetryBackoff,
 	KeyStaleGraceDays,
+	KeyExtensionCheckInterval,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -121,6 +126,10 @@ var tunables = map[string]tunable{
 		KeyStaleGraceDays, "days", 0, 365,
 		func(d Defaults) int { return d.StaleGraceDays },
 	),
+	KeyExtensionCheckInterval: durationTunableMinOrZero(
+		KeyExtensionCheckInterval, "duration", time.Hour,
+		func(d Defaults) time.Duration { return d.ExtensionCheckInterval },
+	),
 }
 
 // durationTunable builds a duration-typed tunable that rejects values below min
@@ -137,6 +146,32 @@ func durationTunable(key, unit string, minVal time.Duration, def func(Defaults) 
 			}
 			if d < minVal {
 				return "", fmt.Errorf("%w: %s must be at least %s (got %s)", ErrInvalidSetting, key, minVal, d)
+			}
+			return d.String(), nil
+		},
+		def: func(d Defaults) string { return def(d).String() },
+	}
+}
+
+// durationTunableMinOrZero is like durationTunable but additionally accepts 0 as
+// a special "disabled" sentinel stored canonically as "0s". Any positive value
+// must still satisfy >= minVal. Used for jobs whose interval can be toggled off
+// at runtime without redeploying the binary.
+func durationTunableMinOrZero(key, unit string, minVal time.Duration, def func(Defaults) time.Duration) tunable {
+	return tunable{
+		key:  key,
+		typ:  TypeDuration,
+		unit: unit,
+		validate: func(raw string) (string, error) {
+			d, err := time.ParseDuration(strings.TrimSpace(raw))
+			if err != nil {
+				return "", fmt.Errorf("%w: %s %q is not a valid duration", ErrInvalidSetting, key, raw)
+			}
+			if d == 0 {
+				return "0s", nil // 0 = disabled; canonical form
+			}
+			if d < minVal {
+				return "", fmt.Errorf("%w: %s must be 0 (disabled) or at least %s (got %s)", ErrInvalidSetting, key, minVal, d)
 			}
 			return d.String(), nil
 		},

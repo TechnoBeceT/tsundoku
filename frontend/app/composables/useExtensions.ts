@@ -19,16 +19,15 @@
  *   removeRepo(id)               — filters out (id===url) + PUT full updated list
  *   reorderRepo({id, direction}) — swaps with neighbor + PUT full updated list
  *
- * extCheckInterval KNOWN GAP: there is no backend settings key for an auto-
- * extension-update-check cadence — extension refresh is MANUAL-ONLY via the
- * checkUpdates action (POST /refresh). The exported constant is a neutral
- * placeholder for the read-only DurationInput in the Repositories tab and is
- * never submitted to the API.
+ * Auto-refetches on `extensions.checked` SSE events so the list stays current
+ * after a background check-for-updates job runs on the server. The extension-
+ * check cadence is now a real backend setting (jobs.extension_check_interval)
+ * managed by useSettings, not a placeholder in this composable.
  */
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { DurationValue, Extension, Repo, ReorderDirection, RowActionState } from '~/components/screens/settings.types'
+import type { Extension, Repo, ReorderDirection, RowActionState } from '~/components/screens/settings.types'
 import { ADD_ACTION_ID } from '~/components/screens/settings.types'
 import { isHttpUrl } from '~/utils/safeUrl'
 
@@ -59,11 +58,6 @@ export function useExtensions() {
   const extensionAction = ref<RowActionState>({ busyId: null })
   const repoAction = ref<RowActionState>({ busyId: null })
   const checkingUpdates = ref(false)
-
-  // extCheckInterval — KNOWN GAP: no backend key for an auto extension-update-check
-  // cadence (refresh is manual-only via checkUpdates). Neutral placeholder for the
-  // read-only DurationInput in the Repositories tab — never submitted to the API.
-  const extCheckInterval: DurationValue = { value: 0, unit: 'h' }
 
   // ── Internal helpers ────────────────────────────────────────────────────────
 
@@ -246,6 +240,11 @@ export function useExtensions() {
     await repoMutate(id, newUrls)
   }
 
+  // Auto-refetch when the background extension-check job fires (mirrors useDownloads).
+  const { on } = useProgressStream()
+  const offChecked = on('extensions.checked', () => { void refresh() })
+  onUnmounted(offChecked)
+
   void refresh()
 
   return {
@@ -254,7 +253,6 @@ export function useExtensions() {
     repos,
     extensionAction,
     repoAction,
-    extCheckInterval,
     checkingUpdates,
     pending,
     error,

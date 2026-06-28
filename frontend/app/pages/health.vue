@@ -11,15 +11,19 @@
  *   :loading     — true during the initial load (skeleton cards)
  *   :refreshing  — true during a manual re-poll (Rescan spinner)
  *
+ * Error wiring:
+ *   error — string | null; shown as a page-level ErrorBanner on GET failure.
+ *
  * Emit wiring:
  *   @open-series → navigateTo('/series/' + id)
  *   @refresh     → refresh() (re-polls GET /api/health, sets refreshing)
  */
-const { series, pending, refreshing, refresh } = useHealth()
+const { series, pending, refreshing, error, refresh } = useHealth()
 </script>
 
 <template>
   <div class="page-health">
+    <ErrorBanner v-if="error" :message="error" />
     <LibraryHealth
       :series="series"
       :loading="pending"

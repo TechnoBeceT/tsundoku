@@ -9,11 +9,12 @@
  *   @open-category → navigate to "/" with ?category=<name> so the library
  *                    page pre-filters to the selected category on arrival.
  */
-const { categories, pending } = useCategories()
+const { categories, pending, error } = useCategories()
 </script>
 
 <template>
   <div class="page-categories">
+    <ErrorBanner v-if="error" :message="error" />
     <Categories
       :categories="categories"
       :loading="pending"

@@ -4,9 +4,11 @@
  *
  * Assembles the 5-pane Settings screen from four composables:
  *   useSettings()         → library knobs + system info + saveLibrary
+ *                           + extensionCheckInterval + saveExtensionCheckInterval
  *   useCategories()       → settingsCategories + categoryAction + CRUD methods
  *   useSuwayomiSettings() → config + suwayomiSave + save
- *   useExtensions()       → extensions + repos + extCheckInterval + mutations
+ *   useExtensions()       → extensions + repos + mutations (no longer the source of
+ *                           extCheckInterval — that moved to useSettings)
  *
  * Prop wiring:
  *   :active-pane          — local activePane ref (default 'library')
@@ -26,27 +28,28 @@
  *   :repos                — repos from useExtensions
  *   :extension-action     — extensionAction from useExtensions
  *   :repo-action          — repoAction from useExtensions
- *   :ext-check-interval   — extCheckInterval from useExtensions
+ *   :ext-check-interval   — extensionCheckInterval from useSettings (live tunable)
  *   :checking-updates     — checkingUpdates from useExtensions
  *   :loading              — true while any primary dataset is still fetching
  *
  * Emit wiring:
- *   @set-pane            → setPane (updates local activePane ref)
- *   @save-library        → saveLibrary
- *   @save-suwayomi       → save
- *   @add-category        → addCategory
- *   @rename-category     → renameCategory
- *   @reorder-category    → reorderCategory
- *   @delete-category     → deleteCategory
- *   @set-default-category → no-op (owner dropped this action; Settings.vue always emits it)
- *   @start-upgrade       → no-op (engine deferred)
- *   @install-extension   → installExtension
- *   @update-extension    → updateExtension
- *   @uninstall-extension → uninstallExtension
- *   @check-updates       → checkUpdates
- *   @add-repo            → addRepo
- *   @remove-repo         → removeRepo
- *   @reorder-repo        → reorderRepo
+ *   @set-pane                    → setPane (updates local activePane ref)
+ *   @save-library                → saveLibrary
+ *   @save-suwayomi               → save
+ *   @add-category                → addCategory
+ *   @rename-category             → renameCategory
+ *   @reorder-category            → reorderCategory
+ *   @delete-category             → deleteCategory
+ *   @set-default-category        → no-op (owner dropped this action)
+ *   @start-upgrade               → no-op (engine deferred)
+ *   @install-extension           → installExtension
+ *   @update-extension            → updateExtension
+ *   @uninstall-extension         → uninstallExtension
+ *   @check-updates               → checkUpdates
+ *   @add-repo                    → addRepo
+ *   @remove-repo                 → removeRepo
+ *   @reorder-repo                → reorderRepo
+ *   @update:ext-check-interval   → saveExtensionCheckInterval
  */
 import type { EngineInfo, SettingsPane } from '~/components/screens/settings.types'
 
@@ -54,6 +57,8 @@ const {
   library,
   system,
   librarySave,
+  extensionCheckInterval,
+  saveExtensionCheckInterval,
   pending: settingsPending,
   saveLibrary,
 } = useSettings()
@@ -81,7 +86,6 @@ const {
   repos,
   extensionAction,
   repoAction,
-  extCheckInterval,
   checkingUpdates,
   pending: extPending,
   installExtension,
@@ -149,7 +153,7 @@ const loading = computed(
       :repos="repos"
       :extension-action="extensionAction"
       :repo-action="repoAction"
-      :ext-check-interval="extCheckInterval"
+      :ext-check-interval="extensionCheckInterval"
       :checking-updates="checkingUpdates"
       :loading="loading"
       @set-pane="setPane"
@@ -168,6 +172,7 @@ const loading = computed(
       @add-repo="addRepo"
       @remove-repo="removeRepo"
       @reorder-repo="reorderRepo"
+      @update:ext-check-interval="saveExtensionCheckInterval"
     />
   </div>
 </template>

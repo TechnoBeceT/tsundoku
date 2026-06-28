@@ -1,8 +1,10 @@
 /**
  * useDownloads — data layer for the downloads screen.
  *
- * Fetches GET /api/downloads?state=<all-relevant-states> once; the screen
- * derives the Active / Failed / Queued tab views itself from the flat list.
+ * Per-tab paginated loader: fetches GET /api/downloads?state=<tab-states>&limit=50&offset=N
+ * for the active tab, plus 4 parallel count probes (limit:1) for exact badge counts.
+ * Switching tabs resets to offset 0; loadMore() appends the next page.
+ *
  * Maps the generated DownloadChapter DTO → DownloadItem, unwrapping the
  * { total, items } envelope.
  *
@@ -19,16 +21,28 @@
  * Auto-refetches on cycle.done and download.done SSE events so the list stays
  * current while a download cycle is active. cycleActive is forwarded from
  * useProgressStream (true on cycle.start, false on cycle.done).
+ *
+ * Documented caveat: client-side search / fail sub-tabs / upgrades-only toggle
+ * operate over the *loaded* pages of the active tab. Tab badge counts + bulk gating
+ * are exact (server totals). Pushing search to the server (q param) is a deliberate
+ * future add.
  */
-import { ref, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { DownloadItem, DownloadTab, RetryAllState, ErrorCategory } from '~/components/screens/downloads.types'
 
 type DownloadChapterDTO = components['schemas']['DownloadChapter']
 
-// Union of all states the Downloads screen renders (Active + Failed + Queued tabs).
-const ALL_STATES = 'wanted,downloading,upgrading,upgrade_available,failed,permanently_failed'
+// Page size for all tab fetches (backend cap is 200).
+const PAGE = 50
+
+// State strings for each top-level tab, passed directly to ?state= on the API.
+const TAB_STATES: Record<DownloadTab, string> = {
+  active: 'downloading,upgrading',
+  failed: 'failed,permanently_failed',
+  queued: 'wanted,upgrade_available',
+}
 
 /**
  * Format an ISO 8601 next-attempt timestamp into a short human string:
@@ -79,6 +93,17 @@ export function useDownloads() {
   const retryingAll = ref<RetryAllState | null>(null)
   const retryError = ref<string>('')
 
+  // Pagination state
+  const total = ref(0)
+  const offset = ref(0)
+  const loadingMore = ref(false)
+
+  // Exact per-state badge counts from 4 parallel server probes.
+  const counts = ref({ active: 0, failed: 0, terminal: 0, queued: 0 })
+
+  // More results exist when the loaded page is shorter than the server total.
+  const hasMore = computed(() => items.value.length < total.value)
+
   // cycleActive: forwarded from the module-singleton SSE composable.
   const { cycleActive, on } = useProgressStream()
 
@@ -86,21 +111,71 @@ export function useDownloads() {
   // guessing. The screen hides the countdown pill when this is null.
   const nextCycleMinutes: number | null = null
 
-  async function refresh(): Promise<void> {
-    loading.value = true
+  /**
+   * Fetch one page of the given tab's chapters.
+   *   append=false: reset offset + items → full tab reload.
+   *   append=true:  read current offset → append results (loadMore path).
+   */
+  async function loadTab(tab: DownloadTab, append: boolean): Promise<void> {
+    if (append) {
+      loadingMore.value = true
+    }
+    else {
+      loading.value = true
+      offset.value = 0
+      total.value = 0 // Reset so hasMore is false while the new page loads.
+    }
     try {
       const res = await apiClient.GET('/api/downloads', {
-        params: { query: { state: ALL_STATES } },
+        params: { query: { state: TAB_STATES[tab], limit: PAGE, offset: offset.value } },
       })
       if (res.error || !res.data) throw new Error('Failed to load downloads')
-      items.value = res.data.items.map(mapItem)
+      const mapped = res.data.items.map(mapItem)
+      items.value = append ? [...items.value, ...mapped] : mapped
+      total.value = res.data.total
     }
     catch (e) {
       retryError.value = e instanceof Error ? e.message : 'Failed to load downloads'
     }
     finally {
       loading.value = false
+      loadingMore.value = false
     }
+  }
+
+  /**
+   * 4 parallel count probes (limit:1, read only total) so tab badges + bulk-action
+   * gating are exact server totals — not derived from the loaded page subset.
+   */
+  async function loadCounts(): Promise<void> {
+    const probe = async (state: string): Promise<number> => {
+      const res = await apiClient.GET('/api/downloads', { params: { query: { state, limit: 1 } } })
+      return res.data?.total ?? 0
+    }
+    const [active, failed, terminal, queued] = await Promise.all([
+      probe('downloading,upgrading'),
+      probe('failed'),
+      probe('permanently_failed'),
+      probe('wanted,upgrade_available'),
+    ])
+    counts.value = { active, failed, terminal, queued }
+  }
+
+  /** Full reload of the active tab + refresh all badge counts. */
+  async function refresh(): Promise<void> {
+    await Promise.all([loadTab(activeTab.value, false), loadCounts()])
+  }
+
+  /** Load the next page of the active tab and append the results. */
+  async function loadMore(): Promise<void> {
+    offset.value += PAGE
+    await loadTab(activeTab.value, true)
+  }
+
+  /** Switch to a tab and load its first page (offset 0). */
+  function setTab(tab: DownloadTab): void {
+    activeTab.value = tab
+    void loadTab(tab, false)
   }
 
   // Auto-refetch whenever a download cycle completes or a chapter download finishes.
@@ -111,10 +186,6 @@ export function useDownloads() {
     unsubCycleDone()
     unsubDownloadDone()
   })
-
-  function setTab(tab: DownloadTab): void {
-    activeTab.value = tab
-  }
 
   async function retry(chapterId: string): Promise<void> {
     if (retryingIds.value.includes(chapterId)) return
@@ -163,12 +234,17 @@ export function useDownloads() {
     items,
     activeTab,
     loading,
+    total,
+    hasMore,
+    loadingMore,
+    counts,
     retryingIds,
     retryingAll,
     retryError,
     cycleActive,
     nextCycleMinutes,
     setTab,
+    loadMore,
     retry,
     retryAll,
     dismissError,
