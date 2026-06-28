@@ -15,6 +15,7 @@ import (
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
 	suwayomih "github.com/technobecet/tsundoku/internal/handler/suwayomi"
+	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	"github.com/technobecet/tsundoku/internal/imports"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
@@ -57,6 +58,7 @@ import (
 //   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
+//   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
 //   - /api/suwayomi/settings (GET)                  — read Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/suwayomi/extensions (GET)                — list Suwayomi extensions (RequireOwner).
@@ -123,6 +125,12 @@ func registerRoutes(
 	settingsH := settingsh.NewHandler(settingsSvc)
 	authed.GET("/settings", settingsH.List)
 	authed.PATCH("/settings", settingsH.Update)
+
+	// System info — read-only credential-free structural config (storage path,
+	// server port, DB host:port/name). The handler needs only the config struct;
+	// no service or Ent client is required.
+	systemH := systemh.NewHandler(cfg)
+	authed.GET("/system", systemH.Get)
 
 	// Suwayomi server-settings proxy (FlareSolverr + SOCKS). The handler holds
 	// the Suwayomi client directly and proxies its server-global settings; no

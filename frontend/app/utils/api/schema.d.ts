@@ -630,6 +630,29 @@ export interface paths {
         patch: operations["updateSettings"];
         trace?: never;
     };
+    "/api/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read-only env-structural system information
+         * @description Returns credential-free structural configuration values for the Settings
+         *     → Library pane's System-info card. Structural settings (storage path,
+         *     server port, database host:port/name) are env-only and not runtime-tunable.
+         *     Password and username are intentionally excluded from the database field.
+         */
+        get: operations["getSystem"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/suwayomi/settings": {
         parameters: {
             query?: never;
@@ -1174,6 +1197,24 @@ export interface components {
             title: string;
             slug: string;
             sources: components["schemas"]["Provider"][];
+        };
+        System: {
+            /**
+             * @description Absolute path to the manga library on disk.
+             * @example /data/manga
+             */
+            storageFolder: string;
+            /**
+             * @description TCP port the HTTP server listens on.
+             * @example 9833
+             */
+            serverPort: string;
+            /**
+             * @description Credential-free display string for the PostgreSQL target:
+             *     "host:port/name". Password and username are never included.
+             * @example 127.0.0.1:5432/tsundoku
+             */
+            database: string;
         };
         Setting: {
             /**
@@ -2791,6 +2832,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSystem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Credential-free structural configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["System"];
                 };
             };
             /** @description Missing or invalid Bearer token. */

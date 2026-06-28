@@ -678,6 +678,25 @@ components:
           items:
             $ref: "#/components/schemas/Provider"
 
+    System:
+      type: object
+      required: [storageFolder, serverPort, database]
+      properties:
+        storageFolder:
+          type: string
+          description: Absolute path to the manga library on disk.
+          example: /data/manga
+        serverPort:
+          type: string
+          description: TCP port the HTTP server listens on.
+          example: "9833"
+        database:
+          type: string
+          description: |
+            Credential-free display string for the PostgreSQL target:
+            "host:port/name". Password and username are never included.
+          example: "127.0.0.1:5432/tsundoku"
+
     Setting:
       type: object
       required: [key, value, default, type, unit]
@@ -2296,6 +2315,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/system:
+    get:
+      operationId: getSystem
+      summary: Read-only env-structural system information
+      description: |
+        Returns credential-free structural configuration values for the Settings
+        → Library pane's System-info card. Structural settings (storage path,
+        server port, database host:port/name) are env-only and not runtime-tunable.
+        Password and username are intentionally excluded from the database field.
+      tags:
+        - settings
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Credential-free structural configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/System"
         "401":
           description: Missing or invalid Bearer token.
           content:

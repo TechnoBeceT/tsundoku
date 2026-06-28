@@ -52,7 +52,7 @@ const props = withDefaults(defineProps<{
   adopting?: boolean
   /** A search or adopt error message to surface, or "" for none. */
   error?: string
-  /** The owner's dynamic category list; the picker defaults to "Other". */
+  /** The owner's dynamic category list; the picker defaults to the first category (owner: first = default). */
   categories?: string[]
 }>(), {
   searchResults: () => [],
@@ -134,7 +134,7 @@ const pickGroup = (g: SearchGroup): void => {
   const keys = g.candidates.map(candKey)
   group.value = g
   title.value = g.title
-  category.value = props.categories.includes('Other') ? 'Other' : (props.categories[0] ?? 'Other')
+  category.value = props.categories[0] ?? 'Other'
   selected.value = Object.fromEntries(keys.map(k => [k, true]))
   order.value = keys
   inspectKey.value = null
