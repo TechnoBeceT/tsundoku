@@ -12,7 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
-const tokenTTL = 7 * 24 * time.Hour
+// TokenTTL is the lifetime of an issued session token (30 days, sliding).
+const TokenTTL = 30 * 24 * time.Hour
 
 // tokenHeader is the fixed header for all issued tokens.
 var tokenHeader = mustBase64JSON(map[string]string{"alg": "HS256"})
@@ -32,9 +33,9 @@ type payload struct {
 }
 
 // Issue produces a signed HMAC-SHA256 token for the given owner UUID.
-// The token expires after 7 days.
+// The token expires after TokenTTL (30 days).
 func (s *Service) Issue(ownerID uuid.UUID) (string, error) {
-	return s.issueWithExpiry(ownerID, time.Now().Add(tokenTTL))
+	return s.issueWithExpiry(ownerID, time.Now().Add(TokenTTL))
 }
 
 // issueWithExpiry produces a signed token with an explicit expiry time.
@@ -93,7 +94,18 @@ func (s *Service) Validate(token string) (Claims, error) {
 		return Claims{}, errors.New("auth: invalid subject in token")
 	}
 
-	return Claims{OwnerID: id}, nil
+	return Claims{
+		OwnerID:   id,
+		IssuedAt:  time.Unix(p.Iat, 0),
+		ExpiresAt: time.Unix(p.Exp, 0),
+	}, nil
+}
+
+// ShouldRenew reports whether a valid token has passed its half-life and should
+// be re-issued (sliding session). now is injected for testability.
+func (s *Service) ShouldRenew(c Claims, now time.Time) bool {
+	halfLife := c.IssuedAt.Add(c.ExpiresAt.Sub(c.IssuedAt) / 2)
+	return now.After(halfLife)
 }
 
 // sign returns the base64url-encoded HMAC-SHA256 signature of data.
