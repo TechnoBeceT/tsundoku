@@ -73,14 +73,11 @@ export function useImport() {
   const route = useRoute()
   const rawSource = route.query.source
   const rawMangaId = route.query.mangaId
-  const rawTitle = route.query.title
 
   // Guard: values can be string | string[] | undefined — only accept plain strings.
   const seedSource: string | null = typeof rawSource === 'string' ? rawSource : null
   const seedMangaIdNum = typeof rawMangaId === 'string' ? Number(rawMangaId) : Number.NaN
   const seedMangaId: number | null = Number.isNaN(seedMangaIdNum) ? null : seedMangaIdNum
-  // Exposed so the page can pre-populate the title field if desired.
-  const seedTitle: string | null = typeof rawTitle === 'string' ? rawTitle : null
 
   // ---- Wizard state ----------------------------------------------------------
   const sources = ref<Source[]>([])
@@ -136,6 +133,7 @@ export function useImport() {
 
   // ---- inspect ---------------------------------------------------------------
   async function inspect(payload: { source: string; mangaId: number }): Promise<void> {
+    error.value = ''
     // Reset so the Import component shows its "loading" state until data arrives.
     inspectChapters.value = null
     try {
@@ -191,7 +189,6 @@ export function useImport() {
     adopting,
     error,
     newSeriesId,
-    seedTitle,
     search,
     inspect,
     adopt,
