@@ -1,8 +1,10 @@
 <template>
-  <!-- Tsundoku SPA shell.
-       This is the root component for the Tsundoku frontend.
-       Feature views are mounted here via <NuxtPage /> in Task 6+. -->
+  <!-- Tsundoku SPA root. NuxtLayout selects layouts/default.vue (shell chrome)
+       or layouts/bare.vue (login, no nav) per the page's definePageMeta layout.
+       Pages that don't declare a layout get default (AppShell) automatically. -->
   <div id="app">
-    <NuxtPage />
+    <NuxtLayout>
+      <NuxtPage />
+    </NuxtLayout>
   </div>
 </template>
