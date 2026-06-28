@@ -30,6 +30,7 @@ import { ref } from 'vue'
 const connected = ref(false)
 const unhealthyCount = ref(0)
 const syncing = ref(false)
+const cycleActive = ref(false)
 const lastCycle = ref<'start' | 'done' | null>(null)
 
 let source: EventSource | null = null
@@ -81,8 +82,8 @@ export function useProgressStream() {
         }
         if (name === 'refresh.start') syncing.value = true
         if (name === 'refresh.done') syncing.value = false
-        if (name === 'cycle.start') lastCycle.value = 'start'
-        if (name === 'cycle.done') lastCycle.value = 'done'
+        if (name === 'cycle.start') { cycleActive.value = true; lastCycle.value = 'start' }
+        if (name === 'cycle.done') { cycleActive.value = false; lastCycle.value = 'done' }
 
         emit(name, data)
       })
@@ -105,5 +106,5 @@ export function useProgressStream() {
     return () => listeners.get(event)?.delete(cb)
   }
 
-  return { connected, unhealthyCount, syncing, lastCycle, connect, disconnect, on }
+  return { connected, unhealthyCount, syncing, cycleActive, lastCycle, connect, disconnect, on }
 }
