@@ -51,6 +51,11 @@ type AuthConfig struct {
 	// this is empty or shorter, preventing all tokens from being forgeable.
 	// Set via TSUNDOKU_AUTH_SECRET.
 	Secret string
+	// CookieSecure sets the Secure flag on the session cookie. Default true.
+	// Set false ONLY for plain-HTTP LAN deploys — browsers drop Secure cookies
+	// over http://, which would prevent login. Prefer fronting with TLS.
+	// Set via TSUNDOKU_AUTH_COOKIESECURE.
+	CookieSecure bool
 }
 
 // ServerConfig holds HTTP server settings.
@@ -247,6 +252,7 @@ func defaults() map[string]any {
 		"database.name":     "tsundoku",
 		"database.sslmode":  "disable",
 		"auth.secret":       "",
+		"auth.cookiesecure": true,
 		// Suwayomi — M0 fields preserved; M2 fields added below.
 		// externalurl blank ⇒ embedded mode (provision + run own JAR).
 		"suwayomi.externalurl":         "",
@@ -333,6 +339,8 @@ func Load() (*Config, error) {
 //	TSUNDOKU_DATABASE_HOST                  → database.host
 //	TSUNDOKU_DATABASE_PASSWORD              → database.password
 //	TSUNDOKU_DATABASE_SSLMODE               → database.sslmode
+//	TSUNDOKU_AUTH_SECRET                    → auth.secret
+//	TSUNDOKU_AUTH_COOKIESECURE              → auth.cookiesecure
 //	TSUNDOKU_SUWAYOMI_EXTERNALURL           → suwayomi.externalurl
 //	TSUNDOKU_SUWAYOMI_HOST                  → suwayomi.host
 //	TSUNDOKU_SUWAYOMI_BASEPATH              → suwayomi.basepath
