@@ -60,13 +60,13 @@ function mapCategoryItem(dto: CategoryDTO): CategorySummary {
   }
 }
 
-export function useLibrary() {
+export function useLibrary(opts: { initialCategory?: string | null } = {}) {
   const series = ref<SeriesSummary[]>([])
   const categories = ref<CategorySummary[]>([])
   const total = ref(0)
   const pending = ref(false)
   const error = ref<string | null>(null)
-  const activeCategory = ref<string | null>(null)
+  const activeCategory = ref<string | null>(opts.initialCategory ?? null)
   const offset = ref(0)
 
   async function load(append = false): Promise<void> {
