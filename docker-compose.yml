@@ -1,0 +1,84 @@
+# docker-compose.yml — self-hosted Tsundoku stack.
+#
+# Two services:
+#   tsundoku — the all-in-one image (Go API + Nuxt SPA + embedded Suwayomi/Java)
+#   postgres — the PostgreSQL database Tsundoku stores its library metadata in
+#
+# Quick start:
+#   1. Change TSUNDOKU_AUTH_SECRET below to a long random string (see comment).
+#   2. docker compose up -d --build
+#   3. Open http://<host>:9833
+#
+# Data persists in two bind mounts next to this file:
+#   ./config -> app + embedded-Suwayomi runtime data (the downloaded JAR, H2 DB)
+#   ./series -> the manga library (CBZ + ComicInfo.xml, ready for Komga)
+#
+# First boot needs outbound internet: embedded Suwayomi downloads its engine
+# JAR from GitHub on first start (then caches it under ./config).
+
+services:
+  tsundoku:
+    build: .
+    container_name: tsundoku
+    ports:
+      - "9833:9833"
+    environment:
+      # Run as this host user so files on the bind mounts stay host-accessible.
+      PUID: "1000"
+      PGID: "1000"
+
+      # REQUIRED: replace with a long random string (>= 16 characters), e.g.
+      # `openssl rand -hex 32`. This placeholder is intentionally too SHORT, so
+      # the server FAILS TO START until you change it — there is no usable
+      # insecure default (an un-edited deploy hard-stops instead of booting with
+      # a publicly-known, forgeable token secret).
+      TSUNDOKU_AUTH_SECRET: "CHANGE_ME"
+
+      # Set to "true" ONLY when serving Tsundoku behind HTTPS. Over plain HTTP
+      # (typical LAN/LXC access) it must be "false" or the browser drops the
+      # session cookie and login won't stick.
+      TSUNDOKU_AUTH_COOKIESECURE: "false"
+
+      # Database connection — points at the postgres service below.
+      TSUNDOKU_DATABASE_HOST: postgres
+      TSUNDOKU_DATABASE_PORT: "5432"
+      TSUNDOKU_DATABASE_USER: tsundoku
+      TSUNDOKU_DATABASE_PASSWORD: tsundoku
+      TSUNDOKU_DATABASE_NAME: tsundoku
+      TSUNDOKU_DATABASE_SSLMODE: disable
+
+      # Note: TSUNDOKU_SUWAYOMI_EXTERNALURL is intentionally NOT set — leaving
+      # it blank keeps Suwayomi in EMBEDDED mode (this image bundles Java and
+      # runs Suwayomi itself). Set it only to point at an external Suwayomi.
+    volumes:
+      - ./config:/config
+      - ./series:/series
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: tsundoku-postgres
+    environment:
+      POSTGRES_DB: tsundoku
+      POSTGRES_USER: tsundoku
+      POSTGRES_PASSWORD: tsundoku
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Optional: expose Postgres on the host for debugging (host 5433 -> 5432).
+    # Left commented out so the database stays container-internal by default
+    # (Tsundoku reaches it over the compose network). Uncomment only if you need
+    # host access — and change POSTGRES_PASSWORD above before you do.
+    # ports:
+    #   - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tsundoku"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:

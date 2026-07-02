@@ -103,7 +103,34 @@ It is designed around a few firm principles:
 | Realtime   | Server-Sent Events                                                |
 | Output     | CBZ + ComicInfo.xml (Komga-compatible)                            |
 
-## Getting started
+## Deploy with Docker (recommended for self-hosting)
+
+The repo ships an **all-in-one image** (Go API + Nuxt SPA + an embedded Suwayomi
+engine with Java bundled) plus a `docker-compose.yml` that pairs it with
+PostgreSQL — the simplest way to self-host, e.g. in an LXC container.
+
+```bash
+git clone git@github.com:TechnoBeceT/tsundoku.git
+cd tsundoku
+# Edit docker-compose.yml and set TSUNDOKU_AUTH_SECRET to a long random string
+# (e.g. `openssl rand -hex 32`). The container refuses to start until you do.
+docker compose up -d --build
+# Then open http://<host>:9833 and claim the owner account.
+```
+
+- Library CBZs are written to `./series`; app + embedded-Suwayomi runtime data
+  (including the downloaded engine JAR) persist under `./config`.
+- **First boot needs outbound internet** — the embedded Suwayomi engine
+  downloads its JAR from GitHub on first start (cached under `./config` after).
+- Files are written as `PUID:PGID` (default `1000:1000`) so bind-mounted data
+  stays accessible from the host.
+- Keep `TSUNDOKU_AUTH_COOKIESECURE=false` for plain-HTTP LAN access; set it
+  `true` only when serving behind HTTPS.
+
+To run against an **external** Suwayomi instead of the bundled one, set
+`TSUNDOKU_SUWAYOMI_EXTERNALURL` in the compose environment.
+
+## Getting started (from source)
 
 ### Prerequisites
 

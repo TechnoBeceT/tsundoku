@@ -1,0 +1,31 @@
+# Keep the Docker build context lean and free of local/dev cruft.
+# Everything the image needs (backend/, frontend/, entrypoint.sh) is copied
+# explicitly in the Dockerfile; nothing below is required at build time.
+
+# Version control
+.git
+.gitignore
+
+# Node / Bun installs and build artifacts (rebuilt inside the image)
+**/node_modules
+frontend/.nuxt
+frontend/.output
+frontend/dist
+frontend/storybook-static
+
+# Go build artifacts / test binaries
+backend/dist
+**/*.test
+
+# Runtime data volumes (must never enter the build context)
+config/
+series/
+
+# Local prototypes
+Prototype
+
+# Editor / OS junk
+.DS_Store
+*.swp
+.idea
+.vscode
