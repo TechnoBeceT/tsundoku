@@ -91,6 +91,15 @@ func (s *ingestStubClient) ExtensionRepos(_ context.Context) ([]string, error) {
 func (s *ingestStubClient) SetExtensionRepos(_ context.Context, _ []string) error {
 	panic("ingestStubClient.SetExtensionRepos: must not be called by Ingest")
 }
+func (s *ingestStubClient) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
+	panic("ingestStubClient.SourcePreferences: must not be called by Ingest")
+}
+func (s *ingestStubClient) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	panic("ingestStubClient.SetSourcePreference: must not be called by Ingest")
+}
+func (s *ingestStubClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
+	panic("ingestStubClient.ExtensionSources: must not be called by Ingest")
+}
 
 // --- helpers -----------------------------------------------------------------
 
@@ -583,6 +592,15 @@ func (s *metaClientStub) ExtensionRepos(_ context.Context) ([]string, error) {
 }
 func (s *metaClientStub) SetExtensionRepos(_ context.Context, _ []string) error {
 	panic("metaClientStub: SetExtensionRepos must not be called by Ingest")
+}
+func (s *metaClientStub) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
+	panic("metaClientStub: SourcePreferences must not be called by Ingest")
+}
+func (s *metaClientStub) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	panic("metaClientStub: SetSourcePreference must not be called by Ingest")
+}
+func (s *metaClientStub) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
+	panic("metaClientStub: ExtensionSources must not be called by Ingest")
 }
 
 // ptrStr returns a pointer to v.

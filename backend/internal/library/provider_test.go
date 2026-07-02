@@ -100,6 +100,15 @@ func (f *fakeAddProviderClient) ExtensionRepos(ctx context.Context) ([]string, e
 func (f *fakeAddProviderClient) SetExtensionRepos(ctx context.Context, repos []string) error {
 	return nil
 }
+func (f *fakeAddProviderClient) SourcePreferences(ctx context.Context, sourceID string) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeAddProviderClient) SetSourcePreference(ctx context.Context, sourceID string, position int, value suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeAddProviderClient) ExtensionSources(ctx context.Context, pkgName string) ([]suwayomi.Source, error) {
+	return nil, nil
+}
 
 // diskScanFirst wraps disk.ScanLibrary and returns the first (and, for this
 // test's single-series fixture, only) SeriesFacts found under storage.

@@ -115,6 +115,15 @@ func (f *fakeClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, e
 }
 func (f *fakeClient) ExtensionRepos(_ context.Context) ([]string, error)    { return nil, nil }
 func (f *fakeClient) SetExtensionRepos(_ context.Context, _ []string) error { return nil }
+func (f *fakeClient) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeClient) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
+	return nil, nil
+}
 
 // makeChapters builds n stub chapters anchored to baseID.
 func makeChapters(baseID, n int) []suwayomi.Chapter {
