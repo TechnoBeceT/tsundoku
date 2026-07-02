@@ -247,6 +247,12 @@ func (d *Dispatcher) persistUpgradeSuccess(ctx context.Context, chapterID uuid.U
 // tryDeleteOldCBZ performs a best-effort removal of the old CBZ file when the
 // filename changed (indicating a different provider/scanlator). It logs but
 // does not fail on removal errors — Task 7 reconcile will clean up any orphans.
+//
+// It resolves the series' REAL category folder via the shared seriesCategoryName
+// (the same resolver buildRenderMeta uses to WRITE the file), so the delete looks
+// in the exact folder the CBZ was rendered into. Previously it hardcoded "Other",
+// so upgrading a chapter in a non-Other series looked in the wrong folder and
+// left the old CBZ orphaned. ch is loaded WithSeries(WithCategory()) by Upgrade.
 func (d *Dispatcher) tryDeleteOldCBZ(ctx context.Context, chapterID uuid.UUID, ch *ent.Chapter, newFilename string) {
 	oldFilename := ch.Filename
 	if oldFilename == "" || oldFilename == newFilename {
@@ -256,7 +262,7 @@ func (d *Dispatcher) tryDeleteOldCBZ(ctx context.Context, chapterID uuid.UUID, c
 	if ch.Edges.Series != nil {
 		seriesTitle = ch.Edges.Series.Title
 	}
-	oldPath := filepath.Join(disk.SeriesDir(d.cfg.Storage, disk.CategoryOther, seriesTitle), oldFilename)
+	oldPath := filepath.Join(disk.SeriesDir(d.cfg.Storage, seriesCategoryName(ch), seriesTitle), oldFilename)
 	if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
 		slog.WarnContext(ctx, "download.Dispatcher.Upgrade: best-effort delete of old CBZ failed — Task 7 reconcile will clean it up",
 			"chapter_id", chapterID,

@@ -385,21 +385,15 @@ func (d *Dispatcher) broadcast(eventType string, data DownloadEvent) {
 // Acceptable for M1.
 func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesProvider, maxChapter *float64) disk.RenderMeta {
 	seriesTitle := ""
-	// Default to Other when the series edge (or its category edge) is
-	// unloaded/absent: a downloaded chapter must still render somewhere valid.
-	categoryName := disk.CategoryOther
 	if ch.Edges.Series != nil {
 		seriesTitle = ch.Edges.Series.Title
-		if name := category.NameOf(ch.Edges.Series); name != "" {
-			categoryName = name
-		}
 	}
 	return disk.RenderMeta{
 		Provider:            sp.Provider,
 		Scanlator:           sp.Scanlator,
 		Language:            sp.Language,
 		SeriesTitle:         seriesTitle,
-		Category:            categoryName,
+		Category:            seriesCategoryName(ch),
 		Number:              pc.Number,
 		MaxChapter:          maxChapter,
 		ChapterName:         pc.Name,
@@ -409,6 +403,30 @@ func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesPro
 		Importance:          sp.Importance,
 		SeriesProviderTitle: sp.Title,
 	}
+}
+
+// seriesCategoryName resolves the on-disk category folder name for a chapter's
+// series from its eagerly-loaded category edge. It is the SINGLE definition of
+// "which folder does this chapter's CBZ live under" (§2 DRY), shared by
+// buildRenderMeta (where the file is written) and tryDeleteOldCBZ (where the old
+// file is removed) so a render and its later cleanup can never disagree on the
+// folder — the F-C bug was tryDeleteOldCBZ hardcoding "Other" while the render
+// used the real category, orphaning the old CBZ for any non-Other series.
+//
+// Callers MUST have loaded the series with its category edge
+// (WithSeries(WithCategory())) — both process and Upgrade do. The disk.CategoryOther
+// fallback is a documented DEFENSIVE last resort, reachable only if the series
+// edge is unloaded/absent or the series is genuinely category-less (a pre-backfill
+// state that no longer occurs — every series is category-linked at create time);
+// a downloaded chapter must still render somewhere valid rather than panic.
+func seriesCategoryName(ch *ent.Chapter) string {
+	if ch.Edges.Series == nil {
+		return disk.CategoryOther
+	}
+	if name := category.NameOf(ch.Edges.Series); name != "" {
+		return name
+	}
+	return disk.CategoryOther
 }
 
 // buildFetchRef constructs a fetcher.FetchRef from a ProviderChapter and its

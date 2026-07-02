@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -166,6 +167,81 @@ func TestUpgrade_SwapsFile(t *testing.T) {
 		if _, statErr := os.Stat(oldPath); !errors.Is(statErr, os.ErrNotExist) {
 			t.Errorf("old CBZ should have been deleted after filename change: stat(%s) = %v", oldPath, statErr)
 		}
+	}
+}
+
+// TestUpgrade_NonOtherCategoryUsesRealFolder is the Part C regression proof: a
+// series filed under a REAL category ("Manhwa") must have its CBZ rendered AND
+// its old CBZ deleted under that category's folder — never the hardcoded "Other".
+//
+// Before the fix, buildRenderMeta wrote to <storage>/Manhwa/… (correct, it read
+// the category edge) but tryDeleteOldCBZ looked under <storage>/Other/… (wrong),
+// so upgrading a non-Other series orphaned the old CBZ. Now both resolve the real
+// category via the shared seriesCategoryName, so they agree.
+func TestUpgrade_NonOtherCategoryUsesRealFolder(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	// A series filed under the seeded "Manhwa" category (NOT the default Other).
+	manhwaID, err := category.IDByName(ctx, client, "Manhwa")
+	if err != nil {
+		t.Fatalf("IDByName(Manhwa): %v", err)
+	}
+	s := client.Series.Create().
+		SetTitle("Solo Leveling").SetSlug("solo-leveling").SetCategoryID(manhwaID).SaveX(ctx)
+	spLow := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-low").SetImportance(2).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spLow.ID).SetChapterKey("ch-manhwa").
+		SetURL("https://low.example.com/ch-manhwa").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-manhwa").SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		PerProviderConcurrency: 1, Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce: %v", err)
+	}
+	initial := client.Chapter.GetX(ctx, ch.ID)
+	oldFilename := initial.Filename
+
+	// The initial CBZ must be under the Manhwa folder, not Other.
+	oldPath := filepath.Join(storageDir, "Manhwa", "Solo Leveling", oldFilename)
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Fatalf("initial CBZ not under Manhwa: %v", err)
+	}
+
+	// Upgrade with a higher-importance provider (different filename ⇒ delete path).
+	spHigh := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-high").SetImportance(5).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spHigh.ID).SetChapterKey("ch-manhwa").
+		SetURL("https://high.example.com/ch-manhwa").SetProviderIndex(0).SaveX(ctx)
+	if _, err := download.DetectUpgrades(ctx, client); err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+	if err := d.Upgrade(ctx, ch.ID); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	final := client.Chapter.GetX(ctx, ch.ID)
+
+	// New CBZ is under Manhwa.
+	newPath := filepath.Join(storageDir, "Manhwa", "Solo Leveling", final.Filename)
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("new CBZ not under Manhwa at %s: %v", newPath, err)
+	}
+	// The old CBZ (under Manhwa) was deleted — the whole point of the fix.
+	if oldFilename != final.Filename {
+		if _, statErr := os.Stat(oldPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("old CBZ under Manhwa should have been deleted: stat(%s) = %v", oldPath, statErr)
+		}
+	}
+	// Nothing must have been rendered under the hardcoded "Other".
+	if _, statErr := os.Stat(filepath.Join(storageDir, "Other")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("no files should exist under Other for a Manhwa series; stat err = %v", statErr)
 	}
 }
 
