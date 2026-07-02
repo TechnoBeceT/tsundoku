@@ -967,6 +967,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/suwayomi/extensions/{pkgName}/icon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Extension icon image
+         * @description Streams the extension's icon image, proxied from Suwayomi. Suwayomi's own
+         *     iconUrl is a cross-origin URL the browser cannot load directly, so this
+         *     endpoint looks the extension up by pkgName among Extensions() and streams
+         *     that entry's own reported icon (Suwayomi's REST icon path, confirmed live:
+         *     "/api/v1/extension/icon/{apkFileName}") as a binary blob. Returns 404 when
+         *     pkgName is unknown, 502 when Suwayomi fails to fetch the icon.
+         */
+        get: operations["getExtensionIcon"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1536,7 +1561,7 @@ export interface components {
              * @example 42
              */
             versionCode: number;
-            /** @description Raw Suwayomi icon URL (no Tsundoku proxy in v1). */
+            /** @description Tsundoku same-origin icon proxy path ("/api/suwayomi/extensions/{pkgName}/icon"), not Suwayomi's own raw (cross-origin) icon URL. */
             iconUrl: string;
             /** @description Source repo URL this extension came from; "" when null. */
             repo: string;
@@ -3807,6 +3832,65 @@ export interface operations {
                 };
             };
             /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getExtensionIcon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The icon image bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description A blank pkgName. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No extension with that pkgName. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon. */
             502: {
                 headers: {
                     [name: string]: unknown;

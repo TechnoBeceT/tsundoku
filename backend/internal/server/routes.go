@@ -74,6 +74,7 @@ import (
 //   - /api/suwayomi/extensions/:pkgName/install (POST) — install an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/update (POST)  — update an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName (DELETE)    — uninstall an extension (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName/icon (GET)  — extension icon proxy (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
@@ -159,6 +160,7 @@ func registerRoutes(
 	authed.POST("/suwayomi/extensions/:pkgName/install", extensionsH.Install)
 	authed.POST("/suwayomi/extensions/:pkgName/update", extensionsH.Update)
 	authed.DELETE("/suwayomi/extensions/:pkgName", extensionsH.Uninstall)
+	authed.GET("/suwayomi/extensions/:pkgName/icon", extensionsH.Icon)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.

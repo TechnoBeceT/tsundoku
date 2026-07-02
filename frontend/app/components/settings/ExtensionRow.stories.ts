@@ -1,10 +1,17 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
+import { expect, waitFor } from 'storybook/test'
 import ExtensionRow from './ExtensionRow.vue'
 import { availableExtensions, installedExtensions } from '../../fixtures/settings'
 // Load this screen's status tokens directly: index.css does not @import them yet
 // (a coordinator wires that line to avoid parallel-worker conflicts), so the
 // side-effect import keeps every story rendering with the real palette.
 import '../../assets/css/tokens/settings.css'
+
+// A tiny inline data-URI icon fixture (a 4x4 red PNG) — Storybook has no
+// backend to proxy a real Suwayomi icon from, so this stands in for a
+// successfully-loaded iconUrl.
+const fakeIconDataUri
+  = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEUlEQVR42mP8z8BQz0AEYBxVAgB6nwYRWl6tSAAAAABJRU5ErkJggg=='
 
 /**
  * Stories for a single extension card. Flip the Storybook theme toolbar to
@@ -38,4 +45,37 @@ export const Available: Story = {
 /** §16 busy — the acting button spins and the row dims/disables. */
 export const Busy: Story = {
   args: { extension: installedExtensions[1]!, installed: true, busy: true },
+}
+
+/**
+ * A real (proxied) icon renders in place of the tinted placeholder square —
+ * confirms the M1 icon-proxy fix's <img> path, not just the fallback.
+ */
+export const WithIcon: Story = {
+  args: {
+    extension: { ...installedExtensions[0]!, iconUrl: fakeIconDataUri },
+    installed: true,
+  },
+}
+
+/**
+ * A broken/unreachable iconUrl (a 502 from the proxy, or Storybook's lack of a
+ * backend) falls back to the tinted placeholder square via the <img>'s
+ * `@error` handler — the row never shows a broken-image glyph. The play
+ * function waits for the real <img> load failure to propagate.
+ */
+export const IconLoadError: Story = {
+  args: {
+    extension: { ...installedExtensions[0]!, iconUrl: '/api/suwayomi/extensions/does-not-exist/icon' },
+    installed: true,
+  },
+  play: async ({ canvasElement }) => {
+    // Query the DOM node directly (not by role): the <img> is aria-hidden by
+    // design, so a role-based query would pass vacuously whether or not the
+    // fallback actually kicked in.
+    await waitFor(async () => {
+      await expect(canvasElement.querySelector('img.ext-card__icon')).toBeNull()
+    })
+    await expect(canvasElement.querySelector('span.ext-card__avatar')).not.toBeNull()
+  },
 }

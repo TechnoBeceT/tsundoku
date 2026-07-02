@@ -396,6 +396,13 @@ func boolptr(b bool) *bool    { return &b }
 // flips back. Guarded by a short network probe; any network/repo/APK
 // unavailability calls t.Skip. updateExtension's input shape is already
 // introspection-confirmed, so Tier 2 is bonus live proof, not the gate.
+//
+// Tier 2 also confirms the M1 icon-proxy bugfix's live discovery: every fetched
+// extension's IconURL is Suwayomi's own REST icon path
+// "/api/v1/extension/icon/{apkFileName}.apk" (NOT a full URL), and that path is
+// genuinely fetchable via PageBytes — proving handler/extensions.Icon's
+// "look up by pkgName, stream that entry's own IconURL via PageBytes" design
+// actually reaches real image bytes, not just a plausible-looking string.
 func TestShape6_Extensions(t *testing.T) {
 	inst := testharness.Shared(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -473,6 +480,8 @@ func tier2Extensions(t *testing.T, client suwayomi.Client) {
 		t.Skipf("Tier 2 skipped: FetchExtensions(real repo): %v", err)
 	}
 
+	tier2IconURLShape(t, ctx, client, fetched)
+
 	var target string
 	for _, e := range fetched {
 		if !e.IsInstalled && !e.IsObsolete {
@@ -485,6 +494,35 @@ func tier2Extensions(t *testing.T, client suwayomi.Client) {
 	}
 
 	tier2InstallUninstallRoundTrip(t, ctx, client, target)
+}
+
+// tier2IconURLShape confirms the M1 icon-proxy discovery against a real repo
+// listing: the first extension's IconURL matches Suwayomi's own REST icon path
+// shape ("/api/v1/extension/icon/{apkFileName}.apk", confirmed live 2026-07-03
+// against Suwayomi v2.2.2100 via the keiyoushi repo), and that path is
+// genuinely fetchable via PageBytes (proving handler/extensions.Icon's
+// PageBytes(e.IconURL) call reaches real bytes, not just a plausible string).
+// It never fails the gate on network/repo unavailability — only on a shape or
+// fetch regression once a listing was already obtained.
+func tier2IconURLShape(t *testing.T, ctx context.Context, client suwayomi.Client, fetched []suwayomi.Extension) {
+	t.Helper()
+	if len(fetched) == 0 {
+		t.Skip("Tier 2 icon shape skipped: repo listing was empty")
+	}
+	icon := fetched[0].IconURL
+	if !strings.HasPrefix(icon, "/api/v1/extension/icon/") || !strings.HasSuffix(icon, ".apk") {
+		t.Fatalf("IconURL shape regression: got %q, want \"/api/v1/extension/icon/{apkFileName}.apk\"", icon)
+	}
+	t.Logf("CONFIRMED: IconURL shape = %q", icon)
+
+	data, ext, err := client.PageBytes(ctx, icon)
+	if err != nil {
+		t.Fatalf("PageBytes(%q) failed — the confirmed icon path is no longer fetchable: %v", icon, err)
+	}
+	if len(data) == 0 {
+		t.Error("PageBytes returned zero bytes for a confirmed icon path")
+	}
+	t.Logf("CONFIRMED: icon fetched via PageBytes, %d bytes, ext=%q", len(data), ext)
 }
 
 // tier2InstallUninstallRoundTrip performs the live install → assert isInstalled →
