@@ -6,6 +6,7 @@ package library_test
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,50 @@ func TestLibraryScan_Returns200(t *testing.T) {
 	rec := env.do("POST", "/api/library/scan", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scan = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLibraryImports_ListsStagedEntries proves the ListImports happy path
+// end-to-end: a seeded on-disk series is staged by POST /library/scan, then
+// GET /library/imports returns it with every field populated. This exercises
+// the service's decode(row.Found)→distinctProviders reuse (not just a non-nil
+// check) by asserting the recovered Providers list contains the source name.
+func TestLibraryImports_ListsStagedEntries(t *testing.T) {
+	env := newEnvWithStorageSeeded(t)
+
+	if rec := env.do("POST", "/api/library/scan", ""); rec.Code != http.StatusOK {
+		t.Fatalf("scan = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	rec := env.do("GET", "/api/library/imports", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var got []library.FoundSeriesDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("list len = %d, want 1", len(got))
+	}
+	assertStagedEntry(t, got[0])
+}
+
+// assertStagedEntry checks the ListImports DTO for the single "My Series"
+// fixture written by newEnvWithStorageSeeded. Providers is asserted by value
+// (not just non-nil) so the service's decode(row.Found)→distinctProviders
+// reuse is genuinely exercised. Extracted from the test body to keep each
+// function's cyclomatic complexity within the cyclop ≤ 10 budget.
+func assertStagedEntry(t *testing.T, f library.FoundSeriesDTO) {
+	t.Helper()
+	if f.Title != "My Series" || f.Category != "Manga" || f.ChapterCount != 2 {
+		t.Fatalf("bad entry: %+v", f)
+	}
+	if len(f.Providers) != 1 || f.Providers[0] != "mangadex" {
+		t.Fatalf("providers = %v, want [mangadex] (decode→distinctProviders reuse)", f.Providers)
+	}
+	if f.Status != "pending" || f.AlreadyInDB {
+		t.Fatalf("status=%q alreadyInDb=%v, want pending/false", f.Status, f.AlreadyInDB)
 	}
 }
 
