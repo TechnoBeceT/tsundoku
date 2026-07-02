@@ -42,6 +42,34 @@ func (_u *ImportEntryUpdate) SetNillablePath(v *string) *ImportEntryUpdate {
 	return _u
 }
 
+// SetTitle sets the "title" field.
+func (_u *ImportEntryUpdate) SetTitle(v string) *ImportEntryUpdate {
+	_u.mutation.SetTitle(v)
+	return _u
+}
+
+// SetNillableTitle sets the "title" field if the given value is not nil.
+func (_u *ImportEntryUpdate) SetNillableTitle(v *string) *ImportEntryUpdate {
+	if v != nil {
+		_u.SetTitle(*v)
+	}
+	return _u
+}
+
+// SetCategory sets the "category" field.
+func (_u *ImportEntryUpdate) SetCategory(v string) *ImportEntryUpdate {
+	_u.mutation.SetCategory(v)
+	return _u
+}
+
+// SetNillableCategory sets the "category" field if the given value is not nil.
+func (_u *ImportEntryUpdate) SetNillableCategory(v *string) *ImportEntryUpdate {
+	if v != nil {
+		_u.SetCategory(*v)
+	}
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *ImportEntryUpdate) SetStatus(v string) *ImportEntryUpdate {
 	_u.mutation.SetStatus(v)
@@ -56,23 +84,54 @@ func (_u *ImportEntryUpdate) SetNillableStatus(v *string) *ImportEntryUpdate {
 	return _u
 }
 
-// SetError sets the "error" field.
-func (_u *ImportEntryUpdate) SetError(v string) *ImportEntryUpdate {
-	_u.mutation.SetError(v)
+// SetChapterCount sets the "chapter_count" field.
+func (_u *ImportEntryUpdate) SetChapterCount(v int) *ImportEntryUpdate {
+	_u.mutation.ResetChapterCount()
+	_u.mutation.SetChapterCount(v)
 	return _u
 }
 
-// SetNillableError sets the "error" field if the given value is not nil.
-func (_u *ImportEntryUpdate) SetNillableError(v *string) *ImportEntryUpdate {
+// SetNillableChapterCount sets the "chapter_count" field if the given value is not nil.
+func (_u *ImportEntryUpdate) SetNillableChapterCount(v *int) *ImportEntryUpdate {
 	if v != nil {
-		_u.SetError(*v)
+		_u.SetChapterCount(*v)
 	}
 	return _u
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (_u *ImportEntryUpdate) SetUpdatedAt(v time.Time) *ImportEntryUpdate {
-	_u.mutation.SetUpdatedAt(v)
+// AddChapterCount adds value to the "chapter_count" field.
+func (_u *ImportEntryUpdate) AddChapterCount(v int) *ImportEntryUpdate {
+	_u.mutation.AddChapterCount(v)
+	return _u
+}
+
+// SetFound sets the "found" field.
+func (_u *ImportEntryUpdate) SetFound(v map[string]interface{}) *ImportEntryUpdate {
+	_u.mutation.SetFound(v)
+	return _u
+}
+
+// ClearFound clears the value of the "found" field.
+func (_u *ImportEntryUpdate) ClearFound() *ImportEntryUpdate {
+	_u.mutation.ClearFound()
+	return _u
+}
+
+// SetMatchedSource sets the "matched_source" field.
+func (_u *ImportEntryUpdate) SetMatchedSource(v map[string]interface{}) *ImportEntryUpdate {
+	_u.mutation.SetMatchedSource(v)
+	return _u
+}
+
+// ClearMatchedSource clears the value of the "matched_source" field.
+func (_u *ImportEntryUpdate) ClearMatchedSource() *ImportEntryUpdate {
+	_u.mutation.ClearMatchedSource()
+	return _u
+}
+
+// SetScannedAt sets the "scanned_at" field.
+func (_u *ImportEntryUpdate) SetScannedAt(v time.Time) *ImportEntryUpdate {
+	_u.mutation.SetScannedAt(v)
 	return _u
 }
 
@@ -111,9 +170,9 @@ func (_u *ImportEntryUpdate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_u *ImportEntryUpdate) defaults() {
-	if _, ok := _u.mutation.UpdatedAt(); !ok {
-		v := importentry.UpdateDefaultUpdatedAt()
-		_u.mutation.SetUpdatedAt(v)
+	if _, ok := _u.mutation.ScannedAt(); !ok {
+		v := importentry.UpdateDefaultScannedAt()
+		_u.mutation.SetScannedAt(v)
 	}
 }
 
@@ -129,14 +188,35 @@ func (_u *ImportEntryUpdate) sqlSave(ctx context.Context) (_node int, err error)
 	if value, ok := _u.mutation.Path(); ok {
 		_spec.SetField(importentry.FieldPath, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.Title(); ok {
+		_spec.SetField(importentry.FieldTitle, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Category(); ok {
+		_spec.SetField(importentry.FieldCategory, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(importentry.FieldStatus, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Error(); ok {
-		_spec.SetField(importentry.FieldError, field.TypeString, value)
+	if value, ok := _u.mutation.ChapterCount(); ok {
+		_spec.SetField(importentry.FieldChapterCount, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.UpdatedAt(); ok {
-		_spec.SetField(importentry.FieldUpdatedAt, field.TypeTime, value)
+	if value, ok := _u.mutation.AddedChapterCount(); ok {
+		_spec.AddField(importentry.FieldChapterCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.Found(); ok {
+		_spec.SetField(importentry.FieldFound, field.TypeJSON, value)
+	}
+	if _u.mutation.FoundCleared() {
+		_spec.ClearField(importentry.FieldFound, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.MatchedSource(); ok {
+		_spec.SetField(importentry.FieldMatchedSource, field.TypeJSON, value)
+	}
+	if _u.mutation.MatchedSourceCleared() {
+		_spec.ClearField(importentry.FieldMatchedSource, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ScannedAt(); ok {
+		_spec.SetField(importentry.FieldScannedAt, field.TypeTime, value)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -172,6 +252,34 @@ func (_u *ImportEntryUpdateOne) SetNillablePath(v *string) *ImportEntryUpdateOne
 	return _u
 }
 
+// SetTitle sets the "title" field.
+func (_u *ImportEntryUpdateOne) SetTitle(v string) *ImportEntryUpdateOne {
+	_u.mutation.SetTitle(v)
+	return _u
+}
+
+// SetNillableTitle sets the "title" field if the given value is not nil.
+func (_u *ImportEntryUpdateOne) SetNillableTitle(v *string) *ImportEntryUpdateOne {
+	if v != nil {
+		_u.SetTitle(*v)
+	}
+	return _u
+}
+
+// SetCategory sets the "category" field.
+func (_u *ImportEntryUpdateOne) SetCategory(v string) *ImportEntryUpdateOne {
+	_u.mutation.SetCategory(v)
+	return _u
+}
+
+// SetNillableCategory sets the "category" field if the given value is not nil.
+func (_u *ImportEntryUpdateOne) SetNillableCategory(v *string) *ImportEntryUpdateOne {
+	if v != nil {
+		_u.SetCategory(*v)
+	}
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *ImportEntryUpdateOne) SetStatus(v string) *ImportEntryUpdateOne {
 	_u.mutation.SetStatus(v)
@@ -186,23 +294,54 @@ func (_u *ImportEntryUpdateOne) SetNillableStatus(v *string) *ImportEntryUpdateO
 	return _u
 }
 
-// SetError sets the "error" field.
-func (_u *ImportEntryUpdateOne) SetError(v string) *ImportEntryUpdateOne {
-	_u.mutation.SetError(v)
+// SetChapterCount sets the "chapter_count" field.
+func (_u *ImportEntryUpdateOne) SetChapterCount(v int) *ImportEntryUpdateOne {
+	_u.mutation.ResetChapterCount()
+	_u.mutation.SetChapterCount(v)
 	return _u
 }
 
-// SetNillableError sets the "error" field if the given value is not nil.
-func (_u *ImportEntryUpdateOne) SetNillableError(v *string) *ImportEntryUpdateOne {
+// SetNillableChapterCount sets the "chapter_count" field if the given value is not nil.
+func (_u *ImportEntryUpdateOne) SetNillableChapterCount(v *int) *ImportEntryUpdateOne {
 	if v != nil {
-		_u.SetError(*v)
+		_u.SetChapterCount(*v)
 	}
 	return _u
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (_u *ImportEntryUpdateOne) SetUpdatedAt(v time.Time) *ImportEntryUpdateOne {
-	_u.mutation.SetUpdatedAt(v)
+// AddChapterCount adds value to the "chapter_count" field.
+func (_u *ImportEntryUpdateOne) AddChapterCount(v int) *ImportEntryUpdateOne {
+	_u.mutation.AddChapterCount(v)
+	return _u
+}
+
+// SetFound sets the "found" field.
+func (_u *ImportEntryUpdateOne) SetFound(v map[string]interface{}) *ImportEntryUpdateOne {
+	_u.mutation.SetFound(v)
+	return _u
+}
+
+// ClearFound clears the value of the "found" field.
+func (_u *ImportEntryUpdateOne) ClearFound() *ImportEntryUpdateOne {
+	_u.mutation.ClearFound()
+	return _u
+}
+
+// SetMatchedSource sets the "matched_source" field.
+func (_u *ImportEntryUpdateOne) SetMatchedSource(v map[string]interface{}) *ImportEntryUpdateOne {
+	_u.mutation.SetMatchedSource(v)
+	return _u
+}
+
+// ClearMatchedSource clears the value of the "matched_source" field.
+func (_u *ImportEntryUpdateOne) ClearMatchedSource() *ImportEntryUpdateOne {
+	_u.mutation.ClearMatchedSource()
+	return _u
+}
+
+// SetScannedAt sets the "scanned_at" field.
+func (_u *ImportEntryUpdateOne) SetScannedAt(v time.Time) *ImportEntryUpdateOne {
+	_u.mutation.SetScannedAt(v)
 	return _u
 }
 
@@ -254,9 +393,9 @@ func (_u *ImportEntryUpdateOne) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_u *ImportEntryUpdateOne) defaults() {
-	if _, ok := _u.mutation.UpdatedAt(); !ok {
-		v := importentry.UpdateDefaultUpdatedAt()
-		_u.mutation.SetUpdatedAt(v)
+	if _, ok := _u.mutation.ScannedAt(); !ok {
+		v := importentry.UpdateDefaultScannedAt()
+		_u.mutation.SetScannedAt(v)
 	}
 }
 
@@ -289,14 +428,35 @@ func (_u *ImportEntryUpdateOne) sqlSave(ctx context.Context) (_node *ImportEntry
 	if value, ok := _u.mutation.Path(); ok {
 		_spec.SetField(importentry.FieldPath, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.Title(); ok {
+		_spec.SetField(importentry.FieldTitle, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Category(); ok {
+		_spec.SetField(importentry.FieldCategory, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(importentry.FieldStatus, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.Error(); ok {
-		_spec.SetField(importentry.FieldError, field.TypeString, value)
+	if value, ok := _u.mutation.ChapterCount(); ok {
+		_spec.SetField(importentry.FieldChapterCount, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.UpdatedAt(); ok {
-		_spec.SetField(importentry.FieldUpdatedAt, field.TypeTime, value)
+	if value, ok := _u.mutation.AddedChapterCount(); ok {
+		_spec.AddField(importentry.FieldChapterCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.Found(); ok {
+		_spec.SetField(importentry.FieldFound, field.TypeJSON, value)
+	}
+	if _u.mutation.FoundCleared() {
+		_spec.ClearField(importentry.FieldFound, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.MatchedSource(); ok {
+		_spec.SetField(importentry.FieldMatchedSource, field.TypeJSON, value)
+	}
+	if _u.mutation.MatchedSourceCleared() {
+		_spec.ClearField(importentry.FieldMatchedSource, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ScannedAt(); ok {
+		_spec.SetField(importentry.FieldScannedAt, field.TypeTime, value)
 	}
 	_node = &ImportEntry{config: _u.config}
 	_spec.Assign = _node.assignValues

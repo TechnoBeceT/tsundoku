@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -20,14 +21,20 @@ type ImportEntry struct {
 	ID uuid.UUID `json:"id,omitempty"`
 	// Path holds the value of the "path" field.
 	Path string `json:"path,omitempty"`
+	// Title holds the value of the "title" field.
+	Title string `json:"title,omitempty"`
+	// Category holds the value of the "category" field.
+	Category string `json:"category,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
-	// Error holds the value of the "error" field.
-	Error string `json:"error,omitempty"`
-	// CreatedAt holds the value of the "created_at" field.
-	CreatedAt time.Time `json:"created_at,omitempty"`
-	// UpdatedAt holds the value of the "updated_at" field.
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	// ChapterCount holds the value of the "chapter_count" field.
+	ChapterCount int `json:"chapter_count,omitempty"`
+	// Found holds the value of the "found" field.
+	Found map[string]interface{} `json:"found,omitempty"`
+	// MatchedSource holds the value of the "matched_source" field.
+	MatchedSource map[string]interface{} `json:"matched_source,omitempty"`
+	// ScannedAt holds the value of the "scanned_at" field.
+	ScannedAt    time.Time `json:"scanned_at,omitempty"`
 	selectValues sql.SelectValues
 }
 
@@ -36,9 +43,13 @@ func (*ImportEntry) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case importentry.FieldPath, importentry.FieldStatus, importentry.FieldError:
+		case importentry.FieldFound, importentry.FieldMatchedSource:
+			values[i] = new([]byte)
+		case importentry.FieldChapterCount:
+			values[i] = new(sql.NullInt64)
+		case importentry.FieldPath, importentry.FieldTitle, importentry.FieldCategory, importentry.FieldStatus:
 			values[i] = new(sql.NullString)
-		case importentry.FieldCreatedAt, importentry.FieldUpdatedAt:
+		case importentry.FieldScannedAt:
 			values[i] = new(sql.NullTime)
 		case importentry.FieldID:
 			values[i] = new(uuid.UUID)
@@ -69,29 +80,51 @@ func (_m *ImportEntry) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Path = value.String
 			}
+		case importentry.FieldTitle:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field title", values[i])
+			} else if value.Valid {
+				_m.Title = value.String
+			}
+		case importentry.FieldCategory:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field category", values[i])
+			} else if value.Valid {
+				_m.Category = value.String
+			}
 		case importentry.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field status", values[i])
 			} else if value.Valid {
 				_m.Status = value.String
 			}
-		case importentry.FieldError:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field error", values[i])
+		case importentry.FieldChapterCount:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field chapter_count", values[i])
 			} else if value.Valid {
-				_m.Error = value.String
+				_m.ChapterCount = int(value.Int64)
 			}
-		case importentry.FieldCreatedAt:
-			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field created_at", values[i])
-			} else if value.Valid {
-				_m.CreatedAt = value.Time
+		case importentry.FieldFound:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field found", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.Found); err != nil {
+					return fmt.Errorf("unmarshal field found: %w", err)
+				}
 			}
-		case importentry.FieldUpdatedAt:
+		case importentry.FieldMatchedSource:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field matched_source", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.MatchedSource); err != nil {
+					return fmt.Errorf("unmarshal field matched_source: %w", err)
+				}
+			}
+		case importentry.FieldScannedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
+				return fmt.Errorf("unexpected type %T for field scanned_at", values[i])
 			} else if value.Valid {
-				_m.UpdatedAt = value.Time
+				_m.ScannedAt = value.Time
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -132,17 +165,26 @@ func (_m *ImportEntry) String() string {
 	builder.WriteString("path=")
 	builder.WriteString(_m.Path)
 	builder.WriteString(", ")
+	builder.WriteString("title=")
+	builder.WriteString(_m.Title)
+	builder.WriteString(", ")
+	builder.WriteString("category=")
+	builder.WriteString(_m.Category)
+	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(_m.Status)
 	builder.WriteString(", ")
-	builder.WriteString("error=")
-	builder.WriteString(_m.Error)
+	builder.WriteString("chapter_count=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ChapterCount))
 	builder.WriteString(", ")
-	builder.WriteString("created_at=")
-	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))
+	builder.WriteString("found=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Found))
 	builder.WriteString(", ")
-	builder.WriteString("updated_at=")
-	builder.WriteString(_m.UpdatedAt.Format(time.ANSIC))
+	builder.WriteString("matched_source=")
+	builder.WriteString(fmt.Sprintf("%v", _m.MatchedSource))
+	builder.WriteString(", ")
+	builder.WriteString("scanned_at=")
+	builder.WriteString(_m.ScannedAt.Format(time.ANSIC))
 	builder.WriteByte(')')
 	return builder.String()
 }

@@ -16,14 +16,20 @@ const (
 	FieldID = "id"
 	// FieldPath holds the string denoting the path field in the database.
 	FieldPath = "path"
+	// FieldTitle holds the string denoting the title field in the database.
+	FieldTitle = "title"
+	// FieldCategory holds the string denoting the category field in the database.
+	FieldCategory = "category"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
-	// FieldError holds the string denoting the error field in the database.
-	FieldError = "error"
-	// FieldCreatedAt holds the string denoting the created_at field in the database.
-	FieldCreatedAt = "created_at"
-	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
-	FieldUpdatedAt = "updated_at"
+	// FieldChapterCount holds the string denoting the chapter_count field in the database.
+	FieldChapterCount = "chapter_count"
+	// FieldFound holds the string denoting the found field in the database.
+	FieldFound = "found"
+	// FieldMatchedSource holds the string denoting the matched_source field in the database.
+	FieldMatchedSource = "matched_source"
+	// FieldScannedAt holds the string denoting the scanned_at field in the database.
+	FieldScannedAt = "scanned_at"
 	// Table holds the table name of the importentry in the database.
 	Table = "import_entries"
 )
@@ -32,10 +38,13 @@ const (
 var Columns = []string{
 	FieldID,
 	FieldPath,
+	FieldTitle,
+	FieldCategory,
 	FieldStatus,
-	FieldError,
-	FieldCreatedAt,
-	FieldUpdatedAt,
+	FieldChapterCount,
+	FieldFound,
+	FieldMatchedSource,
+	FieldScannedAt,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -49,16 +58,18 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTitle holds the default value on creation for the "title" field.
+	DefaultTitle string
+	// DefaultCategory holds the default value on creation for the "category" field.
+	DefaultCategory string
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
-	// DefaultError holds the default value on creation for the "error" field.
-	DefaultError string
-	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
-	DefaultCreatedAt func() time.Time
-	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
-	DefaultUpdatedAt func() time.Time
-	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
-	UpdateDefaultUpdatedAt func() time.Time
+	// DefaultChapterCount holds the default value on creation for the "chapter_count" field.
+	DefaultChapterCount int
+	// DefaultScannedAt holds the default value on creation for the "scanned_at" field.
+	DefaultScannedAt func() time.Time
+	// UpdateDefaultScannedAt holds the default value on update for the "scanned_at" field.
+	UpdateDefaultScannedAt func() time.Time
 	// DefaultID holds the default value on creation for the "id" field.
 	DefaultID func() uuid.UUID
 )
@@ -76,22 +87,27 @@ func ByPath(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPath, opts...).ToFunc()
 }
 
+// ByTitle orders the results by the title field.
+func ByTitle(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTitle, opts...).ToFunc()
+}
+
+// ByCategory orders the results by the category field.
+func ByCategory(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCategory, opts...).ToFunc()
+}
+
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
 }
 
-// ByError orders the results by the error field.
-func ByError(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldError, opts...).ToFunc()
+// ByChapterCount orders the results by the chapter_count field.
+func ByChapterCount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldChapterCount, opts...).ToFunc()
 }
 
-// ByCreatedAt orders the results by the created_at field.
-func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCreatedAt, opts...).ToFunc()
-}
-
-// ByUpdatedAt orders the results by the updated_at field.
-func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldUpdatedAt, opts...).ToFunc()
+// ByScannedAt orders the results by the scanned_at field.
+func ByScannedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldScannedAt, opts...).ToFunc()
 }

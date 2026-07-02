@@ -85,16 +85,26 @@ var (
 	ImportEntriesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
 		{Name: "path", Type: field.TypeString, Unique: true},
+		{Name: "title", Type: field.TypeString, Default: ""},
+		{Name: "category", Type: field.TypeString, Default: ""},
 		{Name: "status", Type: field.TypeString, Default: "pending"},
-		{Name: "error", Type: field.TypeString, Default: ""},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "chapter_count", Type: field.TypeInt, Default: 0},
+		{Name: "found", Type: field.TypeJSON, Nullable: true},
+		{Name: "matched_source", Type: field.TypeJSON, Nullable: true},
+		{Name: "scanned_at", Type: field.TypeTime},
 	}
 	// ImportEntriesTable holds the schema information for the "import_entries" table.
 	ImportEntriesTable = &schema.Table{
 		Name:       "import_entries",
 		Columns:    ImportEntriesColumns,
 		PrimaryKey: []*schema.Column{ImportEntriesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "importentry_status",
+				Unique:  false,
+				Columns: []*schema.Column{ImportEntriesColumns[4]},
+			},
+		},
 	}
 	// LatestSeriesColumns holds the columns for the "latest_series" table.
 	LatestSeriesColumns = []*schema.Column{

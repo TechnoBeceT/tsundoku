@@ -93,24 +93,28 @@ func init() {
 	etagcache.DefaultID = etagcacheDescID.Default.(func() uuid.UUID)
 	importentryFields := schema.ImportEntry{}.Fields()
 	_ = importentryFields
+	// importentryDescTitle is the schema descriptor for title field.
+	importentryDescTitle := importentryFields[2].Descriptor()
+	// importentry.DefaultTitle holds the default value on creation for the title field.
+	importentry.DefaultTitle = importentryDescTitle.Default.(string)
+	// importentryDescCategory is the schema descriptor for category field.
+	importentryDescCategory := importentryFields[3].Descriptor()
+	// importentry.DefaultCategory holds the default value on creation for the category field.
+	importentry.DefaultCategory = importentryDescCategory.Default.(string)
 	// importentryDescStatus is the schema descriptor for status field.
-	importentryDescStatus := importentryFields[2].Descriptor()
+	importentryDescStatus := importentryFields[4].Descriptor()
 	// importentry.DefaultStatus holds the default value on creation for the status field.
 	importentry.DefaultStatus = importentryDescStatus.Default.(string)
-	// importentryDescError is the schema descriptor for error field.
-	importentryDescError := importentryFields[3].Descriptor()
-	// importentry.DefaultError holds the default value on creation for the error field.
-	importentry.DefaultError = importentryDescError.Default.(string)
-	// importentryDescCreatedAt is the schema descriptor for created_at field.
-	importentryDescCreatedAt := importentryFields[4].Descriptor()
-	// importentry.DefaultCreatedAt holds the default value on creation for the created_at field.
-	importentry.DefaultCreatedAt = importentryDescCreatedAt.Default.(func() time.Time)
-	// importentryDescUpdatedAt is the schema descriptor for updated_at field.
-	importentryDescUpdatedAt := importentryFields[5].Descriptor()
-	// importentry.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	importentry.DefaultUpdatedAt = importentryDescUpdatedAt.Default.(func() time.Time)
-	// importentry.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	importentry.UpdateDefaultUpdatedAt = importentryDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// importentryDescChapterCount is the schema descriptor for chapter_count field.
+	importentryDescChapterCount := importentryFields[5].Descriptor()
+	// importentry.DefaultChapterCount holds the default value on creation for the chapter_count field.
+	importentry.DefaultChapterCount = importentryDescChapterCount.Default.(int)
+	// importentryDescScannedAt is the schema descriptor for scanned_at field.
+	importentryDescScannedAt := importentryFields[8].Descriptor()
+	// importentry.DefaultScannedAt holds the default value on creation for the scanned_at field.
+	importentry.DefaultScannedAt = importentryDescScannedAt.Default.(func() time.Time)
+	// importentry.UpdateDefaultScannedAt holds the default value on update for the scanned_at field.
+	importentry.UpdateDefaultScannedAt = importentryDescScannedAt.UpdateDefault.(func() time.Time)
 	// importentryDescID is the schema descriptor for id field.
 	importentryDescID := importentryFields[0].Descriptor()
 	// importentry.DefaultID holds the default value on creation for the id field.

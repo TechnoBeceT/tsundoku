@@ -27,6 +27,34 @@ func (_c *ImportEntryCreate) SetPath(v string) *ImportEntryCreate {
 	return _c
 }
 
+// SetTitle sets the "title" field.
+func (_c *ImportEntryCreate) SetTitle(v string) *ImportEntryCreate {
+	_c.mutation.SetTitle(v)
+	return _c
+}
+
+// SetNillableTitle sets the "title" field if the given value is not nil.
+func (_c *ImportEntryCreate) SetNillableTitle(v *string) *ImportEntryCreate {
+	if v != nil {
+		_c.SetTitle(*v)
+	}
+	return _c
+}
+
+// SetCategory sets the "category" field.
+func (_c *ImportEntryCreate) SetCategory(v string) *ImportEntryCreate {
+	_c.mutation.SetCategory(v)
+	return _c
+}
+
+// SetNillableCategory sets the "category" field if the given value is not nil.
+func (_c *ImportEntryCreate) SetNillableCategory(v *string) *ImportEntryCreate {
+	if v != nil {
+		_c.SetCategory(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *ImportEntryCreate) SetStatus(v string) *ImportEntryCreate {
 	_c.mutation.SetStatus(v)
@@ -41,44 +69,42 @@ func (_c *ImportEntryCreate) SetNillableStatus(v *string) *ImportEntryCreate {
 	return _c
 }
 
-// SetError sets the "error" field.
-func (_c *ImportEntryCreate) SetError(v string) *ImportEntryCreate {
-	_c.mutation.SetError(v)
+// SetChapterCount sets the "chapter_count" field.
+func (_c *ImportEntryCreate) SetChapterCount(v int) *ImportEntryCreate {
+	_c.mutation.SetChapterCount(v)
 	return _c
 }
 
-// SetNillableError sets the "error" field if the given value is not nil.
-func (_c *ImportEntryCreate) SetNillableError(v *string) *ImportEntryCreate {
+// SetNillableChapterCount sets the "chapter_count" field if the given value is not nil.
+func (_c *ImportEntryCreate) SetNillableChapterCount(v *int) *ImportEntryCreate {
 	if v != nil {
-		_c.SetError(*v)
+		_c.SetChapterCount(*v)
 	}
 	return _c
 }
 
-// SetCreatedAt sets the "created_at" field.
-func (_c *ImportEntryCreate) SetCreatedAt(v time.Time) *ImportEntryCreate {
-	_c.mutation.SetCreatedAt(v)
+// SetFound sets the "found" field.
+func (_c *ImportEntryCreate) SetFound(v map[string]interface{}) *ImportEntryCreate {
+	_c.mutation.SetFound(v)
 	return _c
 }
 
-// SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (_c *ImportEntryCreate) SetNillableCreatedAt(v *time.Time) *ImportEntryCreate {
+// SetMatchedSource sets the "matched_source" field.
+func (_c *ImportEntryCreate) SetMatchedSource(v map[string]interface{}) *ImportEntryCreate {
+	_c.mutation.SetMatchedSource(v)
+	return _c
+}
+
+// SetScannedAt sets the "scanned_at" field.
+func (_c *ImportEntryCreate) SetScannedAt(v time.Time) *ImportEntryCreate {
+	_c.mutation.SetScannedAt(v)
+	return _c
+}
+
+// SetNillableScannedAt sets the "scanned_at" field if the given value is not nil.
+func (_c *ImportEntryCreate) SetNillableScannedAt(v *time.Time) *ImportEntryCreate {
 	if v != nil {
-		_c.SetCreatedAt(*v)
-	}
-	return _c
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (_c *ImportEntryCreate) SetUpdatedAt(v time.Time) *ImportEntryCreate {
-	_c.mutation.SetUpdatedAt(v)
-	return _c
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (_c *ImportEntryCreate) SetNillableUpdatedAt(v *time.Time) *ImportEntryCreate {
-	if v != nil {
-		_c.SetUpdatedAt(*v)
+		_c.SetScannedAt(*v)
 	}
 	return _c
 }
@@ -132,21 +158,25 @@ func (_c *ImportEntryCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *ImportEntryCreate) defaults() {
+	if _, ok := _c.mutation.Title(); !ok {
+		v := importentry.DefaultTitle
+		_c.mutation.SetTitle(v)
+	}
+	if _, ok := _c.mutation.Category(); !ok {
+		v := importentry.DefaultCategory
+		_c.mutation.SetCategory(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := importentry.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
-	if _, ok := _c.mutation.Error(); !ok {
-		v := importentry.DefaultError
-		_c.mutation.SetError(v)
+	if _, ok := _c.mutation.ChapterCount(); !ok {
+		v := importentry.DefaultChapterCount
+		_c.mutation.SetChapterCount(v)
 	}
-	if _, ok := _c.mutation.CreatedAt(); !ok {
-		v := importentry.DefaultCreatedAt()
-		_c.mutation.SetCreatedAt(v)
-	}
-	if _, ok := _c.mutation.UpdatedAt(); !ok {
-		v := importentry.DefaultUpdatedAt()
-		_c.mutation.SetUpdatedAt(v)
+	if _, ok := _c.mutation.ScannedAt(); !ok {
+		v := importentry.DefaultScannedAt()
+		_c.mutation.SetScannedAt(v)
 	}
 	if _, ok := _c.mutation.ID(); !ok {
 		v := importentry.DefaultID()
@@ -159,17 +189,20 @@ func (_c *ImportEntryCreate) check() error {
 	if _, ok := _c.mutation.Path(); !ok {
 		return &ValidationError{Name: "path", err: errors.New(`ent: missing required field "ImportEntry.path"`)}
 	}
+	if _, ok := _c.mutation.Title(); !ok {
+		return &ValidationError{Name: "title", err: errors.New(`ent: missing required field "ImportEntry.title"`)}
+	}
+	if _, ok := _c.mutation.Category(); !ok {
+		return &ValidationError{Name: "category", err: errors.New(`ent: missing required field "ImportEntry.category"`)}
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "ImportEntry.status"`)}
 	}
-	if _, ok := _c.mutation.Error(); !ok {
-		return &ValidationError{Name: "error", err: errors.New(`ent: missing required field "ImportEntry.error"`)}
+	if _, ok := _c.mutation.ChapterCount(); !ok {
+		return &ValidationError{Name: "chapter_count", err: errors.New(`ent: missing required field "ImportEntry.chapter_count"`)}
 	}
-	if _, ok := _c.mutation.CreatedAt(); !ok {
-		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "ImportEntry.created_at"`)}
-	}
-	if _, ok := _c.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "ImportEntry.updated_at"`)}
+	if _, ok := _c.mutation.ScannedAt(); !ok {
+		return &ValidationError{Name: "scanned_at", err: errors.New(`ent: missing required field "ImportEntry.scanned_at"`)}
 	}
 	return nil
 }
@@ -210,21 +243,33 @@ func (_c *ImportEntryCreate) createSpec() (*ImportEntry, *sqlgraph.CreateSpec) {
 		_spec.SetField(importentry.FieldPath, field.TypeString, value)
 		_node.Path = value
 	}
+	if value, ok := _c.mutation.Title(); ok {
+		_spec.SetField(importentry.FieldTitle, field.TypeString, value)
+		_node.Title = value
+	}
+	if value, ok := _c.mutation.Category(); ok {
+		_spec.SetField(importentry.FieldCategory, field.TypeString, value)
+		_node.Category = value
+	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(importentry.FieldStatus, field.TypeString, value)
 		_node.Status = value
 	}
-	if value, ok := _c.mutation.Error(); ok {
-		_spec.SetField(importentry.FieldError, field.TypeString, value)
-		_node.Error = value
+	if value, ok := _c.mutation.ChapterCount(); ok {
+		_spec.SetField(importentry.FieldChapterCount, field.TypeInt, value)
+		_node.ChapterCount = value
 	}
-	if value, ok := _c.mutation.CreatedAt(); ok {
-		_spec.SetField(importentry.FieldCreatedAt, field.TypeTime, value)
-		_node.CreatedAt = value
+	if value, ok := _c.mutation.Found(); ok {
+		_spec.SetField(importentry.FieldFound, field.TypeJSON, value)
+		_node.Found = value
 	}
-	if value, ok := _c.mutation.UpdatedAt(); ok {
-		_spec.SetField(importentry.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
+	if value, ok := _c.mutation.MatchedSource(); ok {
+		_spec.SetField(importentry.FieldMatchedSource, field.TypeJSON, value)
+		_node.MatchedSource = value
+	}
+	if value, ok := _c.mutation.ScannedAt(); ok {
+		_spec.SetField(importentry.FieldScannedAt, field.TypeTime, value)
+		_node.ScannedAt = value
 	}
 	return _node, _spec
 }
