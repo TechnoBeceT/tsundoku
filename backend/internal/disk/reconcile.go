@@ -97,6 +97,19 @@ func Reconcile(ctx context.Context, client *ent.Client, storage string) (Reconci
 	return result, nil
 }
 
+// ReconcileOne imports a single already-scanned series into the database,
+// reusing the same per-series upsert path as full Reconcile. It find-or-creates
+// the Series (+ its Category), the per-provider SeriesProvider rows, and the
+// Chapter rows (state=downloaded, satisfied_by the disk provider). No disk I/O,
+// no deletion, no state regression.
+func ReconcileOne(ctx context.Context, client *ent.Client, sf SeriesFacts) (ReconcileResult, error) {
+	var result ReconcileResult
+	if err := reconcileSeries(ctx, client, sf, &result); err != nil {
+		return ReconcileResult{}, err
+	}
+	return result, nil
+}
+
 // reconcileSeries upserts one series and all its providers and chapters.
 func reconcileSeries(ctx context.Context, client *ent.Client, sf SeriesFacts, result *ReconcileResult) error {
 	series, err := upsertSeries(ctx, client, sf.Title, sf.Category)
