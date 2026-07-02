@@ -30,6 +30,61 @@ func TestEnsureDefaultsIdempotent(t *testing.T) {
 	}
 }
 
+// TestEnsureDefaultsSeedsExactlyOneDefaultOther verifies that on a seeded DB
+// exactly one category carries is_default=true and it is "Other" (the seeded
+// fallback), and that ResolveDefault returns it.
+func TestEnsureDefaultsSeedsExactlyOneDefaultOther(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	if n := client.Category.Query().Where(entcategory.IsDefault(true)).CountX(ctx); n != 1 {
+		t.Fatalf("want exactly 1 default after seed, got %d", n)
+	}
+	def, err := category.ResolveDefault(ctx, client)
+	if err != nil {
+		t.Fatalf("ResolveDefault: %v", err)
+	}
+	if def.Name != "Other" {
+		t.Fatalf("seeded default = %q, want Other", def.Name)
+	}
+}
+
+// TestEnsureDefaultsDoesNotClobberChosenDefault is the restart-safety proof: once
+// the owner has promoted a non-Other default, a subsequent EnsureDefaults (every
+// startup) must leave it untouched rather than snap the default back to "Other".
+func TestEnsureDefaultsDoesNotClobberChosenDefault(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	// Owner promotes "Manhwa": clear Other, set Manhwa (what SetDefault does).
+	otherID, err := category.IDByName(ctx, client, "Other")
+	if err != nil {
+		t.Fatalf("IDByName(Other): %v", err)
+	}
+	manhwaID, err := category.IDByName(ctx, client, "Manhwa")
+	if err != nil {
+		t.Fatalf("IDByName(Manhwa): %v", err)
+	}
+	client.Category.UpdateOneID(otherID).SetIsDefault(false).ExecX(ctx)
+	client.Category.UpdateOneID(manhwaID).SetIsDefault(true).ExecX(ctx)
+
+	// Simulate the next startup.
+	if err := category.EnsureDefaults(ctx, client); err != nil {
+		t.Fatalf("EnsureDefaults (restart): %v", err)
+	}
+
+	def, err := category.ResolveDefault(ctx, client)
+	if err != nil {
+		t.Fatalf("ResolveDefault after restart: %v", err)
+	}
+	if def.ID != manhwaID {
+		t.Fatalf("EnsureDefaults clobbered the chosen default: got %q, want Manhwa", def.Name)
+	}
+	if n := client.Category.Query().Where(entcategory.IsDefault(true)).CountX(ctx); n != 1 {
+		t.Fatalf("want exactly 1 default after restart, got %d", n)
+	}
+}
+
 // TestBackfillSeriesFromLegacyEnumColumn is the MIGRATION-SAFETY proof. It
 // simulates an existing enum-era database: a series row whose category lives in
 // the legacy `category` column (which the new Ent schema no longer defines) with

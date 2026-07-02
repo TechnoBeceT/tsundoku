@@ -423,6 +423,30 @@ export interface paths {
         patch: operations["updateCategory"];
         trace?: never;
     };
+    "/api/categories/{id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set the default landing category
+         * @description Promotes the category to be the single default that new / uncategorized
+         *     series are filed under, demoting the previous default in the same
+         *     transaction. The default can never be deleted; the previously-default
+         *     category becomes deletable. No series or folder is moved. Returns the
+         *     updated category.
+         */
+        patch: operations["setDefaultCategory"];
+        trace?: never;
+    };
     "/api/sources": {
         parameters: {
             query?: never;
@@ -1121,8 +1145,10 @@ export interface components {
             name: string;
             /** @description Owner-chosen display order (ascending; ties break by name). */
             sortOrder: number;
-            /** @description True only for the default "Other" — it cannot be renamed or deleted. */
+            /** @description True for the seeded "Other" — it can never be renamed. */
             protected: boolean;
+            /** @description True for the single default landing category (new / uncategorized series file here). It can never be deleted; promote another category (PATCH /api/categories/{id}/default) to make this one deletable. */
+            isDefault: boolean;
             /** @description Number of series filed under this category. */
             count: number;
         };
@@ -2650,6 +2676,56 @@ export interface operations {
             };
             /** @description Another category already uses that name. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setDefaultCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Category UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated. Returns the now-default category. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            /** @description Malformed id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No category with the given id. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

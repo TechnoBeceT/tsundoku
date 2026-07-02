@@ -16,15 +16,15 @@
  *   id        ← dto.id
  *   name      ← dto.name
  *   count     ← dto.count
- *   protected ← dto.protected
- *   isDefault ← dto.protected  (presentational alias — the backend has no separate
- *                               "default" concept; the protected "Other" category is
- *                               the uncategorised-series landing, so protected ≡ isDefault)
+ *   protected ← dto.protected  (the seeded "Other" — can never be renamed)
+ *   isDefault ← dto.isDefault  (the single default landing category — can never be
+ *                               deleted; any category can be promoted to it)
  *
  * CRUD mutations (§16 pattern — busy flag + inline error via categoryAction):
  *   addCategory(name)             POST /api/categories {name}
  *   renameCategory({id, name})    PATCH /api/categories/{id} {name}
  *   reorderCategory({id, dir})    swap sortOrder with neighbor; PATCH both sequentially
+ *   setDefaultCategory(id)        PATCH /api/categories/{id}/default
  *   deleteCategory({id,targetId}) reassign members (if any) then DELETE
  */
 import { computed, ref } from 'vue'
@@ -48,16 +48,17 @@ function mapCategory(dto: CategoryDTO): CategorySummary {
   }
 }
 
-// isDefault = protected (presentational alias — the backend has no separate
-// "default" concept; the protected "Other" category is the uncategorised-series
-// landing, making it the de-facto default).
+// protected → can never be renamed (the seeded "Other"); isDefault → the single
+// default landing category, which can never be deleted. Both come straight from
+// the backend DTO — they are independent flags now (a demoted "Other" is
+// protected but not the default).
 function mapSettingsCategory(dto: CategoryDTO): SettingsCategory {
   return {
     id: dto.id,
     name: dto.name,
     count: dto.count,
     protected: dto.protected,
-    isDefault: dto.protected,
+    isDefault: dto.isDefault,
   }
 }
 
@@ -140,19 +141,45 @@ export function useCategories() {
     const target = list[idx]
     const neighbor = list[neighborIdx]
 
+    // Give target the neighbor's sortOrder and neighbor the target's old value.
+    // Defensive tie-break: if the two share a sortOrder (a legacy collision the
+    // backend NormalizeSortOrder repairs on startup, but a not-yet-restarted DB
+    // may still have — F3), a plain swap would be a no-op, so force distinct
+    // values with the neighbor pushed one step past the target in the move's
+    // direction. Distinct values make the swap actually move the row.
+    const targetOrder = neighbor.sortOrder
+    let neighborOrder = target.sortOrder
+    if (neighborOrder === targetOrder) {
+      neighborOrder = direction === -1 ? targetOrder + 1 : targetOrder - 1
+    }
+
     await categoryMutate(id, async () => {
-      // Give target the neighbor's sortOrder, then give neighbor the target's old value.
       const r1 = await apiClient.PATCH('/api/categories/{id}', {
         params: { path: { id: target.id } },
-        body: { sortOrder: neighbor.sortOrder },
+        body: { sortOrder: targetOrder },
       })
       if (r1.error) throw new Error(r1.error.message)
 
       const r2 = await apiClient.PATCH('/api/categories/{id}', {
         params: { path: { id: neighbor.id } },
-        body: { sortOrder: target.sortOrder },
+        body: { sortOrder: neighborOrder },
       })
       if (r2.error) throw new Error(r2.error.message)
+    })
+  }
+
+  /**
+   * Promotes a category to be the single default landing for new / uncategorized
+   * series. The backend demotes the previous default in the same transaction, so a
+   * refetch reflects both the new DEFAULT badge and the previous default becoming
+   * deletable.
+   */
+  async function setDefaultCategory(id: string): Promise<void> {
+    await categoryMutate(id, async () => {
+      const res = await apiClient.PATCH('/api/categories/{id}/default', {
+        params: { path: { id } },
+      })
+      if (res.error) throw new Error(res.error.message)
     })
   }
 
@@ -218,6 +245,7 @@ export function useCategories() {
     addCategory,
     renameCategory,
     reorderCategory,
+    setDefaultCategory,
     deleteCategory,
   }
 }

@@ -9,13 +9,16 @@ import (
 )
 
 // CategoryDTO is the wire shape for one library category: its identity, name,
-// owner-chosen sort order, the protected flag (true only for the default
-// "Other"), and the number of series currently filed under it.
+// owner-chosen sort order, the protected flag (true for the seeded "Other" — it
+// can never be renamed), the isDefault flag (true for the single category new /
+// uncategorized series land in — it can never be deleted), and the number of
+// series currently filed under it.
 type CategoryDTO struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	SortOrder int    `json:"sortOrder"`
 	Protected bool   `json:"protected"`
+	IsDefault bool   `json:"isDefault"`
 	Count     int    `json:"count"`
 }
 
@@ -27,6 +30,7 @@ func newCategoryDTO(c *ent.Category, count int) CategoryDTO {
 		Name:      c.Name,
 		SortOrder: c.SortOrder,
 		Protected: c.Protected,
+		IsDefault: c.IsDefault,
 		Count:     count,
 	}
 }

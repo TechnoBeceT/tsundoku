@@ -56,6 +56,20 @@ func (_c *CategoryCreate) SetNillableProtected(v *bool) *CategoryCreate {
 	return _c
 }
 
+// SetIsDefault sets the "is_default" field.
+func (_c *CategoryCreate) SetIsDefault(v bool) *CategoryCreate {
+	_c.mutation.SetIsDefault(v)
+	return _c
+}
+
+// SetNillableIsDefault sets the "is_default" field if the given value is not nil.
+func (_c *CategoryCreate) SetNillableIsDefault(v *bool) *CategoryCreate {
+	if v != nil {
+		_c.SetIsDefault(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *CategoryCreate) SetCreatedAt(v time.Time) *CategoryCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -156,6 +170,10 @@ func (_c *CategoryCreate) defaults() {
 		v := category.DefaultProtected
 		_c.mutation.SetProtected(v)
 	}
+	if _, ok := _c.mutation.IsDefault(); !ok {
+		v := category.DefaultIsDefault
+		_c.mutation.SetIsDefault(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := category.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -180,6 +198,9 @@ func (_c *CategoryCreate) check() error {
 	}
 	if _, ok := _c.mutation.Protected(); !ok {
 		return &ValidationError{Name: "protected", err: errors.New(`ent: missing required field "Category.protected"`)}
+	}
+	if _, ok := _c.mutation.IsDefault(); !ok {
+		return &ValidationError{Name: "is_default", err: errors.New(`ent: missing required field "Category.is_default"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "Category.created_at"`)}
@@ -233,6 +254,10 @@ func (_c *CategoryCreate) createSpec() (*Category, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Protected(); ok {
 		_spec.SetField(category.FieldProtected, field.TypeBool, value)
 		_node.Protected = value
+	}
+	if value, ok := _c.mutation.IsDefault(); ok {
+		_spec.SetField(category.FieldIsDefault, field.TypeBool, value)
+		_node.IsDefault = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(category.FieldCreatedAt, field.TypeTime, value)

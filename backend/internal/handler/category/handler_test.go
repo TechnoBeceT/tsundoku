@@ -43,6 +43,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.GET("/categories", h.List)
 	authed.POST("/categories", h.Create)
 	authed.PATCH("/categories/:id", h.Update)
+	authed.PATCH("/categories/:id/default", h.SetDefault)
 	authed.DELETE("/categories/:id", h.Delete)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -223,14 +224,43 @@ func TestDelete_NonEmpty(t *testing.T) {
 	}
 }
 
-// TestDelete_Protected verifies the protected default yields 400.
-func TestDelete_Protected(t *testing.T) {
+// TestDelete_Default verifies the current default ("Other") yields 400.
+func TestDelete_Default(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 	id := env.catID(ctx, t, "Other")
 	rec := env.do(http.MethodDelete, "/api/categories/"+id.String(), "")
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("Delete protected: want 400, got %d", rec.Code)
+		t.Fatalf("Delete default: want 400, got %d", rec.Code)
+	}
+}
+
+// TestSetDefault_OK verifies PATCH /api/categories/:id/default promotes the
+// category and returns 200 with the updated DTO carrying isDefault=true.
+func TestSetDefault_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	id := env.catID(ctx, t, "Manga")
+
+	rec := env.do(http.MethodPatch, "/api/categories/"+id.String()+"/default", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetDefault: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got categorysvc.CategoryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.IsDefault || got.Name != "Manga" {
+		t.Fatalf("SetDefault DTO = %+v, want Manga isDefault=true", got)
+	}
+}
+
+// TestSetDefault_NotFound verifies an unknown id yields 404.
+func TestSetDefault_NotFound(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodPatch, "/api/categories/"+uuid.New().String()+"/default", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("SetDefault unknown: want 404, got %d", rec.Code)
 	}
 }
 
@@ -251,6 +281,7 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodGet, "/api/categories"},
 		{http.MethodPost, "/api/categories"},
 		{http.MethodPatch, "/api/categories/" + id},
+		{http.MethodPatch, "/api/categories/" + id + "/default"},
 		{http.MethodDelete, "/api/categories/" + id},
 	}
 	for _, tc := range cases {

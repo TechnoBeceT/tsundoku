@@ -302,6 +302,7 @@ components:
         - name
         - sortOrder
         - protected
+        - isDefault
         - count
       properties:
         id:
@@ -316,7 +317,13 @@ components:
           description: Owner-chosen display order (ascending; ties break by name).
         protected:
           type: boolean
-          description: True only for the default "Other" — it cannot be renamed or deleted.
+          description: True for the seeded "Other" — it can never be renamed.
+        isDefault:
+          type: boolean
+          description: >-
+            True for the single default landing category (new / uncategorized
+            series file here). It can never be deleted; promote another category
+            (PATCH /api/categories/{id}/default) to make this one deletable.
         count:
           type: integer
           description: Number of series filed under this category.
@@ -2046,6 +2053,54 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The category still has series filed under it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/categories/{id}/default:
+    patch:
+      operationId: setDefaultCategory
+      summary: Set the default landing category
+      description: |
+        Promotes the category to be the single default that new / uncategorized
+        series are filed under, demoting the previous default in the same
+        transaction. The default can never be deleted; the previously-default
+        category becomes deletable. No series or folder is moved. Returns the
+        updated category.
+      tags:
+        - categories
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Category UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Updated. Returns the now-default category.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "400":
+          description: Malformed id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No category with the given id.
           content:
             application/json:
               schema:
