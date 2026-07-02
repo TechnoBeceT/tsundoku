@@ -16,6 +16,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/library"
 )
 
 // New spins up an ephemeral postgres:17-alpine container, runs Ent auto-migration,
@@ -79,6 +80,14 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 	}
 	if err := category.DropLegacyColumn(ctx, db); err != nil {
 		t.Fatalf("testdb: drop legacy category column: %v", err)
+	}
+
+	// Mirror production startup (database.Open): drop the orphaned columns
+	// left behind by the original unused ImportEntry stub. This is a no-op on
+	// the fresh testdb table (the columns never existed here) but is run for
+	// parity with the production sequence and to exercise the call path.
+	if err := library.DropLegacyImportEntryColumns(ctx, db); err != nil {
+		t.Fatalf("testdb: drop legacy import_entries columns: %v", err)
 	}
 
 	t.Cleanup(func() {

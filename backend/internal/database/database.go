@@ -20,6 +20,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/library"
 )
 
 // retryPolicy controls how Open retries a failed connection attempt.
@@ -95,12 +96,26 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*ent.Client, error) {
 		return nil, fmt.Errorf("database: run migration: %w", err)
 	}
 
-	if err := seedCategories(ctx, client, db); err != nil {
+	if err := runPostMigrationCleanup(ctx, client, db); err != nil {
 		_ = client.Close()
 		return nil, err
 	}
 
 	return client, nil
+}
+
+// runPostMigrationCleanup runs every post-auto-migration cleanup step that
+// depends on raw SQL (Ent's additive Schema.Create never drops a superseded
+// column). It is a single call from Open so adding a new cleanup step never
+// grows Open's own branching.
+func runPostMigrationCleanup(ctx context.Context, client *ent.Client, db *sql.DB) error {
+	if err := seedCategories(ctx, client, db); err != nil {
+		return err
+	}
+	if err := library.DropLegacyImportEntryColumns(ctx, db); err != nil {
+		return fmt.Errorf("database: drop legacy import_entries columns: %w", err)
+	}
+	return nil
 }
 
 // seedCategories seeds the five default categories, backfills any legacy
