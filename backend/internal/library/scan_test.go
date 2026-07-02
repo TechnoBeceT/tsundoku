@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/library"
 )
 
@@ -93,5 +95,74 @@ func assertStagedCount(t *testing.T, client *ent.Client, ctx context.Context, wa
 	t.Helper()
 	if n := client.ImportEntry.Query().CountX(ctx); n != want {
 		t.Fatalf("staged rows = %d, want %d", n, want)
+	}
+}
+
+// statusForPath returns the persisted ImportEntry.status for a given path key.
+func statusForPath(t *testing.T, client *ent.Client, ctx context.Context, path string) string {
+	t.Helper()
+	e, err := client.ImportEntry.Query().Where(importentry.Path(path)).Only(ctx)
+	if err != nil {
+		t.Fatalf("query import entry for %q: %v", path, err)
+	}
+	return e.Status
+}
+
+func TestScan_MarksImportedWhenSeriesExists(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+
+	client := testdb.New(t)
+	ctx := context.Background()
+	// A Series whose slug matches the on-disk title already exists in the DB.
+	client.Series.Create().
+		SetTitle("My Series").
+		SetSlug(disk.Slugify("My Series")).
+		SaveX(ctx)
+
+	svc := library.NewService(client, nil, nil, nil, func() {}, storage)
+	found, err := svc.Scan(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(found) != 1 {
+		t.Fatalf("found %d, want 1", len(found))
+	}
+	f := found[0]
+	if f.Status != "imported" || !f.AlreadyInDB {
+		t.Fatalf("status=%q alreadyInDb=%v, want imported/true", f.Status, f.AlreadyInDB)
+	}
+}
+
+func TestScan_NeverDowngradesImportedRow(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := library.NewService(client, nil, nil, nil, func() {}, storage)
+
+	// First scan stages the row as pending (no matching Series in the DB).
+	found, err := svc.Scan(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	path := found[0].Path
+	if got := statusForPath(t, client, ctx, path); got != "pending" {
+		t.Fatalf("first scan status = %q, want pending", got)
+	}
+
+	// Owner (or a later task) promotes the staged row to imported.
+	client.ImportEntry.Update().
+		Where(importentry.Path(path)).
+		SetStatus("imported").
+		SaveX(ctx)
+
+	// Re-scan with the Series STILL absent from the DB must not downgrade it.
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatalf("re-scan: %v", err)
+	}
+	if got := statusForPath(t, client, ctx, path); got != "imported" {
+		t.Fatalf("after re-scan status = %q, want imported (never downgraded)", got)
 	}
 }

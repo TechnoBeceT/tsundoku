@@ -101,7 +101,7 @@ func (s *Service) upsertEntry(ctx context.Context, path string, sf disk.SeriesFa
 // across a series' chapters, in first-seen order.
 func distinctProviders(sf disk.SeriesFacts) []string {
 	seen := map[string]struct{}{}
-	var out []string
+	out := []string{}
 	for _, c := range sf.Chapters {
 		if c.Provider == "" {
 			continue
