@@ -3,9 +3,11 @@ package library
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/series"
 )
@@ -30,8 +32,11 @@ import (
 //  6. Return the refreshed series.SeriesDetailDTO (§16 round-trip).
 func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source string, mangaID, importance int) (series.SeriesDetailDTO, error) {
 	ser, err := s.db.Series.Get(ctx, seriesID)
-	if err != nil {
+	if ent.IsNotFound(err) {
 		return series.SeriesDetailDTO{}, ErrSeriesNotFound
+	}
+	if err != nil {
+		return series.SeriesDetailDTO{}, fmt.Errorf("library.AddProvider: get series %s: %w", seriesID, err)
 	}
 
 	dup, err := s.db.SeriesProvider.Query().
