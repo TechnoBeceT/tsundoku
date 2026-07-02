@@ -10,11 +10,14 @@ func TestKaizokuProvenance_TsundokuExtensionsWin(t *testing.T) {
 	}
 }
 
-func TestKaizokuProvenance_FilenameBracketFallback(t *testing.T) {
-	ci := &ComicInfo{Publisher: "ignored-because-filename-wins", Translator: "ignored"}
-	p, s, imp := kaizokuProvenance("[mangadex-Alpha Scans][en] My Series 12.5 (Finale).cbz", ci)
-	if p != "mangadex" || s != "Alpha Scans" || imp != 1 {
-		t.Fatalf("got %q/%q/%d, want mangadex/Alpha Scans/1", p, s, imp)
+func TestKaizokuProvenance_ComicInfoPublisherWinsOverFilename(t *testing.T) {
+	// filename bracket has no dash, so providerFromFilename yields a
+	// (different) provider with no scanlator at all — ComicInfo Publisher
+	// must still win over it.
+	ci := &ComicInfo{Publisher: "Asura Scans", Translator: ""}
+	p, s, imp := kaizokuProvenance("[mangled][en] X 1.cbz", ci)
+	if p != "Asura Scans" || s != "" || imp != 1 {
+		t.Fatalf("got %q/%q/%d, want Asura Scans//1", p, s, imp)
 	}
 }
 
@@ -37,5 +40,28 @@ func TestKaizokuProvenance_NoSignalAtAll(t *testing.T) {
 	p, s, imp := kaizokuProvenance("plain.cbz", nil)
 	if p != "" || s != "" || imp != 1 {
 		t.Fatalf("got %q/%q/%d, want //1", p, s, imp)
+	}
+}
+
+func TestKaizokuProvenance_RealDataComixOfficial(t *testing.T) {
+	ci := &ComicInfo{Publisher: "Comix", Translator: "Official?"}
+	p, s, imp := kaizokuProvenance("[Comix-Official][en] 4 Cut Hero 156.5.cbz", ci)
+	if p != "Comix" || s != "Official?" || imp != 1 {
+		t.Fatalf("got %q/%q/%d, want Comix/Official?/1", p, s, imp)
+	}
+}
+
+func TestKaizokuProvenance_DuplicateTranslatorDropped(t *testing.T) {
+	ci := &ComicInfo{Publisher: "KaliScan.io", Translator: "KaliScan.io"}
+	p, s, imp := kaizokuProvenance("[KaliScan.io][en] X 1.cbz", ci)
+	if p != "KaliScan.io" || s != "" || imp != 1 {
+		t.Fatalf("got %q/%q/%d, want KaliScan.io//1", p, s, imp)
+	}
+}
+
+func TestKaizokuProvenance_FilenameOnlyFallbackNoComicInfo(t *testing.T) {
+	p, s, imp := kaizokuProvenance("[Comix-Official][en] X 1.cbz", nil)
+	if p != "Comix" || s != "Official" || imp != 1 {
+		t.Fatalf("got %q/%q/%d, want Comix/Official/1", p, s, imp)
 	}
 }

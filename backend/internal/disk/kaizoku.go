@@ -5,9 +5,12 @@ import "strings"
 // kaizokuProvenance resolves the origin provider/scanlator/importance for an
 // orphan CBZ that may have been written by Kaizoku (which stores provider in the
 // filename bracket and ComicInfo Publisher/Translator, with no importance).
-// Preference order: Tsundoku's own ComicInfo extensions → the filename's first
-// [Provider-Scanlator] bracket → ComicInfo Publisher/Translator. Importance
-// defaults to 1 so any matched Suwayomi source (importance >= 2) outranks it.
+// Preference order: Tsundoku's own ComicInfo extensions → the ComicInfo
+// Publisher/Translator (Kaizoku.NET's authoritative, clean provenance) → the
+// filename's first [Provider-Scanlator] bracket, used only as a last-resort
+// fallback since Kaizoku.NET filenames carry filesystem-mangled characters.
+// Importance defaults to 1 so any matched Suwayomi source (importance >= 2)
+// outranks it.
 func kaizokuProvenance(filename string, ci *ComicInfo) (provider, scanlator string, importance int) {
 	var ciProvider, ciScanlator, ciPublisher, ciTranslator string
 	importance = 1
@@ -21,8 +24,18 @@ func kaizokuProvenance(filename string, ci *ComicInfo) (provider, scanlator stri
 
 	fProvider, fScanlator := providerFromFilename(filename)
 
-	provider = firstNonEmpty(ciProvider, fProvider, ciPublisher)
-	scanlator = firstNonEmpty(ciScanlator, fScanlator, ciTranslator)
+	// Prefer Tsundoku's own extension fields, then the ComicInfo
+	// Publisher/Translator (Kaizoku.NET's authoritative, clean provenance),
+	// and only fall back to the filesystem-mangled filename bracket when
+	// neither is present.
+	provider = firstNonEmpty(ciProvider, ciPublisher, fProvider)
+	scanlator = firstNonEmpty(ciScanlator, ciTranslator, fScanlator)
+
+	// A scanlator that merely duplicates the provider carries no information
+	// (some Kaizoku.NET sources set Publisher == Translator, e.g. "KaliScan.io").
+	if scanlator == provider {
+		scanlator = ""
+	}
 	return provider, scanlator, importance
 }
 
