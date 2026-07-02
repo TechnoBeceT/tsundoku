@@ -44,6 +44,20 @@ type Source struct {
 	Lang string
 }
 
+// LocalSourceID is Suwayomi's built-in "Local source" identifier. It is
+// always present in the Sources() list, indexes files from Suwayomi's own
+// on-disk localSourcePath rather than a real online content provider, and
+// carries the fixed lang tag "localsourcelang" (see LocalSourceLang). Tsundoku
+// never treats it as a real content source — see imports.Service.Sources,
+// which filters it out of the Discover/Search source lists.
+const LocalSourceID = "0"
+
+// LocalSourceLang is the fixed BCP-47-shaped lang tag Suwayomi assigns to its
+// built-in Local source. It is a more stable exclusion signal than
+// LocalSourceID: if Suwayomi ever changes the id, the lang tag is what would
+// otherwise leak into the UI as the literal string "LOCALSOURCELANG".
+const LocalSourceLang = "localsourcelang"
+
 // Manga is a search result or library entry from Suwayomi.
 // ID is an int (Kotlin Int, 32-bit); ThumbnailURL is nil when the server does
 // not provide one.

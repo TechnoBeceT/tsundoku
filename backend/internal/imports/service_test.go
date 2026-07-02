@@ -187,6 +187,44 @@ func TestService_Sources(t *testing.T) {
 	}
 }
 
+// TestService_Sources_ExcludesLocalSource verifies that Suwayomi's built-in
+// Local source (id suwayomi.LocalSourceID, lang "localsourcelang") is dropped
+// from the returned list — it is a Suwayomi-internal on-disk source, not a
+// real content source, and should never populate the Discover/Search source
+// pickers (F1). A source matching either signal (id or lang, case-insensitive)
+// is excluded; real sources are kept untouched.
+func TestService_Sources_ExcludesLocalSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: suwayomi.LocalSourceID, Name: "Local source", Lang: "localsourcelang"},
+			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
+			// A source that only matches on the lang signal (id changed, lang
+			// unchanged) must still be excluded — the defensive secondary match.
+			{ID: "999", Name: "Local source", Lang: "LOCALSOURCELANG"},
+			{ID: "src-b", Name: "Beta Source", Lang: "ko"},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Sources: got %d DTOs, want 2 (local source excluded): %+v", len(got), got)
+	}
+	for _, dto := range got {
+		if dto.ID == suwayomi.LocalSourceID || strings.EqualFold(dto.Lang, "localsourcelang") {
+			t.Errorf("Sources: local source leaked into result: %+v", dto)
+		}
+	}
+	if got[0].ID != "src-a" || got[1].ID != "src-b" {
+		t.Errorf("Sources: got %+v, want [src-a, src-b]", got)
+	}
+}
+
 // TestService_Sources_Error verifies that a client error is propagated.
 func TestService_Sources_Error(t *testing.T) {
 	t.Parallel()

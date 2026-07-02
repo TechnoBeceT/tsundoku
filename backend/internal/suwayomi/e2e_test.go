@@ -96,9 +96,9 @@ func TestShape1_LongString_SourceID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	results, err := inst.Client().Search(ctx, testharness.LocalSourceID, testharness.FixtureMangaTitle)
+	results, err := inst.Client().Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
 	if err != nil {
-		t.Fatalf("Search with sourceId=%q: %v\n(check: is LongString! the correct scalar for sourceId?)", testharness.LocalSourceID, err)
+		t.Fatalf("Search with sourceId=%q: %v\n(check: is LongString! the correct scalar for sourceId?)", suwayomi.LocalSourceID, err)
 	}
 	t.Logf("CONFIRMED: LongString! scalar accepted for sourceId; got %d results", len(results))
 }
@@ -116,7 +116,7 @@ func TestShape2_ChapterFilter_EqualTo(t *testing.T) {
 	defer cancel()
 
 	client := inst.Client()
-	results, err := client.Search(ctx, testharness.LocalSourceID, testharness.FixtureMangaTitle)
+	results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
 	if err != nil {
 		t.Skipf("Search failed (skipping shape2): %v", err)
 	}
@@ -150,7 +150,7 @@ func TestShape3_ChapterPages_URLFormat(t *testing.T) {
 
 	client := inst.Client()
 
-	results, err := client.Search(ctx, testharness.LocalSourceID, testharness.FixtureMangaTitle)
+	results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
 	if err != nil || len(results) == 0 {
 		t.Skipf("Search failed or empty (skipping shape3): err=%v results=%d", err, len(results))
 	}
@@ -217,16 +217,16 @@ func TestShape4_BrowseEnumType(t *testing.T) {
 	// POPULAR is the load-bearing assertion: it must be accepted as a value of
 	// FetchSourceMangaType. Any error here means the enum type name or value is
 	// wrong and must fail the test.
-	popular, err := client.Browse(ctx, testharness.LocalSourceID, suwayomi.BrowsePopular, 1)
+	popular, err := client.Browse(ctx, suwayomi.LocalSourceID, suwayomi.BrowsePopular, 1)
 	if err != nil {
-		t.Fatalf("Browse(sourceId=%q, type=POPULAR, page=1): %v\n(check: is FetchSourceMangaType! the correct enum type name, and POPULAR a valid value?)", testharness.LocalSourceID, err)
+		t.Fatalf("Browse(sourceId=%q, type=POPULAR, page=1): %v\n(check: is FetchSourceMangaType! the correct enum type name, and POPULAR a valid value?)", suwayomi.LocalSourceID, err)
 	}
 	t.Logf("CONFIRMED: FetchSourceMangaType! accepted with value POPULAR; got %d mangas, hasNextPage=%v", len(popular.Mangas), popular.HasNextPage)
 
 	// LATEST reuses the same FetchSourceMangaType. The Local source may not
 	// support a latest listing — tolerate a source-capability error, but still
 	// log the outcome so the test record shows whether LATEST round-tripped.
-	latest, err := client.Browse(ctx, testharness.LocalSourceID, suwayomi.BrowseLatest, 1)
+	latest, err := client.Browse(ctx, suwayomi.LocalSourceID, suwayomi.BrowseLatest, 1)
 	if err != nil {
 		t.Logf("NOTE: Browse(type=LATEST) returned an error — tolerated as a possible source-capability limitation (NOT a type-name rejection): %v", err)
 	} else {
@@ -539,7 +539,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 	// Retry search up to 30 s because the Local source may need time to index
 	// on first launch.
 	if err := retryUntil(ctx, 30*time.Second, func() error {
-		results, err := client.Search(ctx, testharness.LocalSourceID, testharness.FixtureMangaTitle)
+		results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
 		if err != nil {
 			return err
 		}

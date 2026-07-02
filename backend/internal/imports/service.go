@@ -62,17 +62,34 @@ func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client,
 	}
 }
 
-// Sources returns all Suwayomi sources as SourceDTOs.
+// Sources returns all Suwayomi sources as SourceDTOs, excluding Suwayomi's
+// built-in Local source (see isLocalSource). The Local source indexes files
+// from Suwayomi's own on-disk localSourcePath rather than a real online
+// provider, and its lang tag renders as the raw "LOCALSOURCELANG" string in
+// the UI — it should never appear in the Discover picker or the Search
+// "Limit to" filters (F1).
 func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 	srcs, err := s.client.Sources(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]SourceDTO, len(srcs))
-	for i, src := range srcs {
-		out[i] = SourceDTO{ID: src.ID, Name: src.Name, Lang: src.Lang}
+	out := make([]SourceDTO, 0, len(srcs))
+	for _, src := range srcs {
+		if isLocalSource(src) {
+			continue
+		}
+		out = append(out, SourceDTO{ID: src.ID, Name: src.Name, Lang: src.Lang})
 	}
 	return out, nil
+}
+
+// isLocalSource reports whether src is Suwayomi's built-in Local source. The
+// primary signal is the fixed id (suwayomi.LocalSourceID); the lang tag
+// (case-insensitive "localsourcelang") is checked too as a defensive
+// secondary signal, since it is the more stable identifier — if Suwayomi ever
+// changes the id, matching on lang still catches it.
+func isLocalSource(src suwayomi.Source) bool {
+	return src.ID == suwayomi.LocalSourceID || strings.EqualFold(src.Lang, suwayomi.LocalSourceLang)
 }
 
 // searchOneSource performs a single-source search against the Suwayomi client
