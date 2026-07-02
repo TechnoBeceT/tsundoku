@@ -26,6 +26,12 @@ import {
  * cadence). A failed extension mutation surfaces in a pane-level banner; the
  * destructive uninstall routes through a confirm modal (§16/§2e).
  *
+ * M2 bugfix: a single shared search box (Installed + Available; hidden on
+ * Repositories) filters the resident list client-side by case-insensitive
+ * name/lang substring — with ~1375 available extensions, scrolling to find one
+ * was unusable. No backend round-trip: useExtensions already loads the full
+ * list in one call.
+ *
  *   - `extensions` / `availableExtensions`: installed + installable sets.
  *   - `repos`: the repository URL list.
  *   - `extensionAction` / `repoAction`: the §16 per-row mutation state.
@@ -78,6 +84,20 @@ const tabs = computed(() => [
   { key: 'available', label: 'Available', count: props.availableExtensions.length },
   { key: 'repos', label: 'Repositories', count: props.repos.length },
 ])
+
+// ---- Search (M2 bugfix: no way to find one extension among ~1375) ---------
+// One shared search box for the Installed + Available tabs (mirrors Kaizoku.GO's
+// single shared input), filtering client-side by case-insensitive name/lang
+// substring — the full list is already resident (useExtensions loads it in one
+// call), so no backend round-trip is needed.
+const extSearch = ref('')
+function matchesSearch(e: Extension, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return e.name.toLowerCase().includes(q) || e.lang.toLowerCase().includes(q)
+}
+const filteredExtensions = computed(() => props.extensions.filter(e => matchesSearch(e, extSearch.value)))
+const filteredAvailableExtensions = computed(() => props.availableExtensions.filter(e => matchesSearch(e, extSearch.value)))
 
 // Per-row busy flags (the parent flags the single in-flight pkgName / repo id).
 const extensionRowBusy = (id: string): boolean => props.extensionAction.busyId === id
@@ -144,14 +164,26 @@ function onRepoMove(id: string, direction: MoveDirection) {
   <!-- A failed extension mutation is surfaced inline for the whole pane. -->
   <p v-if="extensionAction.error" class="form-error--pane">{{ extensionAction.error }}</p>
 
+  <!-- Shared search — filters whichever of Installed/Available is showing
+       (there is no per-source list on the Repositories tab to filter). -->
+  <input
+    v-if="extTab !== 'repos'"
+    v-model="extSearch"
+    type="search"
+    class="ext-search"
+    placeholder="Search extensions by name or language…"
+    aria-label="Search extensions"
+  >
+
   <!-- Installed -->
   <template v-if="extTab === 'installed'">
     <div class="ext-actions">
       <AppButton variant="mini" size="sm" :loading="checkingUpdates" @click="emit('check-updates')">Check for updates</AppButton>
     </div>
+    <p v-if="extSearch && filteredExtensions.length === 0" class="ext-empty">No installed extensions match "{{ extSearch }}".</p>
     <div class="ext-grid">
       <ExtensionRow
-        v-for="e in extensions"
+        v-for="e in filteredExtensions"
         :key="e.id"
         :extension="e"
         installed
@@ -164,9 +196,10 @@ function onRepoMove(id: string, direction: MoveDirection) {
 
   <!-- Available -->
   <template v-else-if="extTab === 'available'">
+    <p v-if="extSearch && filteredAvailableExtensions.length === 0" class="ext-empty">No available extensions match "{{ extSearch }}".</p>
     <div class="ext-grid">
       <ExtensionRow
-        v-for="e in availableExtensions"
+        v-for="e in filteredAvailableExtensions"
         :key="e.id"
         :extension="e"
         :busy="extensionRowBusy(e.id)"
@@ -217,6 +250,37 @@ function onRepoMove(id: string, direction: MoveDirection) {
 <style scoped>
 .ext-tabs {
   margin-bottom: 16px;
+}
+
+/* Shared Installed/Available search box — same input styling as the repo
+   add-row's URL field, just full-width and above the grid. */
+.ext-search {
+  width: 100%;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ext-search::placeholder {
+  color: var(--faint);
+}
+
+.ext-search:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring-focus);
+}
+
+.ext-empty {
+  padding: 10px 2px;
+  font-size: var(--text-sm);
+  color: var(--muted);
 }
 
 .ext-actions {

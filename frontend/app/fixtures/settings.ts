@@ -92,22 +92,26 @@ export const suwayomiConfig: SuwayomiConfig = {
   },
 }
 
-/** Installed extensions — two carry an available update (UPDATE badge). */
+/**
+ * Installed extensions — two carry an available update (UPDATE badge). No
+ * backend is running in Storybook, so iconUrl is '' here (the fallback tinted
+ * square); ExtensionRow.stories.ts adds a dedicated icon fixture separately.
+ */
 export const installedExtensions: Extension[] = [
-  { id: 'mangadex', name: 'MangaDex', lang: 'en', version: '1.4.21', hasUpdate: false },
-  { id: 'asurascans', name: 'Asura Scans', lang: 'en', version: '1.4.9', hasUpdate: true },
-  { id: 'comick', name: 'ComicK', lang: 'en', version: '2.0.3', hasUpdate: false },
-  { id: 'weebcentral', name: 'Weeb Central', lang: 'en', version: '1.2.0', hasUpdate: true },
-  { id: 'bilibili', name: 'BiliBili Comics', lang: 'zh', version: '1.3.7', hasUpdate: false },
+  { id: 'mangadex', name: 'MangaDex', lang: 'en', version: '1.4.21', hasUpdate: false, iconUrl: '' },
+  { id: 'asurascans', name: 'Asura Scans', lang: 'en', version: '1.4.9', hasUpdate: true, iconUrl: '' },
+  { id: 'comick', name: 'ComicK', lang: 'en', version: '2.0.3', hasUpdate: false, iconUrl: '' },
+  { id: 'weebcentral', name: 'Weeb Central', lang: 'en', version: '1.2.0', hasUpdate: true, iconUrl: '' },
+  { id: 'bilibili', name: 'BiliBili Comics', lang: 'zh', version: '1.3.7', hasUpdate: false, iconUrl: '' },
 ]
 
 /** Available (installable) extensions. */
 export const availableExtensions: Extension[] = [
-  { id: 'reaperscans', name: 'Reaper Scans', lang: 'en', version: '1.5.1', hasUpdate: false },
-  { id: 'flamecomics', name: 'Flame Comics', lang: 'en', version: '1.1.2', hasUpdate: false },
-  { id: 'mangaplus', name: 'MANGA Plus', lang: 'en', version: '1.6.0', hasUpdate: false },
-  { id: 'webtoons', name: 'Webtoons', lang: 'en', version: '2.1.0', hasUpdate: false },
-  { id: 'kakao', name: 'Kakao', lang: 'ko', version: '1.0.4', hasUpdate: false },
+  { id: 'reaperscans', name: 'Reaper Scans', lang: 'en', version: '1.5.1', hasUpdate: false, iconUrl: '' },
+  { id: 'flamecomics', name: 'Flame Comics', lang: 'en', version: '1.1.2', hasUpdate: false, iconUrl: '' },
+  { id: 'mangaplus', name: 'MANGA Plus', lang: 'en', version: '1.6.0', hasUpdate: false, iconUrl: '' },
+  { id: 'webtoons', name: 'Webtoons', lang: 'en', version: '2.1.0', hasUpdate: false, iconUrl: '' },
+  { id: 'kakao', name: 'Kakao', lang: 'ko', version: '1.0.4', hasUpdate: false, iconUrl: '' },
 ]
 
 /** Extension repositories — the first is the pre-populated default. */

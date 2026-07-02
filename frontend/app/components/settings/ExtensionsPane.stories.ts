@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
+import { expect, userEvent, within } from 'storybook/test'
 import ExtensionsPane from './ExtensionsPane.vue'
 import { availableExtensions, extCheckInterval, installedExtensions, repos } from '../../fixtures/settings'
 // Load this screen's status tokens directly: index.css does not @import them yet
@@ -38,5 +39,27 @@ export const Default: Story = {
 export const Busy: Story = {
   args: {
     extensionAction: { busyId: 'asurascans', error: 'Update failed — 502 from the extension repository.' },
+  },
+}
+
+/**
+ * M2 bugfix: switching to Available and typing a query narrows the grid down
+ * to the matching extension(s) — proves the search box actually filters
+ * rather than just existing cosmetically.
+ */
+export const SearchFiltersAvailable: Story = {
+  args: { extensionAction: { busyId: null }, repoAction: { busyId: null } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+
+    await userEvent.click(await canvas.findByRole('tab', { name: /Available/ }))
+    await canvas.findByText('Reaper Scans')
+
+    const search = await canvas.findByPlaceholderText('Search extensions by name or language…')
+    await userEvent.type(search, 'kakao')
+
+    await canvas.findByText('Kakao')
+    await expect(canvas.queryByText('Reaper Scans')).not.toBeInTheDocument()
+    await expect(canvas.queryByText('Flame Comics')).not.toBeInTheDocument()
   },
 }

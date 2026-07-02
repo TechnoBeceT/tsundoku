@@ -5,6 +5,9 @@
  * in parallel; maps the generated Extension DTO → screen Extension with RENAMES:
  *   pkgName     → id       (pkgName is the stable identity + mutation target)
  *   versionName → version
+ * iconUrl passes through as-is — it is already the Tsundoku same-origin proxy
+ * path (not Suwayomi's own cross-origin URL), so ExtensionRow can render it
+ * directly in an <img src>.
  * Splits the flat list into `extensions` (isInstalled=true) and
  * `availableExtensions` (isInstalled=false). Maps the repo URL list to screen
  * Repo rows ({ id: url, url, isDefault: false }) — no id/isDefault concept exists
@@ -42,6 +45,7 @@ function mapExtension(dto: ExtensionDTO): Extension {
     lang: dto.lang,
     version: dto.versionName,
     hasUpdate: dto.hasUpdate,
+    iconUrl: dto.iconUrl,
   }
 }
 

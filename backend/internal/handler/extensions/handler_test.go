@@ -45,11 +45,24 @@ type fakeClient struct {
 	setReposErr   error
 	installedFlip bool // when true, Extensions() flips IsInstalled on every entry
 
+	// pageBytes backs Icon's coverproxy.Stream call. nil means "not configured";
+	// Icon tests that don't reach PageBytes never trip this.
+	pageBytes func(ctx context.Context, pageURL string) ([]byte, string, error)
+
 	setStateCalled bool
 	lastAction     suwayomicli.ExtensionAction
 	lastPkgName    string
 	setReposCalled bool
 	lastRepos      []string
+}
+
+// PageBytes backs the icon proxy (coverproxy.Stream calls this). Only Icon
+// tests configure it; every other test leaves it nil (unreached).
+func (f *fakeClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
+	if f.pageBytes != nil {
+		return f.pageBytes(ctx, pageURL)
+	}
+	return nil, "", errors.New("PageBytes: not configured")
 }
 
 func (f *fakeClient) Extensions(context.Context) ([]suwayomicli.Extension, error) {
@@ -135,6 +148,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authed.POST("/suwayomi/extensions/:pkgName/install", h.Install)
 	authed.POST("/suwayomi/extensions/:pkgName/update", h.Update)
 	authed.DELETE("/suwayomi/extensions/:pkgName", h.Uninstall)
+	authed.GET("/suwayomi/extensions/:pkgName/icon", h.Icon)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -201,6 +215,27 @@ func TestList_OK(t *testing.T) {
 		if !strings.Contains(raw, key) {
 			t.Errorf("response missing expected JSON key %s: %s", key, raw)
 		}
+	}
+}
+
+// TestList_IconURLIsProxyPath proves the DTO rewrites IconURL to the Tsundoku
+// same-origin icon proxy path — the raw cross-origin Suwayomi URL the fixture
+// seeds must never reach the client (M1 bugfix). Split from TestList_OK to
+// keep that test's cyclomatic complexity within the project's gate.
+func TestList_IconURLIsProxyPath(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{exts: []suwayomicli.Extension{seededExt()}})
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions", "")
+
+	var got []handler.ExtensionDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 extension, got %d", len(got))
+	}
+	const wantIconURL = "/api/suwayomi/extensions/pkg.test.one/icon"
+	if got[0].IconURL != wantIconURL {
+		t.Errorf("IconURL = %q, want proxy path %q (raw Suwayomi URL must not leak)", got[0].IconURL, wantIconURL)
 	}
 }
 
@@ -517,5 +552,94 @@ func TestSetRepos_ReadBack502(t *testing.T) {
 	}
 	if !env.fake.setReposCalled {
 		t.Error("the write should have been attempted before the read-back")
+	}
+}
+
+// --- Icon (M1 bugfix: extension icon proxy) -----------------------------------
+
+// TestIcon_OK proves the handler looks the extension up by pkgName among
+// Extensions(), then streams THAT entry's own IconURL via coverproxy.Stream —
+// the raw bytes + a Content-Type resolved from the sniffed extension.
+func TestIcon_OK(t *testing.T) {
+	ext := seededExt()
+	ext.PkgName = "eu.kanade.tachiyomi.extension.all.example"
+	ext.IconURL = "/api/v1/extension/icon/tachiyomi-all.example-v1.0.0.apk"
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47}
+
+	var gotURL string
+	env := newTestEnv(t, &fakeClient{
+		exts: []suwayomicli.Extension{ext},
+		pageBytes: func(_ context.Context, pageURL string) ([]byte, string, error) {
+			gotURL = pageURL
+			return pngBytes, "png", nil
+		},
+	})
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/eu.kanade.tachiyomi.extension.all.example/icon", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Icon: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Icon: Content-Type = %q, want image/png", ct)
+	}
+	if rec.Body.String() != string(pngBytes) {
+		t.Error("Icon: body does not match the fetched bytes")
+	}
+	if gotURL != ext.IconURL {
+		t.Errorf("Icon: streamed URL = %q, want the extension's own IconURL %q", gotURL, ext.IconURL)
+	}
+}
+
+// TestIcon_NotFound proves an unknown pkgName (absent from Extensions()) is a
+// 404, not a false 200 or a panic.
+func TestIcon_NotFound(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{exts: []suwayomicli.Extension{seededExt()}})
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.unknown/icon", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Icon unknown pkgName: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIcon_ExtensionsUpstream502 proves a failure of the Extensions() lookup
+// itself (needed to resolve pkgName → IconURL) is a 502.
+func TestIcon_ExtensionsUpstream502(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{listErr: errors.New("connection refused")})
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.test.one/icon", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("Icon Extensions() fail: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIcon_PageBytesFail502 proves a Suwayomi icon-fetch failure (the extension
+// is found, but coverproxy.Stream's PageBytes call fails) is a 502, never a
+// false 200.
+func TestIcon_PageBytesFail502(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{
+		exts: []suwayomicli.Extension{seededExt()},
+		pageBytes: func(context.Context, string) ([]byte, string, error) {
+			return nil, "", errors.New("suwayomi down")
+		},
+	})
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.test.one/icon", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("Icon PageBytes fail: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIcon_BlankPkgName400 proves a whitespace-only pkgName is rejected before
+// any client call (mirrors TestActions_BlankPkgName400).
+func TestIcon_BlankPkgName400(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{exts: []suwayomicli.Extension{seededExt()}})
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/%20/icon", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Icon blank pkgName: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIcon_Unauthorized proves the route is behind RequireOwner.
+func TestIcon_Unauthorized(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{exts: []suwayomicli.Extension{seededExt()}})
+	rec := env.noAuth(http.MethodGet, "/api/suwayomi/extensions/pkg.test.one/icon", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("Icon no token: want 401, got %d", rec.Code)
 	}
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/handler/coverproxy"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -90,6 +91,35 @@ func (h *Handler) setState(c echo.Context, action suwayomicli.ExtensionAction) e
 		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toExtensionDTOs(exts))
+}
+
+// Icon handles GET /api/suwayomi/extensions/:pkgName/icon (M1 bugfix: extension
+// icons rendered as colored placeholder squares because Suwayomi's own iconUrl
+// is a cross-origin URL the browser can't load). Suwayomi keys its icon REST
+// endpoint by the extension's own apk filename, not pkgName — confirmed live
+// (build-tagged TestShape6_Extensions) at
+// /api/v1/extension/icon/{apkFileName} — and Extensions() already reports that
+// exact value as each extension's IconURL, so this looks the extension up by
+// pkgName and streams ITS reported IconURL, mirroring the series/imports cover
+// proxies. No new suwayomi.Client method: Extensions + the existing PageBytes
+// (via coverproxy.Stream) are enough. A blank/unknown pkgName is a 404; any
+// Suwayomi failure (the list call or the icon fetch) is a 502.
+func (h *Handler) Icon(c echo.Context) error {
+	pkgName, err := validatePkgName(c.Param("pkgName"))
+	if err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	exts, err := h.sw.Extensions(ctx)
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	for _, e := range exts {
+		if e.PkgName == pkgName {
+			return coverproxy.Stream(c, h.sw, e.IconURL)
+		}
+	}
+	return echo.NewHTTPError(http.StatusNotFound, "extension not found")
 }
 
 // GetRepos handles GET /api/suwayomi/extensions/repos. It returns the configured

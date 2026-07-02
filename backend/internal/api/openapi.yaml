@@ -931,7 +931,7 @@ components:
           example: 42
         iconUrl:
           type: string
-          description: Raw Suwayomi icon URL (no Tsundoku proxy in v1).
+          description: Tsundoku same-origin icon proxy path ("/api/suwayomi/extensions/{pkgName}/icon"), not Suwayomi's own raw (cross-origin) icon URL.
         repo:
           type: string
           description: Source repo URL this extension came from; "" when null.
@@ -3137,6 +3137,61 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/suwayomi/extensions/{pkgName}/icon:
+    get:
+      operationId: getExtensionIcon
+      summary: Extension icon image
+      description: |
+        Streams the extension's icon image, proxied from Suwayomi. Suwayomi's own
+        iconUrl is a cross-origin URL the browser cannot load directly, so this
+        endpoint looks the extension up by pkgName among Extensions() and streams
+        that entry's own reported icon (Suwayomi's REST icon path, confirmed live:
+        "/api/v1/extension/icon/{apkFileName}") as a binary blob. Returns 404 when
+        pkgName is unknown, 502 when Suwayomi fails to fetch the icon.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: pkgName
+          in: path
+          required: true
+          description: The extension package name (its identity).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The icon image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: A blank pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No extension with that pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon.
           content:
             application/json:
               schema:
