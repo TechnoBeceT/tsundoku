@@ -16,7 +16,11 @@ import type { Extension } from '../screens/settings.types'
  *   - `installed`: installed variant (Update/Uninstall) vs available (Install).
  *   - `busy`: this row's mutation is in flight.
  *
- * Emits `install` / `update` / `uninstall` (the parent dispatches by pkgName).
+ * Installed rows also show a Configure (gear) button that opens the per-source
+ * preferences dialog.
+ *
+ * Emits `install` / `update` / `uninstall` / `configure` (the parent dispatches
+ * by pkgName).
  */
 const props = withDefaults(defineProps<{
   /** The extension to render. */
@@ -37,6 +41,8 @@ const emit = defineEmits<{
   'update': []
   /** Uninstall this installed extension (routed through a confirm by the parent). */
   'uninstall': []
+  /** Open this installed extension's per-source preferences dialog. */
+  'configure': []
 }>()
 
 // A deterministic accent hue for the placeholder square (pkgName-derived).
@@ -76,6 +82,12 @@ const showIcon = computed(() => !!props.extension.iconUrl && !iconFailed.value)
     </div>
 
     <template v-if="installed">
+      <AppButton variant="mini" size="sm" :disabled="busy" @click="emit('configure')">
+        <template #icon>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+        </template>
+        Configure
+      </AppButton>
       <AppButton v-if="extension.hasUpdate" variant="solid" size="sm" :loading="busy" @click="emit('update')">Update</AppButton>
       <AppButton variant="danger-ghost" size="sm" :loading="busy" @click="emit('uninstall')">Uninstall</AppButton>
     </template>
