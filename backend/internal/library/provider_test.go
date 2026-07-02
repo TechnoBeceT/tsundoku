@@ -23,18 +23,39 @@ import (
 // written by writeKaizokuSeries, and MangaMeta returns a valid Manga so
 // suwayomi.Ingest.upsertSeriesProvider does not fail. All other methods are
 // zero-value stubs — the interface is large but unused by this test.
-type fakeAddProviderClient struct{}
+//
+// searchTitle configures Sources/Search to return one candidate manga (for
+// the MatchCandidates test, via newFakeClientWithSearch); it is left zero for
+// newFakeClientWithFeed, preserving that constructor's original empty-search
+// behavior.
+type fakeAddProviderClient struct {
+	searchTitle string
+}
 
 func newFakeClientWithFeed(t *testing.T) *fakeAddProviderClient {
 	t.Helper()
 	return &fakeAddProviderClient{}
 }
 
+// newFakeClientWithSearch returns a fake whose Sources/Search report one
+// source ("weeb") carrying one manga candidate titled title — enough for
+// imports.Service.Search to fan out and return a non-empty group.
+func newFakeClientWithSearch(t *testing.T, title string) *fakeAddProviderClient {
+	t.Helper()
+	return &fakeAddProviderClient{searchTitle: title}
+}
+
 func (f *fakeAddProviderClient) Sources(ctx context.Context) ([]suwayomi.Source, error) {
-	return nil, nil
+	if f.searchTitle == "" {
+		return nil, nil
+	}
+	return []suwayomi.Source{{ID: "weeb", Name: "Weeb Source", Lang: "en"}}, nil
 }
 func (f *fakeAddProviderClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
-	return nil, nil
+	if f.searchTitle == "" {
+		return nil, nil
+	}
+	return []suwayomi.Manga{{ID: 1, Title: f.searchTitle}}, nil
 }
 func (f *fakeAddProviderClient) Browse(ctx context.Context, sourceID string, t suwayomi.BrowseType, page int) (suwayomi.BrowseResult, error) {
 	return suwayomi.BrowseResult{}, nil
