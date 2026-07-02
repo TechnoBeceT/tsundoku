@@ -40,9 +40,12 @@ var defaultCategories = []defaultCategory{
 // end with the five defaults present; new owner-created categories are never
 // touched.
 //
-// It then enforces the single-default invariant via ensureSingleDefault: EXACTLY
-// ONE category carries is_default=true (the landing for new / uncategorized
-// series), and a user-chosen default is never clobbered on restart.
+// It then enforces two startup invariants:
+//   - ensureSingleDefault — EXACTLY ONE category carries is_default=true (the
+//     landing for new / uncategorized series); a user-chosen default is never
+//     clobbered on restart.
+//   - NormalizeSortOrder — sort_order values are contiguous and unique, repairing
+//     the deployed collisions that broke the frontend reorder swap (F3).
 func EnsureDefaults(ctx context.Context, client *ent.Client) error {
 	for _, d := range defaultCategories {
 		exists, err := client.Category.Query().Where(entcategory.Name(d.name)).Exist(ctx)
@@ -66,7 +69,10 @@ func EnsureDefaults(ctx context.Context, client *ent.Client) error {
 		}
 	}
 
-	return ensureSingleDefault(ctx, client)
+	if err := ensureSingleDefault(ctx, client); err != nil {
+		return err
+	}
+	return NormalizeSortOrder(ctx, client)
 }
 
 // ensureSingleDefault guarantees EXACTLY ONE category has is_default=true. It is

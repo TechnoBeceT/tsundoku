@@ -141,17 +141,28 @@ export function useCategories() {
     const target = list[idx]
     const neighbor = list[neighborIdx]
 
+    // Give target the neighbor's sortOrder and neighbor the target's old value.
+    // Defensive tie-break: if the two share a sortOrder (a legacy collision the
+    // backend NormalizeSortOrder repairs on startup, but a not-yet-restarted DB
+    // may still have — F3), a plain swap would be a no-op, so force distinct
+    // values with the neighbor pushed one step past the target in the move's
+    // direction. Distinct values make the swap actually move the row.
+    const targetOrder = neighbor.sortOrder
+    let neighborOrder = target.sortOrder
+    if (neighborOrder === targetOrder) {
+      neighborOrder = direction === -1 ? targetOrder + 1 : targetOrder - 1
+    }
+
     await categoryMutate(id, async () => {
-      // Give target the neighbor's sortOrder, then give neighbor the target's old value.
       const r1 = await apiClient.PATCH('/api/categories/{id}', {
         params: { path: { id: target.id } },
-        body: { sortOrder: neighbor.sortOrder },
+        body: { sortOrder: targetOrder },
       })
       if (r1.error) throw new Error(r1.error.message)
 
       const r2 = await apiClient.PATCH('/api/categories/{id}', {
         params: { path: { id: neighbor.id } },
-        body: { sortOrder: target.sortOrder },
+        body: { sortOrder: neighborOrder },
       })
       if (r2.error) throw new Error(r2.error.message)
     })
