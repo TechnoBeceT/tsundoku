@@ -48,7 +48,7 @@ func providerFromFilename(filename string) (provider, scanlator string) {
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if strings.TrimSpace(v) != "" {
-			return v
+			return strings.TrimSpace(v)
 		}
 	}
 	return ""
