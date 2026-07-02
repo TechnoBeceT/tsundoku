@@ -11,12 +11,14 @@ import (
 	downloadsh "github.com/technobecet/tsundoku/internal/handler/downloads"
 	extensionsh "github.com/technobecet/tsundoku/internal/handler/extensions"
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
+	libraryh "github.com/technobecet/tsundoku/internal/handler/library"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
 	suwayomih "github.com/technobecet/tsundoku/internal/handler/suwayomi"
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	"github.com/technobecet/tsundoku/internal/imports"
+	"github.com/technobecet/tsundoku/internal/library"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/series"
@@ -73,6 +75,11 @@ import (
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
+//   - /api/library/scan (POST)                     — scan on-disk storage, stage found series (RequireOwner).
+//   - /api/library/imports (GET)                   — list staged imports (?status=) (RequireOwner).
+//   - /api/library/imports/match (GET)             — search sources for a staged entry's title (?path=) (RequireOwner).
+//   - /api/library/import (POST)                   — import a staged entry without re-downloading (RequireOwner).
+//   - /api/series/:id/providers (POST)             — attach an additional source to an existing series (RequireOwner).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
 func registerRoutes(
@@ -180,6 +187,17 @@ func registerRoutes(
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)
 	authed.POST("/series", importsH.Adopt)
+
+	// Library-import (on-disk scan + adopt-without-redownload) API. Reuses the
+	// SAME ingest/importsSvc/seriesSvc instances constructed above — no double
+	// construction — plus the shared trigger and storage root.
+	librarySvc := library.NewService(client, ingest, importsSvc, seriesSvc, trigger, cfg.Storage.Folder)
+	libraryH := libraryh.NewHandler(librarySvc)
+	authed.POST("/library/scan", libraryH.Scan)
+	authed.GET("/library/imports", libraryH.ListImports)
+	authed.GET("/library/imports/match", libraryH.Match)
+	authed.POST("/library/import", libraryH.Import)
+	authed.POST("/series/:id/providers", libraryH.AddProvider)
 
 	// SPA static serving + unknown-route handling (registered last).
 	registerStaticSPA(e)
