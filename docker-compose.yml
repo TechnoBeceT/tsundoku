@@ -47,9 +47,25 @@ services:
       TSUNDOKU_DATABASE_NAME: tsundoku
       TSUNDOKU_DATABASE_SSLMODE: disable
 
-      # Note: TSUNDOKU_SUWAYOMI_EXTERNALURL is intentionally NOT set — leaving
-      # it blank keeps Suwayomi in EMBEDDED mode (this image bundles Java and
-      # runs Suwayomi itself). Set it only to point at an external Suwayomi.
+      # --- Suwayomi download engine -------------------------------------
+      # EMBEDDED mode (default): this image bundles Java and runs Suwayomi
+      # itself. Leaving TSUNDOKU_SUWAYOMI_EXTERNALURL blank keeps embedded mode;
+      # set it (e.g. "http://suwayomi:4567") to instead point at a standalone
+      # Suwayomi container — the version/Java knobs below then do nothing.
+      # TSUNDOKU_SUWAYOMI_EXTERNALURL: ""
+      #
+      # Which Suwayomi-Server release the embedded engine provisions. On first
+      # boot it downloads that JAR from GitHub into /config/suwayomi (cached
+      # across restarts). Bump this value + restart to move to a new release —
+      # no image rebuild needed.
+      TSUNDOKU_SUWAYOMI_VERSION: "v2.2.2100"
+      #
+      # Other embedded knobs (optional; defaults are sensible for this image):
+      #   TSUNDOKU_SUWAYOMI_RUNTIMEDIR: "/config/suwayomi"  # JAR + Suwayomi data (image default)
+      #   TSUNDOKU_SUWAYOMI_JAVAPATH: "java"                # image ships Java 21
+      #   TSUNDOKU_SUWAYOMI_STARTTIMEOUT: "2m"              # soft warn threshold on slow first boot
+      #   TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT: "10m"          # JAR download timeout
+      #   TSUNDOKU_SUWAYOMI_DOWNLOADURLTEMPLATE: "https://github.com/Suwayomi/Suwayomi-Server/releases/download/%s/Suwayomi-Server-%s.jar"
     volumes:
       - ./config:/config
       - ./series:/series
