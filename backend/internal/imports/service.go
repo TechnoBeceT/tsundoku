@@ -390,9 +390,9 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 	}
 
 	// 5. Apply category when requested. ingest.AddSeries already linked the new
-	//    series to the "Other" fallback on create, so an empty req.Category keeps
-	//    that default; a named category is find-or-created (a brand-new owner
-	//    category lands here) and linked by id.
+	//    series to the configured default category (is_default) on create, so an
+	//    empty req.Category keeps that default; a named category is find-or-created
+	//    (a brand-new owner category lands here) and linked by id.
 	if req.Category != "" {
 		cat, err := category.FindOrCreate(ctx, s.db, req.Category)
 		if err != nil {
@@ -406,7 +406,7 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 	return series.ID, nil
 }
 
-// validateCategory returns nil when cat is empty (meaning "keep the Other
+// validateCategory returns nil when cat is empty (meaning "keep the configured
 // default") or when it is a filesystem-safe category name (it becomes a folder).
 // A non-empty invalid value yields a wrapped error naming the invalid string.
 func validateCategory(cat string) error {

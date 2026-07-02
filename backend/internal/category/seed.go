@@ -39,6 +39,10 @@ var defaultCategories = []defaultCategory{
 // at startup (after Ent auto-migration) so a fresh DB and an existing DB both
 // end with the five defaults present; new owner-created categories are never
 // touched.
+//
+// It then enforces the single-default invariant via ensureSingleDefault: EXACTLY
+// ONE category carries is_default=true (the landing for new / uncategorized
+// series), and a user-chosen default is never clobbered on restart.
 func EnsureDefaults(ctx context.Context, client *ent.Client) error {
 	for _, d := range defaultCategories {
 		exists, err := client.Category.Query().Where(entcategory.Name(d.name)).Exist(ctx)
@@ -61,7 +65,100 @@ func EnsureDefaults(ctx context.Context, client *ent.Client) error {
 			return fmt.Errorf("category.EnsureDefaults: create %q: %w", d.name, err)
 		}
 	}
+
+	return ensureSingleDefault(ctx, client)
+}
+
+// ensureSingleDefault guarantees EXACTLY ONE category has is_default=true. It is
+// restart-safe and non-clobbering: if a default already exists (the owner may
+// have chosen one) it is left untouched; only when NONE is set does it promote a
+// category — "Other" when present, else the first by (sort_order, name) — so a
+// fresh or upgraded DB always lands new series in a real category rather than the
+// old hardcoded "Other" string.
+func ensureSingleDefault(ctx context.Context, client *ent.Client) error {
+	count, err := client.Category.Query().Where(entcategory.IsDefault(true)).Count(ctx)
+	if err != nil {
+		return fmt.Errorf("category.EnsureDefaults: count defaults: %w", err)
+	}
+	if count == 1 {
+		return nil
+	}
+	if count > 1 {
+		// A pathological state (should be impossible via SetDefault's transaction);
+		// collapse to a single default deterministically rather than leave ambiguity.
+		return collapseToSingleDefault(ctx, client)
+	}
+
+	target, err := defaultTarget(ctx, client)
+	if err != nil {
+		return err
+	}
+	if target == nil {
+		// No categories at all (EnsureDefaults always seeds five, so this is only
+		// reachable if the seed set were emptied) — nothing to promote.
+		return nil
+	}
+	if err := client.Category.UpdateOneID(target.ID).SetIsDefault(true).Exec(ctx); err != nil {
+		return fmt.Errorf("category.EnsureDefaults: promote default %q: %w", target.Name, err)
+	}
 	return nil
+}
+
+// defaultTarget picks the category to promote when none is currently the default:
+// "Other" when it exists, otherwise the first category by (sort_order, name).
+// Returns nil only when no categories exist at all.
+func defaultTarget(ctx context.Context, client *ent.Client) (*ent.Category, error) {
+	other, err := client.Category.Query().Where(entcategory.Name(DefaultCategoryName)).First(ctx)
+	if err != nil && !ent.IsNotFound(err) {
+		return nil, fmt.Errorf("category.EnsureDefaults: find %q: %w", DefaultCategoryName, err)
+	}
+	if other != nil {
+		return other, nil
+	}
+	first, err := client.Category.Query().
+		Order(entcategory.BySortOrder(), entcategory.ByName()).
+		First(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("category.EnsureDefaults: find first category: %w", err)
+	}
+	return first, nil
+}
+
+// collapseToSingleDefault repairs the impossible >1-default state by keeping the
+// first default (by sort_order, name) and clearing is_default on the rest.
+func collapseToSingleDefault(ctx context.Context, client *ent.Client) error {
+	defaults, err := client.Category.Query().
+		Where(entcategory.IsDefault(true)).
+		Order(entcategory.BySortOrder(), entcategory.ByName()).
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("category.EnsureDefaults: load defaults to collapse: %w", err)
+	}
+	for _, c := range defaults[1:] {
+		if err := client.Category.UpdateOneID(c.ID).SetIsDefault(false).Exec(ctx); err != nil {
+			return fmt.Errorf("category.EnsureDefaults: clear extra default %q: %w", c.Name, err)
+		}
+	}
+	return nil
+}
+
+// ResolveDefault returns the single category with is_default=true — the landing
+// category for new / uncategorized series. It replaces every hardcoded "Other"
+// fallback so the owner-chosen default is honoured everywhere (ingest, reconcile,
+// adopt). EnsureDefaults guarantees exactly one default exists at startup; a
+// missing default (an unseeded DB) maps to ErrCategoryNotFound.
+func ResolveDefault(ctx context.Context, client *ent.Client) (*ent.Category, error) {
+	row, err := client.Category.Query().Where(entcategory.IsDefault(true)).First(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, ErrCategoryNotFound
+		}
+		return nil, fmt.Errorf("category.ResolveDefault: query default: %w", err)
+	}
+	return row, nil
 }
 
 // BackfillSeries links every series that still has a NULL category_id to a

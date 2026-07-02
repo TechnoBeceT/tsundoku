@@ -122,17 +122,19 @@ func (s *Service) Reorder(ctx context.Context, id uuid.UUID, sortOrder int) erro
 }
 
 // Delete removes a category. It is allowed ONLY when no series is filed under it
-// (else ErrCategoryNotEmpty) and never for the protected default (else
-// ErrCategoryProtected). It is DB-only: it deletes no series, no CBZ, and leaves
-// any on-disk folder untouched (an empty category folder, if present, is left as
-// is). A missing id returns ErrCategoryNotFound.
+// (else ErrCategoryNotEmpty) and never for the current default (else
+// ErrCategoryIsDefault) — so new / uncategorized series always have a landing
+// spot. A demoted "Other" (protected but no longer the default) IS deletable. It
+// is DB-only: it deletes no series, no CBZ, and leaves any on-disk folder
+// untouched (an empty category folder, if present, is left as is). A missing id
+// returns ErrCategoryNotFound.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	row, err := s.byID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if row.Protected {
-		return ErrCategoryProtected
+	if row.IsDefault {
+		return ErrCategoryIsDefault
 	}
 
 	count, err := s.client.Series.Query().Where(entseries.CategoryID(id)).Count(ctx)

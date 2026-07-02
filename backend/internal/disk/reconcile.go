@@ -174,16 +174,27 @@ func upsertSeries(ctx context.Context, client *ent.Client, title, diskCategory s
 }
 
 // createSeriesFromDisk creates a new Series row, linking it to the disk category
-// (or the "Other" fallback when the series sits uncategorized directly under the
-// storage root) so every series always has a category.
+// (or the configured default category when the series sits uncategorized directly
+// under the storage root) so every series always has a category.
+//
+// The empty-diskCategory fallback resolves the owner-chosen default (is_default),
+// not the hardcoded "Other" — but does so via Ent directly (resolveDefaultCategoryID)
+// so the disk package never imports internal/category (the dependency stays
+// one-directional: category → disk).
 func createSeriesFromDisk(ctx context.Context, client *ent.Client, title, slug, diskCategory string) (*ent.Series, error) {
-	name := diskCategory
-	if name == "" {
-		name = CategoryOther
-	}
-	catID, err := resolveCategoryID(ctx, client, name)
-	if err != nil {
-		return nil, err
+	var catID uuid.UUID
+	if diskCategory != "" {
+		id, err := resolveCategoryID(ctx, client, diskCategory)
+		if err != nil {
+			return nil, err
+		}
+		catID = id
+	} else {
+		id, err := resolveDefaultCategoryID(ctx, client)
+		if err != nil {
+			return nil, err
+		}
+		catID = id
 	}
 	series, err := client.Series.Create().
 		SetTitle(title).
@@ -231,6 +242,25 @@ func resolveCategoryID(ctx context.Context, client *ent.Client, name string) (uu
 		return uuid.Nil, fmt.Errorf("disk.Reconcile: re-query category %q: %w", name, qErr)
 	}
 	return row.ID, nil
+}
+
+// resolveDefaultCategoryID returns the id of the configured default category (the
+// single row with is_default=true) — the landing for an orphan series with no
+// on-disk category folder. It queries Ent directly (never internal/category) so
+// the one-directional category → disk dependency is preserved, and falls back to
+// the "Other" folder name only if no default is set (an unseeded DB — startup
+// EnsureDefaults guarantees one exists in production).
+func resolveDefaultCategoryID(ctx context.Context, client *ent.Client) (uuid.UUID, error) {
+	row, err := client.Category.Query().Where(entcategory.IsDefault(true)).First(ctx)
+	if err != nil && !ent.IsNotFound(err) {
+		// Defensive path: reachable only on DB connection loss or cancelled context.
+		return uuid.Nil, fmt.Errorf("disk.Reconcile: query default category: %w", err)
+	}
+	if row != nil {
+		return row.ID, nil
+	}
+	// No default set (unseeded DB) — fall back to find-or-creating "Other".
+	return resolveCategoryID(ctx, client, CategoryOther)
 }
 
 // upsertProviders builds a provider→SeriesProvider.ID map for all distinct

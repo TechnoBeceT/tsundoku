@@ -136,11 +136,12 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 		return nil, fmt.Errorf("query by slug %q: %w", slug, err)
 	}
 	if ent.IsNotFound(err) {
-		// Link a freshly-created series to the protected "Other" fallback so the
+		// Link a freshly-created series to the configured default category so the
 		// app invariant (every series has a category) holds even before an adopt
-		// caller pins a specific category. A re-fetch of an existing series keeps
+		// caller pins a specific category. The default is owner-chosen (is_default),
+		// not the hardcoded "Other". A re-fetch of an existing series keeps
 		// whatever category it already has.
-		cat, catErr := category.FindOrCreate(ctx, i.db, category.DefaultCategoryName)
+		cat, catErr := category.ResolveDefault(ctx, i.db)
 		if catErr != nil {
 			return nil, fmt.Errorf("resolve default category for series %q: %w", slug, catErr)
 		}

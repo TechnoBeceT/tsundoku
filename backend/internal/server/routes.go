@@ -57,6 +57,7 @@ import (
 //   - /api/categories (GET)                        — list categories with counts (RequireOwner).
 //   - /api/categories (POST)                       — create a category (RequireOwner).
 //   - /api/categories/:id (PATCH)                  — rename and/or reorder a category (RequireOwner).
+//   - /api/categories/:id/default (PATCH)          — set the default landing category (RequireOwner).
 //   - /api/categories/:id (DELETE)                 — delete an empty category (RequireOwner).
 //   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
@@ -166,6 +167,7 @@ func registerRoutes(
 	authed.GET("/categories", categoryH.List)
 	authed.POST("/categories", categoryH.Create)
 	authed.PATCH("/categories/:id", categoryH.Update)
+	authed.PATCH("/categories/:id/default", categoryH.SetDefault)
 	authed.DELETE("/categories/:id", categoryH.Delete)
 
 	// Downloads (cross-library chapter activity) API. The service reuses the

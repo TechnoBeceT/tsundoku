@@ -79,11 +79,11 @@ const emit = defineEmits<{
       <span v-if="category.isDefault" class="pill">DEFAULT</span>
       <span v-if="busy" class="row-busy"><Spinner :size="13" tone="current" />Working…</span>
       <div class="cat-actions">
-        <AppButton v-if="!category.protected && !category.isDefault" variant="text" size="sm" :disabled="busy" @click="emit('set-default')">Set default</AppButton>
+        <AppButton v-if="!category.isDefault" variant="text" size="sm" :disabled="busy" @click="emit('set-default')">Set default</AppButton>
         <IconButton v-if="!category.protected" aria-label="Rename" :disabled="busy" @click="emit('start-rename')">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
         </IconButton>
-        <IconButton v-if="!category.protected" variant="danger" aria-label="Delete" :disabled="busy" @click="emit('start-delete')">
+        <IconButton v-if="!category.isDefault" variant="danger" aria-label="Delete" :disabled="busy" @click="emit('start-delete')">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>
         </IconButton>
       </div>

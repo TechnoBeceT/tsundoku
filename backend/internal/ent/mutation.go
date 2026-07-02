@@ -60,6 +60,7 @@ type CategoryMutation struct {
 	sort_order    *int
 	addsort_order *int
 	protected     *bool
+	is_default    *bool
 	created_at    *time.Time
 	updated_at    *time.Time
 	clearedFields map[string]struct{}
@@ -303,6 +304,42 @@ func (m *CategoryMutation) ResetProtected() {
 	m.protected = nil
 }
 
+// SetIsDefault sets the "is_default" field.
+func (m *CategoryMutation) SetIsDefault(b bool) {
+	m.is_default = &b
+}
+
+// IsDefault returns the value of the "is_default" field in the mutation.
+func (m *CategoryMutation) IsDefault() (r bool, exists bool) {
+	v := m.is_default
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIsDefault returns the old "is_default" field's value of the Category entity.
+// If the Category object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *CategoryMutation) OldIsDefault(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIsDefault is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIsDefault requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIsDefault: %w", err)
+	}
+	return oldValue.IsDefault, nil
+}
+
+// ResetIsDefault resets all changes to the "is_default" field.
+func (m *CategoryMutation) ResetIsDefault() {
+	m.is_default = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *CategoryMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -463,7 +500,7 @@ func (m *CategoryMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *CategoryMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 6)
 	if m.name != nil {
 		fields = append(fields, category.FieldName)
 	}
@@ -472,6 +509,9 @@ func (m *CategoryMutation) Fields() []string {
 	}
 	if m.protected != nil {
 		fields = append(fields, category.FieldProtected)
+	}
+	if m.is_default != nil {
+		fields = append(fields, category.FieldIsDefault)
 	}
 	if m.created_at != nil {
 		fields = append(fields, category.FieldCreatedAt)
@@ -493,6 +533,8 @@ func (m *CategoryMutation) Field(name string) (ent.Value, bool) {
 		return m.SortOrder()
 	case category.FieldProtected:
 		return m.Protected()
+	case category.FieldIsDefault:
+		return m.IsDefault()
 	case category.FieldCreatedAt:
 		return m.CreatedAt()
 	case category.FieldUpdatedAt:
@@ -512,6 +554,8 @@ func (m *CategoryMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldSortOrder(ctx)
 	case category.FieldProtected:
 		return m.OldProtected(ctx)
+	case category.FieldIsDefault:
+		return m.OldIsDefault(ctx)
 	case category.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case category.FieldUpdatedAt:
@@ -545,6 +589,13 @@ func (m *CategoryMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetProtected(v)
+		return nil
+	case category.FieldIsDefault:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIsDefault(v)
 		return nil
 	case category.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -632,6 +683,9 @@ func (m *CategoryMutation) ResetField(name string) error {
 		return nil
 	case category.FieldProtected:
 		m.ResetProtected()
+		return nil
+	case category.FieldIsDefault:
+		m.ResetIsDefault()
 		return nil
 	case category.FieldCreatedAt:
 		m.ResetCreatedAt()

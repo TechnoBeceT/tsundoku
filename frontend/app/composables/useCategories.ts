@@ -16,15 +16,15 @@
  *   id        ← dto.id
  *   name      ← dto.name
  *   count     ← dto.count
- *   protected ← dto.protected
- *   isDefault ← dto.protected  (presentational alias — the backend has no separate
- *                               "default" concept; the protected "Other" category is
- *                               the uncategorised-series landing, so protected ≡ isDefault)
+ *   protected ← dto.protected  (the seeded "Other" — can never be renamed)
+ *   isDefault ← dto.isDefault  (the single default landing category — can never be
+ *                               deleted; any category can be promoted to it)
  *
  * CRUD mutations (§16 pattern — busy flag + inline error via categoryAction):
  *   addCategory(name)             POST /api/categories {name}
  *   renameCategory({id, name})    PATCH /api/categories/{id} {name}
  *   reorderCategory({id, dir})    swap sortOrder with neighbor; PATCH both sequentially
+ *   setDefaultCategory(id)        PATCH /api/categories/{id}/default
  *   deleteCategory({id,targetId}) reassign members (if any) then DELETE
  */
 import { computed, ref } from 'vue'
@@ -48,16 +48,17 @@ function mapCategory(dto: CategoryDTO): CategorySummary {
   }
 }
 
-// isDefault = protected (presentational alias — the backend has no separate
-// "default" concept; the protected "Other" category is the uncategorised-series
-// landing, making it the de-facto default).
+// protected → can never be renamed (the seeded "Other"); isDefault → the single
+// default landing category, which can never be deleted. Both come straight from
+// the backend DTO — they are independent flags now (a demoted "Other" is
+// protected but not the default).
 function mapSettingsCategory(dto: CategoryDTO): SettingsCategory {
   return {
     id: dto.id,
     name: dto.name,
     count: dto.count,
     protected: dto.protected,
-    isDefault: dto.protected,
+    isDefault: dto.isDefault,
   }
 }
 
@@ -157,6 +158,21 @@ export function useCategories() {
   }
 
   /**
+   * Promotes a category to be the single default landing for new / uncategorized
+   * series. The backend demotes the previous default in the same transaction, so a
+   * refetch reflects both the new DEFAULT badge and the previous default becoming
+   * deletable.
+   */
+  async function setDefaultCategory(id: string): Promise<void> {
+    await categoryMutate(id, async () => {
+      const res = await apiClient.PATCH('/api/categories/{id}/default', {
+        params: { path: { id } },
+      })
+      if (res.error) throw new Error(res.error.message)
+    })
+  }
+
+  /**
    * Deletes a category. When `targetId` is non-empty, the category still has members
    * and they must be moved first: series are fetched page-by-page (limit 200) and
    * PATCHed to `targetId` until a fetch returns 0 results, then the now-empty
@@ -218,6 +234,7 @@ export function useCategories() {
     addCategory,
     renameCategory,
     reorderCategory,
+    setDefaultCategory,
     deleteCategory,
   }
 }

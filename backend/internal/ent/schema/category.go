@@ -32,9 +32,17 @@ func (Category) Fields() []ent.Field {
 		// sort_order controls the owner's preferred display order (ascending);
 		// ties break by name. Pure presentation — never disk-determining.
 		field.Int("sort_order").Default(0),
-		// protected marks the default "Other" fallback: it can never be renamed
-		// or deleted, so a series always has a safe category to fall back to.
+		// protected marks a category that can never be RENAMED (the seeded "Other"
+		// fallback). It is NOT the delete-guard — deletion is guarded by is_default
+		// instead — so a demoted "Other" (protected but no longer the default)
+		// becomes deletable while staying unrenameable.
 		field.Bool("protected").Default(false),
+		// is_default marks the single category that new / uncategorized series land
+		// in and that can never be deleted. EXACTLY ONE row carries is_default=true,
+		// maintained by category.EnsureDefaults at startup. It replaces the former
+		// hardcoded "Other" fallback: the owner can promote any category to the
+		// default, which then makes the previous default deletable.
+		field.Bool("is_default").Default(false),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

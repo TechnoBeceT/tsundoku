@@ -8,7 +8,8 @@ import '../../assets/css/tokens/settings.css'
 
 /**
  * Stories for a single category row. Flip the Storybook theme toolbar to confirm
- * both dark and light. The protected "Other" row hides the edit/delete actions.
+ * both dark and light. The current default row hides its set-default + delete
+ * actions and carries the DEFAULT pill; a protected row hides only rename.
  */
 const meta = {
   title: 'Settings/CategoryRow',
@@ -31,9 +32,19 @@ export const Default: Story = {
   args: { category: settingsCategories[0]! },
 }
 
-/** The protected default category — no rename/delete; carries the DEFAULT pill. */
-export const ProtectedDefault: Story = {
+/** The current default category — no set-default/delete; carries the DEFAULT pill. */
+export const DefaultCategory: Story = {
   args: { category: settingsCategories[4]! },
+}
+
+/**
+ * A demoted "Other": protected (can't rename) but no longer the default, so it
+ * regains its delete + set-default actions. Proves the two flags are independent.
+ */
+export const ProtectedButNotDefault: Story = {
+  args: {
+    category: { id: 'cat-other', name: 'Other', count: 0, protected: true, isDefault: false },
+  },
 }
 
 /** §16 busy — the row dims, blocks input, and shows the "Working…" marker. */
