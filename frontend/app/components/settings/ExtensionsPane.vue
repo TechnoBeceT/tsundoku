@@ -6,8 +6,10 @@ import DurationInput from '../ui/DurationInput.vue'
 import FormError from '../ui/FormError.vue'
 import SegmentedTabs from '../ui/SegmentedTabs.vue'
 import ExtensionRow from './ExtensionRow.vue'
+import ExtensionPreferencesDialog from './ExtensionPreferencesDialog.vue'
 import RepoRow from './RepoRow.vue'
 import SettingRow from './SettingRow.vue'
+import { useSourcePreferences } from '~/composables/useSourcePreferences'
 import type { MoveDirection } from '../ui/controls.types'
 import {
   ADD_ACTION_ID,
@@ -154,6 +156,37 @@ watch(confirmBusy, (busy, prev) => {
 function onRepoMove(id: string, direction: MoveDirection) {
   emit('reorder-repo', { id, direction })
 }
+
+// ---- Configure (per-source preferences) dialog ----------------------------
+// Self-contained: the pane owns the preferences composable + dialog (the load +
+// write are dialog-scoped and would otherwise prop-drill through the whole
+// Settings screen). load() only fires on a Configure click, so the pane's
+// stories never trigger a fetch.
+const {
+  groups: prefGroups,
+  pending: prefsPending,
+  error: prefsError,
+  savingKey: prefsSavingKey,
+  saveError: prefsSaveError,
+  load: loadPreferences,
+  setPreference,
+  reset: resetPreferences,
+} = useSourcePreferences()
+
+const configureExt = ref<{ id: string, name: string } | null>(null)
+const prefsDialogOpen = computed({
+  get: () => configureExt.value !== null,
+  set: (open: boolean) => { if (!open) closePreferences() },
+})
+
+function startConfigure(e: Extension) {
+  configureExt.value = { id: e.id, name: e.name }
+  void loadPreferences(e.id)
+}
+function closePreferences() {
+  configureExt.value = null
+  resetPreferences()
+}
 </script>
 
 <template>
@@ -190,6 +223,7 @@ function onRepoMove(id: string, direction: MoveDirection) {
         :busy="extensionRowBusy(e.id)"
         @update="emit('update-extension', e.id)"
         @uninstall="startUninstall(e)"
+        @configure="startConfigure(e)"
       />
     </div>
   </template>
@@ -244,6 +278,18 @@ function onRepoMove(id: string, direction: MoveDirection) {
     :busy="confirmBusy"
     @confirm="confirmUninstall"
     @update:open="(v) => { if (!v) cancelUninstall() }"
+  />
+
+  <!-- Per-source preferences ("Configure") dialog. -->
+  <ExtensionPreferencesDialog
+    v-model:open="prefsDialogOpen"
+    :extension-name="configureExt?.name ?? ''"
+    :groups="prefGroups"
+    :pending="prefsPending"
+    :error="prefsError"
+    :saving-key="prefsSavingKey"
+    :save-error="prefsSaveError"
+    @change="setPreference($event.sourceId, $event.position, $event.value)"
   />
 </template>
 

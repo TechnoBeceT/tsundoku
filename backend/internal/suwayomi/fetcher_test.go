@@ -68,6 +68,15 @@ func (s *stubClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, e
 }
 func (s *stubClient) ExtensionRepos(_ context.Context) ([]string, error)    { return nil, nil }
 func (s *stubClient) SetExtensionRepos(_ context.Context, _ []string) error { return nil }
+func (s *stubClient) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (s *stubClient) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (s *stubClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
+	return nil, nil
+}
 
 // The remaining Client methods are unused by Fetcher; they panic loudly if
 // reached so a future code-change that calls them is caught immediately.
@@ -308,6 +317,15 @@ func (m *midLoopCancelClient) ExtensionRepos(_ context.Context) ([]string, error
 }
 func (m *midLoopCancelClient) SetExtensionRepos(_ context.Context, _ []string) error {
 	return nil
+}
+func (m *midLoopCancelClient) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (m *midLoopCancelClient) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (m *midLoopCancelClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
+	return nil, nil
 }
 
 func (m *midLoopCancelClient) Sources(_ context.Context) ([]suwayomi.Source, error) {

@@ -992,6 +992,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/suwayomi/extensions/{pkgName}/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List an extension's per-source preferences
+         * @description Resolves the extension's sources (one per language) and returns each
+         *     source's configurable preferences, grouped by source. A pure passthrough —
+         *     Tsundoku stores none of this. Preferences are POSITION-indexed for writes;
+         *     the FE must use a fresh read's positions and never cache them. A blank
+         *     pkgName is a 400; any upstream Suwayomi failure is a 502.
+         */
+        get: operations["getExtensionPreferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Write one source preference by position
+         * @description Writes a single preference (identified by sourceId + position) and returns
+         *     the FULL refreshed preference list for that source (§16 round-trip — the FE
+         *     re-derives fresh positions from it). value's JSON type must match the
+         *     variant at that position (boolean → CheckBox/Switch, string → List/EditText,
+         *     array → MultiSelectList); a mismatch or an out-of-range position is a 400.
+         *     Any upstream Suwayomi failure is a 502.
+         */
+        patch: operations["setExtensionPreference"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1591,6 +1624,72 @@ export interface components {
              *     ]
              */
             repos: string[];
+        };
+        /**
+         * @description One configurable preference of a Suwayomi source (a Tachiyomi/Mihon
+         *     source setting), flattened from the GraphQL Preference union. Read `type`
+         *     first: it decides how `currentValue`/`default` are typed —
+         *     CheckBoxPreference/SwitchPreference are booleans, ListPreference/
+         *     EditTextPreference are strings (List also carries entries/entryValues),
+         *     MultiSelectListPreference are string arrays. `position` is the 0-based
+         *     array index and is the ONLY write selector; it must come from a FRESH read
+         *     (the array order can shift server-side — never cache positions).
+         */
+        SourcePreference: {
+            /**
+             * @description The union variant (Suwayomi __typename).
+             * @enum {string}
+             */
+            type: "CheckBoxPreference" | "SwitchPreference" | "ListPreference" | "MultiSelectListPreference" | "EditTextPreference";
+            /** @description 0-based array index — the (position-indexed) write selector. */
+            position: number;
+            /** @description Source-internal preference key ("" when null). */
+            key: string;
+            /** @description Human-readable label ("" when null). */
+            title: string;
+            /** @description Human-readable help text ("" when null). */
+            summary: string;
+            /**
+             * @description Current value; null when unset. A boolean for CheckBox/Switch, a
+             *     string for List/EditText, an array of strings for MultiSelectList.
+             */
+            currentValue: (boolean | string | string[]) | null;
+            /** @description Default value; null when unset. Same per-variant typing as currentValue. */
+            default: (boolean | string | string[]) | null;
+            /** @description Human-readable option labels (List/MultiSelect only; [] otherwise). */
+            entries: string[];
+            /** @description Stored option values matching entries by index (List/MultiSelect only; [] otherwise). */
+            entryValues: string[];
+        };
+        /** @description One source's preferences within a grouped extension response (one source per language). */
+        SourcePreferencesGroup: {
+            /** @description The Suwayomi source id (the write body's sourceId). */
+            sourceId: string;
+            /** @description Human-readable source name. */
+            sourceName: string;
+            /** @description BCP-47 language tag. */
+            lang: string;
+            /** @description This source's configurable preferences, in array order. */
+            preferences: components["schemas"]["SourcePreference"][];
+        };
+        /** @description An extension's per-source preferences, grouped by the (per-language) source they belong to. */
+        SourcePreferencesBySource: {
+            /** @description The extension's sources, each with its own preference list. */
+            sources: components["schemas"]["SourcePreferencesGroup"][];
+        };
+        /**
+         * @description Write one source preference by POSITION. `value`'s JSON type must match the
+         *     variant at that position (boolean → CheckBox/Switch, string → List/EditText,
+         *     array of strings → MultiSelectList) — a mismatch is a 400. position must be
+         *     taken from a fresh read (positions can shift server-side).
+         */
+        SetSourcePreferenceRequest: {
+            /** @description The Suwayomi source id the preference belongs to. */
+            sourceId: string;
+            /** @description 0-based array index of the preference to write. */
+            position: number;
+            /** @description New value — a boolean, a string, or an array of strings (by variant). */
+            value: (boolean | string | string[]) | null;
         };
         /** @description One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB). */
         FoundSeries: {
@@ -3891,6 +3990,110 @@ export interface operations {
                 };
             };
             /** @description Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getExtensionPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The extension's preferences grouped by source. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePreferencesBySource"];
+                };
+            };
+            /** @description A blank pkgName. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setExtensionPreference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSourcePreferenceRequest"];
+            };
+        };
+        responses: {
+            /** @description The refreshed preference list for the written source. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePreference"][];
+                };
+            };
+            /** @description A validation failure (blank sourceId, missing/negative or out-of-range position, or a value whose type doesn't match the variant). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
             502: {
                 headers: {
                     [name: string]: unknown;

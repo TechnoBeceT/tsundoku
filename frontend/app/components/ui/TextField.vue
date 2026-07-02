@@ -17,7 +17,8 @@
  *   - `compact`: a fixed-width inline variant for the Settings integer rows —
  *     the input shrinks to a number-sized box instead of label-above-full-width.
  *
- * Emits `update:modelValue` on every keystroke and `enter` when Enter is pressed.
+ * Emits `update:modelValue` on every keystroke, `enter` when Enter is pressed,
+ * and `blur` when the input loses focus (for commit-on-blur consumers).
  */
 withDefaults(defineProps<{
   /** The input value (v-model). */
@@ -50,6 +51,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
   /** Enter was pressed in the input. */
   'enter': []
+  /** The input lost focus (for commit-on-blur consumers). */
+  'blur': []
 }>()
 
 // Push the input event up as a typed string (the DOM gives us a generic Event).
@@ -72,6 +75,7 @@ function onInput(event: Event) {
       :name="name"
       @input="onInput"
       @keydown.enter="emit('enter')"
+      @blur="emit('blur')"
     >
   </label>
 </template>

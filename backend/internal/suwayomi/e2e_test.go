@@ -595,6 +595,147 @@ func findExtension(t *testing.T, client suwayomi.Client, pkgName string) suwayom
 	return suwayomi.Extension{}
 }
 
+// TestShape8_SourcePreferences is the MERGE GATE for the per-source preferences
+// (M3 "Configure") proxy. It proves, against a real Suwayomi, the GraphQL shapes
+// that httptest fakes cannot — a fake echoes canned JSON, but only a real server
+// validates the Preference-union selection (crucially the per-fragment
+// currentValue/default ALIASES that avoid the FieldsConflict rejection) and the
+// updateSourcePreference input against its schema.
+//
+// Tier 1 (MUST pass; local harness only, no external network):
+//   - SourcePreferences(LocalSourceID) decodes with NO schema/type error —
+//     proving `source(id){ preferences { …aliased union fragments… } }` is a
+//     valid, FieldsConflict-free document. A zero-length list is acceptable (the
+//     Local source may expose no preferences).
+//
+// Tier 2 (BEST-EFFORT; needs network + a real repo; NEVER fails the gate on its
+// absence): point the keiyoushi repo, install an extension, resolve its sources
+// via ExtensionSources(pkgName), read that source's preferences, flip a boolean
+// (Switch/CheckBox) preference via SetSourcePreference, assert the returned list
+// reflects the flip, then restore + uninstall. This is the only place the write
+// mutation + the "exactly one *State field" mapping + ExtensionSources are proven
+// live; their shapes are otherwise introspection-confirmed, so Tier 2 is bonus.
+func TestShape8_SourcePreferences(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	// --- Tier 1: the union query decodes (aliases avoid FieldsConflict) -------
+	prefs, err := client.SourcePreferences(ctx, suwayomi.LocalSourceID)
+	if err != nil {
+		t.Fatalf("SourcePreferences (union query shape): %v\n(check: is `source(id){preferences{…}}` correct and are currentValue/default aliased per fragment to avoid FieldsConflict?)", err)
+	}
+	t.Logf("CONFIRMED: source preferences query decoded; %d preference(s) on the Local source", len(prefs))
+
+	// --- Tier 2: best-effort live write round-trip ---------------------------
+	tier2SourcePreferences(t, client)
+}
+
+// tier2SourcePreferences is the best-effort live install → ExtensionSources →
+// read → write-flip → restore round-trip. It t.Skips on any network/repo/APK
+// unavailability and only t.Errors on a genuine bug (a flipped boolean not
+// reflected in the returned list). Extracted to keep the test within the cyclop
+// budget.
+func tier2SourcePreferences(t *testing.T, client suwayomi.Client) {
+	t.Helper()
+	const realRepo = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"
+	if !probeURL(realRepo) {
+		t.Skip("Tier 2 skipped: no network access to a real extensions repo")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	if err := client.SetExtensionRepos(ctx, []string{realRepo}); err != nil {
+		t.Skipf("Tier 2 skipped: SetExtensionRepos(real repo): %v", err)
+	}
+	t.Cleanup(func() { _ = client.SetExtensionRepos(context.Background(), nil) })
+
+	fetched, err := client.FetchExtensions(ctx)
+	if err != nil {
+		t.Skipf("Tier 2 skipped: FetchExtensions(real repo): %v", err)
+	}
+
+	var pkg string
+	for _, e := range fetched {
+		if !e.IsInstalled && !e.IsObsolete {
+			pkg = e.PkgName
+			break
+		}
+	}
+	if pkg == "" {
+		t.Skip("Tier 2 skipped: no installable extension found in the repo listing")
+	}
+
+	if err := client.SetExtensionState(ctx, pkg, suwayomi.ExtensionInstall); err != nil {
+		t.Skipf("Tier 2 skipped: install %q failed (likely network/APK fetch): %v", pkg, err)
+	}
+	t.Cleanup(func() { _ = client.SetExtensionState(context.Background(), pkg, suwayomi.ExtensionUninstall) })
+
+	sources, err := client.ExtensionSources(ctx, pkg)
+	if err != nil {
+		t.Fatalf("ExtensionSources(%q): %v\n(check: is `extension(pkgName){source{nodes{…}}}` correct?)", pkg, err)
+	}
+	if len(sources) == 0 {
+		t.Skipf("Tier 2 skipped: extension %q reported no sources", pkg)
+	}
+	t.Logf("CONFIRMED: ExtensionSources(%q) returned %d source(s)", pkg, len(sources))
+
+	tier2WriteFlip(t, client, sources[0].ID)
+}
+
+// tier2WriteFlip finds the first boolean (Switch/CheckBox) preference on sourceID,
+// flips it via SetSourcePreference, asserts the returned refreshed list reflects
+// the new value, then restores it. It t.Skips when the source has no boolean
+// preference (nothing safe to flip); it only t.Errors on a non-reflecting write.
+func tier2WriteFlip(t *testing.T, client suwayomi.Client, sourceID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
+	prefs, err := client.SourcePreferences(ctx, sourceID)
+	if err != nil {
+		t.Fatalf("SourcePreferences(%q): %v", sourceID, err)
+	}
+
+	idx := -1
+	for i, p := range prefs {
+		if (p.Type == suwayomi.PreferenceSwitch || p.Type == suwayomi.PreferenceCheckBox) && p.CurrentBool != nil {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		t.Skip("Tier 2 write skipped: source has no boolean preference to flip safely")
+	}
+
+	target := prefs[idx]
+	orig := *target.CurrentBool
+	want := !orig
+	value := suwayomi.BoolPreferenceValue(target.Type, want)
+
+	refreshed, err := client.SetSourcePreference(ctx, sourceID, target.Position, value)
+	if err != nil {
+		t.Fatalf("SetSourcePreference(pos=%d): %v", target.Position, err)
+	}
+	// Restore regardless of assertion outcome.
+	t.Cleanup(func() {
+		_, _ = client.SetSourcePreference(context.Background(), sourceID, target.Position,
+			suwayomi.BoolPreferenceValue(target.Type, orig))
+	})
+
+	if target.Position >= len(refreshed) {
+		t.Fatalf("refreshed list shorter than the written position (%d >= %d)", target.Position, len(refreshed))
+	}
+	got := refreshed[target.Position].CurrentBool
+	if got == nil || *got != want {
+		t.Errorf("after write, preference %q current=%v, want %v", target.Key, got, want)
+	} else {
+		t.Logf("CONFIRMED: SetSourcePreference flipped %q %v→%v (reflected in the returned list)", target.Key, orig, want)
+	}
+}
+
 // TestE2E_AddSeriesDispatchDownload is the Milestone 2 end-to-end proof:
 //
 //	real Suwayomi (local source) →

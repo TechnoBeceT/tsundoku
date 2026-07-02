@@ -203,6 +203,22 @@ type Client interface {
 	// setSettings mutation carrying only extensionRepos (no other setting is
 	// clobbered). An empty slice clears all repos. See extensions.go.
 	SetExtensionRepos(ctx context.Context, repos []string) error
+
+	// SourcePreferences reads a source's configurable preferences (the union of
+	// CheckBox/Switch/List/MultiSelectList/EditText variants), each tagged with
+	// its array Position. See source_preferences.go.
+	SourcePreferences(ctx context.Context, sourceID string) ([]SourcePreference, error)
+
+	// SetSourcePreference writes one preference by POSITION (built via the
+	// BoolPreferenceValue / StringPreferenceValue / MultiSelectPreferenceValue
+	// constructor for the position's variant) and returns the full refreshed
+	// list from the mutation payload. See source_preferences.go.
+	SetSourcePreference(ctx context.Context, sourceID string, position int, value PreferenceValue) ([]SourcePreference, error)
+
+	// ExtensionSources lists the sources an extension provides (one per language)
+	// via the ExtensionType.source link — the pkgName→sources resolution that
+	// drives the per-extension Configure flow. See source_preferences.go.
+	ExtensionSources(ctx context.Context, pkgName string) ([]Source, error)
 }
 
 // --- Constructor -------------------------------------------------------------

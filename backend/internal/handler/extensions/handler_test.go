@@ -54,6 +54,47 @@ type fakeClient struct {
 	lastPkgName    string
 	setReposCalled bool
 	lastRepos      []string
+
+	// Per-source preference state (the M3 "Configure" endpoints).
+	sources         []suwayomicli.Source
+	prefsBySource   map[string][]suwayomicli.SourcePreference
+	extSourcesErr   error
+	prefsErr        error
+	setPrefErr      error
+	setPrefCalled   bool
+	lastSetSourceID string
+	lastSetPosition int
+	lastSetValue    suwayomicli.PreferenceValue
+	setPrefResult   []suwayomicli.SourcePreference
+}
+
+// ExtensionSources returns the configured per-language sources (or the seeded error).
+func (f *fakeClient) ExtensionSources(_ context.Context, _ string) ([]suwayomicli.Source, error) {
+	if f.extSourcesErr != nil {
+		return nil, f.extSourcesErr
+	}
+	return f.sources, nil
+}
+
+// SourcePreferences returns the configured preferences for sourceID (or the error).
+func (f *fakeClient) SourcePreferences(_ context.Context, sourceID string) ([]suwayomicli.SourcePreference, error) {
+	if f.prefsErr != nil {
+		return nil, f.prefsErr
+	}
+	return f.prefsBySource[sourceID], nil
+}
+
+// SetSourcePreference records the write and returns setPrefResult (the authoritative
+// refreshed list the handler must echo back, §16), or the seeded error.
+func (f *fakeClient) SetSourcePreference(_ context.Context, sourceID string, position int, value suwayomicli.PreferenceValue) ([]suwayomicli.SourcePreference, error) {
+	f.setPrefCalled = true
+	f.lastSetSourceID = sourceID
+	f.lastSetPosition = position
+	f.lastSetValue = value
+	if f.setPrefErr != nil {
+		return nil, f.setPrefErr
+	}
+	return f.setPrefResult, nil
 }
 
 // PageBytes backs the icon proxy (coverproxy.Stream calls this). Only Icon
@@ -149,6 +190,8 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authed.POST("/suwayomi/extensions/:pkgName/update", h.Update)
 	authed.DELETE("/suwayomi/extensions/:pkgName", h.Uninstall)
 	authed.GET("/suwayomi/extensions/:pkgName/icon", h.Icon)
+	authed.GET("/suwayomi/extensions/:pkgName/preferences", h.Preferences)
+	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", h.SetPreference)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
