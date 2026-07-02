@@ -60,24 +60,29 @@ func Path(v string) predicate.ImportEntry {
 	return predicate.ImportEntry(sql.FieldEQ(FieldPath, v))
 }
 
+// Title applies equality check predicate on the "title" field. It's identical to TitleEQ.
+func Title(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEQ(FieldTitle, v))
+}
+
+// Category applies equality check predicate on the "category" field. It's identical to CategoryEQ.
+func Category(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEQ(FieldCategory, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.ImportEntry {
 	return predicate.ImportEntry(sql.FieldEQ(FieldStatus, v))
 }
 
-// Error applies equality check predicate on the "error" field. It's identical to ErrorEQ.
-func Error(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldEQ(FieldError, v))
+// ChapterCount applies equality check predicate on the "chapter_count" field. It's identical to ChapterCountEQ.
+func ChapterCount(v int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEQ(FieldChapterCount, v))
 }
 
-// CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
-func CreatedAt(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldEQ(FieldCreatedAt, v))
-}
-
-// UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
-func UpdatedAt(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldEQ(FieldUpdatedAt, v))
+// ScannedAt applies equality check predicate on the "scanned_at" field. It's identical to ScannedAtEQ.
+func ScannedAt(v time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEQ(FieldScannedAt, v))
 }
 
 // PathEQ applies the EQ predicate on the "path" field.
@@ -145,6 +150,136 @@ func PathContainsFold(v string) predicate.ImportEntry {
 	return predicate.ImportEntry(sql.FieldContainsFold(FieldPath, v))
 }
 
+// TitleEQ applies the EQ predicate on the "title" field.
+func TitleEQ(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEQ(FieldTitle, v))
+}
+
+// TitleNEQ applies the NEQ predicate on the "title" field.
+func TitleNEQ(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNEQ(FieldTitle, v))
+}
+
+// TitleIn applies the In predicate on the "title" field.
+func TitleIn(vs ...string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldIn(FieldTitle, vs...))
+}
+
+// TitleNotIn applies the NotIn predicate on the "title" field.
+func TitleNotIn(vs ...string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNotIn(FieldTitle, vs...))
+}
+
+// TitleGT applies the GT predicate on the "title" field.
+func TitleGT(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldGT(FieldTitle, v))
+}
+
+// TitleGTE applies the GTE predicate on the "title" field.
+func TitleGTE(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldGTE(FieldTitle, v))
+}
+
+// TitleLT applies the LT predicate on the "title" field.
+func TitleLT(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldLT(FieldTitle, v))
+}
+
+// TitleLTE applies the LTE predicate on the "title" field.
+func TitleLTE(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldLTE(FieldTitle, v))
+}
+
+// TitleContains applies the Contains predicate on the "title" field.
+func TitleContains(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldContains(FieldTitle, v))
+}
+
+// TitleHasPrefix applies the HasPrefix predicate on the "title" field.
+func TitleHasPrefix(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldHasPrefix(FieldTitle, v))
+}
+
+// TitleHasSuffix applies the HasSuffix predicate on the "title" field.
+func TitleHasSuffix(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldHasSuffix(FieldTitle, v))
+}
+
+// TitleEqualFold applies the EqualFold predicate on the "title" field.
+func TitleEqualFold(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEqualFold(FieldTitle, v))
+}
+
+// TitleContainsFold applies the ContainsFold predicate on the "title" field.
+func TitleContainsFold(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldContainsFold(FieldTitle, v))
+}
+
+// CategoryEQ applies the EQ predicate on the "category" field.
+func CategoryEQ(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEQ(FieldCategory, v))
+}
+
+// CategoryNEQ applies the NEQ predicate on the "category" field.
+func CategoryNEQ(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNEQ(FieldCategory, v))
+}
+
+// CategoryIn applies the In predicate on the "category" field.
+func CategoryIn(vs ...string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldIn(FieldCategory, vs...))
+}
+
+// CategoryNotIn applies the NotIn predicate on the "category" field.
+func CategoryNotIn(vs ...string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNotIn(FieldCategory, vs...))
+}
+
+// CategoryGT applies the GT predicate on the "category" field.
+func CategoryGT(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldGT(FieldCategory, v))
+}
+
+// CategoryGTE applies the GTE predicate on the "category" field.
+func CategoryGTE(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldGTE(FieldCategory, v))
+}
+
+// CategoryLT applies the LT predicate on the "category" field.
+func CategoryLT(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldLT(FieldCategory, v))
+}
+
+// CategoryLTE applies the LTE predicate on the "category" field.
+func CategoryLTE(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldLTE(FieldCategory, v))
+}
+
+// CategoryContains applies the Contains predicate on the "category" field.
+func CategoryContains(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldContains(FieldCategory, v))
+}
+
+// CategoryHasPrefix applies the HasPrefix predicate on the "category" field.
+func CategoryHasPrefix(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldHasPrefix(FieldCategory, v))
+}
+
+// CategoryHasSuffix applies the HasSuffix predicate on the "category" field.
+func CategoryHasSuffix(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldHasSuffix(FieldCategory, v))
+}
+
+// CategoryEqualFold applies the EqualFold predicate on the "category" field.
+func CategoryEqualFold(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEqualFold(FieldCategory, v))
+}
+
+// CategoryContainsFold applies the ContainsFold predicate on the "category" field.
+func CategoryContainsFold(v string) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldContainsFold(FieldCategory, v))
+}
+
 // StatusEQ applies the EQ predicate on the "status" field.
 func StatusEQ(v string) predicate.ImportEntry {
 	return predicate.ImportEntry(sql.FieldEQ(FieldStatus, v))
@@ -210,149 +345,104 @@ func StatusContainsFold(v string) predicate.ImportEntry {
 	return predicate.ImportEntry(sql.FieldContainsFold(FieldStatus, v))
 }
 
-// ErrorEQ applies the EQ predicate on the "error" field.
-func ErrorEQ(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldEQ(FieldError, v))
+// ChapterCountEQ applies the EQ predicate on the "chapter_count" field.
+func ChapterCountEQ(v int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEQ(FieldChapterCount, v))
 }
 
-// ErrorNEQ applies the NEQ predicate on the "error" field.
-func ErrorNEQ(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldNEQ(FieldError, v))
+// ChapterCountNEQ applies the NEQ predicate on the "chapter_count" field.
+func ChapterCountNEQ(v int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNEQ(FieldChapterCount, v))
 }
 
-// ErrorIn applies the In predicate on the "error" field.
-func ErrorIn(vs ...string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldIn(FieldError, vs...))
+// ChapterCountIn applies the In predicate on the "chapter_count" field.
+func ChapterCountIn(vs ...int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldIn(FieldChapterCount, vs...))
 }
 
-// ErrorNotIn applies the NotIn predicate on the "error" field.
-func ErrorNotIn(vs ...string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldNotIn(FieldError, vs...))
+// ChapterCountNotIn applies the NotIn predicate on the "chapter_count" field.
+func ChapterCountNotIn(vs ...int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNotIn(FieldChapterCount, vs...))
 }
 
-// ErrorGT applies the GT predicate on the "error" field.
-func ErrorGT(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldGT(FieldError, v))
+// ChapterCountGT applies the GT predicate on the "chapter_count" field.
+func ChapterCountGT(v int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldGT(FieldChapterCount, v))
 }
 
-// ErrorGTE applies the GTE predicate on the "error" field.
-func ErrorGTE(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldGTE(FieldError, v))
+// ChapterCountGTE applies the GTE predicate on the "chapter_count" field.
+func ChapterCountGTE(v int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldGTE(FieldChapterCount, v))
 }
 
-// ErrorLT applies the LT predicate on the "error" field.
-func ErrorLT(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldLT(FieldError, v))
+// ChapterCountLT applies the LT predicate on the "chapter_count" field.
+func ChapterCountLT(v int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldLT(FieldChapterCount, v))
 }
 
-// ErrorLTE applies the LTE predicate on the "error" field.
-func ErrorLTE(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldLTE(FieldError, v))
+// ChapterCountLTE applies the LTE predicate on the "chapter_count" field.
+func ChapterCountLTE(v int) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldLTE(FieldChapterCount, v))
 }
 
-// ErrorContains applies the Contains predicate on the "error" field.
-func ErrorContains(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldContains(FieldError, v))
+// FoundIsNil applies the IsNil predicate on the "found" field.
+func FoundIsNil() predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldIsNull(FieldFound))
 }
 
-// ErrorHasPrefix applies the HasPrefix predicate on the "error" field.
-func ErrorHasPrefix(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldHasPrefix(FieldError, v))
+// FoundNotNil applies the NotNil predicate on the "found" field.
+func FoundNotNil() predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNotNull(FieldFound))
 }
 
-// ErrorHasSuffix applies the HasSuffix predicate on the "error" field.
-func ErrorHasSuffix(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldHasSuffix(FieldError, v))
+// MatchedSourceIsNil applies the IsNil predicate on the "matched_source" field.
+func MatchedSourceIsNil() predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldIsNull(FieldMatchedSource))
 }
 
-// ErrorEqualFold applies the EqualFold predicate on the "error" field.
-func ErrorEqualFold(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldEqualFold(FieldError, v))
+// MatchedSourceNotNil applies the NotNil predicate on the "matched_source" field.
+func MatchedSourceNotNil() predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNotNull(FieldMatchedSource))
 }
 
-// ErrorContainsFold applies the ContainsFold predicate on the "error" field.
-func ErrorContainsFold(v string) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldContainsFold(FieldError, v))
+// ScannedAtEQ applies the EQ predicate on the "scanned_at" field.
+func ScannedAtEQ(v time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldEQ(FieldScannedAt, v))
 }
 
-// CreatedAtEQ applies the EQ predicate on the "created_at" field.
-func CreatedAtEQ(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldEQ(FieldCreatedAt, v))
+// ScannedAtNEQ applies the NEQ predicate on the "scanned_at" field.
+func ScannedAtNEQ(v time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNEQ(FieldScannedAt, v))
 }
 
-// CreatedAtNEQ applies the NEQ predicate on the "created_at" field.
-func CreatedAtNEQ(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldNEQ(FieldCreatedAt, v))
+// ScannedAtIn applies the In predicate on the "scanned_at" field.
+func ScannedAtIn(vs ...time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldIn(FieldScannedAt, vs...))
 }
 
-// CreatedAtIn applies the In predicate on the "created_at" field.
-func CreatedAtIn(vs ...time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldIn(FieldCreatedAt, vs...))
+// ScannedAtNotIn applies the NotIn predicate on the "scanned_at" field.
+func ScannedAtNotIn(vs ...time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldNotIn(FieldScannedAt, vs...))
 }
 
-// CreatedAtNotIn applies the NotIn predicate on the "created_at" field.
-func CreatedAtNotIn(vs ...time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldNotIn(FieldCreatedAt, vs...))
+// ScannedAtGT applies the GT predicate on the "scanned_at" field.
+func ScannedAtGT(v time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldGT(FieldScannedAt, v))
 }
 
-// CreatedAtGT applies the GT predicate on the "created_at" field.
-func CreatedAtGT(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldGT(FieldCreatedAt, v))
+// ScannedAtGTE applies the GTE predicate on the "scanned_at" field.
+func ScannedAtGTE(v time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldGTE(FieldScannedAt, v))
 }
 
-// CreatedAtGTE applies the GTE predicate on the "created_at" field.
-func CreatedAtGTE(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldGTE(FieldCreatedAt, v))
+// ScannedAtLT applies the LT predicate on the "scanned_at" field.
+func ScannedAtLT(v time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldLT(FieldScannedAt, v))
 }
 
-// CreatedAtLT applies the LT predicate on the "created_at" field.
-func CreatedAtLT(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldLT(FieldCreatedAt, v))
-}
-
-// CreatedAtLTE applies the LTE predicate on the "created_at" field.
-func CreatedAtLTE(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldLTE(FieldCreatedAt, v))
-}
-
-// UpdatedAtEQ applies the EQ predicate on the "updated_at" field.
-func UpdatedAtEQ(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldEQ(FieldUpdatedAt, v))
-}
-
-// UpdatedAtNEQ applies the NEQ predicate on the "updated_at" field.
-func UpdatedAtNEQ(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldNEQ(FieldUpdatedAt, v))
-}
-
-// UpdatedAtIn applies the In predicate on the "updated_at" field.
-func UpdatedAtIn(vs ...time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldIn(FieldUpdatedAt, vs...))
-}
-
-// UpdatedAtNotIn applies the NotIn predicate on the "updated_at" field.
-func UpdatedAtNotIn(vs ...time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldNotIn(FieldUpdatedAt, vs...))
-}
-
-// UpdatedAtGT applies the GT predicate on the "updated_at" field.
-func UpdatedAtGT(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldGT(FieldUpdatedAt, v))
-}
-
-// UpdatedAtGTE applies the GTE predicate on the "updated_at" field.
-func UpdatedAtGTE(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldGTE(FieldUpdatedAt, v))
-}
-
-// UpdatedAtLT applies the LT predicate on the "updated_at" field.
-func UpdatedAtLT(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldLT(FieldUpdatedAt, v))
-}
-
-// UpdatedAtLTE applies the LTE predicate on the "updated_at" field.
-func UpdatedAtLTE(v time.Time) predicate.ImportEntry {
-	return predicate.ImportEntry(sql.FieldLTE(FieldUpdatedAt, v))
+// ScannedAtLTE applies the LTE predicate on the "scanned_at" field.
+func ScannedAtLTE(v time.Time) predicate.ImportEntry {
+	return predicate.ImportEntry(sql.FieldLTE(FieldScannedAt, v))
 }
 
 // And groups predicates with the AND operator between them.

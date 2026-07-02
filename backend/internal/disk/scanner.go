@@ -263,12 +263,13 @@ func chapterFactFromOrphanCBZ(cbzPath, filename string) (*ChapterFact, error) {
 	}
 
 	key, num := provenanceKeyAndNumber(ci)
+	provider, scanlator, importance := kaizokuProvenance(filename, ci)
 	return &ChapterFact{
 		Key:        key,
 		Number:     num,
-		Provider:   ci.Provider,
-		Scanlator:  ci.Scanlator,
-		Importance: ci.Importance,
+		Provider:   provider,
+		Scanlator:  scanlator,
+		Importance: importance,
 		Filename:   filename,
 		PageCount:  ci.PageCount,
 		FileExists: true, // we just successfully opened it

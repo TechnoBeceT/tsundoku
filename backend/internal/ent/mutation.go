@@ -2572,18 +2572,22 @@ func (m *EtagCacheMutation) ResetEdge(name string) error {
 // ImportEntryMutation represents an operation that mutates the ImportEntry nodes in the graph.
 type ImportEntryMutation struct {
 	config
-	op            Op
-	typ           string
-	id            *uuid.UUID
-	_path         *string
-	status        *string
-	error         *string
-	created_at    *time.Time
-	updated_at    *time.Time
-	clearedFields map[string]struct{}
-	done          bool
-	oldValue      func(context.Context) (*ImportEntry, error)
-	predicates    []predicate.ImportEntry
+	op               Op
+	typ              string
+	id               *uuid.UUID
+	_path            *string
+	title            *string
+	category         *string
+	status           *string
+	chapter_count    *int
+	addchapter_count *int
+	found            *map[string]interface{}
+	matched_source   *map[string]interface{}
+	scanned_at       *time.Time
+	clearedFields    map[string]struct{}
+	done             bool
+	oldValue         func(context.Context) (*ImportEntry, error)
+	predicates       []predicate.ImportEntry
 }
 
 var _ ent.Mutation = (*ImportEntryMutation)(nil)
@@ -2726,6 +2730,78 @@ func (m *ImportEntryMutation) ResetPath() {
 	m._path = nil
 }
 
+// SetTitle sets the "title" field.
+func (m *ImportEntryMutation) SetTitle(s string) {
+	m.title = &s
+}
+
+// Title returns the value of the "title" field in the mutation.
+func (m *ImportEntryMutation) Title() (r string, exists bool) {
+	v := m.title
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTitle returns the old "title" field's value of the ImportEntry entity.
+// If the ImportEntry object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ImportEntryMutation) OldTitle(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTitle is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTitle requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTitle: %w", err)
+	}
+	return oldValue.Title, nil
+}
+
+// ResetTitle resets all changes to the "title" field.
+func (m *ImportEntryMutation) ResetTitle() {
+	m.title = nil
+}
+
+// SetCategory sets the "category" field.
+func (m *ImportEntryMutation) SetCategory(s string) {
+	m.category = &s
+}
+
+// Category returns the value of the "category" field in the mutation.
+func (m *ImportEntryMutation) Category() (r string, exists bool) {
+	v := m.category
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCategory returns the old "category" field's value of the ImportEntry entity.
+// If the ImportEntry object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ImportEntryMutation) OldCategory(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCategory is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCategory requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCategory: %w", err)
+	}
+	return oldValue.Category, nil
+}
+
+// ResetCategory resets all changes to the "category" field.
+func (m *ImportEntryMutation) ResetCategory() {
+	m.category = nil
+}
+
 // SetStatus sets the "status" field.
 func (m *ImportEntryMutation) SetStatus(s string) {
 	m.status = &s
@@ -2762,112 +2838,194 @@ func (m *ImportEntryMutation) ResetStatus() {
 	m.status = nil
 }
 
-// SetError sets the "error" field.
-func (m *ImportEntryMutation) SetError(s string) {
-	m.error = &s
+// SetChapterCount sets the "chapter_count" field.
+func (m *ImportEntryMutation) SetChapterCount(i int) {
+	m.chapter_count = &i
+	m.addchapter_count = nil
 }
 
-// Error returns the value of the "error" field in the mutation.
-func (m *ImportEntryMutation) Error() (r string, exists bool) {
-	v := m.error
+// ChapterCount returns the value of the "chapter_count" field in the mutation.
+func (m *ImportEntryMutation) ChapterCount() (r int, exists bool) {
+	v := m.chapter_count
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldError returns the old "error" field's value of the ImportEntry entity.
+// OldChapterCount returns the old "chapter_count" field's value of the ImportEntry entity.
 // If the ImportEntry object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ImportEntryMutation) OldError(ctx context.Context) (v string, err error) {
+func (m *ImportEntryMutation) OldChapterCount(ctx context.Context) (v int, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldError is only allowed on UpdateOne operations")
+		return v, errors.New("OldChapterCount is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldError requires an ID field in the mutation")
+		return v, errors.New("OldChapterCount requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldError: %w", err)
+		return v, fmt.Errorf("querying old value for OldChapterCount: %w", err)
 	}
-	return oldValue.Error, nil
+	return oldValue.ChapterCount, nil
 }
 
-// ResetError resets all changes to the "error" field.
-func (m *ImportEntryMutation) ResetError() {
-	m.error = nil
+// AddChapterCount adds i to the "chapter_count" field.
+func (m *ImportEntryMutation) AddChapterCount(i int) {
+	if m.addchapter_count != nil {
+		*m.addchapter_count += i
+	} else {
+		m.addchapter_count = &i
+	}
 }
 
-// SetCreatedAt sets the "created_at" field.
-func (m *ImportEntryMutation) SetCreatedAt(t time.Time) {
-	m.created_at = &t
-}
-
-// CreatedAt returns the value of the "created_at" field in the mutation.
-func (m *ImportEntryMutation) CreatedAt() (r time.Time, exists bool) {
-	v := m.created_at
+// AddedChapterCount returns the value that was added to the "chapter_count" field in this mutation.
+func (m *ImportEntryMutation) AddedChapterCount() (r int, exists bool) {
+	v := m.addchapter_count
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldCreatedAt returns the old "created_at" field's value of the ImportEntry entity.
-// If the ImportEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ImportEntryMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
-	}
-	return oldValue.CreatedAt, nil
+// ResetChapterCount resets all changes to the "chapter_count" field.
+func (m *ImportEntryMutation) ResetChapterCount() {
+	m.chapter_count = nil
+	m.addchapter_count = nil
 }
 
-// ResetCreatedAt resets all changes to the "created_at" field.
-func (m *ImportEntryMutation) ResetCreatedAt() {
-	m.created_at = nil
+// SetFound sets the "found" field.
+func (m *ImportEntryMutation) SetFound(value map[string]interface{}) {
+	m.found = &value
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *ImportEntryMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *ImportEntryMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
+// Found returns the value of the "found" field in the mutation.
+func (m *ImportEntryMutation) Found() (r map[string]interface{}, exists bool) {
+	v := m.found
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldUpdatedAt returns the old "updated_at" field's value of the ImportEntry entity.
+// OldFound returns the old "found" field's value of the ImportEntry entity.
 // If the ImportEntry object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ImportEntryMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+func (m *ImportEntryMutation) OldFound(ctx context.Context) (v map[string]interface{}, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+		return v, errors.New("OldFound is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+		return v, errors.New("OldFound requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+		return v, fmt.Errorf("querying old value for OldFound: %w", err)
 	}
-	return oldValue.UpdatedAt, nil
+	return oldValue.Found, nil
 }
 
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *ImportEntryMutation) ResetUpdatedAt() {
-	m.updated_at = nil
+// ClearFound clears the value of the "found" field.
+func (m *ImportEntryMutation) ClearFound() {
+	m.found = nil
+	m.clearedFields[importentry.FieldFound] = struct{}{}
+}
+
+// FoundCleared returns if the "found" field was cleared in this mutation.
+func (m *ImportEntryMutation) FoundCleared() bool {
+	_, ok := m.clearedFields[importentry.FieldFound]
+	return ok
+}
+
+// ResetFound resets all changes to the "found" field.
+func (m *ImportEntryMutation) ResetFound() {
+	m.found = nil
+	delete(m.clearedFields, importentry.FieldFound)
+}
+
+// SetMatchedSource sets the "matched_source" field.
+func (m *ImportEntryMutation) SetMatchedSource(value map[string]interface{}) {
+	m.matched_source = &value
+}
+
+// MatchedSource returns the value of the "matched_source" field in the mutation.
+func (m *ImportEntryMutation) MatchedSource() (r map[string]interface{}, exists bool) {
+	v := m.matched_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMatchedSource returns the old "matched_source" field's value of the ImportEntry entity.
+// If the ImportEntry object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ImportEntryMutation) OldMatchedSource(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMatchedSource is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMatchedSource requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMatchedSource: %w", err)
+	}
+	return oldValue.MatchedSource, nil
+}
+
+// ClearMatchedSource clears the value of the "matched_source" field.
+func (m *ImportEntryMutation) ClearMatchedSource() {
+	m.matched_source = nil
+	m.clearedFields[importentry.FieldMatchedSource] = struct{}{}
+}
+
+// MatchedSourceCleared returns if the "matched_source" field was cleared in this mutation.
+func (m *ImportEntryMutation) MatchedSourceCleared() bool {
+	_, ok := m.clearedFields[importentry.FieldMatchedSource]
+	return ok
+}
+
+// ResetMatchedSource resets all changes to the "matched_source" field.
+func (m *ImportEntryMutation) ResetMatchedSource() {
+	m.matched_source = nil
+	delete(m.clearedFields, importentry.FieldMatchedSource)
+}
+
+// SetScannedAt sets the "scanned_at" field.
+func (m *ImportEntryMutation) SetScannedAt(t time.Time) {
+	m.scanned_at = &t
+}
+
+// ScannedAt returns the value of the "scanned_at" field in the mutation.
+func (m *ImportEntryMutation) ScannedAt() (r time.Time, exists bool) {
+	v := m.scanned_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldScannedAt returns the old "scanned_at" field's value of the ImportEntry entity.
+// If the ImportEntry object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ImportEntryMutation) OldScannedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldScannedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldScannedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldScannedAt: %w", err)
+	}
+	return oldValue.ScannedAt, nil
+}
+
+// ResetScannedAt resets all changes to the "scanned_at" field.
+func (m *ImportEntryMutation) ResetScannedAt() {
+	m.scanned_at = nil
 }
 
 // Where appends a list predicates to the ImportEntryMutation builder.
@@ -2904,21 +3062,30 @@ func (m *ImportEntryMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ImportEntryMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 8)
 	if m._path != nil {
 		fields = append(fields, importentry.FieldPath)
+	}
+	if m.title != nil {
+		fields = append(fields, importentry.FieldTitle)
+	}
+	if m.category != nil {
+		fields = append(fields, importentry.FieldCategory)
 	}
 	if m.status != nil {
 		fields = append(fields, importentry.FieldStatus)
 	}
-	if m.error != nil {
-		fields = append(fields, importentry.FieldError)
+	if m.chapter_count != nil {
+		fields = append(fields, importentry.FieldChapterCount)
 	}
-	if m.created_at != nil {
-		fields = append(fields, importentry.FieldCreatedAt)
+	if m.found != nil {
+		fields = append(fields, importentry.FieldFound)
 	}
-	if m.updated_at != nil {
-		fields = append(fields, importentry.FieldUpdatedAt)
+	if m.matched_source != nil {
+		fields = append(fields, importentry.FieldMatchedSource)
+	}
+	if m.scanned_at != nil {
+		fields = append(fields, importentry.FieldScannedAt)
 	}
 	return fields
 }
@@ -2930,14 +3097,20 @@ func (m *ImportEntryMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case importentry.FieldPath:
 		return m.Path()
+	case importentry.FieldTitle:
+		return m.Title()
+	case importentry.FieldCategory:
+		return m.Category()
 	case importentry.FieldStatus:
 		return m.Status()
-	case importentry.FieldError:
-		return m.Error()
-	case importentry.FieldCreatedAt:
-		return m.CreatedAt()
-	case importentry.FieldUpdatedAt:
-		return m.UpdatedAt()
+	case importentry.FieldChapterCount:
+		return m.ChapterCount()
+	case importentry.FieldFound:
+		return m.Found()
+	case importentry.FieldMatchedSource:
+		return m.MatchedSource()
+	case importentry.FieldScannedAt:
+		return m.ScannedAt()
 	}
 	return nil, false
 }
@@ -2949,14 +3122,20 @@ func (m *ImportEntryMutation) OldField(ctx context.Context, name string) (ent.Va
 	switch name {
 	case importentry.FieldPath:
 		return m.OldPath(ctx)
+	case importentry.FieldTitle:
+		return m.OldTitle(ctx)
+	case importentry.FieldCategory:
+		return m.OldCategory(ctx)
 	case importentry.FieldStatus:
 		return m.OldStatus(ctx)
-	case importentry.FieldError:
-		return m.OldError(ctx)
-	case importentry.FieldCreatedAt:
-		return m.OldCreatedAt(ctx)
-	case importentry.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
+	case importentry.FieldChapterCount:
+		return m.OldChapterCount(ctx)
+	case importentry.FieldFound:
+		return m.OldFound(ctx)
+	case importentry.FieldMatchedSource:
+		return m.OldMatchedSource(ctx)
+	case importentry.FieldScannedAt:
+		return m.OldScannedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown ImportEntry field %s", name)
 }
@@ -2973,6 +3152,20 @@ func (m *ImportEntryMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetPath(v)
 		return nil
+	case importentry.FieldTitle:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTitle(v)
+		return nil
+	case importentry.FieldCategory:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCategory(v)
+		return nil
 	case importentry.FieldStatus:
 		v, ok := value.(string)
 		if !ok {
@@ -2980,26 +3173,33 @@ func (m *ImportEntryMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetStatus(v)
 		return nil
-	case importentry.FieldError:
-		v, ok := value.(string)
+	case importentry.FieldChapterCount:
+		v, ok := value.(int)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetError(v)
+		m.SetChapterCount(v)
 		return nil
-	case importentry.FieldCreatedAt:
+	case importentry.FieldFound:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFound(v)
+		return nil
+	case importentry.FieldMatchedSource:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMatchedSource(v)
+		return nil
+	case importentry.FieldScannedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetCreatedAt(v)
-		return nil
-	case importentry.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
+		m.SetScannedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ImportEntry field %s", name)
@@ -3008,13 +3208,21 @@ func (m *ImportEntryMutation) SetField(name string, value ent.Value) error {
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *ImportEntryMutation) AddedFields() []string {
-	return nil
+	var fields []string
+	if m.addchapter_count != nil {
+		fields = append(fields, importentry.FieldChapterCount)
+	}
+	return fields
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *ImportEntryMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case importentry.FieldChapterCount:
+		return m.AddedChapterCount()
+	}
 	return nil, false
 }
 
@@ -3023,6 +3231,13 @@ func (m *ImportEntryMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *ImportEntryMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case importentry.FieldChapterCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddChapterCount(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ImportEntry numeric field %s", name)
 }
@@ -3030,7 +3245,14 @@ func (m *ImportEntryMutation) AddField(name string, value ent.Value) error {
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *ImportEntryMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(importentry.FieldFound) {
+		fields = append(fields, importentry.FieldFound)
+	}
+	if m.FieldCleared(importentry.FieldMatchedSource) {
+		fields = append(fields, importentry.FieldMatchedSource)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -3043,6 +3265,14 @@ func (m *ImportEntryMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *ImportEntryMutation) ClearField(name string) error {
+	switch name {
+	case importentry.FieldFound:
+		m.ClearFound()
+		return nil
+	case importentry.FieldMatchedSource:
+		m.ClearMatchedSource()
+		return nil
+	}
 	return fmt.Errorf("unknown ImportEntry nullable field %s", name)
 }
 
@@ -3053,17 +3283,26 @@ func (m *ImportEntryMutation) ResetField(name string) error {
 	case importentry.FieldPath:
 		m.ResetPath()
 		return nil
+	case importentry.FieldTitle:
+		m.ResetTitle()
+		return nil
+	case importentry.FieldCategory:
+		m.ResetCategory()
+		return nil
 	case importentry.FieldStatus:
 		m.ResetStatus()
 		return nil
-	case importentry.FieldError:
-		m.ResetError()
+	case importentry.FieldChapterCount:
+		m.ResetChapterCount()
 		return nil
-	case importentry.FieldCreatedAt:
-		m.ResetCreatedAt()
+	case importentry.FieldFound:
+		m.ResetFound()
 		return nil
-	case importentry.FieldUpdatedAt:
-		m.ResetUpdatedAt()
+	case importentry.FieldMatchedSource:
+		m.ResetMatchedSource()
+		return nil
+	case importentry.FieldScannedAt:
+		m.ResetScannedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown ImportEntry field %s", name)

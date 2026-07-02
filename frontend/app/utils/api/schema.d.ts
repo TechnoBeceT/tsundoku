@@ -258,7 +258,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
+        /**
+         * Attach an additional source to an existing series
+         * @description Adds a Suwayomi source {source, mangaId, importance} as a new provider
+         *     on an existing series (upgrade-aware — the new source's chapter feed
+         *     is ingested and ranked against the series' existing sources). Returns
+         *     the refreshed series detail (§16 round-trip).
+         */
+        post: operations["addSeriesProvider"];
         delete?: never;
         options?: never;
         head?: never;
@@ -592,6 +599,97 @@ export interface paths {
          *     downloaded file). Returns 409 when the chapter is not in a retryable state.
          */
         post: operations["retryChapter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan on-disk storage for importable series
+         * @description Walks the storage root and upserts one staging row per on-disk series
+         *     (never downgrading an already-imported row), then returns the full
+         *     staging list. Use this to discover series that exist on disk but are
+         *     not yet tracked in the DB (e.g. after a Kaizoku.GO migration).
+         */
+        post: operations["scanLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List staged library-import entries
+         * @description Returns the staged entries from a prior scan, optionally filtered by
+         *     status. An empty/absent status returns every staged entry.
+         */
+        get: operations["listImports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/imports/match": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Suwayomi sources for a staged entry's title
+         * @description Searches every Suwayomi source for the staged entry's title and
+         *     returns the grouped candidates, so the owner can pick one to pass as
+         *     `match` on the subsequent import call. `path` is a REQUIRED query
+         *     param (a filesystem path, never a URL path segment).
+         */
+        get: operations["matchImport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import a staged entry without re-downloading
+         * @description Registers a staged entry's on-disk chapters as already downloaded (no
+         *     re-download), optionally attaching an owner-matched Suwayomi source
+         *     via `match`, and marks the entry imported. Idempotent: re-importing
+         *     the same path re-runs the reconcile without creating a duplicate
+         *     series. Returns the imported series detail (§16 round-trip).
+         */
+        post: operations["importSeries"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1407,6 +1505,47 @@ export interface components {
              */
             repos: string[];
         };
+        /** @description One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB). */
+        FoundSeries: {
+            /** @description Absolute on-disk path to the series folder. */
+            path: string;
+            /** @description Series title as read from disk (ComicInfo.xml/sidecar or folder name). */
+            title: string;
+            /** @description Category folder name this series was found under. */
+            category: string;
+            /** @description Number of chapter files found on disk for this series. */
+            chapterCount: number;
+            /** @description Provider keys recorded in the sidecar for this series (empty when no provenance is known). */
+            providers: string[];
+            /** @description Staging status of this entry (pending/imported/skipped). */
+            status: string;
+            /** @description Whether a Series row with this title/slug already exists in the DB. */
+            alreadyInDb: boolean;
+        };
+        /** @description An owner-chosen Suwayomi source to attach to a staged entry at import time, or as an additional source on an existing series. */
+        MatchInput: {
+            /** @description Suwayomi source ID the chosen candidate came from. */
+            source: string;
+            /** @description Suwayomi-internal manga identifier within that source. */
+            mangaId: number;
+            /** @description Provider importance to assign (higher number = higher priority). */
+            importance: number;
+        };
+        /** @description Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching an owner-matched Suwayomi source. */
+        ImportRequest: {
+            /** @description The staged entry's on-disk path (as returned by a prior scan/list). */
+            path: string;
+            match?: components["schemas"]["MatchInput"];
+        };
+        /** @description Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest). */
+        AddProviderRequest: {
+            /** @description Suwayomi source ID the chosen candidate came from. */
+            source: string;
+            /** @description Suwayomi-internal manga identifier within that source. */
+            mangaId: number;
+            /** @description Provider importance to assign (higher number = higher priority). */
+            importance: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -1950,6 +2089,69 @@ export interface operations {
             };
             /** @description No series with the given id. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    addSeriesProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddProviderRequest"];
+            };
+        };
+        responses: {
+            /** @description Provider attached. Returns the refreshed series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed id, or an invalid/missing source, mangaId, or importance. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id, or no such Suwayomi source/manga. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The source is already attached to this series. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2766,6 +2968,177 @@ export interface operations {
                 };
             };
             /** @description Chapter is not in a retryable state (only failed/permanently_failed may be retried). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scanLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The full staging list after the scan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FoundSeries"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listImports: {
+        parameters: {
+            query?: {
+                /** @description Filter to one staging status. */
+                status?: "pending" | "imported" | "skipped";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The staged entries matching the filter. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FoundSeries"][];
+                };
+            };
+            /** @description Unknown status value. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    matchImport: {
+        parameters: {
+            query: {
+                /** @description The staged entry's on-disk path (as returned by scan/list). */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cross-source search results, grouped by title similarity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchGroup"][];
+                };
+            };
+            /** @description Missing or empty path. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    importSeries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Entry imported. Returns the imported series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Missing path, or an invalid/incomplete match. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No staged entry with that path, or no such Suwayomi source/manga. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The matched source is already attached to this series. */
             409: {
                 headers: {
                     [name: string]: unknown;
