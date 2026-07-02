@@ -41,6 +41,7 @@ import (
 //   - /api/search                                  — multi-source manga search (RequireOwner).
 //   - /api/sources/:sourceId/browse                — per-source Popular/Latest catalog browse (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/chapters — chapter preview (RequireOwner).
+//   - /api/sources/:sourceId/manga/:mangaId/cover    — source-manga cover proxy (RequireOwner).
 //   - /api/series (GET)                            — library list (RequireOwner).
 //   - /api/series (POST)                           — adopt / import manga (RequireOwner).
 //   - /api/series/:id (GET)                        — library detail (RequireOwner).
@@ -181,11 +182,12 @@ func registerRoutes(
 	// value is threaded in from main.
 	ingest := suwayomi.NewIngest(suwayomiClient, client)
 	importsSvc := imports.NewService(suwayomiClient, ingest, client, cfg.Storage.Folder)
-	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger)
+	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, suwayomiClient)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)
+	authed.GET("/sources/:sourceId/manga/:mangaId/cover", importsH.MangaCover)
 	authed.POST("/series", importsH.Adopt)
 
 	// Library-import (on-disk scan + adopt-without-redownload) API. Reuses the

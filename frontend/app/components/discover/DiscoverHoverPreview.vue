@@ -5,8 +5,9 @@ import type { DiscoverCandidate } from '../screens/discover.types'
 /**
  * DiscoverHoverPreview — the rich hover-preview popup shown when a DiscoverCard is
  * hovered: a larger cover header (initial-letter placeholder or image + scrim +
- * title), then a body with the "source · LANG · In library" line, a clamped
- * description, and the candidate's genres as <Chip>s.
+ * title), then a body with the "source · LANG · In library" line, an optional
+ * "by {author} · art by {artist}" credit line (M4), a clamped description, and
+ * the candidate's genres as <Chip>s.
  *
  * BUG-2 FIX — this is a deliberate Kaizoku bug-fix and its structure MUST be
  * preserved by the owning DiscoverCard: the popup is a direct SIBLING of the
@@ -34,6 +35,17 @@ const initial = (title: string): string => (title.trim()[0] ?? '?').toUpperCase(
 
 // The popup's "source · LANG" line.
 const candidateSource = (c: DiscoverCandidate): string => `${c.sourceName} · ${c.lang.toUpperCase()}`
+
+// The "by {author} · art by {artist}" credit line. Artist is only appended
+// when it's set AND differs from author — a single-credit work (very common;
+// many sources set author === artist, or omit artist) shows just "by {author}"
+// instead of a redundant repeat.
+const creditLine = (c: DiscoverCandidate): string => {
+  if (!c.author) return ''
+  return c.artist && c.artist !== c.author
+    ? `by ${c.author} · art by ${c.artist}`
+    : `by ${c.author}`
+}
 </script>
 
 <template>
@@ -52,6 +64,7 @@ const candidateSource = (c: DiscoverCandidate): string => `${c.sourceName} · ${
       <div class="disc-pop__source">
         {{ candidateSource(candidate) }}<template v-if="candidate.inLibrary"> · <span class="disc-pop__in-lib">In library</span></template>
       </div>
+      <p v-if="creditLine(candidate)" class="disc-pop__credit">{{ creditLine(candidate) }}</p>
       <p class="disc-pop__desc">{{ candidate.description || 'No description available for this title.' }}</p>
       <div v-if="candidate.genres && candidate.genres.length" class="disc-pop__genres">
         <Chip v-for="g in candidate.genres" :key="g" variant="neutral">{{ g }}</Chip>
@@ -156,6 +169,13 @@ const candidateSource = (c: DiscoverCandidate): string => `${c.sourceName} · ${
 .disc-pop__in-lib {
   color: var(--cover-done);
   font-weight: var(--weight-bold);
+}
+
+.disc-pop__credit {
+  margin: 0 0 8px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--muted);
 }
 
 .disc-pop__desc {

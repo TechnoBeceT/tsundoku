@@ -9,22 +9,28 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/imports"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // Handler holds the dependencies for the imports HTTP handlers.
 // All business logic lives in imports.Service and series.Service; this handler
-// is thin — it binds, validates, calls the service, and renders the DTO.
+// is thin — it binds, validates, calls the service, and renders the DTO. sw is
+// held directly (cover-proxy style, like handler/series and handler/suwayomi)
+// so MangaCover can stream a source-manga thumbnail without a Tsundoku service
+// round-trip.
 type Handler struct {
 	svc     *imports.Service
 	series  *seriessvc.Service
 	trigger func()
+	sw      suwayomi.Client
 }
 
 // NewHandler constructs a Handler bound to an imports.Service, a series.Service
-// (to render SeriesDetailDTO after Adopt), and an auto-converge trigger (called
-// after a successful adopt to kick an immediate download/upgrade cycle — M5).
-func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func()) *Handler {
-	return &Handler{svc: svc, series: series, trigger: trigger}
+// (to render SeriesDetailDTO after Adopt), an auto-converge trigger (called
+// after a successful adopt to kick an immediate download/upgrade cycle — M5),
+// and a suwayomi.Client (used by MangaCover to proxy a source-manga thumbnail).
+func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func(), sw suwayomi.Client) *Handler {
+	return &Handler{svc: svc, series: series, trigger: trigger, sw: sw}
 }
 
 // Sources handles GET /api/sources.

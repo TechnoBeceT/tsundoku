@@ -534,6 +534,10 @@ components:
         - title
         - url
         - thumbnailUrl
+        - author
+        - artist
+        - description
+        - genres
       properties:
         source:
           type: string
@@ -555,7 +559,24 @@ components:
           description: Provider-canonical URL for this manga (powers the "View on source" link); empty string when not provided.
         thumbnailUrl:
           type: string
-          description: Cover image URL; empty string when not provided.
+          description: |
+            Tsundoku's own cover-proxy path ("/api/sources/{source}/manga/{mangaId}/cover"),
+            never Suwayomi's raw thumbnail URL. Empty string when the source provided no
+            thumbnail at all.
+        author:
+          type: string
+          description: Manga's writing credit; empty string when not provided.
+        artist:
+          type: string
+          description: Manga's art credit; empty string when not provided.
+        description:
+          type: string
+          description: Synopsis/summary text; empty string when not provided.
+        genres:
+          type: array
+          description: Genre/tag list; empty array when the source provides none.
+          items:
+            type: string
 
     BrowseResult:
       type: object
@@ -2210,6 +2231,60 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/manga/{mangaId}/cover:
+    get:
+      operationId: getMangaCover
+      summary: Source-manga cover image
+      description: |
+        Streams a Discover/Search candidate's cover image, proxied from Suwayomi's
+        own REST thumbnail endpoint. The image is returned as a binary blob. Returns
+        502 when Suwayomi fails to fetch it. This is a same-origin, authed proxy —
+        it exists because a source's raw GraphQL thumbnailUrl is Suwayomi-relative
+        and 404s if rendered directly against Tsundoku's own origin.
+      tags:
+        - imports
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Suwayomi source ID (accepted for route symmetry; not used to resolve the thumbnail).
+          schema:
+            type: string
+        - name: mangaId
+          in: path
+          required: true
+          description: Suwayomi-internal manga identifier (integer).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The cover image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Non-integer mangaId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi failed to fetch the cover image.
           content:
             application/json:
               schema:

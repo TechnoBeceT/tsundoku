@@ -5,7 +5,11 @@
  * Covers: a deterministic mix of real placeholder-image URLs (picsum, seeded by
  * mangaId) and empty thumbnails, so the grid exercises BOTH the `<img>` path and
  * the initial-letter placeholder. Several candidates carry a description + genres
- * (to fill the hover popup) and one is flagged `inLibrary`.
+ * (to fill the hover popup) and one is flagged `inLibrary`. Solo Leveling and
+ * Chainsaw Man additionally carry author/artist (M4) — one with distinct credits
+ * (exercises the "by X · art by Y" line) and one with a single credit (exercises
+ * the "by X" line with no redundant art-by repeat); Berserk stays fully bare to
+ * keep exercising the popup's graceful no-metadata-at-all fallback.
  */
 import type { BrowseResult, DiscoverCandidate, DiscoverSource } from '../components/screens/discover.types'
 
@@ -41,12 +45,16 @@ export const popularResult: BrowseResult = {
       inLibrary: true,
       description: 'Ten years ago, "the Gate" connected the real world to a realm of monsters. Sung Jinwoo, the weakest of all hunters, is granted a mysterious power to level up in ways no one else can.',
       genres: ['Action', 'Fantasy', 'Adventure'],
+      author: 'Chugong',
+      artist: 'Dubu (REDICE Studio)',
     }),
     make({
       mangaId: 1002,
       title: 'Chainsaw Man',
       description: 'Denji is a young man trapped in poverty, working off his dead father\'s debt by harvesting devil corpses with his pet devil Pochita.',
       genres: ['Action', 'Horror', 'Comedy'],
+      author: 'Tatsuki Fujimoto',
+      artist: 'Tatsuki Fujimoto',
     }),
     make({
       mangaId: 1003,

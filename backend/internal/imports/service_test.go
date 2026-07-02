@@ -465,16 +465,17 @@ func TestService_Search_ThumbnailNil(t *testing.T) {
 
 // TestService_Search_CandidateFields verifies that SearchCandidateDTO carries
 // correct Source, SourceName, Lang, MangaID, Title, and ThumbnailURL fields.
+// ThumbnailURL must be Tsundoku's OWN cover-proxy path, not Suwayomi's raw
+// thumbnail URL (B2 fix — the raw value 404s against Tsundoku's own origin).
 func TestService_Search_CandidateFields(t *testing.T) {
 	t.Parallel()
 
-	thumb := "http://thumb.test/img.jpg"
 	fc := &fakeClient{
 		sources: []suwayomi.Source{
 			{ID: "s1", Name: "Source One", Lang: "en"},
 		},
 		searchResults: map[string][]suwayomi.Manga{
-			"s1": {{ID: 42, Title: "Attack on Titan", ThumbnailURL: ptrStr(thumb)}},
+			"s1": {{ID: 42, Title: "Attack on Titan", ThumbnailURL: ptrStr("http://thumb.test/img.jpg")}},
 		},
 	}
 	svc := newService(fc)
@@ -502,8 +503,94 @@ func TestService_Search_CandidateFields(t *testing.T) {
 	if c.Title != "Attack on Titan" {
 		t.Errorf("Candidate.Title: got %q, want %q", c.Title, "Attack on Titan")
 	}
-	if c.ThumbnailURL != thumb {
-		t.Errorf("Candidate.ThumbnailURL: got %q, want %q", c.ThumbnailURL, thumb)
+	const wantProxyPath = "/api/sources/s1/manga/42/cover"
+	if c.ThumbnailURL != wantProxyPath {
+		t.Errorf("Candidate.ThumbnailURL: got %q, want %q (Tsundoku cover-proxy path, not the raw Suwayomi URL)", c.ThumbnailURL, wantProxyPath)
+	}
+}
+
+// TestService_Search_MetadataFields verifies that author/artist/genres/
+// description propagate from suwayomi.Manga onto the SearchCandidateDTO (M4).
+func TestService_Search_MetadataFields(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "s1", Name: "Source One", Lang: "en"},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"s1": {{
+				ID:          42,
+				Title:       "Vinland Saga",
+				Author:      ptrStr("Makoto Yukimura"),
+				Artist:      ptrStr("Makoto Yukimura"),
+				Description: ptrStr("A Viking's saga."),
+				Genre:       []string{"Action", "Historical"},
+			}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "Vinland Saga", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	if len(got) == 0 || len(got[0].Candidates) == 0 {
+		t.Fatal("expected at least one group and candidate")
+	}
+	c := got[0].Candidates[0]
+	if c.Author != "Makoto Yukimura" {
+		t.Errorf("Candidate.Author: got %q, want %q", c.Author, "Makoto Yukimura")
+	}
+	if c.Artist != "Makoto Yukimura" {
+		t.Errorf("Candidate.Artist: got %q, want %q", c.Artist, "Makoto Yukimura")
+	}
+	if c.Description != "A Viking's saga." {
+		t.Errorf("Candidate.Description: got %q, want %q", c.Description, "A Viking's saga.")
+	}
+	if len(c.Genres) != 2 || c.Genres[0] != "Action" || c.Genres[1] != "Historical" {
+		t.Errorf("Candidate.Genres: got %v, want [Action Historical]", c.Genres)
+	}
+}
+
+// TestService_Search_MetadataFieldsNil verifies that nil author/artist/genre/
+// description map to "" / a non-nil empty slice — never a nil-pointer panic
+// and never a "null" genres array on the wire.
+func TestService_Search_MetadataFieldsNil(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "s1", Name: "Source One", Lang: "en"},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"s1": {{ID: 1, Title: "No Metadata"}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "No Metadata", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	if len(got) == 0 || len(got[0].Candidates) == 0 {
+		t.Fatal("expected at least one group and candidate")
+	}
+	c := got[0].Candidates[0]
+	if c.Author != "" {
+		t.Errorf("Candidate.Author: got %q, want empty", c.Author)
+	}
+	if c.Artist != "" {
+		t.Errorf("Candidate.Artist: got %q, want empty", c.Artist)
+	}
+	if c.Description != "" {
+		t.Errorf("Candidate.Description: got %q, want empty", c.Description)
+	}
+	if c.Genres == nil {
+		t.Error("Candidate.Genres: got nil, want non-nil empty slice (JSON must be [] not null)")
+	}
+	if len(c.Genres) != 0 {
+		t.Errorf("Candidate.Genres: got %v, want empty", c.Genres)
 	}
 }
 
@@ -610,10 +697,13 @@ func TestService_Browse_Popular(t *testing.T) {
 	if c0.URL != "/manga/1" {
 		t.Errorf("Browse candidate[0].URL: got %q, want /manga/1", c0.URL)
 	}
-	if c0.ThumbnailURL != "http://t/1" {
-		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want http://t/1", c0.ThumbnailURL)
+	// ThumbnailURL must be Tsundoku's own cover-proxy path, not Suwayomi's raw
+	// thumbnail URL (B2 fix).
+	const wantProxyPath = "/api/sources/src-a/manga/1/cover"
+	if c0.ThumbnailURL != wantProxyPath {
+		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want %q", c0.ThumbnailURL, wantProxyPath)
 	}
-	// Nil thumbnail → empty string.
+	// Nil thumbnail → empty string (no proxy path minted with nothing to fetch).
 	if got.Manga[1].ThumbnailURL != "" {
 		t.Errorf("Browse candidate[1].ThumbnailURL: got %q, want empty", got.Manga[1].ThumbnailURL)
 	}

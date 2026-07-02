@@ -234,6 +234,55 @@ func TestShape4_BrowseEnumType(t *testing.T) {
 	}
 }
 
+// TestShape7_MangaMetadataFields is the MERGE GATE for the M4 rich-hover-preview
+// feature: it proves, against a real Suwayomi, that the `author`, `artist`,
+// `genre`, and `description` MangaType field names added to mangaFieldSelection
+// (client.go) are accepted by the schema on all three operations that share it —
+// Search, Browse, and MangaMeta.
+//
+// Why this needs a real Suwayomi: the httptest fakes in client_test.go only
+// prove the Go struct DECODES whatever JSON is handed to it — they cannot catch
+// a wrong GraphQL field NAME, which the server would reject with a schema
+// validation error before ever returning data. Only a real Suwayomi validates
+// the selection set against MangaType.
+//
+// What this confirms: Search/Browse/MangaMeta all return NO error with the
+// widened selection. The Local source's fixture manga may not itself carry
+// author/artist/genre/description (a local worktree source rarely does) — a
+// nil/empty value is fine and expected; the load-bearing assertion is the
+// ABSENCE of a GraphQL error, which is what a bad field name would produce.
+func TestShape7_MangaMetadataFields(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
+	if err != nil {
+		t.Fatalf("Search (widened selection incl. author/artist/genre/description): %v\n(check: are these MangaType field names correct?)", err)
+	}
+	if len(results) == 0 {
+		t.Skip("no search results (local source may not have indexed; skipping shape7)")
+	}
+	m := results[0]
+	t.Logf("CONFIRMED: Search accepted author/artist/genre/description; author=%v artist=%v genre=%v description=%v",
+		m.Author, m.Artist, m.Genre, m.Description)
+
+	popular, err := client.Browse(ctx, suwayomi.LocalSourceID, suwayomi.BrowsePopular, 1)
+	if err != nil {
+		t.Fatalf("Browse (widened selection incl. author/artist/genre/description): %v", err)
+	}
+	t.Logf("CONFIRMED: Browse accepted author/artist/genre/description; got %d mangas", len(popular.Mangas))
+
+	meta, err := client.MangaMeta(ctx, m.ID)
+	if err != nil {
+		t.Fatalf("MangaMeta(mangaId=%d) (widened selection incl. author/artist/genre/description): %v", m.ID, err)
+	}
+	t.Logf("CONFIRMED: MangaMeta accepted author/artist/genre/description; author=%v artist=%v genre=%v description=%v",
+		meta.Author, meta.Artist, meta.Genre, meta.Description)
+}
+
 // TestShape5_ServerSettings is the MERGE GATE for the Suwayomi settings-proxy.
 // It proves, against a real Suwayomi, that:
 //

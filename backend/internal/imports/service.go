@@ -111,14 +111,15 @@ func (s *Service) searchOneSource(ctx context.Context, src suwayomi.Source, quer
 }
 
 // newCandidate maps one suwayomi.Manga to a Candidate tagged with its source's
-// ID/name/lang. A nil ThumbnailURL becomes the empty string. Shared by the
-// Search fan-out (searchOneSource) and the single-source Browse path so the
-// Manga→Candidate mapping lives in exactly one place.
+// ID/name/lang. Shared by the Search fan-out (searchOneSource) and the
+// single-source Browse path so the Manga→Candidate mapping lives in exactly
+// one place.
+//
+// ThumbnailURL is NOT Suwayomi's own thumbnailUrl forwarded verbatim (B2 fix):
+// that value is Suwayomi-relative and 404s when rendered against Tsundoku's
+// own origin. Instead it is Tsundoku's own cover-proxy path, resolved by
+// thumbnailProxyPath.
 func newCandidate(src suwayomi.Source, m suwayomi.Manga) Candidate {
-	thumb := ""
-	if m.ThumbnailURL != nil {
-		thumb = *m.ThumbnailURL
-	}
 	return Candidate{
 		Source:       src.ID,
 		SourceName:   src.Name,
@@ -126,8 +127,45 @@ func newCandidate(src suwayomi.Source, m suwayomi.Manga) Candidate {
 		MangaID:      m.ID,
 		Title:        m.Title,
 		URL:          m.URL,
-		ThumbnailURL: thumb,
+		ThumbnailURL: thumbnailProxyPath(src.ID, m),
+		Author:       strOrEmpty(m.Author),
+		Artist:       strOrEmpty(m.Artist),
+		Description:  strOrEmpty(m.Description),
+		Genres:       nonNilStrings(m.Genre),
 	}
+}
+
+// thumbnailProxyPath returns the Tsundoku-relative cover-proxy path for m
+// within sourceID ("/api/sources/{sourceID}/manga/{mangaId}/cover"), or "" when
+// the source provided no thumbnail at all (m.ThumbnailURL nil/empty) — the FE
+// renders its initial-letter placeholder in that case. The proxy path always
+// targets the SAME Suwayomi REST endpoint (/api/v1/manga/{id}/thumbnail;
+// see handler/imports.MangaCover) regardless of what Suwayomi's own
+// thumbnailUrl string said — only its presence/absence matters here.
+func thumbnailProxyPath(sourceID string, m suwayomi.Manga) string {
+	if m.ThumbnailURL == nil || *m.ThumbnailURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("/api/sources/%s/manga/%d/cover", sourceID, m.ID)
+}
+
+// strOrEmpty dereferences an optional Suwayomi metadata string, returning ""
+// when nil rather than panicking or leaking a pointer into the DTO layer.
+func strOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// nonNilStrings returns in unchanged when non-nil, else an empty (non-nil)
+// slice — so a candidate's Genres always serialises as "[]", never "null"
+// (matches the fleet convention for list-shaped DTO fields).
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }
 
 // newSearchCandidateDTO maps a Candidate to its wire DTO. Shared by Search
@@ -142,6 +180,10 @@ func newSearchCandidateDTO(c Candidate) SearchCandidateDTO {
 		Title:        c.Title,
 		URL:          c.URL,
 		ThumbnailURL: c.ThumbnailURL,
+		Author:       c.Author,
+		Artist:       c.Artist,
+		Description:  c.Description,
+		Genres:       c.Genres,
 	}
 }
 
