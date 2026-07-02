@@ -17,8 +17,8 @@
  *   :library-save         — librarySave from useSettings
  *   :categories           — settingsCategories from useCategories
  *   :category-action      — categoryAction from useCategories
- *   :engine               — ENGINE_PLACEHOLDER (engine upgrade flow is deferred —
- *                           see CLAUDE.md Deferred section; start-upgrade is no-op)
+ *   :engine               — ENGINE_PLACEHOLDER (engine upgrade flow is deferred;
+ *                           start-upgrade is no-op)
  *   :upgrade-steps        — [] static
  *   :upgrading            — false static
  *   :suwayomi             — config from useSuwayomiSettings
@@ -98,7 +98,7 @@ const {
 } = useExtensions()
 
 /**
- * Engine upgrade flow is deferred (see CLAUDE.md Deferred section).
+ * Engine upgrade flow is deferred.
  * This static constant satisfies the required EngineInfo prop so the Engine
  * pane renders its read-only status view without a real backend endpoint.
  * The @start-upgrade emit is wired to a no-op below.

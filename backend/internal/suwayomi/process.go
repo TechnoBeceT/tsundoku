@@ -211,7 +211,7 @@ func (pm *ProcessManager) launch(ctx context.Context, jarPath string) (<-chan st
 // residual: because it is passed as a JVM -D argument it is visible in the
 // process command line (ps / /proc/<pid>/cmdline) to local users. Acceptable
 // under the single-owner homelab threat model; writing it to server.conf
-// instead is a deferred hardening (see backend/CLAUDE.md deferred notes).
+// instead is a deferred hardening.
 func databaseArgs(cfg config.SuwayomiConfig) []string {
 	if cfg.DatabaseType == "" {
 		return nil
