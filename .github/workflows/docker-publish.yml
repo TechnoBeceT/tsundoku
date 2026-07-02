@@ -1,0 +1,101 @@
+# Build the container image from the root Dockerfile and publish it to the
+# GitHub Container Registry (GHCR) at ghcr.io/<owner>/<repo>.
+#
+# The published image can then be pulled by the deployment host, e.g.:
+#   docker pull ghcr.io/technobecet/tsundoku:latest
+name: Build and publish Docker image
+
+# Trigger strategy — build only from TRUSTED refs (no pull_request builds, so a
+# fork PR can never push an image or read the registry token):
+#   * push to main         -> refresh the rolling "edge" / "main" dev image
+#   * push of a v* tag      -> cut a released image (semver + "latest")
+#   * workflow_dispatch     -> lets you re-run the build by hand from the UI
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Only one build per ref at a time: a newer push to the same branch/tag cancels
+# the older in-progress run so we don't waste minutes building a stale commit.
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the job only needs to read the repo and write packages
+# (push to GHCR). Everything else stays at no-access.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # Pull the repository source (needed so Docker can see the Dockerfile).
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Buildx is Docker's modern builder — required for the GitHub Actions
+      # build cache (type=gha) and for multi-platform builds.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Authenticate to GHCR using the automatic, per-run GITHUB_TOKEN. No
+      # long-lived secret is stored anywhere — GitHub injects this token and the
+      # `packages: write` permission above lets it push.
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Compute the image name + tags/labels. metadata-action lowercases the
+      # image name for us (GHCR requires lowercase), so we pass the repo path
+      # verbatim — no manual lowercasing needed.
+      #
+      # Tag scheme produced here:
+      #   main branch push -> "main"  (type=ref,event=branch)
+      #                    -> "edge"  (rolling latest-dev pointer)
+      #   v1.2.3 tag push  -> "1.2.3" (full semver)
+      #                    -> "1.2"   (major.minor, moves with each patch)
+      #                    -> "latest" (only ever moved by a tagged release)
+      # So `latest` tracks releases, `edge` tracks main — they never collide.
+      - name: Extract Docker metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      # Build the image and push it under every tag computed above.
+      #
+      # Platforms: amd64 only — the deploy target is an x86_64 host, and a
+      # single-arch build keeps CI fast. To also publish arm64, add a QEMU
+      # setup step before "Set up Docker Buildx":
+      #     - name: Set up QEMU
+      #       uses: docker/setup-qemu-action@v3
+      # then change the line below to: platforms: linux/amd64,linux/arm64
+      #
+      # Cache: type=gha reads/writes the GitHub Actions build cache so unchanged
+      # layers are reused across runs (mode=max caches intermediate stages too),
+      # dramatically speeding up repeat builds.
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
