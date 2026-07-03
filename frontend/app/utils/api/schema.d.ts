@@ -685,8 +685,10 @@ export interface paths {
         };
         /**
          * List staged library-import entries
-         * @description Returns the staged entries from a prior scan, optionally filtered by
-         *     status. An empty/absent status returns every staged entry.
+         * @description Returns a page of the staged entries from a prior scan, optionally
+         *     filtered by status. An empty/absent status returns every staged
+         *     entry. Paginated via limit/offset so a 1000+ series library loads
+         *     incrementally.
          */
         get: operations["listImports"];
         put?: never;
@@ -3328,6 +3330,10 @@ export interface operations {
             query?: {
                 /** @description Filter to one staging status. */
                 status?: "pending" | "imported" | "skipped";
+                /** @description Page size (default 50, capped at 200). */
+                limit?: number;
+                /** @description Number of rows to skip. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -3335,7 +3341,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The staged entries matching the filter. */
+            /** @description The staged entries matching the filter, paginated. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3344,7 +3350,7 @@ export interface operations {
                     "application/json": components["schemas"]["FoundSeries"][];
                 };
             };
-            /** @description Unknown status value. */
+            /** @description Unknown status value, or an invalid pagination value. */
             400: {
                 headers: {
                     [name: string]: unknown;

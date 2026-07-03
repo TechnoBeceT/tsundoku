@@ -2713,8 +2713,10 @@ paths:
       operationId: listImports
       summary: List staged library-import entries
       description: |
-        Returns the staged entries from a prior scan, optionally filtered by
-        status. An empty/absent status returns every staged entry.
+        Returns a page of the staged entries from a prior scan, optionally
+        filtered by status. An empty/absent status returns every staged
+        entry. Paginated via limit/offset so a 1000+ series library loads
+        incrementally.
       tags:
         - library
       security:
@@ -2727,9 +2729,23 @@ paths:
           schema:
             type: string
             enum: [pending, imported, skipped]
+        - name: limit
+          in: query
+          required: false
+          description: Page size (default 50, capped at 200).
+          schema:
+            type: integer
+            minimum: 0
+        - name: offset
+          in: query
+          required: false
+          description: Number of rows to skip.
+          schema:
+            type: integer
+            minimum: 0
       responses:
         "200":
-          description: The staged entries matching the filter.
+          description: The staged entries matching the filter, paginated.
           content:
             application/json:
               schema:
@@ -2737,7 +2753,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/FoundSeries"
         "400":
-          description: Unknown status value.
+          description: Unknown status value, or an invalid pagination value.
           content:
             application/json:
               schema:

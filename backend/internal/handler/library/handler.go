@@ -45,16 +45,22 @@ func (h *Handler) Scan(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// ListImports handles GET /api/library/imports?status=.
+// ListImports handles GET /api/library/imports?status=&limit=&offset=.
 //
 // The optional ?status filter must be one of pending/imported/skipped (empty
-// means no filter). Returns the staged ImportEntry rows as []FoundSeriesDTO.
+// means no filter). ?limit/?offset page the result (default 50, capped at
+// 200 — see validatePagination). Returns the staged ImportEntry rows as
+// []FoundSeriesDTO.
 func (h *Handler) ListImports(c echo.Context) error {
 	status, err := parseStatusFilter(c.QueryParam("status"))
 	if err != nil {
 		return err
 	}
-	out, err := h.svc.ListImports(c.Request().Context(), status)
+	limit, offset, err := validatePagination(c.QueryParam("limit"), c.QueryParam("offset"))
+	if err != nil {
+		return err
+	}
+	out, err := h.svc.ListImports(c.Request().Context(), status, limit, offset)
 	if err != nil {
 		return mapServiceError(err)
 	}

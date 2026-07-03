@@ -6,6 +6,7 @@ package library_test
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -209,6 +211,67 @@ func assertStagedEntry(t *testing.T, f library.FoundSeriesDTO) {
 	}
 	if f.Status != "pending" || f.AlreadyInDB {
 		t.Fatalf("status=%q alreadyInDb=%v, want pending/false", f.Status, f.AlreadyInDB)
+	}
+}
+
+// seedImportEntry creates a minimal pending ImportEntry row with an explicit
+// scanned_at so pagination ordering (ByScannedAt, ascending) is deterministic.
+// Mirrors internal/library/list_test.go's helper of the same name (a
+// different package — no import cycle risk, small enough to duplicate here
+// rather than export it from the service package for test-only reuse).
+func seedImportEntry(t *testing.T, client *ent.Client, ctx context.Context, path string, scannedAt time.Time) {
+	t.Helper()
+	if _, err := client.ImportEntry.Create().
+		SetPath(path).SetTitle(path).SetCategory("Manga").
+		SetChapterCount(1).SetStatus("pending").
+		SetScannedAt(scannedAt).
+		Save(ctx); err != nil {
+		t.Fatalf("seed import entry %s: %v", path, err)
+	}
+}
+
+// TestListImports_Paginated proves ?limit/?offset page the staged entries in
+// scanned_at order end-to-end through the real HTTP handler.
+func TestListImports_Paginated(t *testing.T) {
+	env := newEnv(t)
+	ctx := context.Background()
+
+	base := time.Now()
+	seedImportEntry(t, env.client, ctx, "/a", base)
+	seedImportEntry(t, env.client, ctx, "/b", base.Add(time.Second))
+	seedImportEntry(t, env.client, ctx, "/c", base.Add(2*time.Second))
+
+	rec := env.do("GET", "/api/library/imports?limit=2&offset=0", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page1 = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var page1 []library.FoundSeriesDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &page1); err != nil {
+		t.Fatalf("decode page1: %v", err)
+	}
+	if len(page1) != 2 || page1[0].Path != "/a" || page1[1].Path != "/b" {
+		t.Fatalf("page1 = %+v, want [/a /b]", page1)
+	}
+
+	rec2 := env.do("GET", "/api/library/imports?limit=2&offset=2", "")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("page2 = %d, want 200 (%s)", rec2.Code, rec2.Body.String())
+	}
+	var page2 []library.FoundSeriesDTO
+	if err := json.Unmarshal(rec2.Body.Bytes(), &page2); err != nil {
+		t.Fatalf("decode page2: %v", err)
+	}
+	if len(page2) != 1 || page2[0].Path != "/c" {
+		t.Fatalf("page2 = %+v, want [/c]", page2)
+	}
+}
+
+// TestListImports_BadLimit proves a negative ?limit is rejected with 400.
+func TestListImports_BadLimit(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("GET", "/api/library/imports?limit=-1", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad limit: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
