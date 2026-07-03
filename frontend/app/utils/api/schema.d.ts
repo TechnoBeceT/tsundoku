@@ -778,6 +778,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/import/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk disk-only import of many staged entries
+         * @description Disk-only imports every path in `paths` (mirrors POST
+         *     /api/library/import with no `match`) — a single request for a
+         *     1000+ series migration instead of N sequential calls. Partial
+         *     success by design: a bad path (e.g. never staged by a prior scan) is
+         *     recorded in the response's `failed` list and never aborts the rest
+         *     of the batch. Always 200 for a well-formed request — the per-path
+         *     failures ARE the result, not a top-level error.
+         */
+        post: operations["importBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings": {
         parameters: {
             query?: never;
@@ -1766,6 +1792,32 @@ export interface components {
         SkipRequest: {
             /** @description The staged entry's on-disk path (as returned by a prior scan/list). */
             path: string;
+        };
+        /**
+         * @description Bulk "import all remaining as disk-only" request — one call instead
+         *     of N sequential POST /api/library/import calls for a 1000+ series
+         *     migration. Every path is imported disk-only (no match attached).
+         */
+        BatchImportRequest: {
+            /** @description Staged entries' on-disk paths (as returned by a prior scan/list). Capped at 500 per request. */
+            paths: string[];
+        };
+        /** @description One path's failure within a batch import. */
+        BatchImportFailure: {
+            /** @description The on-disk path that failed to import. */
+            path: string;
+            /** @description The underlying error message for this path. */
+            message: string;
+        };
+        /**
+         * @description Result of a batch import — partial success by design: a bad path is
+         *     recorded in `failed` and never aborts the rest of the batch.
+         */
+        BatchImportResult: {
+            /** @description Number of paths that imported successfully. */
+            imported: number;
+            /** @description Per-path failures (empty if every path imported successfully). */
+            failed: components["schemas"]["BatchImportFailure"][];
         };
         /** @description Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest). */
         AddProviderRequest: {
@@ -3534,6 +3586,48 @@ export interface operations {
             };
             /** @description The matched source is already attached to this series. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    importBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch processed. See `imported`/`failed` for the per-path outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchImportResult"];
+                };
+            };
+            /** @description Empty paths list, or more than 500 paths in one request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

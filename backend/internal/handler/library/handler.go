@@ -153,6 +153,33 @@ func (h *Handler) Skip(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// Batch handles POST /api/library/import/batch.
+//
+// The body carries {paths:[]string} — a bulk "import all remaining as
+// disk-only" action for a 1000+ series migration, so the owner fires ONE
+// request instead of N sequential POST /api/library/import calls. Each path
+// is disk-only imported (mirrors Import with no match); a bad path's
+// failure is recorded per-entry in the returned library.BatchResult and
+// never aborts the rest of the batch (partial success — see
+// library.Service.ImportBatch). Always 200 on a well-formed request: the
+// per-path failures ARE the result, not a top-level error.
+func (h *Handler) Batch(c echo.Context) error {
+	var body batchImportBody
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+	paths, err := validateBatch(body)
+	if err != nil {
+		return err
+	}
+
+	out, err := h.svc.ImportBatch(c.Request().Context(), paths)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // AddProvider handles POST /api/series/:id/providers.
 //
 // It attaches an additional Suwayomi source {source, mangaId, importance} to

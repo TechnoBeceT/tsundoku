@@ -1201,6 +1201,53 @@ components:
           type: string
           description: The staged entry's on-disk path (as returned by a prior scan/list).
 
+    BatchImportRequest:
+      type: object
+      description: |
+        Bulk "import all remaining as disk-only" request — one call instead
+        of N sequential POST /api/library/import calls for a 1000+ series
+        migration. Every path is imported disk-only (no match attached).
+      required:
+        - paths
+      properties:
+        paths:
+          type: array
+          description: Staged entries' on-disk paths (as returned by a prior scan/list). Capped at 500 per request.
+          items:
+            type: string
+
+    BatchImportFailure:
+      type: object
+      description: One path's failure within a batch import.
+      required:
+        - path
+        - message
+      properties:
+        path:
+          type: string
+          description: The on-disk path that failed to import.
+        message:
+          type: string
+          description: The underlying error message for this path.
+
+    BatchImportResult:
+      type: object
+      description: |
+        Result of a batch import — partial success by design: a bad path is
+        recorded in `failed` and never aborts the rest of the batch.
+      required:
+        - imported
+        - failed
+      properties:
+        imported:
+          type: integer
+          description: Number of paths that imported successfully.
+        failed:
+          type: array
+          description: Per-path failures (empty if every path imported successfully).
+          items:
+            $ref: "#/components/schemas/BatchImportFailure"
+
     AddProviderRequest:
       type: object
       description: Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest).
@@ -2920,6 +2967,48 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The matched source is already attached to this series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/library/import/batch:
+    post:
+      operationId: importBatch
+      summary: Bulk disk-only import of many staged entries
+      description: |
+        Disk-only imports every path in `paths` (mirrors POST
+        /api/library/import with no `match`) — a single request for a
+        1000+ series migration instead of N sequential calls. Partial
+        success by design: a bad path (e.g. never staged by a prior scan) is
+        recorded in the response's `failed` list and never aborts the rest
+        of the batch. Always 200 for a well-formed request — the per-path
+        failures ARE the result, not a top-level error.
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchImportRequest"
+      responses:
+        "200":
+          description: Batch processed. See `imported`/`failed` for the per-path outcome.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchImportResult"
+        "400":
+          description: Empty paths list, or more than 500 paths in one request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
           content:
             application/json:
               schema:

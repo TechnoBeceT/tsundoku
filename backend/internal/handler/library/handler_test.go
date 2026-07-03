@@ -25,6 +25,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -68,7 +69,11 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
-	svc := library.NewService(client, nil, nil, nil, func() {}, storage, sse.NewHub())
+	// seriesSvc is real (not nil) so a disk-only Import/ImportBatch's
+	// GetSeries round-trip (§16) can actually resolve — ingest/importsSvc
+	// stay nil since no test here attaches a Suwayomi match.
+	seriesSvc := series.NewService(client, storage, 14)
+	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage, sse.NewHub())
 	h := handler.NewHandler(svc)
 
 	e := echo.New()
@@ -78,6 +83,7 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	authed.GET("/library/imports", h.ListImports)
 	authed.GET("/library/imports/match", h.Match)
 	authed.POST("/library/import", h.Import)
+	authed.POST("/library/import/batch", h.Batch)
 	authed.POST("/library/imports/skip", h.Skip)
 	authed.POST("/series/:id/providers", h.AddProvider)
 
@@ -156,6 +162,7 @@ func TestLibraryRoutes_RequireOwner(t *testing.T) {
 		{"POST", "/api/library/scan"},
 		{"GET", "/api/library/imports"},
 		{"POST", "/api/library/import"},
+		{"POST", "/api/library/import/batch"},
 		{"GET", "/api/library/imports/match?path=x"},
 		{"POST", "/api/library/imports/skip"},
 		{"POST", "/api/series/" + uuid.New().String() + "/providers"},
@@ -346,6 +353,74 @@ func TestLibraryImport_MissingPath(t *testing.T) {
 	rec := env.do("POST", "/api/library/import", `{}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("missing path body: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLibraryBatch_PartialSuccess proves the batch endpoint end-to-end: two
+// staged series import cleanly while a third, never-staged path fails —
+// without aborting the other two (partial success, the whole point of the
+// bulk endpoint for a 1000+ series migration).
+func TestLibraryBatch_PartialSuccess(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "Series One", "mangadex", "Alpha", 1)
+	writeKaizokuSeries(t, storage, "Manga", "Series Two", "mangadex", "Alpha", 1)
+	env := newEnvWithStorage(t, storage)
+
+	staged, err := env.svc.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(staged) != 2 {
+		t.Fatalf("staged len = %d, want 2", len(staged))
+	}
+
+	reqBody, err := json.Marshal(map[string][]string{
+		"paths": {staged[0].Path, staged[1].Path, "/nonexistent/bogus"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do("POST", "/api/library/import/batch", string(reqBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("batch = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var got library.BatchResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Imported != 2 {
+		t.Fatalf("imported = %d, want 2 (%+v)", got.Imported, got)
+	}
+	if len(got.Failed) != 1 || got.Failed[0].Path != "/nonexistent/bogus" {
+		t.Fatalf("failed = %+v, want one bogus entry", got.Failed)
+	}
+}
+
+// TestLibraryBatch_EmptyPaths proves an empty paths list is rejected with 400
+// rather than silently no-op-ing.
+func TestLibraryBatch_EmptyPaths(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/import/batch", `{"paths":[]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty paths: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLibraryBatch_TooManyPaths proves the maxBatchSize cap (500) is
+// enforced — a single request can't demand unbounded synchronous work.
+func TestLibraryBatch_TooManyPaths(t *testing.T) {
+	env := newEnv(t)
+	paths := make([]string, 501)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("/p%d", i)
+	}
+	reqBody, err := json.Marshal(map[string][]string{"paths": paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do("POST", "/api/library/import/batch", string(reqBody))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("too many paths: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
