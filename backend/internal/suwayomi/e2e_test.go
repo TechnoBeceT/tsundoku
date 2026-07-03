@@ -283,6 +283,44 @@ func TestShape7_MangaMetadataFields(t *testing.T) {
 		meta.Author, meta.Artist, meta.Genre, meta.Description)
 }
 
+// TestShape8_FetchMangaDetails is the MERGE GATE for the on-demand
+// Discover-hover-details feature: it proves, against a real Suwayomi, that the
+// `fetchManga(input:{id:$id})` MUTATION (client.go's fetchMangaMutation) is
+// accepted by the schema and returns a `manga` payload with no GraphQL error.
+//
+// This is deliberately a DIFFERENT operation from TestShape7's MangaMeta
+// check: MangaMeta reads the manga(id) QUERY, which never contacts the source
+// (see its doc comment) — TestShape7 could pass even if the source never
+// populated author/artist/genre/description. fetchManga is the MUTATION that
+// forces Suwayomi to re-fetch details from the source; this test's
+// load-bearing assertion is that the mutation shape (input field `id`, result
+// field `manga`) is correct, not that the Local source's fixture manga
+// happens to carry real author/artist data (a local worktree source rarely
+// does — see TestShape7's identical caveat).
+func TestShape8_FetchMangaDetails(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
+	if err != nil {
+		t.Fatalf("Search (to obtain a mangaId for fetchManga): %v", err)
+	}
+	if len(results) == 0 {
+		t.Skip("no search results (local source may not have indexed; skipping shape8)")
+	}
+	m := results[0]
+
+	details, err := client.FetchMangaDetails(ctx, m.ID)
+	if err != nil {
+		t.Fatalf("FetchMangaDetails(mangaId=%d) (fetchManga mutation): %v\n(check: is the mutation name/input field/result field correct?)", m.ID, err)
+	}
+	t.Logf("CONFIRMED: fetchManga(input:{id}) accepted with no GraphQL error; title=%q author=%v artist=%v genre=%v description=%v",
+		details.Title, details.Author, details.Artist, details.Genre, details.Description)
+}
+
 // TestShape5_ServerSettings is the MERGE GATE for the Suwayomi settings-proxy.
 // It proves, against a real Suwayomi, that:
 //

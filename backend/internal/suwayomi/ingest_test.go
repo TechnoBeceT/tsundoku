@@ -61,6 +61,9 @@ func (s *ingestStubClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, 
 func (s *ingestStubClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
 	panic("ingestStubClient.Sources: must not be called by Ingest")
 }
+func (s *ingestStubClient) FetchMangaDetails(_ context.Context, _ int) (suwayomi.Manga, error) {
+	panic("ingestStubClient.FetchMangaDetails: must not be called by Ingest")
+}
 func (s *ingestStubClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
 	panic("ingestStubClient.MangaChapters: must not be called by Ingest (use FetchChapters)")
 }
@@ -550,6 +553,9 @@ type metaClientStub struct {
 
 func (s *metaClientStub) Sources(_ context.Context) ([]suwayomi.Source, error) {
 	panic("metaClientStub: Sources must not be called by Ingest")
+}
+func (s *metaClientStub) FetchMangaDetails(_ context.Context, _ int) (suwayomi.Manga, error) {
+	panic("metaClientStub: FetchMangaDetails must not be called by Ingest")
 }
 func (s *metaClientStub) Browse(_ context.Context, _ string, _ suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
 	panic("metaClientStub: Browse must not be called by Ingest")

@@ -409,6 +409,9 @@ func (fakeSuwayomi) MangaChapters(context.Context, int) ([]suwayomi.Chapter, err
 func (fakeSuwayomi) MangaMeta(context.Context, int) (suwayomi.Manga, error) {
 	return suwayomi.Manga{}, nil
 }
+func (fakeSuwayomi) FetchMangaDetails(context.Context, int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{}, nil
+}
 func (fakeSuwayomi) ChapterPages(context.Context, int) ([]string, error)       { return nil, nil }
 func (fakeSuwayomi) PageBytes(context.Context, string) ([]byte, string, error) { return nil, "", nil }
 func (fakeSuwayomi) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {

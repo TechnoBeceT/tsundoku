@@ -77,6 +77,9 @@ func (f *fakeAddProviderClient) ChapterPages(ctx context.Context, chapterID int)
 func (f *fakeAddProviderClient) MangaMeta(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
 	return suwayomi.Manga{ID: mangaID, Title: "My Series"}, nil
 }
+func (f *fakeAddProviderClient) FetchMangaDetails(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{ID: mangaID, Title: "My Series"}, nil
+}
 func (f *fakeAddProviderClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
 	return nil, "", errors.New("PageBytes: not configured")
 }

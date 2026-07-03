@@ -43,6 +43,11 @@ type fakeClient struct {
 	// pageBytes, when set, is called by PageBytes instead of the default stub
 	// (exercised by the MangaCover tests).
 	pageBytes func(ctx context.Context, url string) ([]byte, string, error)
+	// detailsPerManga / detailsErrs back FetchMangaDetails (exercised by the
+	// Details tests): a mangaID present in detailsErrs fails with that error;
+	// otherwise a mangaID present in detailsPerManga returns that Manga.
+	detailsPerManga map[int]suwayomi.Manga
+	detailsErrs     map[int]error
 }
 
 func (f *fakeClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
@@ -89,6 +94,19 @@ func (f *fakeClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter
 	panic("MangaChapters must never be called by the imports service (use FetchChapters)")
 }
 func (f *fakeClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{}, nil
+}
+func (f *fakeClient) FetchMangaDetails(_ context.Context, mangaID int) (suwayomi.Manga, error) {
+	if f.detailsErrs != nil {
+		if err, ok := f.detailsErrs[mangaID]; ok {
+			return suwayomi.Manga{}, err
+		}
+	}
+	if f.detailsPerManga != nil {
+		if m, ok := f.detailsPerManga[mangaID]; ok {
+			return m, nil
+		}
+	}
 	return suwayomi.Manga{}, nil
 }
 func (f *fakeClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
@@ -179,6 +197,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authed.GET("/sources/:sourceId/browse", h.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", h.InspectChapters)
 	authed.GET("/sources/:sourceId/manga/:mangaId/cover", h.MangaCover)
+	authed.GET("/sources/:sourceId/manga/:mangaId/details", h.Details)
 	authed.POST("/series", h.Adopt)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -244,6 +263,14 @@ func TestInspectChapters_Unauth(t *testing.T) {
 	rec := env.doUnauth(http.MethodGet, "/api/sources/src/manga/1/chapters")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("InspectChapters unauth: want 401, got %d", rec.Code)
+	}
+}
+
+func TestDetails_Unauth(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	rec := env.doUnauth(http.MethodGet, "/api/sources/src/manga/1/details")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("Details unauth: want 401, got %d", rec.Code)
 	}
 }
 
@@ -579,6 +606,98 @@ func TestInspectChapters_NonIntMangaID_400(t *testing.T) {
 	rec := env.do(http.MethodGet, "/api/sources/src/manga/notanint/chapters", "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("InspectChapters non-int: want 400, got %d", rec.Code)
+	}
+}
+
+// --- GET /api/sources/:sourceId/manga/:mangaId/details -------------------------
+
+// TestDetails_OK_FullRoundTrip is the §16 proof: a fetchManga-forced Manga
+// (author/artist/description/genres populated) round-trips into the response
+// body as a SearchCandidate, not just a 200.
+func TestDetails_OK_FullRoundTrip(t *testing.T) {
+	fc := &fakeClient{
+		sources: []suwayomi.Source{{ID: "src1", Name: "Source One", Lang: "en"}},
+		detailsPerManga: map[int]suwayomi.Manga{
+			10: {
+				ID:          10,
+				Title:       "Solo Leveling",
+				URL:         "/manga/10",
+				Author:      ptrStr("Chugong"),
+				Artist:      ptrStr("Jang Sung-rak"),
+				Description: ptrStr("A weak hunter gains power."),
+				Genre:       []string{"Action", "Fantasy"},
+			},
+		},
+	}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/src1/manga/10/details", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Details OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got imports.SearchCandidateDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Details decode: %v", err)
+	}
+	assertDetailsCandidate(t, got)
+	assertBodyHasKeys(t, rec.Body.String(), `"author"`, `"artist"`, `"description"`, `"genres"`)
+}
+
+// assertDetailsCandidate asserts the enriched fields TestDetails_OK_FullRoundTrip
+// expects on a SearchCandidateDTO. Extracted to keep the test function's
+// cyclomatic complexity under the lint threshold (cyclop).
+func assertDetailsCandidate(t *testing.T, got imports.SearchCandidateDTO) {
+	t.Helper()
+	if got.Source != "src1" || got.SourceName != "Source One" {
+		t.Errorf("Details: source/sourceName: got %q/%q, want src1/Source One", got.Source, got.SourceName)
+	}
+	if got.Author != "Chugong" {
+		t.Errorf("Details: Author: got %q, want %q", got.Author, "Chugong")
+	}
+	if got.Artist != "Jang Sung-rak" {
+		t.Errorf("Details: Artist: got %q, want %q", got.Artist, "Jang Sung-rak")
+	}
+	if got.Description != "A weak hunter gains power." {
+		t.Errorf("Details: Description: got %q, want %q", got.Description, "A weak hunter gains power.")
+	}
+	if len(got.Genres) != 2 || got.Genres[0] != "Action" || got.Genres[1] != "Fantasy" {
+		t.Errorf("Details: Genres: got %v, want [Action Fantasy]", got.Genres)
+	}
+}
+
+// TestDetails_UnknownSource_404 asserts an unknown :sourceId maps to 404
+// (mirrors TestBrowse_UnknownSource_404).
+func TestDetails_UnknownSource_404(t *testing.T) {
+	fc := &fakeClient{sources: []suwayomi.Source{{ID: "src1", Name: "Source One", Lang: "en"}}}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/ghost/manga/10/details", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Details unknown source: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDetails_UpstreamError_502 asserts a Suwayomi fetchManga failure maps to
+// 502, mirroring the cover-proxy's upstream error mapping — a source outage
+// must never surface as a false 200.
+func TestDetails_UpstreamError_502(t *testing.T) {
+	fc := &fakeClient{
+		sources:     []suwayomi.Source{{ID: "src1", Name: "Source One", Lang: "en"}},
+		detailsErrs: map[int]error{10: errors.New("source unreachable")},
+	}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/src1/manga/10/details", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("Details upstream error: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDetails_NonIntMangaID_400 asserts a non-integer :mangaId yields 400
+// (parseMangaID is shared with InspectChapters/MangaCover).
+func TestDetails_NonIntMangaID_400(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	rec := env.do(http.MethodGet, "/api/sources/src/manga/notanint/details", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Details non-int: want 400, got %d", rec.Code)
 	}
 }
 

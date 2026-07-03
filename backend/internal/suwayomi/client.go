@@ -164,6 +164,14 @@ type Client interface {
 	// Returns the full Manga struct including ThumbnailURL (nil when absent).
 	MangaMeta(ctx context.Context, mangaID int) (Manga, error)
 
+	// FetchMangaDetails FORCES Suwayomi to fetch full metadata for mangaID from
+	// its upstream source via the fetchManga(input:{id:$id}) mutation, then
+	// returns the enriched Manga. Unlike MangaMeta this always contacts the
+	// source, so it is more expensive — call it on demand (e.g. a Discover
+	// hover), never eagerly across a whole search/browse page. See
+	// manga_details.go.
+	FetchMangaDetails(ctx context.Context, mangaID int) (Manga, error)
+
 	// PageBytes downloads the image at pageURL (an absolute URL) and returns
 	// the raw bytes and bare file extension (e.g. "jpg", "png") without a
 	// leading dot. Extension detection uses http.DetectContentType on the first

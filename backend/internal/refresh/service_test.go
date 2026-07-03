@@ -49,6 +49,9 @@ func (f *fakeClient) MangaChapters(context.Context, int) ([]suwayomi.Chapter, er
 func (f *fakeClient) MangaMeta(context.Context, int) (suwayomi.Manga, error) {
 	return suwayomi.Manga{}, nil
 }
+func (f *fakeClient) FetchMangaDetails(context.Context, int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{}, nil
+}
 func (f *fakeClient) ChapterPages(context.Context, int) ([]string, error)       { return nil, nil }
 func (f *fakeClient) PageBytes(context.Context, string) ([]byte, string, error) { return nil, "", nil }
 func (f *fakeClient) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {

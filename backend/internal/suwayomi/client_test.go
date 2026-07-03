@@ -1145,6 +1145,89 @@ func TestClient_MangaMeta_MetadataFieldsNil(t *testing.T) {
 	}
 }
 
+// --- FetchMangaDetails --------------------------------------------------------
+
+// TestClient_FetchMangaDetails verifies that FetchMangaDetails posts the
+// fetchManga mutation and decodes the returned manga's fields — including the
+// author/artist/genre/description that MangaMeta's cached query cannot
+// populate. This proves the round-trip through gqlFetchMangaData/toManga
+// against a fake GraphQL server (the shape itself is confirmed against a real
+// Suwayomi by TestShape8_FetchMangaDetails, e2e_test.go).
+func TestClient_FetchMangaDetails(t *testing.T) {
+	const (
+		mangaID    = 11
+		wantTitle  = "One Piece"
+		wantURL    = "/m/11"
+		wantAuthor = "Eiichiro Oda"
+		wantArtist = "Eiichiro Oda"
+		wantDesc   = "A pirate's tale."
+	)
+	wantGenre := []string{"Action", "Adventure"}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/graphql" {
+			http.Error(w, "wrong endpoint", http.StatusNotFound)
+			return
+		}
+		resp := graphqlResponse(t, map[string]any{
+			"fetchManga": map[string]any{
+				"manga": map[string]any{
+					"id":           mangaID,
+					"title":        wantTitle,
+					"url":          wantURL,
+					"thumbnailUrl": nil,
+					"author":       wantAuthor,
+					"artist":       wantArtist,
+					"genre":        wantGenre,
+					"description":  wantDesc,
+				},
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	manga, err := client.FetchMangaDetails(context.Background(), mangaID)
+	if err != nil {
+		t.Fatalf("FetchMangaDetails() error = %v", err)
+	}
+	if manga.ID != mangaID {
+		t.Errorf("manga.ID = %d, want %d", manga.ID, mangaID)
+	}
+	if manga.Title != wantTitle {
+		t.Errorf("manga.Title = %q, want %q", manga.Title, wantTitle)
+	}
+	if manga.URL != wantURL {
+		t.Errorf("manga.URL = %q, want %q", manga.URL, wantURL)
+	}
+	assertMangaMetadata(t, manga, wantAuthor, wantArtist, wantDesc, wantGenre)
+}
+
+// TestClient_FetchMangaDetails_GraphQLError verifies that a GraphQL
+// application error (e.g. the source is unreachable) is propagated as a Go
+// error, never silently swallowed into a zero-value Manga.
+func TestClient_FetchMangaDetails_GraphQLError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, nil, []map[string]any{
+			{"message": "source unreachable"},
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	_, err := client.FetchMangaDetails(context.Background(), 999)
+	if err == nil {
+		t.Fatal("FetchMangaDetails() with GraphQL errors: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "source unreachable") {
+		t.Errorf("error %q should contain the GraphQL error message", err.Error())
+	}
+}
+
 // TestClient_Search_MetadataFields verifies Search decodes author/artist/genre/
 // description onto each result alongside the existing fields.
 func TestClient_Search_MetadataFields(t *testing.T) {

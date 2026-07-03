@@ -2500,6 +2500,67 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/sources/{sourceId}/manga/{mangaId}/details:
+    get:
+      operationId: getMangaDetails
+      summary: On-demand rich manga details
+      description: |
+        FORCES Suwayomi to fetch full metadata (author/artist/genre/description)
+        for this manga from its upstream source, then returns the enriched
+        candidate in the same shape as Search/Browse. Suwayomi's Search/Browse
+        results are lightweight (title/cover/url only) — call this once per
+        manga a Discover card is hovered to fill in the rich fields; never for
+        every row of a search/browse page (each call is a real request to the
+        source).
+      tags:
+        - imports
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Suwayomi source ID.
+          schema:
+            type: string
+        - name: mangaId
+          in: path
+          required: true
+          description: Suwayomi-internal manga identifier (integer).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The enriched manga candidate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchCandidate"
+        "400":
+          description: Non-integer mangaId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown source ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi failed to fetch the manga details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/sources/{sourceId}/manga/{mangaId}/cover:
     get:
       operationId: getMangaCover

@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/imports"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -106,6 +107,35 @@ func (h *Handler) Browse(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")
 		}
 		return err
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// Details handles GET /api/sources/:sourceId/manga/:mangaId/details.
+//
+// It FORCES a live details fetch from the upstream source (via
+// imports.Service.MangaDetails → suwayomi.Client.FetchMangaDetails) and
+// returns the enriched candidate as a SearchCandidateDTO — the same shape
+// Search/Browse return, so the frontend Discover hover preview can merge it
+// straight into an already-rendered candidate. Call this ON DEMAND for one
+// hovered manga at a time; never for every row of a search/browse page.
+//
+// An unknown :sourceId maps to 404 (mirrors Browse); any other failure is a
+// genuine upstream Suwayomi problem and maps to 502 (mirrors the cover-proxy
+// error mapping in cover.go), so a source outage never surfaces as a false 200.
+func (h *Handler) Details(c echo.Context) error {
+	sourceID := c.Param("sourceId")
+	mangaID, err := parseMangaID(c.Param("mangaId"))
+	if err != nil {
+		return err
+	}
+
+	out, err := h.svc.MangaDetails(c.Request().Context(), sourceID, mangaID)
+	if err != nil {
+		if errors.Is(err, imports.ErrSourceNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "source not found")
+		}
+		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, out)
 }

@@ -52,6 +52,10 @@ type fakeClient struct {
 	browseResults map[suwayomi.BrowseType]suwayomi.BrowseResult
 	// browseErr is the error returned by Browse (nil = success).
 	browseErr error
+	// detailsPerManga maps mangaID → the Manga returned by FetchMangaDetails.
+	detailsPerManga map[int]suwayomi.Manga
+	// detailsErr is the error returned by FetchMangaDetails (nil = success).
+	detailsErr error
 }
 
 func (f *fakeClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
@@ -101,6 +105,15 @@ func (f *fakeClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter
 	return nil, nil
 }
 func (f *fakeClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{}, nil
+}
+func (f *fakeClient) FetchMangaDetails(_ context.Context, mangaID int) (suwayomi.Manga, error) {
+	if f.detailsErr != nil {
+		return suwayomi.Manga{}, f.detailsErr
+	}
+	if f.detailsPerManga != nil {
+		return f.detailsPerManga[mangaID], nil
+	}
 	return suwayomi.Manga{}, nil
 }
 func (f *fakeClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
@@ -813,6 +826,83 @@ func TestService_Browse_SourcesError(t *testing.T) {
 	_, err := svc.Browse(context.Background(), "any", suwayomi.BrowsePopular, 1)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("Browse sources error: err = %v, want to wrap %v", err, sentinel)
+	}
+}
+
+// --- MangaDetails --------------------------------------------------------------
+
+// TestService_MangaDetails_OK verifies MangaDetails resolves the source (for
+// its Name/Lang tags), calls client.FetchMangaDetails, and maps the enriched
+// Manga through the SAME newCandidate/newSearchCandidateDTO mappers Search and
+// Browse use — so the returned author/artist/description/genres round-trip
+// exactly as they would from those endpoints.
+func TestService_MangaDetails_OK(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{{ID: "src-a", Name: "Alpha Source", Lang: "en"}},
+		detailsPerManga: map[int]suwayomi.Manga{
+			1: {
+				ID:          1,
+				Title:       "Solo Leveling",
+				URL:         "/manga/1",
+				Author:      ptrStr("Chugong"),
+				Artist:      ptrStr("Jang Sung-rak"),
+				Description: ptrStr("A weak hunter gains power."),
+				Genre:       []string{"Action", "Fantasy"},
+			},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.MangaDetails(context.Background(), "src-a", 1)
+	if err != nil {
+		t.Fatalf("MangaDetails: unexpected error: %v", err)
+	}
+	assertCandidateTags(t, got, "src-a", "Alpha Source", "en")
+	if got.Author != "Chugong" {
+		t.Errorf("MangaDetails: Author = %q, want %q", got.Author, "Chugong")
+	}
+	if got.Artist != "Jang Sung-rak" {
+		t.Errorf("MangaDetails: Artist = %q, want %q", got.Artist, "Jang Sung-rak")
+	}
+	if got.Description != "A weak hunter gains power." {
+		t.Errorf("MangaDetails: Description = %q, want %q", got.Description, "A weak hunter gains power.")
+	}
+	if len(got.Genres) != 2 || got.Genres[0] != "Action" || got.Genres[1] != "Fantasy" {
+		t.Errorf("MangaDetails: Genres = %v, want [Action Fantasy]", got.Genres)
+	}
+}
+
+// TestService_MangaDetails_UnknownSource verifies an unresolvable sourceID
+// returns ErrSourceNotFound (mirrors TestService_Browse_UnknownSource).
+func TestService_MangaDetails_UnknownSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{sources: []suwayomi.Source{{ID: "real", Name: "Real", Lang: "en"}}}
+	svc := newService(fc)
+
+	_, err := svc.MangaDetails(context.Background(), "ghost", 1)
+	if !errors.Is(err, imports.ErrSourceNotFound) {
+		t.Errorf("MangaDetails unknown source: err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+// TestService_MangaDetails_UpstreamError verifies a client.FetchMangaDetails
+// failure propagates verbatim (the handler maps it to 502).
+func TestService_MangaDetails_UpstreamError(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("suwayomi: source unreachable")
+	fc := &fakeClient{
+		sources:    []suwayomi.Source{{ID: "src-a", Name: "Alpha", Lang: "en"}},
+		detailsErr: sentinel,
+	}
+	svc := newService(fc)
+
+	_, err := svc.MangaDetails(context.Background(), "src-a", 1)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("MangaDetails upstream error: err = %v, want to wrap %v", err, sentinel)
 	}
 }
 

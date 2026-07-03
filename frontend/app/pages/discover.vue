@@ -22,7 +22,13 @@
  *   @inspect         → navigateTo /import?source=&mangaId=&title= (Task 6 reads these)
  *   @adopt           → navigateTo /import?source=&mangaId=&title= (same hand-off)
  *   @open-source-link → window.open external tab (noopener)
+ *   @hover           → debounced loadDetails(candidate) — forces Suwayomi to
+ *                      fetch the hovered card's rich metadata (author/artist/
+ *                      description/genres) so the hover preview fills in; the
+ *                      debounce (HOVER_DEBOUNCE_MS) absorbs a fast scrub across
+ *                      the grid so it doesn't fire a fetch per card passed over.
  */
+import { onBeforeUnmount } from 'vue'
 import type { DiscoverCandidate } from '~/components/screens/discover.types'
 
 const {
@@ -36,6 +42,7 @@ const {
   setType,
   loadPage,
   retry,
+  loadDetails,
 } = useDiscover()
 
 function openImport(candidate: DiscoverCandidate): void {
@@ -48,6 +55,21 @@ function openImport(candidate: DiscoverCandidate): void {
     },
   })
 }
+
+/** Debounce window for the hover-details fetch — long enough that scrubbing
+ *  across several cards in a row only fires one fetch (for the card the
+ *  cursor settles on), short enough to feel instant on a deliberate hover. */
+const HOVER_DEBOUNCE_MS = 200
+let hoverTimer: ReturnType<typeof setTimeout> | undefined
+
+function onHover(candidate: DiscoverCandidate): void {
+  if (hoverTimer !== undefined) clearTimeout(hoverTimer)
+  hoverTimer = setTimeout(() => { void loadDetails(candidate) }, HOVER_DEBOUNCE_MS)
+}
+
+onBeforeUnmount(() => {
+  if (hoverTimer !== undefined) clearTimeout(hoverTimer)
+})
 </script>
 
 <template>
@@ -66,6 +88,7 @@ function openImport(candidate: DiscoverCandidate): void {
       @inspect="openImport"
       @adopt="openImport"
       @open-source-link="(c: DiscoverCandidate) => { if (isHttpUrl(c.url)) window.open(c.url, '_blank', 'noopener') }"
+      @hover="onHover"
     />
   </div>
 </template>

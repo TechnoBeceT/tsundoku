@@ -21,6 +21,14 @@ import type { DiscoverCandidate } from '../screens/discover.types'
  * opens while also emitting `open-source-link` (the click doesn't bubble to the
  * cover's inspect).
  *
+ * Rich-hover-details wiring: a `mouseenter` on the card emits `hover` with this
+ * candidate. The card does NOT fetch or debounce itself (still presentation
+ * only) — the parent (Discover.vue → the discover page) debounces this event
+ * and calls `useDiscover().loadDetails`, which merges author/artist/
+ * description/genres back into the candidate once Suwayomi's forced details
+ * fetch resolves; `<DiscoverHoverPreview>` below renders them as soon as they
+ * land, with no extra wiring needed here.
+ *
  * Presentation only: the candidate arrives via props; every action is emitted.
  */
 const props = defineProps<{
@@ -35,6 +43,9 @@ const emit = defineEmits<{
   adopt: [candidate: DiscoverCandidate]
   /** "View on source ↗" clicked — the parent may react; the `<a>` still opens. */
   'open-source-link': [candidate: DiscoverCandidate]
+  /** Cursor entered the card — the parent debounces this to trigger the
+   *  on-demand rich-details fetch for the hover preview. */
+  hover: [candidate: DiscoverCandidate]
 }>()
 
 // The big faint placeholder letter behind a cover (first char, uppercased).
@@ -50,7 +61,7 @@ const onSourceLink = (e: Event): void => {
 </script>
 
 <template>
-  <div class="disc-card">
+  <div class="disc-card" @mouseenter="emit('hover', candidate)">
     <!-- Inner box is overflow-clipped; the popup is its SIBLING (never clipped) -->
     <div class="disc-card__box">
       <button

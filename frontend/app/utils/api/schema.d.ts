@@ -537,6 +537,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sources/{sourceId}/manga/{mangaId}/details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * On-demand rich manga details
+         * @description FORCES Suwayomi to fetch full metadata (author/artist/genre/description)
+         *     for this manga from its upstream source, then returns the enriched
+         *     candidate in the same shape as Search/Browse. Suwayomi's Search/Browse
+         *     results are lightweight (title/cover/url only) — call this once per
+         *     manga a Discover card is hovered to fill in the rich fields; never for
+         *     every row of a search/browse page (each call is a real request to the
+         *     source).
+         */
+        get: operations["getMangaDetails"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sources/{sourceId}/manga/{mangaId}/cover": {
         parameters: {
             query?: never;
@@ -3119,6 +3145,67 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getMangaDetails: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Suwayomi source ID. */
+                sourceId: string;
+                /** @description Suwayomi-internal manga identifier (integer). */
+                mangaId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The enriched manga candidate. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchCandidate"];
+                };
+            };
+            /** @description Non-integer mangaId. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown source ID. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi failed to fetch the manga details. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
