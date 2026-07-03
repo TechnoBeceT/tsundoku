@@ -68,6 +68,7 @@ const showIcon = computed(() => !!props.extension.iconUrl && !iconFailed.value)
       :src="extension.iconUrl"
       alt=""
       aria-hidden="true"
+      loading="lazy"
       class="ext-card__avatar ext-card__icon"
       @error="iconFailed = true"
     >
