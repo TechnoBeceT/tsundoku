@@ -142,6 +142,7 @@ func (f *fakeClient) SetSourcePreference(_ context.Context, _ string, _ int, _ s
 func (f *fakeClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
 	return nil, nil
 }
+func (f *fakeClient) SetSourceEnabled(_ context.Context, _ string, _ bool) error { return nil }
 
 // makeChapters builds n stub chapters anchored to baseID.
 func makeChapters(baseID, n int) []suwayomi.Chapter {

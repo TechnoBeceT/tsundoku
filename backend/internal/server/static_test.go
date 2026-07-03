@@ -80,6 +80,9 @@ func (nullSuwayomiClient) SetSourcePreference(_ context.Context, _ string, _ int
 func (nullSuwayomiClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
 	panic("nullSuwayomiClient.ExtensionSources called in test")
 }
+func (nullSuwayomiClient) SetSourceEnabled(_ context.Context, _ string, _ bool) error {
+	panic("nullSuwayomiClient.SetSourceEnabled called in test")
+}
 
 // newTestServer builds a server.New instance with stub dependencies and no
 // real DB, suitable for route-level unit tests that do not touch the database.

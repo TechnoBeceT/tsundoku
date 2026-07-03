@@ -76,6 +76,7 @@ func (f *fakeClient) SetSourcePreference(context.Context, string, int, suwayomi.
 func (f *fakeClient) ExtensionSources(context.Context, string) ([]suwayomi.Source, error) {
 	return nil, nil
 }
+func (f *fakeClient) SetSourceEnabled(context.Context, string, bool) error { return nil }
 
 // num returns a pointer to a float64 chapter number (Suwayomi's wire shape).
 func num(n float64) *float64 { return &n }

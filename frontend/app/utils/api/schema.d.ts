@@ -1078,6 +1078,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/suwayomi/sources/{sourceId}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Toggle a source's per-language enable/disable state
+         * @description Writes the CLIENT-CONVENTION enable/disable flag for one source (Suwayomi
+         *     has no server-side "disabled source" concept — the flag lives in a
+         *     per-source metadata key). Disabling hides the source from Tsundoku's
+         *     Discover/Search/Browse source lists but does NOT stop refreshing a series
+         *     already adopted from it, and does NOT delete the flag on re-enable.
+         *     Applies the write then RE-READS the authoritative state (§16 round-trip).
+         *     A blank sourceId or a missing `enabled` field is a 400; a sourceId absent
+         *     from the post-write re-read is a 404; any upstream Suwayomi failure
+         *     (the write or the re-read) is a 502.
+         */
+        patch: operations["setSourceEnabled"];
+        trace?: never;
+    };
     "/api/suwayomi/extensions/{pkgName}/preferences": {
         parameters: {
             query?: never;
@@ -1755,8 +1783,27 @@ export interface components {
             sourceName: string;
             /** @description BCP-47 language tag. */
             lang: string;
+            /**
+             * @description The per-language enable/disable toggle. A disabled source is hidden
+             *     from Tsundoku's Discover/Search/Browse source lists but keeps
+             *     updating any series already adopted from it. Toggled via
+             *     PATCH /api/suwayomi/sources/{sourceId}/enabled.
+             */
+            enabled: boolean;
             /** @description This source's configurable preferences, in array order. */
             preferences: components["schemas"]["SourcePreference"][];
+        };
+        /** @description The authoritative per-language enable/disable state, re-read after a write (§16 round-trip). */
+        SourceEnabled: {
+            /** @description The Suwayomi source id. */
+            sourceId: string;
+            /** @description The enable/disable state as re-read after the write. */
+            enabled: boolean;
+        };
+        /** @description Set the per-language enable/disable state for one source. */
+        SetSourceEnabledRequest: {
+            /** @description The new enable/disable state. */
+            enabled: boolean;
         };
         /** @description An extension's per-source preferences, grouped by the (per-language) source they belong to. */
         SourcePreferencesBySource: {
@@ -4277,6 +4324,69 @@ export interface operations {
                 };
             };
             /** @description Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setSourceEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Suwayomi source id. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSourceEnabledRequest"];
+            };
+        };
+        responses: {
+            /** @description The authoritative enable/disable state after the write. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceEnabled"];
+                };
+            };
+            /** @description A blank sourceId, invalid JSON body, or a missing `enabled` field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The source was absent from the post-write re-read. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
             502: {
                 headers: {
                     [name: string]: unknown;

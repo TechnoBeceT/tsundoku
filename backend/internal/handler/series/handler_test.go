@@ -106,6 +106,9 @@ func (f *fakeSuwayomiClient) SetSourcePreference(ctx context.Context, sourceID s
 func (f *fakeSuwayomiClient) ExtensionSources(ctx context.Context, pkgName string) ([]suwayomi.Source, error) {
 	return nil, nil
 }
+func (f *fakeSuwayomiClient) SetSourceEnabled(ctx context.Context, sourceID string, enabled bool) error {
+	return nil
+}
 
 const testSecret = "series-handler-test-secret"
 

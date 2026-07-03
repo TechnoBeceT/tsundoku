@@ -8,15 +8,24 @@
  * source's preference list with the authoritative refreshed list the PATCH
  * returns (§16) — never reusing a cached position for a second edit.
  *
+ * Also owns the per-language enable/disable toggle: PATCH
+ * /api/suwayomi/sources/{sourceId}/enabled hides a disabled source from
+ * Tsundoku's Discover/Search/Browse lists without touching series already
+ * adopted from it. Like setPreference, it reseeds from the authoritative
+ * response rather than optimistically flipping the local flag (§16).
+ *
  * Public surface:
- *   groups      — the sources + their preferences (reactive)
- *   pending     — the initial load is in flight
- *   error       — a load failure message (or null)
- *   savingKey   — `${sourceId}:${position}` of the preference being written (or null)
- *   saveError   — a write failure message (or null)
- *   load(pkg)   — fetch an extension's preferences (opens the dialog session)
+ *   groups        — the sources + their preferences (reactive)
+ *   pending       — the initial load is in flight
+ *   error         — a load failure message (or null)
+ *   savingKey     — `${sourceId}:${position}` of the preference being written (or null)
+ *   saveError     — a write failure message (or null)
+ *   enablingKey   — the sourceId whose enable/disable toggle is being written (or null)
+ *   enableError   — an enable/disable write failure message (or null)
+ *   load(pkg)     — fetch an extension's preferences (opens the dialog session)
  *   setPreference(sourceId, position, value) — write one preference (§16)
- *   reset()     — clear all state (on dialog close)
+ *   setEnabled(sourceId, enabled) — toggle a source's enable/disable state (§16)
+ *   reset()       — clear all state (on dialog close)
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -39,6 +48,8 @@ export function useSourcePreferences() {
   const error = ref<string | null>(null)
   const savingKey = ref<string | null>(null)
   const saveError = ref<string | null>(null)
+  const enablingKey = ref<string | null>(null)
+  const enableError = ref<string | null>(null)
 
   // The pkgName of the currently-loaded extension (the PATCH path param).
   const pkgName = ref('')
@@ -99,14 +110,55 @@ export function useSourcePreferences() {
     }
   }
 
+  /**
+   * Toggles a source's per-language enable/disable state. Drives enablingKey
+   * (the row spinner) and surfaces any failure in enableError (§16). On
+   * success applies the RE-READ enabled flag from the response, never the
+   * optimistic request value.
+   */
+  async function setEnabled(sourceId: string, enabled: boolean): Promise<void> {
+    enablingKey.value = sourceId
+    enableError.value = null
+    try {
+      const res = await apiClient.PATCH('/api/suwayomi/sources/{sourceId}/enabled', {
+        params: { path: { sourceId } },
+        body: { enabled },
+      })
+      if (res.error || !res.data) throw new Error(res.error?.message ?? 'Failed to update source')
+      const authoritative = res.data.enabled
+      groups.value = groups.value.map(g =>
+        g.sourceId === sourceId ? { ...g, enabled: authoritative } : g,
+      )
+      enablingKey.value = null
+    }
+    catch (e) {
+      enableError.value = e instanceof Error ? e.message : 'Failed to update source'
+      enablingKey.value = null
+    }
+  }
+
   /** Clears all state — call when the dialog closes to bound the session. */
   function reset(): void {
     groups.value = []
     error.value = null
     saveError.value = null
     savingKey.value = null
+    enablingKey.value = null
+    enableError.value = null
     pkgName.value = ''
   }
 
-  return { groups, pending, error, savingKey, saveError, load, setPreference, reset }
+  return {
+    groups,
+    pending,
+    error,
+    savingKey,
+    saveError,
+    enablingKey,
+    enableError,
+    load,
+    setPreference,
+    setEnabled,
+    reset,
+  }
 }

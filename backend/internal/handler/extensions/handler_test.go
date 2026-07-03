@@ -57,6 +57,7 @@ type fakeClient struct {
 
 	// Per-source preference state (the M3 "Configure" endpoints).
 	sources         []suwayomicli.Source
+	sourcesErr      error
 	prefsBySource   map[string][]suwayomicli.SourcePreference
 	extSourcesErr   error
 	prefsErr        error
@@ -66,6 +67,12 @@ type fakeClient struct {
 	lastSetPosition int
 	lastSetValue    suwayomicli.PreferenceValue
 	setPrefResult   []suwayomicli.SourcePreference
+
+	// Per-language enable/disable toggle state.
+	setEnabledErr       error
+	setEnabledCalled    bool
+	lastEnabledSourceID string
+	lastEnabledValue    bool
 }
 
 // ExtensionSources returns the configured per-language sources (or the seeded error).
@@ -74,6 +81,33 @@ func (f *fakeClient) ExtensionSources(_ context.Context, _ string) ([]suwayomicl
 		return nil, f.extSourcesErr
 	}
 	return f.sources, nil
+}
+
+// Sources returns the configured source list (or the seeded error) — used by
+// the enable/disable toggle's post-write re-read (§16).
+func (f *fakeClient) Sources(context.Context) ([]suwayomicli.Source, error) {
+	if f.sourcesErr != nil {
+		return nil, f.sourcesErr
+	}
+	return f.sources, nil
+}
+
+// SetSourceEnabled models a real Suwayomi: it mutates the matching source's
+// Disabled flag in `sources` so a post-write Sources() re-read observes the
+// new state (proving the handler re-reads rather than echoing the request).
+func (f *fakeClient) SetSourceEnabled(_ context.Context, sourceID string, enabled bool) error {
+	f.setEnabledCalled = true
+	f.lastEnabledSourceID = sourceID
+	f.lastEnabledValue = enabled
+	if f.setEnabledErr != nil {
+		return f.setEnabledErr
+	}
+	for i := range f.sources {
+		if f.sources[i].ID == sourceID {
+			f.sources[i].Disabled = !enabled
+		}
+	}
+	return nil
 }
 
 // SourcePreferences returns the configured preferences for sourceID (or the error).
@@ -192,6 +226,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authed.GET("/suwayomi/extensions/:pkgName/icon", h.Icon)
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", h.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", h.SetPreference)
+	authed.PATCH("/suwayomi/sources/:sourceId/enabled", h.SetSourceEnabled)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {

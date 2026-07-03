@@ -46,6 +46,7 @@ func (h *Handler) Preferences(c echo.Context) error {
 			SourceID:    s.ID,
 			SourceName:  s.Name,
 			Lang:        s.Lang,
+			Enabled:     !s.Disabled,
 			Preferences: toSourcePreferenceDTOs(prefs),
 		})
 	}
@@ -95,4 +96,46 @@ func (h *Handler) SetPreference(c echo.Context) error {
 		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toSourcePreferenceDTOs(refreshed))
+}
+
+// SetSourceEnabled handles PATCH /api/suwayomi/sources/:sourceId/enabled with a
+// {enabled} body — the per-language enable/disable toggle behind the
+// Configure dialog's per-source Switch. Disabling hides the source from
+// Tsundoku's Discover/Search/Browse source lists (internal/imports); it does
+// NOT stop refreshing a series already adopted from it and does NOT delete
+// the source's isEnabled meta on re-enable (see suwayomi.Client.
+// SetSourceEnabled). Applies the write then RE-READS via Sources for the
+// authoritative post-write state (§16 round-trip). A blank :sourceId or a
+// missing/non-boolean `enabled` field is a 400; any upstream Suwayomi failure
+// (the write or the re-read) is a 502; a sourceId absent from the re-read
+// list (the source vanished between the write and the read) is a 404.
+func (h *Handler) SetSourceEnabled(c echo.Context) error {
+	sourceID, err := validateSourceID(c.Param("sourceId"))
+	if err != nil {
+		return err
+	}
+	var req SourceEnabledUpdateRequest
+	if err := c.Bind(&req); err != nil {
+		return httperr.BadRequest("invalid request body")
+	}
+	enabled, err := validateSourceEnabledUpdate(req)
+	if err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+
+	if err := h.sw.SetSourceEnabled(ctx, sourceID, enabled); err != nil {
+		return httperr.Upstream(err)
+	}
+
+	sources, err := h.sw.Sources(ctx)
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	for _, s := range sources {
+		if s.ID == sourceID {
+			return c.JSON(http.StatusOK, SourceEnabledDTO{SourceID: s.ID, Enabled: !s.Disabled})
+		}
+	}
+	return echo.NewHTTPError(http.StatusNotFound, "source not found")
 }

@@ -105,6 +105,34 @@ func coercePreferenceValue(prefType suwayomicli.PreferenceType, raw json.RawMess
 	}
 }
 
+// SourceEnabledUpdateRequest is the PATCH …/sources/{sourceId}/enabled body.
+// Enabled is a pointer so a missing key is rejected rather than silently
+// defaulting to false (which would look like an owner-initiated disable).
+type SourceEnabledUpdateRequest struct {
+	// Enabled is the new per-language enable/disable state.
+	Enabled *bool `json:"enabled"`
+}
+
+// validateSourceID trims and requires a non-empty :sourceId path param. A
+// blank value is a 400; the trimmed value is returned for use as the source
+// identity.
+func validateSourceID(raw string) (string, error) {
+	sourceID := strings.TrimSpace(raw)
+	if sourceID == "" {
+		return "", httperr.BadRequest("sourceId required")
+	}
+	return sourceID, nil
+}
+
+// validateSourceEnabledUpdate fail-closes the enable/disable write body:
+// enabled must be present (non-nil). It returns the requested state.
+func validateSourceEnabledUpdate(req SourceEnabledUpdateRequest) (bool, error) {
+	if req.Enabled == nil {
+		return false, httperr.BadRequest("enabled required")
+	}
+	return *req.Enabled, nil
+}
+
 // validateRepos fail-closes the repos replacement body:
 //   - Repos must be present (a non-nil JSON array); null/missing → 400;
 //   - an empty array is ALLOWED (clears all repos — the owner's explicit call);
