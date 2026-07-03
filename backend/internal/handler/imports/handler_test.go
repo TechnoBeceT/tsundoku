@@ -646,6 +646,21 @@ func TestMangaCover_NonIntMangaID_400(t *testing.T) {
 	}
 }
 
+// TestMangaCover_NonPositiveMangaID_400 asserts a zero or negative :mangaId is a
+// clean 400 (parseMangaID's doc says "positive integer" but had no guard, so a
+// value like 0 or -1 previously sailed through to a raw Suwayomi 502 instead).
+func TestMangaCover_NonPositiveMangaID_400(t *testing.T) {
+	for _, mangaID := range []string{"0", "-1"} {
+		t.Run(mangaID, func(t *testing.T) {
+			env := newTestEnv(t, &fakeClient{})
+			rec := env.do(http.MethodGet, "/api/sources/src/manga/"+mangaID+"/cover", "")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("MangaCover mangaId=%s: want 400, got %d (%s)", mangaID, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // --- POST /api/series (Adopt) --------------------------------------------------
 
 func TestAdopt_OK_FullRoundTrip(t *testing.T) {

@@ -384,10 +384,10 @@ func (n gqlMangaNode) toManga() Manga {
 
 // mangaFieldSelection is the GraphQL field set shared by every operation that
 // returns manga metadata (Search, Browse, MangaMeta). author/artist/genre/
-// description are Suwayomi MangaType fields (confirmed against the Kaizoku.GO
-// reference client and pending live re-confirmation via TestShape4 — see
-// e2e_test.go); a wrong field name here surfaces as a GraphQL validation error
-// from doGraphQL, not a silent decode-to-zero-value.
+// description are Suwayomi MangaType fields, confirmed live against Suwayomi by
+// TestShape7_MangaMetadataFields (see e2e_test.go); a wrong field name here
+// surfaces as a GraphQL validation error from doGraphQL, not a silent
+// decode-to-zero-value.
 const mangaFieldSelection = `
       id
       title
