@@ -49,7 +49,13 @@ const maxPort = 65535
 //     with a host (an empty string is allowed and clears the URL);
 //   - FlareSolverr timeout / sessionTtl, when set, must be non-negative;
 //   - SOCKS version, when set, must be 4 or 5;
-//   - SOCKS port, when set, must parse as an integer in 1..65535.
+//   - SOCKS port, when set non-empty, must parse as an integer in 1..65535 (an
+//     empty string is allowed and left untouched — the frontend always sends
+//     the full socksProxy group, including port:"" for a disabled/unconfigured
+//     proxy, and Suwayomi itself serves "" for that case, so "" must round-trip
+//     without clobbering an existing port; mirrors the FlareSolverr URL
+//     ""=clear/untouched precedent above, except port's "" means "don't touch"
+//     rather than "clear").
 //
 // On any violation it returns a 400 echo.HTTPError naming the offending field.
 // Per-group validation is split out so each unit stays small (one job per func).
@@ -96,7 +102,10 @@ func applyFlareSolverr(fs *FlareSolverrUpdate, patch *suwayomicli.SuwayomiSettin
 }
 
 // applySocks validates the SOCKS-proxy group and copies its set fields onto
-// patch (same nil-is-untouched copy rule as applyFlareSolverr).
+// patch (same nil-is-untouched copy rule as applyFlareSolverr). Port gets one
+// extra rule: an empty string is ALSO treated as untouched (skip validation,
+// leave patch.SocksProxyPort nil) rather than a validation failure — see the
+// doc comment on validateUpdate.
 func applySocks(sp *SocksProxyUpdate, patch *suwayomicli.SuwayomiSettingsPatch) error {
 	if sp == nil {
 		return nil
@@ -104,15 +113,15 @@ func applySocks(sp *SocksProxyUpdate, patch *suwayomicli.SuwayomiSettingsPatch) 
 	if sp.Version != nil && *sp.Version != 4 && *sp.Version != 5 {
 		return httperr.BadRequest("socksProxy.version must be 4 or 5")
 	}
-	if sp.Port != nil {
+	if sp.Port != nil && *sp.Port != "" {
 		if err := validatePort(*sp.Port); err != nil {
 			return err
 		}
+		patch.SocksProxyPort = sp.Port
 	}
 	patch.SocksProxyEnabled = sp.Enabled
 	patch.SocksProxyVersion = sp.Version
 	patch.SocksProxyHost = sp.Host
-	patch.SocksProxyPort = sp.Port
 	patch.SocksProxyUsername = sp.Username
 	patch.SocksProxyPassword = sp.Password
 	return nil
