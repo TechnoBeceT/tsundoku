@@ -336,39 +336,73 @@ export function useScanLibrary() {
   const batchError = ref('')
   const batchResult = ref<{ imported: number, failed: BatchImportFailure[] } | null>(null)
 
+  /** Fixed page size used while draining the pending list (§ below). */
+  const DRAIN_PAGE = 200
+  /** The batch-import endpoint's validated per-request cap. */
+  const BATCH_CAP = 500
+
   /**
-   * Drains every currently-pending staged entry (paginating internally, 200
-   * rows at a time, capped at 500 — the API's per-request limit) and imports
-   * them all disk-only in a single request. Partial success by design: a bad
-   * path is recorded in `batchResult.value.failed` and never aborts the rest.
+   * Imports EVERY currently-pending staged entry disk-only — a true
+   * import-all, not a single-batch-capped one (the owner is migrating
+   * 1000+ series; one 500-row batch would silently strand the rest with no
+   * signal that more remained).
+   *
+   * Two phases, run strictly in order:
+   *   1. DRAIN — page through `GET .../imports?status=pending` (`DRAIN_PAGE`
+   *      rows at a time) collecting every pending path into one array,
+   *      until a page comes back shorter than `DRAIN_PAGE` (no more pages).
+   *      This phase ONLY reads; it never mutates any entry.
+   *   2. CHUNK — slice the fully-drained path array into ≤`BATCH_CAP` chunks
+   *      and POST `/api/library/import/batch` once per chunk, summing
+   *      `imported` and concatenating `failed` across every chunk so a
+   *      library far larger than one batch is still covered in full.
+   *
+   * Termination is safe by construction: the full pending list is captured
+   * BEFORE any batch runs (phase 1 fully precedes phase 2), so a path that
+   * fails its import (and therefore stays `pending`) is never re-drained or
+   * re-batched — this function makes exactly one drain pass, ever. The
+   * drain offset also advances by the FIXED `DRAIN_PAGE` every iteration
+   * (never derived from how many rows a page happened to contain), so a
+   * short/empty non-terminal page can't leave the offset stuck and loop
+   * forever.
    */
   async function importAllDiskOnly(): Promise<void> {
     batchImporting.value = true
     batchError.value = ''
     batchResult.value = null
     try {
+      // Phase 1 — drain: collect every pending path, read-only.
       const paths: string[] = []
       let drainOffset = 0
       for (;;) {
         const res = await apiClient.GET('/api/library/imports', {
-          params: { query: { status: 'pending', limit: 200, offset: drainOffset } },
+          params: { query: { status: 'pending', limit: DRAIN_PAGE, offset: drainOffset } },
         })
         if (res.error || !res.data) {
           throw new Error(res.error && 'message' in res.error ? res.error.message : 'Failed to load pending entries')
         }
         paths.push(...res.data.map(d => d.path))
-        if (res.data.length < 200 || paths.length >= 500) break
-        drainOffset += 200
+        if (res.data.length < DRAIN_PAGE) break
+        drainOffset += DRAIN_PAGE
       }
 
-      const capped = paths.slice(0, 500)
-      if (capped.length === 0) return
+      if (paths.length === 0) return
 
-      const res = await apiClient.POST('/api/library/import/batch', { body: { paths: capped } })
-      if (res.error || !res.data) {
-        throw new Error(res.error && 'message' in res.error ? res.error.message : 'Batch import failed')
+      // Phase 2 — chunk + import: every drained path is covered, chunk by
+      // chunk, accumulating across the whole array.
+      let imported = 0
+      const failed: BatchImportFailure[] = []
+      for (let i = 0; i < paths.length; i += BATCH_CAP) {
+        const chunk = paths.slice(i, i + BATCH_CAP)
+        const res = await apiClient.POST('/api/library/import/batch', { body: { paths: chunk } })
+        if (res.error || !res.data) {
+          throw new Error(res.error && 'message' in res.error ? res.error.message : 'Batch import failed')
+        }
+        imported += res.data.imported
+        failed.push(...res.data.failed.map(mapBatchFailure))
       }
-      batchResult.value = { imported: res.data.imported, failed: res.data.failed.map(mapBatchFailure) }
+
+      batchResult.value = { imported, failed }
       await load(false)
     }
     catch (e) {

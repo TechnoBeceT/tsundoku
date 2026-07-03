@@ -26,34 +26,70 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { useScanLibrary } from './useScanLibrary'
 import { useProgressStream } from './useProgressStream'
+import { apiClient } from '~/utils/api/client'
 
 // ── Call tracking ─────────────────────────────────────────────────────────────
 
-interface Call { method: string, path: string, body?: unknown }
+interface Call { method: string, path: string, body?: unknown, query?: unknown }
 let calls: Call[] = []
 
 // Controls the next POST /api/library/scan response.
 let nextScanStatus = 202
 
+// One "found" staged entry, shaped like the FoundSeries DTO — used to seed
+// GET /api/library/imports?status=pending for the drain-all test below.
+interface FoundEntryLike {
+  path: string
+  title: string
+  category: string
+  chapterCount: number
+  providers: string[]
+  status: string
+  alreadyInDb: boolean
+}
+
+// Backing store for GET /api/library/imports?status=pending, paginated by
+// the mock itself (offset/limit read off the request query) — lets the
+// import-all-drains-everything test seed an arbitrarily large pending list
+// without hand-writing every page's response.
+let pendingSeed: FoundEntryLike[] = []
+
 // ── Module mock ───────────────────────────────────────────────────────────────
 
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
-    GET: vi.fn().mockImplementation((path: string) => {
-      calls.push({ method: 'GET', path })
+    GET: vi.fn().mockImplementation((path: string, opts?: { params?: { query?: Record<string, unknown> } }) => {
+      const query = opts?.params?.query
+      calls.push({ method: 'GET', path, query })
       if (path === '/api/library/imports') {
+        if (query?.status === 'pending') {
+          const limit = typeof query.limit === 'number' ? query.limit : 50
+          const offset = typeof query.offset === 'number' ? query.offset : 0
+          const page = pendingSeed.slice(offset, offset + limit)
+          return Promise.resolve({ data: page, error: null, response: new Response(null, { status: 200 }) })
+        }
         return Promise.resolve({ data: [], error: null, response: new Response(null, { status: 200 }) })
       }
       if (path === '/api/library/imports/match') {
         return Promise.resolve({
-          data: [{ title: 'Test Manga', candidates: [] }],
+          data: [{
+            title: 'Test Manga',
+            candidates: [{
+              source: 'src-1',
+              sourceName: 'MangaDex',
+              lang: 'en',
+              mangaId: 42,
+              title: 'Test Manga',
+              thumbnailUrl: 'https://example.com/thumb.jpg',
+            }],
+          }],
           error: null,
           response: new Response(null, { status: 200 }),
         })
       }
       return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
     }),
-    POST: vi.fn().mockImplementation((path: string, opts?: { body?: unknown }) => {
+    POST: vi.fn().mockImplementation((path: string, opts?: { body?: { paths?: string[] } }) => {
       calls.push({ method: 'POST', path, body: opts?.body })
       if (path === '/api/library/scan') {
         if (nextScanStatus === 409) {
@@ -80,8 +116,11 @@ vi.mock('~/utils/api/client', () => ({
         })
       }
       if (path === '/api/library/import/batch') {
+        // Echo the chunk size back as `imported` so the drain-all test can
+        // assert the accumulated total across every chunk.
+        const chunkSize = opts?.body?.paths?.length ?? 0
         return Promise.resolve({
-          data: { imported: 0, failed: [] },
+          data: { imported: chunkSize, failed: [] },
           error: null,
           response: new Response(null, { status: 200 }),
         })
@@ -144,6 +183,7 @@ describe('useScanLibrary', () => {
   beforeEach(() => {
     calls = []
     nextScanStatus = 202
+    pendingSeed = []
   })
 
   it('startScan() POSTs /api/library/scan and flips scanState to scanning', async () => {
@@ -225,5 +265,105 @@ describe('useScanLibrary', () => {
       path: '/library/Manga/Foo',
       match: { source: 'src-1', mangaId: 42, importance: 2 },
     })
+  })
+
+  it('match(path) GETs the match endpoint with that path and returns mapped SearchGroups', async () => {
+    const { match } = useScanLibrary()
+    calls = []
+
+    const groups = await match('/library/Manga/Foo')
+
+    const matchCall = calls.find(c => c.path === '/api/library/imports/match')
+    expect(matchCall).toBeDefined()
+    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo' })
+
+    expect(groups).toEqual([
+      {
+        title: 'Test Manga',
+        candidates: [{
+          source: 'src-1',
+          sourceName: 'MangaDex',
+          lang: 'en',
+          mangaId: 42,
+          title: 'Test Manga',
+          thumbnailUrl: 'https://example.com/thumb.jpg',
+        }],
+      },
+    ])
+  })
+
+  it('exposes entriesError (list-load failure) and error (per-row failure) as distinct, independently-working members', async () => {
+    const { entriesError, error, skip, refresh } = useScanLibrary()
+
+    // Per-row failure: the next POST (skip's mutation) fails.
+    vi.mocked(apiClient.POST).mockImplementationOnce((p: string) => {
+      if (p === '/api/library/imports/skip') {
+        return Promise.resolve({
+          data: null,
+          error: { message: 'skip failed' },
+          response: new Response(null, { status: 500 }),
+        })
+      }
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    })
+    await skip('/library/Manga/Foo')
+
+    expect(error('/library/Manga/Foo')).toBe('skip failed')
+    // The list-load error must be untouched by a per-row mutation failure.
+    expect(entriesError.value).toBe('')
+
+    // List-load failure: the next GET /api/library/imports call fails.
+    vi.mocked(apiClient.GET).mockImplementationOnce((p: string) => {
+      if (p === '/api/library/imports') {
+        return Promise.resolve({
+          data: null,
+          error: { message: 'list load failed' },
+          response: new Response(null, { status: 500 }),
+        })
+      }
+      return Promise.resolve({ data: [], error: null, response: new Response(null, { status: 200 }) })
+    })
+    await refresh()
+
+    expect(entriesError.value).toBe('list load failed')
+    // The earlier per-row error must still be independently readable — the
+    // two must never collide on a shared `error` key (the bug this test
+    // guards against).
+    expect(error('/library/Manga/Foo')).toBe('skip failed')
+  })
+
+  it('importAllDiskOnly() drains every pending page then imports all of them across chunked batches', async () => {
+    const total = 550 // > 500 (the batch cap) so this must span ≥2 chunks
+    pendingSeed = Array.from({ length: total }, (_, i) => ({
+      path: `/library/Manga/Series-${i}`,
+      title: `Series ${i}`,
+      category: 'Manga',
+      chapterCount: 1,
+      providers: [],
+      status: 'pending',
+      alreadyInDb: false,
+    }))
+
+    const { importAllDiskOnly, batchResult, batchError } = useScanLibrary()
+    calls = []
+
+    await importAllDiskOnly()
+
+    expect(batchError.value).toBe('')
+
+    // Drain: enough GET pages to cover all 550 pending rows (200/page).
+    const drainCalls = calls.filter(c => c.method === 'GET' && c.path === '/api/library/imports')
+    expect(drainCalls.length).toBeGreaterThanOrEqual(3)
+
+    // Chunk: ≥2 batch POSTs (500-cap), and every drained path is covered
+    // exactly once — none dropped, none duplicated, no infinite loop.
+    const batchCalls = calls.filter(c => c.method === 'POST' && c.path === '/api/library/import/batch')
+    expect(batchCalls.length).toBeGreaterThanOrEqual(2)
+    const importedPaths = batchCalls.flatMap(c => (c.body as { paths: string[] }).paths)
+    expect(importedPaths.length).toBe(total)
+    expect(new Set(importedPaths).size).toBe(total)
+
+    expect(batchResult.value?.imported).toBe(total)
+    expect(batchResult.value?.failed).toEqual([])
   })
 })
