@@ -255,9 +255,13 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 	return out, nil
 }
 
-// resolveSources returns the source list to query. When sourceIDs is non-nil
-// and non-empty, it returns only those sources from the client whose IDs are in
-// the set; otherwise it returns all client sources.
+// resolveSources returns the source list to query, always excluding Suwayomi's
+// built-in Local source (see isLocalSource — the same F1 exclusion Sources()
+// applies). When sourceIDs is non-nil and non-empty, it returns only those
+// sources from the client whose IDs are in the set; otherwise it returns all
+// (non-Local) client sources. Naming Local's id explicitly does not resurrect
+// it (N1) — a client cannot search it by id any more than by leaving the
+// filter empty.
 func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suwayomi.Source, error) {
 	all, err := s.client.Sources(ctx)
 	if err != nil {
@@ -265,7 +269,14 @@ func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suw
 	}
 
 	if len(sourceIDs) == 0 {
-		return all, nil
+		out := make([]suwayomi.Source, 0, len(all))
+		for _, src := range all {
+			if isLocalSource(src) {
+				continue
+			}
+			out = append(out, src)
+		}
+		return out, nil
 	}
 
 	// Build a set for O(1) lookup.
@@ -276,9 +287,10 @@ func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suw
 
 	filtered := make([]suwayomi.Source, 0, len(sourceIDs))
 	for _, src := range all {
-		if want[src.ID] {
-			filtered = append(filtered, src)
+		if isLocalSource(src) || !want[src.ID] {
+			continue
 		}
+		filtered = append(filtered, src)
 	}
 	return filtered, nil
 }

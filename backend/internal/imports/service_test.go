@@ -816,6 +816,49 @@ func TestService_Browse_SourcesError(t *testing.T) {
 	}
 }
 
+// TestService_Search_ExcludesLocalSource verifies the F1 Local-source exclusion
+// extends from Sources() to the Search fan-out itself (N1): an unscoped search
+// (nil sourceIDs, the FE's default) must never query Suwayomi's built-in Local
+// source, and naming its id explicitly must not resurrect it either — a client
+// cannot search Local by id any more than by leaving the filter empty.
+func TestService_Search_ExcludesLocalSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: suwayomi.LocalSourceID, Name: "Local source", Lang: suwayomi.LocalSourceLang},
+			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			suwayomi.LocalSourceID: {{ID: 1, Title: "Should Not Appear"}},
+			"src-a":                {{ID: 2, Title: "Solo Leveling"}},
+		},
+	}
+	svc := newService(fc)
+
+	// Unscoped search (empty filter) must not fan out to Local.
+	got, err := svc.Search(context.Background(), "anything", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	for _, g := range got {
+		for _, c := range g.Candidates {
+			if c.Source == suwayomi.LocalSourceID {
+				t.Errorf("Search: Local source candidate leaked into unscoped results: %+v", c)
+			}
+		}
+	}
+
+	// Explicitly naming Local's id must also be excluded (empty result).
+	got2, err := svc.Search(context.Background(), "anything", []string{suwayomi.LocalSourceID})
+	if err != nil {
+		t.Fatalf("Search explicit local id: unexpected error: %v", err)
+	}
+	if len(got2) != 0 {
+		t.Errorf("Search explicit local id: got %d groups, want 0 (Local must never be queryable by id)", len(got2))
+	}
+}
+
 // TestService_Search_URLPopulated is the non-vacuous proof that Search now
 // surfaces the manga url on each candidate — removing the URL mapping fails it.
 func TestService_Search_URLPopulated(t *testing.T) {
