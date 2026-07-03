@@ -26,39 +26,19 @@
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
+import { mapGroup } from '~/composables/importMappers'
 import type {
   AdoptRequest,
   ChapterInspect,
-  SearchCandidate,
   SearchGroup,
   Source,
 } from '~/components/screens/import.types'
 
 type SourceDTO = components['schemas']['Source']
-type SearchCandidateDTO = components['schemas']['SearchCandidate']
-type SearchGroupDTO = components['schemas']['SearchGroup']
 type ChapterInspectDTO = components['schemas']['ChapterInspect']
 
 function mapSource(dto: SourceDTO): Source {
   return { id: dto.id, name: dto.name, lang: dto.lang }
-}
-
-function mapCandidate(dto: SearchCandidateDTO): SearchCandidate {
-  return {
-    source: dto.source,
-    sourceName: dto.sourceName,
-    lang: dto.lang,
-    mangaId: dto.mangaId,
-    title: dto.title,
-    thumbnailUrl: dto.thumbnailUrl,
-  }
-}
-
-function mapGroup(dto: SearchGroupDTO): SearchGroup {
-  return {
-    title: dto.title,
-    candidates: dto.candidates.map(mapCandidate),
-  }
 }
 
 function mapChapterInspect(dto: ChapterInspectDTO): ChapterInspect {
