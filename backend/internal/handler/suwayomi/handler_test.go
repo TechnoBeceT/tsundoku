@@ -281,6 +281,31 @@ func TestPatch_AcceptsEmptyURLClear(t *testing.T) {
 	}
 }
 
+// TestPatch_SocksDisabledEmptyPort_OK proves the frontend's real request shape
+// for a disabled/unconfigured SOCKS proxy — the full socksProxy group sent with
+// port:"" alongside an unrelated FlareSolverr change — succeeds (200) rather
+// than 400ing on the empty port, and that the empty port is treated as
+// untouched (not forwarded to the downstream client, not clobbering the
+// seeded port).
+func TestPatch_SocksDisabledEmptyPort_OK(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{state: seededState()})
+	body := `{"flareSolverr":{"timeout":90},"socksProxy":{"enabled":false,"version":5,"host":"","port":"","username":"","password":""}}`
+	rec := env.do(http.MethodPatch, "/api/suwayomi/settings", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Patch: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if env.fake.lastPatch.SocksProxyPort != nil {
+		t.Errorf("empty socksProxy.port must not be forwarded downstream, got %q", *env.fake.lastPatch.SocksProxyPort)
+	}
+	var got handler.SuwayomiSettingsDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// The seeded port survives untouched (empty port must not clobber it).
+	assertEq(t, "socksProxy.port (untouched)", got.SocksProxy.Port, "1080")
+	assertEq(t, "flareSolverr.timeout", got.FlareSolverr.Timeout, 90)
+}
+
 // TestPatch_InvalidJSON proves a malformed body is a 400.
 func TestPatch_InvalidJSON(t *testing.T) {
 	env := newTestEnv(t, &fakeClient{state: seededState()})
