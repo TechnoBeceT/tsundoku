@@ -8,19 +8,12 @@ package series
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/technobecet/tsundoku/internal/handler/pagination"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
 )
-
-// defaultLimit is the page size applied when ?limit is omitted (or 0). It bounds
-// an unparameterised list to a sensible page rather than the whole library.
-const defaultLimit = 50
-
-// maxLimit caps ?limit so a single request can never ask for an unbounded page.
-const maxLimit = 200
 
 // SetCategoryRequest is the PATCH /api/series/{id}/category request body.
 type SetCategoryRequest struct {
@@ -40,40 +33,10 @@ func validateCategoryFilter(raw string) (*string, error) {
 }
 
 // validatePagination parses and validates the optional ?limit and ?offset query
-// params. Both must be non-negative integers; limit defaults to defaultLimit
-// when absent/0 and is capped at maxLimit. A malformed or negative value yields
-// a 400 echo.HTTPError.
+// params. Delegates to the shared internal/handler/pagination package (§2 DRY —
+// this logic was byte-identical across series/downloads/library until extracted).
 func validatePagination(limitRaw, offsetRaw string) (limit, offset int, err error) {
-	limit, err = parseNonNegative(limitRaw, "limit")
-	if err != nil {
-		return 0, 0, err
-	}
-	offset, err = parseNonNegative(offsetRaw, "offset")
-	if err != nil {
-		return 0, 0, err
-	}
-
-	if limit == 0 {
-		limit = defaultLimit
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
-	return limit, offset, nil
-}
-
-// parseNonNegative parses raw as a non-negative integer, returning 0 for an
-// empty string (the param is absent). A malformed or negative value yields a
-// 400 echo.HTTPError naming the offending parameter.
-func parseNonNegative(raw, name string) (int, error) {
-	if raw == "" {
-		return 0, nil
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v < 0 {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, name+" must be a non-negative integer")
-	}
-	return v, nil
+	return pagination.Validate(limitRaw, offsetRaw)
 }
 
 // validateID parses a UUID path param. subject names which id is being parsed
