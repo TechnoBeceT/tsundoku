@@ -15,16 +15,27 @@
  * the visible page are irrelevant to what's on screen, so this stays cheap
  * even while draining a 1000+-series library.
  *
+ * The Match sub-panel (Task 7) needs one extra piece of page-owned state the
+ * composable itself doesn't track: WHICH entry is currently being matched
+ * (`matchTarget`, null when the panel is closed) — `matching`/`matchError`
+ * (the search's own loading/error) already come straight from the
+ * composable, and the CONFIRM mutation's busy/error reuse the SAME
+ * `busy(path)`/`error(path)` lookups every other row mutation uses.
+ *
  * Emit wiring:
  *   @start-scan          → startScan()
  *   @set-status-filter   → setStatusFilter(status)
  *   @load-more           → loadMore()
  *   @import-disk-only    → importDiskOnly(path)
- *   @match               → onMatch(path) — stub; the match dialog is Task 7
+ *   @match               → onMatch(path) — opens the panel + runs match(path)
  *   @skip                → skip(path)
  *   @import-all-disk-only → importAllDiskOnly()
+ *   @match-confirm        → onMatchConfirm({path, match}) — importWithMatch
+ *   @match-back           → onMatchBack() — closes the panel, no mutation
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import type { SearchGroup } from '~/components/screens/import.types'
+import type { ScanMatch } from '~/composables/useScanLibrary'
 
 const {
   scanState,
@@ -40,6 +51,10 @@ const {
   error,
   skip,
   importDiskOnly,
+  importWithMatch,
+  matching,
+  matchError,
+  match,
   batchImporting,
   batchError,
   batchResult,
@@ -57,15 +72,36 @@ const rowErrors = computed(() => {
   return out
 })
 
+/** The staged entry currently in the Match sub-panel, or null when it's closed. */
+const matchTarget = ref<{ path: string, title: string } | null>(null)
+/** The current match target's cross-source candidate groups. */
+const matchGroups = ref<SearchGroup[]>([])
+
 /**
- * Match (stub): the cross-source match search dialog is a separate task
- * (Task 7 in the Phase-B plan). This screen only needs to emit the request
- * per row for now — wiring the dialog + the composable's `match()` call lands
- * with that task, so this intentionally does nothing yet rather than firing a
- * network call with no result to show for it.
+ * Opens the Match sub-panel for one staged entry and kicks off the
+ * cross-source search. `matching`/`matchError` (from the composable) drive
+ * the panel's own loading/error state while `match()` resolves.
  */
-function onMatch(_path: string): void {
-  // Intentional no-op until Task 7 adds the match dialog.
+async function onMatch(path: string): Promise<void> {
+  const entry = entries.value.find((e) => e.path === path)
+  matchTarget.value = { path, title: entry?.title ?? path }
+  matchGroups.value = await match(path)
+}
+
+/**
+ * Confirms the owner's picked source: runs `importWithMatch`, then closes
+ * the panel only on success — a failed mutation's error surfaces ON the
+ * panel (via the row's busy/error, reused from the table) so the owner can
+ * retry without losing their candidate selection.
+ */
+async function onMatchConfirm({ path, match: selection }: { path: string, match: ScanMatch }): Promise<void> {
+  await importWithMatch(path, selection)
+  if (!error(path)) matchTarget.value = null
+}
+
+/** Abandons the match flow — returns to the staging table, no mutation fires. */
+function onMatchBack(): void {
+  matchTarget.value = null
 }
 </script>
 
@@ -83,6 +119,11 @@ function onMatch(_path: string): void {
       :batch-importing="batchImporting"
       :batch-error="batchError"
       :batch-result="batchResult"
+      :match-path="matchTarget?.path ?? null"
+      :match-title="matchTarget?.title ?? ''"
+      :match-groups="matchGroups"
+      :matching="matching"
+      :match-error="matchError"
       @start-scan="startScan"
       @set-status-filter="setStatusFilter"
       @load-more="loadMore"
@@ -90,6 +131,8 @@ function onMatch(_path: string): void {
       @match="onMatch"
       @skip="skip"
       @import-all-disk-only="importAllDiskOnly"
+      @match-confirm="onMatchConfirm"
+      @match-back="onMatchBack"
     />
   </div>
 </template>

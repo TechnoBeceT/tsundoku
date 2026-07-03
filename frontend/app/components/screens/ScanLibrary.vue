@@ -3,10 +3,12 @@ import { computed } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import ErrorBanner from '../ui/ErrorBanner.vue'
 import Stepper from '../ui/Stepper.vue'
+import MatchPanel from '../scanLibrary/MatchPanel.vue'
 import ScanProgress from '../scanLibrary/ScanProgress.vue'
 import StagingTable from '../scanLibrary/StagingTable.vue'
 import type { StepItem } from '../ui/nav.types'
-import type { BatchImportResult, ScanEntry, ScanState, ScanStatusFilter } from './scanLibrary.types'
+import type { SearchGroup } from './import.types'
+import type { BatchImportResult, ScanEntry, ScanMatch, ScanState, ScanStatusFilter } from './scanLibrary.types'
 
 /**
  * ScanLibrary — the Scan Library wizard (migrating an existing on-disk manga
@@ -23,6 +25,14 @@ import type { BatchImportResult, ScanEntry, ScanState, ScanStatusFilter } from '
  * scan), the screen jumps to **Review** — its header carries the live
  * `<ScanProgress>` bar + a "Scan again" button, so the owner can kick off
  * another pass without losing sight of the table underneath.
+ *
+ * Within Review, a row's `match` emit opens the `<MatchPanel>` sub-panel
+ * (Task 7) IN PLACE of the header + `<StagingTable>` — `matchPath` (set by
+ * the page once `useScanLibrary().match(path)` resolves) gates which one
+ * renders. The panel's own `confirm`/`back` re-emit as `match-confirm` /
+ * `match-back` (carrying the target `path` alongside the picked source, since
+ * `<MatchPanel>` itself only knows the selection) for the page to call
+ * `importWithMatch` and close the panel.
  *
  * §16 no-silent-failure: a `scanState.error` (a failed/timed-out scan) is
  * rendered via `<ErrorBanner>` regardless of stage — `scan.done` is terminal
@@ -52,6 +62,16 @@ const props = withDefaults(defineProps<{
   batchError?: string
   /** The last bulk batch's outcome, or null before any run / after dismissal. */
   batchResult?: BatchImportResult | null
+  /** The staged entry currently in the Match sub-panel, or null when the table shows instead. */
+  matchPath?: string | null
+  /** The match target's title, for the sub-panel's header. */
+  matchTitle?: string
+  /** Cross-source candidate groups for the current match target. */
+  matchGroups?: SearchGroup[]
+  /** True while the match search itself (not the confirm mutation) is in flight. */
+  matching?: boolean
+  /** A match-search failure message, or "" for none. */
+  matchError?: string
 }>(), {
   statusFilter: null,
   pending: false,
@@ -62,6 +82,11 @@ const props = withDefaults(defineProps<{
   batchImporting: false,
   batchError: '',
   batchResult: null,
+  matchPath: null,
+  matchTitle: '',
+  matchGroups: () => [],
+  matching: false,
+  matchError: '',
 })
 
 const emit = defineEmits<{
@@ -79,6 +104,10 @@ const emit = defineEmits<{
   'skip': [path: string]
   /** Import every remaining pending entry disk-only. */
   'import-all-disk-only': []
+  /** The owner confirmed a source for the current match target. */
+  'match-confirm': [payload: { path: string, match: ScanMatch }]
+  /** Abandon the match sub-panel and return to the staging table. */
+  'match-back': []
 }>()
 
 const stepItems: StepItem[] = [
@@ -102,6 +131,14 @@ const scanning = computed(() => props.scanState.status === 'scanning')
 // remaining" click after everything is already imported/skipped silently
 // no-opped because the button stayed enabled on those tabs).
 const hasPending = computed(() => props.entries.some((e) => e.status === 'pending'))
+
+// The Match sub-panel replaces the staging table entirely while a target is set.
+const showMatchPanel = computed(() => props.matchPath != null)
+
+// Busy/error for the match target's CONFIRM mutation reuse the SAME per-path
+// lookups the table already receives (§2 DRY) — no separate prop needed.
+const matchBusy = computed(() => props.matchPath != null && props.busyPaths.includes(props.matchPath))
+const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors[props.matchPath] ?? '') : ''))
 </script>
 
 <template>
@@ -127,48 +164,64 @@ const hasPending = computed(() => props.entries.some((e) => e.status === 'pendin
 
         <!-- ================= Stage: Review ================= -->
         <section v-else class="sl-stage">
-          <div class="sl-review-head">
-            <ScanProgress v-if="scanning" class="sl-review-head__progress" :processed="scanState.processed" :total="scanState.total" />
-            <span v-else class="sl-review-head__done">
-              {{ scanState.error ? 'Scan incomplete' : (scanState.status === 'done' ? `Scan complete · ${scanState.total} found` : 'Ready to scan') }}
-            </span>
-            <div class="sl-review-head__actions">
-              <AppButton variant="ghost" size="sm" :disabled="scanning" :loading="scanning" @click="emit('start-scan')">
-                Scan again
-              </AppButton>
-              <AppButton
-                variant="mini"
-                size="sm"
-                :loading="batchImporting"
-                :disabled="batchImporting || !hasPending"
-                @click="emit('import-all-disk-only')"
-              >
-                Import all remaining · disk-only
-              </AppButton>
-            </div>
-          </div>
-
-          <ErrorBanner v-if="batchError" class="sl-review-head__error" :message="batchError" :dismissible="false" />
-          <p v-else-if="batchResult" class="sl-batch-result" :class="{ 'sl-batch-result--warn': batchResult.failed.length > 0 }">
-            Imported {{ batchResult.imported }} disk-only<template v-if="batchResult.failed.length">
-              · {{ batchResult.failed.length }} failed
-            </template>.
-          </p>
-
-          <StagingTable
-            :entries="entries"
-            :status-filter="statusFilter"
-            :pending="pending"
-            :entries-error="entriesError"
-            :has-more="hasMore"
-            :busy-paths="busyPaths"
-            :row-errors="rowErrors"
-            @set-status-filter="emit('set-status-filter', $event)"
-            @load-more="emit('load-more')"
-            @import-disk-only="emit('import-disk-only', $event)"
-            @match="emit('match', $event)"
-            @skip="emit('skip', $event)"
+          <!-- The Match sub-panel takes over the whole Review body while a target is set. -->
+          <MatchPanel
+            v-if="showMatchPanel"
+            :path="matchPath!"
+            :title="matchTitle"
+            :groups="matchGroups"
+            :searching="matching"
+            :search-error="matchError"
+            :busy="matchBusy"
+            :error="matchRowError"
+            @confirm="emit('match-confirm', { path: matchPath!, match: $event })"
+            @back="emit('match-back')"
           />
+
+          <template v-else>
+            <div class="sl-review-head">
+              <ScanProgress v-if="scanning" class="sl-review-head__progress" :processed="scanState.processed" :total="scanState.total" />
+              <span v-else class="sl-review-head__done">
+                {{ scanState.error ? 'Scan incomplete' : (scanState.status === 'done' ? `Scan complete · ${scanState.total} found` : 'Ready to scan') }}
+              </span>
+              <div class="sl-review-head__actions">
+                <AppButton variant="ghost" size="sm" :disabled="scanning" :loading="scanning" @click="emit('start-scan')">
+                  Scan again
+                </AppButton>
+                <AppButton
+                  variant="mini"
+                  size="sm"
+                  :loading="batchImporting"
+                  :disabled="batchImporting || !hasPending"
+                  @click="emit('import-all-disk-only')"
+                >
+                  Import all remaining · disk-only
+                </AppButton>
+              </div>
+            </div>
+
+            <ErrorBanner v-if="batchError" class="sl-review-head__error" :message="batchError" :dismissible="false" />
+            <p v-else-if="batchResult" class="sl-batch-result" :class="{ 'sl-batch-result--warn': batchResult.failed.length > 0 }">
+              Imported {{ batchResult.imported }} disk-only<template v-if="batchResult.failed.length">
+                · {{ batchResult.failed.length }} failed
+              </template>.
+            </p>
+
+            <StagingTable
+              :entries="entries"
+              :status-filter="statusFilter"
+              :pending="pending"
+              :entries-error="entriesError"
+              :has-more="hasMore"
+              :busy-paths="busyPaths"
+              :row-errors="rowErrors"
+              @set-status-filter="emit('set-status-filter', $event)"
+              @load-more="emit('load-more')"
+              @import-disk-only="emit('import-disk-only', $event)"
+              @match="emit('match', $event)"
+              @skip="emit('skip', $event)"
+            />
+          </template>
         </section>
       </div>
     </div>
