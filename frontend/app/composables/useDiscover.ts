@@ -24,11 +24,30 @@
  *   error        — boolean: true when the latest browse fetch failed
  *
  * Methods:
- *   setSource(id) — switch source, reset to page 1, refetch
- *   setType(t)    — switch listing, reset to page 1, refetch
- *   loadPage(n)   — fetch page n; n === 1 replaces manga, n > 1 appends
- *   retry()       — retry the last attempted page (resets to page 1 on initial-
- *                   load errors; retries the failed page on load-more errors)
+ *   setSource(id)      — switch source, reset to page 1, refetch
+ *   setType(t)         — switch listing, reset to page 1, refetch
+ *   loadPage(n)        — fetch page n; n === 1 replaces manga, n > 1 appends
+ *   retry()            — retry the last attempted page (resets to page 1 on
+ *                        initial-load errors; retries the failed page on
+ *                        load-more errors)
+ *   loadDetails(c)     — on-demand rich-details fetch for the Discover hover
+ *                        preview (see below)
+ *
+ * loadDetails(candidate) FORCES Suwayomi to fetch full metadata
+ * (author/artist/description/genres) for one candidate via
+ * `GET /api/sources/{sourceId}/manga/{mangaId}/details` — Search/Browse only
+ * ever return the lightweight fields, so the hover preview stays empty until
+ * this is called. It is on-demand and cached: a mangaId whose details already
+ * loaded (or are currently loading) is a no-op, so repeatedly hovering the
+ * same card never re-fetches. On success the returned author/artist/
+ * description/genres are merged into the matching candidate IN PLACE in
+ * `result.manga` so `DiscoverHoverPreview` (which already renders those
+ * fields) fills in reactively. The merge is guarded against a stale/removed
+ * candidate: if the candidate is no longer in the current page (the owner
+ * switched source/listing while the request was in flight) the response is
+ * discarded. A fetch failure is non-fatal — it is NOT cached as "loaded" (so a
+ * later hover can retry), and no page-level error is surfaced; the hover
+ * preview simply keeps its "No description available" fallback.
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -72,6 +91,19 @@ export function useDiscover() {
   // Tracks the last attempted page so retry() can re-issue the same fetch
   // (e.g. retry page 3 without losing the already-loaded pages 1+2).
   let lastPage = 1
+
+  // loadDetails' cache/in-flight guards, keyed by "source:mangaId" (a
+  // candidate's identity — see detailsKey). detailsLoaded is the PERMANENT
+  // cache (a mangaId lands here only after a successful fetch, so a later
+  // hover never re-fetches). detailsInFlight guards a rapid re-hover of the
+  // SAME card from firing a second overlapping request before the first
+  // resolves; it is cleared once that request settles either way.
+  const detailsLoaded = new Set<string>()
+  const detailsInFlight = new Set<string>()
+
+  function detailsKey(c: DiscoverCandidate): string {
+    return `${c.source}:${c.mangaId}`
+  }
 
   async function loadPage(n: number): Promise<void> {
     if (!activeSource.value) return
@@ -127,6 +159,40 @@ export function useDiscover() {
     void loadPage(lastPage)
   }
 
+  async function loadDetails(candidate: DiscoverCandidate): Promise<void> {
+    const key = detailsKey(candidate)
+    if (detailsLoaded.has(key) || detailsInFlight.has(key)) return
+    detailsInFlight.add(key)
+    try {
+      const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/details', {
+        params: { path: { sourceId: candidate.source, mangaId: candidate.mangaId } },
+      })
+      if (res.error || !res.data) return // non-fatal: leave the fallback text
+      const dto = res.data
+
+      // Guard a stale/removed candidate: the owner may have switched
+      // source/listing while this request was in flight, so the candidate
+      // this response describes might no longer be on the current page.
+      const idx = result.value.manga.findIndex(m => m.source === dto.source && m.mangaId === dto.mangaId)
+      if (idx === -1) return
+
+      result.value.manga.splice(idx, 1, {
+        ...result.value.manga[idx]!,
+        author: dto.author,
+        artist: dto.artist,
+        description: dto.description,
+        genres: dto.genres,
+      })
+      detailsLoaded.add(key)
+    }
+    catch {
+      // non-fatal: swallow, leave the fallback "No description available" text.
+    }
+    finally {
+      detailsInFlight.delete(key)
+    }
+  }
+
   void init()
 
   return {
@@ -140,5 +206,6 @@ export function useDiscover() {
     setType,
     loadPage,
     retry,
+    loadDetails,
   }
 }

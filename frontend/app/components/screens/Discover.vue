@@ -60,6 +60,9 @@ const emit = defineEmits<{
   openSourceLink: [candidate: DiscoverCandidate]
   /** Retry the active source after an error — refetches page 1. */
   retry: []
+  /** A card was hovered — forwarded verbatim from DiscoverCard; the parent
+   *  page debounces this to trigger the on-demand rich-details fetch. */
+  hover: [candidate: DiscoverCandidate]
 }>()
 
 // The browse result's accumulated candidates (kept terse for the template).
@@ -130,6 +133,7 @@ const loadMore = (): void => emit('page', props.result.page + 1)
         @inspect="emit('inspect', $event)"
         @adopt="emit('adopt', $event)"
         @open-source-link="emit('openSourceLink', $event)"
+        @hover="emit('hover', $event)"
       />
 
       <!-- First-load skeletons -->
