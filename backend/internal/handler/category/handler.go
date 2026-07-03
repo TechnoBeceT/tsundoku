@@ -85,9 +85,29 @@ func (h *Handler) Update(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// SetDefault handles PATCH /api/categories/:id/default. It promotes the category
+// to be the single default landing for new / uncategorized series, demoting the
+// previous default in the same transaction. On success it returns 200 with the
+// updated CategoryDTO (§16). A missing id yields 404.
+func (h *Handler) SetDefault(c echo.Context) error {
+	id, err := validateID(c.Param("id"))
+	if err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	if err := h.svc.SetDefault(ctx, id); err != nil {
+		return mapServiceError(err)
+	}
+	out, err := h.svc.Get(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // Delete handles DELETE /api/categories/:id. It removes a category only when no
-// series is filed under it (else 409) and never the protected default (else
-// 400). Returns 204 No Content on success; a missing id yields 404.
+// series is filed under it (else 409) and never the current default (else 400).
+// Returns 204 No Content on success; a missing id yields 404.
 func (h *Handler) Delete(c echo.Context) error {
 	id, err := validateID(c.Param("id"))
 	if err != nil {
@@ -102,7 +122,8 @@ func (h *Handler) Delete(c echo.Context) error {
 // mapServiceError translates a category.Service sentinel into the matching HTTP
 // status, leaving any unexpected error to the central middleware as a 500.
 // ErrCategoryNotFound → 404; ErrInvalidCategoryName → 400; ErrCategoryProtected
-// → 400; ErrCategoryNameTaken → 409; ErrCategoryNotEmpty → 409.
+// → 400; ErrCategoryIsDefault → 400; ErrCategoryNameTaken → 409;
+// ErrCategoryNotEmpty → 409.
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, categorysvc.ErrCategoryNotFound):
@@ -111,6 +132,8 @@ func mapServiceError(err error) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid category name")
 	case errors.Is(err, categorysvc.ErrCategoryProtected):
 		return echo.NewHTTPError(http.StatusBadRequest, "category is protected")
+	case errors.Is(err, categorysvc.ErrCategoryIsDefault):
+		return echo.NewHTTPError(http.StatusBadRequest, "category is the default")
 	case errors.Is(err, categorysvc.ErrCategoryNameTaken):
 		return echo.NewHTTPError(http.StatusConflict, "category name already in use")
 	case errors.Is(err, categorysvc.ErrCategoryNotEmpty):

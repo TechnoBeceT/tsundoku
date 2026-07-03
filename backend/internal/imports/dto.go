@@ -32,9 +32,21 @@ type SearchCandidateDTO struct {
 	// URL is the provider-canonical URL for this manga; powers the "View on
 	// source" external link. Empty string when the source does not provide one.
 	URL string `json:"url"`
-	// ThumbnailURL is the cover image URL; empty string when the source does
-	// not provide one.
+	// ThumbnailURL is Tsundoku's OWN cover-proxy path
+	// ("/api/sources/{source}/manga/{mangaId}/cover"), never Suwayomi's raw
+	// (Suwayomi-relative) thumbnail URL — rendering that directly against
+	// Tsundoku's origin 404s (B2). Empty string when the source provided no
+	// thumbnail at all.
 	ThumbnailURL string `json:"thumbnailUrl"`
+	// Author is the manga's writing credit; empty string when not provided.
+	Author string `json:"author"`
+	// Artist is the manga's art credit; empty string when not provided.
+	Artist string `json:"artist"`
+	// Description is the synopsis/summary text; empty string when not provided.
+	Description string `json:"description"`
+	// Genres is the source's genre/tag list; always a non-nil slice (empty when
+	// the source provides none) so the wire value is "[]" not null.
+	Genres []string `json:"genres"`
 }
 
 // BrowseResultDTO is one page of a source's catalog browse (Popular/Latest).

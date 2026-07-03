@@ -28,10 +28,16 @@ var ErrCategoryNameTaken = errors.New("category name already in use")
 // filed under it. The HTTP handler maps it to a 409.
 var ErrCategoryNotEmpty = errors.New("category is not empty")
 
-// ErrCategoryProtected is returned by Rename and Delete for the protected
-// default ("Other"), which must always remain as a safe fallback. The HTTP
-// handler maps it to a 400.
+// ErrCategoryProtected is returned by Rename for a protected category (the
+// seeded "Other"), which can never be renamed. The HTTP handler maps it to a
+// 400.
 var ErrCategoryProtected = errors.New("category is protected")
+
+// ErrCategoryIsDefault is returned by Delete for the current default category,
+// which can never be deleted so new / uncategorized series always have a landing
+// spot. Demote it (SetDefault another category) to make it deletable. The HTTP
+// handler maps it to a 400.
+var ErrCategoryIsDefault = errors.New("category is the default")
 
 // ErrInvalidCategoryName is returned by ValidateName (and the create/rename
 // paths) when a name is blank, too long, or not filesystem-safe. The HTTP

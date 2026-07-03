@@ -124,6 +124,15 @@ func (f *fakeClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, e
 }
 func (f *fakeClient) ExtensionRepos(_ context.Context) ([]string, error)    { return nil, nil }
 func (f *fakeClient) SetExtensionRepos(_ context.Context, _ []string) error { return nil }
+func (f *fakeClient) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeClient) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
+	return nil, nil
+}
 
 // --- helpers -----------------------------------------------------------------
 
@@ -184,6 +193,44 @@ func TestService_Sources(t *testing.T) {
 	}
 	if got[1].ID != "src-b" || got[1].Name != "Beta Source" || got[1].Lang != "ko" {
 		t.Errorf("Sources[1]: got %+v, want {src-b Beta Source ko}", got[1])
+	}
+}
+
+// TestService_Sources_ExcludesLocalSource verifies that Suwayomi's built-in
+// Local source (id suwayomi.LocalSourceID, lang "localsourcelang") is dropped
+// from the returned list — it is a Suwayomi-internal on-disk source, not a
+// real content source, and should never populate the Discover/Search source
+// pickers (F1). A source matching either signal (id or lang, case-insensitive)
+// is excluded; real sources are kept untouched.
+func TestService_Sources_ExcludesLocalSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: suwayomi.LocalSourceID, Name: "Local source", Lang: "localsourcelang"},
+			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
+			// A source that only matches on the lang signal (id changed, lang
+			// unchanged) must still be excluded — the defensive secondary match.
+			{ID: "999", Name: "Local source", Lang: "LOCALSOURCELANG"},
+			{ID: "src-b", Name: "Beta Source", Lang: "ko"},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Sources: got %d DTOs, want 2 (local source excluded): %+v", len(got), got)
+	}
+	for _, dto := range got {
+		if dto.ID == suwayomi.LocalSourceID || strings.EqualFold(dto.Lang, "localsourcelang") {
+			t.Errorf("Sources: local source leaked into result: %+v", dto)
+		}
+	}
+	if got[0].ID != "src-a" || got[1].ID != "src-b" {
+		t.Errorf("Sources: got %+v, want [src-a, src-b]", got)
 	}
 }
 
@@ -427,16 +474,17 @@ func TestService_Search_ThumbnailNil(t *testing.T) {
 
 // TestService_Search_CandidateFields verifies that SearchCandidateDTO carries
 // correct Source, SourceName, Lang, MangaID, Title, and ThumbnailURL fields.
+// ThumbnailURL must be Tsundoku's OWN cover-proxy path, not Suwayomi's raw
+// thumbnail URL (B2 fix — the raw value 404s against Tsundoku's own origin).
 func TestService_Search_CandidateFields(t *testing.T) {
 	t.Parallel()
 
-	thumb := "http://thumb.test/img.jpg"
 	fc := &fakeClient{
 		sources: []suwayomi.Source{
 			{ID: "s1", Name: "Source One", Lang: "en"},
 		},
 		searchResults: map[string][]suwayomi.Manga{
-			"s1": {{ID: 42, Title: "Attack on Titan", ThumbnailURL: ptrStr(thumb)}},
+			"s1": {{ID: 42, Title: "Attack on Titan", ThumbnailURL: ptrStr("http://thumb.test/img.jpg")}},
 		},
 	}
 	svc := newService(fc)
@@ -464,8 +512,94 @@ func TestService_Search_CandidateFields(t *testing.T) {
 	if c.Title != "Attack on Titan" {
 		t.Errorf("Candidate.Title: got %q, want %q", c.Title, "Attack on Titan")
 	}
-	if c.ThumbnailURL != thumb {
-		t.Errorf("Candidate.ThumbnailURL: got %q, want %q", c.ThumbnailURL, thumb)
+	const wantProxyPath = "/api/sources/s1/manga/42/cover"
+	if c.ThumbnailURL != wantProxyPath {
+		t.Errorf("Candidate.ThumbnailURL: got %q, want %q (Tsundoku cover-proxy path, not the raw Suwayomi URL)", c.ThumbnailURL, wantProxyPath)
+	}
+}
+
+// TestService_Search_MetadataFields verifies that author/artist/genres/
+// description propagate from suwayomi.Manga onto the SearchCandidateDTO (M4).
+func TestService_Search_MetadataFields(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "s1", Name: "Source One", Lang: "en"},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"s1": {{
+				ID:          42,
+				Title:       "Vinland Saga",
+				Author:      ptrStr("Makoto Yukimura"),
+				Artist:      ptrStr("Makoto Yukimura"),
+				Description: ptrStr("A Viking's saga."),
+				Genre:       []string{"Action", "Historical"},
+			}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "Vinland Saga", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	if len(got) == 0 || len(got[0].Candidates) == 0 {
+		t.Fatal("expected at least one group and candidate")
+	}
+	c := got[0].Candidates[0]
+	if c.Author != "Makoto Yukimura" {
+		t.Errorf("Candidate.Author: got %q, want %q", c.Author, "Makoto Yukimura")
+	}
+	if c.Artist != "Makoto Yukimura" {
+		t.Errorf("Candidate.Artist: got %q, want %q", c.Artist, "Makoto Yukimura")
+	}
+	if c.Description != "A Viking's saga." {
+		t.Errorf("Candidate.Description: got %q, want %q", c.Description, "A Viking's saga.")
+	}
+	if len(c.Genres) != 2 || c.Genres[0] != "Action" || c.Genres[1] != "Historical" {
+		t.Errorf("Candidate.Genres: got %v, want [Action Historical]", c.Genres)
+	}
+}
+
+// TestService_Search_MetadataFieldsNil verifies that nil author/artist/genre/
+// description map to "" / a non-nil empty slice — never a nil-pointer panic
+// and never a "null" genres array on the wire.
+func TestService_Search_MetadataFieldsNil(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "s1", Name: "Source One", Lang: "en"},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"s1": {{ID: 1, Title: "No Metadata"}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "No Metadata", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	if len(got) == 0 || len(got[0].Candidates) == 0 {
+		t.Fatal("expected at least one group and candidate")
+	}
+	c := got[0].Candidates[0]
+	if c.Author != "" {
+		t.Errorf("Candidate.Author: got %q, want empty", c.Author)
+	}
+	if c.Artist != "" {
+		t.Errorf("Candidate.Artist: got %q, want empty", c.Artist)
+	}
+	if c.Description != "" {
+		t.Errorf("Candidate.Description: got %q, want empty", c.Description)
+	}
+	if c.Genres == nil {
+		t.Error("Candidate.Genres: got nil, want non-nil empty slice (JSON must be [] not null)")
+	}
+	if len(c.Genres) != 0 {
+		t.Errorf("Candidate.Genres: got %v, want empty", c.Genres)
 	}
 }
 
@@ -572,10 +706,13 @@ func TestService_Browse_Popular(t *testing.T) {
 	if c0.URL != "/manga/1" {
 		t.Errorf("Browse candidate[0].URL: got %q, want /manga/1", c0.URL)
 	}
-	if c0.ThumbnailURL != "http://t/1" {
-		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want http://t/1", c0.ThumbnailURL)
+	// ThumbnailURL must be Tsundoku's own cover-proxy path, not Suwayomi's raw
+	// thumbnail URL (B2 fix).
+	const wantProxyPath = "/api/sources/src-a/manga/1/cover"
+	if c0.ThumbnailURL != wantProxyPath {
+		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want %q", c0.ThumbnailURL, wantProxyPath)
 	}
-	// Nil thumbnail → empty string.
+	// Nil thumbnail → empty string (no proxy path minted with nothing to fetch).
 	if got.Manga[1].ThumbnailURL != "" {
 		t.Errorf("Browse candidate[1].ThumbnailURL: got %q, want empty", got.Manga[1].ThumbnailURL)
 	}
@@ -676,6 +813,49 @@ func TestService_Browse_SourcesError(t *testing.T) {
 	_, err := svc.Browse(context.Background(), "any", suwayomi.BrowsePopular, 1)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("Browse sources error: err = %v, want to wrap %v", err, sentinel)
+	}
+}
+
+// TestService_Search_ExcludesLocalSource verifies the F1 Local-source exclusion
+// extends from Sources() to the Search fan-out itself (N1): an unscoped search
+// (nil sourceIDs, the FE's default) must never query Suwayomi's built-in Local
+// source, and naming its id explicitly must not resurrect it either — a client
+// cannot search Local by id any more than by leaving the filter empty.
+func TestService_Search_ExcludesLocalSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: suwayomi.LocalSourceID, Name: "Local source", Lang: suwayomi.LocalSourceLang},
+			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			suwayomi.LocalSourceID: {{ID: 1, Title: "Should Not Appear"}},
+			"src-a":                {{ID: 2, Title: "Solo Leveling"}},
+		},
+	}
+	svc := newService(fc)
+
+	// Unscoped search (empty filter) must not fan out to Local.
+	got, err := svc.Search(context.Background(), "anything", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	for _, g := range got {
+		for _, c := range g.Candidates {
+			if c.Source == suwayomi.LocalSourceID {
+				t.Errorf("Search: Local source candidate leaked into unscoped results: %+v", c)
+			}
+		}
+	}
+
+	// Explicitly naming Local's id must also be excluded (empty result).
+	got2, err := svc.Search(context.Background(), "anything", []string{suwayomi.LocalSourceID})
+	if err != nil {
+		t.Fatalf("Search explicit local id: unexpected error: %v", err)
+	}
+	if len(got2) != 0 {
+		t.Errorf("Search explicit local id: got %d groups, want 0 (Local must never be queryable by id)", len(got2))
 	}
 }
 

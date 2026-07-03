@@ -94,6 +94,15 @@ func (f *fakeSuwayomiClient) ExtensionRepos(ctx context.Context) ([]string, erro
 func (f *fakeSuwayomiClient) SetExtensionRepos(ctx context.Context, repos []string) error {
 	return nil
 }
+func (f *fakeSuwayomiClient) SourcePreferences(ctx context.Context, sourceID string) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) SetSourcePreference(ctx context.Context, sourceID string, position int, value suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeSuwayomiClient) ExtensionSources(ctx context.Context, pkgName string) ([]suwayomi.Source, error) {
+	return nil, nil
+}
 
 const testSecret = "series-handler-test-secret"
 

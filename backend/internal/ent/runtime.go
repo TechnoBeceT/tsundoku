@@ -35,12 +35,16 @@ func init() {
 	categoryDescProtected := categoryFields[3].Descriptor()
 	// category.DefaultProtected holds the default value on creation for the protected field.
 	category.DefaultProtected = categoryDescProtected.Default.(bool)
+	// categoryDescIsDefault is the schema descriptor for is_default field.
+	categoryDescIsDefault := categoryFields[4].Descriptor()
+	// category.DefaultIsDefault holds the default value on creation for the is_default field.
+	category.DefaultIsDefault = categoryDescIsDefault.Default.(bool)
 	// categoryDescCreatedAt is the schema descriptor for created_at field.
-	categoryDescCreatedAt := categoryFields[4].Descriptor()
+	categoryDescCreatedAt := categoryFields[5].Descriptor()
 	// category.DefaultCreatedAt holds the default value on creation for the created_at field.
 	category.DefaultCreatedAt = categoryDescCreatedAt.Default.(func() time.Time)
 	// categoryDescUpdatedAt is the schema descriptor for updated_at field.
-	categoryDescUpdatedAt := categoryFields[5].Descriptor()
+	categoryDescUpdatedAt := categoryFields[6].Descriptor()
 	// category.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	category.DefaultUpdatedAt = categoryDescUpdatedAt.Default.(func() time.Time)
 	// category.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

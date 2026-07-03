@@ -71,6 +71,11 @@ func Protected(v bool) predicate.Category {
 	return predicate.Category(sql.FieldEQ(FieldProtected, v))
 }
 
+// IsDefault applies equality check predicate on the "is_default" field. It's identical to IsDefaultEQ.
+func IsDefault(v bool) predicate.Category {
+	return predicate.Category(sql.FieldEQ(FieldIsDefault, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.Category {
 	return predicate.Category(sql.FieldEQ(FieldCreatedAt, v))
@@ -194,6 +199,16 @@ func ProtectedEQ(v bool) predicate.Category {
 // ProtectedNEQ applies the NEQ predicate on the "protected" field.
 func ProtectedNEQ(v bool) predicate.Category {
 	return predicate.Category(sql.FieldNEQ(FieldProtected, v))
+}
+
+// IsDefaultEQ applies the EQ predicate on the "is_default" field.
+func IsDefaultEQ(v bool) predicate.Category {
+	return predicate.Category(sql.FieldEQ(FieldIsDefault, v))
+}
+
+// IsDefaultNEQ applies the NEQ predicate on the "is_default" field.
+func IsDefaultNEQ(v bool) predicate.Category {
+	return predicate.Category(sql.FieldNEQ(FieldIsDefault, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

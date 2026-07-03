@@ -12,10 +12,12 @@ import (
 )
 
 // Create adds a new, empty category. name is validated (non-blank, ≤64 chars,
-// filesystem-safe) and must be unique. sortOrder is optional — nil defaults to
-// 0. No folder is created on disk until a series is first filed there. Returns
-// ErrInvalidCategoryName (bad name), ErrCategoryNameTaken (duplicate), or the
-// created CategoryDTO (count 0).
+// filesystem-safe) and must be unique. sortOrder is optional — when nil the
+// category is APPENDED at the end (max(existing)+1) rather than left on Ent's
+// default 0, which would collide with the seeded "Manga" and break the frontend
+// reorder swap (F3). No folder is created on disk until a series is first filed
+// there. Returns ErrInvalidCategoryName (bad name), ErrCategoryNameTaken
+// (duplicate), or the created CategoryDTO (count 0).
 func (s *Service) Create(ctx context.Context, name string, sortOrder *int) (CategoryDTO, error) {
 	clean, err := ValidateName(name)
 	if err != nil {
@@ -30,11 +32,16 @@ func (s *Service) Create(ctx context.Context, name string, sortOrder *int) (Cate
 		return CategoryDTO{}, ErrCategoryNameTaken
 	}
 
-	create := s.client.Category.Create().SetName(clean)
-	if sortOrder != nil {
-		create = create.SetSortOrder(*sortOrder)
+	order := sortOrder
+	if order == nil {
+		next, nErr := nextSortOrder(ctx, s.client)
+		if nErr != nil {
+			return CategoryDTO{}, nErr
+		}
+		order = &next
 	}
-	row, err := create.Save(ctx)
+
+	row, err := s.client.Category.Create().SetName(clean).SetSortOrder(*order).Save(ctx)
 	if err != nil {
 		if ent.IsConstraintError(err) {
 			// Lost the unique-name race after the check above.
@@ -122,17 +129,19 @@ func (s *Service) Reorder(ctx context.Context, id uuid.UUID, sortOrder int) erro
 }
 
 // Delete removes a category. It is allowed ONLY when no series is filed under it
-// (else ErrCategoryNotEmpty) and never for the protected default (else
-// ErrCategoryProtected). It is DB-only: it deletes no series, no CBZ, and leaves
-// any on-disk folder untouched (an empty category folder, if present, is left as
-// is). A missing id returns ErrCategoryNotFound.
+// (else ErrCategoryNotEmpty) and never for the current default (else
+// ErrCategoryIsDefault) — so new / uncategorized series always have a landing
+// spot. A demoted "Other" (protected but no longer the default) IS deletable. It
+// is DB-only: it deletes no series, no CBZ, and leaves any on-disk folder
+// untouched (an empty category folder, if present, is left as is). A missing id
+// returns ErrCategoryNotFound.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	row, err := s.byID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if row.Protected {
-		return ErrCategoryProtected
+	if row.IsDefault {
+		return ErrCategoryIsDefault
 	}
 
 	count, err := s.client.Series.Query().Where(entseries.CategoryID(id)).Count(ctx)

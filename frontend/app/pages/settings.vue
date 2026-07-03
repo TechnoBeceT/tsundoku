@@ -40,7 +40,7 @@
  *   @rename-category             → renameCategory
  *   @reorder-category            → reorderCategory
  *   @delete-category             → deleteCategory
- *   @set-default-category        → no-op (owner dropped this action)
+ *   @set-default-category        → setDefaultCategory
  *   @start-upgrade               → no-op (engine deferred)
  *   @install-extension           → installExtension
  *   @update-extension            → updateExtension
@@ -70,6 +70,7 @@ const {
   addCategory,
   renameCategory,
   reorderCategory,
+  setDefaultCategory,
   deleteCategory,
 } = useCategories()
 
@@ -163,7 +164,7 @@ const loading = computed(
       @rename-category="renameCategory"
       @reorder-category="reorderCategory"
       @delete-category="deleteCategory"
-      @set-default-category="() => {}"
+      @set-default-category="setDefaultCategory"
       @start-upgrade="() => {}"
       @install-extension="installExtension"
       @update-extension="updateExtension"

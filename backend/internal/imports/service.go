@@ -62,17 +62,34 @@ func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client,
 	}
 }
 
-// Sources returns all Suwayomi sources as SourceDTOs.
+// Sources returns all Suwayomi sources as SourceDTOs, excluding Suwayomi's
+// built-in Local source (see isLocalSource). The Local source indexes files
+// from Suwayomi's own on-disk localSourcePath rather than a real online
+// provider, and its lang tag renders as the raw "LOCALSOURCELANG" string in
+// the UI — it should never appear in the Discover picker or the Search
+// "Limit to" filters (F1).
 func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 	srcs, err := s.client.Sources(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]SourceDTO, len(srcs))
-	for i, src := range srcs {
-		out[i] = SourceDTO{ID: src.ID, Name: src.Name, Lang: src.Lang}
+	out := make([]SourceDTO, 0, len(srcs))
+	for _, src := range srcs {
+		if isLocalSource(src) {
+			continue
+		}
+		out = append(out, SourceDTO{ID: src.ID, Name: src.Name, Lang: src.Lang})
 	}
 	return out, nil
+}
+
+// isLocalSource reports whether src is Suwayomi's built-in Local source. The
+// primary signal is the fixed id (suwayomi.LocalSourceID); the lang tag
+// (case-insensitive "localsourcelang") is checked too as a defensive
+// secondary signal, since it is the more stable identifier — if Suwayomi ever
+// changes the id, matching on lang still catches it.
+func isLocalSource(src suwayomi.Source) bool {
+	return src.ID == suwayomi.LocalSourceID || strings.EqualFold(src.Lang, suwayomi.LocalSourceLang)
 }
 
 // searchOneSource performs a single-source search against the Suwayomi client
@@ -94,14 +111,15 @@ func (s *Service) searchOneSource(ctx context.Context, src suwayomi.Source, quer
 }
 
 // newCandidate maps one suwayomi.Manga to a Candidate tagged with its source's
-// ID/name/lang. A nil ThumbnailURL becomes the empty string. Shared by the
-// Search fan-out (searchOneSource) and the single-source Browse path so the
-// Manga→Candidate mapping lives in exactly one place.
+// ID/name/lang. Shared by the Search fan-out (searchOneSource) and the
+// single-source Browse path so the Manga→Candidate mapping lives in exactly
+// one place.
+//
+// ThumbnailURL is NOT Suwayomi's own thumbnailUrl forwarded verbatim (B2 fix):
+// that value is Suwayomi-relative and 404s when rendered against Tsundoku's
+// own origin. Instead it is Tsundoku's own cover-proxy path, resolved by
+// thumbnailProxyPath.
 func newCandidate(src suwayomi.Source, m suwayomi.Manga) Candidate {
-	thumb := ""
-	if m.ThumbnailURL != nil {
-		thumb = *m.ThumbnailURL
-	}
 	return Candidate{
 		Source:       src.ID,
 		SourceName:   src.Name,
@@ -109,8 +127,45 @@ func newCandidate(src suwayomi.Source, m suwayomi.Manga) Candidate {
 		MangaID:      m.ID,
 		Title:        m.Title,
 		URL:          m.URL,
-		ThumbnailURL: thumb,
+		ThumbnailURL: thumbnailProxyPath(src.ID, m),
+		Author:       strOrEmpty(m.Author),
+		Artist:       strOrEmpty(m.Artist),
+		Description:  strOrEmpty(m.Description),
+		Genres:       nonNilStrings(m.Genre),
 	}
+}
+
+// thumbnailProxyPath returns the Tsundoku-relative cover-proxy path for m
+// within sourceID ("/api/sources/{sourceID}/manga/{mangaId}/cover"), or "" when
+// the source provided no thumbnail at all (m.ThumbnailURL nil/empty) — the FE
+// renders its initial-letter placeholder in that case. The proxy path always
+// targets the SAME Suwayomi REST endpoint (/api/v1/manga/{id}/thumbnail;
+// see handler/imports.MangaCover) regardless of what Suwayomi's own
+// thumbnailUrl string said — only its presence/absence matters here.
+func thumbnailProxyPath(sourceID string, m suwayomi.Manga) string {
+	if m.ThumbnailURL == nil || *m.ThumbnailURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("/api/sources/%s/manga/%d/cover", sourceID, m.ID)
+}
+
+// strOrEmpty dereferences an optional Suwayomi metadata string, returning ""
+// when nil rather than panicking or leaking a pointer into the DTO layer.
+func strOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// nonNilStrings returns in unchanged when non-nil, else an empty (non-nil)
+// slice — so a candidate's Genres always serialises as "[]", never "null"
+// (matches the fleet convention for list-shaped DTO fields).
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }
 
 // newSearchCandidateDTO maps a Candidate to its wire DTO. Shared by Search
@@ -125,6 +180,10 @@ func newSearchCandidateDTO(c Candidate) SearchCandidateDTO {
 		Title:        c.Title,
 		URL:          c.URL,
 		ThumbnailURL: c.ThumbnailURL,
+		Author:       c.Author,
+		Artist:       c.Artist,
+		Description:  c.Description,
+		Genres:       c.Genres,
 	}
 }
 
@@ -196,9 +255,13 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 	return out, nil
 }
 
-// resolveSources returns the source list to query. When sourceIDs is non-nil
-// and non-empty, it returns only those sources from the client whose IDs are in
-// the set; otherwise it returns all client sources.
+// resolveSources returns the source list to query, always excluding Suwayomi's
+// built-in Local source (see isLocalSource — the same F1 exclusion Sources()
+// applies). When sourceIDs is non-nil and non-empty, it returns only those
+// sources from the client whose IDs are in the set; otherwise it returns all
+// (non-Local) client sources. Naming Local's id explicitly does not resurrect
+// it (N1) — a client cannot search it by id any more than by leaving the
+// filter empty.
 func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suwayomi.Source, error) {
 	all, err := s.client.Sources(ctx)
 	if err != nil {
@@ -206,7 +269,14 @@ func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suw
 	}
 
 	if len(sourceIDs) == 0 {
-		return all, nil
+		out := make([]suwayomi.Source, 0, len(all))
+		for _, src := range all {
+			if isLocalSource(src) {
+				continue
+			}
+			out = append(out, src)
+		}
+		return out, nil
 	}
 
 	// Build a set for O(1) lookup.
@@ -217,9 +287,10 @@ func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suw
 
 	filtered := make([]suwayomi.Source, 0, len(sourceIDs))
 	for _, src := range all {
-		if want[src.ID] {
-			filtered = append(filtered, src)
+		if isLocalSource(src) || !want[src.ID] {
+			continue
 		}
+		filtered = append(filtered, src)
 	}
 	return filtered, nil
 }
@@ -331,9 +402,9 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 	}
 
 	// 5. Apply category when requested. ingest.AddSeries already linked the new
-	//    series to the "Other" fallback on create, so an empty req.Category keeps
-	//    that default; a named category is find-or-created (a brand-new owner
-	//    category lands here) and linked by id.
+	//    series to the configured default category (is_default) on create, so an
+	//    empty req.Category keeps that default; a named category is find-or-created
+	//    (a brand-new owner category lands here) and linked by id.
 	if req.Category != "" {
 		cat, err := category.FindOrCreate(ctx, s.db, req.Category)
 		if err != nil {
@@ -347,7 +418,7 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 	return series.ID, nil
 }
 
-// validateCategory returns nil when cat is empty (meaning "keep the Other
+// validateCategory returns nil when cat is empty (meaning "keep the configured
 // default") or when it is a filesystem-safe category name (it becomes a folder).
 // A non-empty invalid value yields a wrapped error naming the invalid string.
 func validateCategory(cat string) error {

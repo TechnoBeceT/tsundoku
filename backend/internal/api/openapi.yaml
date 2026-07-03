@@ -302,6 +302,7 @@ components:
         - name
         - sortOrder
         - protected
+        - isDefault
         - count
       properties:
         id:
@@ -316,7 +317,13 @@ components:
           description: Owner-chosen display order (ascending; ties break by name).
         protected:
           type: boolean
-          description: True only for the default "Other" — it cannot be renamed or deleted.
+          description: True for the seeded "Other" — it can never be renamed.
+        isDefault:
+          type: boolean
+          description: >-
+            True for the single default landing category (new / uncategorized
+            series file here). It can never be deleted; promote another category
+            (PATCH /api/categories/{id}/default) to make this one deletable.
         count:
           type: integer
           description: Number of series filed under this category.
@@ -534,6 +541,10 @@ components:
         - title
         - url
         - thumbnailUrl
+        - author
+        - artist
+        - description
+        - genres
       properties:
         source:
           type: string
@@ -555,7 +566,24 @@ components:
           description: Provider-canonical URL for this manga (powers the "View on source" link); empty string when not provided.
         thumbnailUrl:
           type: string
-          description: Cover image URL; empty string when not provided.
+          description: |
+            Tsundoku's own cover-proxy path ("/api/sources/{source}/manga/{mangaId}/cover"),
+            never Suwayomi's raw thumbnail URL. Empty string when the source provided no
+            thumbnail at all.
+        author:
+          type: string
+          description: Manga's writing credit; empty string when not provided.
+        artist:
+          type: string
+          description: Manga's art credit; empty string when not provided.
+        description:
+          type: string
+          description: Synopsis/summary text; empty string when not provided.
+        genres:
+          type: array
+          description: Genre/tag list; empty array when the source provides none.
+          items:
+            type: string
 
     BrowseResult:
       type: object
@@ -903,7 +931,7 @@ components:
           example: 42
         iconUrl:
           type: string
-          description: Raw Suwayomi icon URL (no Tsundoku proxy in v1).
+          description: Tsundoku same-origin icon proxy path ("/api/suwayomi/extensions/{pkgName}/icon"), not Suwayomi's own raw (cross-origin) icon URL.
         repo:
           type: string
           description: Source repo URL this extension came from; "" when null.
@@ -946,6 +974,146 @@ components:
             description: Absolute http(s) URL.
           example:
             - https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json
+
+    SourcePreference:
+      type: object
+      description: |
+        One configurable preference of a Suwayomi source (a Tachiyomi/Mihon
+        source setting), flattened from the GraphQL Preference union. Read `type`
+        first: it decides how `currentValue`/`default` are typed —
+        CheckBoxPreference/SwitchPreference are booleans, ListPreference/
+        EditTextPreference are strings (List also carries entries/entryValues),
+        MultiSelectListPreference are string arrays. `position` is the 0-based
+        array index and is the ONLY write selector; it must come from a FRESH read
+        (the array order can shift server-side — never cache positions).
+      required:
+        - type
+        - position
+        - key
+        - title
+        - summary
+        - currentValue
+        - default
+        - entries
+        - entryValues
+      properties:
+        type:
+          type: string
+          description: The union variant (Suwayomi __typename).
+          enum:
+            - CheckBoxPreference
+            - SwitchPreference
+            - ListPreference
+            - MultiSelectListPreference
+            - EditTextPreference
+        position:
+          type: integer
+          description: 0-based array index — the (position-indexed) write selector.
+        key:
+          type: string
+          description: Source-internal preference key ("" when null).
+        title:
+          type: string
+          description: Human-readable label ("" when null).
+        summary:
+          type: string
+          description: Human-readable help text ("" when null).
+        currentValue:
+          nullable: true
+          description: |
+            Current value; null when unset. A boolean for CheckBox/Switch, a
+            string for List/EditText, an array of strings for MultiSelectList.
+          oneOf:
+            - type: boolean
+            - type: string
+            - type: array
+              items:
+                type: string
+        default:
+          nullable: true
+          description: |
+            Default value; null when unset. Same per-variant typing as currentValue.
+          oneOf:
+            - type: boolean
+            - type: string
+            - type: array
+              items:
+                type: string
+        entries:
+          type: array
+          description: Human-readable option labels (List/MultiSelect only; [] otherwise).
+          items:
+            type: string
+        entryValues:
+          type: array
+          description: Stored option values matching entries by index (List/MultiSelect only; [] otherwise).
+          items:
+            type: string
+
+    SourcePreferencesGroup:
+      type: object
+      description: One source's preferences within a grouped extension response (one source per language).
+      required:
+        - sourceId
+        - sourceName
+        - lang
+        - preferences
+      properties:
+        sourceId:
+          type: string
+          description: The Suwayomi source id (the write body's sourceId).
+        sourceName:
+          type: string
+          description: Human-readable source name.
+        lang:
+          type: string
+          description: BCP-47 language tag.
+        preferences:
+          type: array
+          description: This source's configurable preferences, in array order.
+          items:
+            $ref: "#/components/schemas/SourcePreference"
+
+    SourcePreferencesBySource:
+      type: object
+      description: An extension's per-source preferences, grouped by the (per-language) source they belong to.
+      required:
+        - sources
+      properties:
+        sources:
+          type: array
+          description: The extension's sources, each with its own preference list.
+          items:
+            $ref: "#/components/schemas/SourcePreferencesGroup"
+
+    SetSourcePreferenceRequest:
+      type: object
+      description: |
+        Write one source preference by POSITION. `value`'s JSON type must match the
+        variant at that position (boolean → CheckBox/Switch, string → List/EditText,
+        array of strings → MultiSelectList) — a mismatch is a 400. position must be
+        taken from a fresh read (positions can shift server-side).
+      required:
+        - sourceId
+        - position
+        - value
+      properties:
+        sourceId:
+          type: string
+          description: The Suwayomi source id the preference belongs to.
+        position:
+          type: integer
+          minimum: 0
+          description: 0-based array index of the preference to write.
+        value:
+          nullable: true
+          description: New value — a boolean, a string, or an array of strings (by variant).
+          oneOf:
+            - type: boolean
+            - type: string
+            - type: array
+              items:
+                type: string
 
     FoundSeries:
       type: object
@@ -2030,6 +2198,54 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/categories/{id}/default:
+    patch:
+      operationId: setDefaultCategory
+      summary: Set the default landing category
+      description: |
+        Promotes the category to be the single default that new / uncategorized
+        series are filed under, demoting the previous default in the same
+        transaction. The default can never be deleted; the previously-default
+        category becomes deletable. No series or folder is moved. Returns the
+        updated category.
+      tags:
+        - categories
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Category UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Updated. Returns the now-default category.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "400":
+          description: Malformed id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No category with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/sources:
     get:
       operationId: listSources
@@ -2210,6 +2426,60 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/manga/{mangaId}/cover:
+    get:
+      operationId: getMangaCover
+      summary: Source-manga cover image
+      description: |
+        Streams a Discover/Search candidate's cover image, proxied from Suwayomi's
+        own REST thumbnail endpoint. The image is returned as a binary blob. Returns
+        502 when Suwayomi fails to fetch it. This is a same-origin, authed proxy —
+        it exists because a source's raw GraphQL thumbnailUrl is Suwayomi-relative
+        and 404s if rendered directly against Tsundoku's own origin.
+      tags:
+        - imports
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Suwayomi source ID (accepted for route symmetry; not used to resolve the thumbnail).
+          schema:
+            type: string
+        - name: mangaId
+          in: path
+          required: true
+          description: Suwayomi-internal manga identifier (integer).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The cover image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Non-integer mangaId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi failed to fetch the cover image.
           content:
             application/json:
               schema:
@@ -2995,6 +3265,162 @@ paths:
                   $ref: "#/components/schemas/Extension"
         "400":
           description: A blank pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/suwayomi/extensions/{pkgName}/icon:
+    get:
+      operationId: getExtensionIcon
+      summary: Extension icon image
+      description: |
+        Streams the extension's icon image, proxied from Suwayomi. Suwayomi's own
+        iconUrl is a cross-origin URL the browser cannot load directly, so this
+        endpoint looks the extension up by pkgName among Extensions() and streams
+        that entry's own reported icon (Suwayomi's REST icon path, confirmed live:
+        "/api/v1/extension/icon/{apkFileName}") as a binary blob. Returns 404 when
+        pkgName is unknown, 502 when Suwayomi fails to fetch the icon.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: pkgName
+          in: path
+          required: true
+          description: The extension package name (its identity).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The icon image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: A blank pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No extension with that pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/suwayomi/extensions/{pkgName}/preferences:
+    get:
+      operationId: getExtensionPreferences
+      summary: List an extension's per-source preferences
+      description: |
+        Resolves the extension's sources (one per language) and returns each
+        source's configurable preferences, grouped by source. A pure passthrough —
+        Tsundoku stores none of this. Preferences are POSITION-indexed for writes;
+        the FE must use a fresh read's positions and never cache them. A blank
+        pkgName is a 400; any upstream Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: pkgName
+          in: path
+          required: true
+          description: The extension package name (its identity).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The extension's preferences grouped by source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourcePreferencesBySource"
+        "400":
+          description: A blank pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: setExtensionPreference
+      summary: Write one source preference by position
+      description: |
+        Writes a single preference (identified by sourceId + position) and returns
+        the FULL refreshed preference list for that source (§16 round-trip — the FE
+        re-derives fresh positions from it). value's JSON type must match the
+        variant at that position (boolean → CheckBox/Switch, string → List/EditText,
+        array → MultiSelectList); a mismatch or an out-of-range position is a 400.
+        Any upstream Suwayomi failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: pkgName
+          in: path
+          required: true
+          description: The extension package name (its identity).
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetSourcePreferenceRequest"
+      responses:
+        "200":
+          description: The refreshed preference list for the written source.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourcePreference"
+        "400":
+          description: A validation failure (blank sourceId, missing/negative or out-of-range position, or a value whose type doesn't match the variant).
           content:
             application/json:
               schema:

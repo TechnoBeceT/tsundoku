@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1028,6 +1029,181 @@ func TestClient_MangaMeta_GraphQLError(t *testing.T) {
 	if !strings.Contains(err.Error(), "manga not found") {
 		t.Errorf("error %q should contain the GraphQL error message", err.Error())
 	}
+}
+
+// --- Metadata fields (M4: author/artist/genre/description) ------------------
+
+// assertMangaMetadata asserts m's Author/Artist/Description pointers dereference
+// to the given wants and Genre equals wantGenre. Shared by the MangaMeta/Search/
+// Browse metadata tests so each test function stays a single, low-complexity
+// assertion call instead of four repeated nil-check-and-compare blocks (also
+// keeps golangci-lint's cyclop check under its threshold).
+func assertMangaMetadata(t *testing.T, m suwayomi.Manga, wantAuthor, wantArtist, wantDesc string, wantGenre []string) {
+	t.Helper()
+	if got := derefOrEmpty(m.Author); got != wantAuthor {
+		t.Errorf("Author = %q, want %q", got, wantAuthor)
+	}
+	if got := derefOrEmpty(m.Artist); got != wantArtist {
+		t.Errorf("Artist = %q, want %q", got, wantArtist)
+	}
+	if got := derefOrEmpty(m.Description); got != wantDesc {
+		t.Errorf("Description = %q, want %q", got, wantDesc)
+	}
+	if !slices.Equal(m.Genre, wantGenre) {
+		t.Errorf("Genre = %v, want %v", m.Genre, wantGenre)
+	}
+}
+
+// derefOrEmpty dereferences an optional string pointer, returning "" for nil.
+func derefOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// TestClient_MangaMeta_MetadataFields verifies that MangaMeta selects and
+// decodes author, artist, genre, and description alongside the existing
+// id/title/url/thumbnailUrl fields.
+func TestClient_MangaMeta_MetadataFields(t *testing.T) {
+	const (
+		mangaID    = 11
+		wantAuthor = "Eiichiro Oda"
+		wantArtist = "Eiichiro Oda"
+		wantDesc   = "A pirate's tale."
+	)
+	wantGenre := []string{"Action", "Adventure"}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/graphql" {
+			http.Error(w, "wrong endpoint", http.StatusNotFound)
+			return
+		}
+		resp := graphqlResponse(t, map[string]any{
+			"manga": map[string]any{
+				"id":           mangaID,
+				"title":        "One Piece",
+				"url":          "/m/11",
+				"thumbnailUrl": nil,
+				"author":       wantAuthor,
+				"artist":       wantArtist,
+				"genre":        wantGenre,
+				"description":  wantDesc,
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	manga, err := client.MangaMeta(context.Background(), mangaID)
+	if err != nil {
+		t.Fatalf("MangaMeta() error = %v", err)
+	}
+	assertMangaMetadata(t, manga, wantAuthor, wantArtist, wantDesc, wantGenre)
+}
+
+// TestClient_MangaMeta_MetadataFieldsNil verifies that null author/artist/
+// genre/description in the GraphQL response decode to nil (or an empty/nil
+// slice for Genre), not a zero-value panic or a spurious empty string pointer.
+func TestClient_MangaMeta_MetadataFieldsNil(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, map[string]any{
+			"manga": map[string]any{
+				"id":           5,
+				"title":        "No Metadata",
+				"url":          "/m/5",
+				"thumbnailUrl": nil,
+				"author":       nil,
+				"artist":       nil,
+				"genre":        nil,
+				"description":  nil,
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	manga, err := client.MangaMeta(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("MangaMeta() error = %v", err)
+	}
+	if manga.Author != nil {
+		t.Errorf("manga.Author = %v, want nil", *manga.Author)
+	}
+	if manga.Artist != nil {
+		t.Errorf("manga.Artist = %v, want nil", *manga.Artist)
+	}
+	if manga.Description != nil {
+		t.Errorf("manga.Description = %v, want nil", *manga.Description)
+	}
+	if len(manga.Genre) != 0 {
+		t.Errorf("manga.Genre = %v, want empty", manga.Genre)
+	}
+}
+
+// TestClient_Search_MetadataFields verifies Search decodes author/artist/genre/
+// description onto each result alongside the existing fields.
+func TestClient_Search_MetadataFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, map[string]any{
+			"fetchSourceManga": map[string]any{
+				"mangas": []map[string]any{
+					{
+						"id": 1, "title": "Solo Leveling", "url": "/m/1", "thumbnailUrl": nil,
+						"author": "Chugong", "artist": "Dubu", "genre": []string{"Action"}, "description": "A hunter's rise.",
+					},
+				},
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	mangas, err := client.Search(context.Background(), "src", "solo leveling")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(mangas) != 1 {
+		t.Fatalf("Search() got %d results, want 1", len(mangas))
+	}
+	assertMangaMetadata(t, mangas[0], "Chugong", "Dubu", "A hunter's rise.", []string{"Action"})
+}
+
+// TestClient_Browse_MetadataFields verifies Browse decodes the same metadata
+// fields as Search onto each candidate (shared gqlMangaNode mapping).
+func TestClient_Browse_MetadataFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, map[string]any{
+			"fetchSourceManga": map[string]any{
+				"mangas": []map[string]any{
+					{
+						"id": 7, "title": "Berserk", "url": "/m/7", "thumbnailUrl": nil,
+						"author": "Kentaro Miura", "artist": "Kentaro Miura", "genre": []string{"Dark Fantasy"}, "description": "A cursed swordsman.",
+					},
+				},
+				"hasNextPage": false,
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	res, err := client.Browse(context.Background(), "src", suwayomi.BrowsePopular, 1)
+	if err != nil {
+		t.Fatalf("Browse() error = %v", err)
+	}
+	if len(res.Mangas) != 1 {
+		t.Fatalf("Browse() got %d mangas, want 1", len(res.Mangas))
+	}
+	assertMangaMetadata(t, res.Mangas[0], "Kentaro Miura", "Kentaro Miura", "A cursed swordsman.", []string{"Dark Fantasy"})
 }
 
 // --- Interface seam ----------------------------------------------------------

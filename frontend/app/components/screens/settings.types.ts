@@ -217,6 +217,12 @@ export interface Extension {
   version: string
   /** Whether a newer version is available (installed rows only). */
   hasUpdate: boolean
+  /**
+   * Same-origin icon proxy path ("/api/suwayomi/extensions/{id}/icon").
+   * ExtensionRow falls back to the tinted placeholder square on load error
+   * (or when this is empty, e.g. a Storybook fixture with no backend).
+   */
+  iconUrl: string
 }
 
 /** Extension repository URL row (reorderable; one is the pre-populated default). */

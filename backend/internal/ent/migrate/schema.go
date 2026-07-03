@@ -14,6 +14,7 @@ var (
 		{Name: "name", Type: field.TypeString, Unique: true},
 		{Name: "sort_order", Type: field.TypeInt, Default: 0},
 		{Name: "protected", Type: field.TypeBool, Default: false},
+		{Name: "is_default", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}

@@ -424,6 +424,15 @@ func (fakeSuwayomi) SetExtensionState(context.Context, string, suwayomi.Extensio
 func (fakeSuwayomi) FetchExtensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
 func (fakeSuwayomi) ExtensionRepos(context.Context) ([]string, error)              { return nil, nil }
 func (fakeSuwayomi) SetExtensionRepos(context.Context, []string) error             { return nil }
+func (fakeSuwayomi) SourcePreferences(context.Context, string) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (fakeSuwayomi) SetSourcePreference(context.Context, string, int, suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (fakeSuwayomi) ExtensionSources(context.Context, string) ([]suwayomi.Source, error) {
+	return nil, nil
+}
 
 // TestRunner_StartRefresh_DiscoversAndDownloads verifies the refresh ticker
 // re-fetches a monitored series (creating a wanted chapter) and then triggers a

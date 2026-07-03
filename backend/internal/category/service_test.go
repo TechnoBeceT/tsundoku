@@ -123,15 +123,70 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("Delete non-empty: want ErrCategoryNotEmpty, got %v", err)
 	}
 
-	// Protected Other → 400.
+	// Default Other → 400 (the current default can never be deleted).
 	otherID := catIDByName(ctx, t, client, "Other")
-	if err := svc.Delete(ctx, otherID); !errors.Is(err, category.ErrCategoryProtected) {
-		t.Fatalf("Delete protected: want ErrCategoryProtected, got %v", err)
+	if err := svc.Delete(ctx, otherID); !errors.Is(err, category.ErrCategoryIsDefault) {
+		t.Fatalf("Delete default: want ErrCategoryIsDefault, got %v", err)
 	}
 
 	// Unknown → 404.
 	if err := svc.Delete(ctx, uuid.New()); !errors.Is(err, category.ErrCategoryNotFound) {
 		t.Fatalf("Delete unknown: want ErrCategoryNotFound, got %v", err)
+	}
+}
+
+// TestSetDefaultMakesPreviousDefaultDeletable is the F2/F4 proof: the seeded
+// default is "Other"; after SetDefault promotes another category, exactly one
+// default remains, and the demoted "Other" (empty) becomes deletable.
+func TestSetDefaultMakesPreviousDefaultDeletable(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc := category.NewService(client, t.TempDir())
+
+	otherID := catIDByName(ctx, t, client, "Other")
+	mangaID := catIDByName(ctx, t, client, "Manga")
+
+	// Seeded default is "Other".
+	def, err := category.ResolveDefault(ctx, client)
+	if err != nil {
+		t.Fatalf("ResolveDefault (seeded): %v", err)
+	}
+	if def.Name != "Other" {
+		t.Fatalf("seeded default = %q, want Other", def.Name)
+	}
+
+	// Promote "Manga".
+	if err := svc.SetDefault(ctx, mangaID); err != nil {
+		t.Fatalf("SetDefault(Manga): %v", err)
+	}
+	// Exactly one default, and it is Manga.
+	if n := client.Category.Query().Where(entcategory.IsDefault(true)).CountX(ctx); n != 1 {
+		t.Fatalf("want exactly 1 default after SetDefault, got %d", n)
+	}
+	def2, err := category.ResolveDefault(ctx, client)
+	if err != nil || def2.ID != mangaID {
+		t.Fatalf("ResolveDefault after promote = %+v (err %v), want Manga", def2, err)
+	}
+
+	// "Manga" (the new default) can NOT be deleted.
+	if err := svc.Delete(ctx, mangaID); !errors.Is(err, category.ErrCategoryIsDefault) {
+		t.Fatalf("Delete new default: want ErrCategoryIsDefault, got %v", err)
+	}
+	// "Other" (demoted, empty) CAN now be deleted.
+	if err := svc.Delete(ctx, otherID); err != nil {
+		t.Fatalf("Delete demoted Other: %v", err)
+	}
+}
+
+// TestSetDefaultUnknownID verifies SetDefault maps a missing id to
+// ErrCategoryNotFound (→ 404).
+func TestSetDefaultUnknownID(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc := category.NewService(client, t.TempDir())
+
+	if err := svc.SetDefault(ctx, uuid.New()); !errors.Is(err, category.ErrCategoryNotFound) {
+		t.Fatalf("SetDefault(unknown): want ErrCategoryNotFound, got %v", err)
 	}
 }
 

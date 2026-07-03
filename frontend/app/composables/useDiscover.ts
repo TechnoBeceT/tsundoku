@@ -6,8 +6,9 @@
  *
  * Browse: GET /api/sources/{sourceId}/browse?type={activeType}&page={n}.
  * Maps the generated SearchCandidate DTO → DiscoverCandidate (fields align
- * 1-to-1; optional extras inLibrary/description/genres are absent from the
- * current DTO and stay undefined on the screen type).
+ * 1-to-1; description/genres/author/artist come straight off the DTO — a
+ * backend-provided "" or [] simply renders as "no value" on the screen type;
+ * inLibrary has no DTO counterpart and stays undefined).
  *
  * Pagination: loadPage(n) APPENDS each page's manga onto result.manga for the
  * standard "Load more" accumulation pattern (BrowseResult.manga is documented
@@ -52,8 +53,11 @@ function mapCandidate(dto: SearchCandidateDTO): DiscoverCandidate {
     title: dto.title,
     thumbnailUrl: dto.thumbnailUrl,
     url: dto.url,
-    // inLibrary / description / genres: not present in the current SearchCandidate
-    // DTO; left undefined so the hover popup simply omits those optional sections.
+    description: dto.description,
+    genres: dto.genres,
+    author: dto.author,
+    artist: dto.artist,
+    // inLibrary: no DTO counterpart; left undefined.
   }
 }
 

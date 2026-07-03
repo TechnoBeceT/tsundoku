@@ -96,9 +96,9 @@ func TestShape1_LongString_SourceID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	results, err := inst.Client().Search(ctx, testharness.LocalSourceID, testharness.FixtureMangaTitle)
+	results, err := inst.Client().Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
 	if err != nil {
-		t.Fatalf("Search with sourceId=%q: %v\n(check: is LongString! the correct scalar for sourceId?)", testharness.LocalSourceID, err)
+		t.Fatalf("Search with sourceId=%q: %v\n(check: is LongString! the correct scalar for sourceId?)", suwayomi.LocalSourceID, err)
 	}
 	t.Logf("CONFIRMED: LongString! scalar accepted for sourceId; got %d results", len(results))
 }
@@ -116,7 +116,7 @@ func TestShape2_ChapterFilter_EqualTo(t *testing.T) {
 	defer cancel()
 
 	client := inst.Client()
-	results, err := client.Search(ctx, testharness.LocalSourceID, testharness.FixtureMangaTitle)
+	results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
 	if err != nil {
 		t.Skipf("Search failed (skipping shape2): %v", err)
 	}
@@ -150,7 +150,7 @@ func TestShape3_ChapterPages_URLFormat(t *testing.T) {
 
 	client := inst.Client()
 
-	results, err := client.Search(ctx, testharness.LocalSourceID, testharness.FixtureMangaTitle)
+	results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
 	if err != nil || len(results) == 0 {
 		t.Skipf("Search failed or empty (skipping shape3): err=%v results=%d", err, len(results))
 	}
@@ -217,21 +217,70 @@ func TestShape4_BrowseEnumType(t *testing.T) {
 	// POPULAR is the load-bearing assertion: it must be accepted as a value of
 	// FetchSourceMangaType. Any error here means the enum type name or value is
 	// wrong and must fail the test.
-	popular, err := client.Browse(ctx, testharness.LocalSourceID, suwayomi.BrowsePopular, 1)
+	popular, err := client.Browse(ctx, suwayomi.LocalSourceID, suwayomi.BrowsePopular, 1)
 	if err != nil {
-		t.Fatalf("Browse(sourceId=%q, type=POPULAR, page=1): %v\n(check: is FetchSourceMangaType! the correct enum type name, and POPULAR a valid value?)", testharness.LocalSourceID, err)
+		t.Fatalf("Browse(sourceId=%q, type=POPULAR, page=1): %v\n(check: is FetchSourceMangaType! the correct enum type name, and POPULAR a valid value?)", suwayomi.LocalSourceID, err)
 	}
 	t.Logf("CONFIRMED: FetchSourceMangaType! accepted with value POPULAR; got %d mangas, hasNextPage=%v", len(popular.Mangas), popular.HasNextPage)
 
 	// LATEST reuses the same FetchSourceMangaType. The Local source may not
 	// support a latest listing — tolerate a source-capability error, but still
 	// log the outcome so the test record shows whether LATEST round-tripped.
-	latest, err := client.Browse(ctx, testharness.LocalSourceID, suwayomi.BrowseLatest, 1)
+	latest, err := client.Browse(ctx, suwayomi.LocalSourceID, suwayomi.BrowseLatest, 1)
 	if err != nil {
 		t.Logf("NOTE: Browse(type=LATEST) returned an error — tolerated as a possible source-capability limitation (NOT a type-name rejection): %v", err)
 	} else {
 		t.Logf("CONFIRMED: FetchSourceMangaType! accepted with value LATEST; got %d mangas, hasNextPage=%v", len(latest.Mangas), latest.HasNextPage)
 	}
+}
+
+// TestShape7_MangaMetadataFields is the MERGE GATE for the M4 rich-hover-preview
+// feature: it proves, against a real Suwayomi, that the `author`, `artist`,
+// `genre`, and `description` MangaType field names added to mangaFieldSelection
+// (client.go) are accepted by the schema on all three operations that share it —
+// Search, Browse, and MangaMeta.
+//
+// Why this needs a real Suwayomi: the httptest fakes in client_test.go only
+// prove the Go struct DECODES whatever JSON is handed to it — they cannot catch
+// a wrong GraphQL field NAME, which the server would reject with a schema
+// validation error before ever returning data. Only a real Suwayomi validates
+// the selection set against MangaType.
+//
+// What this confirms: Search/Browse/MangaMeta all return NO error with the
+// widened selection. The Local source's fixture manga may not itself carry
+// author/artist/genre/description (a local worktree source rarely does) — a
+// nil/empty value is fine and expected; the load-bearing assertion is the
+// ABSENCE of a GraphQL error, which is what a bad field name would produce.
+func TestShape7_MangaMetadataFields(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
+	if err != nil {
+		t.Fatalf("Search (widened selection incl. author/artist/genre/description): %v\n(check: are these MangaType field names correct?)", err)
+	}
+	if len(results) == 0 {
+		t.Skip("no search results (local source may not have indexed; skipping shape7)")
+	}
+	m := results[0]
+	t.Logf("CONFIRMED: Search accepted author/artist/genre/description; author=%v artist=%v genre=%v description=%v",
+		m.Author, m.Artist, m.Genre, m.Description)
+
+	popular, err := client.Browse(ctx, suwayomi.LocalSourceID, suwayomi.BrowsePopular, 1)
+	if err != nil {
+		t.Fatalf("Browse (widened selection incl. author/artist/genre/description): %v", err)
+	}
+	t.Logf("CONFIRMED: Browse accepted author/artist/genre/description; got %d mangas", len(popular.Mangas))
+
+	meta, err := client.MangaMeta(ctx, m.ID)
+	if err != nil {
+		t.Fatalf("MangaMeta(mangaId=%d) (widened selection incl. author/artist/genre/description): %v", m.ID, err)
+	}
+	t.Logf("CONFIRMED: MangaMeta accepted author/artist/genre/description; author=%v artist=%v genre=%v description=%v",
+		meta.Author, meta.Artist, meta.Genre, meta.Description)
 }
 
 // TestShape5_ServerSettings is the MERGE GATE for the Suwayomi settings-proxy.
@@ -347,6 +396,13 @@ func boolptr(b bool) *bool    { return &b }
 // flips back. Guarded by a short network probe; any network/repo/APK
 // unavailability calls t.Skip. updateExtension's input shape is already
 // introspection-confirmed, so Tier 2 is bonus live proof, not the gate.
+//
+// Tier 2 also confirms the M1 icon-proxy bugfix's live discovery: every fetched
+// extension's IconURL is Suwayomi's own REST icon path
+// "/api/v1/extension/icon/{apkFileName}.apk" (NOT a full URL), and that path is
+// genuinely fetchable via PageBytes — proving handler/extensions.Icon's
+// "look up by pkgName, stream that entry's own IconURL via PageBytes" design
+// actually reaches real image bytes, not just a plausible-looking string.
 func TestShape6_Extensions(t *testing.T) {
 	inst := testharness.Shared(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -424,6 +480,8 @@ func tier2Extensions(t *testing.T, client suwayomi.Client) {
 		t.Skipf("Tier 2 skipped: FetchExtensions(real repo): %v", err)
 	}
 
+	tier2IconURLShape(t, ctx, client, fetched)
+
 	var target string
 	for _, e := range fetched {
 		if !e.IsInstalled && !e.IsObsolete {
@@ -436,6 +494,35 @@ func tier2Extensions(t *testing.T, client suwayomi.Client) {
 	}
 
 	tier2InstallUninstallRoundTrip(t, ctx, client, target)
+}
+
+// tier2IconURLShape confirms the M1 icon-proxy discovery against a real repo
+// listing: the first extension's IconURL matches Suwayomi's own REST icon path
+// shape ("/api/v1/extension/icon/{apkFileName}.apk", confirmed live 2026-07-03
+// against Suwayomi v2.2.2100 via the keiyoushi repo), and that path is
+// genuinely fetchable via PageBytes (proving handler/extensions.Icon's
+// PageBytes(e.IconURL) call reaches real bytes, not just a plausible string).
+// It never fails the gate on network/repo unavailability — only on a shape or
+// fetch regression once a listing was already obtained.
+func tier2IconURLShape(t *testing.T, ctx context.Context, client suwayomi.Client, fetched []suwayomi.Extension) {
+	t.Helper()
+	if len(fetched) == 0 {
+		t.Skip("Tier 2 icon shape skipped: repo listing was empty")
+	}
+	icon := fetched[0].IconURL
+	if !strings.HasPrefix(icon, "/api/v1/extension/icon/") || !strings.HasSuffix(icon, ".apk") {
+		t.Fatalf("IconURL shape regression: got %q, want \"/api/v1/extension/icon/{apkFileName}.apk\"", icon)
+	}
+	t.Logf("CONFIRMED: IconURL shape = %q", icon)
+
+	data, ext, err := client.PageBytes(ctx, icon)
+	if err != nil {
+		t.Fatalf("PageBytes(%q) failed — the confirmed icon path is no longer fetchable: %v", icon, err)
+	}
+	if len(data) == 0 {
+		t.Error("PageBytes returned zero bytes for a confirmed icon path")
+	}
+	t.Logf("CONFIRMED: icon fetched via PageBytes, %d bytes, ext=%q", len(data), ext)
 }
 
 // tier2InstallUninstallRoundTrip performs the live install → assert isInstalled →
@@ -508,6 +595,147 @@ func findExtension(t *testing.T, client suwayomi.Client, pkgName string) suwayom
 	return suwayomi.Extension{}
 }
 
+// TestShape8_SourcePreferences is the MERGE GATE for the per-source preferences
+// (M3 "Configure") proxy. It proves, against a real Suwayomi, the GraphQL shapes
+// that httptest fakes cannot — a fake echoes canned JSON, but only a real server
+// validates the Preference-union selection (crucially the per-fragment
+// currentValue/default ALIASES that avoid the FieldsConflict rejection) and the
+// updateSourcePreference input against its schema.
+//
+// Tier 1 (MUST pass; local harness only, no external network):
+//   - SourcePreferences(LocalSourceID) decodes with NO schema/type error —
+//     proving `source(id){ preferences { …aliased union fragments… } }` is a
+//     valid, FieldsConflict-free document. A zero-length list is acceptable (the
+//     Local source may expose no preferences).
+//
+// Tier 2 (BEST-EFFORT; needs network + a real repo; NEVER fails the gate on its
+// absence): point the keiyoushi repo, install an extension, resolve its sources
+// via ExtensionSources(pkgName), read that source's preferences, flip a boolean
+// (Switch/CheckBox) preference via SetSourcePreference, assert the returned list
+// reflects the flip, then restore + uninstall. This is the only place the write
+// mutation + the "exactly one *State field" mapping + ExtensionSources are proven
+// live; their shapes are otherwise introspection-confirmed, so Tier 2 is bonus.
+func TestShape8_SourcePreferences(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	// --- Tier 1: the union query decodes (aliases avoid FieldsConflict) -------
+	prefs, err := client.SourcePreferences(ctx, suwayomi.LocalSourceID)
+	if err != nil {
+		t.Fatalf("SourcePreferences (union query shape): %v\n(check: is `source(id){preferences{…}}` correct and are currentValue/default aliased per fragment to avoid FieldsConflict?)", err)
+	}
+	t.Logf("CONFIRMED: source preferences query decoded; %d preference(s) on the Local source", len(prefs))
+
+	// --- Tier 2: best-effort live write round-trip ---------------------------
+	tier2SourcePreferences(t, client)
+}
+
+// tier2SourcePreferences is the best-effort live install → ExtensionSources →
+// read → write-flip → restore round-trip. It t.Skips on any network/repo/APK
+// unavailability and only t.Errors on a genuine bug (a flipped boolean not
+// reflected in the returned list). Extracted to keep the test within the cyclop
+// budget.
+func tier2SourcePreferences(t *testing.T, client suwayomi.Client) {
+	t.Helper()
+	const realRepo = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"
+	if !probeURL(realRepo) {
+		t.Skip("Tier 2 skipped: no network access to a real extensions repo")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	if err := client.SetExtensionRepos(ctx, []string{realRepo}); err != nil {
+		t.Skipf("Tier 2 skipped: SetExtensionRepos(real repo): %v", err)
+	}
+	t.Cleanup(func() { _ = client.SetExtensionRepos(context.Background(), nil) })
+
+	fetched, err := client.FetchExtensions(ctx)
+	if err != nil {
+		t.Skipf("Tier 2 skipped: FetchExtensions(real repo): %v", err)
+	}
+
+	var pkg string
+	for _, e := range fetched {
+		if !e.IsInstalled && !e.IsObsolete {
+			pkg = e.PkgName
+			break
+		}
+	}
+	if pkg == "" {
+		t.Skip("Tier 2 skipped: no installable extension found in the repo listing")
+	}
+
+	if err := client.SetExtensionState(ctx, pkg, suwayomi.ExtensionInstall); err != nil {
+		t.Skipf("Tier 2 skipped: install %q failed (likely network/APK fetch): %v", pkg, err)
+	}
+	t.Cleanup(func() { _ = client.SetExtensionState(context.Background(), pkg, suwayomi.ExtensionUninstall) })
+
+	sources, err := client.ExtensionSources(ctx, pkg)
+	if err != nil {
+		t.Fatalf("ExtensionSources(%q): %v\n(check: is `extension(pkgName){source{nodes{…}}}` correct?)", pkg, err)
+	}
+	if len(sources) == 0 {
+		t.Skipf("Tier 2 skipped: extension %q reported no sources", pkg)
+	}
+	t.Logf("CONFIRMED: ExtensionSources(%q) returned %d source(s)", pkg, len(sources))
+
+	tier2WriteFlip(t, client, sources[0].ID)
+}
+
+// tier2WriteFlip finds the first boolean (Switch/CheckBox) preference on sourceID,
+// flips it via SetSourcePreference, asserts the returned refreshed list reflects
+// the new value, then restores it. It t.Skips when the source has no boolean
+// preference (nothing safe to flip); it only t.Errors on a non-reflecting write.
+func tier2WriteFlip(t *testing.T, client suwayomi.Client, sourceID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
+	prefs, err := client.SourcePreferences(ctx, sourceID)
+	if err != nil {
+		t.Fatalf("SourcePreferences(%q): %v", sourceID, err)
+	}
+
+	idx := -1
+	for i, p := range prefs {
+		if (p.Type == suwayomi.PreferenceSwitch || p.Type == suwayomi.PreferenceCheckBox) && p.CurrentBool != nil {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		t.Skip("Tier 2 write skipped: source has no boolean preference to flip safely")
+	}
+
+	target := prefs[idx]
+	orig := *target.CurrentBool
+	want := !orig
+	value := suwayomi.BoolPreferenceValue(target.Type, want)
+
+	refreshed, err := client.SetSourcePreference(ctx, sourceID, target.Position, value)
+	if err != nil {
+		t.Fatalf("SetSourcePreference(pos=%d): %v", target.Position, err)
+	}
+	// Restore regardless of assertion outcome.
+	t.Cleanup(func() {
+		_, _ = client.SetSourcePreference(context.Background(), sourceID, target.Position,
+			suwayomi.BoolPreferenceValue(target.Type, orig))
+	})
+
+	if target.Position >= len(refreshed) {
+		t.Fatalf("refreshed list shorter than the written position (%d >= %d)", target.Position, len(refreshed))
+	}
+	got := refreshed[target.Position].CurrentBool
+	if got == nil || *got != want {
+		t.Errorf("after write, preference %q current=%v, want %v", target.Key, got, want)
+	} else {
+		t.Logf("CONFIRMED: SetSourcePreference flipped %q %v→%v (reflected in the returned list)", target.Key, orig, want)
+	}
+}
+
 // TestE2E_AddSeriesDispatchDownload is the Milestone 2 end-to-end proof:
 //
 //	real Suwayomi (local source) →
@@ -539,7 +767,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 	// Retry search up to 30 s because the Local source may need time to index
 	// on first launch.
 	if err := retryUntil(ctx, 30*time.Second, func() error {
-		results, err := client.Search(ctx, testharness.LocalSourceID, testharness.FixtureMangaTitle)
+		results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
 		if err != nil {
 			return err
 		}

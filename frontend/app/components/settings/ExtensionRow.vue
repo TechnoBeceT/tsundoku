@@ -1,20 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import type { Extension } from '../screens/settings.types'
 
 /**
- * ExtensionRow — one Suwayomi source-extension card. A deterministic id-tinted
- * avatar, the name + language + version, an optional UPDATE badge, and the
- * action button(s): an installed row shows Update (when an update exists) +
- * Uninstall; an available row shows Install. The acting button spins + disables
- * while this row's mutation is in flight (§16).
+ * ExtensionRow — one Suwayomi source-extension card. The extension's own icon
+ * (proxied same-origin, see useExtensions' iconUrl) when available, else a
+ * deterministic id-tinted placeholder square; the name + language + version,
+ * an optional UPDATE badge, and the action button(s): an installed row shows
+ * Update (when an update exists) + Uninstall; an available row shows Install.
+ * The acting button spins + disables while this row's mutation is in flight
+ * (§16).
  *
  *   - `extension`: the extension to render.
  *   - `installed`: installed variant (Update/Uninstall) vs available (Install).
  *   - `busy`: this row's mutation is in flight.
  *
- * Emits `install` / `update` / `uninstall` (the parent dispatches by pkgName).
+ * Installed rows also show a Configure (gear) button that opens the per-source
+ * preferences dialog.
+ *
+ * Emits `install` / `update` / `uninstall` / `configure` (the parent dispatches
+ * by pkgName).
  */
 const props = withDefaults(defineProps<{
   /** The extension to render. */
@@ -35,20 +41,38 @@ const emit = defineEmits<{
   'update': []
   /** Uninstall this installed extension (routed through a confirm by the parent). */
   'uninstall': []
+  /** Open this installed extension's per-source preferences dialog. */
+  'configure': []
 }>()
 
-// A deterministic accent hue for the square avatar (pkgName-derived).
+// A deterministic accent hue for the placeholder square (pkgName-derived).
 const hue = computed(() => {
   let h = 0
   for (let i = 0; i < props.extension.id.length; i++) h = (h * 31 + props.extension.id.charCodeAt(i)) % 360
   return h
 })
 const language = computed(() => props.extension.lang.toUpperCase())
+
+// The tinted square is the fallback: an empty iconUrl (e.g. a backend-less
+// Storybook fixture) or a load failure (@error, e.g. a 404/502 from the proxy)
+// both fall back to it, so the row never shows a broken-image icon.
+const iconFailed = ref(false)
+watch(() => props.extension.iconUrl, () => { iconFailed.value = false })
+const showIcon = computed(() => !!props.extension.iconUrl && !iconFailed.value)
 </script>
 
 <template>
   <div class="ext-card" :class="{ 'ext-card--busy': busy }">
-    <span class="ext-card__avatar" :style="{ background: `hsl(${hue} 55% 30%)` }" />
+    <img
+      v-if="showIcon"
+      :src="extension.iconUrl"
+      alt=""
+      aria-hidden="true"
+      loading="lazy"
+      class="ext-card__avatar ext-card__icon"
+      @error="iconFailed = true"
+    >
+    <span v-else class="ext-card__avatar" :style="{ background: `hsl(${hue} 55% 30%)` }" />
     <div class="ext-card__body">
       <div class="ext-card__titleline">
         <span class="ext-card__name">{{ extension.name }}</span>
@@ -59,6 +83,12 @@ const language = computed(() => props.extension.lang.toUpperCase())
     </div>
 
     <template v-if="installed">
+      <AppButton variant="mini" size="sm" :disabled="busy" @click="emit('configure')">
+        <template #icon>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+        </template>
+        Configure
+      </AppButton>
       <AppButton v-if="extension.hasUpdate" variant="solid" size="sm" :loading="busy" @click="emit('update')">Update</AppButton>
       <AppButton variant="danger-ghost" size="sm" :loading="busy" @click="emit('uninstall')">Uninstall</AppButton>
     </template>
@@ -93,6 +123,14 @@ const language = computed(() => props.extension.lang.toUpperCase())
   height: 34px;
   border-radius: var(--radius-md);
   flex: none;
+}
+
+/* The real icon (an <img>, not the tinted placeholder <span>): contain so a
+   non-square source icon doesn't stretch, and a neutral surface backdrop so a
+   transparent-background icon reads cleanly. */
+.ext-card__icon {
+  object-fit: contain;
+  background: var(--surface3);
 }
 
 .ext-card__body {

@@ -423,6 +423,30 @@ export interface paths {
         patch: operations["updateCategory"];
         trace?: never;
     };
+    "/api/categories/{id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set the default landing category
+         * @description Promotes the category to be the single default that new / uncategorized
+         *     series are filed under, demoting the previous default in the same
+         *     transaction. The default can never be deleted; the previously-default
+         *     category becomes deletable. No series or folder is moved. Returns the
+         *     updated category.
+         */
+        patch: operations["setDefaultCategory"];
+        trace?: never;
+    };
     "/api/sources": {
         parameters: {
             query?: never;
@@ -505,6 +529,30 @@ export interface paths {
          *     confirm the chapter count.
          */
         get: operations["inspectChapters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{sourceId}/manga/{mangaId}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Source-manga cover image
+         * @description Streams a Discover/Search candidate's cover image, proxied from Suwayomi's
+         *     own REST thumbnail endpoint. The image is returned as a binary blob. Returns
+         *     502 when Suwayomi fails to fetch it. This is a same-origin, authed proxy —
+         *     it exists because a source's raw GraphQL thumbnailUrl is Suwayomi-relative
+         *     and 404s if rendered directly against Tsundoku's own origin.
+         */
+        get: operations["getMangaCover"];
         put?: never;
         post?: never;
         delete?: never;
@@ -919,6 +967,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/suwayomi/extensions/{pkgName}/icon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Extension icon image
+         * @description Streams the extension's icon image, proxied from Suwayomi. Suwayomi's own
+         *     iconUrl is a cross-origin URL the browser cannot load directly, so this
+         *     endpoint looks the extension up by pkgName among Extensions() and streams
+         *     that entry's own reported icon (Suwayomi's REST icon path, confirmed live:
+         *     "/api/v1/extension/icon/{apkFileName}") as a binary blob. Returns 404 when
+         *     pkgName is unknown, 502 when Suwayomi fails to fetch the icon.
+         */
+        get: operations["getExtensionIcon"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suwayomi/extensions/{pkgName}/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List an extension's per-source preferences
+         * @description Resolves the extension's sources (one per language) and returns each
+         *     source's configurable preferences, grouped by source. A pure passthrough —
+         *     Tsundoku stores none of this. Preferences are POSITION-indexed for writes;
+         *     the FE must use a fresh read's positions and never cache them. A blank
+         *     pkgName is a 400; any upstream Suwayomi failure is a 502.
+         */
+        get: operations["getExtensionPreferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Write one source preference by position
+         * @description Writes a single preference (identified by sourceId + position) and returns
+         *     the FULL refreshed preference list for that source (§16 round-trip — the FE
+         *     re-derives fresh positions from it). value's JSON type must match the
+         *     variant at that position (boolean → CheckBox/Switch, string → List/EditText,
+         *     array → MultiSelectList); a mismatch or an out-of-range position is a 400.
+         *     Any upstream Suwayomi failure is a 502.
+         */
+        patch: operations["setExtensionPreference"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1097,8 +1203,10 @@ export interface components {
             name: string;
             /** @description Owner-chosen display order (ascending; ties break by name). */
             sortOrder: number;
-            /** @description True only for the default "Other" — it cannot be renamed or deleted. */
+            /** @description True for the seeded "Other" — it can never be renamed. */
             protected: boolean;
+            /** @description True for the single default landing category (new / uncategorized series file here). It can never be deleted; promote another category (PATCH /api/categories/{id}/default) to make this one deletable. */
+            isDefault: boolean;
             /** @description Number of series filed under this category. */
             count: number;
         };
@@ -1237,8 +1345,20 @@ export interface components {
             title: string;
             /** @description Provider-canonical URL for this manga (powers the "View on source" link); empty string when not provided. */
             url: string;
-            /** @description Cover image URL; empty string when not provided. */
+            /**
+             * @description Tsundoku's own cover-proxy path ("/api/sources/{source}/manga/{mangaId}/cover"),
+             *     never Suwayomi's raw thumbnail URL. Empty string when the source provided no
+             *     thumbnail at all.
+             */
             thumbnailUrl: string;
+            /** @description Manga's writing credit; empty string when not provided. */
+            author: string;
+            /** @description Manga's art credit; empty string when not provided. */
+            artist: string;
+            /** @description Synopsis/summary text; empty string when not provided. */
+            description: string;
+            /** @description Genre/tag list; empty array when the source provides none. */
+            genres: string[];
         };
         /** @description One page of a source's catalog browse (Popular/Latest) — a flat candidate list in source order plus pagination metadata. */
         BrowseResult: {
@@ -1474,7 +1594,7 @@ export interface components {
              * @example 42
              */
             versionCode: number;
-            /** @description Raw Suwayomi icon URL (no Tsundoku proxy in v1). */
+            /** @description Tsundoku same-origin icon proxy path ("/api/suwayomi/extensions/{pkgName}/icon"), not Suwayomi's own raw (cross-origin) icon URL. */
             iconUrl: string;
             /** @description Source repo URL this extension came from; "" when null. */
             repo: string;
@@ -1504,6 +1624,72 @@ export interface components {
              *     ]
              */
             repos: string[];
+        };
+        /**
+         * @description One configurable preference of a Suwayomi source (a Tachiyomi/Mihon
+         *     source setting), flattened from the GraphQL Preference union. Read `type`
+         *     first: it decides how `currentValue`/`default` are typed —
+         *     CheckBoxPreference/SwitchPreference are booleans, ListPreference/
+         *     EditTextPreference are strings (List also carries entries/entryValues),
+         *     MultiSelectListPreference are string arrays. `position` is the 0-based
+         *     array index and is the ONLY write selector; it must come from a FRESH read
+         *     (the array order can shift server-side — never cache positions).
+         */
+        SourcePreference: {
+            /**
+             * @description The union variant (Suwayomi __typename).
+             * @enum {string}
+             */
+            type: "CheckBoxPreference" | "SwitchPreference" | "ListPreference" | "MultiSelectListPreference" | "EditTextPreference";
+            /** @description 0-based array index — the (position-indexed) write selector. */
+            position: number;
+            /** @description Source-internal preference key ("" when null). */
+            key: string;
+            /** @description Human-readable label ("" when null). */
+            title: string;
+            /** @description Human-readable help text ("" when null). */
+            summary: string;
+            /**
+             * @description Current value; null when unset. A boolean for CheckBox/Switch, a
+             *     string for List/EditText, an array of strings for MultiSelectList.
+             */
+            currentValue: (boolean | string | string[]) | null;
+            /** @description Default value; null when unset. Same per-variant typing as currentValue. */
+            default: (boolean | string | string[]) | null;
+            /** @description Human-readable option labels (List/MultiSelect only; [] otherwise). */
+            entries: string[];
+            /** @description Stored option values matching entries by index (List/MultiSelect only; [] otherwise). */
+            entryValues: string[];
+        };
+        /** @description One source's preferences within a grouped extension response (one source per language). */
+        SourcePreferencesGroup: {
+            /** @description The Suwayomi source id (the write body's sourceId). */
+            sourceId: string;
+            /** @description Human-readable source name. */
+            sourceName: string;
+            /** @description BCP-47 language tag. */
+            lang: string;
+            /** @description This source's configurable preferences, in array order. */
+            preferences: components["schemas"]["SourcePreference"][];
+        };
+        /** @description An extension's per-source preferences, grouped by the (per-language) source they belong to. */
+        SourcePreferencesBySource: {
+            /** @description The extension's sources, each with its own preference list. */
+            sources: components["schemas"]["SourcePreferencesGroup"][];
+        };
+        /**
+         * @description Write one source preference by POSITION. `value`'s JSON type must match the
+         *     variant at that position (boolean → CheckBox/Switch, string → List/EditText,
+         *     array of strings → MultiSelectList) — a mismatch is a 400. position must be
+         *     taken from a fresh read (positions can shift server-side).
+         */
+        SetSourcePreferenceRequest: {
+            /** @description The Suwayomi source id the preference belongs to. */
+            sourceId: string;
+            /** @description 0-based array index of the preference to write. */
+            position: number;
+            /** @description New value — a boolean, a string, or an array of strings (by variant). */
+            value: (boolean | string | string[]) | null;
         };
         /** @description One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB). */
         FoundSeries: {
@@ -2623,6 +2809,56 @@ export interface operations {
             };
         };
     };
+    setDefaultCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Category UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated. Returns the now-default category. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            /** @description Malformed id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No category with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listSources: {
         parameters: {
             query?: never;
@@ -2787,6 +3023,58 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getMangaCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Suwayomi source ID (accepted for route symmetry; not used to resolve the thumbnail). */
+                sourceId: string;
+                /** @description Suwayomi-internal manga identifier (integer). */
+                mangaId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The cover image bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description Non-integer mangaId. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi failed to fetch the cover image. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3625,6 +3913,169 @@ export interface operations {
                 };
             };
             /** @description A blank pkgName. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getExtensionIcon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The icon image bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description A blank pkgName. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No extension with that pkgName. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getExtensionPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The extension's preferences grouped by source. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePreferencesBySource"];
+                };
+            };
+            /** @description A blank pkgName. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setExtensionPreference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSourcePreferenceRequest"];
+            };
+        };
+        responses: {
+            /** @description The refreshed preference list for the written source. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePreference"][];
+                };
+            };
+            /** @description A validation failure (blank sourceId, missing/negative or out-of-range position, or a value whose type doesn't match the variant). */
             400: {
                 headers: {
                     [name: string]: unknown;

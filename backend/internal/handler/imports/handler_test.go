@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -39,6 +40,9 @@ type fakeClient struct {
 	chapterErrs      map[int]error
 	browseResults    map[suwayomi.BrowseType]suwayomi.BrowseResult
 	browseErr        error
+	// pageBytes, when set, is called by PageBytes instead of the default stub
+	// (exercised by the MangaCover tests).
+	pageBytes func(ctx context.Context, url string) ([]byte, string, error)
 }
 
 func (f *fakeClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
@@ -90,7 +94,10 @@ func (f *fakeClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error)
 func (f *fakeClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
 	return nil, nil
 }
-func (f *fakeClient) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
+func (f *fakeClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
+	if f.pageBytes != nil {
+		return f.pageBytes(ctx, pageURL)
+	}
 	return nil, "", nil
 }
 func (f *fakeClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
@@ -108,6 +115,15 @@ func (f *fakeClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, e
 }
 func (f *fakeClient) ExtensionRepos(_ context.Context) ([]string, error)    { return nil, nil }
 func (f *fakeClient) SetExtensionRepos(_ context.Context, _ []string) error { return nil }
+func (f *fakeClient) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeClient) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	return nil, nil
+}
+func (f *fakeClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
+	return nil, nil
+}
 
 // makeChapters builds n stub chapters anchored to baseID.
 func makeChapters(baseID, n int) []suwayomi.Chapter {
@@ -153,7 +169,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	seriesSvc := seriessvc.NewService(db, "", 14)
 
 	triggered := new(int)
-	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ })
+	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ }, fc)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -162,6 +178,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authed.GET("/search", h.Search)
 	authed.GET("/sources/:sourceId/browse", h.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", h.InspectChapters)
+	authed.GET("/sources/:sourceId/manga/:mangaId/cover", h.MangaCover)
 	authed.POST("/series", h.Adopt)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -562,6 +579,85 @@ func TestInspectChapters_NonIntMangaID_400(t *testing.T) {
 	rec := env.do(http.MethodGet, "/api/sources/src/manga/notanint/chapters", "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("InspectChapters non-int: want 400, got %d", rec.Code)
+	}
+}
+
+// --- GET /api/sources/:sourceId/manga/:mangaId/cover (B2) ----------------------
+
+func TestMangaCover_Unauth(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	rec := env.doUnauth(http.MethodGet, "/api/sources/src/manga/12/cover")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("MangaCover unauth: want 401, got %d", rec.Code)
+	}
+}
+
+// TestMangaCover_OK verifies the handler streams the bytes PageBytes returns,
+// with a Content-Type resolved from the reported extension, and that it calls
+// PageBytes with Suwayomi's own REST thumbnail path (not whatever GraphQL
+// thumbnailUrl string a source happened to report).
+func TestMangaCover_OK(t *testing.T) {
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47}
+	var gotURL string
+	fc := &fakeClient{
+		pageBytes: func(_ context.Context, url string) ([]byte, string, error) {
+			gotURL = url
+			return pngBytes, "png", nil
+		},
+	}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/src-x/manga/12/cover", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("MangaCover OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
+		t.Errorf("MangaCover OK: Content-Type want image/png, got %q", ct)
+	}
+	if rec.Body.String() != string(pngBytes) {
+		t.Errorf("MangaCover OK: body mismatch")
+	}
+	if gotURL != "/api/v1/manga/12/thumbnail" {
+		t.Errorf("MangaCover OK: PageBytes called with %q, want /api/v1/manga/12/thumbnail", gotURL)
+	}
+}
+
+// TestMangaCover_PageBytesFail_502 asserts a Suwayomi fetch failure yields 502,
+// mirroring the series/provider cover proxies.
+func TestMangaCover_PageBytesFail_502(t *testing.T) {
+	fc := &fakeClient{
+		pageBytes: func(_ context.Context, _ string) ([]byte, string, error) {
+			return nil, "", errors.New("suwayomi down")
+		},
+	}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/src-x/manga/12/cover", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("MangaCover PageBytesFail: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMangaCover_NonIntMangaID_400 asserts a non-integer :mangaId yields 400
+// (parseMangaID is shared with InspectChapters).
+func TestMangaCover_NonIntMangaID_400(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	rec := env.do(http.MethodGet, "/api/sources/src/manga/notanint/cover", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("MangaCover non-int: want 400, got %d", rec.Code)
+	}
+}
+
+// TestMangaCover_NonPositiveMangaID_400 asserts a zero or negative :mangaId is a
+// clean 400 (parseMangaID's doc says "positive integer" but had no guard, so a
+// value like 0 or -1 previously sailed through to a raw Suwayomi 502 instead).
+func TestMangaCover_NonPositiveMangaID_400(t *testing.T) {
+	for _, mangaID := range []string{"0", "-1"} {
+		t.Run(mangaID, func(t *testing.T) {
+			env := newTestEnv(t, &fakeClient{})
+			rec := env.do(http.MethodGet, "/api/sources/src/manga/"+mangaID+"/cover", "")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("MangaCover mangaId=%s: want 400, got %d (%s)", mangaID, rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

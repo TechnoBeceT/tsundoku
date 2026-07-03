@@ -52,6 +52,11 @@ export interface DiscoverCandidate {
   description?: string
   /** Genre tags shown as chips in the hover preview popup, when available. */
   genres?: string[]
+  /** Writing credit shown in the hover preview popup, when the source provides one. */
+  author?: string
+  /** Art credit shown in the hover preview popup, when the source provides one and
+   *  it differs from `author` (a single-credit work only shows `author`). */
+  artist?: string
 }
 
 /**

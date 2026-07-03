@@ -44,9 +44,25 @@ type Source struct {
 	Lang string
 }
 
+// LocalSourceID is Suwayomi's built-in "Local source" identifier. It is
+// always present in the Sources() list, indexes files from Suwayomi's own
+// on-disk localSourcePath rather than a real online content provider, and
+// carries the fixed lang tag "localsourcelang" (see LocalSourceLang). Tsundoku
+// never treats it as a real content source — see imports.Service.Sources,
+// which filters it out of the Discover/Search source lists.
+const LocalSourceID = "0"
+
+// LocalSourceLang is the fixed BCP-47-shaped lang tag Suwayomi assigns to its
+// built-in Local source. It is a more stable exclusion signal than
+// LocalSourceID: if Suwayomi ever changes the id, the lang tag is what would
+// otherwise leak into the UI as the literal string "LOCALSOURCELANG".
+const LocalSourceLang = "localsourcelang"
+
 // Manga is a search result or library entry from Suwayomi.
-// ID is an int (Kotlin Int, 32-bit); ThumbnailURL is nil when the server does
-// not provide one.
+// ID is an int (Kotlin Int, 32-bit); ThumbnailURL, Author, Artist, and
+// Description are nil when the source does not provide them; Genre is nil/empty
+// under the same condition. These MangaType fields are read-only metadata —
+// Suwayomi never contacts the upstream source again for them once cached.
 type Manga struct {
 	// ID is the Suwayomi-internal manga identifier.
 	ID int
@@ -56,6 +72,17 @@ type Manga struct {
 	URL string
 	// ThumbnailURL is the cover image URL; nil if not available.
 	ThumbnailURL *string
+	// Author is the manga's writing credit; nil when the source omits it.
+	Author *string
+	// Artist is the manga's art credit; nil when the source omits it (some
+	// sources set Author == Artist, or omit Artist entirely for a single-credit
+	// work — callers decide how to display that, this struct just carries what
+	// Suwayomi reports).
+	Artist *string
+	// Description is the synopsis/summary text; nil when the source omits it.
+	Description *string
+	// Genre is the source's genre/tag list; nil or empty when not provided.
+	Genre []string
 }
 
 // Chapter represents a single chapter entry from Suwayomi.
@@ -176,6 +203,22 @@ type Client interface {
 	// setSettings mutation carrying only extensionRepos (no other setting is
 	// clobbered). An empty slice clears all repos. See extensions.go.
 	SetExtensionRepos(ctx context.Context, repos []string) error
+
+	// SourcePreferences reads a source's configurable preferences (the union of
+	// CheckBox/Switch/List/MultiSelectList/EditText variants), each tagged with
+	// its array Position. See source_preferences.go.
+	SourcePreferences(ctx context.Context, sourceID string) ([]SourcePreference, error)
+
+	// SetSourcePreference writes one preference by POSITION (built via the
+	// BoolPreferenceValue / StringPreferenceValue / MultiSelectPreferenceValue
+	// constructor for the position's variant) and returns the full refreshed
+	// list from the mutation payload. See source_preferences.go.
+	SetSourcePreference(ctx context.Context, sourceID string, position int, value PreferenceValue) ([]SourcePreference, error)
+
+	// ExtensionSources lists the sources an extension provides (one per language)
+	// via the ExtensionType.source link — the pkgName→sources resolution that
+	// drives the per-extension Configure flow. See source_preferences.go.
+	ExtensionSources(ctx context.Context, pkgName string) ([]Source, error)
 }
 
 // --- Constructor -------------------------------------------------------------
@@ -309,15 +352,56 @@ func (c *httpClient) Sources(ctx context.Context) ([]Source, error) {
 
 // --- Search ------------------------------------------------------------------
 
+// gqlMangaNode is the common JSON shape for a manga node returned by the
+// fetchSourceManga mutation (Search/Browse) and the manga(id) query
+// (MangaMeta). All three operations select the identical field set, so this
+// shared type avoids duplicating the struct and the Manga-conversion logic
+// (§2 DRY — a dropped field here would surface in all three callers at once).
+type gqlMangaNode struct {
+	ID           int      `json:"id"`
+	Title        string   `json:"title"`
+	URL          string   `json:"url"`
+	ThumbnailURL *string  `json:"thumbnailUrl"`
+	Author       *string  `json:"author"`
+	Artist       *string  `json:"artist"`
+	Genre        []string `json:"genre"`
+	Description  *string  `json:"description"`
+}
+
+// toManga converts a gqlMangaNode to the public Manga type.
+func (n gqlMangaNode) toManga() Manga {
+	return Manga{
+		ID:           n.ID,
+		Title:        n.Title,
+		URL:          n.URL,
+		ThumbnailURL: n.ThumbnailURL,
+		Author:       n.Author,
+		Artist:       n.Artist,
+		Genre:        n.Genre,
+		Description:  n.Description,
+	}
+}
+
+// mangaFieldSelection is the GraphQL field set shared by every operation that
+// returns manga metadata (Search, Browse, MangaMeta). author/artist/genre/
+// description are Suwayomi MangaType fields, confirmed live against Suwayomi by
+// TestShape7_MangaMetadataFields (see e2e_test.go); a wrong field name here
+// surfaces as a GraphQL validation error from doGraphQL, not a silent
+// decode-to-zero-value.
+const mangaFieldSelection = `
+      id
+      title
+      url
+      thumbnailUrl
+      author
+      artist
+      genre
+      description`
+
 // gqlSearchData is the typed shape of the `data` field for the fetchSourceManga mutation.
 type gqlSearchData struct {
 	FetchSourceManga struct {
-		Mangas []struct {
-			ID           int     `json:"id"`
-			Title        string  `json:"title"`
-			URL          string  `json:"url"`
-			ThumbnailURL *string `json:"thumbnailUrl"`
-		} `json:"mangas"`
+		Mangas []gqlMangaNode `json:"mangas"`
 	} `json:"fetchSourceManga"`
 }
 
@@ -331,11 +415,7 @@ mutation SearchSource($sourceId: LongString!, $query: String!, $page: Int!) {
     query: $query
     page: $page
   }) {
-    mangas {
-      id
-      title
-      url
-      thumbnailUrl
+    mangas {` + mangaFieldSelection + `
     }
   }
 }`
@@ -354,12 +434,7 @@ func (c *httpClient) Search(ctx context.Context, sourceID, query string) ([]Mang
 	nodes := data.FetchSourceManga.Mangas
 	out := make([]Manga, len(nodes))
 	for i, n := range nodes {
-		out[i] = Manga{
-			ID:           n.ID,
-			Title:        n.Title,
-			URL:          n.URL,
-			ThumbnailURL: n.ThumbnailURL,
-		}
+		out[i] = n.toManga()
 	}
 	return out, nil
 }
@@ -389,13 +464,8 @@ type BrowseResult struct {
 // hasNextPage so the caller can paginate.
 type gqlBrowseData struct {
 	FetchSourceManga struct {
-		Mangas []struct {
-			ID           int     `json:"id"`
-			Title        string  `json:"title"`
-			URL          string  `json:"url"`
-			ThumbnailURL *string `json:"thumbnailUrl"`
-		} `json:"mangas"`
-		HasNextPage bool `json:"hasNextPage"`
+		Mangas      []gqlMangaNode `json:"mangas"`
+		HasNextPage bool           `json:"hasNextPage"`
 	} `json:"fetchSourceManga"`
 }
 
@@ -410,11 +480,7 @@ mutation BrowseSource($sourceId: LongString!, $type: FetchSourceMangaType!, $pag
     type: $type
     page: $page
   }) {
-    mangas {
-      id
-      title
-      url
-      thumbnailUrl
+    mangas {` + mangaFieldSelection + `
     }
     hasNextPage
   }
@@ -437,12 +503,7 @@ func (c *httpClient) Browse(ctx context.Context, sourceID string, t BrowseType, 
 	nodes := data.FetchSourceManga.Mangas
 	out := make([]Manga, len(nodes))
 	for i, n := range nodes {
-		out[i] = Manga{
-			ID:           n.ID,
-			Title:        n.Title,
-			URL:          n.URL,
-			ThumbnailURL: n.ThumbnailURL,
-		}
+		out[i] = n.toManga()
 	}
 	return BrowseResult{Mangas: out, HasNextPage: data.FetchSourceManga.HasNextPage}, nil
 }
@@ -571,21 +632,12 @@ func (c *httpClient) MangaChapters(ctx context.Context, mangaID int) ([]Chapter,
 
 // gqlMangaMetaData is the typed shape of the `data` field for the manga(id) query.
 type gqlMangaMetaData struct {
-	Manga struct {
-		ID           int     `json:"id"`
-		Title        string  `json:"title"`
-		URL          string  `json:"url"`
-		ThumbnailURL *string `json:"thumbnailUrl"`
-	} `json:"manga"`
+	Manga gqlMangaNode `json:"manga"`
 }
 
 const mangaMetaQuery = `
 query MangaMeta($id: Int!) {
-  manga(id: $id) {
-    id
-    title
-    url
-    thumbnailUrl
+  manga(id: $id) {` + mangaFieldSelection + `
   }
 }`
 
@@ -599,13 +651,7 @@ func (c *httpClient) MangaMeta(ctx context.Context, mangaID int) (Manga, error) 
 	if err := c.doGraphQL(ctx, mangaMetaQuery, vars, &data); err != nil {
 		return Manga{}, err
 	}
-	n := data.Manga
-	return Manga{
-		ID:           n.ID,
-		Title:        n.Title,
-		URL:          n.URL,
-		ThumbnailURL: n.ThumbnailURL,
-	}, nil
+	return data.Manga.toManga(), nil
 }
 
 // --- ChapterPages ------------------------------------------------------------

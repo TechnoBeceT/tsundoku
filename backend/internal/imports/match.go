@@ -27,8 +27,19 @@ type Candidate struct {
 	// URL is the provider-canonical URL for this manga (powers the
 	// "View on source" external link); empty when the source omits it.
 	URL string
-	// ThumbnailURL is the cover image URL from the source.
+	// ThumbnailURL is the Tsundoku-relative cover proxy path
+	// ("/api/sources/{source}/manga/{mangaId}/cover"), or "" when the source
+	// provided no thumbnail at all (see thumbnailProxyPath in service.go).
 	ThumbnailURL string
+	// Author is the manga's writing credit; "" when the source omits it.
+	Author string
+	// Artist is the manga's art credit; "" when the source omits it.
+	Artist string
+	// Description is the synopsis/summary text; "" when the source omits it.
+	Description string
+	// Genres is the source's genre/tag list; never nil (empty slice when the
+	// source provides none), so the DTO always serialises "genres": [] not null.
+	Genres []string
 }
 
 // Group is one logical series and all the per-source candidates that matched it.

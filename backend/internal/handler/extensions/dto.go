@@ -1,6 +1,10 @@
 package extensions
 
-import suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
+import (
+	"net/url"
+
+	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
+)
 
 // ExtensionDTO is the JSON shape returned by the extension-list and the three
 // mutating extension endpoints. It mirrors suwayomi.Extension verbatim in
@@ -17,7 +21,10 @@ type ExtensionDTO struct {
 	VersionName string `json:"versionName"`
 	// VersionCode is the integer version.
 	VersionCode int `json:"versionCode"`
-	// IconURL is the raw Suwayomi icon URL (no proxy in v1).
+	// IconURL is the Tsundoku same-origin icon proxy path
+	// ("/api/suwayomi/extensions/{pkgName}/icon"), NOT Suwayomi's own raw
+	// (cross-origin) icon URL — the browser can't load that directly. See
+	// Handler.Icon.
 	IconURL string `json:"iconUrl"`
 	// Repo is the source repo URL; "" when Suwayomi reports null.
 	Repo string `json:"repo"`
@@ -39,7 +46,10 @@ type ExtensionReposDTO struct {
 
 // toExtensionDTO maps one client Extension into the HTTP DTO. It is the SINGLE
 // mapper every extension-returning endpoint routes through, so no field is ever
-// dropped on one path but not another.
+// dropped on one path but not another. IconURL is REWRITTEN to the Tsundoku
+// proxy path (mirrors how B2/M4 rewrote thumbnailUrl) — the raw Suwayomi
+// e.IconURL never reaches the client; Handler.Icon looks it back up by pkgName
+// when the proxy path is requested.
 func toExtensionDTO(e suwayomicli.Extension) ExtensionDTO {
 	return ExtensionDTO{
 		PkgName:     e.PkgName,
@@ -47,13 +57,21 @@ func toExtensionDTO(e suwayomicli.Extension) ExtensionDTO {
 		Lang:        e.Lang,
 		VersionName: e.VersionName,
 		VersionCode: e.VersionCode,
-		IconURL:     e.IconURL,
+		IconURL:     iconProxyPath(e.PkgName),
 		Repo:        e.Repo,
 		IsInstalled: e.IsInstalled,
 		HasUpdate:   e.HasUpdate,
 		IsNsfw:      e.IsNsfw,
 		IsObsolete:  e.IsObsolete,
 	}
+}
+
+// iconProxyPath builds the same-origin icon proxy path for an extension
+// identified by pkgName. pkgName is URL-path-escaped defensively even though
+// real Suwayomi pkgNames are dotted Java-style identifiers with no reserved
+// characters.
+func iconProxyPath(pkgName string) string {
+	return "/api/suwayomi/extensions/" + url.PathEscape(pkgName) + "/icon"
 }
 
 // toExtensionDTOs maps a slice of client Extensions through toExtensionDTO. The

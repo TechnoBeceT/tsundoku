@@ -79,6 +79,20 @@ func (_u *CategoryUpdate) SetNillableProtected(v *bool) *CategoryUpdate {
 	return _u
 }
 
+// SetIsDefault sets the "is_default" field.
+func (_u *CategoryUpdate) SetIsDefault(v bool) *CategoryUpdate {
+	_u.mutation.SetIsDefault(v)
+	return _u
+}
+
+// SetNillableIsDefault sets the "is_default" field if the given value is not nil.
+func (_u *CategoryUpdate) SetNillableIsDefault(v *bool) *CategoryUpdate {
+	if v != nil {
+		_u.SetIsDefault(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *CategoryUpdate) SetUpdatedAt(v time.Time) *CategoryUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -182,6 +196,9 @@ func (_u *CategoryUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Protected(); ok {
 		_spec.SetField(category.FieldProtected, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.IsDefault(); ok {
+		_spec.SetField(category.FieldIsDefault, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(category.FieldUpdatedAt, field.TypeTime, value)
@@ -296,6 +313,20 @@ func (_u *CategoryUpdateOne) SetProtected(v bool) *CategoryUpdateOne {
 func (_u *CategoryUpdateOne) SetNillableProtected(v *bool) *CategoryUpdateOne {
 	if v != nil {
 		_u.SetProtected(*v)
+	}
+	return _u
+}
+
+// SetIsDefault sets the "is_default" field.
+func (_u *CategoryUpdateOne) SetIsDefault(v bool) *CategoryUpdateOne {
+	_u.mutation.SetIsDefault(v)
+	return _u
+}
+
+// SetNillableIsDefault sets the "is_default" field if the given value is not nil.
+func (_u *CategoryUpdateOne) SetNillableIsDefault(v *bool) *CategoryUpdateOne {
+	if v != nil {
+		_u.SetIsDefault(*v)
 	}
 	return _u
 }
@@ -433,6 +464,9 @@ func (_u *CategoryUpdateOne) sqlSave(ctx context.Context) (_node *Category, err 
 	}
 	if value, ok := _u.mutation.Protected(); ok {
 		_spec.SetField(category.FieldProtected, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.IsDefault(); ok {
+		_spec.SetField(category.FieldIsDefault, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(category.FieldUpdatedAt, field.TypeTime, value)

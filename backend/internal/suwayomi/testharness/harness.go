@@ -72,10 +72,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
-// LocalSourceID is the Suwayomi built-in Local source identifier.
-// The Local source is always present; its ID is "0".
-const LocalSourceID = "0"
-
 // FixtureMangaTitle is the title of the fixture manga seeded into localSourcePath.
 const FixtureMangaTitle = "Test Manga"
 

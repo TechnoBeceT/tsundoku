@@ -41,7 +41,13 @@ type Extension struct {
 	VersionName string
 	// VersionCode is the monotonically increasing integer version.
 	VersionCode int
-	// IconURL is the raw Suwayomi icon URL (no Tsundoku proxy in v1).
+	// IconURL is Suwayomi's OWN icon path as reported by the extensions query —
+	// confirmed live to be a server-relative REST path,
+	// "/api/v1/extension/icon/{apkFileName}.apk" (TestShape6_Extensions), which
+	// suwayomi.Client.PageBytes can fetch directly. This field stays the raw
+	// upstream value; handler/extensions rewrites it to a same-origin Tsundoku
+	// proxy path in the HTTP DTO (the browser can't load Suwayomi's own
+	// cross-origin URL directly).
 	IconURL string
 	// Repo is the source repo URL this extension came from; "" when null.
 	Repo string

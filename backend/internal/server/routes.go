@@ -41,6 +41,7 @@ import (
 //   - /api/search                                  — multi-source manga search (RequireOwner).
 //   - /api/sources/:sourceId/browse                — per-source Popular/Latest catalog browse (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/chapters — chapter preview (RequireOwner).
+//   - /api/sources/:sourceId/manga/:mangaId/cover    — source-manga cover proxy (RequireOwner).
 //   - /api/series (GET)                            — library list (RequireOwner).
 //   - /api/series (POST)                           — adopt / import manga (RequireOwner).
 //   - /api/series/:id (GET)                        — library detail (RequireOwner).
@@ -56,6 +57,7 @@ import (
 //   - /api/categories (GET)                        — list categories with counts (RequireOwner).
 //   - /api/categories (POST)                       — create a category (RequireOwner).
 //   - /api/categories/:id (PATCH)                  — rename and/or reorder a category (RequireOwner).
+//   - /api/categories/:id/default (PATCH)          — set the default landing category (RequireOwner).
 //   - /api/categories/:id (DELETE)                 — delete an empty category (RequireOwner).
 //   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
@@ -72,6 +74,9 @@ import (
 //   - /api/suwayomi/extensions/:pkgName/install (POST) — install an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/update (POST)  — update an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName (DELETE)    — uninstall an extension (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName/icon (GET)  — extension icon proxy (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName/preferences (GET)   — per-source preferences, grouped by source (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName/preferences (PATCH) — write one preference by position (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
@@ -157,6 +162,9 @@ func registerRoutes(
 	authed.POST("/suwayomi/extensions/:pkgName/install", extensionsH.Install)
 	authed.POST("/suwayomi/extensions/:pkgName/update", extensionsH.Update)
 	authed.DELETE("/suwayomi/extensions/:pkgName", extensionsH.Uninstall)
+	authed.GET("/suwayomi/extensions/:pkgName/icon", extensionsH.Icon)
+	authed.GET("/suwayomi/extensions/:pkgName/preferences", extensionsH.Preferences)
+	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", extensionsH.SetPreference)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.
@@ -165,6 +173,7 @@ func registerRoutes(
 	authed.GET("/categories", categoryH.List)
 	authed.POST("/categories", categoryH.Create)
 	authed.PATCH("/categories/:id", categoryH.Update)
+	authed.PATCH("/categories/:id/default", categoryH.SetDefault)
 	authed.DELETE("/categories/:id", categoryH.Delete)
 
 	// Downloads (cross-library chapter activity) API. The service reuses the
@@ -181,11 +190,12 @@ func registerRoutes(
 	// value is threaded in from main.
 	ingest := suwayomi.NewIngest(suwayomiClient, client)
 	importsSvc := imports.NewService(suwayomiClient, ingest, client, cfg.Storage.Folder)
-	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger)
+	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, suwayomiClient)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)
+	authed.GET("/sources/:sourceId/manga/:mangaId/cover", importsH.MangaCover)
 	authed.POST("/series", importsH.Adopt)
 
 	// Library-import (on-disk scan + adopt-without-redownload) API. Reuses the

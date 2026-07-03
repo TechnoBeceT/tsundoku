@@ -6,9 +6,18 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
+
+// heartbeatInterval is how often ProgressHandler writes an idle SSE keepalive
+// comment when no real hub event is flowing. Cloudflare Tunnel (and similar
+// reverse proxies) kill an HTTP stream after ~100s of total silence (observed
+// as an HTTP 524 on /api/progress); 20s comfortably beats that. It is a
+// package-level var, not a const, so tests can shrink it via
+// export_test.go's SetHeartbeatInterval.
+var heartbeatInterval = 20 * time.Second
 
 // ProgressHandler returns an Echo HandlerFunc that streams SSE events from hub
 // to the connected client.
@@ -19,6 +28,10 @@ import (
 //     as a live stream.
 //   - Subscribes to hub, then writes each received event as an SSE frame:
 //     "event: <type>\ndata: <json>\n\n", flushing after each frame.
+//   - Writes an idle keepalive (": ping\n\n", an SSE comment line) every
+//     heartbeatInterval so a reverse proxy never sees a silent connection
+//     between real events; EventSource ignores comment lines, so this has no
+//     effect visible to the frontend.
 //   - Exits cleanly when the client disconnects (request context Done), calling
 //     the unsubscribe function to release the subscriber channel.
 //
@@ -54,6 +67,9 @@ func ProgressHandler(hub *Hub) echo.HandlerFunc {
 		ch, unsubscribe := hub.Subscribe()
 		defer unsubscribe()
 
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+
 		ctx := c.Request().Context()
 		for {
 			select {
@@ -66,6 +82,15 @@ func ProgressHandler(hub *Hub) echo.HandlerFunc {
 					return nil
 				}
 				if err := writeSSEFrame(w, event); err != nil {
+					// Write failure usually means the client disconnected.
+					return nil //nolint:nilerr // intentional: stream end is not an error
+				}
+				flusher.Flush()
+			case <-ticker.C:
+				// Idle heartbeat: a leading colon is an SSE comment per spec,
+				// so EventSource ignores it entirely — this is transport-only
+				// keepalive, invisible to the frontend.
+				if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 					// Write failure usually means the client disconnected.
 					return nil //nolint:nilerr // intentional: stream end is not an error
 				}

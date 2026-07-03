@@ -14,6 +14,13 @@ import type { FlareSolverrConfig, SaveState, SocksProxyConfig, SuwayomiConfig } 
  * reflects the persisted value back (§16 round-trip). The Save button disables
  * until something is dirty.
  *
+ * GOTCHA: `socks`/`flare` are `reactive()` objects, not `ref()`s — the cards are
+ * bound `:model-value`/`@update:model-value="… => Object.assign(target, v)"`
+ * rather than whole-object `v-model`. A whole-object `v-model` desugars to
+ * `socks = $event` (reassigning the binding), which does not update the
+ * underlying object in place; `Object.assign` mutates the existing reactive
+ * object, matching the re-seed pattern the watchers below already use.
+ *
  *   - `config`: the whole proxied Suwayomi config (SOCKS proxy + FlareSolverr).
  *   - `save`: the §16 save lifecycle (loading / success / error).
  *
@@ -68,9 +75,9 @@ function onSave() {
 
 <template>
   <div class="pane-stack">
-    <ProxyConfigCard v-model="socks" />
+    <ProxyConfigCard :model-value="socks" @update:model-value="v => Object.assign(socks, v)" />
 
-    <FlareSolverrCard v-model="flare" />
+    <FlareSolverrCard :model-value="flare" @update:model-value="v => Object.assign(flare, v)" />
 
     <SaveFooter :state="footerState" :dirty="dirty" label="Save engine settings" @save="onSave" />
   </div>
