@@ -20,8 +20,16 @@ import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
  * The tiny cover reuses <CoverImage> with the row's small corner via the public
  * `radius` prop; only the smaller initial-glyph size still needs a scoped
  * `:deep` override (CoverImage exposes no prop for the initial-letter size).
+ *
+ * `hideInspect`/`hideReorder` are opt-in escape hatches for the two
+ * SINGLE-SELECT match surfaces (`scanLibrary/MatchPanel`,
+ * `seriesDetail/MatchSourceDialog`) that reuse this row but have no live
+ * chapter-inspect endpoint and nothing to reorder (exactly one provider is
+ * ever attached). Both default `false` so the real Adopt wizard
+ * (`screens/Import.vue`, multi-source ranking + live inspect) renders
+ * byte-for-byte unchanged with zero prop changes.
  */
-defineProps<{
+withDefaults(defineProps<{
   /** The candidate this row represents. */
   candidate: SearchCandidate
   /** Whether this candidate is selected for adoption. */
@@ -38,7 +46,14 @@ defineProps<{
   inspected: boolean
   /** The resolved chapter-preview rows (rendered when `inspected`). */
   chapters: ChapterInspect[]
-}>()
+  /** Hide the Inspect button — for surfaces with no live chapter-inspect endpoint. */
+  hideInspect?: boolean
+  /** Never render the reorder stepper — for single-select surfaces with nothing to rank. */
+  hideReorder?: boolean
+}>(), {
+  hideInspect: false,
+  hideReorder: false,
+})
 
 const emit = defineEmits<{
   /** Toggle this candidate's selection. */
@@ -82,7 +97,7 @@ const emit = defineEmits<{
         <span class="cand__lang">{{ candidate.lang.toUpperCase() }}</span>
       </span>
 
-      <button type="button" class="inspect" @click="emit('inspect')">
+      <button v-if="!hideInspect" type="button" class="inspect" @click="emit('inspect')">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
           <circle cx="12" cy="12" r="3" />
@@ -91,7 +106,7 @@ const emit = defineEmits<{
       </button>
 
       <ReorderControl
-        v-if="selected"
+        v-if="selected && !hideReorder"
         :can-up="canUp"
         :can-down="canDown"
         :rank="rank"

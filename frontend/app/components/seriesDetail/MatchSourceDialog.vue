@@ -213,6 +213,8 @@ function onBackOrCancel(): void {
         :inspecting="false"
         :inspected="false"
         :chapters="[]"
+        hide-inspect
+        hide-reorder
         @toggle="toggleCandidate(row.key)"
       />
 
