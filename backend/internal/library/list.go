@@ -38,7 +38,7 @@ func (s *Service) ListImports(ctx context.Context, status string) ([]FoundSeries
 			ChapterCount: row.ChapterCount,
 			Providers:    distinctProviders(sf.Facts),
 			Status:       row.Status,
-			AlreadyInDB:  row.Status == "imported",
+			AlreadyInDB:  row.Status == statusImported,
 		})
 	}
 	return out, nil

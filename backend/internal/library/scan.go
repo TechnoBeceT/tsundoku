@@ -31,9 +31,9 @@ func (s *Service) Scan(ctx context.Context) ([]FoundSeriesDTO, error) {
 		if err != nil {
 			return nil, err
 		}
-		status := "pending"
+		status := statusPending
 		if exists {
-			status = "imported"
+			status = statusImported
 		}
 
 		found, err := foundBlob(sf)
@@ -90,7 +90,7 @@ func (s *Service) upsertEntry(ctx context.Context, path string, sf disk.SeriesFa
 
 	upd := existing.Update().SetTitle(sf.Title).SetCategory(sf.Category).
 		SetChapterCount(count).SetFound(found)
-	if existing.Status != "imported" {
+	if existing.Status != statusImported {
 		upd = upd.SetStatus(status)
 	}
 	_, uerr := upd.Save(ctx)

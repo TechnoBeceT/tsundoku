@@ -29,6 +29,11 @@ type addProviderBody struct {
 	Importance int    `json:"importance"`
 }
 
+// skipBody is the wire shape for POST /api/library/imports/skip.
+type skipBody struct {
+	Path string `json:"path"`
+}
+
 // validateID parses a required UUID path param (the target series id).
 func validateID(raw string) (uuid.UUID, error) {
 	id, err := uuid.Parse(raw)
@@ -83,6 +88,13 @@ func validateMatch(m matchBody) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "importance must be >= 1")
 	}
 	return nil
+}
+
+// validateSkipRequest validates the POST /api/library/imports/skip body:
+// path is required (non-blank) — delegates to the same validatePath check
+// used for the match handler's ?path query param (§2 DRY).
+func validateSkipRequest(body skipBody) (string, error) {
+	return validatePath(body.Path)
 }
 
 // parseStatusFilter parses the optional ?status filter. An empty value is

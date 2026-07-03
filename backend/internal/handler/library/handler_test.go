@@ -69,6 +69,7 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	authed.GET("/library/imports", h.ListImports)
 	authed.GET("/library/imports/match", h.Match)
 	authed.POST("/library/import", h.Import)
+	authed.POST("/library/imports/skip", h.Skip)
 	authed.POST("/series/:id/providers", h.AddProvider)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -147,6 +148,7 @@ func TestLibraryRoutes_RequireOwner(t *testing.T) {
 		{"GET", "/api/library/imports"},
 		{"POST", "/api/library/import"},
 		{"GET", "/api/library/imports/match?path=x"},
+		{"POST", "/api/library/imports/skip"},
 		{"POST", "/api/series/" + uuid.New().String() + "/providers"},
 	} {
 		rec := env.doUnauth(r.method, r.path, "")
@@ -254,5 +256,61 @@ func TestLibraryAddProvider_InvalidBody(t *testing.T) {
 	rec := env.do("POST", "/api/series/"+uuid.New().String()+"/providers", `{"mangaId":1,"importance":1}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid body: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSkip_OK proves the happy path end-to-end: scanning a seeded temp
+// storage directory stages a pending entry, POST /library/imports/skip
+// flips it to "skipped" (204), and a re-GET of /library/imports confirms the
+// persisted status (§16 round-trip via re-fetch, not just the 204 code).
+func TestSkip_OK(t *testing.T) {
+	env := newEnvWithStorageSeeded(t)
+
+	scanRec := env.do("POST", "/api/library/scan", "")
+	if scanRec.Code != http.StatusOK {
+		t.Fatalf("scan = %d, want 200 (%s)", scanRec.Code, scanRec.Body.String())
+	}
+	var staged []library.FoundSeriesDTO
+	if err := json.Unmarshal(scanRec.Body.Bytes(), &staged); err != nil {
+		t.Fatalf("decode scan: %v", err)
+	}
+	if len(staged) != 1 {
+		t.Fatalf("staged len = %d, want 1", len(staged))
+	}
+
+	body := fmt.Sprintf(`{"path":%q}`, staged[0].Path)
+	rec := env.do("POST", "/api/library/imports/skip", body)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("skip = %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+
+	listRec := env.do("GET", "/api/library/imports?status=skipped", "")
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list = %d, want 200 (%s)", listRec.Code, listRec.Body.String())
+	}
+	var got []library.FoundSeriesDTO
+	if err := json.Unmarshal(listRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(got) != 1 || got[0].Path != staged[0].Path {
+		t.Fatalf("skipped list = %+v, want [%s]", got, staged[0].Path)
+	}
+}
+
+// TestSkip_NotFound proves an unstaged path 404s.
+func TestSkip_NotFound(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/imports/skip", `{"path":"/nope"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("skip unknown path = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSkip_MissingPath proves the body requires a non-empty path.
+func TestSkip_MissingPath(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/imports/skip", `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing path body: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }

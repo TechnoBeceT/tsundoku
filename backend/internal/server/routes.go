@@ -207,6 +207,7 @@ func registerRoutes(
 	authed.GET("/library/imports", libraryH.ListImports)
 	authed.GET("/library/imports/match", libraryH.Match)
 	authed.POST("/library/import", libraryH.Import)
+	authed.POST("/library/imports/skip", libraryH.Skip)
 	authed.POST("/series/:id/providers", libraryH.AddProvider)
 
 	// SPA static serving + unknown-route handling (registered last).

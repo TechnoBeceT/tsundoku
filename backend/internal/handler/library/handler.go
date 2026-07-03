@@ -113,6 +113,28 @@ func (h *Handler) Import(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// Skip handles POST /api/library/imports/skip.
+//
+// The body carries {path}: path (required) identifies a previously staged
+// ImportEntry (as returned by scan/list) that the owner wants to leave on
+// disk without importing. Purely a status flip — no disk I/O, no row
+// deletion (never-auto-delete invariant). Returns 204 on success.
+func (h *Handler) Skip(c echo.Context) error {
+	var body skipBody
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+	path, err := validateSkipRequest(body)
+	if err != nil {
+		return err
+	}
+
+	if err := h.svc.Skip(c.Request().Context(), path); err != nil {
+		return mapServiceError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // AddProvider handles POST /api/series/:id/providers.
 //
 // It attaches an additional Suwayomi source {source, mangaId, importance} to

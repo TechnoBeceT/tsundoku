@@ -1181,6 +1181,16 @@ components:
         match:
           $ref: "#/components/schemas/MatchInput"
 
+    SkipRequest:
+      type: object
+      description: Marks a staged library-scan entry as skipped — leave it on disk, stop showing it as pending.
+      required:
+        - path
+      properties:
+        path:
+          type: string
+          description: The staged entry's on-disk path (as returned by a prior scan/list).
+
     AddProviderRequest:
       type: object
       description: Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest).
@@ -2776,6 +2786,47 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/library/imports/skip:
+    post:
+      operationId: skipImport
+      summary: Skip a staged library-import entry
+      description: |
+        Marks a staged entry as "skipped" — the owner's "leave this on disk,
+        don't import it" action. Purely a status flip: no disk I/O, no row
+        deletion. Idempotent (skipping an already-skipped entry is a no-op
+        success).
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkipRequest"
+      responses:
+        "204":
+          description: Entry marked skipped.
+        "400":
+          description: Missing or empty path.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No staged entry with that path.
           content:
             application/json:
               schema:

@@ -21,6 +21,14 @@ var (
 	ErrSourceNotFound = errors.New("source not found")
 )
 
+// Staging statuses for ImportEntry.status — the single source of truth so
+// Scan/List/Import/Skip never disagree on the literal spelling (§2 DRY).
+const (
+	statusPending  = "pending"
+	statusImported = "imported"
+	statusSkipped  = "skipped"
+)
+
 // Service implements the on-disk library-import workflow: scanning storage,
 // staging found series into ImportEntry rows, and (in later tasks) matching
 // + importing them against a Suwayomi source without re-downloading.

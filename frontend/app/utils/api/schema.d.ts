@@ -720,6 +720,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/imports/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Skip a staged library-import entry
+         * @description Marks a staged entry as "skipped" — the owner's "leave this on disk,
+         *     don't import it" action. Purely a status flip: no disk I/O, no row
+         *     deletion. Idempotent (skipping an already-skipped entry is a no-op
+         *     success).
+         */
+        post: operations["skipImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/import": {
         parameters: {
             query?: never;
@@ -1722,6 +1745,11 @@ export interface components {
             /** @description The staged entry's on-disk path (as returned by a prior scan/list). */
             path: string;
             match?: components["schemas"]["MatchInput"];
+        };
+        /** @description Marks a staged library-scan entry as skipped — leave it on disk, stop showing it as pending. */
+        SkipRequest: {
+            /** @description The staged entry's on-disk path (as returned by a prior scan/list). */
+            path: string;
         };
         /** @description Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest). */
         AddProviderRequest: {
@@ -3368,6 +3396,55 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    skipImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkipRequest"];
+            };
+        };
+        responses: {
+            /** @description Entry marked skipped. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or empty path. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No staged entry with that path. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
