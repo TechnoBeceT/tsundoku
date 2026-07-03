@@ -37,6 +37,9 @@ func (f *fakeClient) ChapterPages(context.Context, int) ([]string, error) { retu
 func (f *fakeClient) MangaMeta(context.Context, int) (suwayomi.Manga, error) {
 	return suwayomi.Manga{}, nil
 }
+func (f *fakeClient) FetchMangaDetails(context.Context, int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{}, nil
+}
 func (f *fakeClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
 	if f.pageBytes != nil {
 		return f.pageBytes(ctx, pageURL)

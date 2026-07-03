@@ -42,6 +42,7 @@ import (
 //   - /api/sources/:sourceId/browse                — per-source Popular/Latest catalog browse (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/chapters — chapter preview (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/cover    — source-manga cover proxy (RequireOwner).
+//   - /api/sources/:sourceId/manga/:mangaId/details  — on-demand rich manga details (RequireOwner).
 //   - /api/series (GET)                            — library list (RequireOwner).
 //   - /api/series (POST)                           — adopt / import manga (RequireOwner).
 //   - /api/series/:id (GET)                        — library detail (RequireOwner).
@@ -197,6 +198,7 @@ func registerRoutes(
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)
 	authed.GET("/sources/:sourceId/manga/:mangaId/cover", importsH.MangaCover)
+	authed.GET("/sources/:sourceId/manga/:mangaId/details", importsH.Details)
 	authed.POST("/series", importsH.Adopt)
 
 	// Library-import (on-disk scan + adopt-without-redownload) API. Reuses the

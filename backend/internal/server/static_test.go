@@ -41,6 +41,9 @@ func (nullSuwayomiClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Ch
 func (nullSuwayomiClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
 	panic("nullSuwayomiClient.MangaMeta called in test")
 }
+func (nullSuwayomiClient) FetchMangaDetails(_ context.Context, _ int) (suwayomi.Manga, error) {
+	panic("nullSuwayomiClient.FetchMangaDetails called in test")
+}
 func (nullSuwayomiClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
 	panic("nullSuwayomiClient.ChapterPages called in test")
 }

@@ -67,6 +67,9 @@ func (f *fakeSuwayomiClient) ChapterPages(ctx context.Context, chapterID int) ([
 func (f *fakeSuwayomiClient) MangaMeta(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
 	return suwayomi.Manga{}, nil
 }
+func (f *fakeSuwayomiClient) FetchMangaDetails(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
+	return suwayomi.Manga{}, nil
+}
 func (f *fakeSuwayomiClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
 	if f.pageBytes != nil {
 		return f.pageBytes(ctx, pageURL)

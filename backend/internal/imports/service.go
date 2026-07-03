@@ -361,6 +361,32 @@ func (s *Service) InspectChapters(ctx context.Context, _ string, mangaID int) ([
 	return out, nil
 }
 
+// MangaDetails FORCES a live details fetch for (sourceID, mangaID) via
+// suwayomi.Client.FetchMangaDetails and returns the enriched candidate as a
+// SearchCandidateDTO — the SAME shape Search/Browse return, so the caller (the
+// Discover hover preview) can merge the response straight into an existing
+// candidate. sourceID resolves the source's Name/Lang (reusing resolveSource,
+// the same helper Browse uses); an unknown sourceID yields ErrSourceNotFound
+// (→ 404). A client.FetchMangaDetails failure is returned verbatim — the
+// caller maps it to a 502 (this is a genuine upstream/source fetch, not a
+// Tsundoku validation problem).
+//
+// This is deliberately on-demand, single-manga only: calling it once per
+// Search/Browse result would multiply upstream requests by the page size.
+func (s *Service) MangaDetails(ctx context.Context, sourceID string, mangaID int) (SearchCandidateDTO, error) {
+	src, err := s.resolveSource(ctx, sourceID)
+	if err != nil {
+		return SearchCandidateDTO{}, err
+	}
+
+	m, err := s.client.FetchMangaDetails(ctx, mangaID)
+	if err != nil {
+		return SearchCandidateDTO{}, err
+	}
+
+	return newSearchCandidateDTO(newCandidate(src, m)), nil
+}
+
 // Adopt groups one or more (source, manga) candidates under a single canonical
 // title and merges them into ONE Series with N importance-ranked providers,
 // ingesting all their chapters.
