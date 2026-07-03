@@ -60,21 +60,27 @@ export const editPref: Preference = {
   entryValues: [],
 }
 
-/** One source's group covering all four control variants. */
+/** One source's group covering all four control variants (enabled). */
 export const preferenceGroup: Group = {
   sourceId: 'src-en',
   sourceName: 'MangaDex',
   lang: 'en',
+  enabled: true,
   preferences: [switchPref, listPref, multiPref, editPref],
 }
 
-/** A two-language grouping (an extension backs one source per language). */
+/**
+ * A two-language grouping (an extension backs one source per language) — the
+ * second language is DISABLED, so stories + Vitest exercise the per-language
+ * enable/disable Switch without a backend.
+ */
 export const preferenceGroups: Group[] = [
   preferenceGroup,
   {
     sourceId: 'src-ja',
     sourceName: 'MangaDex',
     lang: 'ja',
+    enabled: false,
     preferences: [{ ...switchPref, position: 0, currentValue: false }],
   },
 ]

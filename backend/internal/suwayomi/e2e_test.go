@@ -774,6 +774,99 @@ func tier2WriteFlip(t *testing.T, client suwayomi.Client, sourceID string) {
 	}
 }
 
+// TestShape9_SourceMeta is the MERGE GATE for the per-language source
+// enable/disable feature. Suwayomi has NO server-side "disabled source"
+// concept — enable/disable is a CLIENT convention over generic per-source
+// metadata (SourceType.meta), the same convention Suwayomi-WebUI itself uses.
+// A fake HTTP transport can echo canned JSON for this shape, but only a real
+// server validates that `meta { key value }` is a legal SourceType selection
+// and that `setSourceMeta` is a real mutation accepting the documented input.
+//
+// Tier 1 (MUST pass; local harness only, no external network), entirely
+// against Suwayomi's built-in Local source so no extension install is needed:
+//
+//  1. Sources() decodes with NO schema/type error — proving
+//     `sources { nodes { … meta { key value } } }` is a valid selection —
+//     and the Local source resolves as enabled (no isEnabled meta key has
+//     ever been written for it, so "absent ⇒ enabled" is exercised for real).
+//  2. SetSourceEnabled(LocalSourceID, false) round-trips: a fresh Sources()
+//     read reports the Local source as disabled — proving
+//     `setSourceMeta(input:{meta:{sourceId,key:"isEnabled",value:"false"}})`
+//     is accepted and its effect is visible on the very next read (Suwayomi
+//     applies the write synchronously, no cache lag).
+//  3. SetSourceEnabled(LocalSourceID, true) restores it (re-enable sets
+//     "true" EXPLICITLY, per the owner-ratified design — never deletes the
+//     meta row) and a final Sources() read confirms it is enabled again.
+//
+// ExtensionSources carries the identical `meta { key value }` selection (see
+// source_preferences.go) — proven by construction, not re-tested here, since
+// it is the same SourceType field via a different root query.
+func TestShape9_SourceMeta(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	// --- (a) the meta selection decodes; Local source defaults to enabled ----
+	before, err := findSourceByID(ctx, client, suwayomi.LocalSourceID)
+	if err != nil {
+		t.Fatalf("Sources (meta selection shape): %v\n(check: is `sources{nodes{meta{key value}}}` a legal SourceType selection?)", err)
+	}
+	if before.Disabled {
+		t.Fatalf("Local source reported Disabled=true before any write — expected absent isEnabled meta to default to enabled")
+	}
+	t.Logf("CONFIRMED: sources query decoded meta{key value}; Local source defaults to enabled")
+
+	// Always attempt to restore the Local source to enabled, regardless of
+	// assertion outcome below, so a failing run doesn't poison later tests
+	// sharing the same harness instance.
+	t.Cleanup(func() {
+		_ = client.SetSourceEnabled(context.Background(), suwayomi.LocalSourceID, true)
+	})
+
+	// --- (b) setSourceMeta round-trips: disable then re-read -----------------
+	if err := client.SetSourceEnabled(ctx, suwayomi.LocalSourceID, false); err != nil {
+		t.Fatalf("SetSourceEnabled(false): %v\n(check: is `setSourceMeta(input:{meta:{sourceId,key,value}})` the correct mutation/input shape?)", err)
+	}
+	disabled, err := findSourceByID(ctx, client, suwayomi.LocalSourceID)
+	if err != nil {
+		t.Fatalf("Sources after disable: %v", err)
+	}
+	if !disabled.Disabled {
+		t.Fatalf("after SetSourceEnabled(false), Sources() still reports the source as enabled")
+	}
+	t.Logf("CONFIRMED: setSourceMeta(isEnabled=false) round-trips through a fresh Sources() read")
+
+	// --- (c) re-enable sets "true" explicitly, restoring the default state ---
+	if err := client.SetSourceEnabled(ctx, suwayomi.LocalSourceID, true); err != nil {
+		t.Fatalf("SetSourceEnabled(true): %v", err)
+	}
+	restored, err := findSourceByID(ctx, client, suwayomi.LocalSourceID)
+	if err != nil {
+		t.Fatalf("Sources after re-enable: %v", err)
+	}
+	if restored.Disabled {
+		t.Fatalf("after SetSourceEnabled(true), Sources() still reports the source as disabled")
+	}
+	t.Logf("CONFIRMED: setSourceMeta(isEnabled=true) round-trips; re-enable is an explicit write, not a meta-row delete")
+}
+
+// findSourceByID returns the Source with the given id from a fresh
+// client.Sources() call, or an error if the id is absent from the list.
+func findSourceByID(ctx context.Context, client suwayomi.Client, id string) (suwayomi.Source, error) {
+	sources, err := client.Sources(ctx)
+	if err != nil {
+		return suwayomi.Source{}, err
+	}
+	for _, s := range sources {
+		if s.ID == id {
+			return s, nil
+		}
+	}
+	return suwayomi.Source{}, fmt.Errorf("source %q not found in Sources() list", id)
+}
+
 // TestE2E_AddSeriesDispatchDownload is the Milestone 2 end-to-end proof:
 //
 //	real Suwayomi (local source) →

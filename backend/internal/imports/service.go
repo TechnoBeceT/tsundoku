@@ -63,11 +63,23 @@ func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client,
 }
 
 // Sources returns all Suwayomi sources as SourceDTOs, excluding Suwayomi's
-// built-in Local source (see isLocalSource). The Local source indexes files
-// from Suwayomi's own on-disk localSourcePath rather than a real online
+// built-in Local source (see isLocalSource) AND any source the owner has
+// disabled (see isDisabledSource) — the per-language enable/disable toggle
+// exposed via the extension "Configure" dialog. The Local source indexes
+// files from Suwayomi's own on-disk localSourcePath rather than a real online
 // provider, and its lang tag renders as the raw "LOCALSOURCELANG" string in
 // the UI — it should never appear in the Discover picker or the Search
 // "Limit to" filters (F1).
+//
+// Disabling only declutters these pickers; it does not affect a series
+// already adopted from the disabled source (refresh.RefreshAll iterates
+// SeriesProvider rows, not this list) and does not block a direct-by-id
+// request (resolveSource/Browse, and Adopt/AddProvider's ingest calls, all
+// bypass this filtered list — see resolveSources below for the equivalent
+// Search/Browse-fan-out filter).
+//
+// client.Sources already selects each source's `meta` inline (see
+// suwayomi/source_meta.go), so this filter costs no extra round trip.
 func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 	srcs, err := s.client.Sources(ctx)
 	if err != nil {
@@ -75,7 +87,7 @@ func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 	}
 	out := make([]SourceDTO, 0, len(srcs))
 	for _, src := range srcs {
-		if isLocalSource(src) {
+		if excludedFromPicker(src) {
 			continue
 		}
 		out = append(out, SourceDTO{ID: src.ID, Name: src.Name, Lang: src.Lang})
@@ -90,6 +102,21 @@ func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 // changes the id, matching on lang still catches it.
 func isLocalSource(src suwayomi.Source) bool {
 	return src.ID == suwayomi.LocalSourceID || strings.EqualFold(src.Lang, suwayomi.LocalSourceLang)
+}
+
+// isDisabledSource reports whether the owner has disabled src via the
+// per-language enable/disable toggle (suwayomi.Source.Disabled, resolved from
+// the source's isEnabled meta key — see suwayomi/source_meta.go).
+func isDisabledSource(src suwayomi.Source) bool {
+	return src.Disabled
+}
+
+// excludedFromPicker reports whether src must never appear in a Discover/
+// Search/Browse source picker: Suwayomi's built-in Local source (F1) or a
+// source the owner has disabled. Shared by Sources() and resolveSources() so
+// the two exclusion rules can never drift apart.
+func excludedFromPicker(src suwayomi.Source) bool {
+	return isLocalSource(src) || isDisabledSource(src)
 }
 
 // searchOneSource performs a single-source search against the Suwayomi client
@@ -257,42 +284,59 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 
 // resolveSources returns the source list to query, always excluding Suwayomi's
 // built-in Local source (see isLocalSource — the same F1 exclusion Sources()
-// applies). When sourceIDs is non-nil and non-empty, it returns only those
-// sources from the client whose IDs are in the set; otherwise it returns all
-// (non-Local) client sources. Naming Local's id explicitly does not resurrect
-// it (N1) — a client cannot search it by id any more than by leaving the
-// filter empty.
+// applies) AND any source the owner has disabled (see isDisabledSource,
+// mirroring Sources()'s filter) — a disabled source is never fanned out to by
+// Search, even when the caller names it explicitly in sourceIDs (the picker
+// that supplies sourceIDs is itself built from the filtered Sources() list, so
+// this only matters for a stale/hand-crafted request). When sourceIDs is
+// non-nil and non-empty, it returns only those sources from the client whose
+// IDs are in the set; otherwise it returns all (non-Local, enabled) client
+// sources. Naming Local's id explicitly does not resurrect it (N1) — a client
+// cannot search it by id any more than by leaving the filter empty; the same
+// reasoning applies to a disabled source's id.
 func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suwayomi.Source, error) {
 	all, err := s.client.Sources(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(sourceIDs) == 0 {
-		out := make([]suwayomi.Source, 0, len(all))
-		for _, src := range all {
-			if isLocalSource(src) {
-				continue
-			}
-			out = append(out, src)
-		}
-		return out, nil
-	}
+	// nil want ⇒ match every id (the "no filter" case); a non-nil want is an
+	// O(1)-lookup allowlist built once, up front.
+	want := sourceIDSet(sourceIDs)
 
-	// Build a set for O(1) lookup.
-	want := make(map[string]bool, len(sourceIDs))
-	for _, id := range sourceIDs {
-		want[id] = true
-	}
-
-	filtered := make([]suwayomi.Source, 0, len(sourceIDs))
+	out := make([]suwayomi.Source, 0, len(all))
 	for _, src := range all {
-		if isLocalSource(src) || !want[src.ID] {
+		if excludedFromPicker(src) || !want.matches(src.ID) {
 			continue
 		}
-		filtered = append(filtered, src)
+		out = append(out, src)
 	}
-	return filtered, nil
+	return out, nil
+}
+
+// sourceIDFilter is an O(1)-lookup allowlist of source IDs; a nil filter
+// matches every id (used when the caller passed no explicit sourceIDs).
+type sourceIDFilter map[string]bool
+
+// sourceIDSet builds a sourceIDFilter from ids, or nil when ids is empty.
+func sourceIDSet(ids []string) sourceIDFilter {
+	if len(ids) == 0 {
+		return nil
+	}
+	want := make(sourceIDFilter, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	return want
+}
+
+// matches reports whether id passes the filter: true for every id when want
+// is nil, else membership in the allowlist.
+func (want sourceIDFilter) matches(id string) bool {
+	if want == nil {
+		return true
+	}
+	return want[id]
 }
 
 // Browse returns one page of a single source's catalog listing (Popular or

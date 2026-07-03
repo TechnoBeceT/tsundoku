@@ -3,6 +3,7 @@ import Dialog from '../ui/Dialog.vue'
 import Spinner from '../ui/Spinner.vue'
 import FormError from '../ui/FormError.vue'
 import EmptyState from '../ui/EmptyState.vue'
+import Toggle from '../ui/Toggle.vue'
 import SourcePreferenceControl from './SourcePreferenceControl.vue'
 import { preferenceKey, type SourcePreferenceValue } from '~/composables/useSourcePreferences'
 import type { components } from '~/utils/api/schema.d.ts'
@@ -17,6 +18,10 @@ type Group = components['schemas']['SourcePreferencesGroup']
  * and after a write the parent swaps in the refreshed list, so positions never go
  * stale (§16).
  *
+ * Each group header also carries a per-language enable/disable Switch —
+ * disabling hides that language from Discover/Search/Browse without touching
+ * series already adopted from it (a series keeps updating regardless).
+ *
  *   - `open` (v-model:open): whether the dialog is shown.
  *   - `extensionName`: the extension's display name (dialog title).
  *   - `groups`: the per-source preference groups.
@@ -24,8 +29,11 @@ type Group = components['schemas']['SourcePreferencesGroup']
  *   - `error`: a load failure message (or null).
  *   - `savingKey`: `${sourceId}:${position}` of the preference being written (or null).
  *   - `saveError`: a write failure message (or null).
+ *   - `enablingKey`: the sourceId whose enable/disable toggle is being written (or null).
+ *   - `enableError`: an enable/disable write failure message (or null).
  *
- * Emits `update:open` (v-model) and `change` (a committed preference edit).
+ * Emits `update:open` (v-model), `change` (a committed preference edit), and
+ * `toggle-enabled` (a committed enable/disable flip).
  */
 const props = withDefaults(defineProps<{
   /** Whether the dialog is shown (v-model:open). */
@@ -42,6 +50,10 @@ const props = withDefaults(defineProps<{
   savingKey?: string | null
   /** A write failure message. */
   saveError?: string | null
+  /** The sourceId whose enable/disable toggle is being written. */
+  enablingKey?: string | null
+  /** An enable/disable write failure message. */
+  enableError?: string | null
 }>(), {
   extensionName: '',
   groups: () => [],
@@ -49,6 +61,8 @@ const props = withDefaults(defineProps<{
   error: null,
   savingKey: null,
   saveError: null,
+  enablingKey: null,
+  enableError: null,
 })
 
 const emit = defineEmits<{
@@ -56,11 +70,22 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
   /** A committed preference edit — forwarded from a control. */
   'change': [payload: { sourceId: string, position: number, value: SourcePreferenceValue }]
+  /** A committed enable/disable flip — forwarded from a group's Switch. */
+  'toggle-enabled': [payload: { sourceId: string, enabled: boolean }]
 }>()
 
 // A control is busy when its (sourceId, position) matches the saving key.
 function rowBusy(sourceId: string, position: number): boolean {
   return props.savingKey === preferenceKey(sourceId, position)
+}
+
+// A group's enable/disable Switch is busy while its own toggle write is in flight.
+function enableBusy(sourceId: string): boolean {
+  return props.enablingKey === sourceId
+}
+
+function toggleEnabled(sourceId: string, enabled: boolean): void {
+  emit('toggle-enabled', { sourceId, enabled })
 }
 </script>
 
@@ -73,6 +98,9 @@ function rowBusy(sourceId: string, position: number): boolean {
     <!-- A write failure is surfaced for the whole dialog (§16). -->
     <div v-if="saveError" class="prefs__saveerror">
       <FormError :message="saveError" />
+    </div>
+    <div v-if="enableError" class="prefs__saveerror">
+      <FormError :message="enableError" />
     </div>
 
     <div v-if="pending" class="prefs__loading">
@@ -93,6 +121,19 @@ function rowBusy(sourceId: string, position: number): boolean {
         <header class="prefs__grouphead">
           <span class="prefs__sourcename">{{ group.sourceName }}</span>
           <span class="prefs__lang">{{ group.lang.toUpperCase() }}</span>
+          <span class="prefs__spacer" />
+          <Spinner v-if="enableBusy(group.sourceId)" :size="15" tone="accent" />
+          <!-- eslint-disable vue/attribute-hyphenation -->
+          <!-- camelCase :ariaLabel is required: a bound kebab :aria-label routes to
+               the native ARIA attribute, leaving Toggle's REQUIRED ariaLabel prop
+               unset (a vue-tsc type error) — mirrors SourcePreferenceControl. -->
+          <Toggle
+            :model-value="group.enabled"
+            :disabled="enableBusy(group.sourceId)"
+            :ariaLabel="`Enable ${group.sourceName} (${group.lang})`"
+            @update:model-value="toggleEnabled(group.sourceId, $event)"
+          />
+          <!-- eslint-enable vue/attribute-hyphenation -->
         </header>
 
         <p v-if="group.preferences.length === 0" class="prefs__none">No preferences for this source.</p>
@@ -138,6 +179,10 @@ function rowBusy(sourceId: string, position: number): boolean {
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+}
+
+.prefs__spacer {
+  flex: 1;
 }
 
 .prefs__sourcename {

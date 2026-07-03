@@ -42,6 +42,20 @@ type Source struct {
 	Name string
 	// Lang is the BCP-47 language tag for the source (e.g. "en", "ja").
 	Lang string
+	// Disabled reports the CLIENT-CONVENTION disable state (see
+	// source_meta.go): resolved from the source's `isEnabled` meta key — true
+	// ONLY when that key is explicitly the literal string "false"; absent or
+	// any other value (including "true") means enabled, i.e. Disabled=false.
+	//
+	// Deliberately named Disabled (not Enabled) so its Go zero value (false)
+	// means enabled, matching Suwayomi's own "absent meta = enabled" default —
+	// every existing Source{...} literal across the tree (fakes/fixtures built
+	// before this field existed) stays enabled without touching 39+ call
+	// sites. Suwayomi itself has no server-side "disabled source" concept and
+	// keeps serving a disabled source over GraphQL; Tsundoku applies the
+	// filter itself wherever it lists sources (imports.Service.Sources /
+	// resolveSources).
+	Disabled bool
 }
 
 // LocalSourceID is Suwayomi's built-in "Local source" identifier. It is
@@ -227,6 +241,12 @@ type Client interface {
 	// via the ExtensionType.source link — the pkgName→sources resolution that
 	// drives the per-extension Configure flow. See source_preferences.go.
 	ExtensionSources(ctx context.Context, pkgName string) ([]Source, error)
+
+	// SetSourceEnabled writes the CLIENT-CONVENTION enable/disable flag for
+	// sourceID via the setSourceMeta mutation (key "isEnabled", value
+	// "true"/"false"). Re-enabling sets "true" explicitly rather than deleting
+	// the meta row (mirrors Suwayomi-WebUI). See source_meta.go.
+	SetSourceEnabled(ctx context.Context, sourceID string, enabled bool) error
 }
 
 // --- Constructor -------------------------------------------------------------
@@ -323,12 +343,15 @@ func (c *httpClient) doGraphQL(ctx context.Context, query string, vars map[strin
 // --- Sources -----------------------------------------------------------------
 
 // gqlSourcesData is the typed shape of the `data` field for the sources query.
+// meta is selected inline so the enable/disable filter (imports.Service.Sources
+// / resolveSources) needs no separate per-source read — see source_meta.go.
 type gqlSourcesData struct {
 	Sources struct {
 		Nodes []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-			Lang string `json:"lang"`
+			ID   string              `json:"id"`
+			Name string              `json:"name"`
+			Lang string              `json:"lang"`
+			Meta []gqlSourceMetaNode `json:"meta"`
 		} `json:"nodes"`
 	} `json:"sources"`
 }
@@ -340,6 +363,7 @@ query {
       id
       name
       lang
+      meta { key value }
     }
   }
 }`
@@ -353,7 +377,7 @@ func (c *httpClient) Sources(ctx context.Context) ([]Source, error) {
 	nodes := data.Sources.Nodes
 	out := make([]Source, len(nodes))
 	for i, n := range nodes {
-		out[i] = Source{ID: n.ID, Name: n.Name, Lang: n.Lang}
+		out[i] = Source{ID: n.ID, Name: n.Name, Lang: n.Lang, Disabled: sourceDisabledFromMeta(n.Meta)}
 	}
 	return out, nil
 }

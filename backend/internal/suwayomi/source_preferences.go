@@ -315,7 +315,9 @@ mutation UpdateSourcePreference($source: LongString!, $change: SourcePreferenceC
 
 // extensionSourcesQuery resolves an extension's sources via the ExtensionType.source
 // link — the natural "one extension → N language sources" traversal that drives a
-// per-extension Configure UI.
+// per-extension Configure UI. meta is selected inline (same SourceType field the
+// bulk `sources` query reads — see source_meta.go) so the Configure dialog's
+// per-language enable/disable toggle needs no separate per-source read.
 const extensionSourcesQuery = `
 query ExtensionSources($pkgName: String!) {
   extension(pkgName: $pkgName) {
@@ -324,6 +326,7 @@ query ExtensionSources($pkgName: String!) {
         id
         name
         lang
+        meta { key value }
       }
     }
   }
@@ -348,9 +351,10 @@ type gqlExtensionSourcesData struct {
 	Extension struct {
 		Source struct {
 			Nodes []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-				Lang string `json:"lang"`
+				ID   string              `json:"id"`
+				Name string              `json:"name"`
+				Lang string              `json:"lang"`
+				Meta []gqlSourceMetaNode `json:"meta"`
 			} `json:"nodes"`
 		} `json:"source"`
 	} `json:"extension"`
@@ -400,7 +404,7 @@ func (c *httpClient) ExtensionSources(ctx context.Context, pkgName string) ([]So
 	nodes := data.Extension.Source.Nodes
 	out := make([]Source, len(nodes))
 	for i, n := range nodes {
-		out[i] = Source{ID: n.ID, Name: n.Name, Lang: n.Lang}
+		out[i] = Source{ID: n.ID, Name: n.Name, Lang: n.Lang, Disabled: sourceDisabledFromMeta(n.Meta)}
 	}
 	return out, nil
 }

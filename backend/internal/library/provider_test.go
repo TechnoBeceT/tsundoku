@@ -113,6 +113,9 @@ func (f *fakeAddProviderClient) SetSourcePreference(ctx context.Context, sourceI
 func (f *fakeAddProviderClient) ExtensionSources(ctx context.Context, pkgName string) ([]suwayomi.Source, error) {
 	return nil, nil
 }
+func (f *fakeAddProviderClient) SetSourceEnabled(ctx context.Context, sourceID string, enabled bool) error {
+	return nil
+}
 
 // diskScanFirst wraps disk.ScanLibrary and returns the first (and, for this
 // test's single-series fixture, only) SeriesFacts found under storage.

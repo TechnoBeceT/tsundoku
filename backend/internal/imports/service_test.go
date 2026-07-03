@@ -146,6 +146,7 @@ func (f *fakeClient) SetSourcePreference(_ context.Context, _ string, _ int, _ s
 func (f *fakeClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
 	return nil, nil
 }
+func (f *fakeClient) SetSourceEnabled(_ context.Context, _ string, _ bool) error { return nil }
 
 // --- helpers -----------------------------------------------------------------
 
@@ -261,6 +262,33 @@ func TestService_Sources_Error(t *testing.T) {
 	}
 }
 
+// TestService_Sources_ExcludesDisabledSource verifies that a source the owner
+// has disabled via the per-language toggle (suwayomi.Source.Disabled) is
+// excluded from the Discover/Search source list, decluttering the picker,
+// while an enabled source (the Go zero value) is kept.
+func TestService_Sources_ExcludesDisabledSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
+			{ID: "src-b", Name: "Beta Source", Lang: "ko", Disabled: true},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Sources: got %d DTOs, want 1 (disabled source excluded): %+v", len(got), got)
+	}
+	if got[0].ID != "src-a" {
+		t.Errorf("Sources: got %+v, want only src-a", got)
+	}
+}
+
 // --- Search tests ------------------------------------------------------------
 
 // TestService_Search_AllSources verifies that Search(query, nil) fans across
@@ -330,6 +358,61 @@ func TestService_Search_FilterSources(t *testing.T) {
 	}
 	if got[0].Candidates[0].Lang != "en" {
 		t.Errorf("Candidate.Lang: got %q, want %q", got[0].Candidates[0].Lang, "en")
+	}
+}
+
+// TestService_Search_ExcludesDisabledSource verifies that Search(query, nil)
+// (the "fan out to all sources" path) never queries a source the owner has
+// disabled — resolveSources applies the same Disabled filter Sources() does.
+func TestService_Search_ExcludesDisabledSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "a", Name: "A Source", Lang: "en"},
+			{ID: "b", Name: "B Source", Lang: "ko", Disabled: true},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"a": {{ID: 1, Title: "Tower of God"}},
+			"b": {{ID: 2, Title: "Tower of God"}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "Tower of God", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Candidates) != 1 {
+		t.Fatalf("Search: got %+v, want exactly 1 candidate (disabled source b never fanned out)", got)
+	}
+	if got[0].Candidates[0].Source != "a" {
+		t.Errorf("Candidate.Source: got %q, want %q (disabled source b must be excluded)", got[0].Candidates[0].Source, "a")
+	}
+}
+
+// TestService_Search_ExplicitDisabledSourceIDExcluded verifies that even an
+// EXPLICIT sourceIDs filter naming a disabled source is not fanned out —
+// disabling wins over an explicit (stale/hand-crafted) request.
+func TestService_Search_ExplicitDisabledSourceIDExcluded(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "a", Name: "A Source", Lang: "en", Disabled: true},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"a": {{ID: 1, Title: "Tower of God"}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "Tower of God", []string{"a"})
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Search: got %+v, want no groups (the only requested source is disabled)", got)
 	}
 }
 

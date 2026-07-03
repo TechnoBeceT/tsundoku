@@ -77,6 +77,7 @@ func (s *stubClient) SetSourcePreference(_ context.Context, _ string, _ int, _ s
 func (s *stubClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
 	return nil, nil
 }
+func (s *stubClient) SetSourceEnabled(_ context.Context, _ string, _ bool) error { return nil }
 
 // The remaining Client methods are unused by Fetcher; they panic loudly if
 // reached so a future code-change that calls them is caught immediately.
@@ -329,6 +330,9 @@ func (m *midLoopCancelClient) SetSourcePreference(_ context.Context, _ string, _
 }
 func (m *midLoopCancelClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
 	return nil, nil
+}
+func (m *midLoopCancelClient) SetSourceEnabled(_ context.Context, _ string, _ bool) error {
+	return nil
 }
 
 func (m *midLoopCancelClient) Sources(_ context.Context) ([]suwayomi.Source, error) {

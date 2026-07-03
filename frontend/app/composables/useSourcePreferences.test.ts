@@ -80,4 +80,39 @@ describe('useSourcePreferences', () => {
     expect(saveError.value).toBe('Expected change to SwitchPreferenceCompat')
     expect(savingKey.value).toBeNull()
   })
+
+  it('setEnabled PATCHes the toggle and reseeds from the authoritative response (§16)', async () => {
+    getMock.mockResolvedValue({ data: { sources: [preferenceGroup] }, error: null })
+    patchMock.mockResolvedValue({ data: { sourceId: 'src-en', enabled: false }, error: null })
+
+    const { groups, enablingKey, load, setEnabled } = useSourcePreferences()
+    await load('pkg.test')
+    expect(groups.value[0]!.enabled).toBe(true)
+
+    await setEnabled('src-en', false)
+
+    expect(patchMock).toHaveBeenCalledWith('/api/suwayomi/sources/{sourceId}/enabled', {
+      params: { path: { sourceId: 'src-en' } },
+      body: { enabled: false },
+    })
+    // The group's `enabled` flag comes from the RE-READ response, not an
+    // optimistic flip of the request value.
+    expect(groups.value[0]!.enabled).toBe(false)
+    expect(enablingKey.value).toBeNull()
+  })
+
+  it('surfaces an enable/disable write failure in enableError without throwing', async () => {
+    getMock.mockResolvedValue({ data: { sources: [preferenceGroup] }, error: null })
+    patchMock.mockResolvedValue({ data: null, error: { message: 'suwayomi: source not found' } })
+
+    const { groups, enableError, enablingKey, load, setEnabled } = useSourcePreferences()
+    await load('pkg.test')
+
+    await setEnabled('src-en', false)
+
+    expect(enableError.value).toBe('suwayomi: source not found')
+    expect(enablingKey.value).toBeNull()
+    // A failed write must not silently flip the local state.
+    expect(groups.value[0]!.enabled).toBe(true)
+  })
 })

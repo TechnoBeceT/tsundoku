@@ -72,10 +72,33 @@ func TestPreferences_OK(t *testing.T) {
 	if g.SourceID != "src-en" || g.SourceName != "MangaDex" || g.Lang != "en" {
 		t.Errorf("group identity mismatch: %+v", g)
 	}
+	if !g.Enabled {
+		t.Errorf("group.Enabled = false, want true (the seeded source carries no Disabled flag)")
+	}
 	if len(g.Preferences) != 3 {
 		t.Fatalf("want 3 preferences, got %d", len(g.Preferences))
 	}
 	assertVariantJSONTypes(t, g.Preferences)
+}
+
+// TestPreferences_SurfacesDisabled proves a disabled source's group reports
+// enabled=false in the GET response — the Configure dialog's per-language
+// Switch reads this field.
+func TestPreferences_SurfacesDisabled(t *testing.T) {
+	fc := prefsFake()
+	fc.sources[0].Disabled = true
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.test/preferences", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Preferences: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got handler.SourcePreferencesBySourceDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Sources) != 1 || got.Sources[0].Enabled {
+		t.Fatalf("want 1 disabled (enabled=false) group, got %+v", got.Sources)
+	}
 }
 
 // assertVariantJSONTypes checks the seeded switch/list/multi preferences mapped to

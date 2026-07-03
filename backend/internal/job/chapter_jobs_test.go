@@ -436,6 +436,7 @@ func (fakeSuwayomi) SetSourcePreference(context.Context, string, int, suwayomi.P
 func (fakeSuwayomi) ExtensionSources(context.Context, string) ([]suwayomi.Source, error) {
 	return nil, nil
 }
+func (fakeSuwayomi) SetSourceEnabled(context.Context, string, bool) error { return nil }
 
 // TestRunner_StartRefresh_DiscoversAndDownloads verifies the refresh ticker
 // re-fetches a monitored series (creating a wanted chapter) and then triggers a

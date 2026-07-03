@@ -1057,6 +1057,7 @@ components:
         - sourceId
         - sourceName
         - lang
+        - enabled
         - preferences
       properties:
         sourceId:
@@ -1068,11 +1069,42 @@ components:
         lang:
           type: string
           description: BCP-47 language tag.
+        enabled:
+          type: boolean
+          description: |
+            The per-language enable/disable toggle. A disabled source is hidden
+            from Tsundoku's Discover/Search/Browse source lists but keeps
+            updating any series already adopted from it. Toggled via
+            PATCH /api/suwayomi/sources/{sourceId}/enabled.
         preferences:
           type: array
           description: This source's configurable preferences, in array order.
           items:
             $ref: "#/components/schemas/SourcePreference"
+
+    SourceEnabled:
+      type: object
+      description: The authoritative per-language enable/disable state, re-read after a write (§16 round-trip).
+      required:
+        - sourceId
+        - enabled
+      properties:
+        sourceId:
+          type: string
+          description: The Suwayomi source id.
+        enabled:
+          type: boolean
+          description: The enable/disable state as re-read after the write.
+
+    SetSourceEnabledRequest:
+      type: object
+      description: Set the per-language enable/disable state for one source.
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+          description: The new enable/disable state.
 
     SourcePreferencesBySource:
       type: object
@@ -3574,6 +3606,69 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/suwayomi/sources/{sourceId}/enabled:
+    patch:
+      operationId: setSourceEnabled
+      summary: Toggle a source's per-language enable/disable state
+      description: |
+        Writes the CLIENT-CONVENTION enable/disable flag for one source (Suwayomi
+        has no server-side "disabled source" concept — the flag lives in a
+        per-source metadata key). Disabling hides the source from Tsundoku's
+        Discover/Search/Browse source lists but does NOT stop refreshing a series
+        already adopted from it, and does NOT delete the flag on re-enable.
+        Applies the write then RE-READS the authoritative state (§16 round-trip).
+        A blank sourceId or a missing `enabled` field is a 400; a sourceId absent
+        from the post-write re-read is a 404; any upstream Suwayomi failure
+        (the write or the re-read) is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: The Suwayomi source id.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetSourceEnabledRequest"
+      responses:
+        "200":
+          description: The authoritative enable/disable state after the write.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceEnabled"
+        "400":
+          description: A blank sourceId, invalid JSON body, or a missing `enabled` field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The source was absent from the post-write re-read.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned a GraphQL error.
           content:
             application/json:
               schema:

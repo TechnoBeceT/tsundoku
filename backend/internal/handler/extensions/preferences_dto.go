@@ -47,8 +47,24 @@ type SourcePreferencesGroupDTO struct {
 	SourceName string `json:"sourceName"`
 	// Lang is the source's BCP-47 language tag.
 	Lang string `json:"lang"`
+	// Enabled is the per-language enable/disable toggle — the inverse of
+	// suwayomicli.Source.Disabled: a disabled source is hidden from Tsundoku's
+	// Discover/Search/Browse source lists but keeps updating any series
+	// already adopted from it. Toggled via PATCH
+	// /api/suwayomi/sources/:sourceId/enabled.
+	Enabled bool `json:"enabled"`
 	// Preferences are this source's configurable preferences, in array order.
 	Preferences []SourcePreferenceDTO `json:"preferences"`
+}
+
+// SourceEnabledDTO is the response of PATCH /api/suwayomi/sources/:sourceId/enabled
+// — the authoritative per-language enable/disable state after the write
+// (§16 round-trip: re-read via suwayomicli.Client.Sources, never the request echo).
+type SourceEnabledDTO struct {
+	// SourceID is the Suwayomi source id.
+	SourceID string `json:"sourceId"`
+	// Enabled is the enable/disable state as re-read after the write.
+	Enabled bool `json:"enabled"`
 }
 
 // SourcePreferencesBySourceDTO is the GET response: an extension's preferences

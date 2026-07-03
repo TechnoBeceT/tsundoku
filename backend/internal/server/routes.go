@@ -78,6 +78,7 @@ import (
 //   - /api/suwayomi/extensions/:pkgName/icon (GET)  — extension icon proxy (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/preferences (GET)   — per-source preferences, grouped by source (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/preferences (PATCH) — write one preference by position (RequireOwner).
+//   - /api/suwayomi/sources/:sourceId/enabled (PATCH)        — per-language enable/disable toggle (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
@@ -167,6 +168,7 @@ func registerRoutes(
 	authed.GET("/suwayomi/extensions/:pkgName/icon", extensionsH.Icon)
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", extensionsH.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", extensionsH.SetPreference)
+	authed.PATCH("/suwayomi/sources/:sourceId/enabled", extensionsH.SetSourceEnabled)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.

@@ -103,6 +103,9 @@ func (s *ingestStubClient) SetSourcePreference(_ context.Context, _ string, _ in
 func (s *ingestStubClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
 	panic("ingestStubClient.ExtensionSources: must not be called by Ingest")
 }
+func (s *ingestStubClient) SetSourceEnabled(_ context.Context, _ string, _ bool) error {
+	panic("ingestStubClient.SetSourceEnabled: must not be called by Ingest")
+}
 
 // --- helpers -----------------------------------------------------------------
 
@@ -607,6 +610,9 @@ func (s *metaClientStub) SetSourcePreference(_ context.Context, _ string, _ int,
 }
 func (s *metaClientStub) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
 	panic("metaClientStub: ExtensionSources must not be called by Ingest")
+}
+func (s *metaClientStub) SetSourceEnabled(_ context.Context, _ string, _ bool) error {
+	panic("metaClientStub: SetSourceEnabled must not be called by Ingest")
 }
 
 // ptrStr returns a pointer to v.

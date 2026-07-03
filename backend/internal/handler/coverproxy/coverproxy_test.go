@@ -70,6 +70,7 @@ func (f *fakeClient) SetSourcePreference(context.Context, string, int, suwayomi.
 func (f *fakeClient) ExtensionSources(context.Context, string) ([]suwayomi.Source, error) {
 	return nil, nil
 }
+func (f *fakeClient) SetSourceEnabled(context.Context, string, bool) error { return nil }
 
 // newTestContext builds a bare echo.Context over a GET request/response pair.
 func newTestContext() (echo.Context, *httptest.ResponseRecorder) {
