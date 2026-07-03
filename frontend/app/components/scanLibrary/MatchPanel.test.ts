@@ -22,7 +22,6 @@ describe('MatchPanel', () => {
   it('picking a group then a candidate and confirming emits confirm with the chosen source+importance', async () => {
     const wrapper = mount(MatchPanel, {
       props: {
-        path: '/data/manga/Manga/Solo Leveling',
         title: 'Solo Leveling',
         groups: searchResults,
       },
@@ -56,7 +55,6 @@ describe('MatchPanel', () => {
   it('the Groups-stage Back button emits back without ever picking a group', async () => {
     const wrapper = mount(MatchPanel, {
       props: {
-        path: '/data/manga/Manga/Solo Leveling',
         title: 'Solo Leveling',
         groups: searchResults,
       },
@@ -70,7 +68,6 @@ describe('MatchPanel', () => {
   it('renders a match-search failure instead of a blank panel (§16)', () => {
     const wrapper = mount(MatchPanel, {
       props: {
-        path: '/data/manga/Manga/Solo Leveling',
         title: 'Solo Leveling',
         groups: [],
         searchError: 'Match search failed — the server returned a 500.',
@@ -85,7 +82,6 @@ describe('MatchPanel', () => {
   it('confirm button stays disabled with no candidate selected', async () => {
     const wrapper = mount(MatchPanel, {
       props: {
-        path: '/data/manga/Manga/Solo Leveling',
         title: 'Solo Leveling',
         groups: searchResults,
       },

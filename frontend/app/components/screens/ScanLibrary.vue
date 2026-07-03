@@ -167,7 +167,6 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
           <!-- The Match sub-panel takes over the whole Review body while a target is set. -->
           <MatchPanel
             v-if="showMatchPanel"
-            :path="matchPath!"
             :title="matchTitle"
             :groups="matchGroups"
             :searching="matching"

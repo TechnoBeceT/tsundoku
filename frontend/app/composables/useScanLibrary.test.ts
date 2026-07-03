@@ -292,6 +292,54 @@ describe('useScanLibrary', () => {
     ])
   })
 
+  it('match() discards a stale response when an earlier (slower) request resolves after a later (faster) one', async () => {
+    // Task-7 review fix: two overlapping match() calls for two DIFFERENT
+    // staged entries (the owner clicks Match on series A, goes Back, then
+    // clicks Match on series B). B is fast and resolves FIRST; A is slow and
+    // resolves SECOND, after B has already landed. The composable's shared
+    // matchGroups/matchError state must reflect B (the latest request) even
+    // though A's promise settles later — a path-equality guard would not be
+    // enough (this drives two DIFFERENT paths), which is why the fix uses a
+    // monotonic generation counter.
+    const { match, matchGroups, matchError } = useScanLibrary()
+
+    interface DeferredGetResult { data: unknown, error: unknown, response: Response }
+    let resolveA!: (v: DeferredGetResult) => void
+    let resolveB!: (v: DeferredGetResult) => void
+    const responseA = new Promise<DeferredGetResult>((resolve) => { resolveA = resolve })
+    const responseB = new Promise<DeferredGetResult>((resolve) => { resolveB = resolve })
+
+    vi.mocked(apiClient.GET)
+      .mockImplementationOnce(() => responseA)
+      .mockImplementationOnce(() => responseB)
+
+    const matchA = match('/library/Manga/Series-A') // slow, started first
+    const matchB = match('/library/Manga/Series-B') // fast, started second
+
+    // B (the LATER request) resolves FIRST.
+    resolveB({
+      data: [{ title: 'Series B', candidates: [] }],
+      error: null,
+      response: new Response(null, { status: 200 }),
+    })
+    await matchB
+
+    expect(matchGroups.value).toEqual([{ title: 'Series B', candidates: [] }])
+
+    // A (the EARLIER request) finally resolves AFTER B already landed.
+    resolveA({
+      data: [{ title: 'Series A', candidates: [] }],
+      error: null,
+      response: new Response(null, { status: 200 }),
+    })
+    await matchA
+
+    // The stale A response must be discarded — shared state still reflects
+    // B, the latest request, not whichever promise happened to settle last.
+    expect(matchGroups.value).toEqual([{ title: 'Series B', candidates: [] }])
+    expect(matchError.value).toBe('')
+  })
+
   it('exposes entriesError (list-load failure) and error (per-row failure) as distinct, independently-working members', async () => {
     const { entriesError, error, skip, refresh } = useScanLibrary()
 

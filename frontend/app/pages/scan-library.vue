@@ -17,10 +17,19 @@
  *
  * The Match sub-panel (Task 7) needs one extra piece of page-owned state the
  * composable itself doesn't track: WHICH entry is currently being matched
- * (`matchTarget`, null when the panel is closed) — `matching`/`matchError`
- * (the search's own loading/error) already come straight from the
- * composable, and the CONFIRM mutation's busy/error reuse the SAME
+ * (`matchTarget`, null when the panel is closed) — `matching`/`matchError`/
+ * `matchGroups` (the search's own loading/error/results, INCLUDING the
+ * stale-response guard — see useScanLibrary.ts) already come straight from
+ * the composable, and the CONFIRM mutation's busy/error reuse the SAME
  * `busy(path)`/`error(path)` lookups every other row mutation uses.
+ *
+ * `onMatch` deliberately does NOT assign the composable's `match(path)`
+ * return value anywhere — it just awaits the call and lets the template
+ * read the composable's own `matchGroups` ref. Assigning the return value
+ * into a page-local ref would reintroduce the exact race the composable's
+ * generation-counter guard closes (an overlapping, earlier match() call
+ * resolving after a later one and clobbering the panel with the wrong
+ * series' candidates).
  *
  * Emit wiring:
  *   @start-scan          → startScan()
@@ -34,7 +43,6 @@
  *   @match-back           → onMatchBack() — closes the panel, no mutation
  */
 import { computed, ref } from 'vue'
-import type { SearchGroup } from '~/components/screens/import.types'
 import type { ScanMatch } from '~/composables/useScanLibrary'
 
 const {
@@ -54,6 +62,7 @@ const {
   importWithMatch,
   matching,
   matchError,
+  matchGroups,
   match,
   batchImporting,
   batchError,
@@ -74,18 +83,17 @@ const rowErrors = computed(() => {
 
 /** The staged entry currently in the Match sub-panel, or null when it's closed. */
 const matchTarget = ref<{ path: string, title: string } | null>(null)
-/** The current match target's cross-source candidate groups. */
-const matchGroups = ref<SearchGroup[]>([])
 
 /**
  * Opens the Match sub-panel for one staged entry and kicks off the
- * cross-source search. `matching`/`matchError` (from the composable) drive
- * the panel's own loading/error state while `match()` resolves.
+ * cross-source search. `matching`/`matchError`/`matchGroups` (all from the
+ * composable, and all covered by its stale-response guard) drive the
+ * panel's own loading/error/results state while `match()` resolves.
  */
 async function onMatch(path: string): Promise<void> {
   const entry = entries.value.find((e) => e.path === path)
   matchTarget.value = { path, title: entry?.title ?? path }
-  matchGroups.value = await match(path)
+  await match(path)
 }
 
 /**

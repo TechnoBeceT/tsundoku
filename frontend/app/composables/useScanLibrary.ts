@@ -39,6 +39,16 @@
  * at once, so busy/error state is tracked per-path (a `Set`/`Record`) rather
  * than a single shared field — exposed as the `busy(path)`/`error(path)`
  * lookup functions the wizard screen (Task 6/7) will call per row.
+ *
+ * `match()`'s result state (`matchGroups`/`matching`/`matchError`) lives HERE
+ * rather than in the page (Task-7 review fix) precisely so it can carry a
+ * stale-response guard: the owner can open the Match panel for one staged
+ * entry, go Back, and open it for another before the first search resolves —
+ * without a guard the slower, superseded request's candidates would land
+ * after the faster one's and silently overwrite the panel the owner is
+ * actually looking at. A monotonic generation counter (incremented per
+ * `match()` call) ensures only the MOST RECENTLY STARTED request's response
+ * is ever written to the shared refs, regardless of resolution order.
  */
 import { ref, onUnmounted } from 'vue'
 import { useProgressStream } from '~/composables/useProgressStream'
@@ -310,9 +320,34 @@ export function useScanLibrary() {
   // ── Cross-source match search ────────────────────────────────────────────
   const matching = ref(false)
   const matchError = ref('')
+  /** The active match target's cross-source candidate groups (see the
+   * stale-response guard on `match()` below — this ref only ever reflects
+   * the MOST RECENTLY STARTED request, never an earlier one that happens to
+   * resolve later). */
+  const matchGroups = ref<SearchGroup[]>([])
+  /**
+   * Monotonic request-generation counter for `match()`'s stale-response
+   * guard (Task-7 review fix). The owner can click Match on series A (a
+   * slow cross-source search), go Back, then click Match on series B (a
+   * fast one) before A's promise settles — without a guard, A's response
+   * would land AFTER B's and clobber `matchGroups`/`matchError` with the
+   * WRONG series' candidates, letting the owner attach A's chosen source to
+   * B's on-disk path. A plain `path` equality check is not enough (the same
+   * path re-matched twice must ALSO discard the earlier response), so each
+   * call captures its own generation and only writes shared state back if
+   * it is still the most recent one when its `await` resolves.
+   */
+  let matchGeneration = 0
 
-  /** Searches every Suwayomi source for a staged entry's title. */
+  /**
+   * Searches every Suwayomi source for a staged entry's title. Always
+   * returns this call's own mapped groups (even if stale) so a caller that
+   * wants the raw result directly still can — but the SHARED `matchGroups`/
+   * `matching`/`matchError` refs are only updated when this call is still
+   * the latest one in flight (see the generation-counter guard above).
+   */
   async function match(path: string): Promise<SearchGroup[]> {
+    const generation = ++matchGeneration
     matching.value = true
     matchError.value = ''
     try {
@@ -320,14 +355,17 @@ export function useScanLibrary() {
       if (res.error || !res.data) {
         throw new Error(res.error && 'message' in res.error ? res.error.message : 'Match search failed')
       }
-      return res.data.map(mapGroup)
+      const groups = res.data.map(mapGroup)
+      if (generation === matchGeneration) matchGroups.value = groups
+      return groups
     }
     catch (e) {
-      matchError.value = e instanceof Error ? e.message : 'Match search failed'
+      const message = e instanceof Error ? e.message : 'Match search failed'
+      if (generation === matchGeneration) matchError.value = message
       return []
     }
     finally {
-      matching.value = false
+      if (generation === matchGeneration) matching.value = false
     }
   }
 
@@ -440,6 +478,7 @@ export function useScanLibrary() {
     importWithMatch,
     matching,
     matchError,
+    matchGroups,
     match,
     batchImporting,
     batchError,

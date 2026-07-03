@@ -36,8 +36,6 @@ import type { ScanMatch } from '../screens/scanLibrary.types'
  * operations, two distinct §16 state pairs.
  */
 const props = withDefaults(defineProps<{
-  /** The staged entry's on-disk path (its identity key) — display-only here. */
-  path: string
   /** The staged entry's title, for the panel header. */
   title: string
   /** Cross-source candidate groups returned by the match search. */

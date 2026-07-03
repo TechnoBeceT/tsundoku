@@ -14,7 +14,6 @@ const meta = {
   component: MatchPanel,
   parameters: { layout: 'padded' },
   args: {
-    path: '/data/manga/Manga/Solo Leveling',
     title: 'Solo Leveling',
     onConfirm: fn(),
     onBack: fn(),
