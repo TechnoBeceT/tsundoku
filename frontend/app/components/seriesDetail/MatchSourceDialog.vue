@@ -133,7 +133,16 @@ const candRows = computed<CandRow[]>(() => {
   }))
 })
 
-const canConfirm = computed(() => selectedKey.value !== null && importance.value >= 1 && !props.saving)
+// The backend's importance column is a Go `int` — a decimal (e.g. 1.5, which
+// `type="number"` + `v-model.number` happily produces) would fail server-side
+// unmarshalling and surface as an ugly generic banner. Require a clean
+// integer client-side instead so that failure mode can't happen.
+const canConfirm = computed(() =>
+  selectedKey.value !== null
+  && Number.isInteger(importance.value)
+  && importance.value >= 1
+  && !props.saving,
+)
 
 function confirm(): void {
   const group = pickedGroup.value
@@ -213,6 +222,7 @@ function onBackOrCancel(): void {
           v-model.number="importance"
           type="number"
           min="1"
+          step="1"
           class="match-importance__input"
         >
         <span class="match-importance__hint">

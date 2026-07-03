@@ -14,6 +14,7 @@
  * before useMatchSource.ts is evaluated, regardless of import order here.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { apiClient } from '~/utils/api/client'
 import { useMatchSource } from './useMatchSource'
 
 interface Call { method: string, path: string, body?: unknown, query?: unknown }
@@ -100,6 +101,51 @@ describe('useMatchSource', () => {
         }],
       },
     ])
+  })
+
+  it('search() discards a stale response when an earlier (slower) request resolves after a later (faster) one', async () => {
+    // The owner searches "naruto" (slow), then edits the box and searches
+    // "one piece" (fast) before "naruto"'s response lands. Without the
+    // generation guard, "naruto"'s late response would silently overwrite
+    // `groups` even though the box reads "one piece" — letting the owner
+    // attach a candidate from the WRONG query. Control the resolution order
+    // with deferred promises: the SECOND (later) call resolves FIRST.
+    interface DeferredGetResult { data: unknown, error: unknown, response: Response }
+    let resolveNaruto!: (v: DeferredGetResult) => void
+    let resolveOnePiece!: (v: DeferredGetResult) => void
+    const responseNaruto = new Promise<DeferredGetResult>((resolve) => { resolveNaruto = resolve })
+    const responseOnePiece = new Promise<DeferredGetResult>((resolve) => { resolveOnePiece = resolve })
+
+    vi.mocked(apiClient.GET)
+      .mockImplementationOnce(() => responseNaruto)
+      .mockImplementationOnce(() => responseOnePiece)
+
+    const { groups, error, search } = useMatchSource('series-1')
+
+    const searchNaruto = search('naruto') // slow, started first
+    const searchOnePiece = search('one piece') // fast, started second
+
+    // The LATER request ("one piece") resolves FIRST.
+    resolveOnePiece({
+      data: [{ title: 'One Piece', candidates: [] }],
+      error: null,
+      response: new Response(null, { status: 200 }),
+    })
+    await searchOnePiece
+
+    expect(groups.value).toEqual([{ title: 'One Piece', candidates: [] }])
+
+    // The EARLIER request ("naruto") finally resolves AFTER "one piece"
+    // already landed — its response must be discarded, not overwrite groups.
+    resolveNaruto({
+      data: [{ title: 'Naruto', candidates: [] }],
+      error: null,
+      response: new Response(null, { status: 200 }),
+    })
+    await searchNaruto
+
+    expect(groups.value).toEqual([{ title: 'One Piece', candidates: [] }])
+    expect(error.value).toBeNull()
   })
 
   it('search() failure sets error and leaves groups empty', async () => {

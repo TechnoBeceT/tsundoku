@@ -58,6 +58,22 @@ describe('MatchSourceDialog', () => {
     expect(wrapper.emitted('confirm')).toEqual([[{ source: target.source, mangaId: target.mangaId, importance: 7 }]])
   })
 
+  it('the Attach button stays disabled when the priority is a non-integer (must POST a clean int)', async () => {
+    const wrapper = mountDialog()
+    await wrapper.findAll('button').find(b => b.text().includes(searchResults[0]!.title))!.trigger('click')
+
+    const target = searchResults[0]!.candidates[1]!
+    await wrapper.find(`[aria-label="Toggle ${target.sourceName}"]`).trigger('click')
+    await wrapper.find('input[type="number"]').setValue(1.5)
+
+    const attach = wrapper.findAll('button').find(b => b.text() === 'Attach source')!
+    expect(attach.attributes('disabled')).toBeDefined()
+
+    // Clicking it anyway must not emit confirm with the decimal — no bad POST.
+    await attach.trigger('click')
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+  })
+
   it('the Attach button stays disabled until a candidate is selected', async () => {
     const wrapper = mountDialog()
     await wrapper.findAll('button').find(b => b.text().includes(searchResults[0]!.title))!.trigger('click')
