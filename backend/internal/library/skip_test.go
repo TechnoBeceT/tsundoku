@@ -7,6 +7,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 // TestSkip_MarksEntrySkipped proves the happy path: skipping a staged
@@ -18,7 +19,7 @@ func TestSkip_MarksEntrySkipped(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage)
+	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
 	found, err := svc.Scan(ctx)
 	if err != nil {
@@ -45,7 +46,7 @@ func TestSkip_UnknownPathReturnsErrEntryNotFound(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage)
+	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
 	if err := svc.Skip(ctx, "/nope"); err != library.ErrEntryNotFound {
 		t.Fatalf("err = %v, want ErrEntryNotFound", err)

@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -151,7 +152,7 @@ func TestAddProvider_AttachesSourceAndFlagsUpgrade(t *testing.T) {
 	fake := newFakeClientWithFeed(t) // returns 2 chapters keyed "1","2" for mangaID 99
 	ingest := suwayomi.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage)
+	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
 	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5)
 	if err != nil {

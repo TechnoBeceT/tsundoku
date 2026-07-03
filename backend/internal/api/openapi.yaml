@@ -1115,6 +1115,16 @@ components:
               items:
                 type: string
 
+    ScanStarted:
+      type: object
+      description: Result of a POST /api/library/scan call — whether this call launched the background scan (202) or one was already in flight (409).
+      required:
+        - started
+      properties:
+        started:
+          type: boolean
+          description: true if this call launched the scan; false if a scan was already running (single-flight guard).
+
     FoundSeries:
       type: object
       description: One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB).
@@ -1365,7 +1375,9 @@ paths:
                 description: |
                   Newline-delimited SSE frames. Each frame carries a `data:` field
                   containing a JSON-encoded progress event. The `event:` field names
-                  the event type (e.g. `chapter.downloaded`, `series.synced`).
+                  the event type (e.g. `chapter.downloaded`, `series.synced`,
+                  `scan.start`/`scan.progress`/`scan.done` — emitted by the async
+                  library scan, see POST /api/library/scan).
         "401":
           description: Missing or invalid Bearer token.
           content:
@@ -2682,31 +2694,44 @@ paths:
   /api/library/scan:
     post:
       operationId: scanLibrary
-      summary: Scan on-disk storage for importable series
+      summary: Launch an async scan of on-disk storage for importable series
       description: |
-        Walks the storage root and upserts one staging row per on-disk series
-        (never downgrading an already-imported row), then returns the full
-        staging list. Use this to discover series that exist on disk but are
-        not yet tracked in the DB (e.g. after a Kaizoku.GO migration).
+        Launches a background walk of the storage root that upserts one
+        staging row per on-disk series (never downgrading an already-imported
+        row). Use this to discover series that exist on disk but are not yet
+        tracked in the DB (e.g. after a Kaizoku.GO migration).
+
+        The scan runs asynchronously and streams progress over the
+        `/api/progress` SSE stream as `scan.start` (fired once, when the walk
+        begins), `scan.progress` (fired after each series is staged, carrying
+        `processed`/`total`/`path`), and `scan.done` (fired once, carrying the
+        final `total`/`found`, or `error` if the walk itself failed) — this
+        avoids blocking the request for a 1000+ series NFS walk, which could
+        otherwise trip a gateway timeout (e.g. a Cloudflare Tunnel's edge
+        limit). Only one scan may run at a time; see the 409 response.
       tags:
         - library
       security:
         - BearerAuth: []
       responses:
-        "200":
-          description: The full staging list after the scan.
+        "202":
+          description: The scan was launched; watch /api/progress for scan.* events.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/FoundSeries"
+                $ref: "#/components/schemas/ScanStarted"
         "401":
           description: Missing or invalid Bearer token.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A scan is already in flight (single-flight guard).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanStarted"
 
   /api/library/imports:
     get:

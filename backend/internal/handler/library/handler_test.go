@@ -25,6 +25,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 const testSecret = "library-handler-test-secret"
@@ -33,6 +34,12 @@ type testEnv struct {
 	e      *echo.Echo
 	client *ent.Client
 	token  string
+	// svc is the same library.Service instance wired into e's routes. Tests
+	// that need to stage ImportEntry rows use svc.Scan directly (the
+	// synchronous path) rather than POST /api/library/scan, since that route
+	// now launches the scan asynchronously (StartScan) and returns before any
+	// row is guaranteed to exist.
+	svc *library.Service
 }
 
 // newEnv wires a fully-authenticated Echo instance with the library routes
@@ -61,7 +68,7 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
-	svc := library.NewService(client, nil, nil, nil, func() {}, storage)
+	svc := library.NewService(client, nil, nil, nil, func() {}, storage, sse.NewHub())
 	h := handler.NewHandler(svc)
 
 	e := echo.New()
@@ -78,7 +85,7 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	if err != nil {
 		t.Fatalf("Issue token: %v", err)
 	}
-	return &testEnv{e: e, client: client, token: token}
+	return &testEnv{e: e, client: client, token: token, svc: svc}
 }
 
 func (env *testEnv) do(method, target, body string) *httptest.ResponseRecorder {
@@ -160,26 +167,65 @@ func TestLibraryRoutes_RequireOwner(t *testing.T) {
 	}
 }
 
-// TestLibraryScan_Returns200 proves the happy path: scanning a seeded temp
-// storage directory returns 200 with the staged series.
-func TestLibraryScan_Returns200(t *testing.T) {
+// TestLibraryScan_Accepted proves the happy path: POST /api/library/scan
+// launches the async scan and returns 202 {started:true} immediately —
+// it no longer blocks for the walk to finish (see library.Service.StartScan).
+func TestLibraryScan_Accepted(t *testing.T) {
 	env := newEnvWithStorageSeeded(t)
 	rec := env.do("POST", "/api/library/scan", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("scan = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("scan = %d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Started bool `json:"started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Started {
+		t.Fatalf("started = %v, want true", got.Started)
+	}
+}
+
+// TestLibraryScan_ConflictWhenInFlight proves the single-flight guard end to
+// end through the HTTP handler: a second concurrent POST /api/library/scan
+// while the first scan is still running gets 409 {started:false} rather than
+// launching a second NFS walk.
+func TestLibraryScan_ConflictWhenInFlight(t *testing.T) {
+	env := newEnvWithStorageSeeded(t)
+
+	first := env.do("POST", "/api/library/scan", "")
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first scan = %d, want 202 (%s)", first.Code, first.Body.String())
+	}
+
+	second := env.do("POST", "/api/library/scan", "")
+	if second.Code != http.StatusConflict {
+		t.Fatalf("second scan = %d, want 409 (%s)", second.Code, second.Body.String())
+	}
+	var got struct {
+		Started bool `json:"started"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Started {
+		t.Fatalf("started = %v, want false", got.Started)
 	}
 }
 
 // TestLibraryImports_ListsStagedEntries proves the ListImports happy path
-// end-to-end: a seeded on-disk series is staged by POST /library/scan, then
-// GET /library/imports returns it with every field populated. This exercises
-// the service's decode(row.Found)→distinctProviders reuse (not just a non-nil
-// check) by asserting the recovered Providers list contains the source name.
+// end-to-end: a seeded on-disk series is staged (via the service's
+// synchronous Scan — POST /library/scan is now async and returns before any
+// row is guaranteed to exist), then GET /library/imports returns it with
+// every field populated. This exercises the service's decode(row.Found)→
+// distinctProviders reuse (not just a non-nil check) by asserting the
+// recovered Providers list contains the source name.
 func TestLibraryImports_ListsStagedEntries(t *testing.T) {
 	env := newEnvWithStorageSeeded(t)
 
-	if rec := env.do("POST", "/api/library/scan", ""); rec.Code != http.StatusOK {
-		t.Fatalf("scan = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	if _, err := env.svc.Scan(context.Background()); err != nil {
+		t.Fatalf("scan: %v", err)
 	}
 
 	rec := env.do("GET", "/api/library/imports", "")
@@ -323,19 +369,16 @@ func TestLibraryAddProvider_InvalidBody(t *testing.T) {
 }
 
 // TestSkip_OK proves the happy path end-to-end: scanning a seeded temp
-// storage directory stages a pending entry, POST /library/imports/skip
-// flips it to "skipped" (204), and a re-GET of /library/imports confirms the
+// storage directory stages a pending entry (via the service's synchronous
+// Scan — POST /library/scan is now async), POST /library/imports/skip flips
+// it to "skipped" (204), and a re-GET of /library/imports confirms the
 // persisted status (§16 round-trip via re-fetch, not just the 204 code).
 func TestSkip_OK(t *testing.T) {
 	env := newEnvWithStorageSeeded(t)
 
-	scanRec := env.do("POST", "/api/library/scan", "")
-	if scanRec.Code != http.StatusOK {
-		t.Fatalf("scan = %d, want 200 (%s)", scanRec.Code, scanRec.Body.String())
-	}
-	var staged []library.FoundSeriesDTO
-	if err := json.Unmarshal(scanRec.Body.Bytes(), &staged); err != nil {
-		t.Fatalf("decode scan: %v", err)
+	staged, err := env.svc.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
 	}
 	if len(staged) != 1 {
 		t.Fatalf("staged len = %d, want 1", len(staged))

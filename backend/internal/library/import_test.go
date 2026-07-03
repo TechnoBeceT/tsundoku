@@ -9,6 +9,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 // TestImport_RegistersDiskChaptersDownloaded proves the happy-path disk-only
@@ -21,7 +22,7 @@ func TestImport_RegistersDiskChaptersDownloaded(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage)
+	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
 	found, err := svc.Scan(ctx)
 	if err != nil {
@@ -73,7 +74,7 @@ func TestImport_UnknownPathReturnsErrEntryNotFound(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage)
+	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
 	if _, err := svc.Import(ctx, "/nonexistent/path", nil); err != library.ErrEntryNotFound {
 		t.Fatalf("err = %v, want ErrEntryNotFound", err)

@@ -2,10 +2,12 @@ package library
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -39,10 +41,20 @@ type Service struct {
 	series  *series.Service
 	trigger func()
 	storage string
+	hub     *sse.Hub
+
+	// scanMu guards scanning, the single-flight latch consumed by StartScan
+	// (scanjob.go): only one background scan may run at a time, so a
+	// double-click on "Scan" can't launch two concurrent NFS walks.
+	scanMu   sync.Mutex
+	scanning bool
 }
 
 // NewService builds a library Service. ingest/imports/series/trigger are
 // wired by later tasks (Match/Import) and may be nil/no-op for Scan-only use.
-func NewService(db *ent.Client, ingest *suwayomi.Ingest, importsSvc *imports.Service, seriesSvc *series.Service, trigger func(), storage string) *Service {
-	return &Service{db: db, ingest: ingest, imports: importsSvc, series: seriesSvc, trigger: trigger, storage: storage}
+// hub is required — even the synchronous Scan path broadcasts scan.progress
+// (see scan.go), so callers that don't care about the SSE stream should still
+// pass a live *sse.Hub (broadcasting to zero subscribers is a harmless no-op).
+func NewService(db *ent.Client, ingest *suwayomi.Ingest, importsSvc *imports.Service, seriesSvc *series.Service, trigger func(), storage string, hub *sse.Hub) *Service {
+	return &Service{db: db, ingest: ingest, imports: importsSvc, series: seriesSvc, trigger: trigger, storage: storage, hub: hub}
 }

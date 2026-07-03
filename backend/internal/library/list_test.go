@@ -8,6 +8,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 // seedImportEntry creates a minimal pending ImportEntry row with an explicit
@@ -30,7 +31,7 @@ func seedImportEntry(t *testing.T, client *ent.Client, ctx context.Context, path
 func TestListImports_Paginated(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
-	svc := library.NewService(client, nil, nil, nil, func() {}, "")
+	svc := library.NewService(client, nil, nil, nil, func() {}, "", sse.NewHub())
 
 	base := time.Now()
 	seedImportEntry(t, client, ctx, "/a", base)

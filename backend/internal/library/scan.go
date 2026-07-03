@@ -10,19 +10,34 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 )
 
-// Scan walks the storage root via disk.ScanLibrary, upserts one ImportEntry
-// per series directory found (keyed by path), and returns the staging list.
-// A series whose title already exists in the DB (by slug) is marked
-// status="imported" so the owner can see it needs no further action; an
-// entry already marked "imported" is never silently downgraded back to
-// "pending" by a re-scan.
+// Scan walks the storage root, upserts one ImportEntry per series directory
+// found, and returns the staging list synchronously. It is retained for tests
+// and any other in-process caller that wants a direct, blocking result rather
+// than the async StartScan (scanjob.go), which is what the HTTP handler now
+// uses so an owner scanning a 1000+ series NFS library doesn't block the
+// request (and trip a gateway timeout) waiting for it to finish.
 func (s *Service) Scan(ctx context.Context) ([]FoundSeriesDTO, error) {
+	return s.scanWithProgress(ctx)
+}
+
+// scanWithProgress is the shared implementation behind both Scan and
+// StartScan. It walks storage via disk.ScanLibrary, upserts one ImportEntry
+// per series directory found (keyed by path) — a series whose title already
+// exists in the DB (by slug) is marked status="imported" so the owner can see
+// it needs no further action, and an entry already marked "imported" is never
+// silently downgraded back to "pending" by a re-scan — and broadcasts a
+// scan.progress SSE event after each series is staged, so a long-running scan
+// gives the owner live feedback instead of silence until it completes.
+// Broadcasting into a hub with no subscribers (as when Scan is called
+// directly in tests) is a harmless no-op — see sse.Hub.Broadcast.
+func (s *Service) scanWithProgress(ctx context.Context) ([]FoundSeriesDTO, error) {
 	facts, err := disk.ScanLibrary(s.storage)
 	if err != nil {
 		return nil, err
 	}
 
-	out := make([]FoundSeriesDTO, 0, len(facts))
+	total := len(facts)
+	out := make([]FoundSeriesDTO, 0, total)
 	for _, sf := range facts {
 		path := disk.SeriesDir(s.storage, sf.Category, sf.Title)
 		providers := distinctProviders(sf)
@@ -53,6 +68,13 @@ func (s *Service) Scan(ctx context.Context) ([]FoundSeriesDTO, error) {
 			Providers:    providers,
 			Status:       status,
 			AlreadyInDB:  exists,
+		})
+
+		s.broadcastScan("scan.progress", ScanEvent{
+			Processed: len(out),
+			Total:     total,
+			Path:      path,
+			Found:     len(out),
 		})
 	}
 	return out, nil

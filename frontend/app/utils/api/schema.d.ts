@@ -663,11 +663,20 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Scan on-disk storage for importable series
-         * @description Walks the storage root and upserts one staging row per on-disk series
-         *     (never downgrading an already-imported row), then returns the full
-         *     staging list. Use this to discover series that exist on disk but are
-         *     not yet tracked in the DB (e.g. after a Kaizoku.GO migration).
+         * Launch an async scan of on-disk storage for importable series
+         * @description Launches a background walk of the storage root that upserts one
+         *     staging row per on-disk series (never downgrading an already-imported
+         *     row). Use this to discover series that exist on disk but are not yet
+         *     tracked in the DB (e.g. after a Kaizoku.GO migration).
+         *
+         *     The scan runs asynchronously and streams progress over the
+         *     `/api/progress` SSE stream as `scan.start` (fired once, when the walk
+         *     begins), `scan.progress` (fired after each series is staged, carrying
+         *     `processed`/`total`/`path`), and `scan.done` (fired once, carrying the
+         *     final `total`/`found`, or `error` if the walk itself failed) — this
+         *     avoids blocking the request for a 1000+ series NFS walk, which could
+         *     otherwise trip a gateway timeout (e.g. a Cloudflare Tunnel's edge
+         *     limit). Only one scan may run at a time; see the 409 response.
          */
         post: operations["scanLibrary"];
         delete?: never;
@@ -1715,6 +1724,11 @@ export interface components {
             position: number;
             /** @description New value — a boolean, a string, or an array of strings (by variant). */
             value: (boolean | string | string[]) | null;
+        };
+        /** @description Result of a POST /api/library/scan call — whether this call launched the background scan (202) or one was already in flight (409). */
+        ScanStarted: {
+            /** @description true if this call launched the scan; false if a scan was already running (single-flight guard). */
+            started: boolean;
         };
         /** @description One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB). */
         FoundSeries: {
@@ -3305,13 +3319,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The full staging list after the scan. */
-            200: {
+            /** @description The scan was launched; watch /api/progress for scan.* events. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FoundSeries"][];
+                    "application/json": components["schemas"]["ScanStarted"];
                 };
             };
             /** @description Missing or invalid Bearer token. */
@@ -3321,6 +3335,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A scan is already in flight (single-flight guard). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanStarted"];
                 };
             };
         };
