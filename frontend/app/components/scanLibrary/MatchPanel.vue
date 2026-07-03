@@ -187,6 +187,8 @@ const confirm = (): void => {
         :inspecting="false"
         :inspected="false"
         :chapters="[]"
+        hide-inspect
+        hide-reorder
         @toggle="selectCandidate(row.key)"
         @inspect="() => {}"
         @move="() => {}"

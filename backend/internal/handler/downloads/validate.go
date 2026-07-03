@@ -8,7 +8,6 @@ package downloads
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -16,13 +15,8 @@ import (
 
 	downloadssvc "github.com/technobecet/tsundoku/internal/downloads"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/handler/pagination"
 )
-
-// defaultLimit is the page size applied when ?limit is omitted (or 0).
-const defaultLimit = 50
-
-// maxLimit caps ?limit so a single request can never ask for an unbounded page.
-const maxLimit = 200
 
 // parseStates parses the REQUIRED ?state CSV into a set of chapter states. An
 // empty value yields a 400 (the state filter is mandatory — listing every
@@ -79,39 +73,11 @@ func parseStateCSV(raw string) ([]entchapter.State, error) {
 	return states, nil
 }
 
-// validatePagination parses the optional ?limit and ?offset query params. Both
-// must be non-negative integers; limit defaults to defaultLimit when absent/0 and
-// is capped at maxLimit. A malformed or negative value yields a 400.
+// validatePagination parses the optional ?limit and ?offset query params.
+// Delegates to the shared internal/handler/pagination package (§2 DRY — this
+// logic was byte-identical across series/downloads/library until extracted).
 func validatePagination(limitRaw, offsetRaw string) (limit, offset int, err error) {
-	limit, err = parseNonNegative(limitRaw, "limit")
-	if err != nil {
-		return 0, 0, err
-	}
-	offset, err = parseNonNegative(offsetRaw, "offset")
-	if err != nil {
-		return 0, 0, err
-	}
-	if limit == 0 {
-		limit = defaultLimit
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
-	return limit, offset, nil
-}
-
-// parseNonNegative parses raw as a non-negative integer, returning 0 for an empty
-// string (the param is absent). A malformed or negative value yields a 400 naming
-// the offending parameter.
-func parseNonNegative(raw, name string) (int, error) {
-	if raw == "" {
-		return 0, nil
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v < 0 {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, name+" must be a non-negative integer")
-	}
-	return v, nil
+	return pagination.Validate(limitRaw, offsetRaw)
 }
 
 // validateID parses a required UUID path param. subject names which id is being

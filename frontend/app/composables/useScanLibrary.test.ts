@@ -23,7 +23,9 @@
  * vi.mock is hoisted by Vitest's transform so the apiClient mock is in place
  * before useScanLibrary.ts is evaluated, regardless of import order here.
  */
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
+import { defineComponent } from 'vue'
+import { mount } from '@vue/test-utils'
 import { useScanLibrary } from './useScanLibrary'
 import { useProgressStream } from './useProgressStream'
 import { apiClient } from '~/utils/api/client'
@@ -170,6 +172,35 @@ class FakeEventSource {
   close(): void { stubSource = null }
 }
 
+// ── Per-test isolation harness ───────────────────────────────────────────────
+
+type ScanLibraryApi = ReturnType<typeof useScanLibrary>
+
+let activeWrapper: ReturnType<typeof mount> | null = null
+
+/**
+ * Mounts useScanLibrary() inside a real component instance instead of
+ * calling it bare at test-body scope. useScanLibrary registers its
+ * scan.start/scan.progress/scan.done subscriptions via `on()` and tears
+ * them down in `onUnmounted` (see useScanLibrary.ts) — with no active
+ * component instance `onUnmounted` is a silent no-op, so calling the
+ * composable directly would leak listeners onto the useProgressStream
+ * singleton across every test in this file. Mounting gives `onUnmounted` a
+ * real instance to attach to, and the `afterEach` below unmounts it so each
+ * test starts with a clean listener set.
+ */
+function mountScanLibrary(): ScanLibraryApi {
+  let api!: ScanLibraryApi
+  const Harness = defineComponent({
+    setup() {
+      api = useScanLibrary()
+      return () => null
+    },
+  })
+  activeWrapper = mount(Harness)
+  return api
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('useScanLibrary', () => {
@@ -186,8 +217,16 @@ describe('useScanLibrary', () => {
     pendingSeed = []
   })
 
+  afterEach(() => {
+    // Unmount the previous test's harness so its onUnmounted cleanup fires
+    // (unsubscribing from scan.start/scan.progress/scan.done) before the
+    // next test mounts a fresh instance.
+    activeWrapper?.unmount()
+    activeWrapper = null
+  })
+
   it('startScan() POSTs /api/library/scan and flips scanState to scanning', async () => {
-    const { scanState, startScan } = useScanLibrary()
+    const { scanState, startScan } = mountScanLibrary()
     expect(scanState.value.status).toBe('idle')
 
     await startScan()
@@ -199,7 +238,7 @@ describe('useScanLibrary', () => {
 
   it('startScan() treats a 409 (already scanning) as scanning, not an error', async () => {
     nextScanStatus = 409
-    const { scanState, startScan } = useScanLibrary()
+    const { scanState, startScan } = mountScanLibrary()
 
     await startScan()
 
@@ -208,7 +247,7 @@ describe('useScanLibrary', () => {
   })
 
   it('scan.done is terminal: flips status to done, refetches entries, and ignores a late scan.progress', async () => {
-    const { scanState, startScan } = useScanLibrary()
+    const { scanState, startScan } = mountScanLibrary()
     await startScan()
     expect(scanState.value.status).toBe('scanning')
 
@@ -230,7 +269,7 @@ describe('useScanLibrary', () => {
   })
 
   it('scan.done carries its error string onto scanState', async () => {
-    const { scanState, startScan } = useScanLibrary()
+    const { scanState, startScan } = mountScanLibrary()
     await startScan()
     await vi.waitFor(() => expect(stubSource).not.toBeNull())
 
@@ -241,7 +280,7 @@ describe('useScanLibrary', () => {
   })
 
   it('skip(path) POSTs the skip endpoint then refetches entries', async () => {
-    const { skip } = useScanLibrary()
+    const { skip } = mountScanLibrary()
     calls = []
 
     await skip('/library/Manga/Foo')
@@ -254,7 +293,7 @@ describe('useScanLibrary', () => {
   })
 
   it('importWithMatch(path, match) POSTs /api/library/import with {path, match}', async () => {
-    const { importWithMatch } = useScanLibrary()
+    const { importWithMatch } = mountScanLibrary()
     calls = []
 
     await importWithMatch('/library/Manga/Foo', { source: 'src-1', mangaId: 42, importance: 2 })
@@ -268,7 +307,7 @@ describe('useScanLibrary', () => {
   })
 
   it('match(path) GETs the match endpoint with that path and returns mapped SearchGroups', async () => {
-    const { match } = useScanLibrary()
+    const { match } = mountScanLibrary()
     calls = []
 
     const groups = await match('/library/Manga/Foo')
@@ -301,7 +340,7 @@ describe('useScanLibrary', () => {
     // though A's promise settles later — a path-equality guard would not be
     // enough (this drives two DIFFERENT paths), which is why the fix uses a
     // monotonic generation counter.
-    const { match, matchGroups, matchError } = useScanLibrary()
+    const { match, matchGroups, matchError } = mountScanLibrary()
 
     interface DeferredGetResult { data: unknown, error: unknown, response: Response }
     let resolveA!: (v: DeferredGetResult) => void
@@ -341,7 +380,7 @@ describe('useScanLibrary', () => {
   })
 
   it('exposes entriesError (list-load failure) and error (per-row failure) as distinct, independently-working members', async () => {
-    const { entriesError, error, skip, refresh } = useScanLibrary()
+    const { entriesError, error, skip, refresh } = mountScanLibrary()
 
     // Per-row failure: the next POST (skip's mutation) fails.
     vi.mocked(apiClient.POST).mockImplementationOnce((p: string) => {
@@ -392,21 +431,35 @@ describe('useScanLibrary', () => {
       alreadyInDb: false,
     }))
 
-    const { importAllDiskOnly, batchResult, batchError } = useScanLibrary()
+    const { importAllDiskOnly, batchResult, batchError } = mountScanLibrary()
     calls = []
 
     await importAllDiskOnly()
 
     expect(batchError.value).toBe('')
 
-    // Drain: enough GET pages to cover all 550 pending rows (200/page).
-    const drainCalls = calls.filter(c => c.method === 'GET' && c.path === '/api/library/imports')
-    expect(drainCalls.length).toBeGreaterThanOrEqual(3)
+    // All GET /api/library/imports calls made during importAllDiskOnly():
+    // the drain pages (status=pending, limit=DRAIN_PAGE=200) PLUS the one
+    // trailing refetch `load(false)` fires after the batch completes
+    // (status=undefined, limit=PAGE=50) — distinguished by `limit` so the
+    // trailing refetch can't be silently folded into the drain count.
+    const importsGetCalls = calls.filter(c => c.method === 'GET' && c.path === '/api/library/imports')
+    const drainCalls = importsGetCalls.filter(c => (c.query as { limit?: number } | undefined)?.limit === 200)
+    const trailingRefetchCalls = importsGetCalls.filter(c => (c.query as { limit?: number } | undefined)?.limit !== 200)
 
-    // Chunk: ≥2 batch POSTs (500-cap), and every drained path is covered
-    // exactly once — none dropped, none duplicated, no infinite loop.
+    // Exactly 3 drain pages cover 550 rows at 200/page: 200 + 200 + 150
+    // (the 150-row page is short, terminating the drain loop).
+    expect(drainCalls.length).toBe(3)
+    // Exactly 1 trailing refetch — importAllDiskOnly's `await load(false)`
+    // after the batch phase, not a drain page.
+    expect(trailingRefetchCalls.length).toBe(1)
+    expect(importsGetCalls.length).toBe(4)
+
+    // Chunk: 550 paths / 500-cap = exactly 2 batch POSTs (500 + 50), and
+    // every drained path is covered exactly once — none dropped, none
+    // duplicated, no infinite loop.
     const batchCalls = calls.filter(c => c.method === 'POST' && c.path === '/api/library/import/batch')
-    expect(batchCalls.length).toBeGreaterThanOrEqual(2)
+    expect(batchCalls.length).toBe(2)
     const importedPaths = batchCalls.flatMap(c => (c.body as { paths: string[] }).paths)
     expect(importedPaths.length).toBe(total)
     expect(new Set(importedPaths).size).toBe(total)
@@ -418,7 +471,7 @@ describe('useScanLibrary', () => {
   it('importAllDiskOnly() with zero pending sets an explicit zero result instead of a silent no-op', async () => {
     // pendingSeed defaults to [] (reset in beforeEach) — the drain finds
     // nothing to import.
-    const { importAllDiskOnly, batchResult, batchError } = useScanLibrary()
+    const { importAllDiskOnly, batchResult, batchError } = mountScanLibrary()
     calls = []
 
     await importAllDiskOnly()

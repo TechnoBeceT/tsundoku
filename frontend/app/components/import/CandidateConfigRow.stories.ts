@@ -94,3 +94,25 @@ export const Inspected: Story = {
     chapters: inspectChapters,
   },
 }
+
+/**
+ * Selected + `hideInspect`/`hideReorder` both true — the shape rendered by
+ * the two single-select match surfaces (`scanLibrary/MatchPanel`,
+ * `seriesDetail/MatchSourceDialog`): neither the no-op Inspect button nor the
+ * inert reorder stepper appears, even though `selected` would otherwise show
+ * the stepper.
+ */
+export const HiddenInspectAndReorder: Story = {
+  args: {
+    candidate,
+    selected: true,
+    rank: 1,
+    canUp: false,
+    canDown: true,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+    hideInspect: true,
+    hideReorder: true,
+  },
+}

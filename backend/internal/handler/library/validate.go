@@ -3,20 +3,13 @@ package library
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"github.com/technobecet/tsundoku/internal/handler/pagination"
 )
-
-// defaultLimit is the page size applied when ?limit is omitted (or 0) —
-// mirrors the handler/downloads and handler/series pagination convention.
-const defaultLimit = 50
-
-// maxLimit caps ?limit so a single request can never ask for an unbounded
-// page (a 1000+ series library staging table pages incrementally).
-const maxLimit = 200
 
 // maxBatchSize caps POST /api/library/import/batch's paths list so a single
 // request can't ask for an unbounded amount of synchronous DB work in one
@@ -134,41 +127,11 @@ func validateBatch(body batchImportBody) ([]string, error) {
 }
 
 // validatePagination parses the optional ?limit and ?offset query params for
-// GET /api/library/imports. Both must be non-negative integers; limit
-// defaults to defaultLimit when absent/0 and is capped at maxLimit. A
-// malformed or negative value yields a 400 (mirrors handler/downloads'
-// validatePagination — replicated per-package since handler packages don't
-// share a validator).
+// GET /api/library/imports. Delegates to the shared internal/handler/pagination
+// package (§2 DRY — this logic was byte-identical across series/downloads/
+// library until extracted).
 func validatePagination(limitRaw, offsetRaw string) (limit, offset int, err error) {
-	limit, err = parseNonNegative(limitRaw, "limit")
-	if err != nil {
-		return 0, 0, err
-	}
-	offset, err = parseNonNegative(offsetRaw, "offset")
-	if err != nil {
-		return 0, 0, err
-	}
-	if limit == 0 {
-		limit = defaultLimit
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
-	return limit, offset, nil
-}
-
-// parseNonNegative parses raw as a non-negative integer, returning 0 for an
-// empty string (the param is absent). A malformed or negative value yields a
-// 400 naming the offending parameter.
-func parseNonNegative(raw, name string) (int, error) {
-	if raw == "" {
-		return 0, nil
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v < 0 {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, name+" must be a non-negative integer")
-	}
-	return v, nil
+	return pagination.Validate(limitRaw, offsetRaw)
 }
 
 // parseStatusFilter parses the optional ?status filter. An empty value is
