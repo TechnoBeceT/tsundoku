@@ -70,6 +70,8 @@ export function useImport() {
   const error = ref('')
   /** Set on a successful adopt; the page watches and navigates to /series/{id}. */
   const newSeriesId = ref<string | null>(null)
+  /** Monotonic request-generation counter for `search()`'s stale-response guard (mirrors useMatchSource/useScanLibrary). */
+  let searchGeneration = 0
 
   // ---- Init: load sources + categories in parallel ---------------------------
   async function loadInitial(): Promise<void> {
@@ -86,9 +88,21 @@ export function useImport() {
   }
 
   // ---- search ----------------------------------------------------------------
+  /**
+   * Cross-source title search. Captures its own generation and clears
+   * `searchResults`/`error` immediately (so a re-search never shows stale
+   * results while in flight, and a failed re-search doesn't leave the
+   * PREVIOUS query's results displayed as if they belonged to the new one);
+   * the eventual success or failure is only written back to the shared
+   * `searchResults`/`error` refs if this call is still the most recently
+   * started one — a superseded response is discarded. `searched` is a
+   * monotonic "has ever searched" flag and stays unconditional.
+   */
   async function search(payload: { q: string; sources: string[] }): Promise<void> {
+    const generation = ++searchGeneration
     searching.value = true
     error.value = ''
+    searchResults.value = []
     try {
       // Omit sources param when empty (all sources searched); join as CSV when set.
       const query: { q: string; sources?: string } = { q: payload.q }
@@ -99,14 +113,17 @@ export function useImport() {
       if (res.error || !res.data) {
         throw new Error(res.error ? res.error.message : 'Search failed')
       }
-      searchResults.value = res.data.map(mapGroup)
+      const mapped = res.data.map(mapGroup)
+      if (generation === searchGeneration) searchResults.value = mapped
     }
     catch (e) {
-      error.value = e instanceof Error ? e.message : 'Search failed'
+      const message = e instanceof Error ? e.message : 'Search failed'
+      if (generation === searchGeneration) error.value = message
     }
     finally {
-      searching.value = false
-      // `searched` flips true on first completed search and stays true.
+      if (generation === searchGeneration) searching.value = false
+      // `searched` flips true on first completed search and stays true —
+      // monotonic, so it stays unconditional even for a superseded response.
       searched.value = true
     }
   }
