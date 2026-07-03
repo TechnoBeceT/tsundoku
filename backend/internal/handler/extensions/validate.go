@@ -1,6 +1,7 @@
 package extensions
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -71,7 +72,15 @@ func validatePreferenceUpdate(req PreferenceUpdateRequest) (string, int, error) 
 // switch, a string for a list/edittext, a string array for a multi-select. A
 // value whose JSON type does not match the variant is a 400 (so the caller learns
 // the mismatch as a clean validation error, not a raw Suwayomi 502).
+//
+// An explicit JSON null is rejected the same way as an absent value: `null`
+// unmarshals cleanly into a zero bool/string/slice for every variant, so
+// without this guard a null request would silently clear the preference
+// instead of failing closed (M3-1).
 func coercePreferenceValue(prefType suwayomicli.PreferenceType, raw json.RawMessage) (suwayomicli.PreferenceValue, error) {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return suwayomicli.PreferenceValue{}, httperr.BadRequest("value required")
+	}
 	switch prefType {
 	case suwayomicli.PreferenceCheckBox, suwayomicli.PreferenceSwitch:
 		var b bool

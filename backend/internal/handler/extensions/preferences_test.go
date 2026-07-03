@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"testing"
 
 	handler "github.com/technobecet/tsundoku/internal/handler/extensions"
@@ -136,6 +137,12 @@ func TestSetPreference_OK(t *testing.T) {
 	if !fc.setPrefCalled || fc.lastSetSourceID != "src-en" || fc.lastSetPosition != 0 {
 		t.Errorf("write not dispatched correctly: called=%v src=%q pos=%d", fc.setPrefCalled, fc.lastSetSourceID, fc.lastSetPosition)
 	}
+	// The dispatched value must be the correctly-typed bool write for a switch
+	// preference, not e.g. a string coercion of "false".
+	wantValue := suwayomicli.BoolPreferenceValue(suwayomicli.PreferenceSwitch, false)
+	if !reflect.DeepEqual(fc.lastSetValue, wantValue) {
+		t.Errorf("dispatched value: got %+v, want %+v", fc.lastSetValue, wantValue)
+	}
 	var got []handler.SourcePreferenceDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -163,6 +170,12 @@ func TestSetPreference_ListValue(t *testing.T) {
 	if fc.lastSetPosition != 1 {
 		t.Errorf("want position 1, got %d", fc.lastSetPosition)
 	}
+	// The dispatched value must be the correctly-typed string write for a list
+	// preference, not e.g. left as raw JSON.
+	wantValue := suwayomicli.StringPreferenceValue(suwayomicli.PreferenceList, ".256.jpg")
+	if !reflect.DeepEqual(fc.lastSetValue, wantValue) {
+		t.Errorf("dispatched value: got %+v, want %+v", fc.lastSetValue, wantValue)
+	}
 }
 
 // TestSetPreference_MultiSelectValue proves an array value writes a multi-select.
@@ -178,6 +191,12 @@ func TestSetPreference_MultiSelectValue(t *testing.T) {
 	}
 	if fc.lastSetPosition != 2 {
 		t.Errorf("want position 2, got %d", fc.lastSetPosition)
+	}
+	// The dispatched value must be the correctly-typed string-slice write for a
+	// multi-select preference.
+	wantValue := suwayomicli.MultiSelectPreferenceValue([]string{"safe", "erotica"})
+	if !reflect.DeepEqual(fc.lastSetValue, wantValue) {
+		t.Errorf("dispatched value: got %+v, want %+v", fc.lastSetValue, wantValue)
 	}
 }
 
@@ -195,6 +214,24 @@ func TestSetPreference_TypeMismatch400(t *testing.T) {
 	}
 	if fc.setPrefCalled {
 		t.Error("a write was dispatched despite a type-mismatched value")
+	}
+}
+
+// TestSetPreference_NullValue400 proves an explicit JSON `null` value is
+// rejected with the same "value required" 400 as an absent value (M3-1). Without
+// this guard, `null` (4 bytes) passes the "value present" length gate and then
+// json.Unmarshal("null", &dst) succeeds leaving a zero value — silently
+// clearing the preference instead of failing closed.
+func TestSetPreference_NullValue400(t *testing.T) {
+	fc := prefsFake()
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
+		`{"sourceId":"src-en","position":0,"value":null}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("null value: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if fc.setPrefCalled {
+		t.Error("a write was dispatched despite a null value")
 	}
 }
 

@@ -124,7 +124,10 @@ func BoolPreferenceValue(kind PreferenceType, v bool) PreferenceValue {
 
 // StringPreferenceValue builds a write for a List or EditText preference. kind
 // MUST be PreferenceList or PreferenceEditText (it selects listState vs
-// editTextState). For a List, v must be one of the preference's EntryValues.
+// editTextState). v is passed through to Suwayomi as-is — Suwayomi, not
+// Tsundoku, is the authority on what's valid: for a List preference it expects
+// one of the preference's EntryValues, but Tsundoku does not check membership
+// here (an invalid value surfaces as the ordinary upstream error).
 func StringPreferenceValue(kind PreferenceType, v string) PreferenceValue {
 	return PreferenceValue{kind: kind, stringVal: &v}
 }
