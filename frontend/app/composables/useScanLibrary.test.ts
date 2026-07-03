@@ -366,4 +366,21 @@ describe('useScanLibrary', () => {
     expect(batchResult.value?.imported).toBe(total)
     expect(batchResult.value?.failed).toEqual([])
   })
+
+  it('importAllDiskOnly() with zero pending sets an explicit zero result instead of a silent no-op', async () => {
+    // pendingSeed defaults to [] (reset in beforeEach) — the drain finds
+    // nothing to import.
+    const { importAllDiskOnly, batchResult, batchError } = useScanLibrary()
+    calls = []
+
+    await importAllDiskOnly()
+
+    expect(batchError.value).toBe('')
+    // §16: batchResult must be an explicit zero outcome, never left
+    // undefined/null — that's the silent no-op this test guards against.
+    expect(batchResult.value).toEqual({ imported: 0, failed: [] })
+
+    // No batch POST should have fired — there was nothing to chunk.
+    expect(calls.some(c => c.method === 'POST' && c.path === '/api/library/import/batch')).toBe(false)
+  })
 })

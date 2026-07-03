@@ -386,7 +386,15 @@ export function useScanLibrary() {
         drainOffset += DRAIN_PAGE
       }
 
-      if (paths.length === 0) return
+      if (paths.length === 0) {
+        // Defense-in-depth: nothing to drain, but still surface an explicit
+        // zero outcome rather than returning silently — a caller (the
+        // owner clicking "Import all remaining" a second time after
+        // everything is already imported/skipped) must always see a result
+        // banner, never a busy-flip-with-no-feedback (§16).
+        batchResult.value = { imported: 0, failed: [] }
+        return
+      }
 
       // Phase 2 — chunk + import: every drained path is covered, chunk by
       // chunk, accumulating across the whole array.

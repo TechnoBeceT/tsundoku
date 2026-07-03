@@ -94,8 +94,14 @@ const currentStep = computed(() => (props.scanState.status === 'idle' && props.e
 const scanning = computed(() => props.scanState.status === 'scanning')
 
 // Pending count (across the loaded page) gates the bulk import-all button —
-// there's nothing to drain if nothing pending is currently in view.
-const hasPending = computed(() => props.entries.some((e) => e.status === 'pending') || props.statusFilter === 'pending' || props.statusFilter === null)
+// there's nothing to drain if nothing pending is currently in view. Gated
+// strictly on entries actually present with status 'pending': the tab
+// filter alone says nothing about the CURRENT page's contents, so a stale
+// "All"/"Pending" tab selection with zero pending rows in view must NOT
+// enable the button (the bug this guards against: a second "Import all
+// remaining" click after everything is already imported/skipped silently
+// no-opped because the button stayed enabled on those tabs).
+const hasPending = computed(() => props.entries.some((e) => e.status === 'pending'))
 </script>
 
 <template>
@@ -114,8 +120,7 @@ const hasPending = computed(() => props.entries.some((e) => e.status === 'pendin
           <p class="sl-intro">
             Scan your existing on-disk library to bring it into Tsundoku without re-downloading anything.
           </p>
-          <ScanProgress v-if="scanning" :processed="scanState.processed" :total="scanState.total" />
-          <AppButton v-else variant="primary" size="lg" @click="emit('start-scan')">
+          <AppButton variant="primary" size="lg" @click="emit('start-scan')">
             Start scan
           </AppButton>
         </section>
@@ -125,7 +130,7 @@ const hasPending = computed(() => props.entries.some((e) => e.status === 'pendin
           <div class="sl-review-head">
             <ScanProgress v-if="scanning" class="sl-review-head__progress" :processed="scanState.processed" :total="scanState.total" />
             <span v-else class="sl-review-head__done">
-              {{ scanState.status === 'done' ? `Scan complete · ${scanState.total} found` : 'Ready to scan' }}
+              {{ scanState.error ? 'Scan incomplete' : (scanState.status === 'done' ? `Scan complete · ${scanState.total} found` : 'Ready to scan') }}
             </span>
             <div class="sl-review-head__actions">
               <AppButton variant="ghost" size="sm" :disabled="scanning" :loading="scanning" @click="emit('start-scan')">
