@@ -3,8 +3,11 @@
  * Series detail page — route /series/:id.
  *
  * Delegates all data fetching, mutation state, and §16 error handling to
- * useSeriesDetail(id). SeriesDetail is auto-imported from app/components/.
- * navigateTo is a Nuxt auto-import.
+ * useSeriesDetail(id). The "Match source" dialog (the inverse of remove-source)
+ * is backed by its OWN composable, useMatchSource(id) — searching sources is
+ * orthogonal to the series-detail state useSeriesDetail owns. SeriesDetail and
+ * MatchSourceDialog are auto-imported from app/components/. navigateTo is a
+ * Nuxt auto-import.
  *
  * Prop wiring:
  *   :series            — the mapped SeriesDetail (null while loading)
@@ -22,8 +25,14 @@
  *   @remove-source          → removeSource(providerId)
  *   @choose-metadata-source → chooseMetadataSource(providerId)
  *   @delete-series          → deleteSeries(deleteFiles)   (navigates to / on success)
- *   @add-source             → navigateTo('/import')
+ *   @add-source             → opens MatchSourceDialog (matchOpen = true)
  *   @dismiss-error          → dismissError()
+ *
+ * Match-source wiring: MatchSourceDialog's `search`/`confirm` emits drive
+ * useMatchSource's `search`/`addProvider`. On a successful `addProvider` the
+ * dialog closes and `useSeriesDetail.refresh()` reloads the authoritative
+ * series state — the same "mutate, then refetch" pattern every other
+ * useSeriesDetail mutation already uses (§16 round-trip).
  *
  * §16: pending true during the initial fetch; ErrorBanner shown on hard fetch
  * failure. Mutation errors are surfaced via the :error prop (dismissible banner
@@ -48,7 +57,27 @@ const {
   chooseMetadataSource,
   deleteSeries,
   dismissError,
+  refresh,
 } = useSeriesDetail(id)
+
+const {
+  groups: matchGroups,
+  searching: matchSearching,
+  saving: matchSaving,
+  error: matchError,
+  search: matchSearch,
+  addProvider: matchAddProvider,
+} = useMatchSource(id)
+
+const matchOpen = ref(false)
+
+async function onMatchConfirm(payload: { source: string, mangaId: number, importance: number }): Promise<void> {
+  const detail = await matchAddProvider(payload)
+  if (detail) {
+    matchOpen.value = false
+    await refresh()
+  }
+}
 </script>
 
 <template>
@@ -72,8 +101,20 @@ const {
       @remove-source="removeSource"
       @choose-metadata-source="chooseMetadataSource"
       @delete-series="deleteSeries"
-      @add-source="() => navigateTo('/import')"
+      @add-source="matchOpen = true"
       @dismiss-error="dismissError"
+    />
+
+    <MatchSourceDialog
+      v-if="series"
+      v-model:open="matchOpen"
+      :series-title="series.title"
+      :groups="matchGroups"
+      :searching="matchSearching"
+      :saving="matchSaving"
+      :error="matchError"
+      @search="matchSearch"
+      @confirm="onMatchConfirm"
     />
   </div>
 </template>

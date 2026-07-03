@@ -63,7 +63,7 @@ func (s *Service) Import(ctx context.Context, path string, match *MatchInput) (s
 		}
 	}
 
-	if _, err := entry.Update().SetStatus("imported").Save(ctx); err != nil {
+	if _, err := entry.Update().SetStatus(statusImported).Save(ctx); err != nil {
 		return series.SeriesDetailDTO{}, err
 	}
 	if s.trigger != nil {

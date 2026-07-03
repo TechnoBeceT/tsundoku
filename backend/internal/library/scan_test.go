@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 // writeKaizokuSeries writes N Kaizoku-style CBZs for one series under
@@ -55,7 +56,7 @@ func TestScan_StagesFoundSeries(t *testing.T) {
 	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
 
 	client := testdb.New(t)
-	svc := library.NewService(client, nil, nil, nil, func() {}, storage)
+	svc := library.NewService(client, nil, nil, nil, func() {}, storage, sse.NewHub())
 	ctx := context.Background()
 
 	found, err := svc.Scan(ctx)
@@ -120,7 +121,7 @@ func TestScan_MarksImportedWhenSeriesExists(t *testing.T) {
 		SetSlug(disk.Slugify("My Series")).
 		SaveX(ctx)
 
-	svc := library.NewService(client, nil, nil, nil, func() {}, storage)
+	svc := library.NewService(client, nil, nil, nil, func() {}, storage, sse.NewHub())
 	found, err := svc.Scan(ctx)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
@@ -140,7 +141,7 @@ func TestScan_NeverDowngradesImportedRow(t *testing.T) {
 
 	client := testdb.New(t)
 	ctx := context.Background()
-	svc := library.NewService(client, nil, nil, nil, func() {}, storage)
+	svc := library.NewService(client, nil, nil, nil, func() {}, storage, sse.NewHub())
 
 	// First scan stages the row as pending (no matching Series in the DB).
 	found, err := svc.Scan(ctx)

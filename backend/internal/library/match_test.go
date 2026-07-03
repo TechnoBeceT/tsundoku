@@ -7,6 +7,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -22,7 +23,7 @@ func TestMatchCandidates_ReturnsSearchGroups(t *testing.T) {
 	fake := newFakeClientWithSearch(t, "My Series") // Search returns 1 manga titled "My Series"
 	ingest := suwayomi.NewIngest(fake, client)
 	importsSvc := imports.NewService(fake, ingest, client, storage)
-	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage)
+	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage, sse.NewHub())
 
 	found, err := svc.Scan(ctx)
 	if err != nil {
@@ -47,7 +48,7 @@ func TestMatchCandidates_UnknownPathReturnsErrEntryNotFound(t *testing.T) {
 	fake := newFakeClientWithSearch(t, "My Series")
 	ingest := suwayomi.NewIngest(fake, client)
 	importsSvc := imports.NewService(fake, ingest, client, storage)
-	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage)
+	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage, sse.NewHub())
 
 	if _, err := svc.MatchCandidates(ctx, "/nonexistent/path"); err != library.ErrEntryNotFound {
 		t.Fatalf("err = %v, want ErrEntryNotFound", err)

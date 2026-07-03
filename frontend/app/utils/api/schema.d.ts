@@ -663,11 +663,20 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Scan on-disk storage for importable series
-         * @description Walks the storage root and upserts one staging row per on-disk series
-         *     (never downgrading an already-imported row), then returns the full
-         *     staging list. Use this to discover series that exist on disk but are
-         *     not yet tracked in the DB (e.g. after a Kaizoku.GO migration).
+         * Launch an async scan of on-disk storage for importable series
+         * @description Launches a background walk of the storage root that upserts one
+         *     staging row per on-disk series (never downgrading an already-imported
+         *     row). Use this to discover series that exist on disk but are not yet
+         *     tracked in the DB (e.g. after a Kaizoku.GO migration).
+         *
+         *     The scan runs asynchronously and streams progress over the
+         *     `/api/progress` SSE stream as `scan.start` (fired once, when the walk
+         *     begins), `scan.progress` (fired after each series is staged, carrying
+         *     `processed`/`total`/`path`), and `scan.done` (fired once, carrying the
+         *     final `total`/`found`, or `error` if the walk itself failed) — this
+         *     avoids blocking the request for a 1000+ series NFS walk, which could
+         *     otherwise trip a gateway timeout (e.g. a Cloudflare Tunnel's edge
+         *     limit). Only one scan may run at a time; see the 409 response.
          */
         post: operations["scanLibrary"];
         delete?: never;
@@ -685,8 +694,10 @@ export interface paths {
         };
         /**
          * List staged library-import entries
-         * @description Returns the staged entries from a prior scan, optionally filtered by
-         *     status. An empty/absent status returns every staged entry.
+         * @description Returns a page of the staged entries from a prior scan, optionally
+         *     filtered by status. An empty/absent status returns every staged
+         *     entry. Paginated via limit/offset so a 1000+ series library loads
+         *     incrementally.
          */
         get: operations["listImports"];
         put?: never;
@@ -720,6 +731,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/imports/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Skip a staged library-import entry
+         * @description Marks a staged entry as "skipped" — the owner's "leave this on disk,
+         *     don't import it" action. Purely a status flip: no disk I/O, no row
+         *     deletion. Idempotent (skipping an already-skipped entry is a no-op
+         *     success).
+         */
+        post: operations["skipImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/import": {
         parameters: {
             query?: never;
@@ -738,6 +772,32 @@ export interface paths {
          *     series. Returns the imported series detail (§16 round-trip).
          */
         post: operations["importSeries"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/import/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk disk-only import of many staged entries
+         * @description Disk-only imports every path in `paths` (mirrors POST
+         *     /api/library/import with no `match`) — a single request for a
+         *     1000+ series migration instead of N sequential calls. Partial
+         *     success by design: a bad path (e.g. never staged by a prior scan) is
+         *     recorded in the response's `failed` list and never aborts the rest
+         *     of the batch. Always 200 for a well-formed request — the per-path
+         *     failures ARE the result, not a top-level error.
+         */
+        post: operations["importBatch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1691,6 +1751,11 @@ export interface components {
             /** @description New value — a boolean, a string, or an array of strings (by variant). */
             value: (boolean | string | string[]) | null;
         };
+        /** @description Result of a POST /api/library/scan call — whether this call launched the background scan (202) or one was already in flight (409). */
+        ScanStarted: {
+            /** @description true if this call launched the scan; false if a scan was already running (single-flight guard). */
+            started: boolean;
+        };
         /** @description One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB). */
         FoundSeries: {
             /** @description Absolute on-disk path to the series folder. */
@@ -1722,6 +1787,37 @@ export interface components {
             /** @description The staged entry's on-disk path (as returned by a prior scan/list). */
             path: string;
             match?: components["schemas"]["MatchInput"];
+        };
+        /** @description Marks a staged library-scan entry as skipped — leave it on disk, stop showing it as pending. */
+        SkipRequest: {
+            /** @description The staged entry's on-disk path (as returned by a prior scan/list). */
+            path: string;
+        };
+        /**
+         * @description Bulk "import all remaining as disk-only" request — one call instead
+         *     of N sequential POST /api/library/import calls for a 1000+ series
+         *     migration. Every path is imported disk-only (no match attached).
+         */
+        BatchImportRequest: {
+            /** @description Staged entries' on-disk paths (as returned by a prior scan/list). Capped at 500 per request. */
+            paths: string[];
+        };
+        /** @description One path's failure within a batch import. */
+        BatchImportFailure: {
+            /** @description The on-disk path that failed to import. */
+            path: string;
+            /** @description The underlying error message for this path. */
+            message: string;
+        };
+        /**
+         * @description Result of a batch import — partial success by design: a bad path is
+         *     recorded in `failed` and never aborts the rest of the batch.
+         */
+        BatchImportResult: {
+            /** @description Number of paths that imported successfully. */
+            imported: number;
+            /** @description Per-path failures (empty if every path imported successfully). */
+            failed: components["schemas"]["BatchImportFailure"][];
         };
         /** @description Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest). */
         AddProviderRequest: {
@@ -3275,13 +3371,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The full staging list after the scan. */
-            200: {
+            /** @description The scan was launched; watch /api/progress for scan.* events. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FoundSeries"][];
+                    "application/json": components["schemas"]["ScanStarted"];
                 };
             };
             /** @description Missing or invalid Bearer token. */
@@ -3293,6 +3389,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description A scan is already in flight (single-flight guard). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanStarted"];
+                };
+            };
         };
     };
     listImports: {
@@ -3300,6 +3405,10 @@ export interface operations {
             query?: {
                 /** @description Filter to one staging status. */
                 status?: "pending" | "imported" | "skipped";
+                /** @description Page size (default 50, capped at 200). */
+                limit?: number;
+                /** @description Number of rows to skip. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -3307,7 +3416,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The staged entries matching the filter. */
+            /** @description The staged entries matching the filter, paginated. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3316,7 +3425,7 @@ export interface operations {
                     "application/json": components["schemas"]["FoundSeries"][];
                 };
             };
-            /** @description Unknown status value. */
+            /** @description Unknown status value, or an invalid pagination value. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -3377,6 +3486,55 @@ export interface operations {
             };
         };
     };
+    skipImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkipRequest"];
+            };
+        };
+        responses: {
+            /** @description Entry marked skipped. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or empty path. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No staged entry with that path. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     importSeries: {
         parameters: {
             query?: never;
@@ -3428,6 +3586,48 @@ export interface operations {
             };
             /** @description The matched source is already attached to this series. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    importBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Batch processed. See `imported`/`failed` for the per-path outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchImportResult"];
+                };
+            };
+            /** @description Empty paths list, or more than 500 paths in one request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

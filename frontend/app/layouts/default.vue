@@ -17,6 +17,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'health', label: 'Library Health', icon: 'activity' },
   { key: 'categories', label: 'Categories', icon: 'layout-grid' },
   { key: 'import', label: 'Import', icon: 'file-plus' },
+  { key: 'scan-library', label: 'Scan Library', icon: 'folder-search' },
   { key: 'settings', label: 'Settings', icon: 'settings', pinned: true },
 ]
 
@@ -29,6 +30,7 @@ const KEY_TO_PATH: Record<string, string> = {
   health: '/health',
   categories: '/categories',
   import: '/import',
+  'scan-library': '/scan-library',
   settings: '/settings',
 }
 

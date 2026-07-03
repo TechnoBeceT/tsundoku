@@ -58,7 +58,7 @@ const emit = defineEmits<{
   chooseMetadataSource: [providerId: string]
   /** The series delete was confirmed — carries the required deleteFiles choice. */
   deleteSeries: [deleteFiles: boolean]
-  /** The owner asked to add a source (→ the import flow). */
+  /** The owner asked to add a source (→ opens the Match Source dialog). */
   addSource: []
   /** The error banner was dismissed. */
   dismissError: []

@@ -12,6 +12,15 @@ import { ref } from 'vue'
  *   cycle.start    | cycle.done
  *   refresh.start  | refresh.done
  *   health.summary  → payload { unhealthy: number }
+ *   scan.start | scan.progress | scan.done — the Library-Import scan (see
+ *     useScanLibrary): scan.start carries no payload; scan.progress carries
+ *     { processed, total, path }; scan.done is TERMINAL and carries either
+ *     { total, found } on success or { error } if the walk failed/timed out.
+ *     Forwarded raw via `on()` — this composable does not interpret them
+ *     (unlike health.summary / refresh.start / cycle.start) because the
+ *     terminal-latch logic (ignore a late scan.progress after scan.done) is
+ *     a scan-specific concern that belongs in useScanLibrary, not in this
+ *     shared hub.
  *
  * What each prop can and cannot drive:
  *   - `unhealthyCount`  ← health.summary payload { unhealthy } — exact, server-authoritative.
@@ -47,6 +56,9 @@ const NAMED_EVENTS = [
   'refresh.done',
   'health.summary',
   'extensions.checked',
+  'scan.start',
+  'scan.progress',
+  'scan.done',
 ] as const
 
 function emit(event: string, data: unknown): void {

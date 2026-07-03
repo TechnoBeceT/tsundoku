@@ -6,6 +6,7 @@ package library_test
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -23,6 +25,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 const testSecret = "library-handler-test-secret"
@@ -31,6 +35,12 @@ type testEnv struct {
 	e      *echo.Echo
 	client *ent.Client
 	token  string
+	// svc is the same library.Service instance wired into e's routes. Tests
+	// that need to stage ImportEntry rows use svc.Scan directly (the
+	// synchronous path) rather than POST /api/library/scan, since that route
+	// now launches the scan asynchronously (StartScan) and returns before any
+	// row is guaranteed to exist.
+	svc *library.Service
 }
 
 // newEnv wires a fully-authenticated Echo instance with the library routes
@@ -59,7 +69,11 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
-	svc := library.NewService(client, nil, nil, nil, func() {}, storage)
+	// seriesSvc is real (not nil) so a disk-only Import/ImportBatch's
+	// GetSeries round-trip (§16) can actually resolve — ingest/importsSvc
+	// stay nil since no test here attaches a Suwayomi match.
+	seriesSvc := series.NewService(client, storage, 14)
+	svc := library.NewService(client, nil, nil, seriesSvc, func() {}, storage, sse.NewHub())
 	h := handler.NewHandler(svc)
 
 	e := echo.New()
@@ -69,13 +83,15 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	authed.GET("/library/imports", h.ListImports)
 	authed.GET("/library/imports/match", h.Match)
 	authed.POST("/library/import", h.Import)
+	authed.POST("/library/import/batch", h.Batch)
+	authed.POST("/library/imports/skip", h.Skip)
 	authed.POST("/series/:id/providers", h.AddProvider)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
 		t.Fatalf("Issue token: %v", err)
 	}
-	return &testEnv{e: e, client: client, token: token}
+	return &testEnv{e: e, client: client, token: token, svc: svc}
 }
 
 func (env *testEnv) do(method, target, body string) *httptest.ResponseRecorder {
@@ -146,7 +162,9 @@ func TestLibraryRoutes_RequireOwner(t *testing.T) {
 		{"POST", "/api/library/scan"},
 		{"GET", "/api/library/imports"},
 		{"POST", "/api/library/import"},
+		{"POST", "/api/library/import/batch"},
 		{"GET", "/api/library/imports/match?path=x"},
+		{"POST", "/api/library/imports/skip"},
 		{"POST", "/api/series/" + uuid.New().String() + "/providers"},
 	} {
 		rec := env.doUnauth(r.method, r.path, "")
@@ -156,26 +174,65 @@ func TestLibraryRoutes_RequireOwner(t *testing.T) {
 	}
 }
 
-// TestLibraryScan_Returns200 proves the happy path: scanning a seeded temp
-// storage directory returns 200 with the staged series.
-func TestLibraryScan_Returns200(t *testing.T) {
+// TestLibraryScan_Accepted proves the happy path: POST /api/library/scan
+// launches the async scan and returns 202 {started:true} immediately —
+// it no longer blocks for the walk to finish (see library.Service.StartScan).
+func TestLibraryScan_Accepted(t *testing.T) {
 	env := newEnvWithStorageSeeded(t)
 	rec := env.do("POST", "/api/library/scan", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("scan = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("scan = %d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Started bool `json:"started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Started {
+		t.Fatalf("started = %v, want true", got.Started)
+	}
+}
+
+// TestLibraryScan_ConflictWhenInFlight proves the single-flight guard end to
+// end through the HTTP handler: a second concurrent POST /api/library/scan
+// while the first scan is still running gets 409 {started:false} rather than
+// launching a second NFS walk.
+func TestLibraryScan_ConflictWhenInFlight(t *testing.T) {
+	env := newEnvWithStorageSeeded(t)
+
+	first := env.do("POST", "/api/library/scan", "")
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first scan = %d, want 202 (%s)", first.Code, first.Body.String())
+	}
+
+	second := env.do("POST", "/api/library/scan", "")
+	if second.Code != http.StatusConflict {
+		t.Fatalf("second scan = %d, want 409 (%s)", second.Code, second.Body.String())
+	}
+	var got struct {
+		Started bool `json:"started"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Started {
+		t.Fatalf("started = %v, want false", got.Started)
 	}
 }
 
 // TestLibraryImports_ListsStagedEntries proves the ListImports happy path
-// end-to-end: a seeded on-disk series is staged by POST /library/scan, then
-// GET /library/imports returns it with every field populated. This exercises
-// the service's decode(row.Found)→distinctProviders reuse (not just a non-nil
-// check) by asserting the recovered Providers list contains the source name.
+// end-to-end: a seeded on-disk series is staged (via the service's
+// synchronous Scan — POST /library/scan is now async and returns before any
+// row is guaranteed to exist), then GET /library/imports returns it with
+// every field populated. This exercises the service's decode(row.Found)→
+// distinctProviders reuse (not just a non-nil check) by asserting the
+// recovered Providers list contains the source name.
 func TestLibraryImports_ListsStagedEntries(t *testing.T) {
 	env := newEnvWithStorageSeeded(t)
 
-	if rec := env.do("POST", "/api/library/scan", ""); rec.Code != http.StatusOK {
-		t.Fatalf("scan = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	if _, err := env.svc.Scan(context.Background()); err != nil {
+		t.Fatalf("scan: %v", err)
 	}
 
 	rec := env.do("GET", "/api/library/imports", "")
@@ -210,6 +267,67 @@ func assertStagedEntry(t *testing.T, f library.FoundSeriesDTO) {
 	}
 }
 
+// seedImportEntry creates a minimal pending ImportEntry row with an explicit
+// scanned_at so pagination ordering (ByScannedAt, ascending) is deterministic.
+// Mirrors internal/library/list_test.go's helper of the same name (a
+// different package — no import cycle risk, small enough to duplicate here
+// rather than export it from the service package for test-only reuse).
+func seedImportEntry(t *testing.T, client *ent.Client, ctx context.Context, path string, scannedAt time.Time) {
+	t.Helper()
+	if _, err := client.ImportEntry.Create().
+		SetPath(path).SetTitle(path).SetCategory("Manga").
+		SetChapterCount(1).SetStatus("pending").
+		SetScannedAt(scannedAt).
+		Save(ctx); err != nil {
+		t.Fatalf("seed import entry %s: %v", path, err)
+	}
+}
+
+// TestListImports_Paginated proves ?limit/?offset page the staged entries in
+// scanned_at order end-to-end through the real HTTP handler.
+func TestListImports_Paginated(t *testing.T) {
+	env := newEnv(t)
+	ctx := context.Background()
+
+	base := time.Now()
+	seedImportEntry(t, env.client, ctx, "/a", base)
+	seedImportEntry(t, env.client, ctx, "/b", base.Add(time.Second))
+	seedImportEntry(t, env.client, ctx, "/c", base.Add(2*time.Second))
+
+	rec := env.do("GET", "/api/library/imports?limit=2&offset=0", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page1 = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var page1 []library.FoundSeriesDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &page1); err != nil {
+		t.Fatalf("decode page1: %v", err)
+	}
+	if len(page1) != 2 || page1[0].Path != "/a" || page1[1].Path != "/b" {
+		t.Fatalf("page1 = %+v, want [/a /b]", page1)
+	}
+
+	rec2 := env.do("GET", "/api/library/imports?limit=2&offset=2", "")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("page2 = %d, want 200 (%s)", rec2.Code, rec2.Body.String())
+	}
+	var page2 []library.FoundSeriesDTO
+	if err := json.Unmarshal(rec2.Body.Bytes(), &page2); err != nil {
+		t.Fatalf("decode page2: %v", err)
+	}
+	if len(page2) != 1 || page2[0].Path != "/c" {
+		t.Fatalf("page2 = %+v, want [/c]", page2)
+	}
+}
+
+// TestListImports_BadLimit proves a negative ?limit is rejected with 400.
+func TestListImports_BadLimit(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("GET", "/api/library/imports?limit=-1", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad limit: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // TestLibraryImports_BadStatusFilter proves ?status is validated against the
 // closed enum.
 func TestLibraryImports_BadStatusFilter(t *testing.T) {
@@ -238,6 +356,74 @@ func TestLibraryImport_MissingPath(t *testing.T) {
 	}
 }
 
+// TestLibraryBatch_PartialSuccess proves the batch endpoint end-to-end: two
+// staged series import cleanly while a third, never-staged path fails —
+// without aborting the other two (partial success, the whole point of the
+// bulk endpoint for a 1000+ series migration).
+func TestLibraryBatch_PartialSuccess(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "Series One", "mangadex", "Alpha", 1)
+	writeKaizokuSeries(t, storage, "Manga", "Series Two", "mangadex", "Alpha", 1)
+	env := newEnvWithStorage(t, storage)
+
+	staged, err := env.svc.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(staged) != 2 {
+		t.Fatalf("staged len = %d, want 2", len(staged))
+	}
+
+	reqBody, err := json.Marshal(map[string][]string{
+		"paths": {staged[0].Path, staged[1].Path, "/nonexistent/bogus"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do("POST", "/api/library/import/batch", string(reqBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("batch = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var got library.BatchResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Imported != 2 {
+		t.Fatalf("imported = %d, want 2 (%+v)", got.Imported, got)
+	}
+	if len(got.Failed) != 1 || got.Failed[0].Path != "/nonexistent/bogus" {
+		t.Fatalf("failed = %+v, want one bogus entry", got.Failed)
+	}
+}
+
+// TestLibraryBatch_EmptyPaths proves an empty paths list is rejected with 400
+// rather than silently no-op-ing.
+func TestLibraryBatch_EmptyPaths(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/import/batch", `{"paths":[]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty paths: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLibraryBatch_TooManyPaths proves the maxBatchSize cap (500) is
+// enforced — a single request can't demand unbounded synchronous work.
+func TestLibraryBatch_TooManyPaths(t *testing.T) {
+	env := newEnv(t)
+	paths := make([]string, 501)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("/p%d", i)
+	}
+	reqBody, err := json.Marshal(map[string][]string{"paths": paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do("POST", "/api/library/import/batch", string(reqBody))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("too many paths: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // TestLibraryAddProvider_BadID proves :id is validated as a UUID.
 func TestLibraryAddProvider_BadID(t *testing.T) {
 	env := newEnv(t)
@@ -254,5 +440,58 @@ func TestLibraryAddProvider_InvalidBody(t *testing.T) {
 	rec := env.do("POST", "/api/series/"+uuid.New().String()+"/providers", `{"mangaId":1,"importance":1}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid body: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSkip_OK proves the happy path end-to-end: scanning a seeded temp
+// storage directory stages a pending entry (via the service's synchronous
+// Scan — POST /library/scan is now async), POST /library/imports/skip flips
+// it to "skipped" (204), and a re-GET of /library/imports confirms the
+// persisted status (§16 round-trip via re-fetch, not just the 204 code).
+func TestSkip_OK(t *testing.T) {
+	env := newEnvWithStorageSeeded(t)
+
+	staged, err := env.svc.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(staged) != 1 {
+		t.Fatalf("staged len = %d, want 1", len(staged))
+	}
+
+	body := fmt.Sprintf(`{"path":%q}`, staged[0].Path)
+	rec := env.do("POST", "/api/library/imports/skip", body)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("skip = %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+
+	listRec := env.do("GET", "/api/library/imports?status=skipped", "")
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list = %d, want 200 (%s)", listRec.Code, listRec.Body.String())
+	}
+	var got []library.FoundSeriesDTO
+	if err := json.Unmarshal(listRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(got) != 1 || got[0].Path != staged[0].Path {
+		t.Fatalf("skipped list = %+v, want [%s]", got, staged[0].Path)
+	}
+}
+
+// TestSkip_NotFound proves an unstaged path 404s.
+func TestSkip_NotFound(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/imports/skip", `{"path":"/nope"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("skip unknown path = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSkip_MissingPath proves the body requires a non-empty path.
+func TestSkip_MissingPath(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/imports/skip", `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing path body: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }

@@ -27,7 +27,7 @@ const emit = defineEmits<{
   move: [id: string, direction: MoveDirection]
   /** A source removal was requested — carries the SeriesProvider id. */
   removeSource: [id: string]
-  /** The Add button was pressed (→ the import flow). */
+  /** The Add button was pressed (→ opens the Match Source dialog). */
   addSource: []
 }>()
 </script>
