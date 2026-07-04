@@ -250,7 +250,7 @@ func TestIngest_AddSeries_Basic(t *testing.T) {
 	}
 
 	ing := suwayomi.NewIngest(sc, client)
-	result, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle)
+	result, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle, "")
 	if err != nil {
 		t.Fatalf("AddSeries: unexpected error: %v", err)
 	}
@@ -293,12 +293,12 @@ func TestIngest_AddSeries_Idempotent(t *testing.T) {
 	ing := suwayomi.NewIngest(sc, client)
 
 	// First call.
-	if _, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle); err != nil {
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle, ""); err != nil {
 		t.Fatalf("first AddSeries: %v", err)
 	}
 
 	// Second call (idempotent re-add).
-	result2, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle)
+	result2, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle, "")
 	if err != nil {
 		t.Fatalf("second AddSeries: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestIngest_AddSeries_FetchChaptersError(t *testing.T) {
 	sc := &ingestStubClient{chaptersErr: sentinel}
 	ing := suwayomi.NewIngest(sc, client)
 
-	_, err := ing.AddSeries(ctx, "src", 7, "Broken Manga")
+	_, err := ing.AddSeries(ctx, "src", 7, "Broken Manga", "")
 	if !errors.Is(err, sentinel) {
 		t.Errorf("AddSeries: err got %v, want to wrap %v", err, sentinel)
 	}
@@ -405,7 +405,7 @@ func TestIngest_AddSeries_UnnumberedChapter(t *testing.T) {
 	}
 	ing := suwayomi.NewIngest(sc, client)
 
-	result, err := ing.AddSeries(ctx, "source", 55, "Special Series")
+	result, err := ing.AddSeries(ctx, "source", 55, "Special Series", "")
 	if err != nil {
 		t.Fatalf("AddSeries: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestIngest_AddSeries_TitleUpdate(t *testing.T) {
 	ing := suwayomi.NewIngest(sc, client)
 
 	// First call: creates the Series row.
-	if _, err := ing.AddSeries(ctx, sourceName, mangaID, initialTitle); err != nil {
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, initialTitle, ""); err != nil {
 		t.Fatalf("first AddSeries: %v", err)
 	}
 
@@ -461,7 +461,7 @@ func TestIngest_AddSeries_TitleUpdate(t *testing.T) {
 	assertSeries(t, ctx, client, initialTitle, initialSlug)
 
 	// Second call with a changed title: Series.Title must be updated.
-	if _, err := ing.AddSeries(ctx, sourceName, mangaID, updatedTitle); err != nil {
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, updatedTitle, ""); err != nil {
 		t.Fatalf("second AddSeries (title change): %v", err)
 	}
 
@@ -506,7 +506,7 @@ func TestIngest_AddSeries_SeriesProviderTitle(t *testing.T) {
 	ing := suwayomi.NewIngest(sc, client)
 
 	// ── Create path: source title must be stored on first AddSeries ──────────
-	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle); err != nil {
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle, ""); err != nil {
 		t.Fatalf("first AddSeries: %v", err)
 	}
 
@@ -525,7 +525,7 @@ func TestIngest_AddSeries_SeriesProviderTitle(t *testing.T) {
 	updatedSourceTitle := "Dragon Reborn (Source v2)"
 	sc.mangaMeta = suwayomi.Manga{Title: updatedSourceTitle}
 
-	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle); err != nil {
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle, ""); err != nil {
 		t.Fatalf("second AddSeries: %v", err)
 	}
 
@@ -644,7 +644,7 @@ func TestIngest_AddSeries_PerSourceMetadata(t *testing.T) {
 	}
 
 	ing := suwayomi.NewIngest(sc, client)
-	_, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle)
+	_, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle, "")
 	if err != nil {
 		t.Fatalf("AddSeries: unexpected error: %v", err)
 	}
@@ -669,6 +669,197 @@ func TestIngest_AddSeries_PerSourceMetadata(t *testing.T) {
 	}
 }
 
+// --- scanlator-aware provider identity tests ---------------------------------
+
+// makeChaptersWithScanlator builds n stub suwayomi.Chapter values (mirroring
+// makeChapters) where each chapter's Scanlator is set to scanlator. Chapter
+// numbers are sequential starting at start so that two scanlator groups for
+// the same manga produce disjoint, deterministic chapter keys.
+func makeChaptersWithScanlator(n int, start int, idOffset int, scanlator string) []suwayomi.Chapter {
+	chs := make([]suwayomi.Chapter, n)
+	for i := range n {
+		num := float64(start + i)
+		chs[i] = suwayomi.Chapter{
+			ID:        idOffset + i,
+			Index:     start + i - 1,
+			Name:      "Chapter " + chapter.FormatChapterNumber(num),
+			Number:    ptrF64(num),
+			URL:       "https://suwayomi.test/ch/" + chapter.FormatChapterNumber(num),
+			Scanlator: scanlator,
+		}
+	}
+	return chs
+}
+
+// TestIngest_AddSeries_ScanlatorFilter_TwoGroupsCoexist verifies that a manga
+// whose upstream chapter list carries two distinct scanlators produces TWO
+// independent SeriesProvider rows — one per scanlator — each holding only its
+// own ProviderChapter feed. This is the core (source,scanlator) provider
+// identity requirement: calling AddSeries once per scanlator must not merge
+// or clobber the other scanlator's row.
+func TestIngest_AddSeries_ScanlatorFilter_TwoGroupsCoexist(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID    = 1001
+		mangaTitle = "Two Scanlators Manga"
+		sourceName = "mangadex"
+	)
+
+	alphaChapters := makeChaptersWithScanlator(2, 1, 500, "Alpha")
+	betaChapters := makeChaptersWithScanlator(3, 1, 600, "Beta")
+	allChapters := append(append([]suwayomi.Chapter{}, alphaChapters...), betaChapters...)
+
+	sc := &ingestStubClient{
+		chapters:  allChapters,
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
+	}
+	ing := suwayomi.NewIngest(sc, client)
+
+	// AddSeries(..., "Alpha") must create a SeriesProvider scoped to Alpha only.
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle, "Alpha"); err != nil {
+		t.Fatalf("AddSeries(Alpha): %v", err)
+	}
+	// AddSeries(..., "Beta") must create a SECOND, independent SeriesProvider.
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle, "Beta"); err != nil {
+		t.Fatalf("AddSeries(Beta): %v", err)
+	}
+
+	sps := client.SeriesProvider.Query().AllX(ctx)
+	if len(sps) != 2 {
+		t.Fatalf("SeriesProvider count: got %d, want 2", len(sps))
+	}
+	byScanlator := indexSeriesProvidersByScanlator(sps)
+
+	alphaSP := requireSeriesProvider(t, byScanlator, "Alpha", sourceName)
+	betaSP := requireSeriesProvider(t, byScanlator, "Beta", sourceName)
+	if alphaSP.ID == betaSP.ID {
+		t.Fatalf("Alpha and Beta SeriesProvider rows must be distinct, got the same ID %s", alphaSP.ID)
+	}
+
+	// Each row's ProviderChapter feed must hold ONLY its own scanlator's chapters.
+	assertProviderChapterIDs(t, ctx, client, alphaSP.ID, buildWantIDs(alphaChapters))
+	assertProviderChapterIDs(t, ctx, client, betaSP.ID, buildWantIDs(betaChapters))
+}
+
+// indexSeriesProvidersByScanlator builds a scanlator → SeriesProvider lookup,
+// used by tests that assert two scanlator-scoped rows coexist for one source.
+func indexSeriesProvidersByScanlator(sps []*ent.SeriesProvider) map[string]*ent.SeriesProvider {
+	byScanlator := make(map[string]*ent.SeriesProvider, len(sps))
+	for _, sp := range sps {
+		byScanlator[sp.Scanlator] = sp
+	}
+	return byScanlator
+}
+
+// requireSeriesProvider fetches the SeriesProvider keyed by scanlator from the
+// index built by indexSeriesProvidersByScanlator, failing the test if absent
+// or if its Provider does not match wantProvider.
+func requireSeriesProvider(t *testing.T, byScanlator map[string]*ent.SeriesProvider, scanlator, wantProvider string) *ent.SeriesProvider {
+	t.Helper()
+	sp, ok := byScanlator[scanlator]
+	if !ok {
+		t.Fatalf("no SeriesProvider found for scanlator %q", scanlator)
+	}
+	if sp.Provider != wantProvider {
+		t.Errorf("SeriesProvider.Provider: got %q, want %q", sp.Provider, wantProvider)
+	}
+	return sp
+}
+
+// TestIngest_AddSeries_ScanlatorFilter_EmptyIngestsAll verifies the
+// regression-critical default: AddSeries(..., "") ingests ALL chapters
+// (across every scanlator, tagged or untagged) into a single scanlator==""
+// SeriesProvider row — unchanged from pre-scanlator behavior.
+func TestIngest_AddSeries_ScanlatorFilter_EmptyIngestsAll(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID    = 1002
+		mangaTitle = "Mixed Scanlators Manga"
+		sourceName = "mangadex"
+	)
+
+	alphaChapters := makeChaptersWithScanlator(2, 1, 700, "Alpha")
+	betaChapters := makeChaptersWithScanlator(2, 3, 800, "Beta")
+	untaggedChapters := makeChaptersWithScanlator(1, 5, 900, "") // no scanlator credited
+	allChapters := append(append(append([]suwayomi.Chapter{}, alphaChapters...), betaChapters...), untaggedChapters...)
+
+	sc := &ingestStubClient{
+		chapters:  allChapters,
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
+	}
+	ing := suwayomi.NewIngest(sc, client)
+
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle, ""); err != nil {
+		t.Fatalf("AddSeries(\"\"): %v", err)
+	}
+
+	sp := assertSeriesProvider(t, ctx, client, sourceName, mangaID, mangaTitle)
+	if sp.Scanlator != "" {
+		t.Errorf("SeriesProvider.Scanlator: got %q, want \"\"", sp.Scanlator)
+	}
+	// All 5 chapters (2 Alpha + 2 Beta + 1 untagged) must be present on the "" row.
+	assertProviderChapterIDs(t, ctx, client, sp.ID, buildWantIDs(allChapters))
+}
+
+// TestIngest_AddSeries_ScanlatorFilter_RefreshUpdatesSameRow verifies the
+// idempotency/refresh requirement: calling AddSeries(..., "Alpha") twice
+// updates the SAME SeriesProvider row (no duplicate) and the ProviderChapter
+// feed stays Alpha-only — a subsequent scanlator-blind re-fetch must not pull
+// in Beta's chapters just because they belong to the same upstream manga.
+func TestIngest_AddSeries_ScanlatorFilter_RefreshUpdatesSameRow(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID    = 1003
+		mangaTitle = "Refresh Scanlator Manga"
+		sourceName = "mangadex"
+	)
+
+	alphaChapters := makeChaptersWithScanlator(2, 1, 1000, "Alpha")
+	betaChapters := makeChaptersWithScanlator(1, 3, 1100, "Beta")
+	allChapters := append(append([]suwayomi.Chapter{}, alphaChapters...), betaChapters...)
+
+	sc := &ingestStubClient{
+		chapters:  allChapters,
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
+	}
+	ing := suwayomi.NewIngest(sc, client)
+
+	// First call: creates the Alpha-scoped SeriesProvider.
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle, "Alpha"); err != nil {
+		t.Fatalf("first AddSeries(Alpha): %v", err)
+	}
+	first := client.SeriesProvider.Query().OnlyX(ctx)
+
+	// Second call (simulating a refresh sweep re-fetch): must update the SAME row.
+	result2, err := ing.AddSeries(ctx, sourceName, mangaID, mangaTitle, "Alpha")
+	if err != nil {
+		t.Fatalf("second AddSeries(Alpha): %v", err)
+	}
+	if result2.NewChapters != 0 {
+		t.Errorf("second AddSeries(Alpha): NewChapters got %d, want 0 (idempotent)", result2.NewChapters)
+	}
+
+	sps := client.SeriesProvider.Query().AllX(ctx)
+	if len(sps) != 1 {
+		t.Fatalf("SeriesProvider count after refresh: got %d, want 1 (no duplicate row)", len(sps))
+	}
+	if sps[0].ID != first.ID {
+		t.Fatalf("SeriesProvider row changed identity across refresh: got %s, want %s", sps[0].ID, first.ID)
+	}
+	if sps[0].Scanlator != "Alpha" {
+		t.Errorf("SeriesProvider.Scanlator after refresh: got %q, want %q", sps[0].Scanlator, "Alpha")
+	}
+
+	// The feed must still be Alpha-only — Beta's chapter must never have leaked in.
+	assertProviderChapterIDs(t, ctx, client, sps[0].ID, buildWantIDs(alphaChapters))
+}
+
 // TestIngest_AddSeries_MangaMetaError verifies that a MangaMeta client error is
 // propagated and no SeriesProvider row is created (the series row is created
 // first, but the provider/chapter rows must not be).
@@ -683,7 +874,7 @@ func TestIngest_AddSeries_MangaMetaError(t *testing.T) {
 	}
 	ing := suwayomi.NewIngest(sc, client)
 
-	_, err := ing.AddSeries(ctx, "src", 7, "Some Series")
+	_, err := ing.AddSeries(ctx, "src", 7, "Some Series", "")
 	if !errors.Is(err, sentinel) {
 		t.Errorf("AddSeries: err got %v, want to wrap %v", err, sentinel)
 	}

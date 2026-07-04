@@ -508,7 +508,9 @@ func validateCategory(cat string) error {
 func (s *Service) ingestProviders(ctx context.Context, req AdoptRequest) error {
 	attached := make([]string, 0, len(req.Providers))
 	for _, p := range req.Providers {
-		if _, err := s.ingest.AddSeries(ctx, p.Source, p.MangaID, req.Title); err != nil {
+		// scanlator is "" for now (Task 4 adds AdoptProvider.Scanlator and
+		// threads p.Scanlator here); "" means "all chapters from this source".
+		if _, err := s.ingest.AddSeries(ctx, p.Source, p.MangaID, req.Title, ""); err != nil {
 			if len(attached) > 0 {
 				return fmt.Errorf(
 					"imports.Adopt: provider %q failed (providers already attached: %s): %w",

@@ -972,7 +972,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 	// ── Step 2: AddSeries — populate DB rows ──────────────────────────────────
 	t.Log("Step 2: AddSeries — ingesting chapters into DB...")
 	ingest := suwayomi.NewIngest(client, db)
-	result, err := ingest.AddSeries(ctx, "local", mangaID, mangaTitle)
+	result, err := ingest.AddSeries(ctx, "local", mangaID, mangaTitle, "")
 	if err != nil {
 		t.Fatalf("Step 2 — AddSeries: %v", err)
 	}

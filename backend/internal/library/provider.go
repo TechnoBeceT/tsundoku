@@ -18,10 +18,11 @@ import (
 //  1. Load the series by id — ErrSeriesNotFound if it does not exist.
 //  2. Reject if a SeriesProvider with provider==source is already attached —
 //     ErrProviderAlreadyPresent.
-//  3. Call s.ingest.AddSeries(ctx, source, mangaID, ser.Title): AddSeries
+//  3. Call s.ingest.AddSeries(ctx, source, mangaID, ser.Title, ""): AddSeries
 //     find-or-creates a Series by slug(title), so passing the EXISTING
 //     series' canonical title attaches the new source to THIS series and
-//     ingests its chapter feed (new chapters land as wanted). A Suwayomi
+//     ingests its chapter feed (new chapters land as wanted). scanlator is ""
+//     for now (Task 4 wires the real scanlator through here). A Suwayomi
 //     fetch failure is wrapped as ErrSourceNotFound.
 //  4. Set importance on the just-created SeriesProvider(seriesID, source).
 //  5. Call s.trigger() (if non-nil) to converge immediately: any on-disk
@@ -49,7 +50,9 @@ func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source st
 		return series.SeriesDetailDTO{}, ErrProviderAlreadyPresent
 	}
 
-	if _, err := s.ingest.AddSeries(ctx, source, mangaID, ser.Title); err != nil {
+	// scanlator is "" for now (Task 4 wires the real scanlator through here);
+	// "" means "all chapters from this source".
+	if _, err := s.ingest.AddSeries(ctx, source, mangaID, ser.Title, ""); err != nil {
 		return series.SeriesDetailDTO{}, errors.Join(ErrSourceNotFound, err)
 	}
 
