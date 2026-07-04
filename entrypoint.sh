@@ -60,6 +60,26 @@ if [ -z "${TSUNDOKU_SUWAYOMI_EXTERNALURL:-}" ] && [ -z "${DISPLAY:-}" ] && \
     fi
 fi
 
+# ── Clear the stale KCEF (WebView Chromium) profile lock ──────────────────────
+# Suwayomi's WebView engine (KCEF) keeps its Chromium profile under the PERSISTENT
+# /config volume (<runtimedir>/cache/kcef). Chromium writes a `SingletonLock`
+# symlink naming the HOSTNAME + PID that owns the profile. Container hostnames are
+# random and change on every recreate, so after any restart/recreate the lock
+# points at a dead hostname; Chromium then refuses to launch ("The profile appears
+# to be in use by another Chromium process on another computer", ContentMainRun
+# exit code 21). Only the zygote survives, no browser starts, and WebView sources
+# (e.g. Comix) fail with "Timed out starting WebView". Unlike the X11 lock this
+# one lives in a mounted volume, so it survives even a full image update — it must
+# be cleared on every boot. No Chromium is running yet at container start, so
+# removing the singleton files is safe (Chromium recreates them on launch).
+# EMBEDDED mode only: in external mode no local KCEF exists.
+if [ -z "${TSUNDOKU_SUWAYOMI_EXTERNALURL:-}" ]; then
+    KCEF_PROFILE="${TSUNDOKU_SUWAYOMI_RUNTIMEDIR:-/config/suwayomi}/cache/kcef"
+    rm -f "$KCEF_PROFILE/SingletonLock" \
+          "$KCEF_PROFILE/SingletonCookie" \
+          "$KCEF_PROFILE/SingletonSocket" 2>/dev/null || true
+fi
+
 # Run as root when explicitly asked (both IDs 0) — no user juggling needed.
 if [ "$PUID" -eq 0 ] && [ "$PGID" -eq 0 ]; then
     exec /app/tsundoku "$@"
