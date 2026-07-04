@@ -53,8 +53,26 @@ FROM eclipse-temurin:21-jre-noble
 #          (important: the Go server spawns a child Java/Suwayomi process).
 # gosu  -> drops privileges to the PUID/PGID user without a login shell.
 # curl  -> used by the HEALTHCHECK below to probe the /health endpoint.
+#
+# xvfb + the lib* set -> embedded Suwayomi's WebView engine is KCEF (a Chromium
+# Embedded Framework build). Sources that render their catalog via JavaScript or
+# behind a browser challenge (e.g. Comix.to) ask Suwayomi to spin up a WebView;
+# KCEF needs the native X11/Chromium shared libraries AND a live X DISPLAY even
+# when headless. Without them the WebView's native init fails to load libjawt and
+# the source errors with "Failed to start WebView". The library list mirrors the
+# official Suwayomi-Server docker image (Ubuntu 'noble' t64 ABI names); Xvfb
+# supplies the headless virtual display (started by entrypoint.sh). /tmp/.X11-unix
+# is the world-writable socket dir the X server + its clients share.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tini gosu curl && \
+    apt-get install -y --no-install-recommends \
+        tini gosu curl \
+        xvfb \
+        libxss1 libxext6 libxrender1 libxcomposite1 libxdamage1 \
+        libxkbcommon0 libxtst6 libxcursor1 \
+        libglib2.0-0t64 libnss3 libdbus-1-3 libpango-1.0-0 \
+        libcairo2 libasound2t64 libatk-bridge2.0-0t64 \
+        libcups2t64 libdrm2 libgbm1 libegl1 && \
+    mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
