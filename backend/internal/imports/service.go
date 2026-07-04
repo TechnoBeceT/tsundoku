@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
@@ -45,21 +46,30 @@ var ErrSourceNotFound = errors.New("source not found")
 // Fields ingest, db, and storage are unused in Task 3 but declared here so
 // Task 4 can extend this struct without changing the constructor signature.
 type Service struct {
-	client  suwayomi.Client
-	ingest  *suwayomi.Ingest
-	db      *ent.Client
-	storage string
+	client        suwayomi.Client
+	ingest        *suwayomi.Ingest
+	db            *ent.Client
+	storage       string
+	searchTimeout time.Duration
 }
 
 // NewService constructs a Service backed by the given Suwayomi client.
-// ingest, db, and storage are reserved for Task 4 (adopt workflow) and may be
-// nil/empty for Task 3 callers.
-func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client, storage string) *Service {
+//
+// searchTimeout is the OVERALL deadline for one interactive Search fan-out (see
+// Search) — it bounds the response below a CDN edge timeout and yields partial
+// results instead of hanging on a slow anti-bot source. It is sourced from
+// config (cfg.Suwayomi.SearchTimeout) and is DISTINCT from the per-request HTTP
+// client timeout, which downloads keep generous.
+//
+// ingest, db, and storage back the adopt/import workflow and may be nil/empty
+// for callers that only use the read-only discovery paths.
+func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client, storage string, searchTimeout time.Duration) *Service {
 	return &Service{
-		client:  client,
-		ingest:  ingest,
-		db:      db,
-		storage: storage,
+		client:        client,
+		ingest:        ingest,
+		db:            db,
+		storage:       storage,
+		searchTimeout: searchTimeout,
 	}
 }
 
@@ -222,6 +232,17 @@ func newSearchCandidateDTO(c Candidate) SearchCandidateDTO {
 // Per-source errors are logged at WARN level and skipped — the caller receives
 // partial results from healthy sources with a nil error. This keeps a single
 // misbehaving source from blocking the entire search response.
+//
+// The whole fan-out is additionally bounded by an OVERALL deadline
+// (s.searchTimeout). Interactive search fans out to every installed source in
+// parallel, and a Cloudflare-protected source can hang for a long time solving
+// an anti-bot challenge; without a bound the response can exceed a CDN edge's
+// ~100s cut-off (e.g. Cloudflare's 524) and the user sees a gateway error
+// instead of any results. When the deadline fires, sources that have not
+// answered are simply DROPPED and whatever completed is returned as partial
+// results — the exact same partial-results contract the per-source skip above
+// already honours. The deadline is never surfaced as an error (a slow source is
+// not a failed search).
 func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) ([]SearchGroupDTO, error) {
 	// Resolve the source set to query.
 	sources, err := s.resolveSources(ctx, sourceIDs)
@@ -229,21 +250,26 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 		return nil, err
 	}
 
+	// Bound the whole fan-out below the CDN edge timeout so a hung source yields
+	// partial results rather than a gateway error.
+	sctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
+	defer cancel()
+
 	// Fan out per-source searches with bounded concurrency.
 	sem := make(chan struct{}, searchConcurrency)
 	var mu sync.Mutex
 	var candidates []Candidate
 
-	g, gctx := errgroup.WithContext(ctx)
+	g, gctx := errgroup.WithContext(sctx)
 	for _, src := range sources {
 		g.Go(func() error {
-			// Acquire a concurrency slot; respect context cancellation so that
-			// in-flight goroutines don't block indefinitely when the caller
-			// cancels while all slots are taken.
+			// Acquire a concurrency slot; on deadline/cancel just drop this
+			// source (return nil) so partial results survive — the caller must
+			// never see the deadline as an error.
 			select {
 			case sem <- struct{}{}:
 			case <-gctx.Done():
-				return gctx.Err()
+				return nil
 			}
 			defer func() { <-sem }()
 
@@ -261,12 +287,12 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 		})
 	}
 
-	// Wait for all goroutines. Per-source fetch errors are logged and skipped
-	// (goroutine returns nil), so partial results reach the caller. Context
-	// cancellation or deadline expiry is returned via the semaphore acquire.
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
+	// Every goroutine returns nil (per-source failures and the overall deadline
+	// are both treated as "drop that source"), so g.Wait never surfaces an
+	// error — it just joins all goroutines. Once it returns, every mutex-guarded
+	// write has happened-before, so candidates is the complete set as of the
+	// deadline and is safe to read.
+	_ = g.Wait()
 
 	// Group candidates by title similarity using the Task 2 matcher.
 	groups := groupCandidates(candidates)

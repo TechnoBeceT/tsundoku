@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -184,7 +185,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authSvc := auth.NewService(testSecret)
 
 	ingest := suwayomi.NewIngest(fc, db)
-	importsSvc := imports.NewService(fc, ingest, db, "")
+	importsSvc := imports.NewService(fc, ingest, db, "", 30*time.Second)
 	seriesSvc := seriessvc.NewService(db, "", 14)
 
 	triggered := new(int)

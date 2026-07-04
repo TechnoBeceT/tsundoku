@@ -194,7 +194,7 @@ func registerRoutes(
 	// the same Ent client as the rest of the application; a single suwayomiClient
 	// value is threaded in from main.
 	ingest := suwayomi.NewIngest(suwayomiClient, client)
-	importsSvc := imports.NewService(suwayomiClient, ingest, client, cfg.Storage.Folder)
+	importsSvc := imports.NewService(suwayomiClient, ingest, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout)
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, suwayomiClient)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)

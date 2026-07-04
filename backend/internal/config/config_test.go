@@ -251,7 +251,7 @@ func TestValidateAcceptsValidAuthSecret(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
 	}
 	if err := config.ExportValidateForTest(cfg); err != nil {
@@ -410,7 +410,7 @@ func TestValidateAcceptsExternalURL(t *testing.T) {
 		cfg := &config.Config{
 			Database: config.DatabaseConfig{Password: "somepassword"},
 			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-			Suwayomi: config.SuwayomiConfig{ExternalURL: raw, HTTPTimeout: 3 * time.Minute},
+			Suwayomi: config.SuwayomiConfig{ExternalURL: raw, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
 			Jobs:     config.JobsConfig{DownloadConcurrency: 4},
 		}
 		if err := config.ExportValidateForTest(cfg); err != nil {
@@ -665,6 +665,56 @@ func TestValidateRejectsNonPositiveHTTPTimeout(t *testing.T) {
 	}
 }
 
+// TestSuwayomiSearchTimeoutDefault confirms Load() applies the 85s default for
+// the interactive search fan-out deadline — chosen to sit under a CDN edge's
+// ~100s cut-off so a hung Cloudflare source yields partial results, not a 524.
+func TestSuwayomiSearchTimeoutDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Suwayomi.SearchTimeout != 85*time.Second {
+		t.Errorf("Suwayomi.SearchTimeout default = %v, want 85s", cfg.Suwayomi.SearchTimeout)
+	}
+}
+
+// TestSuwayomiSearchTimeoutEnvOverride confirms TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT
+// overrides the default and unmarshals as a duration.
+func TestSuwayomiSearchTimeoutEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT", "45s")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Suwayomi.SearchTimeout != 45*time.Second {
+		t.Errorf("Suwayomi.SearchTimeout = %v, want 45s", cfg.Suwayomi.SearchTimeout)
+	}
+}
+
+// TestValidateRejectsNonPositiveSearchTimeout confirms validate() fails closed on
+// a zero/negative interactive-search deadline, naming the offending env var.
+func TestValidateRejectsNonPositiveSearchTimeout(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: time.Minute, SearchTimeout: 0}, // invalid
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for non-positive SearchTimeout, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT") {
+		t.Errorf("error should name TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT, got: %v", err)
+	}
+}
+
 // TestJobsDownloadConcurrencyDefault confirms the per-provider download
 // concurrency defaults to 4 (unchanged from the previous hardcoded literal).
 func TestJobsDownloadConcurrencyDefault(t *testing.T) {
@@ -702,7 +752,7 @@ func TestValidateRejectsDownloadConcurrencyBelowOne(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
 		Jobs:     config.JobsConfig{DownloadConcurrency: 0}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
@@ -799,7 +849,7 @@ func suwayomiDBConfig(dbType, dbURL string) *config.Config {
 	return &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{DatabaseType: dbType, DatabaseURL: dbURL, HTTPTimeout: 3 * time.Minute},
+		Suwayomi: config.SuwayomiConfig{DatabaseType: dbType, DatabaseURL: dbURL, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
 	}
 }

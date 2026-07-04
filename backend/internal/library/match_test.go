@@ -3,6 +3,7 @@ package library_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/imports"
@@ -22,7 +23,7 @@ func TestMatchCandidates_ReturnsSearchGroups(t *testing.T) {
 
 	fake := newFakeClientWithSearch(t, "My Series") // Search returns 1 manga titled "My Series"
 	ingest := suwayomi.NewIngest(fake, client)
-	importsSvc := imports.NewService(fake, ingest, client, storage)
+	importsSvc := imports.NewService(fake, ingest, client, storage, 30*time.Second)
 	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage, sse.NewHub())
 
 	found, err := svc.Scan(ctx)
@@ -47,7 +48,7 @@ func TestMatchCandidates_UnknownPathReturnsErrEntryNotFound(t *testing.T) {
 
 	fake := newFakeClientWithSearch(t, "My Series")
 	ingest := suwayomi.NewIngest(fake, client)
-	importsSvc := imports.NewService(fake, ingest, client, storage)
+	importsSvc := imports.NewService(fake, ingest, client, storage, 30*time.Second)
 	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage, sse.NewHub())
 
 	if _, err := svc.MatchCandidates(ctx, "/nonexistent/path"); err != library.ErrEntryNotFound {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
@@ -156,9 +157,15 @@ func ptrStr(s string) *string { return &s }
 // ptrF64 returns a pointer to v.
 func ptrF64(v float64) *float64 { return &v }
 
+// testSearchTimeout is a generous overall-search deadline used by tests that are
+// not exercising the deadline behaviour itself — long enough never to fire for
+// an in-memory fake client. The dedicated partial-results test passes its own
+// short value directly.
+const testSearchTimeout = 30 * time.Second
+
 // newService constructs a Service with a fake client and nil ingest/db (unused in Task 3).
 func newService(fc *fakeClient) *imports.Service {
-	return imports.NewService(fc, nil, nil, "")
+	return imports.NewService(fc, nil, nil, "", testSearchTimeout)
 }
 
 // makeAdoptChapters builds n stub suwayomi.Chapter values anchored to a base ID
@@ -512,6 +519,74 @@ func TestService_Search_SourceError(t *testing.T) {
 	}
 	if got[0].Title != "Naruto" {
 		t.Errorf("Group.Title: got %q, want %q", got[0].Title, "Naruto")
+	}
+}
+
+// blockingFakeClient wraps fakeClient and makes Search for one source (blockID)
+// hang until its context is cancelled, modelling a Cloudflare-protected source
+// that stalls on an anti-bot challenge (a real Suwayomi HTTP call respects ctx,
+// returning as soon as the deadline fires). Every other source delegates to the
+// embedded fakeClient and returns immediately.
+type blockingFakeClient struct {
+	*fakeClient
+	blockID string
+}
+
+func (b *blockingFakeClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
+	if sourceID == b.blockID {
+		<-ctx.Done() // hang until the overall Search deadline cancels ctx
+		return nil, ctx.Err()
+	}
+	return b.fakeClient.Search(ctx, sourceID, query)
+}
+
+// TestService_Search_PartialResultsOnDeadline proves the CDN-timeout fix: when a
+// source hangs past the overall search deadline, Search returns the fast
+// source's results as PARTIAL results — no error, and in roughly the timeout
+// (NOT after the hung source's full delay, and NOT hanging forever).
+func TestService_Search_PartialResultsOnDeadline(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "fast", Name: "Fast Source", Lang: "en"},
+			{ID: "slow", Name: "Slow Source", Lang: "en"}, // hangs until the deadline
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"fast": {{ID: 1, Title: "Naruto"}},
+			// "slow" never returns a result — its goroutine blocks on ctx.
+		},
+	}
+	client := &blockingFakeClient{fakeClient: fc, blockID: "slow"}
+	// Short overall deadline so the hung source is dropped quickly.
+	svc := imports.NewService(client, nil, nil, "", 200*time.Millisecond)
+
+	start := time.Now()
+	got, err := svc.Search(context.Background(), "Naruto", nil)
+	elapsed := time.Since(start)
+
+	// Partial results, never an error, never a hang.
+	if err != nil {
+		t.Fatalf("Search: expected nil error (partial results on deadline), got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("Search took %v — deadline should bound it to ~200ms, not the hung source's full delay", elapsed)
+	}
+
+	// The fast source's result is present; the slow source's is absent.
+	titles := map[string]string{} // title → source id
+	for _, grp := range got {
+		for _, c := range grp.Candidates {
+			titles[c.Title] = c.Source
+		}
+	}
+	if src, ok := titles["Naruto"]; !ok || src != "fast" {
+		t.Errorf("expected fast source's %q present (source=fast), got titles=%v", "Naruto", titles)
+	}
+	for _, src := range titles {
+		if src == "slow" {
+			t.Errorf("slow (hung) source must be absent from partial results, got %v", titles)
+		}
 	}
 }
 
@@ -1176,7 +1251,7 @@ func newServiceDB(t *testing.T, fc *fakeClient) *imports.Service {
 	t.Helper()
 	db := testdb.New(t)
 	ingest := suwayomi.NewIngest(fc, db)
-	return imports.NewService(fc, ingest, db, "")
+	return imports.NewService(fc, ingest, db, "", testSearchTimeout)
 }
 
 // assertAdoptSeries verifies that exactly one Series exists with the expected
@@ -1256,7 +1331,7 @@ func TestService_Adopt_TwoProviders(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "")
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
 
 	id, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title: canonicalTitle,
@@ -1317,7 +1392,7 @@ func TestService_Adopt_SameSourceDifferentScanlators(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "")
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
 
 	id, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title: canonicalTitle,
@@ -1375,7 +1450,7 @@ func TestService_Adopt_Idempotent(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "")
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
 
 	req := imports.AdoptRequest{
 		Title: canonicalTitle,
@@ -1435,7 +1510,7 @@ func TestService_Adopt_AttachToExisting(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "")
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
 
 	// First adopt: one provider.
 	if _, err := svc.Adopt(ctx, imports.AdoptRequest{
@@ -1493,7 +1568,7 @@ func TestService_Adopt_Category(t *testing.T) {
 			},
 		}
 		ingest := suwayomi.NewIngest(fc, db)
-		svc := imports.NewService(fc, ingest, db, "")
+		svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
 
 		_, err := svc.Adopt(ctx, imports.AdoptRequest{
 			Title:    "Berserk",
@@ -1520,7 +1595,7 @@ func TestService_Adopt_Category(t *testing.T) {
 			},
 		}
 		ingest := suwayomi.NewIngest(fc, db)
-		svc := imports.NewService(fc, ingest, db, "")
+		svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
 
 		_, err := svc.Adopt(ctx, imports.AdoptRequest{
 			Title:    "Naruto",
@@ -1567,7 +1642,7 @@ func TestService_Adopt_NoSilentPartial(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "")
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
 
 	req := imports.AdoptRequest{
 		Title: canonicalTitle,

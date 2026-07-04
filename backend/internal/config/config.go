@@ -155,6 +155,24 @@ type SuwayomiConfig struct {
 	// headers)" failures. Default 3m. validate() rejects a non-positive value.
 	// Set via TSUNDOKU_SUWAYOMI_HTTPTIMEOUT.
 	HTTPTimeout time.Duration
+	// SearchTimeout is the OVERALL deadline for one interactive multi-source
+	// search fan-out (imports.Service.Search), DISTINCT from HTTPTimeout (the
+	// per-request client deadline used by ALL API calls, including background
+	// downloads). Interactive search fans out to every installed source in
+	// parallel; a Cloudflare-protected source can hang for a long time solving
+	// an anti-bot challenge, and those challenges are solved serially through a
+	// single embedded WebView, so a few slow sources can stall the whole
+	// response. This deadline bounds the response and yields PARTIAL results
+	// (the sources that answered in time) instead of hanging.
+	//
+	// The default is 85s: comfortably UNDER a CDN edge's ~100s cut-off (e.g.
+	// Cloudflare's 524 timeout) so the user gets partial results rather than a
+	// 524, while still allowing a cold anti-bot source ~30–60s to solve its
+	// challenge and contribute. Downloads deliberately keep the generous 3m
+	// HTTPTimeout — this knob only governs the interactive search fan-out.
+	// Default 85s. validate() rejects a non-positive value.
+	// Set via TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT.
+	SearchTimeout time.Duration
 	// JavaPath is the path to the java executable used to launch the
 	// Suwayomi JAR. Defaults to "java" (system PATH). Override when the
 	// system default java is too old (Suwayomi v2.2.2100 requires Java 21+).
@@ -289,6 +307,7 @@ func defaults() map[string]any {
 		"suwayomi.starttimeout":        "2m",
 		"suwayomi.downloadtimeout":     "10m",
 		"suwayomi.httptimeout":         "3m",
+		"suwayomi.searchtimeout":       "85s",
 		"suwayomi.javapath":            "java",
 		// Embedded-Suwayomi DB engine — all blank ⇒ disabled (Suwayomi's
 		// default H2, unchanged behaviour). Set DatabaseType=POSTGRESQL to
@@ -377,6 +396,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_SUWAYOMI_STARTTIMEOUT          → suwayomi.starttimeout
 //	TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT       → suwayomi.downloadtimeout
 //	TSUNDOKU_SUWAYOMI_HTTPTIMEOUT           → suwayomi.httptimeout
+//	TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT         → suwayomi.searchtimeout
 //	TSUNDOKU_SUWAYOMI_JAVAPATH              → suwayomi.javapath
 //	TSUNDOKU_SUWAYOMI_DATABASETYPE          → suwayomi.databasetype
 //	TSUNDOKU_SUWAYOMI_DATABASEURL           → suwayomi.databaseurl
@@ -454,6 +474,12 @@ func (c *Config) validate() error {
 	if c.Suwayomi.HTTPTimeout <= 0 {
 		errs = append(errs, fmt.Sprintf(
 			"TSUNDOKU_SUWAYOMI_HTTPTIMEOUT must be positive (got %s)", c.Suwayomi.HTTPTimeout,
+		))
+	}
+
+	if c.Suwayomi.SearchTimeout <= 0 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT must be positive (got %s)", c.Suwayomi.SearchTimeout,
 		))
 	}
 
