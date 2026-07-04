@@ -36,6 +36,9 @@ type addProviderBody struct {
 	Source     string `json:"source"`
 	MangaID    int    `json:"mangaId"`
 	Importance int    `json:"importance"`
+	// Scanlator selects which scanlation group's chapters this provider
+	// tracks; optional, "" means "all chapters from this source".
+	Scanlator string `json:"scanlator"`
 }
 
 // skipBody is the wire shape for POST /api/library/imports/skip.
@@ -82,15 +85,17 @@ func validateImportBody(body importBody) error {
 }
 
 // validateAddProviderBody validates the POST /api/series/:id/providers body:
-// a non-empty source, a positive mangaId, and an importance >= 1.
+// a non-empty source, a positive mangaId, and an importance >= 1. Scanlator
+// is optional (no format constraint — "" means "all chapters"), so it is not
+// part of the shared validateMatch check.
 func validateAddProviderBody(body addProviderBody) error {
-	return validateMatch(matchBody(body))
+	return validateMatch(matchBody{Source: body.Source, MangaID: body.MangaID, Importance: body.Importance})
 }
 
 // validateMatch is the shared source/mangaId/importance validation reused by
 // both validateImportBody's optional match and validateAddProviderBody (§2
-// DRY — addProviderBody and matchBody share the identical field shape, so a
-// plain type conversion feeds both callers through the one check).
+// DRY — addProviderBody and matchBody share the identical source/mangaId/
+// importance fields, feeding both callers through the one check).
 func validateMatch(m matchBody) error {
 	if strings.TrimSpace(m.Source) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "source is required")

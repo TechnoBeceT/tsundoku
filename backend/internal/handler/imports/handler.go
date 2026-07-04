@@ -140,6 +140,31 @@ func (h *Handler) Details(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// Breakdown handles GET /api/sources/:sourceId/manga/:mangaId/breakdown.
+//
+// It fetches the live chapter feed for (sourceId, mangaId) and groups it by
+// scanlator, returning a SourceBreakdownDTO so the adopt UI can auto-split a
+// source into per-scanlator rows with counts + display ranges. An unknown
+// :sourceId maps to 404 (mirrors Details); any other failure is a genuine
+// upstream Suwayomi problem and maps to 502 via the shared httperr.Upstream
+// (mirrors Details), so a source outage never surfaces as a false 200.
+func (h *Handler) Breakdown(c echo.Context) error {
+	sourceID := c.Param("sourceId")
+	mangaID, err := parseMangaID(c.Param("mangaId"))
+	if err != nil {
+		return err
+	}
+
+	out, err := h.svc.SourceBreakdown(c.Request().Context(), sourceID, mangaID)
+	if err != nil {
+		if errors.Is(err, imports.ErrSourceNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "source not found")
+		}
+		return httperr.Upstream(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // Adopt handles POST /api/series.
 //
 // It binds and validates the AdoptRequest body (non-blank title, >= 1 provider,
@@ -171,6 +196,7 @@ func (h *Handler) Adopt(c echo.Context) error {
 			Source:     p.Source,
 			MangaID:    p.MangaID,
 			Importance: p.Importance,
+			Scanlator:  p.Scanlator,
 		}
 	}
 

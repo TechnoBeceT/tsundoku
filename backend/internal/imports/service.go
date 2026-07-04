@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -398,11 +399,80 @@ func (s *Service) InspectChapters(ctx context.Context, _ string, mangaID int) ([
 	out := make([]ChapterInspectDTO, len(chapters))
 	for i, ch := range chapters {
 		out[i] = ChapterInspectDTO{
-			Number: ch.Number,
-			Name:   ch.Name,
+			Number:    ch.Number,
+			Name:      ch.Name,
+			Scanlator: ch.Scanlator,
 		}
 	}
 	return out, nil
+}
+
+// SourceBreakdown groups a source-manga's live chapter feed by scanlator so
+// the adopt UI can auto-split a source into per-scanlator rows with counts +
+// display ranges. A chapter's group key is its own Scanlator when non-empty,
+// else the source's own Name (mirrors Kaizoku's "untagged → source name"
+// convention — an aggregator source may tag some chapters and leave others
+// untagged, and the untagged ones are attributed to the source itself).
+//
+// Ranges reuses the Task 2 coverage helper (FormatChapterRanges) — the
+// run-collapsing walk is never duplicated. Only chapters with a non-nil
+// Number contribute to a group's Ranges/Count coverage input; Total counts
+// every chapter regardless.
+//
+// An unknown sourceID yields ErrSourceNotFound (→ 404, mirrors Browse/
+// MangaDetails); a client.FetchChapters failure is returned verbatim (the
+// caller maps it to a 502, mirroring Details' upstream mapping).
+func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, mangaID int) (SourceBreakdownDTO, error) {
+	src, err := s.resolveSource(ctx, sourceID)
+	if err != nil {
+		return SourceBreakdownDTO{}, err
+	}
+
+	chapters, err := s.client.FetchChapters(ctx, mangaID)
+	if err != nil {
+		return SourceBreakdownDTO{}, err
+	}
+
+	type group struct {
+		numbers []float64
+		count   int
+	}
+	groups := make(map[string]*group)
+	order := make([]string, 0)
+	for _, ch := range chapters {
+		key := ch.Scanlator
+		if key == "" {
+			key = src.Name
+		}
+		g, ok := groups[key]
+		if !ok {
+			g = &group{}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.count++
+		if ch.Number != nil {
+			g.numbers = append(g.numbers, *ch.Number)
+		}
+	}
+
+	scanlators := make([]ScanlatorCoverageDTO, 0, len(order))
+	for _, key := range order {
+		g := groups[key]
+		scanlators = append(scanlators, ScanlatorCoverageDTO{
+			Scanlator: key,
+			Count:     g.count,
+			Ranges:    FormatChapterRanges(g.numbers),
+		})
+	}
+	sort.Slice(scanlators, func(i, j int) bool {
+		if scanlators[i].Count != scanlators[j].Count {
+			return scanlators[i].Count > scanlators[j].Count
+		}
+		return scanlators[i].Scanlator < scanlators[j].Scanlator
+	})
+
+	return SourceBreakdownDTO{Total: len(chapters), Scanlators: scanlators}, nil
 }
 
 // MangaDetails FORCES a live details fetch for (sourceID, mangaID) via
@@ -508,9 +578,10 @@ func validateCategory(cat string) error {
 func (s *Service) ingestProviders(ctx context.Context, req AdoptRequest) error {
 	attached := make([]string, 0, len(req.Providers))
 	for _, p := range req.Providers {
-		// scanlator is "" for now (Task 4 adds AdoptProvider.Scanlator and
-		// threads p.Scanlator here); "" means "all chapters from this source".
-		if _, err := s.ingest.AddSeries(ctx, p.Source, p.MangaID, req.Title, ""); err != nil {
+		// p.Scanlator selects which scanlation group's chapters this provider
+		// tracks; "" means "all chapters from this source" (see
+		// suwayomi.Ingest.AddSeries).
+		if _, err := s.ingest.AddSeries(ctx, p.Source, p.MangaID, req.Title, p.Scanlator); err != nil {
 			if len(attached) > 0 {
 				return fmt.Errorf(
 					"imports.Adopt: provider %q failed (providers already attached: %s): %w",
@@ -541,14 +612,21 @@ func (s *Service) loadSeriesBySlug(ctx context.Context, title string) (*ent.Seri
 }
 
 // setImportances updates the Importance field on each SeriesProvider identified
-// by (seriesID, provider). The provider row is guaranteed to exist because
-// ingestProviders just created or confirmed it; a failure here is a DB problem.
+// by (seriesID, provider, scanlator) — a SeriesProvider row's identity is the
+// full triple (see suwayomi.Ingest.upsertSeriesProvider), so matching on
+// provider alone would be WRONG once two scanlator rows share the same
+// provider name: e.g. adopting the same source under two scanlators with
+// different importances would otherwise both resolve to whichever row
+// First(ctx) happens to return, silently clobbering one of them. The provider
+// row is guaranteed to exist because ingestProviders just created or
+// confirmed it; a failure here is a DB problem.
 func (s *Service) setImportances(ctx context.Context, seriesID uuid.UUID, providers []AdoptProvider) error {
 	for _, p := range providers {
 		sp, err := s.db.SeriesProvider.Query().
 			Where(
 				entseriesprovider.SeriesID(seriesID),
 				entseriesprovider.Provider(p.Source),
+				entseriesprovider.Scanlator(p.Scanlator),
 			).
 			First(ctx)
 		if err != nil {

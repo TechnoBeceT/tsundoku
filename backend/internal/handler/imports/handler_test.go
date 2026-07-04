@@ -199,6 +199,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", h.InspectChapters)
 	authed.GET("/sources/:sourceId/manga/:mangaId/cover", h.MangaCover)
 	authed.GET("/sources/:sourceId/manga/:mangaId/details", h.Details)
+	authed.GET("/sources/:sourceId/manga/:mangaId/breakdown", h.Breakdown)
 	authed.POST("/series", h.Adopt)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -272,6 +273,14 @@ func TestDetails_Unauth(t *testing.T) {
 	rec := env.doUnauth(http.MethodGet, "/api/sources/src/manga/1/details")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("Details unauth: want 401, got %d", rec.Code)
+	}
+}
+
+func TestBreakdown_Unauth(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	rec := env.doUnauth(http.MethodGet, "/api/sources/src/manga/1/breakdown")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("Breakdown unauth: want 401, got %d", rec.Code)
 	}
 }
 
@@ -702,6 +711,81 @@ func TestDetails_NonIntMangaID_400(t *testing.T) {
 	}
 }
 
+// --- GET /api/sources/:sourceId/manga/:mangaId/breakdown ----------------------
+
+// TestBreakdown_OK verifies the 200 shape: chapters grouped by scanlator with
+// counts/ranges, sorted by count descending.
+func TestBreakdown_OK(t *testing.T) {
+	fc := &fakeClient{
+		sources: []suwayomi.Source{{ID: "src1", Name: "Source One", Lang: "en"}},
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			10: {
+				{ID: 1, Number: ptrF64(1), Scanlator: "Alpha Scans"},
+				{ID: 2, Number: ptrF64(2), Scanlator: "Alpha Scans"},
+				{ID: 3, Number: ptrF64(1), Scanlator: "Beta Scans"},
+			},
+		},
+	}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/src1/manga/10/breakdown", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Breakdown OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var got imports.SourceBreakdownDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Breakdown decode: %v", err)
+	}
+	if got.Total != 3 {
+		t.Errorf("Breakdown: Total = %d, want 3", got.Total)
+	}
+	if len(got.Scanlators) != 2 {
+		t.Fatalf("Breakdown: got %d groups, want 2", len(got.Scanlators))
+	}
+	if got.Scanlators[0].Scanlator != "Alpha Scans" || got.Scanlators[0].Count != 2 || got.Scanlators[0].Ranges != "1-2" {
+		t.Errorf("Breakdown.Scanlators[0]: got %+v, want {Alpha Scans 2 1-2}", got.Scanlators[0])
+	}
+	if got.Scanlators[1].Scanlator != "Beta Scans" || got.Scanlators[1].Count != 1 {
+		t.Errorf("Breakdown.Scanlators[1]: got %+v, want {Beta Scans 1 ...}", got.Scanlators[1])
+	}
+	assertBodyHasKeys(t, rec.Body.String(), `"total"`, `"scanlators"`, `"ranges"`)
+}
+
+// TestBreakdown_UnknownSource_404 asserts an unknown :sourceId maps to 404
+// (mirrors TestDetails_UnknownSource_404).
+func TestBreakdown_UnknownSource_404(t *testing.T) {
+	fc := &fakeClient{sources: []suwayomi.Source{{ID: "src1", Name: "Source One", Lang: "en"}}}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/ghost/manga/10/breakdown", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Breakdown unknown source: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBreakdown_UpstreamError_502 asserts a Suwayomi FetchChapters failure
+// maps to 502 (mirrors TestDetails_UpstreamError_502).
+func TestBreakdown_UpstreamError_502(t *testing.T) {
+	fc := &fakeClient{
+		sources:     []suwayomi.Source{{ID: "src1", Name: "Source One", Lang: "en"}},
+		chapterErrs: map[int]error{10: errors.New("source unreachable")},
+	}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/src1/manga/10/breakdown", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("Breakdown upstream error: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBreakdown_NonIntMangaID_400 asserts a non-integer :mangaId yields 400
+// (parseMangaID is shared with Details/InspectChapters/MangaCover).
+func TestBreakdown_NonIntMangaID_400(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	rec := env.do(http.MethodGet, "/api/sources/src/manga/notanint/breakdown", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Breakdown non-int: want 400, got %d", rec.Code)
+	}
+}
+
 // --- GET /api/sources/:sourceId/manga/:mangaId/cover (B2) ----------------------
 
 func TestMangaCover_Unauth(t *testing.T) {
@@ -843,6 +927,67 @@ func TestAdopt_OK_FullRoundTrip(t *testing.T) {
 	}
 	if impBySource[srcB] != importB {
 		t.Errorf("Adopt: %q importance: got %d, want %d", srcB, impBySource[srcB], importB)
+	}
+}
+
+// TestAdopt_SameSourceDifferentScanlators is the HTTP-level companion to the
+// service-level setImportances-by-scanlator proof: two providers naming the
+// SAME source under two DIFFERENT scanlators (with different importances)
+// must be accepted (not rejected as a duplicate source) and must round-trip
+// as two distinct providers, each with its own importance.
+func TestAdopt_SameSourceDifferentScanlators(t *testing.T) {
+	const (
+		src     = "comix"
+		mangaID = 999
+		scanA   = "Alpha Scans"
+		importA = 5
+		scanB   = "Beta Scans"
+		importB = 3
+		title   = "Comix Series"
+	)
+
+	fc := &fakeClient{
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			mangaID: {
+				{ID: 1, Number: ptrF64(1), Scanlator: scanA},
+				{ID: 2, Number: ptrF64(2), Scanlator: scanB},
+			},
+		},
+	}
+	env := newTestEnv(t, fc)
+
+	body, _ := json.Marshal(map[string]any{
+		"title": title,
+		"providers": []map[string]any{
+			{"source": src, "mangaId": mangaID, "importance": importA, "scanlator": scanA},
+			{"source": src, "mangaId": mangaID, "importance": importB, "scanlator": scanB},
+		},
+	})
+
+	rec := env.do(http.MethodPost, "/api/series", string(body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Adopt (same source, different scanlators): want 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var detail seriessvc.SeriesDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("Adopt decode detail: %v", err)
+	}
+	if len(detail.Providers) != 2 {
+		t.Fatalf("Adopt: Providers count: got %d, want 2", len(detail.Providers))
+	}
+	impByScanlator := make(map[string]int, 2)
+	for _, p := range detail.Providers {
+		if p.Provider != src {
+			t.Errorf("Adopt: provider = %q, want %q", p.Provider, src)
+		}
+		impByScanlator[p.Scanlator] = p.Importance
+	}
+	if impByScanlator[scanA] != importA {
+		t.Errorf("Adopt: %q importance: got %d, want %d", scanA, impByScanlator[scanA], importA)
+	}
+	if impByScanlator[scanB] != importB {
+		t.Errorf("Adopt: %q importance: got %d, want %d", scanB, impByScanlator[scanB], importB)
 	}
 }
 

@@ -77,6 +77,9 @@ type ChapterInspectDTO struct {
 	Number *float64 `json:"number"`
 	// Name is the chapter's display name (e.g. "Chapter 1").
 	Name string `json:"name"`
+	// Scanlator is the scanlation group credited for this chapter; "" when
+	// the source/chapter carries no scanlator tag.
+	Scanlator string `json:"scanlator"`
 }
 
 // AdoptProvider identifies one source/manga pair within an adopt request.
@@ -90,6 +93,33 @@ type AdoptProvider struct {
 	MangaID int
 	// Importance is the provider rank for this series (higher = better).
 	Importance int
+	// Scanlator selects which scanlation group's chapters this provider
+	// tracks; "" means "all chapters from this source" (see
+	// suwayomi.Ingest.AddSeries). Optional.
+	Scanlator string `json:"scanlator"`
+}
+
+// ScanlatorCoverageDTO is one scanlator's chapter coverage for a source-manga.
+type ScanlatorCoverageDTO struct {
+	// Scanlator is the group name; the source name when chapters carry no
+	// scanlator tag (see SourceBreakdown).
+	Scanlator string `json:"scanlator"`
+	// Count is the number of chapters this scanlator has published.
+	Count int `json:"count"`
+	// Ranges is the human-readable coverage string, e.g. "1-90, 92-101".
+	Ranges string `json:"ranges"`
+}
+
+// SourceBreakdownDTO is the per-scanlator breakdown of a source-manga's
+// chapters, used by the adopt UI to auto-split a source into per-scanlator
+// rows with counts + ranges.
+type SourceBreakdownDTO struct {
+	// Total is the total chapter count across all scanlators.
+	Total int `json:"total"`
+	// Scanlators is the per-scanlator breakdown, sorted by Count descending
+	// (ties broken by Scanlator name ascending). Always non-nil (JSON "[]",
+	// never null).
+	Scanlators []ScanlatorCoverageDTO `json:"scanlators"`
 }
 
 // AdoptRequest groups one or more (source, manga) candidates under a single
