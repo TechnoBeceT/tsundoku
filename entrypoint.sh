@@ -16,6 +16,29 @@ set -e
 PUID=${PUID:-0}
 PGID=${PGID:-0}
 
+# ── Virtual X display for embedded Suwayomi's WebView (KCEF/Chromium) ──────────
+# KCEF requires a real X DISPLAY even when running headless. Start Xvfb on :99 and
+# export DISPLAY so the embedded Suwayomi Java process — spawned by the Go binary,
+# which inherits this environment (process.go does not override cmd.Env) — can
+# start a WebView for JS/challenge sources. Flags:
+#   -ac          disable X access control, so a dropped-privilege (PUID != 0)
+#                client can still connect to this root-owned display.
+#   -nolisten tcp  no network X socket; local unix socket only (/tmp/.X11-unix).
+# Backgrounded: when this script later exec's the server, Xvfb reparents to tini
+# (PID 1) and keeps running. Xvfb starts in well under a second; a source's first
+# WebView use happens minutes later, so no readiness wait is needed.
+#
+# Skip it entirely when:
+#   - TSUNDOKU_SUWAYOMI_EXTERNALURL is set (EXTERNAL mode → no embedded Java, no
+#     WebView here — the external Suwayomi host owns its own display), or
+#   - a DISPLAY is already provided (respect an operator-supplied X server), or
+#   - Xvfb isn't installed (a slim/dev image — WebView-only sources just won't work).
+if [ -z "${TSUNDOKU_SUWAYOMI_EXTERNALURL:-}" ] && [ -z "${DISPLAY:-}" ] && \
+   command -v Xvfb > /dev/null 2>&1; then
+    Xvfb :99 -screen 0 1280x1024x24 -ac -nolisten tcp > /dev/null 2>&1 &
+    export DISPLAY=:99
+fi
+
 # Run as root when explicitly asked (both IDs 0) — no user juggling needed.
 if [ "$PUID" -eq 0 ] && [ "$PGID" -eq 0 ]; then
     exec /app/tsundoku "$@"
