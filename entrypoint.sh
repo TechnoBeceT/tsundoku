@@ -35,8 +35,29 @@ PGID=${PGID:-0}
 #   - Xvfb isn't installed (a slim/dev image — WebView-only sources just won't work).
 if [ -z "${TSUNDOKU_SUWAYOMI_EXTERNALURL:-}" ] && [ -z "${DISPLAY:-}" ] && \
    command -v Xvfb > /dev/null 2>&1; then
+    # A `docker restart` reuses the container's writable layer, so /tmp still holds
+    # the X lock + socket from the PREVIOUS run. `Xvfb :99` then aborts with "Server
+    # is already active for display 99" and exits — yet DISPLAY=:99 is exported
+    # below regardless, so the WebView dials a dead display and the source fails
+    # with "Can't connect to X11 window". Clear the stale lock/socket first so Xvfb
+    # can always re-acquire :99 on a restart (harmless on a fresh container).
+    rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
     Xvfb :99 -screen 0 1280x1024x24 -ac -nolisten tcp > /dev/null 2>&1 &
     export DISPLAY=:99
+    # The line above backgrounds Xvfb and can't observe its exit, so wait briefly
+    # for the display socket to appear. This turns a silent Xvfb failure into a
+    # visible startup warning instead of a confusing WebView connect error later.
+    i=0
+    while [ "$i" -lt 50 ]; do
+        if [ -S /tmp/.X11-unix/X99 ]; then
+            break
+        fi
+        i=$((i + 1))
+        sleep 0.1
+    done
+    if [ ! -S /tmp/.X11-unix/X99 ]; then
+        echo "entrypoint: WARNING: Xvfb display :99 did not come up; WebView sources (e.g. Comix) will fail" >&2
+    fi
 fi
 
 # Run as root when explicitly asked (both IDs 0) — no user juggling needed.
