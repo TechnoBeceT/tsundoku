@@ -263,30 +263,45 @@ func resolveDefaultCategoryID(ctx context.Context, client *ent.Client) (uuid.UUI
 	return resolveCategoryID(ctx, client, CategoryOther)
 }
 
-// upsertProviders builds a provider→SeriesProvider.ID map for all distinct
-// providers referenced in chapters, finding or creating each SeriesProvider row.
+// providerKey identifies a distinct SeriesProvider row on disk: the
+// (provider, scanlator) pair. Two files that share a provider but carry
+// different scanlators (e.g. "[Comix-Alpha]…" and "[Comix-Beta]…") must
+// reconcile into TWO SeriesProvider rows, not one — collapsing them would
+// lose the scanlator round-trip on a DB-loss reconcile.
+type providerKey struct {
+	provider  string
+	scanlator string
+}
+
+// upsertProviders builds a providerKey→SeriesProvider.ID map for all distinct
+// (provider, scanlator) pairs referenced in chapters, finding or creating each
+// SeriesProvider row.
 func upsertProviders(
 	ctx context.Context,
 	client *ent.Client,
 	seriesID uuid.UUID,
 	chapters []ChapterFact,
 	result *ReconcileResult,
-) (map[string]uuid.UUID, error) {
-	// Collect distinct provider names with their maximum importance.
-	provImportance := make(map[string]int)
+) (map[providerKey]uuid.UUID, error) {
+	// Collect distinct (provider, scanlator) pairs with their maximum importance.
+	provImportance := make(map[providerKey]int)
 	for _, cf := range chapters {
-		if cf.Provider != "" && cf.Importance > provImportance[cf.Provider] {
-			provImportance[cf.Provider] = cf.Importance
+		if cf.Provider == "" {
+			continue
+		}
+		key := providerKey{provider: cf.Provider, scanlator: cf.Scanlator}
+		if cf.Importance > provImportance[key] {
+			provImportance[key] = cf.Importance
 		}
 	}
 
-	providerIDs := make(map[string]uuid.UUID, len(provImportance))
-	for provName, importance := range provImportance {
-		sp, err := findOrCreateSeriesProvider(ctx, client, seriesID, provName, importance)
+	providerIDs := make(map[providerKey]uuid.UUID, len(provImportance))
+	for key, importance := range provImportance {
+		sp, err := findOrCreateSeriesProvider(ctx, client, seriesID, key.provider, key.scanlator, importance)
 		if err != nil {
 			return nil, err
 		}
-		providerIDs[provName] = sp.ID
+		providerIDs[key] = sp.ID
 		result.ProvidersUpserted++
 	}
 	return providerIDs, nil
@@ -298,7 +313,7 @@ func reconcileChapters(
 	ctx context.Context,
 	client *ent.Client,
 	seriesID uuid.UUID,
-	providerIDs map[string]uuid.UUID,
+	providerIDs map[providerKey]uuid.UUID,
 	chapters []ChapterFact,
 	result *ReconcileResult,
 ) error {
@@ -315,27 +330,30 @@ func reconcileChapters(
 }
 
 // findOrCreateSeriesProvider queries for an existing SeriesProvider matching
-// (series_id, provider). If none exists it creates one with the supplied
-// importance. Returns the row either way.
+// (series_id, provider, scanlator). If none exists it creates one with the
+// supplied importance and scanlator. Returns the row either way.
 //
-// There is no unique index on SeriesProvider(series_id, provider), so the
-// lookup-then-create pattern is the correct idempotency strategy here.
+// There is no unique index on SeriesProvider(series_id, provider, scanlator),
+// so the lookup-then-create pattern is the correct idempotency strategy here
+// (mirrors suwayomi.Ingest.upsertSeriesProvider's identity key).
 func findOrCreateSeriesProvider(
 	ctx context.Context,
 	client *ent.Client,
 	seriesID uuid.UUID,
 	provName string,
+	scanlator string,
 	importance int,
 ) (*ent.SeriesProvider, error) {
 	existing, err := client.SeriesProvider.Query().
 		Where(
 			entseriesprovider.SeriesID(seriesID),
 			entseriesprovider.Provider(provName),
+			entseriesprovider.Scanlator(scanlator),
 		).
 		First(ctx)
 	if err != nil && !ent.IsNotFound(err) {
 		// Defensive path: reachable only on DB connection loss or cancelled context.
-		return nil, fmt.Errorf("disk.Reconcile: query SeriesProvider (series=%s provider=%q): %w", seriesID, provName, err)
+		return nil, fmt.Errorf("disk.Reconcile: query SeriesProvider (series=%s provider=%q scanlator=%q): %w", seriesID, provName, scanlator, err)
 	}
 	if existing != nil {
 		// Update importance in case it changed.
@@ -344,7 +362,7 @@ func findOrCreateSeriesProvider(
 			Save(ctx)
 		if err != nil {
 			// Defensive path: reachable only on DB connection loss mid-run.
-			return nil, fmt.Errorf("disk.Reconcile: update SeriesProvider (series=%s provider=%q): %w", seriesID, provName, err)
+			return nil, fmt.Errorf("disk.Reconcile: update SeriesProvider (series=%s provider=%q scanlator=%q): %w", seriesID, provName, scanlator, err)
 		}
 		return updated, nil
 	}
@@ -352,12 +370,13 @@ func findOrCreateSeriesProvider(
 	sp, err := client.SeriesProvider.Create().
 		SetSeriesID(seriesID).
 		SetProvider(provName).
+		SetScanlator(scanlator).
 		SetImportance(importance).
 		Save(ctx)
 	if err != nil {
 		// Defensive path: reachable only on DB connection loss or a concurrent
 		// INSERT that races with the query above.
-		return nil, fmt.Errorf("disk.Reconcile: create SeriesProvider (series=%s provider=%q): %w", seriesID, provName, err)
+		return nil, fmt.Errorf("disk.Reconcile: create SeriesProvider (series=%s provider=%q scanlator=%q): %w", seriesID, provName, scanlator, err)
 	}
 	return sp, nil
 }
@@ -368,11 +387,11 @@ func reconcileChapter(
 	ctx context.Context,
 	client *ent.Client,
 	seriesID uuid.UUID,
-	providerIDs map[string]uuid.UUID,
+	providerIDs map[providerKey]uuid.UUID,
 	cf ChapterFact,
 	result *ReconcileResult,
 ) error {
-	spID, hasProvider := providerIDs[cf.Provider]
+	spID, hasProvider := providerIDs[providerKey{provider: cf.Provider, scanlator: cf.Scanlator}]
 
 	existing, err := client.Chapter.Query().
 		Where(

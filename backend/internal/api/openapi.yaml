@@ -625,6 +625,7 @@ components:
       required:
         - number
         - name
+        - scanlator
       properties:
         number:
           type: [number, "null"]
@@ -632,6 +633,9 @@ components:
         name:
           type: string
           description: Chapter display name (e.g. "Chapter 1").
+        scanlator:
+          type: string
+          description: Scanlation group credited for this chapter; empty string when untagged.
 
     AdoptProvider:
       type: object
@@ -650,6 +654,48 @@ components:
           type: integer
           minimum: 0
           description: Provider rank for this series (higher = preferred).
+        scanlator:
+          type: string
+          description: |
+            Selects which scanlation group's chapters this provider tracks; omit or send ""
+            for "all chapters from this source". The same source may appear more than once
+            under different scanlators, each with its own importance.
+
+    ScanlatorCoverage:
+      type: object
+      description: One scanlator's chapter coverage for a source-manga.
+      required:
+        - scanlator
+        - count
+        - ranges
+      properties:
+        scanlator:
+          type: string
+          description: Group name; the source name when chapters carry no scanlator tag.
+        count:
+          type: integer
+          description: Number of chapters this scanlator has published.
+        ranges:
+          type: string
+          description: Human-readable coverage string, e.g. "1-90, 92-101".
+
+    SourceBreakdown:
+      type: object
+      description: |
+        Per-scanlator breakdown of a source-manga's chapters, used by the adopt UI to
+        auto-split a source into per-scanlator rows with counts + ranges.
+      required:
+        - total
+        - scanlators
+      properties:
+        total:
+          type: integer
+          description: Total chapter count across all scanlators.
+        scanlators:
+          type: array
+          description: Per-scanlator breakdown, sorted by count descending (ties by name ascending).
+          items:
+            $ref: "#/components/schemas/ScanlatorCoverage"
 
     AdoptRequest:
       type: object
@@ -1297,6 +1343,12 @@ components:
         importance:
           type: integer
           description: Provider importance to assign (higher number = higher priority).
+        scanlator:
+          type: string
+          description: |
+            Selects which scanlation group's chapters this provider tracks; omit or send ""
+            for "all chapters from this source". The same source may be attached again
+            under a different scanlator.
 
 paths:
   /health:
@@ -2588,6 +2640,63 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Suwayomi failed to fetch the manga details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/manga/{mangaId}/breakdown:
+    get:
+      operationId: getSourceBreakdown
+      summary: Per-scanlator chapter coverage breakdown
+      description: |
+        Fetches the live chapter feed for this source-manga and groups it by scanlator,
+        returning per-group counts and display ranges — powers the adopt UI's auto-split
+        of a source into per-scanlator rows, each adoptable with its own importance.
+      tags:
+        - imports
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Suwayomi source ID.
+          schema:
+            type: string
+        - name: mangaId
+          in: path
+          required: true
+          description: Suwayomi-internal manga identifier (integer).
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The per-scanlator breakdown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceBreakdown"
+        "400":
+          description: Non-integer mangaId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown source ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi failed to fetch the chapter feed.
           content:
             application/json:
               schema:

@@ -28,6 +28,14 @@ import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
  * ever attached). Both default `false` so the real Adopt wizard
  * (`screens/Import.vue`, multi-source ranking + live inspect) renders
  * byte-for-byte unchanged with zero prop changes.
+ *
+ * `scanlator`/`chapterCount`/`chapterRanges`/`coverageUnavailable` are a
+ * second set of opt-in props (all default off/empty/undefined) driving the
+ * Adopt wizard's per-scanlator auto-split rows (mirrors Kaizoku.GO's
+ * `ConfirmSeriesStep.vue` provider-info line): a subtitle naming the
+ * scanlation group this row tracks, and an inline "N chapters · ranges"
+ * coverage line. Left unset, the row renders exactly as before — the two
+ * match surfaces never pass these.
  */
 withDefaults(defineProps<{
   /** The candidate this row represents. */
@@ -50,9 +58,21 @@ withDefaults(defineProps<{
   hideInspect?: boolean
   /** Never render the reorder stepper — for single-select surfaces with nothing to rank. */
   hideReorder?: boolean
+  /** Scanlation group subtitle shown under the source name; "" hides it. */
+  scanlator?: string
+  /** Chapter count for this row's coverage; omit to show no coverage line. */
+  chapterCount?: number
+  /** Human-readable chapter-range string (e.g. "1-90, 92-101"), appended when non-empty. */
+  chapterRanges?: string
+  /** True when the source's breakdown fetch failed — shows a "Coverage unavailable" note. */
+  coverageUnavailable?: boolean
 }>(), {
   hideInspect: false,
   hideReorder: false,
+  scanlator: '',
+  chapterCount: undefined,
+  chapterRanges: '',
+  coverageUnavailable: false,
 })
 
 const emit = defineEmits<{
@@ -94,7 +114,12 @@ const emit = defineEmits<{
 
       <span class="cand__meta">
         <span class="cand__source">{{ candidate.sourceName }}</span>
+        <span v-if="scanlator" class="cand__scanlator">{{ scanlator }}</span>
         <span class="cand__lang">{{ candidate.lang.toUpperCase() }}</span>
+        <span v-if="coverageUnavailable" class="cand__coverage cand__coverage--muted">Coverage unavailable</span>
+        <span v-else-if="chapterCount != null" class="cand__coverage">
+          {{ chapterCount }} chapter{{ chapterCount === 1 ? '' : 's' }}<span v-if="chapterRanges"> · {{ chapterRanges }}</span>
+        </span>
       </span>
 
       <button v-if="!hideInspect" type="button" class="inspect" @click="emit('inspect')">
@@ -192,6 +217,22 @@ const emit = defineEmits<{
 .cand__lang {
   font-size: var(--text-xs);
   color: var(--faint);
+}
+
+.cand__scanlator {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--muted);
+}
+
+.cand__coverage {
+  font-size: var(--text-xs);
+  color: var(--faint);
+  margin-top: 1px;
+}
+
+.cand__coverage--muted {
+  font-style: italic;
 }
 
 .inspect {

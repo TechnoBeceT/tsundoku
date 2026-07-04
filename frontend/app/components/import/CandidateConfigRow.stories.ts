@@ -116,3 +116,84 @@ export const HiddenInspectAndReorder: Story = {
     hideReorder: true,
   },
 }
+
+/**
+ * The Adopt wizard's auto-split rows (Import.vue Stage 2 — see `configRows`).
+ * A source with only ONE scanlator group still shows its inline coverage
+ * (count + ranges); the scanlator subtitle only appears when the group is
+ * genuinely named (not the source's own "untagged" name).
+ */
+export const SingleScanlatorCoverage: Story = {
+  args: {
+    candidate,
+    selected: true,
+    rank: 1,
+    canUp: false,
+    canDown: true,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+    scanlator: 'ZScans',
+    chapterCount: 42,
+    chapterRanges: '1-42',
+  },
+}
+
+/**
+ * One row of a MULTI-scanlator split (2+ groups from the same source) — the
+ * Inspect button is hidden (`hideInspect`) since coverage is already inline.
+ */
+export const MultiScanlatorRow: Story = {
+  args: {
+    candidate,
+    selected: true,
+    rank: 1,
+    canUp: false,
+    canDown: true,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+    hideInspect: true,
+    scanlator: 'HiveToons',
+    chapterCount: 58,
+    chapterRanges: '43-90, 92-101',
+  },
+}
+
+/** A row with gaps in its coverage — the ranges string surfaces the hole (e.g. a missing chapter 91). */
+export const CoverageWithGaps: Story = {
+  args: {
+    candidate,
+    selected: true,
+    rank: 2,
+    canUp: true,
+    canDown: false,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+    hideInspect: true,
+    scanlator: 'Comix',
+    chapterCount: 99,
+    chapterRanges: '1-90, 92-101',
+  },
+}
+
+/**
+ * The breakdown fetch failed for this source (non-fatal — see
+ * `useImport.loadBreakdowns`): a single unsplit row with a "Coverage
+ * unavailable" note instead of a count, and the Inspect button still shown
+ * (there's no inline info to fall back on).
+ */
+export const CoverageUnavailable: Story = {
+  args: {
+    candidate,
+    selected: true,
+    rank: 1,
+    canUp: false,
+    canDown: true,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+    coverageUnavailable: true,
+  },
+}

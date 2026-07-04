@@ -198,7 +198,7 @@ func (h *Handler) AddProvider(c echo.Context) error {
 		return err
 	}
 
-	out, err := h.svc.AddProvider(c.Request().Context(), id, body.Source, body.MangaID, body.Importance)
+	out, err := h.svc.AddProvider(c.Request().Context(), id, body.Source, body.MangaID, body.Importance, body.Scanlator)
 	if err != nil {
 		return mapServiceError(err)
 	}

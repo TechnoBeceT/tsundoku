@@ -24,6 +24,9 @@ type adoptProviderRequest struct {
 	MangaID int `json:"mangaId"`
 	// Importance is the provider rank (higher = preferred); must be >= 0.
 	Importance int `json:"importance"`
+	// Scanlator selects which scanlation group's chapters this provider
+	// tracks; optional, "" means "all chapters from this source".
+	Scanlator string `json:"scanlator"`
 }
 
 // adoptRequestBody is the JSON body for POST /api/series.
@@ -116,9 +119,13 @@ func parseMangaID(raw string) (int, error) {
 //   - title must be non-blank.
 //   - providers must have >= 1 entry.
 //   - each provider's importance must be >= 0.
-//   - each source must be distinct across providers (a series may carry at most
-//     one provider per source; duplicate sources — even with different mangaIds —
-//     would silently collapse onto a single SeriesProvider row).
+//   - each (source, scanlator) pair must be distinct across providers (a
+//     series may carry at most one provider per (source, scanlator) —
+//     duplicates would silently collapse onto a single SeriesProvider row).
+//     The SAME source MAY appear more than once under DIFFERENT scanlators
+//     (e.g. adopting one aggregator source split into two scanlation groups
+//     with independent importances) — see setImportances, which matches by
+//     the full (series, provider, scanlator) triple.
 //   - category, if non-empty, must be a legal enum value.
 func validateAdoptBody(req adoptRequestBody) error {
 	if strings.TrimSpace(req.Title) == "" {
@@ -127,15 +134,16 @@ func validateAdoptBody(req adoptRequestBody) error {
 	if len(req.Providers) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "providers must have at least one entry")
 	}
-	seenSource := make(map[string]bool, len(req.Providers))
+	seen := make(map[string]bool, len(req.Providers))
 	for _, p := range req.Providers {
 		if p.Importance < 0 {
 			return echo.NewHTTPError(http.StatusBadRequest, "provider importance must be >= 0")
 		}
-		if seenSource[p.Source] {
-			return echo.NewHTTPError(http.StatusBadRequest, "duplicate source in providers: each source may appear at most once")
+		key := p.Source + "\x00" + p.Scanlator
+		if seen[key] {
+			return echo.NewHTTPError(http.StatusBadRequest, "duplicate source+scanlator in providers: each (source, scanlator) pair may appear at most once")
 		}
-		seenSource[p.Source] = true
+		seen[key] = true
 	}
 	if req.Category != "" {
 		if _, err := category.ValidateName(req.Category); err != nil {

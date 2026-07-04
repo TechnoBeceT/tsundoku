@@ -58,7 +58,10 @@ func (s *Service) Import(ctx context.Context, path string, match *MatchInput) (s
 	}
 
 	if match != nil {
-		if _, err := s.AddProvider(ctx, ser.ID, match.Source, match.MangaID, match.Importance); err != nil {
+		// MatchInput carries no scanlator field (out of scope for this pass —
+		// see library.Service.AddProvider); "" attaches the whole source, all
+		// scanlators, matching the pre-existing behavior of this path.
+		if _, err := s.AddProvider(ctx, ser.ID, match.Source, match.MangaID, match.Importance, ""); err != nil {
 			return series.SeriesDetailDTO{}, err
 		}
 	}

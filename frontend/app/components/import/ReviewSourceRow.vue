@@ -8,8 +8,12 @@ import type { SearchCandidate } from '../screens/import.types'
  * badge, the source name, a language <Chip>, the "PREFERRED" <Tag> on the top
  * source, and the derived importance weight. Presentation-only — the candidate +
  * its resolved rank/importance arrive via props; the row emits nothing.
+ *
+ * `scanlator` is an opt-in subtitle (default "" = hidden) distinguishing two
+ * review rows that share the same source (a per-scanlator adopt row) — see
+ * `Import.vue`'s Stage 2 auto-split.
  */
-defineProps<{
+withDefaults(defineProps<{
   /** The candidate this review line represents. */
   candidate: SearchCandidate
   /** 1-based rank among the selected sources (1 = preferred). */
@@ -18,13 +22,20 @@ defineProps<{
   importance: number
   /** Whether this is the preferred (rank-1) source. */
   preferred: boolean
-}>()
+  /** Scanlation group subtitle for this row, when it tracks one specific group; "" hides it. */
+  scanlator?: string
+}>(), {
+  scanlator: '',
+})
 </script>
 
 <template>
   <div class="row">
     <span class="row__rank" :class="{ 'row__rank--top': preferred }">{{ rank }}</span>
-    <span class="row__source">{{ candidate.sourceName }}</span>
+    <span class="row__meta">
+      <span class="row__source">{{ candidate.sourceName }}</span>
+      <span v-if="scanlator" class="row__scanlator">{{ scanlator }}</span>
+    </span>
     <Chip variant="language">{{ candidate.lang.toUpperCase() }}</Chip>
     <Tag v-if="preferred" tone="accent">PREFERRED</Tag>
     <span class="row__imp">importance {{ importance }}</span>
@@ -62,10 +73,22 @@ defineProps<{
   color: var(--cover-text);
 }
 
+.row__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 .row__source {
   font-weight: var(--weight-bold);
   font-size: var(--text-md);
   color: var(--text);
+}
+
+.row__scanlator {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--muted);
 }
 
 .row__imp {

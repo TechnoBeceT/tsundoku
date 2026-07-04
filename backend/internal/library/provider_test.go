@@ -160,7 +160,7 @@ func TestAddProvider_AttachesSourceAndFlagsUpgrade(t *testing.T) {
 	seriesSvc := series.NewService(client, storage, 14)
 	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
-	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5)
+	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "")
 	if err != nil {
 		t.Fatalf("AddProvider: %v", err)
 	}
@@ -170,6 +170,61 @@ func TestAddProvider_AttachesSourceAndFlagsUpgrade(t *testing.T) {
 
 	assertUpgradesFlagged(t, ctx, client, 2)
 	assertAddProviderErrors(t, ctx, svc, ser.ID)
+}
+
+// TestAddProvider_ScanlatorAware verifies that AddProvider treats the same
+// source under two DIFFERENT scanlators as two independent SeriesProvider
+// rows — each keeping its OWN importance — rather than colliding on
+// provider name alone (the same bug class as imports.setImportances).
+func TestAddProvider_ScanlatorAware(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	facts, err := diskScanFirst(t, storage)
+	if err != nil {
+		t.Fatalf("diskScanFirst: %v", err)
+	}
+	importOneFromFacts(t, client, facts)
+	ser := client.Series.Query().OnlyX(ctx)
+
+	fake := newFakeClientWithFeed(t)
+	ingest := suwayomi.NewIngest(fake, client)
+	seriesSvc := series.NewService(client, storage, 14)
+	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+
+	// Attach "weeb" twice under two different scanlators, with different
+	// importances. Neither call should be rejected as a duplicate.
+	if _, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "Alpha Scans"); err != nil {
+		t.Fatalf("AddProvider (Alpha Scans): %v", err)
+	}
+	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 3, "Beta Scans")
+	if err != nil {
+		t.Fatalf("AddProvider (Beta Scans): %v", err)
+	}
+	if len(dto.Providers) != 3 {
+		t.Fatalf("providers = %d, want 3 (disk + weeb/Alpha Scans + weeb/Beta Scans)", len(dto.Providers))
+	}
+
+	rows := client.SeriesProvider.Query().AllX(ctx)
+	gotImportance := make(map[string]int, len(rows))
+	for _, sp := range rows {
+		if sp.Provider == "weeb" {
+			gotImportance[sp.Scanlator] = sp.Importance
+		}
+	}
+	if gotImportance["Alpha Scans"] != 5 {
+		t.Errorf("weeb/Alpha Scans importance: got %d, want 5", gotImportance["Alpha Scans"])
+	}
+	if gotImportance["Beta Scans"] != 3 {
+		t.Errorf("weeb/Beta Scans importance: got %d, want 3", gotImportance["Beta Scans"])
+	}
+
+	// Re-adding the exact same (source, scanlator) pair is still rejected.
+	if _, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 9, "Alpha Scans"); !errors.Is(err, library.ErrProviderAlreadyPresent) {
+		t.Fatalf("want ErrProviderAlreadyPresent on duplicate (source, scanlator), got %v", err)
+	}
 }
 
 // assertUpgradesFlagged runs download.DetectUpgrades and checks that exactly
@@ -195,10 +250,10 @@ func assertUpgradesFlagged(t *testing.T, ctx context.Context, client *ent.Client
 // already-present provider, and targeting an unknown series id.
 func assertAddProviderErrors(t *testing.T, ctx context.Context, svc *library.Service, seriesID uuid.UUID) {
 	t.Helper()
-	if _, err := svc.AddProvider(ctx, seriesID, "weeb", 99, 5); !errors.Is(err, library.ErrProviderAlreadyPresent) {
+	if _, err := svc.AddProvider(ctx, seriesID, "weeb", 99, 5, ""); !errors.Is(err, library.ErrProviderAlreadyPresent) {
 		t.Fatalf("want ErrProviderAlreadyPresent on duplicate add, got %v", err)
 	}
-	if _, err := svc.AddProvider(ctx, uuid.New(), "weeb", 99, 5); !errors.Is(err, library.ErrSeriesNotFound) {
+	if _, err := svc.AddProvider(ctx, uuid.New(), "weeb", 99, 5, ""); !errors.Is(err, library.ErrSeriesNotFound) {
 		t.Fatalf("want ErrSeriesNotFound on unknown series, got %v", err)
 	}
 }

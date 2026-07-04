@@ -17,14 +17,17 @@
 //     reconciler), guaranteeing that a series created by ingest and one
 //     reconstructed by disk.Reconcile after a DB wipe agree on identity.
 //
-//   - SeriesProvider is looked up by (series_id, provider) — the same key the
-//     disk reconciler uses — so a provider previously created by reconcile is
+//   - SeriesProvider is looked up by (series_id, provider, scanlator) so that
+//     two rows for the same source but different scanlation groups coexist as
+//     independent providers (see AddSeries doc comment). A provider previously
+//     created by the disk reconciler (which always uses scanlator="") is
 //     reused rather than duplicated.
 package suwayomi
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -68,23 +71,34 @@ func (i *Ingest) Search(ctx context.Context, sourceID, query string) ([]Manga, e
 //   - title is the manga's display title (used to derive the Series slug and
 //     set Series.title). The caller is responsible for providing the correct
 //     title; AddSeries does not call client.Search to look it up.
+//   - scanlator selects which scanlation group's chapters this provider row
+//     tracks. "" means "all chapters from this source, regardless of
+//     scanlator" (today's behavior, and what an untagged chapter matches). A
+//     non-empty value keeps ONLY chapters whose Chapter.Scanlator
+//     case-insensitively equals it — see mapToFetchedChapters. A provider is
+//     therefore identified by (series, sourceName, scanlator): the same
+//     source can be added twice under two different scanlators and the two
+//     SeriesProvider rows coexist independently (see upsertSeriesProvider).
 //
-// The operation is idempotent: calling AddSeries again for the same manga
-// produces no duplicate rows. The M1 dedup invariant guarantees that
-// re-ingesting the same chapter list creates no new Chapter rows (result counts
-// will be zero on a second call).
+// The operation is idempotent: calling AddSeries again for the same
+// (manga, scanlator) produces no duplicate rows. The M1 dedup invariant
+// guarantees that re-ingesting the same chapter list creates no new Chapter
+// rows (result counts will be zero on a second call).
 func (i *Ingest) AddSeries(
 	ctx context.Context,
 	sourceName string,
 	mangaID int,
 	title string,
+	scanlator string,
 ) (chapter.IngestResult, error) {
 	// 1. Fetch all chapters from Suwayomi via the fetchChapters mutation. This
 	//    contacts the upstream source and populates Suwayomi's internal cache
 	//    before we touch our own DB, so that a client failure does not leave
 	//    partially-created rows. FetchChapters must be called (not MangaChapters)
 	//    because after Search the manga exists in Suwayomi but chapters are not
-	//    cached yet (they require an explicit source fetch first).
+	//    cached yet (they require an explicit source fetch first). The result is
+	//    UNFILTERED — it holds every scanlator's chapters; filtering happens in
+	//    mapToFetchedChapters below.
 	swChapters, err := i.client.FetchChapters(ctx, mangaID)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: fetch chapters for manga %d: %w", mangaID, err)
@@ -96,16 +110,17 @@ func (i *Ingest) AddSeries(
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: upsert series %q: %w", title, err)
 	}
 
-	// 3. Upsert the SeriesProvider row, keyed by (series_id, provider).
+	// 3. Upsert the SeriesProvider row, keyed by (series_id, provider, scanlator).
 	//    MangaMeta is called inside upsertSeriesProvider to populate the source's
 	//    own title and cover URL — distinct from the canonical series title above.
-	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID)
+	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID, scanlator)
 	if err != nil {
-		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: upsert series provider %q for series %s: %w", sourceName, series.ID, err)
+		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: upsert series provider %q (scanlator %q) for series %s: %w", sourceName, scanlator, series.ID, err)
 	}
 
-	// 4. Map Suwayomi chapters to the M1 FetchedChapter type.
-	fetched := mapToFetchedChapters(swChapters)
+	// 4. Map Suwayomi chapters to the M1 FetchedChapter type, filtered to this
+	//    provider's scanlator (see mapToFetchedChapters).
+	fetched := mapToFetchedChapters(swChapters, scanlator)
 
 	// 5. Delegate to the M1 ingest engine (dedup/identity — never duplicated).
 	result, err := chapter.IngestProviderChapters(ctx, i.db, sp.ID, fetched)
@@ -115,8 +130,9 @@ func (i *Ingest) AddSeries(
 
 	// 6. Post-ingest: write suwayomi_chapter_id on each ProviderChapter row.
 	//    Keyed by (series_provider_id, chapter_key) — the same unique index the
-	//    M1 ingest used to create/update the rows.
-	if err := i.backfillSuwayomiChapterIDs(ctx, sp.ID, swChapters); err != nil {
+	//    M1 ingest used to create/update the rows. Filtered the same way as
+	//    step 4 so this loop only touches rows that belong to this provider.
+	if err := i.backfillSuwayomiChapterIDs(ctx, sp.ID, filterByScanlator(swChapters, scanlator)); err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: backfill suwayomi_chapter_id for series provider %s: %w", sp.ID, err)
 	}
 
@@ -169,17 +185,22 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 	return updated, nil
 }
 
-// upsertSeriesProvider finds the SeriesProvider row by (series_id, provider)
-// or creates it. It fetches the source's own metadata via MangaMeta so that
-// each SeriesProvider row carries the title and cover URL as the source knows
-// them — independent of the canonical Series.title set by the caller. On find
-// it refreshes suwayomi_id, title, and cover_url in case the manga was updated
-// upstream. Returns the existing or newly created row.
+// upsertSeriesProvider finds the SeriesProvider row by (series_id, provider,
+// scanlator) or creates it. Matching on scanlator too means the same source
+// can be attached twice under two different scanlation groups — e.g.
+// (seriesID, "mangadex", "") and (seriesID, "mangadex", "Reset Scans") are
+// DISTINCT rows, each with its own independent ProviderChapter feed and
+// importance ranking. It fetches the source's own metadata via MangaMeta so
+// that each SeriesProvider row carries the title and cover URL as the source
+// knows them — independent of the canonical Series.title set by the caller.
+// On find it refreshes suwayomi_id, title, and cover_url in case the manga
+// was updated upstream. Returns the existing or newly created row.
 func (i *Ingest) upsertSeriesProvider(
 	ctx context.Context,
 	seriesID uuid.UUID,
 	provider string,
 	suwayomiMangaID int,
+	scanlator string,
 ) (*ent.SeriesProvider, error) {
 	// Fetch the source's own title and cover so SeriesProvider reflects what
 	// this specific source knows about the manga, not the canonical adopt title.
@@ -197,11 +218,12 @@ func (i *Ingest) upsertSeriesProvider(
 		Where(
 			entseriesprovider.SeriesID(seriesID),
 			entseriesprovider.Provider(provider),
+			entseriesprovider.Scanlator(scanlator),
 		).
 		First(ctx)
 	if existErr != nil && !ent.IsNotFound(existErr) {
 		// Defensive path: reachable only on DB connection loss or cancelled context.
-		return nil, fmt.Errorf("query (series=%s provider=%q): %w", seriesID, provider, existErr)
+		return nil, fmt.Errorf("query (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, existErr)
 	}
 	if existing != nil {
 		// Keep suwayomi_id, source title and cover fresh in case the manga was
@@ -213,7 +235,7 @@ func (i *Ingest) upsertSeriesProvider(
 			Save(ctx)
 		if updateErr != nil {
 			// Defensive path: reachable only on DB connection loss mid-operation.
-			return nil, fmt.Errorf("update (series=%s provider=%q): %w", seriesID, provider, updateErr)
+			return nil, fmt.Errorf("update (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, updateErr)
 		}
 		return updated, nil
 	}
@@ -221,6 +243,7 @@ func (i *Ingest) upsertSeriesProvider(
 	created, createErr := i.db.SeriesProvider.Create().
 		SetSeriesID(seriesID).
 		SetProvider(provider).
+		SetScanlator(scanlator).
 		SetSuwayomiID(suwayomiMangaID).
 		SetTitle(srcTitle).
 		SetCoverURL(cover).
@@ -229,16 +252,40 @@ func (i *Ingest) upsertSeriesProvider(
 	if createErr != nil {
 		// Defensive path: reachable on DB connection loss or a concurrent INSERT
 		// that races with the query above.
-		return nil, fmt.Errorf("create (series=%s provider=%q): %w", seriesID, provider, createErr)
+		return nil, fmt.Errorf("create (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, createErr)
 	}
 	return created, nil
 }
 
+// filterByScanlator returns the subset of chs that belong to scanlator.
+//
+//   - scanlator == "" means "no filtering" — every chapter matches, which is
+//     today's (pre-scanlator) behavior and is regression-critical to preserve.
+//   - A non-empty scanlator keeps ONLY chapters whose Chapter.Scanlator is
+//     case-insensitively equal to it (strings.EqualFold, mirroring Kaizoku's
+//     workers.go:1311 comparison). An untagged chapter (Scanlator == "") never
+//     matches a named scanlator — it belongs only to the "" (all-chapters)
+//     provider, which is intentional and must not be special-cased away.
+func filterByScanlator(chs []Chapter, scanlator string) []Chapter {
+	if scanlator == "" {
+		return chs
+	}
+	filtered := make([]Chapter, 0, len(chs))
+	for _, ch := range chs {
+		if strings.EqualFold(ch.Scanlator, scanlator) {
+			filtered = append(filtered, ch)
+		}
+	}
+	return filtered
+}
+
 // mapToFetchedChapters converts a slice of Suwayomi Chapter DTOs to the M1
-// FetchedChapter type. The mapping is lossless for the fields that the M1
+// FetchedChapter type, first filtering to the given scanlator (see
+// filterByScanlator). The mapping is lossless for the fields that the M1
 // ingest engine uses; suwayomi_chapter_id is NOT included here — it is written
 // in a separate post-ingest update (backfillSuwayomiChapterIDs).
-func mapToFetchedChapters(chs []Chapter) []chapter.FetchedChapter {
+func mapToFetchedChapters(chs []Chapter, scanlator string) []chapter.FetchedChapter {
+	chs = filterByScanlator(chs, scanlator)
 	out := make([]chapter.FetchedChapter, len(chs))
 	for idx, ch := range chs {
 		// Suwayomi returns PageCount=0 when pages have not been fetched yet; pass

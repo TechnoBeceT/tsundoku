@@ -90,6 +90,13 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 		provider   string
 		mangaID    int
 		providerID uuid.UUID
+		// scanlator is the STORED scanlator of this SeriesProvider row (set at
+		// create time — see suwayomi.Ingest.upsertSeriesProvider). It MUST be
+		// passed back into AddSeries below so a re-fetch updates this SAME row
+		// instead of find-or-creating a fresh scanlator=="" one: AddSeries keys
+		// SeriesProvider on (series, provider, scanlator), and a mismatched
+		// scanlator here would silently split one provider into two.
+		scanlator string
 	}
 	var items []item
 	for _, sr := range seriesList {
@@ -99,7 +106,7 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 					"series", sr.Title, "provider", p.Provider)
 				continue
 			}
-			items = append(items, item{title: sr.Title, provider: p.Provider, mangaID: p.SuwayomiID, providerID: p.ID})
+			items = append(items, item{title: sr.Title, provider: p.Provider, mangaID: p.SuwayomiID, providerID: p.ID, scanlator: p.Scanlator})
 		}
 	}
 
@@ -112,7 +119,7 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	g.SetLimit(s.refreshLimit(ctx))
 	for _, it := range items {
 		g.Go(func() error {
-			res, addErr := s.ingest.AddSeries(gctx, it.provider, it.mangaID, it.title)
+			res, addErr := s.ingest.AddSeries(gctx, it.provider, it.mangaID, it.title, it.scanlator)
 
 			// Persist polling health; upsertSyncState skips on ctx-cancel.
 			if uerr := s.upsertSyncState(gctx, it.providerID, addErr); uerr != nil {

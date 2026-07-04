@@ -28,3 +28,8 @@ export const Preferred: Story = {
 export const Secondary: Story = {
   args: { candidate, rank: 2, importance: 20, preferred: false },
 }
+
+/** A per-scanlator adopt row — the scanlator subtitle distinguishes it from another row sharing the same source. */
+export const WithScanlator: Story = {
+  args: { candidate, rank: 1, importance: 30, preferred: true, scanlator: 'ZScans' },
+}

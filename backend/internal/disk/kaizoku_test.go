@@ -65,3 +65,75 @@ func TestKaizokuProvenance_FilenameOnlyFallbackNoComicInfo(t *testing.T) {
 		t.Fatalf("got %q/%q/%d, want Comix/Official/1", p, s, imp)
 	}
 }
+
+// TestFilenameRoundTrip proves the Task 5 write/read agreement: whatever
+// GenerateCBZFilename writes into the "[Provider-Scanlator]" bracket,
+// kaizokuProvenance must parse back to the SAME (provider, scanlator) — the
+// lossless disk↔DB round-trip a total-DB-loss Reconcile depends on.
+func TestFilenameRoundTrip(t *testing.T) {
+	cases := []struct {
+		name          string
+		provider      string
+		scanlator     string
+		wantProvider  string
+		wantScanlator string
+	}{
+		{
+			name:          "provider and scanlator",
+			provider:      "mangadex",
+			scanlator:     "dynasty",
+			wantProvider:  "mangadex",
+			wantScanlator: "dynasty",
+		},
+		{
+			name:          "no scanlator",
+			provider:      "mangadex",
+			scanlator:     "",
+			wantProvider:  "mangadex",
+			wantScanlator: "",
+		},
+		{
+			name:          "scanlator equals provider — dropped by GenerateCBZFilename",
+			provider:      "mangadex",
+			scanlator:     "mangadex",
+			wantProvider:  "mangadex",
+			wantScanlator: "",
+		},
+		{
+			name:          "provider with hyphen sanitized to underscore",
+			provider:      "manga-plus",
+			scanlator:     "team-x",
+			wantProvider:  "manga_plus",
+			wantScanlator: "team-x",
+		},
+		{
+			name:          "scanlator with brackets sanitized",
+			provider:      "comix",
+			scanlator:     "[Best] Group",
+			wantProvider:  "comix",
+			wantScanlator: "(Best) Group",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := RenderMeta{
+				Provider:    tc.provider,
+				Scanlator:   tc.scanlator,
+				Language:    "en",
+				SeriesTitle: "Round Trip Test",
+				Number:      ptrFloat(1),
+				MaxChapter:  ptrFloat(10),
+			}
+			filename := GenerateCBZFilename(meta)
+
+			gotProvider, gotScanlator, _ := kaizokuProvenance(filename, nil)
+			if gotProvider != tc.wantProvider || gotScanlator != tc.wantScanlator {
+				t.Fatalf("round-trip(%q) = %q/%q, want %q/%q",
+					filename, gotProvider, gotScanlator, tc.wantProvider, tc.wantScanlator)
+			}
+		})
+	}
+}
+
+func ptrFloat(f float64) *float64 { return &f }

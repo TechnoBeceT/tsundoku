@@ -867,6 +867,60 @@ func findSourceByID(ctx context.Context, client suwayomi.Client, id string) (suw
 	return suwayomi.Source{}, fmt.Errorf("source %q not found in Sources() list", id)
 }
 
+// TestShape10_ChapterScanlator is the MERGE GATE for the scanlator-aware-
+// providers feature: it proves, against a real Suwayomi, that the `scanlator`
+// field added to the shared chapter selection (client.go's fetchChaptersMutation
+// and chaptersQuery) is a legal ChapterType selection — i.e. the field NAME is
+// correct and the server does not reject the query/mutation document.
+//
+// Why this needs a real Suwayomi: the httptest fakes in client_test.go only
+// prove the Go struct DECODES whatever JSON is handed to it — they cannot
+// catch a wrong GraphQL field name, which the server would reject with a
+// schema validation error before ever returning data. Only a real Suwayomi
+// validates the selection set against ChapterType.
+//
+// What this confirms: FetchChapters (mutation) and MangaChapters (query) both
+// return NO error with `scanlator` in the selection. The Local source's
+// fixture chapters may not themselves carry a scanlator value (a local
+// worktree source is not an aggregator like Comix) — a "" value is fine and
+// expected; the load-bearing assertion is the ABSENCE of a GraphQL error,
+// which is what a wrong field name would produce (mirrors TestShape7/8's
+// identical caveat).
+func TestShape10_ChapterScanlator(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	results, err := client.Search(ctx, suwayomi.LocalSourceID, testharness.FixtureMangaTitle)
+	if err != nil {
+		t.Fatalf("Search (to obtain a mangaId for the chapter selections): %v", err)
+	}
+	if len(results) == 0 {
+		t.Skip("no search results (local source may not have indexed; skipping shape10)")
+	}
+	mangaID := results[0].ID
+
+	fetched, err := client.FetchChapters(ctx, mangaID)
+	if err != nil {
+		t.Fatalf("FetchChapters(mangaId=%d) (selection incl. scanlator): %v\n(check: is `scanlator` a valid ChapterType field name?)", mangaID, err)
+	}
+	t.Logf("CONFIRMED: fetchChapters accepted the scanlator selection; got %d chapters", len(fetched))
+	if len(fetched) > 0 {
+		t.Logf("scanlator on chapters[0] = %q", fetched[0].Scanlator)
+	}
+
+	cached, err := client.MangaChapters(ctx, mangaID)
+	if err != nil {
+		t.Fatalf("MangaChapters(mangaId=%d) (selection incl. scanlator): %v\n(check: is `scanlator` a valid ChapterType field name?)", mangaID, err)
+	}
+	t.Logf("CONFIRMED: chapters query accepted the scanlator selection; got %d chapters", len(cached))
+	if len(cached) > 0 {
+		t.Logf("scanlator on cached[0] = %q", cached[0].Scanlator)
+	}
+}
+
 // TestE2E_AddSeriesDispatchDownload is the Milestone 2 end-to-end proof:
 //
 //	real Suwayomi (local source) →
@@ -918,7 +972,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 	// ── Step 2: AddSeries — populate DB rows ──────────────────────────────────
 	t.Log("Step 2: AddSeries — ingesting chapters into DB...")
 	ingest := suwayomi.NewIngest(client, db)
-	result, err := ingest.AddSeries(ctx, "local", mangaID, mangaTitle)
+	result, err := ingest.AddSeries(ctx, "local", mangaID, mangaTitle, "")
 	if err != nil {
 		t.Fatalf("Step 2 — AddSeries: %v", err)
 	}

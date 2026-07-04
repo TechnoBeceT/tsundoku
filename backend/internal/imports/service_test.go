@@ -989,6 +989,117 @@ func TestService_MangaDetails_UpstreamError(t *testing.T) {
 	}
 }
 
+// --- SourceBreakdown tests ----------------------------------------------------
+
+// TestService_SourceBreakdown_GroupsByScanlator verifies the core grouping
+// algorithm: chapters split across two named scanlators plus some untagged
+// ones group correctly — untagged chapters attribute to the SOURCE NAME (the
+// Kaizoku search.go:355 convention), counts/ranges are computed per group via
+// the shared FormatChapterRanges helper, Total counts every chapter, and the
+// result is sorted by Count descending (ties by Scanlator name ascending).
+func TestService_SourceBreakdown_GroupsByScanlator(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{{ID: "src-a", Name: "Alpha Source", Lang: "en"}},
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			1: {
+				{ID: 1, Number: ptrF64(1), Scanlator: "Alpha Scans"},
+				{ID: 2, Number: ptrF64(2), Scanlator: "Alpha Scans"},
+				{ID: 3, Number: ptrF64(3), Scanlator: "Alpha Scans"},
+				{ID: 4, Number: ptrF64(1), Scanlator: "Beta Scans"},
+				{ID: 5, Number: ptrF64(2), Scanlator: "Beta Scans"},
+				{ID: 6, Number: ptrF64(1), Scanlator: ""}, // untagged → source name
+			},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.SourceBreakdown(context.Background(), "src-a", 1)
+	if err != nil {
+		t.Fatalf("SourceBreakdown: unexpected error: %v", err)
+	}
+	if got.Total != 6 {
+		t.Errorf("SourceBreakdown: Total = %d, want 6", got.Total)
+	}
+	if len(got.Scanlators) != 3 {
+		t.Fatalf("SourceBreakdown: got %d groups, want 3", len(got.Scanlators))
+	}
+
+	// Sorted by Count descending: Alpha Scans (3), Beta Scans (2), Alpha Source (1).
+	want := []imports.ScanlatorCoverageDTO{
+		{Scanlator: "Alpha Scans", Count: 3, Ranges: "1-3"},
+		{Scanlator: "Beta Scans", Count: 2, Ranges: "1-2"},
+		{Scanlator: "Alpha Source", Count: 1, Ranges: "1"},
+	}
+	for i, w := range want {
+		if got.Scanlators[i] != w {
+			t.Errorf("SourceBreakdown.Scanlators[%d]: got %+v, want %+v", i, got.Scanlators[i], w)
+		}
+	}
+}
+
+// TestService_SourceBreakdown_SortTiesByName verifies that groups with equal
+// counts are ordered by Scanlator name ascending (deterministic tie-break).
+func TestService_SourceBreakdown_SortTiesByName(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{{ID: "src-a", Name: "Alpha Source", Lang: "en"}},
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			1: {
+				{ID: 1, Number: ptrF64(1), Scanlator: "Zeta Scans"},
+				{ID: 2, Number: ptrF64(1), Scanlator: "Alpha Scans"},
+			},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.SourceBreakdown(context.Background(), "src-a", 1)
+	if err != nil {
+		t.Fatalf("SourceBreakdown: unexpected error: %v", err)
+	}
+	if len(got.Scanlators) != 2 {
+		t.Fatalf("SourceBreakdown: got %d groups, want 2", len(got.Scanlators))
+	}
+	if got.Scanlators[0].Scanlator != "Alpha Scans" || got.Scanlators[1].Scanlator != "Zeta Scans" {
+		t.Errorf("SourceBreakdown: tie order = [%q, %q], want [Alpha Scans, Zeta Scans]",
+			got.Scanlators[0].Scanlator, got.Scanlators[1].Scanlator)
+	}
+}
+
+// TestService_SourceBreakdown_UnknownSource verifies an unresolvable sourceID
+// returns ErrSourceNotFound (mirrors MangaDetails/Browse).
+func TestService_SourceBreakdown_UnknownSource(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{sources: []suwayomi.Source{{ID: "real", Name: "Real", Lang: "en"}}}
+	svc := newService(fc)
+
+	_, err := svc.SourceBreakdown(context.Background(), "ghost", 1)
+	if !errors.Is(err, imports.ErrSourceNotFound) {
+		t.Errorf("SourceBreakdown unknown source: err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+// TestService_SourceBreakdown_UpstreamError verifies a client.FetchChapters
+// failure propagates verbatim (the handler maps it to 502).
+func TestService_SourceBreakdown_UpstreamError(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("suwayomi: source unreachable")
+	fc := &fakeClient{
+		sources:     []suwayomi.Source{{ID: "src-a", Name: "Alpha", Lang: "en"}},
+		chapterErrs: map[int]error{1: sentinel},
+	}
+	svc := newService(fc)
+
+	_, err := svc.SourceBreakdown(context.Background(), "src-a", 1)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("SourceBreakdown upstream error: err = %v, want to wrap %v", err, sentinel)
+	}
+}
+
 // TestService_Search_ExcludesLocalSource verifies the F1 Local-source exclusion
 // extends from Sources() to the Search fan-out itself (N1): an unscoped search
 // (nil sourceIDs, the FE's default) must never query Suwayomi's built-in Local
@@ -1164,6 +1275,84 @@ func TestService_Adopt_TwoProviders(t *testing.T) {
 	assertAdoptSeries(t, ctx, db, canonicalTitle, id)
 	assertAdoptProviders(t, ctx, db, 2, map[string]int{srcA: impA, srcB: impB})
 	assertAdoptChapters(t, ctx, db, 3)
+}
+
+// TestService_Adopt_SameSourceDifferentScanlators is the CRITICAL
+// setImportances-by-scanlator proof: two AdoptProviders naming the SAME
+// source under two DIFFERENT scanlators, with DIFFERENT importances, must
+// produce TWO SeriesProvider rows — each keeping its OWN importance. Before
+// the fix, setImportances matched by (seriesID, provider) alone, so both
+// rows would collapse onto whichever one First(ctx) happened to return.
+func TestService_Adopt_SameSourceDifferentScanlators(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	const (
+		canonicalTitle = "Comix Series"
+		src            = "comix"
+		mangaID        = 555
+		scanA          = "Alpha Scans"
+		impA           = 5
+		scanB          = "Beta Scans"
+		impB           = 3
+	)
+
+	chapsA := makeAdoptChapters(1000, 2) // numbers 1, 2
+	for i := range chapsA {
+		chapsA[i].Scanlator = scanA
+	}
+	// Numbers 3, 4, 5 — DISJOINT from chapsA's 1, 2, so the union has exactly
+	// 5 distinct chapter_keys (Chapter identity is per-series, not per-
+	// provider — overlapping numbers here would dedupe and defeat the count
+	// assertion below).
+	chapsB := makeAdoptChapters(2000, 3)
+	for i := range chapsB {
+		*chapsB[i].Number += 2
+		chapsB[i].Scanlator = scanB
+	}
+
+	fc := &fakeClient{
+		chaptersPerManga: map[int][]suwayomi.Chapter{
+			mangaID: append(append([]suwayomi.Chapter{}, chapsA...), chapsB...),
+		},
+	}
+	ingest := suwayomi.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingest, db, "")
+
+	id, err := svc.Adopt(ctx, imports.AdoptRequest{
+		Title: canonicalTitle,
+		Providers: []imports.AdoptProvider{
+			{Source: src, MangaID: mangaID, Importance: impA, Scanlator: scanA},
+			{Source: src, MangaID: mangaID, Importance: impB, Scanlator: scanB},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Adopt: unexpected error: %v", err)
+	}
+
+	assertAdoptSeries(t, ctx, db, canonicalTitle, id)
+
+	rows := db.SeriesProvider.Query().AllX(ctx)
+	if len(rows) != 2 {
+		t.Fatalf("SeriesProvider count: got %d, want 2", len(rows))
+	}
+	gotImportance := make(map[string]int, len(rows))
+	for _, sp := range rows {
+		if sp.Provider != src {
+			t.Errorf("SeriesProvider.Provider: got %q, want %q", sp.Provider, src)
+		}
+		gotImportance[sp.Scanlator] = sp.Importance
+	}
+	if gotImportance[scanA] != impA {
+		t.Errorf("%s/%s importance: got %d, want %d", src, scanA, gotImportance[scanA], impA)
+	}
+	if gotImportance[scanB] != impB {
+		t.Errorf("%s/%s importance: got %d, want %d", src, scanB, gotImportance[scanB], impB)
+	}
+
+	// Chapters from both scanlators ingested (2 + 3 = 5), each filtered into
+	// its own provider's feed by suwayomi.Ingest's scanlator filter.
+	assertAdoptChapters(t, ctx, db, 5)
 }
 
 // TestService_Adopt_Idempotent verifies that calling Adopt twice with the same

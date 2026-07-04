@@ -22,14 +22,27 @@
  *                    ← SearchCandidate (url is in DTO but not in screen type)
  *   SearchGroup:     title / candidates     ← SearchGroup
  *   ChapterInspect:  number / name          ← ChapterInspect
+ *
+ * loadBreakdowns(candidates) fetches the per-scanlator chapter-coverage
+ * breakdown (`GET /api/sources/{sourceId}/manga/{mangaId}/breakdown`) for each
+ * given (source, mangaId) pair IN PARALLEL — powers the Configure stage's
+ * auto-split of a source into per-scanlator rows (`Import.vue`). Mirrors
+ * `useDiscover.loadDetails`'s on-demand cache/in-flight-guard pattern, keyed by
+ * `source:mangaId`: `breakdowns` is a PERMANENT cache (both a successful result
+ * — the mapped `ScanlatorCoverage[]` — and a failure — `null`, so `Import.vue`
+ * falls back to a single unsplit row — are cached so a candidate is never
+ * re-fetched); a per-candidate in-flight guard stops an overlapping call to
+ * `loadBreakdowns` for the same candidate from firing a duplicate request. A
+ * per-source failure is non-fatal: it never rejects and never touches `error`.
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import { mapGroup } from '~/composables/importMappers'
+import { mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
 import type {
   AdoptRequest,
   ChapterInspect,
+  ScanlatorCoverage,
   SearchGroup,
   Source,
 } from '~/components/screens/import.types'
@@ -46,6 +59,11 @@ function mapChapterInspect(dto: ChapterInspectDTO): ChapterInspect {
     number: dto.number,
     name: dto.name,
   }
+}
+
+/** Stable cache/in-flight key for one (source, mangaId) breakdown fetch. */
+function breakdownKey(source: string, mangaId: number): string {
+  return `${source}:${mangaId}`
 }
 
 export function useImport() {
@@ -72,6 +90,12 @@ export function useImport() {
   const newSeriesId = ref<string | null>(null)
   /** Monotonic request-generation counter for `search()`'s stale-response guard (mirrors useMatchSource/useScanLibrary). */
   let searchGeneration = 0
+
+  // ---- breakdowns (per-scanlator coverage, Configure stage auto-split) -------
+  // Keyed by `source:mangaId`. `null` = fetch attempted and failed (Import.vue
+  // falls back to a single unsplit row); an absent key = not yet attempted.
+  const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
+  const breakdownsInFlight = new Set<string>()
 
   // ---- Init: load sources + categories in parallel ---------------------------
   async function loadInitial(): Promise<void> {
@@ -147,6 +171,41 @@ export function useImport() {
     }
   }
 
+  // ---- loadBreakdowns ----------------------------------------------------------
+  /**
+   * Fetches the per-scanlator breakdown for every given candidate IN PARALLEL,
+   * skipping any candidate already cached (success or failure) or already
+   * in flight. Never throws — a per-candidate failure caches `null` and is
+   * otherwise swallowed (non-fatal; `Import.vue` renders that source as a
+   * single unsplit row).
+   */
+  async function loadBreakdowns(candidates: { source: string, mangaId: number }[]): Promise<void> {
+    const toFetch = candidates.filter((c) => {
+      const key = breakdownKey(c.source, c.mangaId)
+      return !(key in breakdowns.value) && !breakdownsInFlight.has(key)
+    })
+    if (toFetch.length === 0) return
+    for (const c of toFetch) breakdownsInFlight.add(breakdownKey(c.source, c.mangaId))
+    await Promise.all(toFetch.map(async (c) => {
+      const key = breakdownKey(c.source, c.mangaId)
+      try {
+        const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
+          params: { path: { sourceId: c.source, mangaId: c.mangaId } },
+        })
+        breakdowns.value = {
+          ...breakdowns.value,
+          [key]: res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage),
+        }
+      }
+      catch {
+        breakdowns.value = { ...breakdowns.value, [key]: null }
+      }
+      finally {
+        breakdownsInFlight.delete(key)
+      }
+    }))
+  }
+
   // ---- adopt -----------------------------------------------------------------
   async function adopt(req: AdoptRequest): Promise<void> {
     adopting.value = true
@@ -186,8 +245,10 @@ export function useImport() {
     adopting,
     error,
     newSeriesId,
+    breakdowns,
     search,
     inspect,
+    loadBreakdowns,
     adopt,
   }
 }

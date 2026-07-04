@@ -563,6 +563,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sources/{sourceId}/manga/{mangaId}/breakdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-scanlator chapter coverage breakdown
+         * @description Fetches the live chapter feed for this source-manga and groups it by scanlator,
+         *     returning per-group counts and display ranges — powers the adopt UI's auto-split
+         *     of a source into per-scanlator rows, each adoptable with its own importance.
+         */
+        get: operations["getSourceBreakdown"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sources/{sourceId}/manga/{mangaId}/cover": {
         parameters: {
             query?: never;
@@ -1494,6 +1516,8 @@ export interface components {
             number: number | null;
             /** @description Chapter display name (e.g. "Chapter 1"). */
             name: string;
+            /** @description Scanlation group credited for this chapter; empty string when untagged. */
+            scanlator: string;
         };
         AdoptProvider: {
             /** @description Suwayomi source ID (e.g. "mangadex"). */
@@ -1502,6 +1526,31 @@ export interface components {
             mangaId: number;
             /** @description Provider rank for this series (higher = preferred). */
             importance: number;
+            /**
+             * @description Selects which scanlation group's chapters this provider tracks; omit or send ""
+             *     for "all chapters from this source". The same source may appear more than once
+             *     under different scanlators, each with its own importance.
+             */
+            scanlator?: string;
+        };
+        /** @description One scanlator's chapter coverage for a source-manga. */
+        ScanlatorCoverage: {
+            /** @description Group name; the source name when chapters carry no scanlator tag. */
+            scanlator: string;
+            /** @description Number of chapters this scanlator has published. */
+            count: number;
+            /** @description Human-readable coverage string, e.g. "1-90, 92-101". */
+            ranges: string;
+        };
+        /**
+         * @description Per-scanlator breakdown of a source-manga's chapters, used by the adopt UI to
+         *     auto-split a source into per-scanlator rows with counts + ranges.
+         */
+        SourceBreakdown: {
+            /** @description Total chapter count across all scanlators. */
+            total: number;
+            /** @description Per-scanlator breakdown, sorted by count descending (ties by name ascending). */
+            scanlators: components["schemas"]["ScanlatorCoverage"][];
         };
         AdoptRequest: {
             /** @description Canonical series title; all providers attach to the series slug derived from this. */
@@ -1900,6 +1949,12 @@ export interface components {
             mangaId: number;
             /** @description Provider importance to assign (higher number = higher priority). */
             importance: number;
+            /**
+             * @description Selects which scanlation group's chapters this provider tracks; omit or send ""
+             *     for "all chapters from this source". The same source may be attached again
+             *     under a different scanlator.
+             */
+            scanlator?: string;
         };
     };
     responses: never;
@@ -3252,6 +3307,67 @@ export interface operations {
                 };
             };
             /** @description Suwayomi failed to fetch the manga details. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSourceBreakdown: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Suwayomi source ID. */
+                sourceId: string;
+                /** @description Suwayomi-internal manga identifier (integer). */
+                mangaId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The per-scanlator breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceBreakdown"];
+                };
+            };
+            /** @description Non-integer mangaId. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown source ID. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi failed to fetch the chapter feed. */
             502: {
                 headers: {
                     [name: string]: unknown;
