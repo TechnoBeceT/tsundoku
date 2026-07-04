@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -21,8 +22,14 @@ import (
 //   - state == failed AND retries < maxRetries AND (next_attempt_at IS NULL OR next_attempt_at <= now)
 //
 // upgrade_available chapters are deliberately excluded — Task 6's upgrade engine
-// handles that path. Results are ordered by ID ascending (deterministic proxy
-// for creation order).
+// handles that path.
+//
+// Results are ordered by chapter number ascending (nulls last), with the random
+// UUID id as a stable tiebreaker. Ordering by number is what the owner expects —
+// chapters download 1, 2, 3, … rather than in the effectively-random id order
+// (id is a UUIDv4, so ByID alone scrambles the download sequence). A chapter with
+// no parsed number sorts last but stays reachable; the id tiebreaker keeps the
+// order deterministic across equal numbers.
 func WantedChapters(ctx context.Context, client *ent.Client, limit int, maxRetries int) ([]*ent.Chapter, error) {
 	chapters, err := client.Chapter.Query().
 		Where(entchapter.Or(
@@ -36,7 +43,10 @@ func WantedChapters(ctx context.Context, client *ent.Client, limit int, maxRetri
 				),
 			),
 		)).
-		Order(entchapter.ByID()).
+		Order(
+			entchapter.ByNumber(sql.OrderAsc(), sql.OrderNullsLast()),
+			entchapter.ByID(),
+		).
 		Limit(limit).
 		All(ctx)
 	if err != nil {

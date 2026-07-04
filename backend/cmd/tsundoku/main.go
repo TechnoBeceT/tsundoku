@@ -50,11 +50,6 @@ import (
 // after the shutdown signal is received before the process exits forcefully.
 const shutdownTimeout = 15 * time.Second
 
-// suwayomiHTTPTimeout is the deadline applied to individual page-download requests
-// made by the Suwayomi HTTP client. Page images can be several megabytes; 60 s
-// gives slow hosts time to respond without blocking the dispatcher indefinitely.
-const suwayomiHTTPTimeout = 60 * time.Second
-
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -90,12 +85,12 @@ func main() {
 	// Build the Suwayomi HTTP client and real ChapterFetcher now — these are
 	// just typed values and do not require Suwayomi to be running yet. They are
 	// passed to download.New immediately so the dispatcher is fully wired.
-	httpc := &http.Client{Timeout: suwayomiHTTPTimeout}
+	httpc := &http.Client{Timeout: cfg.Suwayomi.HTTPTimeout}
 	suwayomiClient := suwayomi.NewClient(cfg.Suwayomi, httpc)
 	suwayomiFetcher := suwayomi.NewFetcher(suwayomiClient)
 
 	dispatcher := download.New(entClient, suwayomiFetcher, hub, download.Config{
-		PerProviderConcurrency: 4,
+		PerProviderConcurrency: cfg.Jobs.DownloadConcurrency,
 		Storage:                cfg.Storage.Folder,
 	}, settingsSvc)
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)

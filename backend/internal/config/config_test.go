@@ -251,6 +251,8 @@ func TestValidateAcceptsValidAuthSecret(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
 	}
 	if err := config.ExportValidateForTest(cfg); err != nil {
 		t.Fatalf("expected validate to pass, got: %v", err)
@@ -408,7 +410,8 @@ func TestValidateAcceptsExternalURL(t *testing.T) {
 		cfg := &config.Config{
 			Database: config.DatabaseConfig{Password: "somepassword"},
 			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-			Suwayomi: config.SuwayomiConfig{ExternalURL: raw},
+			Suwayomi: config.SuwayomiConfig{ExternalURL: raw, HTTPTimeout: 3 * time.Minute},
+			Jobs:     config.JobsConfig{DownloadConcurrency: 4},
 		}
 		if err := config.ExportValidateForTest(cfg); err != nil {
 			t.Errorf("validate() rejected ExternalURL %q, want accept: %v", raw, err)
@@ -612,6 +615,105 @@ func TestJobsRetryDefaults(t *testing.T) {
 	}
 }
 
+// TestSuwayomiHTTPTimeoutDefault confirms that Load() applies the 3m default for
+// the Suwayomi API-client timeout (raised from the old hardcoded 60s so that the
+// slow fetchChapterPages upstream fetch does not time out under concurrency).
+func TestSuwayomiHTTPTimeoutDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Suwayomi.HTTPTimeout != 3*time.Minute {
+		t.Errorf("Suwayomi.HTTPTimeout default = %v, want 3m", cfg.Suwayomi.HTTPTimeout)
+	}
+}
+
+// TestSuwayomiHTTPTimeoutEnvOverride confirms TSUNDOKU_SUWAYOMI_HTTPTIMEOUT
+// overrides the default and unmarshals as a duration.
+func TestSuwayomiHTTPTimeoutEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SUWAYOMI_HTTPTIMEOUT", "90s")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Suwayomi.HTTPTimeout != 90*time.Second {
+		t.Errorf("Suwayomi.HTTPTimeout = %v, want 90s", cfg.Suwayomi.HTTPTimeout)
+	}
+}
+
+// TestValidateRejectsNonPositiveHTTPTimeout confirms validate() fails closed on a
+// zero/negative Suwayomi API-client timeout, naming the offending env var.
+func TestValidateRejectsNonPositiveHTTPTimeout(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 0}, // invalid
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for non-positive HTTPTimeout, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_SUWAYOMI_HTTPTIMEOUT") {
+		t.Errorf("error should name TSUNDOKU_SUWAYOMI_HTTPTIMEOUT, got: %v", err)
+	}
+}
+
+// TestJobsDownloadConcurrencyDefault confirms the per-provider download
+// concurrency defaults to 4 (unchanged from the previous hardcoded literal).
+func TestJobsDownloadConcurrencyDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.DownloadConcurrency != 4 {
+		t.Errorf("Jobs.DownloadConcurrency default = %d, want 4", cfg.Jobs.DownloadConcurrency)
+	}
+}
+
+// TestJobsDownloadConcurrencyEnvOverride confirms TSUNDOKU_JOBS_DOWNLOADCONCURRENCY
+// overrides the default.
+func TestJobsDownloadConcurrencyEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_JOBS_DOWNLOADCONCURRENCY", "8")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.DownloadConcurrency != 8 {
+		t.Errorf("Jobs.DownloadConcurrency = %d, want 8", cfg.Jobs.DownloadConcurrency)
+	}
+}
+
+// TestValidateRejectsDownloadConcurrencyBelowOne confirms validate() fails closed
+// when the per-provider download concurrency is below 1, naming the env var.
+func TestValidateRejectsDownloadConcurrencyBelowOne(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 0}, // invalid
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for DownloadConcurrency < 1, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_JOBS_DOWNLOADCONCURRENCY") {
+		t.Errorf("error should name TSUNDOKU_JOBS_DOWNLOADCONCURRENCY, got: %v", err)
+	}
+}
+
 // TestLoadDefaultsHealthStaleGrace confirms that Load() applies the default
 // value (14) for Health.StaleGraceDays when TSUNDOKU_HEALTH_STALEGRACEDAYS
 // is not set.
@@ -697,7 +799,8 @@ func suwayomiDBConfig(dbType, dbURL string) *config.Config {
 	return &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{DatabaseType: dbType, DatabaseURL: dbURL},
+		Suwayomi: config.SuwayomiConfig{DatabaseType: dbType, DatabaseURL: dbURL, HTTPTimeout: 3 * time.Minute},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
 	}
 }
 

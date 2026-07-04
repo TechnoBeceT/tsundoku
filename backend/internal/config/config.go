@@ -144,6 +144,17 @@ type SuwayomiConfig struct {
 	// DownloadTimeout is the HTTP client deadline for downloading the JAR.
 	// Default 10m. Set via TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT.
 	DownloadTimeout time.Duration
+	// HTTPTimeout is the deadline applied to every request the Suwayomi API
+	// client makes (GraphQL + page-image REST). It is DISTINCT from StartTimeout
+	// (process-ready wait) and DownloadTimeout (JAR download): those govern the
+	// JAR/process lifecycle, this governs the live API client. The default is
+	// deliberately generous (3m) because fetchChapterPages forces Suwayomi to
+	// contact the upstream source, which is legitimately slow — under
+	// per-provider concurrency a shorter deadline caused frequent
+	// "context deadline exceeded (Client.Timeout exceeded while awaiting
+	// headers)" failures. Default 3m. validate() rejects a non-positive value.
+	// Set via TSUNDOKU_SUWAYOMI_HTTPTIMEOUT.
+	HTTPTimeout time.Duration
 	// JavaPath is the path to the java executable used to launch the
 	// Suwayomi JAR. Defaults to "java" (system PATH). Override when the
 	// system default java is too old (Suwayomi v2.2.2100 requires Java 21+).
@@ -199,6 +210,12 @@ type JobsConfig struct {
 	// DownloadInterval is the tick period for the download runner (queue drain
 	// + upgrade-swap). Default 15m. Set via TSUNDOKU_JOBS_DOWNLOADINTERVAL.
 	DownloadInterval time.Duration
+
+	// DownloadConcurrency bounds how many chapter downloads run in parallel PER
+	// PROVIDER in the dispatcher (each is a live upstream fetch). Default 4 —
+	// unchanged from the previous hardcoded literal. validate() rejects a value
+	// below 1. Set via TSUNDOKU_JOBS_DOWNLOADCONCURRENCY.
+	DownloadConcurrency int
 
 	// RefreshInterval is the tick period for the M5 discovery poll, which
 	// re-fetches every monitored series' chapter list to find new releases.
@@ -271,6 +288,7 @@ func defaults() map[string]any {
 		"suwayomi.downloadurltemplate": suwayomiDownloadURLTemplate,
 		"suwayomi.starttimeout":        "2m",
 		"suwayomi.downloadtimeout":     "10m",
+		"suwayomi.httptimeout":         "3m",
 		"suwayomi.javapath":            "java",
 		// Embedded-Suwayomi DB engine — all blank ⇒ disabled (Suwayomi's
 		// default H2, unchanged behaviour). Set DatabaseType=POSTGRESQL to
@@ -281,6 +299,7 @@ func defaults() map[string]any {
 		"suwayomi.databasepassword": "",
 		// Jobs — background-job scheduler.
 		"jobs.downloadinterval":       "15m",
+		"jobs.downloadconcurrency":    4,
 		"jobs.refreshinterval":        "2h",
 		"jobs.refreshconcurrency":     4,
 		"jobs.maxretries":             3,
@@ -357,12 +376,14 @@ func Load() (*Config, error) {
 //	TSUNDOKU_SUWAYOMI_DOWNLOADURLTEMPLATE   → suwayomi.downloadurltemplate
 //	TSUNDOKU_SUWAYOMI_STARTTIMEOUT          → suwayomi.starttimeout
 //	TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT       → suwayomi.downloadtimeout
+//	TSUNDOKU_SUWAYOMI_HTTPTIMEOUT           → suwayomi.httptimeout
 //	TSUNDOKU_SUWAYOMI_JAVAPATH              → suwayomi.javapath
 //	TSUNDOKU_SUWAYOMI_DATABASETYPE          → suwayomi.databasetype
 //	TSUNDOKU_SUWAYOMI_DATABASEURL           → suwayomi.databaseurl
 //	TSUNDOKU_SUWAYOMI_DATABASEUSERNAME      → suwayomi.databaseusername
 //	TSUNDOKU_SUWAYOMI_DATABASEPASSWORD      → suwayomi.databasepassword
 //	TSUNDOKU_JOBS_DOWNLOADINTERVAL          → jobs.downloadinterval
+//	TSUNDOKU_JOBS_DOWNLOADCONCURRENCY       → jobs.downloadconcurrency
 //	TSUNDOKU_JOBS_REFRESHINTERVAL           → jobs.refreshinterval
 //	TSUNDOKU_JOBS_REFRESHCONCURRENCY        → jobs.refreshconcurrency
 //	TSUNDOKU_JOBS_MAXRETRIES                → jobs.maxretries
@@ -404,6 +425,10 @@ const minAuthSecretLen = 16
 //   - Suwayomi.DatabaseType, when set, must be H2 or POSTGRESQL; POSTGRESQL
 //     additionally requires a valid postgresql:// Suwayomi.DatabaseURL (blank
 //     ⇒ default H2, the unchanged behaviour).
+//   - Suwayomi.HTTPTimeout must be positive — a zero/negative client deadline
+//     would either never time out or reject every request.
+//   - Jobs.DownloadConcurrency must be at least 1 — a non-positive per-provider
+//     concurrency would stall the dispatcher entirely.
 func (c *Config) validate() error {
 	var errs []string
 
@@ -424,6 +449,18 @@ func (c *Config) validate() error {
 
 	if err := validateSuwayomiDatabase(c.Suwayomi); err != nil {
 		errs = append(errs, err.Error())
+	}
+
+	if c.Suwayomi.HTTPTimeout <= 0 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_SUWAYOMI_HTTPTIMEOUT must be positive (got %s)", c.Suwayomi.HTTPTimeout,
+		))
+	}
+
+	if c.Jobs.DownloadConcurrency < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_JOBS_DOWNLOADCONCURRENCY must be at least 1 (got %d)", c.Jobs.DownloadConcurrency,
+		))
 	}
 
 	if len(errs) > 0 {

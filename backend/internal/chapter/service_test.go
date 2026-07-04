@@ -4,6 +4,7 @@ package chapter_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -132,6 +133,74 @@ func TestWantedChapters_upgrade_available_excluded(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("want 0 chapters (upgrade_available excluded), got %d", len(got))
+	}
+}
+
+// TestWantedChapters_ordered_by_number_ascending verifies that WantedChapters
+// returns actionable chapters ordered by their numeric number ascending —
+// independent of insert order. This pins the fix for the random-order bug: the
+// Chapter id is a UUIDv4, so ordering by id scrambled the download sequence; the
+// owner expects chapters to download 1, 2, 10, 20, … in number order.
+func TestWantedChapters_ordered_by_number_ascending(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	s := client.Series.Create().SetTitle("Order Test").SetSlug("order-test").SaveX(ctx)
+
+	// Insert in scrambled order; the returned slice must still be number-ascending.
+	for _, n := range []float64{20, 1, 10, 2} {
+		client.Chapter.Create().
+			SetSeries(s).
+			SetChapterKey(fmt.Sprintf("%g", n)).
+			SetNumber(n).
+			SetState(entchapter.StateWanted).
+			SaveX(ctx)
+	}
+
+	got, err := chapter.WantedChapters(ctx, client, 100, 3)
+	if err != nil {
+		t.Fatalf("WantedChapters: %v", err)
+	}
+
+	wantOrder := []float64{1, 2, 10, 20}
+	if len(got) != len(wantOrder) {
+		t.Fatalf("want %d chapters, got %d", len(wantOrder), len(got))
+	}
+	for i, ch := range got {
+		if ch.Number == nil {
+			t.Fatalf("chapter %d: number is nil, want %g", i, wantOrder[i])
+		}
+		if *ch.Number != wantOrder[i] {
+			t.Errorf("position %d: want number %g, got %g", i, wantOrder[i], *ch.Number)
+		}
+	}
+}
+
+// TestWantedChapters_null_number_sorts_last verifies that a chapter with no
+// parsed number stays reachable but sorts after every numbered chapter (nulls
+// last), so a missing number never jumps the download queue.
+func TestWantedChapters_null_number_sorts_last(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	s := client.Series.Create().SetTitle("Null Number Test").SetSlug("null-number-test").SaveX(ctx)
+
+	// A numbered chapter and one with no number (nil), inserted null-first.
+	client.Chapter.Create().SetSeries(s).SetChapterKey("no-number").SetState(entchapter.StateWanted).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("5").SetNumber(5).SetState(entchapter.StateWanted).SaveX(ctx)
+
+	got, err := chapter.WantedChapters(ctx, client, 100, 3)
+	if err != nil {
+		t.Fatalf("WantedChapters: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 chapters, got %d", len(got))
+	}
+	if got[0].Number == nil || *got[0].Number != 5 {
+		t.Errorf("position 0: want numbered chapter 5 first, got %v", got[0].Number)
+	}
+	if got[1].Number != nil {
+		t.Errorf("position 1: want null-number chapter last, got %v", got[1].Number)
 	}
 }
 
