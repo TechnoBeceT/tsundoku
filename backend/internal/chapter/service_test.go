@@ -24,7 +24,7 @@ func TestWantedChapters_wanted_included(t *testing.T) {
 	s := client.Series.Create().SetTitle("Wanted Test").SetSlug("wanted-test").SaveX(ctx)
 	client.Chapter.Create().SetSeries(s).SetChapterKey("1").SetState(entchapter.StateWanted).SaveX(ctx)
 
-	got, err := chapter.WantedChapters(ctx, client, 100, 3)
+	got, err := chapter.WantedChapters(ctx, client, 100)
 	if err != nil {
 		t.Fatalf("WantedChapters: %v", err)
 	}
@@ -36,80 +36,67 @@ func TestWantedChapters_wanted_included(t *testing.T) {
 	}
 }
 
-// TestWantedChapters_failed_due_included verifies that a failed chapter whose
-// next_attempt_at is in the past (or nil) and whose retries < maxRetries is
-// returned by WantedChapters.
-func TestWantedChapters_failed_due_included(t *testing.T) {
+// TestWantedChapters_failed_included verifies that a failed chapter is returned
+// by WantedChapters regardless of any legacy per-CHAPTER retry fields. In the
+// multi-source engine the per-source retry gating (which source is a live
+// candidate) lives in RankedLiveCandidates and is applied per chapter by the
+// dispatcher — WantedChapters just surfaces the work list. A failed chapter whose
+// sources happen to be all on cooldown is still returned (the dispatcher no-ops
+// it that cycle); it is not filtered out at the query level.
+func TestWantedChapters_failed_included(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 
-	s := client.Series.Create().SetTitle("Failed Due Test").SetSlug("failed-due-test").SaveX(ctx)
-	past := time.Now().Add(-1 * time.Hour)
+	s := client.Series.Create().SetTitle("Failed Included Test").SetSlug("failed-included-test").SaveX(ctx)
+	// Legacy chapter-level retry fields are deliberately set to non-default values
+	// to prove they no longer gate WantedChapters.
+	future := time.Now().Add(1 * time.Hour)
 	client.Chapter.Create().
 		SetSeries(s).
 		SetChapterKey("2").
 		SetState(entchapter.StateFailed).
-		SetRetries(1).
-		SetNextAttemptAt(past).
+		SetRetries(9).
+		SetNextAttemptAt(future).
 		SaveX(ctx)
 
-	got, err := chapter.WantedChapters(ctx, client, 100, 3)
+	got, err := chapter.WantedChapters(ctx, client, 100)
 	if err != nil {
 		t.Fatalf("WantedChapters: %v", err)
 	}
 	if len(got) != 1 {
-		t.Fatalf("want 1 chapter, got %d", len(got))
+		t.Fatalf("want 1 chapter (failed is actionable regardless of legacy fields), got %d", len(got))
 	}
 	if got[0].ChapterKey != "2" {
 		t.Errorf("chapter_key: want %q, got %q", "2", got[0].ChapterKey)
 	}
 }
 
-// TestWantedChapters_failed_not_due_excluded verifies that a failed chapter
-// whose next_attempt_at is in the future is excluded from WantedChapters.
-func TestWantedChapters_failed_not_due_excluded(t *testing.T) {
+// TestWantedChapters_terminal_states_excluded verifies that downloaded,
+// downloading, and permanently_failed chapters are NOT returned by WantedChapters
+// — only wanted and failed are actionable.
+func TestWantedChapters_terminal_states_excluded(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 
-	s := client.Series.Create().SetTitle("Failed Future Test").SetSlug("failed-future-test").SaveX(ctx)
-	future := time.Now().Add(1 * time.Hour)
-	client.Chapter.Create().
-		SetSeries(s).
-		SetChapterKey("3").
-		SetState(entchapter.StateFailed).
-		SetRetries(1).
-		SetNextAttemptAt(future).
-		SaveX(ctx)
+	s := client.Series.Create().SetTitle("Terminal Test").SetSlug("terminal-test").SaveX(ctx)
+	for i, st := range []entchapter.State{
+		entchapter.StateDownloaded,
+		entchapter.StateDownloading,
+		entchapter.StatePermanentlyFailed,
+	} {
+		client.Chapter.Create().
+			SetSeries(s).
+			SetChapterKey(fmt.Sprintf("t-%d", i)).
+			SetState(st).
+			SaveX(ctx)
+	}
 
-	got, err := chapter.WantedChapters(ctx, client, 100, 3)
+	got, err := chapter.WantedChapters(ctx, client, 100)
 	if err != nil {
 		t.Fatalf("WantedChapters: %v", err)
 	}
 	if len(got) != 0 {
-		t.Fatalf("want 0 chapters (not due yet), got %d", len(got))
-	}
-}
-
-// TestWantedChapters_failed_max_retries_excluded verifies that a failed chapter
-// that has exhausted its retry budget (retries >= maxRetries) is excluded.
-func TestWantedChapters_failed_max_retries_excluded(t *testing.T) {
-	ctx := context.Background()
-	client := testdb.New(t)
-
-	s := client.Series.Create().SetTitle("Max Retries Test").SetSlug("max-retries-test").SaveX(ctx)
-	client.Chapter.Create().
-		SetSeries(s).
-		SetChapterKey("4").
-		SetState(entchapter.StateFailed).
-		SetRetries(3). // == maxRetries
-		SaveX(ctx)
-
-	got, err := chapter.WantedChapters(ctx, client, 100, 3)
-	if err != nil {
-		t.Fatalf("WantedChapters: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("want 0 chapters (retries exhausted), got %d", len(got))
+		t.Fatalf("want 0 chapters (downloaded/downloading/permanently_failed excluded), got %d", len(got))
 	}
 }
 
@@ -127,7 +114,7 @@ func TestWantedChapters_upgrade_available_excluded(t *testing.T) {
 		SetState(entchapter.StateUpgradeAvailable).
 		SaveX(ctx)
 
-	got, err := chapter.WantedChapters(ctx, client, 100, 3)
+	got, err := chapter.WantedChapters(ctx, client, 100)
 	if err != nil {
 		t.Fatalf("WantedChapters: %v", err)
 	}
@@ -157,7 +144,7 @@ func TestWantedChapters_ordered_by_number_ascending(t *testing.T) {
 			SaveX(ctx)
 	}
 
-	got, err := chapter.WantedChapters(ctx, client, 100, 3)
+	got, err := chapter.WantedChapters(ctx, client, 100)
 	if err != nil {
 		t.Fatalf("WantedChapters: %v", err)
 	}
@@ -189,7 +176,7 @@ func TestWantedChapters_null_number_sorts_last(t *testing.T) {
 	client.Chapter.Create().SetSeries(s).SetChapterKey("no-number").SetState(entchapter.StateWanted).SaveX(ctx)
 	client.Chapter.Create().SetSeries(s).SetChapterKey("5").SetNumber(5).SetState(entchapter.StateWanted).SaveX(ctx)
 
-	got, err := chapter.WantedChapters(ctx, client, 100, 3)
+	got, err := chapter.WantedChapters(ctx, client, 100)
 	if err != nil {
 		t.Fatalf("WantedChapters: %v", err)
 	}

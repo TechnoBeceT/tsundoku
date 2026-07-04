@@ -126,6 +126,9 @@ func TestSetInvalidValue(t *testing.T) {
 		{"unparseable duration", settings.KeyRetryBackoff, "soon"},
 		{"backoff below min", settings.KeyRetryBackoff, "0s"},
 		{"retries negative", settings.KeyMaxRetries, "-1"},
+		// 0 is rejected: a source must always get at least one attempt, else the
+		// attempts>=maxRetries rule would drive the whole library to permanently_failed.
+		{"retries zero", settings.KeyMaxRetries, "0"},
 		{"retries over max", settings.KeyMaxRetries, "21"},
 		{"concurrency zero", settings.KeyRefreshConcurrency, "0"},
 		{"concurrency over max", settings.KeyRefreshConcurrency, "33"},

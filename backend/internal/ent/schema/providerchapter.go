@@ -41,6 +41,22 @@ func (ProviderChapter) Fields() []ent.Field {
 		// Populated by the M2 ingest service when a chapter is sourced from
 		// Suwayomi; used by the download dispatcher to fetch page bytes.
 		field.Int("suwayomi_chapter_id").Optional(),
+		// attempts counts how many times the download dispatcher has tried to
+		// fetch this chapter FROM THIS SOURCE and failed. It is the per-source
+		// retry counter: once attempts reaches jobs.max_retries this source is
+		// "exhausted" for this chapter and is dropped from the live-candidate set.
+		// A chapter only becomes permanently_failed when EVERY source that offers
+		// it is exhausted. Default 0 → every existing row is immediately a live
+		// candidate (zero-data migration).
+		field.Int("attempts").Default(0),
+		// last_error records the most recent failure reason for THIS source's
+		// attempt at THIS chapter (empty when it has never failed or after a reset).
+		field.String("last_error").Default(""),
+		// next_attempt_at is the per-source backoff gate: this source is not a live
+		// candidate for this chapter again until now >= next_attempt_at. Nil means
+		// "no cooldown pending" (never failed, or its cooldown has been cleared by a
+		// success or an owner retry-reset).
+		field.Time("next_attempt_at").Optional().Nillable(),
 	}
 }
 

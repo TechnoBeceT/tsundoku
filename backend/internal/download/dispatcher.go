@@ -50,12 +50,15 @@ type Config struct {
 // implementations must be safe for concurrent use (handleFailure runs in the
 // per-chapter goroutines).
 type RetrySettings interface {
-	// MaxRetries is the number of times a failed chapter is retried before it is
-	// parked in permanently_failed.
+	// MaxRetries is the PER-SOURCE retry budget: how many times the dispatcher
+	// retries a chapter FROM ONE SOURCE before that source is abandoned for it. A
+	// chapter is parked in permanently_failed only when EVERY source offering it
+	// has been abandoned (see chapter.AllProvidersExhausted) — this is not a global
+	// per-chapter counter.
 	MaxRetries(ctx context.Context) int
-	// RetryBackoff is the BASE delay fed to backoffCurve. The delay before retry
-	// attempt n is base×2^n (capped at 1h): attempt 0 = base, the first retry
-	// (n=1) = 2×base, n=2 = 4×base, and so on.
+	// RetryBackoff is the BASE delay fed to backoffCurve, applied PER SOURCE. The
+	// delay before a source's retry attempt n is base×2^n (capped at 1h): the first
+	// retry (n=1) = 2×base, n=2 = 4×base, and so on.
 	RetryBackoff(ctx context.Context) time.Duration
 }
 
@@ -121,17 +124,32 @@ func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config,
 	}
 }
 
-// RunOnce loads all currently actionable chapters and processes them
-// concurrently, honouring the per-provider concurrency cap. It waits for all
-// downloads to complete before returning. Per-chapter errors are collected; the
-// first non-nil error is returned. Callers can run this method in a ticker loop.
+// MaxRetries returns the current per-source retry budget from the runtime
+// settings (read at call time, so a settings change is reflected immediately).
+// It lets the job runner pass the same budget into download.DetectUpgrades that
+// the dispatcher uses, keeping the exhaustion rule consistent across the download
+// and upgrade paths without the runner needing its own settings handle.
+func (d *Dispatcher) MaxRetries(ctx context.Context) int {
+	return d.retry.MaxRetries(ctx)
+}
+
+// RunOnce loads every actionable chapter (state wanted or failed) and processes
+// them concurrently, honouring the per-provider concurrency cap. It waits for all
+// chapters to finish before returning. Per-chapter outcomes (success, source
+// failure, permanent failure) are recorded in the DB and broadcast via SSE, not
+// propagated to the caller — only a hard infrastructure failure loading the work
+// list is returned. Callers can run this method in a ticker loop.
 //
-// BestProviderChapter is resolved exactly once per chapter here so that the
-// semaphore key and the actual fetch target are always the same provider
-// snapshot, preventing a TOCTOU skew if provider importance changes mid-run.
+// The per-source retry budget (maxRetries) and the cycle timestamp (now) are read
+// ONCE here so every chapter in the cycle sees a consistent snapshot; a settings
+// change therefore applies from the next cycle. The candidate loop (Process) then
+// decides, per chapter, which source to try — RunOnce no longer pre-resolves a
+// single provider, because a chapter may fall through several sources in one pass.
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
-	// Read the retry budget at use-time so a settings change applies this cycle.
-	chapters, err := chapter.WantedChapters(ctx, d.client, 1000, d.retry.MaxRetries(ctx))
+	maxRetries := d.retry.MaxRetries(ctx)
+	now := time.Now()
+
+	chapters, err := chapter.WantedChapters(ctx, d.client, 1000)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.RunOnce: load chapters: %w", err)
 	}
@@ -139,223 +157,346 @@ func (d *Dispatcher) RunOnce(ctx context.Context) error {
 		return nil
 	}
 
-	// Per-provider semaphores: one buffered channel per provider name.
-	type semaphore = chan struct{}
-	var mu sync.Mutex
-	sems := make(map[string]semaphore)
-
-	getSem := func(provider string) semaphore {
-		mu.Lock()
-		defer mu.Unlock()
-		if _, ok := sems[provider]; !ok {
-			sems[provider] = make(semaphore, d.cfg.PerProviderConcurrency)
-		}
-		return sems[provider]
-	}
-
+	limiter := newProviderLimiter(d.cfg.PerProviderConcurrency)
 	var wg sync.WaitGroup
-
 	for _, ch := range chapters {
 		chID := ch.ID
-
-		// Resolve the best provider ONCE per chapter so the semaphore key and the
-		// fetch target are guaranteed to be the same provider.
-		pc, importance, err := chapter.BestProviderChapter(ctx, d.client, chID)
-		if err != nil {
-			// No-provider is near-defensive: the ingest invariant guarantees every
-			// Chapter is created alongside at least one ProviderChapter. If that
-			// invariant is violated (e.g. a manual DB edit), the chapter should stay
-			// in wanted — it is awaiting a source via ingest, NOT a fetch failure.
-			// Transitioning to failed here would be an illegal state-graph edge.
-			// Emit an observable skip notice and continue; do not silently swallow.
-			slog.WarnContext(ctx, "download.RunOnce: no provider for chapter — skipping this round; chapter stays wanted until ingest supplies a provider",
-				"chapter_id", chID,
-				"err", err,
-			)
-			d.broadcast("download.skip", DownloadEvent{
-				ChapterID: chID,
-				State:     string(entchapter.StateWanted),
-				Error:     "no provider available: " + err.Error(),
-			})
-			continue
-		}
-		sp := pc.Edges.SeriesProvider
-		providerName := ""
-		if sp != nil {
-			providerName = sp.Provider
-		}
-
-		sem := getSem(providerName)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			// Per-chapter errors are recorded in the DB and broadcast via SSE.
-			// They are not propagated to the caller — a failed chapter is a
-			// handled outcome, not an infrastructure failure.
-			_ = d.process(ctx, chID, pc, importance)
+			_ = d.processChapter(ctx, chID, maxRetries, now, limiter)
 		}()
 	}
-
 	wg.Wait()
 	return nil
 }
 
-// Process executes the full download pipeline for a single chapter by chapter
-// ID. It resolves the best provider internally and delegates to the internal
-// process method. Callers that have already resolved the best ProviderChapter
-// (e.g. RunOnce) should use process directly to avoid a redundant DB query.
+// Process runs the full multi-source download pipeline for a single chapter by
+// id, resolving the retry budget and timestamp itself and using a fresh
+// per-provider limiter. RunOnce drives the batch path (shared snapshot + limiter);
+// Process is the standalone single-chapter entry point.
 func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
-	pc, importance, err := chapter.BestProviderChapter(ctx, d.client, chapterID)
-	if err != nil {
-		return fmt.Errorf("download.Dispatcher.Process: best provider for chapter %s: %w", chapterID, err)
-	}
-	return d.process(ctx, chapterID, pc, importance)
+	maxRetries := d.retry.MaxRetries(ctx)
+	now := time.Now()
+	limiter := newProviderLimiter(d.cfg.PerProviderConcurrency)
+	return d.processChapter(ctx, chapterID, maxRetries, now, limiter)
 }
 
-// process executes the full download pipeline for a single chapter using a
-// pre-resolved ProviderChapter. RunOnce calls this directly so that the
-// BestProviderChapter resolution is never duplicated (semaphore key and fetch
-// target are always the same provider snapshot).
+// processChapter executes the multi-source download pipeline for one chapter.
 //
-//  1. Load the chapter with its series edge.
-//  2. Transition the chapter to downloading.
-//  3. Broadcast a download.start SSE event.
-//  4. Build a FetchRef and fetch pages.
-//  5. On success: render to disk, update provenance fields, transition to
-//     downloaded, broadcast download.done.
-//  6. On failure: call handleFailure, which increments retries, sets last_error
-//     and next_attempt_at, transitions to permanently_failed when the retry
-//     budget is exhausted, and broadcasts download.fail.
-func (d *Dispatcher) process(ctx context.Context, chapterID uuid.UUID, pc *ent.ProviderChapter, importance int) error {
+// It asks chapter.RankedLiveCandidates for the sources it may try right now
+// (have the chapter, retry budget left, past their cooldown), ranked best-first.
+//
+//   - No live candidate → handleNoCandidates decides: leave the chapter wanted
+//     (no source has it yet, or sources exist but are all on cooldown) OR mark it
+//     permanently_failed (every source is exhausted).
+//   - Otherwise → transition to downloading and try each candidate IN IMPORTANCE
+//     ORDER, falling through to the next source the instant one fails (so reading
+//     is never blocked on a broken preferred source). The first success wins:
+//     render + persist + downloaded. Each failing source has its per-source retry
+//     state bumped (attempts++, last_error, next_attempt_at). If every candidate
+//     fails this cycle, finalizeAfterAllFailed marks the chapter failed (some
+//     source may still recover) or permanently_failed (all sources now exhausted).
+func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, maxRetries int, now time.Time, limiter *providerLimiter) error {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
 		Only(ctx)
 	if err != nil {
-		return fmt.Errorf("download.Dispatcher.process: load chapter %s: %w", chapterID, err)
+		return fmt.Errorf("download.Dispatcher.processChapter: load chapter %s: %w", chapterID, err)
 	}
 
-	sp := pc.Edges.SeriesProvider
+	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, maxRetries, now)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.processChapter: rank candidates for chapter %s: %w", chapterID, err)
+	}
+	if len(cands) == 0 {
+		return d.handleNoCandidates(ctx, ch, maxRetries)
+	}
 
-	// Transition wanted / failed → downloading.
+	// Transition wanted / failed → downloading and announce the attempt.
 	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloading); err != nil {
-		return fmt.Errorf("download.Dispatcher.process: transition to downloading for chapter %s: %w", chapterID, err)
+		return fmt.Errorf("download.Dispatcher.processChapter: transition to downloading for chapter %s: %w", chapterID, err)
 	}
-
 	d.broadcast("download.start", DownloadEvent{
 		ChapterID: chapterID,
 		State:     string(entchapter.StateDownloading),
 	})
 
-	ref := buildFetchRef(pc, sp)
-
-	pages, fetchErr := d.f.Fetch(ctx, ref)
-	if fetchErr != nil {
-		return d.handleFailure(ctx, ch, chapterID, fetchErr)
+	var lastErr error
+	for _, cand := range cands {
+		done, cause := d.tryCandidate(ctx, ch, chapterID, cand, limiter, now)
+		if done {
+			return nil
+		}
+		lastErr = cause
 	}
 
-	// Render to disk.
+	// Every live source failed this cycle. Decide failed vs permanently_failed
+	// from the CURRENT per-source state (the loop just bumped attempts).
+	return d.finalizeAfterAllFailed(ctx, chapterID, maxRetries, lastErr)
+}
+
+// tryCandidate attempts a single source for a chapter: it fetches under the
+// source's per-provider concurrency slot, and on success renders + persists +
+// transitions the chapter to downloaded (returning done=true). On any failure —
+// fetch, render, or persist — it bumps that source's per-source retry state and
+// returns done=false with the cause, so the caller falls through to the next
+// source. The concurrency slot is held only for the network fetch; rendering is
+// local disk work and does not contend for the provider's API.
+func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time) (done bool, cause error) {
+	release := limiter.acquire(cand.SeriesProvider.Provider)
+	pages, fetchErr := d.f.Fetch(ctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
+	release()
+	if fetchErr != nil {
+		d.bumpSourceFailure(ctx, cand.ProviderChapter, fetchErr, now)
+		return false, fetchErr
+	}
+
+	if err := d.finishDownload(ctx, ch, chapterID, cand, pages); err != nil {
+		// A render/persist failure is not the source's fault, but bumping it (and
+		// falling through) keeps the chapter from stranding in downloading and lets
+		// another source deliver it. On retry RenderChapter safely upserts the CBZ.
+		d.bumpSourceFailure(ctx, cand.ProviderChapter, err, now)
+		return false, err
+	}
+	return true, nil
+}
+
+// finishDownload renders the fetched pages to disk, writes the success provenance
+// (satisfied-by source + importance, filename, page count, download date), clears
+// the chapter's last_error, resets the winning source's per-source retry state
+// (it demonstrably works), and transitions the chapter to downloaded, broadcasting
+// download.done. Any error is returned so tryCandidate can fall through.
+func (d *Dispatcher) finishDownload(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, pages fetcher.ChapterPages) error {
+	pc := cand.ProviderChapter
+	sp := cand.SeriesProvider
+
 	maxChap := maxChapterNumber(ctx, d.client, ch.SeriesID)
-	meta := buildRenderMeta(ch, pc, sp, maxChap)
-	filename, renderErr := disk.RenderChapter(disk.RenderRequest{
+	filename, err := disk.RenderChapter(disk.RenderRequest{
 		Storage: d.cfg.Storage,
-		Meta:    meta,
+		Meta:    buildRenderMeta(ch, pc, sp, maxChap),
 		Pages:   pages.Pages,
 	})
-	if renderErr != nil {
-		return d.handleFailure(ctx, ch, chapterID, renderErr)
+	if err != nil {
+		return fmt.Errorf("render chapter %s: %w", chapterID, err)
 	}
 
-	// Persist provenance on the Chapter row.
-	now := time.Now()
-	pageCount := pages.PageCount
 	if err := d.client.Chapter.UpdateOneID(chapterID).
 		SetSatisfiedByProviderID(sp.ID).
-		SetSatisfiedImportance(importance).
+		SetSatisfiedImportance(sp.Importance).
 		SetFilename(filename).
-		SetPageCount(pageCount).
-		SetDownloadDate(now).
+		SetPageCount(pages.PageCount).
+		SetDownloadDate(time.Now()).
 		SetLastError("").
 		Exec(ctx); err != nil {
-		// Route through handleFailure so the chapter transitions out of
-		// downloading (→ failed / permanently_failed) rather than stranding there.
-		// Re-downloading on retry is safe: RenderChapter upserts the CBZ.
-		return d.handleFailure(ctx, ch, chapterID, fmt.Errorf("persist provenance: %w", err))
+		return fmt.Errorf("persist provenance for chapter %s: %w", chapterID, err)
+	}
+
+	// The winning source works: clear its per-source retry state so a prior
+	// transient failure never nudges it toward exhaustion.
+	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).
+		SetAttempts(0).
+		SetLastError("").
+		ClearNextAttemptAt().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("reset source retry state for chapter %s: %w", chapterID, err)
 	}
 
 	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
 		// Defensive path: only reachable on DB failure between the provenance
-		// update and this state transition. Route through handleFailure so the
-		// chapter is never left in downloading.
-		return d.handleFailure(ctx, ch, chapterID, fmt.Errorf("transition to downloaded: %w", err))
+		// update and this transition. Returned so tryCandidate falls through
+		// rather than stranding the chapter in downloading.
+		return fmt.Errorf("transition chapter %s to downloaded: %w", chapterID, err)
 	}
 
 	d.broadcast("download.done", DownloadEvent{
 		ChapterID: chapterID,
 		State:     string(entchapter.StateDownloaded),
 	})
-
 	return nil
 }
 
-// handleFailure records a failed download attempt and transitions the chapter
-// to the appropriate terminal (permanently_failed) or retry (failed) state.
-//
-// ch is the snapshot of the Chapter row taken at Process entry. The
-// wanted/failed→downloading state-gate in SetState prevents double-processing,
-// so ch.Retries reflects the value at Process entry and is not stale in practice.
-//
-// It increments the retry counter, stores the cause as last_error, computes
-// next_attempt_at via the runtime-tunable backoff base (read at use-time), then:
-//   - If newRetries >= MaxRetries: transitions to permanently_failed.
-//   - Otherwise: leaves the chapter in failed state (SetState downloading→failed).
-//
-// It always broadcasts a download.fail event and returns the original cause.
-func (d *Dispatcher) handleFailure(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cause error) error {
-	// Read the retry policy at use-time so a settings change applies immediately.
-	maxRetries := d.retry.MaxRetries(ctx)
-	backoffBase := d.retry.RetryBackoff(ctx)
-	newRetries := ch.Retries + 1
-	nextAttempt := time.Now().Add(backoffCurve(backoffBase, newRetries))
-
-	// Transition downloading → failed.
-	if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StateFailed); setErr != nil {
-		// Defensive path: only reachable if the DB connection is lost between the
-		// downloading transition and this failure handler — not reachable under
-		// normal operation.
-		return fmt.Errorf("download.Dispatcher.handleFailure: transition to failed for chapter %s: %w", chapterID, setErr)
-	}
-
-	if err := d.client.Chapter.UpdateOneID(chapterID).
-		SetRetries(newRetries).
+// bumpSourceFailure records one failed attempt against a single source's
+// ProviderChapter row: attempts++, last_error, and next_attempt_at = now +
+// backoffCurve(base, newAttempts). The backoff base is read at use-time so a
+// settings change applies immediately. Per-source retry state lives ONLY on the
+// ProviderChapter row (the Chapter-identity invariant keeps per-source state off
+// the Chapter). A DB write failure is logged, not propagated — the cycle's other
+// work must not be aborted by one source's bookkeeping error.
+func (d *Dispatcher) bumpSourceFailure(ctx context.Context, pc *ent.ProviderChapter, cause error, now time.Time) {
+	newAttempts := pc.Attempts + 1
+	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx), newAttempts))
+	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).
+		SetAttempts(newAttempts).
 		SetLastError(cause.Error()).
 		SetNextAttemptAt(nextAttempt).
 		Exec(ctx); err != nil {
-		return fmt.Errorf("download.Dispatcher.handleFailure: update retry fields for chapter %s: %w", chapterID, err)
+		slog.WarnContext(ctx, "download.bumpSourceFailure: could not persist per-source retry state",
+			"provider_chapter_id", pc.ID,
+			"err", err,
+		)
+		return
+	}
+	// Keep the in-memory row consistent with the DB for any later read this cycle.
+	pc.Attempts = newAttempts
+}
+
+// cooldownSource records an UPGRADE fetch failure against a source's
+// ProviderChapter row WITHOUT spending its retry budget: it sets last_error and a
+// backoff cooldown (next_attempt_at = now + backoffCurve(base, 1)) but leaves
+// attempts UNCHANGED. This is the deliberate asymmetry with bumpSourceFailure: a
+// download failure sticks (attempts increments toward exhaustion, so the owner's
+// "give up on a chapter this source can't provide" is honoured), whereas an
+// upgrade failure only defers the next try — the engine must NEVER permanently
+// give up on IMPROVING a chapter to a better source, so a preferred source that is
+// temporarily down during upgrade attempts recovers as an upgrade target once it
+// is back and past its cooldown. A DB write failure is logged, not propagated.
+func (d *Dispatcher) cooldownSource(ctx context.Context, pc *ent.ProviderChapter, cause error, now time.Time) {
+	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx), 1))
+	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).
+		SetLastError(cause.Error()).
+		SetNextAttemptAt(nextAttempt).
+		Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "download.cooldownSource: could not persist per-source cooldown",
+			"provider_chapter_id", pc.ID,
+			"err", err,
+		)
+	}
+}
+
+// finalizeAfterAllFailed transitions a chapter out of downloading once every live
+// source has failed this cycle. It re-reads the current per-source state (the
+// candidate loop just bumped it): if every source offering the chapter is now
+// exhausted, the chapter becomes permanently_failed; otherwise it becomes failed
+// (some source is still on cooldown and may recover on a later cycle). It records
+// the last cause as the chapter's last_error and broadcasts download.fail with the
+// resting state.
+func (d *Dispatcher) finalizeAfterAllFailed(ctx context.Context, chapterID uuid.UUID, maxRetries int, cause error) error {
+	exhausted, err := chapter.AllProvidersExhausted(ctx, d.client, chapterID, maxRetries)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.finalizeAfterAllFailed: exhaustion check for chapter %s: %w", chapterID, err)
 	}
 
-	if newRetries >= maxRetries {
-		if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StatePermanentlyFailed); setErr != nil {
-			// Defensive path: only reachable on DB failure between the failed
-			// transition and this permanent-failure escalation.
-			return fmt.Errorf("download.Dispatcher.handleFailure: transition to permanently_failed for chapter %s: %w", chapterID, setErr)
-		}
-		d.broadcast("download.fail", DownloadEvent{
-			ChapterID: chapterID,
-			State:     string(entchapter.StatePermanentlyFailed),
-			Error:     cause.Error(),
-		})
-		return cause
+	final := entchapter.StateFailed
+	if exhausted {
+		final = entchapter.StatePermanentlyFailed
+	}
+	if setErr := chapter.SetState(ctx, d.client, chapterID, final); setErr != nil {
+		// Defensive path: only reachable on DB failure between the downloading
+		// transition and this one — not reachable under normal operation.
+		return fmt.Errorf("download.Dispatcher.finalizeAfterAllFailed: transition chapter %s to %s: %w", chapterID, final, setErr)
+	}
+
+	msg := "all live sources failed this cycle"
+	if cause != nil {
+		msg = cause.Error()
+	}
+	if err := d.client.Chapter.UpdateOneID(chapterID).SetLastError(msg).Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "download.finalizeAfterAllFailed: could not persist chapter last_error",
+			"chapter_id", chapterID,
+			"err", err,
+		)
 	}
 
 	d.broadcast("download.fail", DownloadEvent{
 		ChapterID: chapterID,
-		State:     string(entchapter.StateFailed),
-		Error:     cause.Error(),
+		State:     string(final),
+		Error:     msg,
 	})
-	return cause
+	return nil
+}
+
+// handleNoCandidates handles a chapter that has no LIVE source to try this cycle.
+// It distinguishes three cases:
+//
+//   - No source offers the chapter at all → leave it wanted and emit download.skip.
+//     This is near-defensive (ingest always creates a ProviderChapter alongside a
+//     Chapter) but reachable via a manual DB edit; the chapter awaits a source.
+//   - Every source is exhausted → mark permanently_failed (from wanted or failed)
+//     and broadcast download.fail. This is the sole permanent-failure entry that
+//     does not pass through the download loop (the sources were already spent
+//     before this cycle began).
+//   - Sources exist, none exhausted, all on cooldown → nothing to do this cycle;
+//     leave the chapter as-is (no state change, no event) and let a later cycle
+//     retry the survivors once their backoff elapses.
+func (d *Dispatcher) handleNoCandidates(ctx context.Context, ch *ent.Chapter, maxRetries int) error {
+	hasAny, err := chapter.HasAnyProviderChapter(ctx, d.client, ch.ID)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.handleNoCandidates: provider check for chapter %s: %w", ch.ID, err)
+	}
+	if !hasAny {
+		slog.WarnContext(ctx, "download.processChapter: no provider for chapter — staying wanted until ingest supplies a source",
+			"chapter_id", ch.ID,
+		)
+		d.broadcast("download.skip", DownloadEvent{
+			ChapterID: ch.ID,
+			State:     string(ch.State),
+			Error:     "no provider available for this chapter",
+		})
+		return nil
+	}
+
+	exhausted, err := chapter.AllProvidersExhausted(ctx, d.client, ch.ID, maxRetries)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.handleNoCandidates: exhaustion check for chapter %s: %w", ch.ID, err)
+	}
+	if !exhausted {
+		// Sources remain but are all on cooldown — wait for the next cycle.
+		return nil
+	}
+
+	if err := chapter.SetState(ctx, d.client, ch.ID, entchapter.StatePermanentlyFailed); err != nil {
+		return fmt.Errorf("download.Dispatcher.handleNoCandidates: transition chapter %s to permanently_failed: %w", ch.ID, err)
+	}
+	const msg = "all sources exhausted their retry budget"
+	if err := d.client.Chapter.UpdateOneID(ch.ID).SetLastError(msg).Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "download.handleNoCandidates: could not persist chapter last_error",
+			"chapter_id", ch.ID,
+			"err", err,
+		)
+	}
+	d.broadcast("download.fail", DownloadEvent{
+		ChapterID: ch.ID,
+		State:     string(entchapter.StatePermanentlyFailed),
+		Error:     msg,
+	})
+	return nil
+}
+
+// providerLimiter caps how many chapters may be fetched concurrently from the
+// same provider. It hands out one buffered-channel semaphore per provider name,
+// each of capacity PerProviderConcurrency, so a single busy provider can never
+// monopolise the fetch pool while other providers proceed in parallel. Safe for
+// concurrent use by the per-chapter goroutines.
+type providerLimiter struct {
+	mu   sync.Mutex
+	cap  int
+	sems map[string]chan struct{}
+}
+
+// newProviderLimiter builds a limiter whose per-provider concurrency is capacity
+// (clamped to >= 1).
+func newProviderLimiter(capacity int) *providerLimiter {
+	if capacity < 1 {
+		capacity = 1
+	}
+	return &providerLimiter{cap: capacity, sems: make(map[string]chan struct{})}
+}
+
+// acquire blocks until a concurrency slot for the given provider is free, then
+// returns a release func the caller must invoke (once) to free the slot.
+func (l *providerLimiter) acquire(provider string) (release func()) {
+	l.mu.Lock()
+	sem, ok := l.sems[provider]
+	if !ok {
+		sem = make(chan struct{}, l.cap)
+		l.sems[provider] = sem
+	}
+	l.mu.Unlock()
+
+	sem <- struct{}{}
+	return func() { <-sem }
 }
 
 // broadcast emits an SSE event of the given type with data as the JSON payload.

@@ -11,6 +11,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
+	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/series"
@@ -219,11 +220,16 @@ func chapterProvider(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider
 }
 
 // RetryChapter resets one failed/permanently_failed chapter back to wanted so the
-// next download cycle re-attempts it, clearing the failure bookkeeping
-// (last_error, error_category, retries→0, next_attempt_at→null). It is a RESET,
-// never a delete (the never-auto-delete invariant holds — a failed chapter has no
-// CBZ). Returns ErrChapterNotFound (→404) for an unknown id, or ErrNotRetryable
-// (→409) when the chapter is in a non-retryable state.
+// next download cycle re-attempts it. It clears the chapter's failure bookkeeping
+// (last_error, error_category, legacy retries→0, next_attempt_at→null) AND resets
+// the per-source retry state on every ProviderChapter offering this chapter
+// (attempts→0, last_error→"", next_attempt_at→null) so EVERY source gets a fresh
+// budget — otherwise a source that had exhausted its attempts would still be
+// excluded and the retry would silently do nothing. It is a RESET, never a delete
+// (the never-auto-delete invariant holds — a failed chapter has no CBZ). Chapter +
+// source resets run in one transaction so they can never half-apply. Returns
+// ErrChapterNotFound (→404) for an unknown id, or ErrNotRetryable (→409) when the
+// chapter is in a non-retryable state.
 func (s *Service) RetryChapter(ctx context.Context, id uuid.UUID) error {
 	ch, err := s.client.Chapter.Get(ctx, id)
 	if err != nil {
@@ -235,20 +241,28 @@ func (s *Service) RetryChapter(ctx context.Context, id uuid.UUID) error {
 	if !IsRetryableState(ch.State) {
 		return ErrNotRetryable
 	}
-	// The state guard above makes failed/permanently_failed → wanted legal (the
-	// owner-retry edges); the field clears accompany the transition in one update.
-	if _, err := applyRetryReset(s.client.Chapter.Update().Where(entchapter.IDEQ(id))).Save(ctx); err != nil {
-		return fmt.Errorf("downloads.RetryChapter: reset chapter %s: %w", id, err)
+
+	err = withTx(ctx, s.client, func(tx *ent.Tx) error {
+		// The state guard above makes failed/permanently_failed → wanted legal (the
+		// owner-retry edges); the field clears accompany the transition in one update.
+		if _, err := applyChapterRetryReset(tx.Chapter.Update().Where(entchapter.IDEQ(id))).Save(ctx); err != nil {
+			return fmt.Errorf("reset chapter %s: %w", id, err)
+		}
+		return resetProviderChapters(ctx, tx, map[uuid.UUID][]string{ch.SeriesID: {ch.ChapterKey}})
+	})
+	if err != nil {
+		return fmt.Errorf("downloads.RetryChapter: %w", err)
 	}
 	return nil
 }
 
 // RetryAll bulk-resets every chapter in the filter's states back to wanted
-// (clearing the same failure fields as RetryChapter), optionally scoped to one
-// series, and returns how many rows it reset. States defaults to the retryable
-// set (failed + permanently_failed) when empty. The caller is responsible for
-// rejecting non-retryable states (the handler validates via IsRetryableState);
-// the service trusts the filter it is given.
+// (clearing the same chapter + per-source failure state as RetryChapter),
+// optionally scoped to one series, and returns how many chapters it reset. States
+// defaults to the retryable set (failed + permanently_failed) when empty. The
+// caller rejects non-retryable states (the handler validates via IsRetryableState);
+// the service trusts the filter it is given. Chapter + source resets run in one
+// transaction.
 func (s *Service) RetryAll(ctx context.Context, filter RetryAllFilter) (int, error) {
 	states := filter.States
 	if len(states) == 0 {
@@ -258,22 +272,105 @@ func (s *Service) RetryAll(ctx context.Context, filter RetryAllFilter) (int, err
 	if filter.SeriesID != nil {
 		preds = append(preds, entchapter.SeriesID(*filter.SeriesID))
 	}
-	n, err := applyRetryReset(s.client.Chapter.Update().Where(preds...)).Save(ctx)
+
+	// Snapshot the affected (series, chapter_key) pairs BEFORE the reset so the
+	// per-source reset targets exactly the chapters being retried.
+	affected, err := s.client.Chapter.Query().Where(preds...).All(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("downloads.RetryAll: reset chapters: %w", err)
+		return 0, fmt.Errorf("downloads.RetryAll: load target chapters: %w", err)
+	}
+
+	var n int
+	err = withTx(ctx, s.client, func(tx *ent.Tx) error {
+		reset, err := applyChapterRetryReset(tx.Chapter.Update().Where(preds...)).Save(ctx)
+		if err != nil {
+			return fmt.Errorf("reset chapters: %w", err)
+		}
+		n = reset
+		return resetProviderChapters(ctx, tx, groupKeysBySeries(affected))
+	})
+	if err != nil {
+		return 0, fmt.Errorf("downloads.RetryAll: %w", err)
 	}
 	return n, nil
 }
 
-// applyRetryReset applies the shared retry mutation to a bulk Chapter update:
-// state→wanted plus the failure-field clears. Both RetryChapter (scoped to one
-// id) and RetryAll (scoped to a state set) route through this single definition
-// so the reset semantics can never diverge between the two paths (§2 DRY).
-func applyRetryReset(u *ent.ChapterUpdate) *ent.ChapterUpdate {
+// applyChapterRetryReset applies the shared Chapter-side retry mutation: state→
+// wanted plus the chapter's failure-field clears. Both RetryChapter (scoped to
+// one id) and RetryAll (scoped to a state set) route through this single
+// definition so the reset semantics can never diverge (§2 DRY). retries and
+// next_attempt_at on the Chapter are legacy (the engine drives retry from
+// ProviderChapter now) but are still cleared so no stale value lingers.
+func applyChapterRetryReset(u *ent.ChapterUpdate) *ent.ChapterUpdate {
 	return u.
 		SetState(entchapter.StateWanted).
 		SetRetries(0).
 		SetLastError("").
 		SetErrorCategory("").
 		ClearNextAttemptAt()
+}
+
+// groupKeysBySeries collapses a set of chapters into a series_id → distinct
+// chapter_keys map, the shape resetProviderChapters consumes so it can reset each
+// series' ProviderChapter rows with a single precise predicate.
+func groupKeysBySeries(chapters []*ent.Chapter) map[uuid.UUID][]string {
+	out := make(map[uuid.UUID][]string, len(chapters))
+	seen := make(map[uuid.UUID]map[string]struct{}, len(chapters))
+	for _, ch := range chapters {
+		if seen[ch.SeriesID] == nil {
+			seen[ch.SeriesID] = map[string]struct{}{}
+		}
+		if _, dup := seen[ch.SeriesID][ch.ChapterKey]; dup {
+			continue
+		}
+		seen[ch.SeriesID][ch.ChapterKey] = struct{}{}
+		out[ch.SeriesID] = append(out[ch.SeriesID], ch.ChapterKey)
+	}
+	return out
+}
+
+// resetProviderChapters clears the per-source retry state (attempts→0,
+// last_error→"", next_attempt_at→null) on every ProviderChapter that offers one
+// of the given chapter_keys within its series, so a manual retry hands every
+// source a fresh budget. It matches per (series, key) precisely — one bulk update
+// per series — so a shared chapter_key across series never resets an unrelated
+// series' sources.
+func resetProviderChapters(ctx context.Context, tx *ent.Tx, bySeries map[uuid.UUID][]string) error {
+	for seriesID, keys := range bySeries {
+		if len(keys) == 0 {
+			continue
+		}
+		if _, err := tx.ProviderChapter.Update().
+			Where(
+				entproviderchapter.ChapterKeyIn(keys...),
+				entproviderchapter.HasSeriesProviderWith(entseriesprovider.SeriesIDEQ(seriesID)),
+			).
+			SetAttempts(0).
+			SetLastError("").
+			ClearNextAttemptAt().
+			Save(ctx); err != nil {
+			return fmt.Errorf("reset provider chapters for series %s: %w", seriesID, err)
+		}
+	}
+	return nil
+}
+
+// withTx runs fn inside a database transaction, committing on success and rolling
+// back (and joining any rollback error) on failure, so a multi-statement retry
+// reset can never half-apply.
+func withTx(ctx context.Context, client *ent.Client, fn func(tx *ent.Tx) error) error {
+	tx, err := client.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback: %w", rbErr))
+		}
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }

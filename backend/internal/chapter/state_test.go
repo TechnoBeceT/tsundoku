@@ -19,7 +19,7 @@ func TestCanTransition(t *testing.T) {
 		to   entchapter.State
 		want bool
 	}{
-		// Legal edges — all 8 must return true.
+		// Legal edges — every one must return true.
 		{"wanted→downloading", entchapter.StateWanted, entchapter.StateDownloading, true},
 		{"downloading→downloaded", entchapter.StateDownloading, entchapter.StateDownloaded, true},
 		{"downloading→failed", entchapter.StateDownloading, entchapter.StateFailed, true},
@@ -31,6 +31,11 @@ func TestCanTransition(t *testing.T) {
 		// Owner-retry edges (Downloads milestone) — the only edges targeting wanted.
 		{"failed→wanted (owner retry)", entchapter.StateFailed, entchapter.StateWanted, true},
 		{"permanently_failed→wanted (owner reset)", entchapter.StatePermanentlyFailed, entchapter.StateWanted, true},
+		// Terminal-exhaustion edges (multi-source engine) — permanent failure can be
+		// observed mid-cycle (from downloading, last live source just exhausted) or
+		// on entry (from wanted, all sources already exhausted).
+		{"downloading→permanently_failed", entchapter.StateDownloading, entchapter.StatePermanentlyFailed, true},
+		{"wanted→permanently_failed", entchapter.StateWanted, entchapter.StatePermanentlyFailed, true},
 
 		// Illegal edges — must return false.
 		// permanently_failed now has exactly ONE outgoing edge (→wanted); every

@@ -49,7 +49,7 @@ export const NameOnly: Story = {
 
 /** An integer field as the trailing control (the compact TextField variant). */
 export const WithNumberField: Story = {
-  args: { name: 'Chapter max retries', hint: 'Attempts before a chapter is permanently failed' },
+  args: { name: 'Chapter max retries', hint: 'Attempts per source before that source is given up; a chapter fails only when all its sources are exhausted' },
   render: (args) => ({
     components: { SettingRow, TextField },
     setup: () => ({ args }),

@@ -132,6 +132,48 @@ func (_c *ProviderChapterCreate) SetNillableSuwayomiChapterID(v *int) *ProviderC
 	return _c
 }
 
+// SetAttempts sets the "attempts" field.
+func (_c *ProviderChapterCreate) SetAttempts(v int) *ProviderChapterCreate {
+	_c.mutation.SetAttempts(v)
+	return _c
+}
+
+// SetNillableAttempts sets the "attempts" field if the given value is not nil.
+func (_c *ProviderChapterCreate) SetNillableAttempts(v *int) *ProviderChapterCreate {
+	if v != nil {
+		_c.SetAttempts(*v)
+	}
+	return _c
+}
+
+// SetLastError sets the "last_error" field.
+func (_c *ProviderChapterCreate) SetLastError(v string) *ProviderChapterCreate {
+	_c.mutation.SetLastError(v)
+	return _c
+}
+
+// SetNillableLastError sets the "last_error" field if the given value is not nil.
+func (_c *ProviderChapterCreate) SetNillableLastError(v *string) *ProviderChapterCreate {
+	if v != nil {
+		_c.SetLastError(*v)
+	}
+	return _c
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (_c *ProviderChapterCreate) SetNextAttemptAt(v time.Time) *ProviderChapterCreate {
+	_c.mutation.SetNextAttemptAt(v)
+	return _c
+}
+
+// SetNillableNextAttemptAt sets the "next_attempt_at" field if the given value is not nil.
+func (_c *ProviderChapterCreate) SetNillableNextAttemptAt(v *time.Time) *ProviderChapterCreate {
+	if v != nil {
+		_c.SetNextAttemptAt(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *ProviderChapterCreate) SetID(v uuid.UUID) *ProviderChapterCreate {
 	_c.mutation.SetID(v)
@@ -198,6 +240,14 @@ func (_c *ProviderChapterCreate) defaults() {
 		v := providerchapter.DefaultProviderIndex
 		_c.mutation.SetProviderIndex(v)
 	}
+	if _, ok := _c.mutation.Attempts(); !ok {
+		v := providerchapter.DefaultAttempts
+		_c.mutation.SetAttempts(v)
+	}
+	if _, ok := _c.mutation.LastError(); !ok {
+		v := providerchapter.DefaultLastError
+		_c.mutation.SetLastError(v)
+	}
 	if _, ok := _c.mutation.ID(); !ok {
 		v := providerchapter.DefaultID()
 		_c.mutation.SetID(v)
@@ -220,6 +270,12 @@ func (_c *ProviderChapterCreate) check() error {
 	}
 	if _, ok := _c.mutation.ProviderIndex(); !ok {
 		return &ValidationError{Name: "provider_index", err: errors.New(`ent: missing required field "ProviderChapter.provider_index"`)}
+	}
+	if _, ok := _c.mutation.Attempts(); !ok {
+		return &ValidationError{Name: "attempts", err: errors.New(`ent: missing required field "ProviderChapter.attempts"`)}
+	}
+	if _, ok := _c.mutation.LastError(); !ok {
+		return &ValidationError{Name: "last_error", err: errors.New(`ent: missing required field "ProviderChapter.last_error"`)}
 	}
 	if len(_c.mutation.SeriesProviderIDs()) == 0 {
 		return &ValidationError{Name: "series_provider", err: errors.New(`ent: missing required edge "ProviderChapter.series_provider"`)}
@@ -290,6 +346,18 @@ func (_c *ProviderChapterCreate) createSpec() (*ProviderChapter, *sqlgraph.Creat
 	if value, ok := _c.mutation.SuwayomiChapterID(); ok {
 		_spec.SetField(providerchapter.FieldSuwayomiChapterID, field.TypeInt, value)
 		_node.SuwayomiChapterID = value
+	}
+	if value, ok := _c.mutation.Attempts(); ok {
+		_spec.SetField(providerchapter.FieldAttempts, field.TypeInt, value)
+		_node.Attempts = value
+	}
+	if value, ok := _c.mutation.LastError(); ok {
+		_spec.SetField(providerchapter.FieldLastError, field.TypeString, value)
+		_node.LastError = value
+	}
+	if value, ok := _c.mutation.NextAttemptAt(); ok {
+		_spec.SetField(providerchapter.FieldNextAttemptAt, field.TypeTime, value)
+		_node.NextAttemptAt = &value
 	}
 	if nodes := _c.mutation.SeriesProviderIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{

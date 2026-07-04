@@ -145,6 +145,9 @@ var (
 		{Name: "provider_index", Type: field.TypeInt, Default: 0},
 		{Name: "page_count", Type: field.TypeInt, Nullable: true},
 		{Name: "suwayomi_chapter_id", Type: field.TypeInt, Nullable: true},
+		{Name: "attempts", Type: field.TypeInt, Default: 0},
+		{Name: "last_error", Type: field.TypeString, Default: ""},
+		{Name: "next_attempt_at", Type: field.TypeTime, Nullable: true},
 		{Name: "series_provider_id", Type: field.TypeUUID},
 	}
 	// ProviderChaptersTable holds the schema information for the "provider_chapters" table.
@@ -155,7 +158,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "provider_chapters_series_providers_provider_chapters",
-				Columns:    []*schema.Column{ProviderChaptersColumns[9]},
+				Columns:    []*schema.Column{ProviderChaptersColumns[12]},
 				RefColumns: []*schema.Column{SeriesProvidersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -164,7 +167,7 @@ var (
 			{
 				Name:    "providerchapter_series_provider_id_chapter_key",
 				Unique:  true,
-				Columns: []*schema.Column{ProviderChaptersColumns[9], ProviderChaptersColumns[1]},
+				Columns: []*schema.Column{ProviderChaptersColumns[12], ProviderChaptersColumns[1]},
 			},
 		},
 	}

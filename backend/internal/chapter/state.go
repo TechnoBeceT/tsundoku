@@ -14,11 +14,13 @@ import (
 // Each key is a source state; its value is the set of legal target states.
 // Any edge not present is illegal, including same-state self-loops (X→X).
 //
-// Legal edges (M1 controller contract):
+// Legal edges (controller contract):
 //
 //	wanted             → downloading
+//	wanted             → permanently_failed  (every source already exhausted — see below)
 //	downloading        → downloaded
 //	downloading        → failed
+//	downloading        → permanently_failed  (last live source exhausted this cycle — see below)
 //	downloaded         → upgrade_available
 //	upgrade_available  → upgrading
 //	upgrading          → downloaded      (success or failure; working copy retained)
@@ -27,21 +29,33 @@ import (
 //	failed             → wanted          (owner-retry-only — see below)
 //	permanently_failed → wanted          (owner-retry-only — the one terminal escape)
 //
+// Terminal-exhaustion edges (multi-source download engine): permanently_failed is
+// now reached ONLY when EVERY source offering a chapter has spent its per-source
+// retry budget (see chapter.AllProvidersExhausted) — never from a single
+// per-chapter counter. That exhaustion can be observed either mid-cycle from
+// downloading (the last live source just failed its final attempt) or on entry
+// from wanted/failed (all sources were already exhausted before this cycle), so
+// downloading→permanently_failed and wanted→permanently_failed are both legal.
+// failed→permanently_failed pre-existed.
+//
 // Owner-retry edges (Downloads milestone): failed→wanted and
 // permanently_failed→wanted are the only edges that target wanted, and they are
 // reachable ONLY through the owner-initiated retry action (downloads.RetryChapter
-// / RetryAll). The automatic download dispatcher NEVER targets wanted, so the
-// auto-pipeline's terminal semantics are unchanged: in normal operation a chapter
-// only reaches wanted on first discovery (ingest). permanently_failed is no longer
-// strictly terminal — it has exactly one sanctioned owner escape hatch, mirroring
-// the never-auto-delete model (a state reset is an owner action, never automatic).
+// / RetryAll, which also resets the per-source ProviderChapter retry state). The
+// automatic download dispatcher NEVER targets wanted, so the auto-pipeline's
+// terminal semantics are unchanged: in normal operation a chapter only reaches
+// wanted on first discovery (ingest). permanently_failed is no longer strictly
+// terminal — it has exactly one sanctioned owner escape hatch, mirroring the
+// never-auto-delete model (a state reset is an owner action, never automatic).
 var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	entchapter.StateWanted: {
-		entchapter.StateDownloading: {},
+		entchapter.StateDownloading:       {},
+		entchapter.StatePermanentlyFailed: {}, // all sources already exhausted on entry
 	},
 	entchapter.StateDownloading: {
-		entchapter.StateDownloaded: {},
-		entchapter.StateFailed:     {},
+		entchapter.StateDownloaded:        {},
+		entchapter.StateFailed:            {},
+		entchapter.StatePermanentlyFailed: {}, // last live source exhausted this cycle
 	},
 	entchapter.StateDownloaded: {
 		entchapter.StateUpgradeAvailable: {},

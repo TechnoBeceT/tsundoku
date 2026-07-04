@@ -133,8 +133,10 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 		return fmt.Errorf("job.Runner.RunDownloadCycle: RunOnce: %w", err)
 	}
 
-	// Step 2: detect upgrade candidates among downloaded chapters.
-	flagged, err := download.DetectUpgrades(ctx, r.client)
+	// Step 2: detect upgrade candidates among downloaded chapters. Exhausted
+	// sources are excluded using the SAME per-source retry budget the dispatcher
+	// applies, so an upgrade never targets a source that has failed out.
+	flagged, err := download.DetectUpgrades(ctx, r.client, r.dispatcher.MaxRetries(ctx))
 	if err != nil {
 		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: DetectUpgrades: %w", err)

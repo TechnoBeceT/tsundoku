@@ -64,6 +64,9 @@ const advancedOpen = ref(false)
 
 // Clamp a raw integer-field input to a non-negative integer (NaN / negatives → 0).
 const clampInt = (raw: string): number => Math.max(0, Number.parseInt(raw, 10) || 0)
+// Chapter max retries is a PER-SOURCE budget with a hard floor of 1 (a source must
+// always get at least one attempt — the backend rejects 0 with a 400).
+const clampMin1 = (raw: string): number => Math.max(1, Number.parseInt(raw, 10) || 1)
 
 function onSave() {
   if (!dirty.value || props.save.status === 'saving') return
@@ -89,8 +92,8 @@ function onSave() {
         <DurationInput v-model="lib.retryBackoff" />
       </SettingRow>
 
-      <SettingRow name="Chapter max retries" hint="Attempts before a chapter is permanently failed">
-        <TextField compact type="number" :model-value="String(lib.maxRetries)" @update:model-value="lib.maxRetries = clampInt($event)" />
+      <SettingRow name="Chapter max retries" hint="Attempts per source before that source is given up; a chapter fails only when all its sources are exhausted">
+        <TextField compact type="number" :model-value="String(lib.maxRetries)" @update:model-value="lib.maxRetries = clampMin1($event)" />
       </SettingRow>
 
       <SettingRow name="Stale-grace days" hint="Health threshold before a source counts as stale">

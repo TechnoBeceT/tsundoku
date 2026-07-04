@@ -101,6 +101,21 @@ func SuwayomiChapterID(v int) predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldEQ(FieldSuwayomiChapterID, v))
 }
 
+// Attempts applies equality check predicate on the "attempts" field. It's identical to AttemptsEQ.
+func Attempts(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldAttempts, v))
+}
+
+// LastError applies equality check predicate on the "last_error" field. It's identical to LastErrorEQ.
+func LastError(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldLastError, v))
+}
+
+// NextAttemptAt applies equality check predicate on the "next_attempt_at" field. It's identical to NextAttemptAtEQ.
+func NextAttemptAt(v time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldNextAttemptAt, v))
+}
+
 // SeriesProviderIDEQ applies the EQ predicate on the "series_provider_id" field.
 func SeriesProviderIDEQ(v uuid.UUID) predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldEQ(FieldSeriesProviderID, v))
@@ -554,6 +569,161 @@ func SuwayomiChapterIDIsNil() predicate.ProviderChapter {
 // SuwayomiChapterIDNotNil applies the NotNil predicate on the "suwayomi_chapter_id" field.
 func SuwayomiChapterIDNotNil() predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldNotNull(FieldSuwayomiChapterID))
+}
+
+// AttemptsEQ applies the EQ predicate on the "attempts" field.
+func AttemptsEQ(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldAttempts, v))
+}
+
+// AttemptsNEQ applies the NEQ predicate on the "attempts" field.
+func AttemptsNEQ(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNEQ(FieldAttempts, v))
+}
+
+// AttemptsIn applies the In predicate on the "attempts" field.
+func AttemptsIn(vs ...int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldIn(FieldAttempts, vs...))
+}
+
+// AttemptsNotIn applies the NotIn predicate on the "attempts" field.
+func AttemptsNotIn(vs ...int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNotIn(FieldAttempts, vs...))
+}
+
+// AttemptsGT applies the GT predicate on the "attempts" field.
+func AttemptsGT(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGT(FieldAttempts, v))
+}
+
+// AttemptsGTE applies the GTE predicate on the "attempts" field.
+func AttemptsGTE(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGTE(FieldAttempts, v))
+}
+
+// AttemptsLT applies the LT predicate on the "attempts" field.
+func AttemptsLT(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLT(FieldAttempts, v))
+}
+
+// AttemptsLTE applies the LTE predicate on the "attempts" field.
+func AttemptsLTE(v int) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLTE(FieldAttempts, v))
+}
+
+// LastErrorEQ applies the EQ predicate on the "last_error" field.
+func LastErrorEQ(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldLastError, v))
+}
+
+// LastErrorNEQ applies the NEQ predicate on the "last_error" field.
+func LastErrorNEQ(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNEQ(FieldLastError, v))
+}
+
+// LastErrorIn applies the In predicate on the "last_error" field.
+func LastErrorIn(vs ...string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldIn(FieldLastError, vs...))
+}
+
+// LastErrorNotIn applies the NotIn predicate on the "last_error" field.
+func LastErrorNotIn(vs ...string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNotIn(FieldLastError, vs...))
+}
+
+// LastErrorGT applies the GT predicate on the "last_error" field.
+func LastErrorGT(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGT(FieldLastError, v))
+}
+
+// LastErrorGTE applies the GTE predicate on the "last_error" field.
+func LastErrorGTE(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGTE(FieldLastError, v))
+}
+
+// LastErrorLT applies the LT predicate on the "last_error" field.
+func LastErrorLT(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLT(FieldLastError, v))
+}
+
+// LastErrorLTE applies the LTE predicate on the "last_error" field.
+func LastErrorLTE(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLTE(FieldLastError, v))
+}
+
+// LastErrorContains applies the Contains predicate on the "last_error" field.
+func LastErrorContains(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldContains(FieldLastError, v))
+}
+
+// LastErrorHasPrefix applies the HasPrefix predicate on the "last_error" field.
+func LastErrorHasPrefix(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldHasPrefix(FieldLastError, v))
+}
+
+// LastErrorHasSuffix applies the HasSuffix predicate on the "last_error" field.
+func LastErrorHasSuffix(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldHasSuffix(FieldLastError, v))
+}
+
+// LastErrorEqualFold applies the EqualFold predicate on the "last_error" field.
+func LastErrorEqualFold(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEqualFold(FieldLastError, v))
+}
+
+// LastErrorContainsFold applies the ContainsFold predicate on the "last_error" field.
+func LastErrorContainsFold(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldContainsFold(FieldLastError, v))
+}
+
+// NextAttemptAtEQ applies the EQ predicate on the "next_attempt_at" field.
+func NextAttemptAtEQ(v time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtNEQ applies the NEQ predicate on the "next_attempt_at" field.
+func NextAttemptAtNEQ(v time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNEQ(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtIn applies the In predicate on the "next_attempt_at" field.
+func NextAttemptAtIn(vs ...time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldIn(FieldNextAttemptAt, vs...))
+}
+
+// NextAttemptAtNotIn applies the NotIn predicate on the "next_attempt_at" field.
+func NextAttemptAtNotIn(vs ...time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNotIn(FieldNextAttemptAt, vs...))
+}
+
+// NextAttemptAtGT applies the GT predicate on the "next_attempt_at" field.
+func NextAttemptAtGT(v time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGT(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtGTE applies the GTE predicate on the "next_attempt_at" field.
+func NextAttemptAtGTE(v time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGTE(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtLT applies the LT predicate on the "next_attempt_at" field.
+func NextAttemptAtLT(v time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLT(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtLTE applies the LTE predicate on the "next_attempt_at" field.
+func NextAttemptAtLTE(v time.Time) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLTE(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtIsNil applies the IsNil predicate on the "next_attempt_at" field.
+func NextAttemptAtIsNil() predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldIsNull(FieldNextAttemptAt))
+}
+
+// NextAttemptAtNotNil applies the NotNil predicate on the "next_attempt_at" field.
+func NextAttemptAtNotNil() predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNotNull(FieldNextAttemptAt))
 }
 
 // HasSeriesProvider applies the HasEdge predicate on the "series_provider" edge.

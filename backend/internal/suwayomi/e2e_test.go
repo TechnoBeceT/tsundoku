@@ -984,7 +984,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 
 	// ── Step 3: Verify all chapters are in state=wanted ───────────────────────
 	t.Log("Step 3: verifying chapters are in state=wanted...")
-	wanted, err := chapter.WantedChapters(ctx, db, 100, 3)
+	wanted, err := chapter.WantedChapters(ctx, db, 100)
 	if err != nil {
 		t.Fatalf("Step 3 — WantedChapters: %v", err)
 	}

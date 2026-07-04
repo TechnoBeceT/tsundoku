@@ -14,8 +14,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
-	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
-	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 )
 
 // upgradeResult holds the artefacts produced by fetchAndRender so that
@@ -31,16 +29,24 @@ type upgradeResult struct {
 // DetectUpgrades scans all Chapter rows in state=downloaded and transitions
 // those that have a strictly better source available to state=upgrade_available.
 //
-// "Strictly better" means: the maximum importance among ProviderChapters whose
-// chapter_key matches this chapter's key within the same series is STRICTLY
-// GREATER THAN the chapter's satisfied_importance. An equal-importance provider
-// does NOT trigger an upgrade (comparison is >, not >=).
+// "Strictly better" means: the maximum importance among the LIVE sources offering
+// this chapter's key within the same series is STRICTLY GREATER THAN the chapter's
+// satisfied_importance. An equal-importance source does NOT trigger an upgrade
+// (comparison is >, not >=). A LIVE source is one that still has retry budget
+// (attempts < maxRetries) AND is past its per-source cooldown — the same predicate
+// the download path uses (chapter.RankedLiveCandidates). So a source that failed
+// out of the download path (exhausted) is never chosen as an upgrade target, and a
+// source merely on cooldown after an upgrade attempt is skipped THIS cycle but
+// re-considered once its cooldown elapses (upgrade failures never spend budget, so
+// a preferred source always recovers as an upgrade target).
 //
 // Chapters with a nil satisfied_importance are skipped with a warning — this is
-// a defensive case, because process always sets satisfied_importance on success.
+// a defensive case, because a successful download always sets satisfied_importance.
 //
-// Returns the number of chapters flagged.
-func DetectUpgrades(ctx context.Context, client *ent.Client) (int, error) {
+// Returns the number of chapters flagged. now is read once by the caller so every
+// chapter in the scan sees a consistent cooldown horizon.
+func DetectUpgrades(ctx context.Context, client *ent.Client, maxRetries int) (int, error) {
+	now := time.Now()
 	chapters, err := client.Chapter.Query().
 		Where(entchapter.StateEQ(entchapter.StateDownloaded)).
 		All(ctx)
@@ -50,7 +56,7 @@ func DetectUpgrades(ctx context.Context, client *ent.Client) (int, error) {
 
 	flagged := 0
 	for _, ch := range chapters {
-		n, err := detectUpgradeForChapter(ctx, client, ch)
+		n, err := detectUpgradeForChapter(ctx, client, ch, maxRetries, now)
 		if err != nil {
 			return flagged, err
 		}
@@ -63,9 +69,9 @@ func DetectUpgrades(ctx context.Context, client *ent.Client) (int, error) {
 // upgrade_available when a strictly higher-importance provider exists.
 // Returns 1 if flagged, 0 if skipped or unchanged, and a non-nil error only
 // for hard failures (state transition errors) that should abort the scan.
-func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Chapter) (int, error) {
+func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
 	// Defensive path: satisfied_importance should always be set for a downloaded
-	// chapter (process always writes it). Skip to avoid a nil-deref.
+	// chapter (a successful download always writes it). Skip to avoid a nil-deref.
 	if ch.SatisfiedImportance == nil {
 		slog.WarnContext(ctx, "download.DetectUpgrades: downloaded chapter has nil satisfied_importance — skipping",
 			"chapter_id", ch.ID,
@@ -74,7 +80,7 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Ch
 		return 0, nil
 	}
 
-	maxImportance, err := maxImportanceForChapter(ctx, client, ch)
+	maxImportance, err := maxImportanceForChapter(ctx, client, ch, maxRetries, now)
 	if err != nil {
 		// Log and continue — one chapter failing to scan should not abort all others.
 		slog.WarnContext(ctx, "download.DetectUpgrades: failed to query max importance for chapter — skipping",
@@ -95,36 +101,21 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Ch
 	return 1, nil
 }
 
-// maxImportanceForChapter returns the highest importance among all
-// ProviderChapters whose chapter_key matches ch's key within the same series.
-// Returns 0 if no matching ProviderChapters exist.
-func maxImportanceForChapter(ctx context.Context, client *ent.Client, ch *ent.Chapter) (int, error) {
-	pcs, err := client.ProviderChapter.Query().
-		Where(
-			entproviderchapter.ChapterKeyEQ(ch.ChapterKey),
-			entproviderchapter.HasSeriesProviderWith(
-				entseriesprovider.SeriesIDEQ(ch.SeriesID),
-			),
-		).
-		WithSeriesProvider().
-		All(ctx)
+// maxImportanceForChapter returns the highest importance among the LIVE sources
+// offering ch's chapter_key within the same series (attempts < maxRetries AND past
+// cooldown). Returns 0 if no eligible source exists. It reuses
+// chapter.RankedLiveCandidates so the "live, importance-ranked" rule is defined
+// once and is identical to the download path (§2 DRY).
+func maxImportanceForChapter(ctx context.Context, client *ent.Client, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now)
 	if err != nil {
-		return 0, fmt.Errorf("query provider chapters for key %q series %s: %w", ch.ChapterKey, ch.SeriesID, err)
+		return 0, fmt.Errorf("rank live candidates for chapter %s: %w", ch.ID, err)
 	}
-
-	max := 0
-	for _, pc := range pcs {
-		sp := pc.Edges.SeriesProvider
-		if sp == nil {
-			// Defensive path: WithSeriesProvider always loads the edge for a valid
-			// FK; a nil here means a broken FK — not reachable under normal operation.
-			continue
-		}
-		if sp.Importance > max {
-			max = sp.Importance
-		}
+	if len(cands) == 0 {
+		return 0, nil
 	}
-	return max, nil
+	// RankedLiveCandidates is importance-DESC, so the first is the highest.
+	return cands[0].SeriesProvider.Importance, nil
 }
 
 // Upgrade executes a non-destructive atomic upgrade for the given chapter.
@@ -161,11 +152,13 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 
 	res, err := d.fetchAndRender(ctx, ch, chapterID)
 	if err != nil {
-		return d.handleUpgradeFailure(ctx, ch, chapterID, err)
+		return d.handleUpgradeFailure(ctx, chapterID, res.pc, err)
 	}
 
 	if err := d.persistUpgradeSuccess(ctx, chapterID, res); err != nil {
-		return d.handleUpgradeFailure(ctx, ch, chapterID, err)
+		// A persist failure is a DB error, not the source's fault — no per-source
+		// bump (failedPC is nil).
+		return d.handleUpgradeFailure(ctx, chapterID, nil, err)
 	}
 
 	d.broadcast("download.done", DownloadEvent{
@@ -177,19 +170,33 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	return nil
 }
 
-// fetchAndRender resolves the best provider for chapterID, fetches pages,
-// and renders the new CBZ atomically. It returns an upgradeResult on success
-// or an error that should be routed to handleUpgradeFailure.
+// fetchAndRender resolves the best LIVE source for chapterID, fetches pages, and
+// renders the new CBZ atomically. It returns an upgradeResult on success, or an
+// error to route to handleUpgradeFailure. On a FETCH failure the returned result
+// carries the attempted source's pc so the caller can COOL IT DOWN (defer the next
+// try) — upgrade failures never spend retry budget, so a preferred source recovers
+// as an upgrade target once it is back. A render failure returns no pc (not the
+// source's fault, so no cooldown).
 func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID) (upgradeResult, error) {
-	pc, importance, err := chapter.BestProviderChapter(ctx, d.client, chapterID)
+	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), time.Now())
 	if err != nil {
-		return upgradeResult{}, fmt.Errorf("resolve best provider: %w", err)
+		return upgradeResult{}, fmt.Errorf("rank live candidates: %w", err)
 	}
-	sp := pc.Edges.SeriesProvider
+	if len(cands) == 0 {
+		// Defensive path: DetectUpgrades only flags a chapter when a live higher
+		// source exists, so there is normally at least one candidate here; a
+		// concurrent RemoveProvider / owner action, or a cooldown elapsing between
+		// the flag and this call, could empty it.
+		return upgradeResult{}, fmt.Errorf("no live source available for chapter %s", chapterID)
+	}
+	best := cands[0]
+	pc := best.ProviderChapter
+	sp := best.SeriesProvider
 
 	pages, err := d.f.Fetch(ctx, buildFetchRef(pc, sp))
 	if err != nil {
-		return upgradeResult{}, err
+		// Carry pc so handleUpgradeFailure bumps this source's per-source retry state.
+		return upgradeResult{pc: pc, sp: sp}, err
 	}
 
 	maxChap := maxChapterNumber(ctx, d.client, ch.SeriesID)
@@ -205,15 +212,16 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	return upgradeResult{
 		pc:          pc,
 		sp:          sp,
-		importance:  importance,
+		importance:  sp.Importance,
 		newFilename: newFilename,
 		pageCount:   pages.PageCount,
 	}, nil
 }
 
-// persistUpgradeSuccess writes the new provenance to the Chapter row and
-// transitions the state from upgrading to downloaded. Returns an error only
-// for DB failures that should be routed to handleUpgradeFailure.
+// persistUpgradeSuccess writes the new provenance to the Chapter row, resets the
+// winning source's per-source retry state, and transitions the state from
+// upgrading to downloaded. Returns an error only for DB failures that should be
+// routed to handleUpgradeFailure.
 func (d *Dispatcher) persistUpgradeSuccess(ctx context.Context, chapterID uuid.UUID, res upgradeResult) error {
 	if err := d.client.Chapter.UpdateOneID(chapterID).
 		SetSatisfiedByProviderID(res.sp.ID).
@@ -227,6 +235,17 @@ func (d *Dispatcher) persistUpgradeSuccess(ctx context.Context, chapterID uuid.U
 		// so the chapter transitions out of upgrading. A partial state (new file on
 		// disk, old DB provenance) may exist; Task 7 reconcile handles orphans.
 		return fmt.Errorf("persist provenance: %w", err)
+	}
+
+	// The winning source works: clear any per-source retry state it accrued from
+	// earlier failed upgrade attempts (parity with finishDownload's winning-source
+	// reset), so a prior transient cooldown never lingers on a now-proven source.
+	if err := d.client.ProviderChapter.UpdateOneID(res.pc.ID).
+		SetAttempts(0).
+		SetLastError("").
+		ClearNextAttemptAt().
+		Exec(ctx); err != nil {
+		return fmt.Errorf("reset winning source retry state: %w", err)
 	}
 
 	// Defensive path: reachable only on DB failure between the provenance update
@@ -274,13 +293,20 @@ func (d *Dispatcher) tryDeleteOldCBZ(ctx context.Context, chapterID uuid.UUID, c
 
 // handleUpgradeFailure is the upgrade-specific failure handler.
 //
-// Unlike handleFailure (which transitions to failed/permanently_failed and
-// increments retries), an upgrade failure MUST keep the working copy intact.
-// It transitions upgrading → downloaded (the chapter remains usable with its
-// original CBZ and provenance), records last_error, and broadcasts upgrade.fail.
-// It always returns nil so that Upgrade callers can treat upgrade failures as
-// handled outcomes, not infrastructure errors.
-func (d *Dispatcher) handleUpgradeFailure(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cause error) error {
+// Unlike a download failure, an upgrade failure MUST keep the working copy
+// intact: it transitions upgrading → downloaded (the chapter stays usable with
+// its original CBZ and provenance), records last_error, and broadcasts
+// upgrade.fail. When the failure came from a fetch attempt (failedPC non-nil) it
+// COOLS THE SOURCE DOWN (cooldownSource — defers the next upgrade try) WITHOUT
+// spending its retry budget, so a source temporarily down during upgrade attempts
+// never exhausts and always recovers as an upgrade target once it is back (the
+// "preferred source recovers → swap back" guarantee). It always returns nil so
+// callers treat upgrade failures as handled outcomes, not infrastructure errors.
+func (d *Dispatcher) handleUpgradeFailure(ctx context.Context, chapterID uuid.UUID, failedPC *ent.ProviderChapter, cause error) error {
+	if failedPC != nil {
+		d.cooldownSource(ctx, failedPC, cause, time.Now())
+	}
+
 	// Transition upgrading → downloaded (restores working state).
 	if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); setErr != nil {
 		// Defensive path: only reachable if the DB connection is lost between the
@@ -309,7 +335,5 @@ func (d *Dispatcher) handleUpgradeFailure(ctx context.Context, ch *ent.Chapter, 
 		State:     string(entchapter.StateDownloaded),
 		Error:     cause.Error(),
 	})
-
-	_ = ch // passed for symmetry with handleFailure; not used here.
 	return nil
 }

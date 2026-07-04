@@ -4398,6 +4398,10 @@ type ProviderChapterMutation struct {
 	addpage_count          *int
 	suwayomi_chapter_id    *int
 	addsuwayomi_chapter_id *int
+	attempts               *int
+	addattempts            *int
+	last_error             *string
+	next_attempt_at        *time.Time
 	clearedFields          map[string]struct{}
 	series_provider        *uuid.UUID
 	clearedseries_provider bool
@@ -4969,6 +4973,147 @@ func (m *ProviderChapterMutation) ResetSuwayomiChapterID() {
 	delete(m.clearedFields, providerchapter.FieldSuwayomiChapterID)
 }
 
+// SetAttempts sets the "attempts" field.
+func (m *ProviderChapterMutation) SetAttempts(i int) {
+	m.attempts = &i
+	m.addattempts = nil
+}
+
+// Attempts returns the value of the "attempts" field in the mutation.
+func (m *ProviderChapterMutation) Attempts() (r int, exists bool) {
+	v := m.attempts
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAttempts returns the old "attempts" field's value of the ProviderChapter entity.
+// If the ProviderChapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProviderChapterMutation) OldAttempts(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAttempts is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAttempts requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAttempts: %w", err)
+	}
+	return oldValue.Attempts, nil
+}
+
+// AddAttempts adds i to the "attempts" field.
+func (m *ProviderChapterMutation) AddAttempts(i int) {
+	if m.addattempts != nil {
+		*m.addattempts += i
+	} else {
+		m.addattempts = &i
+	}
+}
+
+// AddedAttempts returns the value that was added to the "attempts" field in this mutation.
+func (m *ProviderChapterMutation) AddedAttempts() (r int, exists bool) {
+	v := m.addattempts
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAttempts resets all changes to the "attempts" field.
+func (m *ProviderChapterMutation) ResetAttempts() {
+	m.attempts = nil
+	m.addattempts = nil
+}
+
+// SetLastError sets the "last_error" field.
+func (m *ProviderChapterMutation) SetLastError(s string) {
+	m.last_error = &s
+}
+
+// LastError returns the value of the "last_error" field in the mutation.
+func (m *ProviderChapterMutation) LastError() (r string, exists bool) {
+	v := m.last_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastError returns the old "last_error" field's value of the ProviderChapter entity.
+// If the ProviderChapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProviderChapterMutation) OldLastError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastError: %w", err)
+	}
+	return oldValue.LastError, nil
+}
+
+// ResetLastError resets all changes to the "last_error" field.
+func (m *ProviderChapterMutation) ResetLastError() {
+	m.last_error = nil
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (m *ProviderChapterMutation) SetNextAttemptAt(t time.Time) {
+	m.next_attempt_at = &t
+}
+
+// NextAttemptAt returns the value of the "next_attempt_at" field in the mutation.
+func (m *ProviderChapterMutation) NextAttemptAt() (r time.Time, exists bool) {
+	v := m.next_attempt_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNextAttemptAt returns the old "next_attempt_at" field's value of the ProviderChapter entity.
+// If the ProviderChapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProviderChapterMutation) OldNextAttemptAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNextAttemptAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNextAttemptAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNextAttemptAt: %w", err)
+	}
+	return oldValue.NextAttemptAt, nil
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (m *ProviderChapterMutation) ClearNextAttemptAt() {
+	m.next_attempt_at = nil
+	m.clearedFields[providerchapter.FieldNextAttemptAt] = struct{}{}
+}
+
+// NextAttemptAtCleared returns if the "next_attempt_at" field was cleared in this mutation.
+func (m *ProviderChapterMutation) NextAttemptAtCleared() bool {
+	_, ok := m.clearedFields[providerchapter.FieldNextAttemptAt]
+	return ok
+}
+
+// ResetNextAttemptAt resets all changes to the "next_attempt_at" field.
+func (m *ProviderChapterMutation) ResetNextAttemptAt() {
+	m.next_attempt_at = nil
+	delete(m.clearedFields, providerchapter.FieldNextAttemptAt)
+}
+
 // ClearSeriesProvider clears the "series_provider" edge to the SeriesProvider entity.
 func (m *ProviderChapterMutation) ClearSeriesProvider() {
 	m.clearedseries_provider = true
@@ -5030,7 +5175,7 @@ func (m *ProviderChapterMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProviderChapterMutation) Fields() []string {
-	fields := make([]string, 0, 9)
+	fields := make([]string, 0, 12)
 	if m.series_provider != nil {
 		fields = append(fields, providerchapter.FieldSeriesProviderID)
 	}
@@ -5058,6 +5203,15 @@ func (m *ProviderChapterMutation) Fields() []string {
 	if m.suwayomi_chapter_id != nil {
 		fields = append(fields, providerchapter.FieldSuwayomiChapterID)
 	}
+	if m.attempts != nil {
+		fields = append(fields, providerchapter.FieldAttempts)
+	}
+	if m.last_error != nil {
+		fields = append(fields, providerchapter.FieldLastError)
+	}
+	if m.next_attempt_at != nil {
+		fields = append(fields, providerchapter.FieldNextAttemptAt)
+	}
 	return fields
 }
 
@@ -5084,6 +5238,12 @@ func (m *ProviderChapterMutation) Field(name string) (ent.Value, bool) {
 		return m.PageCount()
 	case providerchapter.FieldSuwayomiChapterID:
 		return m.SuwayomiChapterID()
+	case providerchapter.FieldAttempts:
+		return m.Attempts()
+	case providerchapter.FieldLastError:
+		return m.LastError()
+	case providerchapter.FieldNextAttemptAt:
+		return m.NextAttemptAt()
 	}
 	return nil, false
 }
@@ -5111,6 +5271,12 @@ func (m *ProviderChapterMutation) OldField(ctx context.Context, name string) (en
 		return m.OldPageCount(ctx)
 	case providerchapter.FieldSuwayomiChapterID:
 		return m.OldSuwayomiChapterID(ctx)
+	case providerchapter.FieldAttempts:
+		return m.OldAttempts(ctx)
+	case providerchapter.FieldLastError:
+		return m.OldLastError(ctx)
+	case providerchapter.FieldNextAttemptAt:
+		return m.OldNextAttemptAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown ProviderChapter field %s", name)
 }
@@ -5183,6 +5349,27 @@ func (m *ProviderChapterMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetSuwayomiChapterID(v)
 		return nil
+	case providerchapter.FieldAttempts:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAttempts(v)
+		return nil
+	case providerchapter.FieldLastError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastError(v)
+		return nil
+	case providerchapter.FieldNextAttemptAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNextAttemptAt(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter field %s", name)
 }
@@ -5203,6 +5390,9 @@ func (m *ProviderChapterMutation) AddedFields() []string {
 	if m.addsuwayomi_chapter_id != nil {
 		fields = append(fields, providerchapter.FieldSuwayomiChapterID)
 	}
+	if m.addattempts != nil {
+		fields = append(fields, providerchapter.FieldAttempts)
+	}
 	return fields
 }
 
@@ -5219,6 +5409,8 @@ func (m *ProviderChapterMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedPageCount()
 	case providerchapter.FieldSuwayomiChapterID:
 		return m.AddedSuwayomiChapterID()
+	case providerchapter.FieldAttempts:
+		return m.AddedAttempts()
 	}
 	return nil, false
 }
@@ -5256,6 +5448,13 @@ func (m *ProviderChapterMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddSuwayomiChapterID(v)
 		return nil
+	case providerchapter.FieldAttempts:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAttempts(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter numeric field %s", name)
 }
@@ -5275,6 +5474,9 @@ func (m *ProviderChapterMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(providerchapter.FieldSuwayomiChapterID) {
 		fields = append(fields, providerchapter.FieldSuwayomiChapterID)
+	}
+	if m.FieldCleared(providerchapter.FieldNextAttemptAt) {
+		fields = append(fields, providerchapter.FieldNextAttemptAt)
 	}
 	return fields
 }
@@ -5301,6 +5503,9 @@ func (m *ProviderChapterMutation) ClearField(name string) error {
 		return nil
 	case providerchapter.FieldSuwayomiChapterID:
 		m.ClearSuwayomiChapterID()
+		return nil
+	case providerchapter.FieldNextAttemptAt:
+		m.ClearNextAttemptAt()
 		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter nullable field %s", name)
@@ -5336,6 +5541,15 @@ func (m *ProviderChapterMutation) ResetField(name string) error {
 		return nil
 	case providerchapter.FieldSuwayomiChapterID:
 		m.ResetSuwayomiChapterID()
+		return nil
+	case providerchapter.FieldAttempts:
+		m.ResetAttempts()
+		return nil
+	case providerchapter.FieldLastError:
+		m.ResetLastError()
+		return nil
+	case providerchapter.FieldNextAttemptAt:
+		m.ResetNextAttemptAt()
 		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter field %s", name)

@@ -65,7 +65,7 @@ export interface LibrarySettings {
   downloadInterval: DurationValue
   /** Wait before retrying a failed chapter. */
   retryBackoff: DurationValue
-  /** Attempts before a chapter is permanently failed. */
+  /** Attempts per source before that source is abandoned; a chapter fails only when all its sources are exhausted. */
   maxRetries: number
   /** Health threshold (days) before a source counts as stale. */
   staleGraceDays: number

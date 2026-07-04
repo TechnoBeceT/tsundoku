@@ -37,6 +37,12 @@ type ProviderChapter struct {
 	PageCount *int `json:"page_count,omitempty"`
 	// SuwayomiChapterID holds the value of the "suwayomi_chapter_id" field.
 	SuwayomiChapterID int `json:"suwayomi_chapter_id,omitempty"`
+	// Attempts holds the value of the "attempts" field.
+	Attempts int `json:"attempts,omitempty"`
+	// LastError holds the value of the "last_error" field.
+	LastError string `json:"last_error,omitempty"`
+	// NextAttemptAt holds the value of the "next_attempt_at" field.
+	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ProviderChapterQuery when eager-loading is set.
 	Edges        ProviderChapterEdges `json:"edges"`
@@ -70,11 +76,11 @@ func (*ProviderChapter) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case providerchapter.FieldNumber:
 			values[i] = new(sql.NullFloat64)
-		case providerchapter.FieldProviderIndex, providerchapter.FieldPageCount, providerchapter.FieldSuwayomiChapterID:
+		case providerchapter.FieldProviderIndex, providerchapter.FieldPageCount, providerchapter.FieldSuwayomiChapterID, providerchapter.FieldAttempts:
 			values[i] = new(sql.NullInt64)
-		case providerchapter.FieldChapterKey, providerchapter.FieldName, providerchapter.FieldURL:
+		case providerchapter.FieldChapterKey, providerchapter.FieldName, providerchapter.FieldURL, providerchapter.FieldLastError:
 			values[i] = new(sql.NullString)
-		case providerchapter.FieldProviderUploadDate:
+		case providerchapter.FieldProviderUploadDate, providerchapter.FieldNextAttemptAt:
 			values[i] = new(sql.NullTime)
 		case providerchapter.FieldID, providerchapter.FieldSeriesProviderID:
 			values[i] = new(uuid.UUID)
@@ -156,6 +162,25 @@ func (_m *ProviderChapter) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.SuwayomiChapterID = int(value.Int64)
 			}
+		case providerchapter.FieldAttempts:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field attempts", values[i])
+			} else if value.Valid {
+				_m.Attempts = int(value.Int64)
+			}
+		case providerchapter.FieldLastError:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field last_error", values[i])
+			} else if value.Valid {
+				_m.LastError = value.String
+			}
+		case providerchapter.FieldNextAttemptAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field next_attempt_at", values[i])
+			} else if value.Valid {
+				_m.NextAttemptAt = new(time.Time)
+				*_m.NextAttemptAt = value.Time
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -229,6 +254,17 @@ func (_m *ProviderChapter) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("suwayomi_chapter_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.SuwayomiChapterID))
+	builder.WriteString(", ")
+	builder.WriteString("attempts=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Attempts))
+	builder.WriteString(", ")
+	builder.WriteString("last_error=")
+	builder.WriteString(_m.LastError)
+	builder.WriteString(", ")
+	if v := _m.NextAttemptAt; v != nil {
+		builder.WriteString("next_attempt_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteByte(')')
 	return builder.String()
 }

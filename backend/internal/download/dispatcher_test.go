@@ -21,6 +21,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/settings"
@@ -156,7 +157,8 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: 0})
 
-	// First run: should fail.
+	// First run: should fail. The per-source retry counter lives on the
+	// ProviderChapter now (NOT the Chapter), so assert attempts there.
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("first RunOnce: %v", err)
 	}
@@ -164,18 +166,19 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 	if after1.State != entchapter.StateFailed {
 		t.Errorf("after first run: want failed, got %s", after1.State)
 	}
-	if after1.Retries != 1 {
-		t.Errorf("after first run: want retries=1, got %d", after1.Retries)
-	}
 	if after1.LastError == "" {
 		t.Error("after first run: last_error should be set")
 	}
+	pc1 := providerChapterFor(ctx, t, client, "ch-retry")
+	if pc1.Attempts != 1 {
+		t.Errorf("after first run: want source attempts=1, got %d", pc1.Attempts)
+	}
+	if pc1.LastError == "" {
+		t.Error("after first run: source last_error should be set")
+	}
 
-	// Reset next_attempt_at so the second run processes the chapter.
-	past := time.Now().Add(-1 * time.Hour)
-	client.Chapter.UpdateOneID(ch.ID).SetNextAttemptAt(past).ExecX(ctx)
-
-	// Second run: should succeed.
+	// The dispatcher uses Backoff:0, so the source's next_attempt_at is already
+	// past — the second run re-selects it as a live candidate without any nudging.
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("second RunOnce: %v", err)
 	}
@@ -183,6 +186,24 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 	if after2.State != entchapter.StateDownloaded {
 		t.Errorf("after second run: want downloaded, got %s", after2.State)
 	}
+	// A successful source has its per-source retry state reset.
+	pc2 := providerChapterFor(ctx, t, client, "ch-retry")
+	if pc2.Attempts != 0 {
+		t.Errorf("after success: want source attempts reset to 0, got %d", pc2.Attempts)
+	}
+}
+
+// providerChapterFor loads the single ProviderChapter with the given chapter key
+// in the test DB (each dispatcher test seeds distinct keys).
+func providerChapterFor(ctx context.Context, t *testing.T, client *ent.Client, key string) *ent.ProviderChapter {
+	t.Helper()
+	pc, err := client.ProviderChapter.Query().
+		Where(entproviderchapter.ChapterKeyEQ(key)).
+		Only(ctx)
+	if err != nil {
+		t.Fatalf("load provider chapter %q: %v", key, err)
+	}
+	return pc
 }
 
 // TestDispatcher_PermanentFailure verifies that a chapter that exhausts its

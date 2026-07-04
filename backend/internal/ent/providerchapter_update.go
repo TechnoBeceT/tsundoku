@@ -208,6 +208,61 @@ func (_u *ProviderChapterUpdate) ClearSuwayomiChapterID() *ProviderChapterUpdate
 	return _u
 }
 
+// SetAttempts sets the "attempts" field.
+func (_u *ProviderChapterUpdate) SetAttempts(v int) *ProviderChapterUpdate {
+	_u.mutation.ResetAttempts()
+	_u.mutation.SetAttempts(v)
+	return _u
+}
+
+// SetNillableAttempts sets the "attempts" field if the given value is not nil.
+func (_u *ProviderChapterUpdate) SetNillableAttempts(v *int) *ProviderChapterUpdate {
+	if v != nil {
+		_u.SetAttempts(*v)
+	}
+	return _u
+}
+
+// AddAttempts adds value to the "attempts" field.
+func (_u *ProviderChapterUpdate) AddAttempts(v int) *ProviderChapterUpdate {
+	_u.mutation.AddAttempts(v)
+	return _u
+}
+
+// SetLastError sets the "last_error" field.
+func (_u *ProviderChapterUpdate) SetLastError(v string) *ProviderChapterUpdate {
+	_u.mutation.SetLastError(v)
+	return _u
+}
+
+// SetNillableLastError sets the "last_error" field if the given value is not nil.
+func (_u *ProviderChapterUpdate) SetNillableLastError(v *string) *ProviderChapterUpdate {
+	if v != nil {
+		_u.SetLastError(*v)
+	}
+	return _u
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (_u *ProviderChapterUpdate) SetNextAttemptAt(v time.Time) *ProviderChapterUpdate {
+	_u.mutation.SetNextAttemptAt(v)
+	return _u
+}
+
+// SetNillableNextAttemptAt sets the "next_attempt_at" field if the given value is not nil.
+func (_u *ProviderChapterUpdate) SetNillableNextAttemptAt(v *time.Time) *ProviderChapterUpdate {
+	if v != nil {
+		_u.SetNextAttemptAt(*v)
+	}
+	return _u
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (_u *ProviderChapterUpdate) ClearNextAttemptAt() *ProviderChapterUpdate {
+	_u.mutation.ClearNextAttemptAt()
+	return _u
+}
+
 // SetSeriesProvider sets the "series_provider" edge to the SeriesProvider entity.
 func (_u *ProviderChapterUpdate) SetSeriesProvider(v *SeriesProvider) *ProviderChapterUpdate {
 	return _u.SetSeriesProviderID(v.ID)
@@ -318,6 +373,21 @@ func (_u *ProviderChapterUpdate) sqlSave(ctx context.Context) (_node int, err er
 	}
 	if _u.mutation.SuwayomiChapterIDCleared() {
 		_spec.ClearField(providerchapter.FieldSuwayomiChapterID, field.TypeInt)
+	}
+	if value, ok := _u.mutation.Attempts(); ok {
+		_spec.SetField(providerchapter.FieldAttempts, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAttempts(); ok {
+		_spec.AddField(providerchapter.FieldAttempts, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.LastError(); ok {
+		_spec.SetField(providerchapter.FieldLastError, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.NextAttemptAt(); ok {
+		_spec.SetField(providerchapter.FieldNextAttemptAt, field.TypeTime, value)
+	}
+	if _u.mutation.NextAttemptAtCleared() {
+		_spec.ClearField(providerchapter.FieldNextAttemptAt, field.TypeTime)
 	}
 	if _u.mutation.SeriesProviderCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -546,6 +616,61 @@ func (_u *ProviderChapterUpdateOne) ClearSuwayomiChapterID() *ProviderChapterUpd
 	return _u
 }
 
+// SetAttempts sets the "attempts" field.
+func (_u *ProviderChapterUpdateOne) SetAttempts(v int) *ProviderChapterUpdateOne {
+	_u.mutation.ResetAttempts()
+	_u.mutation.SetAttempts(v)
+	return _u
+}
+
+// SetNillableAttempts sets the "attempts" field if the given value is not nil.
+func (_u *ProviderChapterUpdateOne) SetNillableAttempts(v *int) *ProviderChapterUpdateOne {
+	if v != nil {
+		_u.SetAttempts(*v)
+	}
+	return _u
+}
+
+// AddAttempts adds value to the "attempts" field.
+func (_u *ProviderChapterUpdateOne) AddAttempts(v int) *ProviderChapterUpdateOne {
+	_u.mutation.AddAttempts(v)
+	return _u
+}
+
+// SetLastError sets the "last_error" field.
+func (_u *ProviderChapterUpdateOne) SetLastError(v string) *ProviderChapterUpdateOne {
+	_u.mutation.SetLastError(v)
+	return _u
+}
+
+// SetNillableLastError sets the "last_error" field if the given value is not nil.
+func (_u *ProviderChapterUpdateOne) SetNillableLastError(v *string) *ProviderChapterUpdateOne {
+	if v != nil {
+		_u.SetLastError(*v)
+	}
+	return _u
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (_u *ProviderChapterUpdateOne) SetNextAttemptAt(v time.Time) *ProviderChapterUpdateOne {
+	_u.mutation.SetNextAttemptAt(v)
+	return _u
+}
+
+// SetNillableNextAttemptAt sets the "next_attempt_at" field if the given value is not nil.
+func (_u *ProviderChapterUpdateOne) SetNillableNextAttemptAt(v *time.Time) *ProviderChapterUpdateOne {
+	if v != nil {
+		_u.SetNextAttemptAt(*v)
+	}
+	return _u
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (_u *ProviderChapterUpdateOne) ClearNextAttemptAt() *ProviderChapterUpdateOne {
+	_u.mutation.ClearNextAttemptAt()
+	return _u
+}
+
 // SetSeriesProvider sets the "series_provider" edge to the SeriesProvider entity.
 func (_u *ProviderChapterUpdateOne) SetSeriesProvider(v *SeriesProvider) *ProviderChapterUpdateOne {
 	return _u.SetSeriesProviderID(v.ID)
@@ -686,6 +811,21 @@ func (_u *ProviderChapterUpdateOne) sqlSave(ctx context.Context) (_node *Provide
 	}
 	if _u.mutation.SuwayomiChapterIDCleared() {
 		_spec.ClearField(providerchapter.FieldSuwayomiChapterID, field.TypeInt)
+	}
+	if value, ok := _u.mutation.Attempts(); ok {
+		_spec.SetField(providerchapter.FieldAttempts, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAttempts(); ok {
+		_spec.AddField(providerchapter.FieldAttempts, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.LastError(); ok {
+		_spec.SetField(providerchapter.FieldLastError, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.NextAttemptAt(); ok {
+		_spec.SetField(providerchapter.FieldNextAttemptAt, field.TypeTime, value)
+	}
+	if _u.mutation.NextAttemptAtCleared() {
+		_spec.ClearField(providerchapter.FieldNextAttemptAt, field.TypeTime)
 	}
 	if _u.mutation.SeriesProviderCleared() {
 		edge := &sqlgraph.EdgeSpec{

@@ -233,7 +233,7 @@ func TestAddProvider_ScanlatorAware(t *testing.T) {
 // strictly-higher-importance provider's feed covers the same chapter keys.
 func assertUpgradesFlagged(t *testing.T, ctx context.Context, client *ent.Client, want int) {
 	t.Helper()
-	n, err := download.DetectUpgrades(ctx, client)
+	n, err := download.DetectUpgrades(ctx, client, 3)
 	if err != nil {
 		t.Fatal(err)
 	}

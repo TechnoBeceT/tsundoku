@@ -432,3 +432,59 @@ func TestRetryAllExplicitState(t *testing.T) {
 		t.Error("permanently_failed must be untouched when state=failed only")
 	}
 }
+
+// seedExhaustedSource creates a series with a failed chapter whose single source
+// has spent per-source retry state (attempts + last_error + a future cooldown), so
+// a retry-reset test can assert the ProviderChapter row is reset too. Returns the
+// chapter id and the ProviderChapter id.
+func seedExhaustedSource(ctx context.Context, t *testing.T, client *ent.Client) (chID, pcID uuid.UUID) {
+	t.Helper()
+	s := client.Series.Create().SetTitle("Exhausted").SetSlug("exhausted-src").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeriesID(s.ID).SetProvider("only").SetImportance(10).SaveX(ctx)
+	pc := client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).SetChapterKey("x-1").SetProviderIndex(0).
+		SetAttempts(3).SetLastError("boom").SetNextAttemptAt(time.Now().Add(time.Hour)).
+		SaveX(ctx)
+	ch := client.Chapter.Create().
+		SetSeriesID(s.ID).SetChapterKey("x-1").SetNumber(1).
+		SetState(entchapter.StatePermanentlyFailed).SaveX(ctx)
+	return ch.ID, pc.ID
+}
+
+// TestRetryChapterResetsProviderSources verifies that RetryChapter resets the
+// per-source retry state on the chapter's ProviderChapter rows (attempts→0,
+// last_error→"", next_attempt_at→null), giving every source a fresh budget — not
+// just the Chapter row.
+func TestRetryChapterResetsProviderSources(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	chID, pcID := seedExhaustedSource(ctx, t, client)
+	svc := downloads.NewService(client)
+
+	if err := svc.RetryChapter(ctx, chID); err != nil {
+		t.Fatalf("RetryChapter: %v", err)
+	}
+	pc := client.ProviderChapter.GetX(ctx, pcID)
+	if pc.Attempts != 0 || pc.LastError != "" || pc.NextAttemptAt != nil {
+		t.Errorf("source retry state not reset: attempts=%d lastErr=%q next=%v",
+			pc.Attempts, pc.LastError, pc.NextAttemptAt)
+	}
+}
+
+// TestRetryAllResetsProviderSources verifies the same per-source reset for the
+// bulk RetryAll path.
+func TestRetryAllResetsProviderSources(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	_, pcID := seedExhaustedSource(ctx, t, client)
+	svc := downloads.NewService(client)
+
+	if _, err := svc.RetryAll(ctx, downloads.RetryAllFilter{}); err != nil {
+		t.Fatalf("RetryAll: %v", err)
+	}
+	pc := client.ProviderChapter.GetX(ctx, pcID)
+	if pc.Attempts != 0 || pc.LastError != "" || pc.NextAttemptAt != nil {
+		t.Errorf("source retry state not reset by RetryAll: attempts=%d lastErr=%q next=%v",
+			pc.Attempts, pc.LastError, pc.NextAttemptAt)
+	}
+}

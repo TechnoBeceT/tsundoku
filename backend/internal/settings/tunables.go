@@ -48,7 +48,13 @@ const (
 	KeyRefreshInterval = "jobs.refresh_interval"
 	// KeyRefreshConcurrency bounds parallel provider re-fetches (int, 1..32).
 	KeyRefreshConcurrency = "jobs.refresh_concurrency"
-	// KeyMaxRetries is the failed-download retry budget (int, 0..20).
+	// KeyMaxRetries is the PER-SOURCE download retry budget (int, 1..20): how many
+	// times a chapter is retried from ONE source before that source is abandoned
+	// for it. A chapter is only permanently_failed once EVERY source that offers it
+	// has been abandoned — this is not a global per-chapter counter. The lower bound
+	// is 1 (NOT 0): with the attempts>=maxRetries exhaustion rule, a max of 0 would
+	// make every fresh source exhausted before any fetch, driving the whole library
+	// straight to permanently_failed — so a source must always get at least one try.
 	KeyMaxRetries = "jobs.max_retries"
 	// KeyRetryBackoff is the base retry backoff delay (duration, >= 1s).
 	KeyRetryBackoff = "jobs.retry_backoff"
@@ -115,7 +121,7 @@ var tunables = map[string]tunable{
 		func(d Defaults) int { return d.RefreshConcurrency },
 	),
 	KeyMaxRetries: intTunable(
-		KeyMaxRetries, "count", 0, 20,
+		KeyMaxRetries, "count", 1, 20,
 		func(d Defaults) int { return d.MaxRetries },
 	),
 	KeyRetryBackoff: durationTunable(

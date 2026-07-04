@@ -31,6 +31,12 @@ const (
 	FieldPageCount = "page_count"
 	// FieldSuwayomiChapterID holds the string denoting the suwayomi_chapter_id field in the database.
 	FieldSuwayomiChapterID = "suwayomi_chapter_id"
+	// FieldAttempts holds the string denoting the attempts field in the database.
+	FieldAttempts = "attempts"
+	// FieldLastError holds the string denoting the last_error field in the database.
+	FieldLastError = "last_error"
+	// FieldNextAttemptAt holds the string denoting the next_attempt_at field in the database.
+	FieldNextAttemptAt = "next_attempt_at"
 	// EdgeSeriesProvider holds the string denoting the series_provider edge name in mutations.
 	EdgeSeriesProvider = "series_provider"
 	// Table holds the table name of the providerchapter in the database.
@@ -56,6 +62,9 @@ var Columns = []string{
 	FieldProviderIndex,
 	FieldPageCount,
 	FieldSuwayomiChapterID,
+	FieldAttempts,
+	FieldLastError,
+	FieldNextAttemptAt,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -75,6 +84,10 @@ var (
 	DefaultURL string
 	// DefaultProviderIndex holds the default value on creation for the "provider_index" field.
 	DefaultProviderIndex int
+	// DefaultAttempts holds the default value on creation for the "attempts" field.
+	DefaultAttempts int
+	// DefaultLastError holds the default value on creation for the "last_error" field.
+	DefaultLastError string
 	// DefaultID holds the default value on creation for the "id" field.
 	DefaultID func() uuid.UUID
 )
@@ -130,6 +143,21 @@ func ByPageCount(opts ...sql.OrderTermOption) OrderOption {
 // BySuwayomiChapterID orders the results by the suwayomi_chapter_id field.
 func BySuwayomiChapterID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSuwayomiChapterID, opts...).ToFunc()
+}
+
+// ByAttempts orders the results by the attempts field.
+func ByAttempts(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAttempts, opts...).ToFunc()
+}
+
+// ByLastError orders the results by the last_error field.
+func ByLastError(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLastError, opts...).ToFunc()
+}
+
+// ByNextAttemptAt orders the results by the next_attempt_at field.
+func ByNextAttemptAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNextAttemptAt, opts...).ToFunc()
 }
 
 // BySeriesProviderField orders the results by series_provider field.

@@ -163,6 +163,14 @@ func init() {
 	providerchapterDescProviderIndex := providerchapterFields[7].Descriptor()
 	// providerchapter.DefaultProviderIndex holds the default value on creation for the provider_index field.
 	providerchapter.DefaultProviderIndex = providerchapterDescProviderIndex.Default.(int)
+	// providerchapterDescAttempts is the schema descriptor for attempts field.
+	providerchapterDescAttempts := providerchapterFields[10].Descriptor()
+	// providerchapter.DefaultAttempts holds the default value on creation for the attempts field.
+	providerchapter.DefaultAttempts = providerchapterDescAttempts.Default.(int)
+	// providerchapterDescLastError is the schema descriptor for last_error field.
+	providerchapterDescLastError := providerchapterFields[11].Descriptor()
+	// providerchapter.DefaultLastError holds the default value on creation for the last_error field.
+	providerchapter.DefaultLastError = providerchapterDescLastError.Default.(string)
 	// providerchapterDescID is the schema descriptor for id field.
 	providerchapterDescID := providerchapterFields[0].Descriptor()
 	// providerchapter.DefaultID holds the default value on creation for the id field.

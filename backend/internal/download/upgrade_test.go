@@ -137,7 +137,7 @@ func TestUpgrade_SwapsFile(t *testing.T) {
 		SetSeriesProviderID(spHigh.ID).SetChapterKey("ch-upg").
 		SetURL("https://high.example.com/ch-upg").SetProviderIndex(0).SaveX(ctx)
 
-	n, err := download.DetectUpgrades(ctx, client)
+	n, err := download.DetectUpgrades(ctx, client, 3)
 	if err != nil {
 		t.Fatalf("DetectUpgrades: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestUpgrade_ScanlatorChangeReplacesFile(t *testing.T) {
 		SetSeriesProviderID(spAlpha.ID).SetChapterKey("ch-scan").
 		SetURL("https://alpha.example.com/ch-scan").SetProviderIndex(0).SaveX(ctx)
 
-	n, err := download.DetectUpgrades(ctx, client)
+	n, err := download.DetectUpgrades(ctx, client, 3)
 	if err != nil {
 		t.Fatalf("DetectUpgrades: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestUpgrade_NonOtherCategoryUsesRealFolder(t *testing.T) {
 	client.ProviderChapter.Create().
 		SetSeriesProviderID(spHigh.ID).SetChapterKey("ch-manhwa").
 		SetURL("https://high.example.com/ch-manhwa").SetProviderIndex(0).SaveX(ctx)
-	if _, err := download.DetectUpgrades(ctx, client); err != nil {
+	if _, err := download.DetectUpgrades(ctx, client, 3); err != nil {
 		t.Fatalf("DetectUpgrades: %v", err)
 	}
 	if err := d.Upgrade(ctx, ch.ID); err != nil {
@@ -381,7 +381,7 @@ func TestUpgrade_NonDestructiveOnFailure(t *testing.T) {
 		SetSeriesProviderID(spHigh.ID).SetChapterKey("ch-fail").
 		SetURL("https://high.example.com/ch-fail").SetProviderIndex(0).SaveX(ctx)
 
-	if _, err := download.DetectUpgrades(ctx, client); err != nil {
+	if _, err := download.DetectUpgrades(ctx, client, 3); err != nil {
 		t.Fatalf("DetectUpgrades: %v", err)
 	}
 
@@ -441,7 +441,7 @@ func TestDetectUpgrades_StrictlyGreater(t *testing.T) {
 		SetSeriesProviderID(spB.ID).SetChapterKey("ch-strict").
 		SetURL("https://b.example.com/ch-strict").SetProviderIndex(0).SaveX(ctx)
 
-	n, err := download.DetectUpgrades(ctx, client)
+	n, err := download.DetectUpgrades(ctx, client, 3)
 	if err != nil {
 		t.Fatalf("DetectUpgrades (equal-importance case): %v", err)
 	}
@@ -460,7 +460,7 @@ func TestDetectUpgrades_StrictlyGreater(t *testing.T) {
 		SetSeriesProviderID(spC.ID).SetChapterKey("ch-strict").
 		SetURL("https://c.example.com/ch-strict").SetProviderIndex(0).SaveX(ctx)
 
-	n, err = download.DetectUpgrades(ctx, client)
+	n, err = download.DetectUpgrades(ctx, client, 3)
 	if err != nil {
 		t.Fatalf("DetectUpgrades (strictly-higher case): %v", err)
 	}
@@ -501,7 +501,7 @@ func TestUpgrade_SSEEvents(t *testing.T) {
 	client.ProviderChapter.Create().
 		SetSeriesProviderID(spHigh.ID).SetChapterKey("ch-sse-upg").
 		SetURL("https://high.example.com/ch-sse-upg").SetProviderIndex(0).SaveX(ctx)
-	if _, err := download.DetectUpgrades(ctx, client); err != nil {
+	if _, err := download.DetectUpgrades(ctx, client, 3); err != nil {
 		t.Fatalf("DetectUpgrades: %v", err)
 	}
 
