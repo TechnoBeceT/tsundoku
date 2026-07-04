@@ -39,6 +39,12 @@ type ingestStubClient struct {
 	mangaMeta suwayomi.Manga
 	// mangaMetaErr is the error returned by MangaMeta (nil = success).
 	mangaMetaErr error
+	// sources is the source list returned by Sources (used by ingest to resolve
+	// each provider's human-readable name). nil = empty list, resolving to "".
+	sources []suwayomi.Source
+	// sourcesErr is the error returned by Sources (nil = success). A non-nil
+	// error must be non-fatal to ingest (provider_name stays "").
+	sourcesErr error
 }
 
 func (s *ingestStubClient) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
@@ -57,10 +63,14 @@ func (s *ingestStubClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, 
 	return s.mangaMeta, s.mangaMetaErr
 }
 
-// Ingest must never call these methods; panic loudly if reached.
+// Sources returns the configured source list so ingest can resolve each
+// provider's display name. Returns the stub error unchanged so tests can drive
+// the non-fatal-error path (provider_name must stay "" when Sources fails).
 func (s *ingestStubClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
-	panic("ingestStubClient.Sources: must not be called by Ingest")
+	return s.sources, s.sourcesErr
 }
+
+// Ingest must never call these methods; panic loudly if reached.
 func (s *ingestStubClient) FetchMangaDetails(_ context.Context, _ int) (suwayomi.Manga, error) {
 	panic("ingestStubClient.FetchMangaDetails: must not be called by Ingest")
 }
@@ -552,10 +562,11 @@ type metaClientStub struct {
 	chaptersErr  error
 	mangaMeta    suwayomi.Manga
 	mangaMetaErr error
+	sources      []suwayomi.Source
 }
 
 func (s *metaClientStub) Sources(_ context.Context) ([]suwayomi.Source, error) {
-	panic("metaClientStub: Sources must not be called by Ingest")
+	return s.sources, nil
 }
 func (s *metaClientStub) FetchMangaDetails(_ context.Context, _ int) (suwayomi.Manga, error) {
 	panic("metaClientStub: FetchMangaDetails must not be called by Ingest")
@@ -666,6 +677,98 @@ func TestIngest_AddSeries_PerSourceMetadata(t *testing.T) {
 	if sp.CoverURL != sourceCover {
 		t.Errorf("SeriesProvider.CoverURL: got %q, want %q",
 			sp.CoverURL, sourceCover)
+	}
+}
+
+// TestIngest_AddSeries_ProviderName verifies that AddSeries resolves the
+// source's human-readable display name from client.Sources() and stores it in
+// SeriesProvider.provider_name on BOTH the create and the update path, keyed by
+// matching the numeric source id (stored in provider) against Source.ID. This is
+// what lets the UI show "WebToon" instead of the raw numeric id.
+func TestIngest_AddSeries_ProviderName(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID    = 314
+		mangaTitle = "Named Source Manga"
+		// sourceID is the numeric Suwayomi source id — the value stored in
+		// SeriesProvider.provider, and the key ingest matches against Source.ID.
+		sourceID   = "7537715367149829912"
+		sourceName = "WebToon"
+	)
+
+	sc := &ingestStubClient{
+		chapters:  makeChapters(1),
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
+		sources: []suwayomi.Source{
+			{ID: "999", Name: "Other Source"},
+			{ID: sourceID, Name: sourceName},
+		},
+	}
+	ing := suwayomi.NewIngest(sc, client)
+
+	// ── Create path: display name must be resolved and stored ────────────────
+	if _, err := ing.AddSeries(ctx, sourceID, mangaID, mangaTitle, ""); err != nil {
+		t.Fatalf("first AddSeries: %v", err)
+	}
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Provider != sourceID {
+		t.Errorf("SeriesProvider.Provider: got %q, want %q (numeric id)", sp.Provider, sourceID)
+	}
+	if sp.ProviderName != sourceName {
+		t.Errorf("SeriesProvider.ProviderName after create: got %q, want %q", sp.ProviderName, sourceName)
+	}
+
+	// ── Update path: a renamed source must refresh provider_name on re-add ────
+	sc.sources = []suwayomi.Source{{ID: sourceID, Name: "WebToon (renamed)"}}
+	if _, err := ing.AddSeries(ctx, sourceID, mangaID, mangaTitle, ""); err != nil {
+		t.Fatalf("second AddSeries: %v", err)
+	}
+	sp = client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.ProviderName != "WebToon (renamed)" {
+		t.Errorf("SeriesProvider.ProviderName after update: got %q, want %q", sp.ProviderName, "WebToon (renamed)")
+	}
+	if n := len(client.SeriesProvider.Query().AllX(ctx)); n != 1 {
+		t.Errorf("SeriesProvider count: got %d, want 1 (idempotent)", n)
+	}
+}
+
+// TestIngest_AddSeries_ProviderNameUnresolved verifies the non-fatal fallback:
+// when the source id is absent from client.Sources() OR Sources() errors,
+// AddSeries still succeeds and stores an empty provider_name (the DTO layer then
+// falls back to the numeric id). A missing display name must never fail ingest.
+func TestIngest_AddSeries_ProviderNameUnresolved(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name    string
+		sources []suwayomi.Source
+		srcErr  error
+	}{
+		{name: "id absent from list", sources: []suwayomi.Source{{ID: "other", Name: "Nope"}}},
+		{name: "sources error", srcErr: errors.New("suwayomi: sources unavailable")},
+		{name: "empty source list", sources: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := testdb.New(t)
+			sc := &ingestStubClient{
+				chapters:   makeChapters(1),
+				mangaMeta:  suwayomi.Manga{Title: "Unresolved Manga"},
+				sources:    tc.sources,
+				sourcesErr: tc.srcErr,
+			}
+			ing := suwayomi.NewIngest(sc, client)
+
+			if _, err := ing.AddSeries(ctx, "12345", 7, "Unresolved Manga", ""); err != nil {
+				t.Fatalf("AddSeries must not fail on unresolved provider name: %v", err)
+			}
+			sp := client.SeriesProvider.Query().OnlyX(ctx)
+			if sp.ProviderName != "" {
+				t.Errorf("SeriesProvider.ProviderName: got %q, want \"\" (unresolved fallback)", sp.ProviderName)
+			}
+		})
 	}
 }
 

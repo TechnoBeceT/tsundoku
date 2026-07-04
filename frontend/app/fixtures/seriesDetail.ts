@@ -98,7 +98,8 @@ const chapters: Chapter[] = [
 const providers: Provider[] = [
   {
     id: 'prov-1111',
-    provider: 'mangadex',
+    provider: '2499283573021220255',
+    providerName: 'MangaDex',
     scanlator: 'Flame Scans',
     language: 'en',
     importance: 30,
@@ -110,7 +111,8 @@ const providers: Provider[] = [
   },
   {
     id: 'prov-2222',
-    provider: 'asurascans',
+    provider: '2528143451863530665',
+    providerName: 'Asura Scans',
     scanlator: '',
     language: 'en',
     importance: 20,
@@ -122,7 +124,8 @@ const providers: Provider[] = [
   },
   {
     id: 'prov-3333',
-    provider: 'reaperscans',
+    provider: '5183473065805179973',
+    providerName: 'Reaper Scans',
     scanlator: 'Reaper',
     language: 'ko',
     importance: 10,

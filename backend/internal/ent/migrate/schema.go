@@ -202,6 +202,7 @@ var (
 		{Name: "id", Type: field.TypeUUID, Unique: true},
 		{Name: "suwayomi_id", Type: field.TypeInt, Nullable: true},
 		{Name: "provider", Type: field.TypeString},
+		{Name: "provider_name", Type: field.TypeString, Nullable: true, Default: ""},
 		{Name: "scanlator", Type: field.TypeString, Default: ""},
 		{Name: "language", Type: field.TypeString, Default: ""},
 		{Name: "url", Type: field.TypeString, Default: ""},
@@ -223,7 +224,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "series_providers_series_providers",
-				Columns:    []*schema.Column{SeriesProvidersColumns[14]},
+				Columns:    []*schema.Column{SeriesProvidersColumns[15]},
 				RefColumns: []*schema.Column{SeriesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},

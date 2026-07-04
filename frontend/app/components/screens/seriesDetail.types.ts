@@ -49,8 +49,10 @@ export interface Chapter {
 export interface Provider {
   /** SeriesProvider UUID (used to reorder or remove this source). */
   id: string
-  /** Source key (e.g. `mangadex`). */
+  /** Raw Suwayomi source-ID identity key (e.g. `7537715367149829912`). */
   provider: string
+  /** Human-readable source display name (e.g. `WebToon`); falls back to the id upstream. Shown in place of the id. */
+  providerName: string
   /** Scanlation group name (may be empty → row omits it). */
   scanlator: string
   /** BCP-47 language code (e.g. `en`, `ko`). */

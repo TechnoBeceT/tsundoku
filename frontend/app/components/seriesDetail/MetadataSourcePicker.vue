@@ -56,7 +56,7 @@ const tag = (p: Provider): string =>
         </span>
         <span class="metacard__body">
           <span class="metacard__name">
-            {{ p.provider }}
+            {{ p.providerName }}
             <svg v-if="p.id === activeId" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="metacard__check" aria-hidden="true">
               <path d="M20 6L9 17l-5-5" />
             </svg>

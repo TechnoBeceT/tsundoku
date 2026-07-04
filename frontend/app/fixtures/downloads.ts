@@ -25,7 +25,8 @@ export const downloadItems: DownloadItem[] = [
     number: 148,
     name: 'Chapter 148',
     state: 'downloading',
-    provider: 'Asura Scans',
+    provider: '2528143451863530665',
+    providerName: 'Asura Scans',
   },
   {
     chapterId: 'c-0002',
@@ -36,7 +37,8 @@ export const downloadItems: DownloadItem[] = [
     number: 365,
     name: 'The Flower of the Stone Castle',
     state: 'upgrading',
-    provider: 'MangaDex',
+    provider: '2499283573021220255',
+    providerName: 'MangaDex',
   },
   {
     chapterId: 'c-0003',
@@ -47,7 +49,8 @@ export const downloadItems: DownloadItem[] = [
     number: 181,
     name: 'Chapter 181',
     state: 'downloading',
-    provider: 'ComicK',
+    provider: '4630885490626382823',
+    providerName: 'ComicK',
   },
 
   // ---- Failed: retryable ----
@@ -60,7 +63,8 @@ export const downloadItems: DownloadItem[] = [
     number: 147,
     name: 'Chapter 147',
     state: 'failed',
-    provider: 'MangaDex',
+    provider: '2499283573021220255',
+    providerName: 'MangaDex',
     retries: 2,
     nextAttempt: 'in 12m',
     lastError: 'read tcp 10.0.0.4:443: connection reset by peer',
@@ -75,7 +79,8 @@ export const downloadItems: DownloadItem[] = [
     number: 480,
     name: 'Chapter 480',
     state: 'failed',
-    provider: 'Reaper Scans',
+    provider: '5183473065805179973',
+    providerName: 'Reaper Scans',
     retries: 1,
     nextAttempt: 'in 4m',
     lastError: 'Cloudflare challenge failed (403)',
@@ -92,7 +97,8 @@ export const downloadItems: DownloadItem[] = [
     number: 96,
     name: 'Chapter 96',
     state: 'permanently_failed',
-    provider: 'Asura Scans',
+    provider: '2528143451863530665',
+    providerName: 'Asura Scans',
     retries: 5,
     lastError: 'timeout waiting for page list',
     errorCategory: 'timeout',
@@ -108,7 +114,8 @@ export const downloadItems: DownloadItem[] = [
     number: 1122,
     name: 'Chapter 1122',
     state: 'wanted',
-    provider: 'MangaDex',
+    provider: '2499283573021220255',
+    providerName: 'MangaDex',
   },
   {
     chapterId: 'c-0031',
@@ -119,7 +126,8 @@ export const downloadItems: DownloadItem[] = [
     number: 1123,
     name: 'Chapter 1123',
     state: 'wanted',
-    provider: 'MangaDex',
+    provider: '2499283573021220255',
+    providerName: 'MangaDex',
   },
 
   // ---- Queued: upgrade_available ----
@@ -132,7 +140,8 @@ export const downloadItems: DownloadItem[] = [
     number: 207,
     name: 'Chapter 207',
     state: 'upgrade_available',
-    provider: 'ComicK',
+    provider: '4630885490626382823',
+    providerName: 'ComicK',
   },
 ]
 

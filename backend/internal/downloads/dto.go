@@ -23,7 +23,9 @@ import (
 // ("/api/series/{id}/cover") or "" when no provider supplies a cover. Name is the
 // best-provider ProviderChapter.name and is "" when no provider titles the
 // chapter (the FE then derives "Chapter {number}"). Provider is the source key
-// (SeriesProvider.provider) of the satisfying source, else the series' top source.
+// (SeriesProvider.provider — the raw numeric id) of the satisfying source, else
+// the series' top source; ProviderName is that same source's human-readable
+// display label (falls back to the id), which the UI shows in place of the id.
 type DownloadChapterDTO struct {
 	ID             uuid.UUID  `json:"id"`
 	SeriesID       uuid.UUID  `json:"seriesId"`
@@ -35,6 +37,7 @@ type DownloadChapterDTO struct {
 	Name           string     `json:"name"`
 	State          string     `json:"state"`
 	Provider       string     `json:"provider"`
+	ProviderName   string     `json:"providerName"`
 	Retries        int        `json:"retries"`
 	NextAttemptAt  *time.Time `json:"nextAttemptAt"`
 	LastError      string     `json:"lastError"`
@@ -60,20 +63,22 @@ type RetryAllResultDTO struct {
 
 // seriesResolution holds the once-per-series derived values reused across all of
 // that series' chapters on a page: the chapter_key→name map, the resolved display
-// name + cover proxy path, and the top source's provider key (the fallback for a
-// chapter's provider field when it has no satisfying source yet).
+// name + cover proxy path, and the top source (the fallback for a chapter's
+// provider fields when it has no satisfying source yet). bestProvider is nil for
+// a 0-provider series, in which case a chapter's provider id + name are both "".
 type seriesResolution struct {
-	names       map[string]string
-	displayName string
-	coverURL    string
-	bestSource  string
+	names        map[string]string
+	displayName  string
+	coverURL     string
+	bestProvider *ent.SeriesProvider
 }
 
 // newDownloadChapterDTO maps one Chapter row to its enriched DTO. The series
-// context (display name, category, cover, chapter name, provider) is resolved
-// once per series by the caller and passed in, so this mapper does no lookups —
-// it only projects fields, ensuring every contract field is populated (§16).
-func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, provider string) DownloadChapterDTO {
+// context (display name, category, cover, chapter name, provider id + name) is
+// resolved once per series by the caller and passed in, so this mapper does no
+// lookups — it only projects fields, ensuring every contract field is
+// populated (§16).
+func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, provider, providerName string) DownloadChapterDTO {
 	return DownloadChapterDTO{
 		ID:             ch.ID,
 		SeriesID:       ch.SeriesID,
@@ -85,6 +90,7 @@ func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolutio
 		Name:           res.names[ch.ChapterKey],
 		State:          ch.State.String(),
 		Provider:       provider,
+		ProviderName:   providerName,
 		Retries:        ch.Retries,
 		NextAttemptAt:  ch.NextAttemptAt,
 		LastError:      ch.LastError,

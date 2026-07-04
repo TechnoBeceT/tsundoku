@@ -71,6 +71,11 @@ func Provider(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldEQ(FieldProvider, v))
 }
 
+// ProviderName applies equality check predicate on the "provider_name" field. It's identical to ProviderNameEQ.
+func ProviderName(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEQ(FieldProviderName, v))
+}
+
 // Scanlator applies equality check predicate on the "scanlator" field. It's identical to ScanlatorEQ.
 func Scanlator(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldEQ(FieldScanlator, v))
@@ -259,6 +264,81 @@ func ProviderEqualFold(v string) predicate.SeriesProvider {
 // ProviderContainsFold applies the ContainsFold predicate on the "provider" field.
 func ProviderContainsFold(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldContainsFold(FieldProvider, v))
+}
+
+// ProviderNameEQ applies the EQ predicate on the "provider_name" field.
+func ProviderNameEQ(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEQ(FieldProviderName, v))
+}
+
+// ProviderNameNEQ applies the NEQ predicate on the "provider_name" field.
+func ProviderNameNEQ(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldNEQ(FieldProviderName, v))
+}
+
+// ProviderNameIn applies the In predicate on the "provider_name" field.
+func ProviderNameIn(vs ...string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldIn(FieldProviderName, vs...))
+}
+
+// ProviderNameNotIn applies the NotIn predicate on the "provider_name" field.
+func ProviderNameNotIn(vs ...string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldNotIn(FieldProviderName, vs...))
+}
+
+// ProviderNameGT applies the GT predicate on the "provider_name" field.
+func ProviderNameGT(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldGT(FieldProviderName, v))
+}
+
+// ProviderNameGTE applies the GTE predicate on the "provider_name" field.
+func ProviderNameGTE(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldGTE(FieldProviderName, v))
+}
+
+// ProviderNameLT applies the LT predicate on the "provider_name" field.
+func ProviderNameLT(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldLT(FieldProviderName, v))
+}
+
+// ProviderNameLTE applies the LTE predicate on the "provider_name" field.
+func ProviderNameLTE(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldLTE(FieldProviderName, v))
+}
+
+// ProviderNameContains applies the Contains predicate on the "provider_name" field.
+func ProviderNameContains(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldContains(FieldProviderName, v))
+}
+
+// ProviderNameHasPrefix applies the HasPrefix predicate on the "provider_name" field.
+func ProviderNameHasPrefix(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldHasPrefix(FieldProviderName, v))
+}
+
+// ProviderNameHasSuffix applies the HasSuffix predicate on the "provider_name" field.
+func ProviderNameHasSuffix(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldHasSuffix(FieldProviderName, v))
+}
+
+// ProviderNameIsNil applies the IsNil predicate on the "provider_name" field.
+func ProviderNameIsNil() predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldIsNull(FieldProviderName))
+}
+
+// ProviderNameNotNil applies the NotNil predicate on the "provider_name" field.
+func ProviderNameNotNil() predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldNotNull(FieldProviderName))
+}
+
+// ProviderNameEqualFold applies the EqualFold predicate on the "provider_name" field.
+func ProviderNameEqualFold(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEqualFold(FieldProviderName, v))
+}
+
+// ProviderNameContainsFold applies the ContainsFold predicate on the "provider_name" field.
+func ProviderNameContainsFold(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldContainsFold(FieldProviderName, v))
 }
 
 // ScanlatorEQ applies the EQ predicate on the "scanlator" field.

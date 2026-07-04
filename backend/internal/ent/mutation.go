@@ -6559,6 +6559,7 @@ type SeriesProviderMutation struct {
 	suwayomi_id               *int
 	addsuwayomi_id            *int
 	provider                  *string
+	provider_name             *string
 	scanlator                 *string
 	language                  *string
 	url                       *string
@@ -6832,6 +6833,55 @@ func (m *SeriesProviderMutation) OldProvider(ctx context.Context) (v string, err
 // ResetProvider resets all changes to the "provider" field.
 func (m *SeriesProviderMutation) ResetProvider() {
 	m.provider = nil
+}
+
+// SetProviderName sets the "provider_name" field.
+func (m *SeriesProviderMutation) SetProviderName(s string) {
+	m.provider_name = &s
+}
+
+// ProviderName returns the value of the "provider_name" field in the mutation.
+func (m *SeriesProviderMutation) ProviderName() (r string, exists bool) {
+	v := m.provider_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderName returns the old "provider_name" field's value of the SeriesProvider entity.
+// If the SeriesProvider object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesProviderMutation) OldProviderName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderName: %w", err)
+	}
+	return oldValue.ProviderName, nil
+}
+
+// ClearProviderName clears the value of the "provider_name" field.
+func (m *SeriesProviderMutation) ClearProviderName() {
+	m.provider_name = nil
+	m.clearedFields[seriesprovider.FieldProviderName] = struct{}{}
+}
+
+// ProviderNameCleared returns if the "provider_name" field was cleared in this mutation.
+func (m *SeriesProviderMutation) ProviderNameCleared() bool {
+	_, ok := m.clearedFields[seriesprovider.FieldProviderName]
+	return ok
+}
+
+// ResetProviderName resets all changes to the "provider_name" field.
+func (m *SeriesProviderMutation) ResetProviderName() {
+	m.provider_name = nil
+	delete(m.clearedFields, seriesprovider.FieldProviderName)
 }
 
 // SetScanlator sets the "scanlator" field.
@@ -7478,7 +7528,7 @@ func (m *SeriesProviderMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesProviderMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.series != nil {
 		fields = append(fields, seriesprovider.FieldSeriesID)
 	}
@@ -7487,6 +7537,9 @@ func (m *SeriesProviderMutation) Fields() []string {
 	}
 	if m.provider != nil {
 		fields = append(fields, seriesprovider.FieldProvider)
+	}
+	if m.provider_name != nil {
+		fields = append(fields, seriesprovider.FieldProviderName)
 	}
 	if m.scanlator != nil {
 		fields = append(fields, seriesprovider.FieldScanlator)
@@ -7535,6 +7588,8 @@ func (m *SeriesProviderMutation) Field(name string) (ent.Value, bool) {
 		return m.SuwayomiID()
 	case seriesprovider.FieldProvider:
 		return m.Provider()
+	case seriesprovider.FieldProviderName:
+		return m.ProviderName()
 	case seriesprovider.FieldScanlator:
 		return m.Scanlator()
 	case seriesprovider.FieldLanguage:
@@ -7572,6 +7627,8 @@ func (m *SeriesProviderMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldSuwayomiID(ctx)
 	case seriesprovider.FieldProvider:
 		return m.OldProvider(ctx)
+	case seriesprovider.FieldProviderName:
+		return m.OldProviderName(ctx)
 	case seriesprovider.FieldScanlator:
 		return m.OldScanlator(ctx)
 	case seriesprovider.FieldLanguage:
@@ -7623,6 +7680,13 @@ func (m *SeriesProviderMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetProvider(v)
+		return nil
+	case seriesprovider.FieldProviderName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderName(v)
 		return nil
 	case seriesprovider.FieldScanlator:
 		v, ok := value.(string)
@@ -7773,6 +7837,9 @@ func (m *SeriesProviderMutation) ClearedFields() []string {
 	if m.FieldCleared(seriesprovider.FieldSuwayomiID) {
 		fields = append(fields, seriesprovider.FieldSuwayomiID)
 	}
+	if m.FieldCleared(seriesprovider.FieldProviderName) {
+		fields = append(fields, seriesprovider.FieldProviderName)
+	}
 	return fields
 }
 
@@ -7790,6 +7857,9 @@ func (m *SeriesProviderMutation) ClearField(name string) error {
 	case seriesprovider.FieldSuwayomiID:
 		m.ClearSuwayomiID()
 		return nil
+	case seriesprovider.FieldProviderName:
+		m.ClearProviderName()
+		return nil
 	}
 	return fmt.Errorf("unknown SeriesProvider nullable field %s", name)
 }
@@ -7806,6 +7876,9 @@ func (m *SeriesProviderMutation) ResetField(name string) error {
 		return nil
 	case seriesprovider.FieldProvider:
 		m.ResetProvider()
+		return nil
+	case seriesprovider.FieldProviderName:
+		m.ResetProviderName()
 		return nil
 	case seriesprovider.FieldScanlator:
 		m.ResetScanlator()

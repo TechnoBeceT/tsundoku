@@ -186,6 +186,7 @@ components:
       required:
         - id
         - provider
+        - providerName
         - title
         - coverUrl
         - isMetadataSource
@@ -202,7 +203,10 @@ components:
           description: SeriesProvider UUID (used by re-rank and metadata-source pin).
         provider:
           type: string
-          description: Provider key (e.g. mangadex).
+          description: Raw Suwayomi source-ID identity key (e.g. 7537715367149829912).
+        providerName:
+          type: string
+          description: Human-readable source display name (e.g. WebToon); falls back to the id when unresolved. Shown in the UI in place of the id.
         title:
           type: string
           description: This provider's own title for the series (may be empty).
@@ -419,6 +423,7 @@ components:
         - name
         - state
         - provider
+        - providerName
         - retries
         - nextAttemptAt
         - lastError
@@ -460,7 +465,10 @@ components:
           description: Chapter download state.
         provider:
           type: string
-          description: Source key (SeriesProvider.provider) of the satisfying source, else the series' top source.
+          description: Raw Suwayomi source-ID key (SeriesProvider.provider) of the satisfying source, else the series' top source.
+        providerName:
+          type: string
+          description: Human-readable source display name of that source; falls back to the id when unresolved. Shown in the UI in place of the id.
         retries:
           type: integer
           description: Number of download attempts so far (0 when never attempted or after a retry reset).

@@ -41,7 +41,7 @@ const hasBehind = computed(() => props.source.chaptersBehind > 0)
 
 <template>
   <div class="source">
-    <span class="source__provider">{{ source.provider }}</span>
+    <span class="source__provider">{{ source.providerName }}</span>
     <Chip variant="language">{{ language }}</Chip>
     <HealthBadge :health="source.health" />
     <span class="source__synced">{{ syncedLabel }}</span>

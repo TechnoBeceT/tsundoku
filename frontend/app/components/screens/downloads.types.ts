@@ -52,8 +52,10 @@ export interface DownloadItem {
   name: string
   /** Which state bucket this chapter is in. */
   state: DownloadState
-  /** Best-source provider key (satisfied-by, or highest-importance). */
+  /** Best-source raw source-ID key (satisfied-by, or highest-importance). */
   provider: string
+  /** Human-readable display name of that source; falls back to the id upstream. Shown in place of the id. */
+  providerName: string
   /**
    * Reserved: SSE emits state transitions, not byte progress, so the Active bar
    * is indeterminate today. Populate once a page-level progress event exists.

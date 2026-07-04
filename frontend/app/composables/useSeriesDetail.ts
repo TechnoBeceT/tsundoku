@@ -43,6 +43,7 @@ function mapProvider(dto: ProviderDTO): Provider {
   return {
     id: dto.id,
     provider: dto.provider,
+    providerName: dto.providerName,
     scanlator: dto.scanlator,
     language: dto.language,
     importance: dto.importance,

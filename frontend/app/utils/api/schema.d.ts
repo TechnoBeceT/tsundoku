@@ -1269,8 +1269,10 @@ export interface components {
              * @description SeriesProvider UUID (used by re-rank and metadata-source pin).
              */
             id: string;
-            /** @description Provider key (e.g. mangadex). */
+            /** @description Raw Suwayomi source-ID identity key (e.g. 7537715367149829912). */
             provider: string;
+            /** @description Human-readable source display name (e.g. WebToon); falls back to the id when unresolved. Shown in the UI in place of the id. */
+            providerName: string;
             /** @description This provider's own title for the series (may be empty). */
             title: string;
             /** @description Provider-level cover proxy path ("/api/series/{id}/providers/{pid}/cover"); empty when no cover. */
@@ -1418,8 +1420,10 @@ export interface components {
              * @enum {string}
              */
             state: "wanted" | "downloading" | "downloaded" | "upgrade_available" | "upgrading" | "failed" | "permanently_failed";
-            /** @description Source key (SeriesProvider.provider) of the satisfying source, else the series' top source. */
+            /** @description Raw Suwayomi source-ID key (SeriesProvider.provider) of the satisfying source, else the series' top source. */
             provider: string;
+            /** @description Human-readable source display name of that source; falls back to the id when unresolved. Shown in the UI in place of the id. */
+            providerName: string;
             /** @description Number of download attempts so far (0 when never attempted or after a retry reset). */
             retries: number;
             /**

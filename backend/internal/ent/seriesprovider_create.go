@@ -51,6 +51,20 @@ func (_c *SeriesProviderCreate) SetProvider(v string) *SeriesProviderCreate {
 	return _c
 }
 
+// SetProviderName sets the "provider_name" field.
+func (_c *SeriesProviderCreate) SetProviderName(v string) *SeriesProviderCreate {
+	_c.mutation.SetProviderName(v)
+	return _c
+}
+
+// SetNillableProviderName sets the "provider_name" field if the given value is not nil.
+func (_c *SeriesProviderCreate) SetNillableProviderName(v *string) *SeriesProviderCreate {
+	if v != nil {
+		_c.SetProviderName(*v)
+	}
+	return _c
+}
+
 // SetScanlator sets the "scanlator" field.
 func (_c *SeriesProviderCreate) SetScanlator(v string) *SeriesProviderCreate {
 	_c.mutation.SetScanlator(v)
@@ -308,6 +322,10 @@ func (_c *SeriesProviderCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *SeriesProviderCreate) defaults() {
+	if _, ok := _c.mutation.ProviderName(); !ok {
+		v := seriesprovider.DefaultProviderName
+		_c.mutation.SetProviderName(v)
+	}
 	if _, ok := _c.mutation.Scanlator(); !ok {
 		v := seriesprovider.DefaultScanlator
 		_c.mutation.SetScanlator(v)
@@ -444,6 +462,10 @@ func (_c *SeriesProviderCreate) createSpec() (*SeriesProvider, *sqlgraph.CreateS
 	if value, ok := _c.mutation.Provider(); ok {
 		_spec.SetField(seriesprovider.FieldProvider, field.TypeString, value)
 		_node.Provider = value
+	}
+	if value, ok := _c.mutation.ProviderName(); ok {
+		_spec.SetField(seriesprovider.FieldProviderName, field.TypeString, value)
+		_node.ProviderName = value
 	}
 	if value, ok := _c.mutation.Scanlator(); ok {
 		_spec.SetField(seriesprovider.FieldScanlator, field.TypeString, value)

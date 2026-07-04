@@ -115,11 +115,13 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 	items := make([]DownloadChapterDTO, len(rows))
 	for i, ch := range rows {
 		res := resolutions[ch.SeriesID]
+		provID, provName := chapterProvider(ch, provByID, res.bestProvider)
 		items[i] = newDownloadChapterDTO(
 			ch,
 			category.NameOf(seriesByID[ch.SeriesID]),
 			res,
-			chapterProvider(ch, provByID, res.bestSource),
+			provID,
+			provName,
 		)
 	}
 	return DownloadListDTO{Total: total, Items: items}, nil
@@ -186,32 +188,34 @@ func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.U
 		provs := provBySeries[sid]
 		row.Edges.Providers = provs // reuse MetadataProvider/SeriesDisplay resolution
 		displayName, coverURL := series.SeriesDisplay(row, series.MetadataProvider(row))
-		best := series.HighestImportanceProvider(provs)
-		bestSource := ""
-		if best != nil {
-			bestSource = best.Provider
-		}
 		out[sid] = seriesResolution{
-			names:       series.ChapterTitles(provs),
-			displayName: displayName,
-			coverURL:    coverURL,
-			bestSource:  bestSource,
+			names:        series.ChapterTitles(provs),
+			displayName:  displayName,
+			coverURL:     coverURL,
+			bestProvider: series.HighestImportanceProvider(provs),
 		}
 	}
 	return out
 }
 
-// chapterProvider resolves a chapter's provider key: the provider that satisfied
-// it (satisfied_by_provider_id) when set and still present, else the series' top
-// source (bestSource). A wanted/upgrade_available chapter has no satisfying
-// source yet, so it shows the best available one.
-func chapterProvider(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider, bestSource string) string {
+// chapterProvider resolves a chapter's source to its (id, displayName): the
+// provider that satisfied it (satisfied_by_provider_id) when set and still
+// present, else the series' top source (best). A wanted/upgrade_available
+// chapter has no satisfying source yet, so it shows the best available one. The
+// id is SeriesProvider.provider (raw numeric key); the name is series.ProviderLabel
+// (display name, falling back to the id). Both are "" for a 0-provider series
+// (best is nil).
+func chapterProvider(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider, best *ent.SeriesProvider) (id, name string) {
+	src := best
 	if ch.SatisfiedByProviderID != nil {
 		if p, ok := provByID[*ch.SatisfiedByProviderID]; ok {
-			return p.Provider
+			src = p
 		}
 	}
-	return bestSource
+	if src == nil {
+		return "", ""
+	}
+	return src.Provider, series.ProviderLabel(src)
 }
 
 // RetryChapter resets one failed/permanently_failed chapter back to wanted so the

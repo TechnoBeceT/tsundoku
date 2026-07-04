@@ -58,7 +58,7 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
         <span class="dl-row__title">{{ item.seriesTitle }}</span>
         <Chip variant="category">{{ item.seriesCategory }}</Chip>
       </div>
-      <div class="dl-row__meta">{{ metaLine }} <span class="dl-row__provider">· {{ item.provider }}</span></div>
+      <div class="dl-row__meta">{{ metaLine }} <span class="dl-row__provider">· {{ item.providerName }}</span></div>
     </button>
 
     <slot name="before-badge" />

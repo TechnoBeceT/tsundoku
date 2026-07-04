@@ -116,9 +116,12 @@ func seedLibrary(ctx context.Context, t *testing.T, client *ent.Client) seededLi
 		SetLanguage("en").
 		SetImportance(5).
 		SaveX(ctx)
+	// flame carries a display name; asura (above) does not — so the ProviderDTO
+	// exercises both the provider_name path and the id-fallback path.
 	client.SeriesProvider.Create().
 		SetSeriesID(manhwa.ID).
 		SetProvider("flame").
+		SetProviderName("Flame Scans").
 		SetLanguage("en").
 		SetImportance(8).
 		SaveX(ctx)
@@ -263,6 +266,24 @@ func TestGetSeriesReturnsDetail(t *testing.T) {
 
 	if len(got.Providers) != 2 {
 		t.Fatalf("GetSeries: want 2 providers, got %d", len(got.Providers))
+	}
+	assertProviderNames(t, got.Providers)
+}
+
+// assertProviderNames checks the ProviderDTO display-vs-id fallback: flame has a
+// provider_name ("Flame Scans") so it is shown, asura has none so it falls back
+// to the raw provider id ("asura").
+func assertProviderNames(t *testing.T, providers []series.ProviderDTO) {
+	t.Helper()
+	names := map[string]string{}
+	for _, p := range providers {
+		names[p.Provider] = p.ProviderName
+	}
+	if names["flame"] != "Flame Scans" {
+		t.Errorf("GetSeries: flame providerName want 'Flame Scans', got %q", names["flame"])
+	}
+	if names["asura"] != "asura" {
+		t.Errorf("GetSeries: asura providerName want id fallback 'asura', got %q", names["asura"])
 	}
 }
 

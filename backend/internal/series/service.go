@@ -742,6 +742,19 @@ func HighestImportanceProvider(providers []*ent.SeriesProvider) *ent.SeriesProvi
 	return best
 }
 
+// ProviderLabel returns the human-readable source label for a SeriesProvider:
+// its provider_name (the display name captured at ingest, e.g. "WebToon") when
+// non-empty, else provider (the raw numeric Suwayomi source-ID identity key) as
+// a fallback. Exported so the series-detail and downloads DTOs both resolve the
+// display-vs-id fallback through one definition (§2 DRY) — a numeric ID is never
+// shown when a name is available, and the label is never empty for a real row.
+func ProviderLabel(p *ent.SeriesProvider) string {
+	if p.ProviderName != "" {
+		return p.ProviderName
+	}
+	return p.Provider
+}
+
 // SeriesDisplay derives the display name and cover proxy URL for a series.
 // name is metaProv.Title when non-empty, else row.Title (canonical fallback).
 // coverURL is the series cover proxy path when metaProv has a non-empty

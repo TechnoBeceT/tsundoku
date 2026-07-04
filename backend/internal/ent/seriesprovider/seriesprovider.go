@@ -21,6 +21,8 @@ const (
 	FieldSuwayomiID = "suwayomi_id"
 	// FieldProvider holds the string denoting the provider field in the database.
 	FieldProvider = "provider"
+	// FieldProviderName holds the string denoting the provider_name field in the database.
+	FieldProviderName = "provider_name"
 	// FieldScanlator holds the string denoting the scanlator field in the database.
 	FieldScanlator = "scanlator"
 	// FieldLanguage holds the string denoting the language field in the database.
@@ -89,6 +91,7 @@ var Columns = []string{
 	FieldSeriesID,
 	FieldSuwayomiID,
 	FieldProvider,
+	FieldProviderName,
 	FieldScanlator,
 	FieldLanguage,
 	FieldURL,
@@ -113,6 +116,8 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultProviderName holds the default value on creation for the "provider_name" field.
+	DefaultProviderName string
 	// DefaultScanlator holds the default value on creation for the "scanlator" field.
 	DefaultScanlator string
 	// DefaultLanguage holds the default value on creation for the "language" field.
@@ -162,6 +167,11 @@ func BySuwayomiID(opts ...sql.OrderTermOption) OrderOption {
 // ByProvider orders the results by the provider field.
 func ByProvider(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProvider, opts...).ToFunc()
+}
+
+// ByProviderName orders the results by the provider_name field.
+func ByProviderName(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProviderName, opts...).ToFunc()
 }
 
 // ByScanlator orders the results by the scanlator field.

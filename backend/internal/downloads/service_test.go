@@ -56,8 +56,10 @@ func seedLibrary(ctx context.Context, t *testing.T, client *ent.Client) seeded {
 		SetTitle("Beta Quest").SetSlug("beta-quest").
 		SetCategoryID(catID(ctx, client, "Manhwa")).SaveX(ctx)
 
+	// provHigh carries a provider_name ("MangaDex") so the DTO shows the display
+	// label; provLow has none so its label falls back to the raw provider id.
 	provHigh := client.SeriesProvider.Create().
-		SetSeriesID(alpha.ID).SetProvider("mangadex").SetLanguage("en").
+		SetSeriesID(alpha.ID).SetProvider("mangadex").SetProviderName("MangaDex").SetLanguage("en").
 		SetImportance(10).SetTitle("Alpha Saga (MangaDex)").
 		SetCoverURL("/cover/alpha-high.jpg").SaveX(ctx)
 	provLow := client.SeriesProvider.Create().
@@ -248,6 +250,9 @@ func assertWantedEnrichment(t *testing.T, items []downloads.DownloadChapterDTO, 
 	if a2.Provider != "mangadex" {
 		t.Errorf("a-2 provider: want best 'mangadex', got %q", a2.Provider)
 	}
+	if a2.ProviderName != "MangaDex" {
+		t.Errorf("a-2 providerName: want display 'MangaDex', got %q", a2.ProviderName)
+	}
 	if a2.SeriesTitle != "Alpha Saga (MangaDex)" {
 		t.Errorf("a-2 seriesTitle: want resolved display 'Alpha Saga (MangaDex)', got %q", a2.SeriesTitle)
 	}
@@ -270,6 +275,9 @@ func assertSatisfiedByProvider(t *testing.T, items []downloads.DownloadChapterDT
 	}
 	if a1.Provider != "asura" {
 		t.Errorf("a-1 provider: want satisfied-by 'asura', got %q", a1.Provider)
+	}
+	if a1.ProviderName != "asura" {
+		t.Errorf("a-1 providerName: want id fallback 'asura' (no provider_name), got %q", a1.ProviderName)
 	}
 	if a1.Retries != 2 || a1.LastError != "connection reset" || a1.ErrorCategory != "network" {
 		t.Errorf("a-1 failure fields not surfaced: %+v", a1)

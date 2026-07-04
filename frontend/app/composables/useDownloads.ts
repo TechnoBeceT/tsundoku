@@ -75,6 +75,7 @@ function mapItem(dto: DownloadChapterDTO): DownloadItem {
     // The DTO state includes 'downloaded' (filtered out by the query), so narrow safely.
     state: dto.state as DownloadItem['state'],
     provider: dto.provider,
+    providerName: dto.providerName,
     retries: dto.retries,
     nextAttempt: formatNextAttempt(dto.nextAttemptAt),
     // Empty string means "no error" — map to undefined so optional fields stay absent.

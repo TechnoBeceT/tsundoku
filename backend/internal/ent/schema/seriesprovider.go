@@ -21,6 +21,14 @@ func (SeriesProvider) Fields() []ent.Field {
 		field.UUID("series_id", uuid.UUID{}),
 		field.Int("suwayomi_id").Optional(),
 		field.String("provider"),
+		// provider_name is the source's human-readable display name (e.g.
+		// "WebToon", "Comix"), captured at ingest from client.Sources(). It is
+		// DISTINCT from provider (the numeric Suwayomi source-ID identity key) and
+		// from title (the manga's per-source title). "" when the name could not be
+		// resolved — the DTO layer then falls back to showing the id. Additive +
+		// defaulted, so existing rows migrate with zero data change and backfill
+		// their name on the next ingest/refresh sweep.
+		field.String("provider_name").Optional().Default(""),
 		field.String("scanlator").Default(""),
 		field.String("language").Default(""),
 		field.String("url").Default(""),

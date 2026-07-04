@@ -18,7 +18,8 @@ const daysAgo = (n: number): string => new Date(Date.now() - n * 86_400_000).toI
 // A stale source: synced a while ago, falling behind, no error.
 const staleSource = (over: Partial<Provider>): Provider => ({
   id: 'prov-stale',
-  provider: 'mangadex',
+  provider: '2499283573021220255',
+  providerName: 'MangaDex',
   scanlator: '',
   language: 'en',
   importance: 30,
@@ -33,7 +34,8 @@ const staleSource = (over: Partial<Provider>): Provider => ({
 // An erroring source: last refresh failed, carries an inline error message.
 const erroringSource = (over: Partial<Provider>): Provider => ({
   id: 'prov-err',
-  provider: 'flamecomics',
+  provider: '6511650935329388080',
+  providerName: 'Flame Comics',
   scanlator: 'Asura Scans',
   language: 'en',
   importance: 20,
@@ -52,8 +54,8 @@ export const sickSeries: SeriesHealth[] = [
     title: 'Solo Leveling',
     slug: 'solo-leveling',
     sources: [
-      erroringSource({ id: 's1-a', provider: 'asurascans', scanlator: 'Asura' }),
-      staleSource({ id: 's1-b', provider: 'mangadex', chaptersBehind: 2, lastSyncedAt: daysAgo(11) }),
+      erroringSource({ id: 's1-a', provider: '2528143451863530665', providerName: 'Asura Scans', scanlator: 'Asura' }),
+      staleSource({ id: 's1-b', provider: '2499283573021220255', providerName: 'MangaDex', chaptersBehind: 2, lastSyncedAt: daysAgo(11) }),
     ],
   },
   {
@@ -63,7 +65,8 @@ export const sickSeries: SeriesHealth[] = [
     sources: [
       staleSource({
         id: 's2-a',
-        provider: 'reaperscans',
+        provider: '5183473065805179973',
+        providerName: 'Reaper Scans',
         chaptersBehind: 4,
         lastSyncedAt: daysAgo(16),
         newestChapterAt: daysAgo(16),
@@ -77,13 +80,15 @@ export const sickSeries: SeriesHealth[] = [
     sources: [
       erroringSource({
         id: 's3-a',
-        provider: 'flamecomics',
+        provider: '6511650935329388080',
+        providerName: 'Flame Comics',
         chaptersBehind: 0,
         lastError: 'source returned malformed chapter list (parse error at index 12)',
       }),
       erroringSource({
         id: 's3-b',
-        provider: 'mangabuddy',
+        provider: '7205846017935949201',
+        providerName: 'MangaBuddy',
         scanlator: '',
         language: 'ko',
         chaptersBehind: 7,
@@ -99,7 +104,8 @@ export const sickSeries: SeriesHealth[] = [
     sources: [
       staleSource({
         id: 's4-a',
-        provider: 'mangaplus',
+        provider: '1998737332432153860',
+        providerName: 'MangaPlus',
         language: 'ja',
         chaptersBehind: 1,
         lastSyncedAt: daysAgo(8),

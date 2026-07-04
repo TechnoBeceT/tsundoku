@@ -64,7 +64,7 @@ const rel = (iso: string | null): string => {
 
     <div class="source__main">
       <div class="source__namerow">
-        <span class="source__name">{{ provider.provider }}</span>
+        <span class="source__name">{{ provider.providerName }}</span>
         <Chip v-if="preferred" variant="accent">PREFERRED</Chip>
       </div>
       <div class="source__meta">

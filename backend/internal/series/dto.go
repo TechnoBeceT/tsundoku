@@ -73,7 +73,10 @@ type ChapterDTO struct {
 }
 
 // ProviderDTO is one SeriesProvider in a series-detail response. ID is the
-// SeriesProvider UUID (used by re-rank). Importance is the priority/quality rank
+// SeriesProvider UUID (used by re-rank). Provider is the raw Suwayomi source-ID
+// identity key; ProviderName is its human-readable display label (falls back to
+// the id when no name was captured) — the UI shows ProviderName, keeps Provider
+// for identity. Importance is the priority/quality rank
 // (higher = preferred). Title is this provider's own title for the series.
 // CoverURL is the provider-level cover proxy path
 // ("/api/series/{sid}/providers/{pid}/cover"). IsMetadataSource is true for the
@@ -83,6 +86,7 @@ type ChapterDTO struct {
 type ProviderDTO struct {
 	ID               string     `json:"id"`
 	Provider         string     `json:"provider"`
+	ProviderName     string     `json:"providerName"`
 	Title            string     `json:"title"`
 	CoverURL         string     `json:"coverUrl"`
 	IsMetadataSource bool       `json:"isMetadataSource"`
@@ -177,6 +181,7 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 	return ProviderDTO{
 		ID:               p.ID.String(),
 		Provider:         p.Provider,
+		ProviderName:     ProviderLabel(p),
 		Title:            p.Title,
 		CoverURL:         coverURL,
 		IsMetadataSource: isMetadataSource,

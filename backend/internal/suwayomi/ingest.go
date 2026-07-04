@@ -192,9 +192,13 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 // DISTINCT rows, each with its own independent ProviderChapter feed and
 // importance ranking. It fetches the source's own metadata via MangaMeta so
 // that each SeriesProvider row carries the title and cover URL as the source
-// knows them — independent of the canonical Series.title set by the caller.
-// On find it refreshes suwayomi_id, title, and cover_url in case the manga
-// was updated upstream. Returns the existing or newly created row.
+// knows them — independent of the canonical Series.title set by the caller. It
+// also resolves the source's human-readable display name (provider_name) so the
+// UI can show "WebToon" instead of the numeric source id stored in provider.
+// On find it refreshes suwayomi_id, title, provider_name, and cover_url in case
+// the manga (or the source name) was updated upstream — so a pre-existing row
+// backfills its provider_name on the next ingest/refresh. Returns the existing
+// or newly created row.
 func (i *Ingest) upsertSeriesProvider(
 	ctx context.Context,
 	seriesID uuid.UUID,
@@ -214,6 +218,12 @@ func (i *Ingest) upsertSeriesProvider(
 		cover = *meta.ThumbnailURL
 	}
 
+	// Resolve the source's human-readable display name (e.g. "WebToon") from the
+	// live source list so it is stored durably alongside the numeric id. Runs on
+	// both create and update, so an existing row backfills its name on the next
+	// refresh sweep. Best-effort: "" when unresolved (the DTO falls back to the id).
+	providerName := i.resolveProviderName(ctx, provider)
+
 	existing, existErr := i.db.SeriesProvider.Query().
 		Where(
 			entseriesprovider.SeriesID(seriesID),
@@ -228,11 +238,17 @@ func (i *Ingest) upsertSeriesProvider(
 	if existing != nil {
 		// Keep suwayomi_id, source title and cover fresh in case the manga was
 		// re-added from a different Suwayomi instance or updated upstream.
-		updated, updateErr := i.db.SeriesProvider.UpdateOne(existing).
+		update := i.db.SeriesProvider.UpdateOne(existing).
 			SetSuwayomiID(suwayomiMangaID).
 			SetTitle(srcTitle).
-			SetCoverURL(cover).
-			Save(ctx)
+			SetCoverURL(cover)
+		// Only refresh provider_name when we actually resolved one — a transient
+		// Sources() failure yields "" and must not clobber a previously-stored
+		// good name (it would flicker back to the raw id until the next sweep).
+		if providerName != "" {
+			update.SetProviderName(providerName)
+		}
+		updated, updateErr := update.Save(ctx)
 		if updateErr != nil {
 			// Defensive path: reachable only on DB connection loss mid-operation.
 			return nil, fmt.Errorf("update (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, updateErr)
@@ -243,6 +259,7 @@ func (i *Ingest) upsertSeriesProvider(
 	created, createErr := i.db.SeriesProvider.Create().
 		SetSeriesID(seriesID).
 		SetProvider(provider).
+		SetProviderName(providerName).
 		SetScanlator(scanlator).
 		SetSuwayomiID(suwayomiMangaID).
 		SetTitle(srcTitle).
@@ -255,6 +272,26 @@ func (i *Ingest) upsertSeriesProvider(
 		return nil, fmt.Errorf("create (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, createErr)
 	}
 	return created, nil
+}
+
+// resolveProviderName returns the human-readable display name for a source id
+// (the value stored in SeriesProvider.provider) by looking it up in the live
+// source list. It is best-effort and NEVER returns an error: if the source list
+// cannot be fetched or the id is not present, it returns "" and the caller stores
+// an empty provider_name, leaving the DTO layer to fall back to the raw id. A
+// missing display name must never fail an ingest. One Sources() call per
+// AddSeries (AddSeries handles a single provider), so no per-chapter fan-out.
+func (i *Ingest) resolveProviderName(ctx context.Context, sourceID string) string {
+	sources, err := i.client.Sources(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, src := range sources {
+		if src.ID == sourceID {
+			return src.Name
+		}
+	}
+	return ""
 }
 
 // filterByScanlator returns the subset of chs that belong to scanlator.

@@ -205,48 +205,52 @@ func init() {
 	series.DefaultID = seriesDescID.Default.(func() uuid.UUID)
 	seriesproviderFields := schema.SeriesProvider{}.Fields()
 	_ = seriesproviderFields
+	// seriesproviderDescProviderName is the schema descriptor for provider_name field.
+	seriesproviderDescProviderName := seriesproviderFields[4].Descriptor()
+	// seriesprovider.DefaultProviderName holds the default value on creation for the provider_name field.
+	seriesprovider.DefaultProviderName = seriesproviderDescProviderName.Default.(string)
 	// seriesproviderDescScanlator is the schema descriptor for scanlator field.
-	seriesproviderDescScanlator := seriesproviderFields[4].Descriptor()
+	seriesproviderDescScanlator := seriesproviderFields[5].Descriptor()
 	// seriesprovider.DefaultScanlator holds the default value on creation for the scanlator field.
 	seriesprovider.DefaultScanlator = seriesproviderDescScanlator.Default.(string)
 	// seriesproviderDescLanguage is the schema descriptor for language field.
-	seriesproviderDescLanguage := seriesproviderFields[5].Descriptor()
+	seriesproviderDescLanguage := seriesproviderFields[6].Descriptor()
 	// seriesprovider.DefaultLanguage holds the default value on creation for the language field.
 	seriesprovider.DefaultLanguage = seriesproviderDescLanguage.Default.(string)
 	// seriesproviderDescURL is the schema descriptor for url field.
-	seriesproviderDescURL := seriesproviderFields[6].Descriptor()
+	seriesproviderDescURL := seriesproviderFields[7].Descriptor()
 	// seriesprovider.DefaultURL holds the default value on creation for the url field.
 	seriesprovider.DefaultURL = seriesproviderDescURL.Default.(string)
 	// seriesproviderDescTitle is the schema descriptor for title field.
-	seriesproviderDescTitle := seriesproviderFields[7].Descriptor()
+	seriesproviderDescTitle := seriesproviderFields[8].Descriptor()
 	// seriesprovider.DefaultTitle holds the default value on creation for the title field.
 	seriesprovider.DefaultTitle = seriesproviderDescTitle.Default.(string)
 	// seriesproviderDescMetadata is the schema descriptor for metadata field.
-	seriesproviderDescMetadata := seriesproviderFields[8].Descriptor()
+	seriesproviderDescMetadata := seriesproviderFields[9].Descriptor()
 	// seriesprovider.DefaultMetadata holds the default value on creation for the metadata field.
 	seriesprovider.DefaultMetadata = seriesproviderDescMetadata.Default.(bool)
 	// seriesproviderDescStatus is the schema descriptor for status field.
-	seriesproviderDescStatus := seriesproviderFields[9].Descriptor()
+	seriesproviderDescStatus := seriesproviderFields[10].Descriptor()
 	// seriesprovider.DefaultStatus holds the default value on creation for the status field.
 	seriesprovider.DefaultStatus = seriesproviderDescStatus.Default.(string)
 	// seriesproviderDescFlags is the schema descriptor for flags field.
-	seriesproviderDescFlags := seriesproviderFields[10].Descriptor()
+	seriesproviderDescFlags := seriesproviderFields[11].Descriptor()
 	// seriesprovider.DefaultFlags holds the default value on creation for the flags field.
 	seriesprovider.DefaultFlags = seriesproviderDescFlags.Default.(uint32)
 	// seriesproviderDescImportance is the schema descriptor for importance field.
-	seriesproviderDescImportance := seriesproviderFields[11].Descriptor()
+	seriesproviderDescImportance := seriesproviderFields[12].Descriptor()
 	// seriesprovider.DefaultImportance holds the default value on creation for the importance field.
 	seriesprovider.DefaultImportance = seriesproviderDescImportance.Default.(int)
 	// seriesproviderDescCoverURL is the schema descriptor for cover_url field.
-	seriesproviderDescCoverURL := seriesproviderFields[12].Descriptor()
+	seriesproviderDescCoverURL := seriesproviderFields[13].Descriptor()
 	// seriesprovider.DefaultCoverURL holds the default value on creation for the cover_url field.
 	seriesprovider.DefaultCoverURL = seriesproviderDescCoverURL.Default.(string)
 	// seriesproviderDescCreatedAt is the schema descriptor for created_at field.
-	seriesproviderDescCreatedAt := seriesproviderFields[13].Descriptor()
+	seriesproviderDescCreatedAt := seriesproviderFields[14].Descriptor()
 	// seriesprovider.DefaultCreatedAt holds the default value on creation for the created_at field.
 	seriesprovider.DefaultCreatedAt = seriesproviderDescCreatedAt.Default.(func() time.Time)
 	// seriesproviderDescUpdatedAt is the schema descriptor for updated_at field.
-	seriesproviderDescUpdatedAt := seriesproviderFields[14].Descriptor()
+	seriesproviderDescUpdatedAt := seriesproviderFields[15].Descriptor()
 	// seriesprovider.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	seriesprovider.DefaultUpdatedAt = seriesproviderDescUpdatedAt.Default.(func() time.Time)
 	// seriesprovider.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

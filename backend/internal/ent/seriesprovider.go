@@ -26,6 +26,8 @@ type SeriesProvider struct {
 	SuwayomiID int `json:"suwayomi_id,omitempty"`
 	// Provider holds the value of the "provider" field.
 	Provider string `json:"provider,omitempty"`
+	// ProviderName holds the value of the "provider_name" field.
+	ProviderName string `json:"provider_name,omitempty"`
 	// Scanlator holds the value of the "scanlator" field.
 	Scanlator string `json:"scanlator,omitempty"`
 	// Language holds the value of the "language" field.
@@ -118,7 +120,7 @@ func (*SeriesProvider) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case seriesprovider.FieldSuwayomiID, seriesprovider.FieldFlags, seriesprovider.FieldImportance:
 			values[i] = new(sql.NullInt64)
-		case seriesprovider.FieldProvider, seriesprovider.FieldScanlator, seriesprovider.FieldLanguage, seriesprovider.FieldURL, seriesprovider.FieldTitle, seriesprovider.FieldStatus, seriesprovider.FieldCoverURL:
+		case seriesprovider.FieldProvider, seriesprovider.FieldProviderName, seriesprovider.FieldScanlator, seriesprovider.FieldLanguage, seriesprovider.FieldURL, seriesprovider.FieldTitle, seriesprovider.FieldStatus, seriesprovider.FieldCoverURL:
 			values[i] = new(sql.NullString)
 		case seriesprovider.FieldCreatedAt, seriesprovider.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -162,6 +164,12 @@ func (_m *SeriesProvider) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field provider", values[i])
 			} else if value.Valid {
 				_m.Provider = value.String
+			}
+		case seriesprovider.FieldProviderName:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field provider_name", values[i])
+			} else if value.Valid {
+				_m.ProviderName = value.String
 			}
 		case seriesprovider.FieldScanlator:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -293,6 +301,9 @@ func (_m *SeriesProvider) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("provider=")
 	builder.WriteString(_m.Provider)
+	builder.WriteString(", ")
+	builder.WriteString("provider_name=")
+	builder.WriteString(_m.ProviderName)
 	builder.WriteString(", ")
 	builder.WriteString("scanlator=")
 	builder.WriteString(_m.Scanlator)

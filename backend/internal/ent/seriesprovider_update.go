@@ -88,6 +88,26 @@ func (_u *SeriesProviderUpdate) SetNillableProvider(v *string) *SeriesProviderUp
 	return _u
 }
 
+// SetProviderName sets the "provider_name" field.
+func (_u *SeriesProviderUpdate) SetProviderName(v string) *SeriesProviderUpdate {
+	_u.mutation.SetProviderName(v)
+	return _u
+}
+
+// SetNillableProviderName sets the "provider_name" field if the given value is not nil.
+func (_u *SeriesProviderUpdate) SetNillableProviderName(v *string) *SeriesProviderUpdate {
+	if v != nil {
+		_u.SetProviderName(*v)
+	}
+	return _u
+}
+
+// ClearProviderName clears the value of the "provider_name" field.
+func (_u *SeriesProviderUpdate) ClearProviderName() *SeriesProviderUpdate {
+	_u.mutation.ClearProviderName()
+	return _u
+}
+
 // SetScanlator sets the "scanlator" field.
 func (_u *SeriesProviderUpdate) SetScanlator(v string) *SeriesProviderUpdate {
 	_u.mutation.SetScanlator(v)
@@ -415,6 +435,12 @@ func (_u *SeriesProviderUpdate) sqlSave(ctx context.Context) (_node int, err err
 	if value, ok := _u.mutation.Provider(); ok {
 		_spec.SetField(seriesprovider.FieldProvider, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.ProviderName(); ok {
+		_spec.SetField(seriesprovider.FieldProviderName, field.TypeString, value)
+	}
+	if _u.mutation.ProviderNameCleared() {
+		_spec.ClearField(seriesprovider.FieldProviderName, field.TypeString)
+	}
 	if value, ok := _u.mutation.Scanlator(); ok {
 		_spec.SetField(seriesprovider.FieldScanlator, field.TypeString, value)
 	}
@@ -671,6 +697,26 @@ func (_u *SeriesProviderUpdateOne) SetNillableProvider(v *string) *SeriesProvide
 	if v != nil {
 		_u.SetProvider(*v)
 	}
+	return _u
+}
+
+// SetProviderName sets the "provider_name" field.
+func (_u *SeriesProviderUpdateOne) SetProviderName(v string) *SeriesProviderUpdateOne {
+	_u.mutation.SetProviderName(v)
+	return _u
+}
+
+// SetNillableProviderName sets the "provider_name" field if the given value is not nil.
+func (_u *SeriesProviderUpdateOne) SetNillableProviderName(v *string) *SeriesProviderUpdateOne {
+	if v != nil {
+		_u.SetProviderName(*v)
+	}
+	return _u
+}
+
+// ClearProviderName clears the value of the "provider_name" field.
+func (_u *SeriesProviderUpdateOne) ClearProviderName() *SeriesProviderUpdateOne {
+	_u.mutation.ClearProviderName()
 	return _u
 }
 
@@ -1030,6 +1076,12 @@ func (_u *SeriesProviderUpdateOne) sqlSave(ctx context.Context) (_node *SeriesPr
 	}
 	if value, ok := _u.mutation.Provider(); ok {
 		_spec.SetField(seriesprovider.FieldProvider, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ProviderName(); ok {
+		_spec.SetField(seriesprovider.FieldProviderName, field.TypeString, value)
+	}
+	if _u.mutation.ProviderNameCleared() {
+		_spec.ClearField(seriesprovider.FieldProviderName, field.TypeString)
 	}
 	if value, ok := _u.mutation.Scanlator(); ok {
 		_spec.SetField(seriesprovider.FieldScanlator, field.TypeString, value)
