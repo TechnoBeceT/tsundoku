@@ -117,6 +117,13 @@ type Chapter struct {
 	UploadDate *time.Time
 	// PageCount is the number of pages in this chapter.
 	PageCount int
+	// Scanlator is the scanlation group credited for this chapter (Suwayomi:
+	// scanlator). It is nullable on the wire — aggregator sources such as
+	// Comix populate it (e.g. "Reset Scans"), most single-group sources leave
+	// it null/absent. Normalised to "" when null/absent, never a pointer:
+	// downstream code treats "" as "no scanlator / fall back to provider
+	// name" (not this package's concern — it only surfaces the raw value).
+	Scanlator string
 }
 
 // --- Client interface --------------------------------------------------------
@@ -559,6 +566,9 @@ type gqlChapterNode struct {
 	UploadDate    *string  `json:"uploadDate"`
 	PageCount     int      `json:"pageCount"`
 	SourceOrder   int      `json:"sourceOrder"`
+	// Scanlator is nullable on the wire; a null/absent value decodes to a nil
+	// pointer here, which mapChapterNodes normalises to "" on Chapter.
+	Scanlator *string `json:"scanlator"`
 }
 
 // mapChapterNodes converts a slice of gqlChapterNode to []Chapter.
@@ -574,6 +584,10 @@ func mapChapterNodes(nodes []gqlChapterNode) []Chapter {
 				uploadDate = &t
 			}
 		}
+		var scanlator string
+		if n.Scanlator != nil {
+			scanlator = *n.Scanlator
+		}
 		out[i] = Chapter{
 			ID:         n.ID,
 			Index:      n.SourceOrder,
@@ -582,6 +596,7 @@ func mapChapterNodes(nodes []gqlChapterNode) []Chapter {
 			URL:        n.URL,
 			UploadDate: uploadDate,
 			PageCount:  n.PageCount,
+			Scanlator:  scanlator,
 		}
 	}
 	return out
@@ -607,6 +622,7 @@ mutation FetchChapters($mangaId: Int!) {
       uploadDate
       pageCount
       sourceOrder
+      scanlator
     }
   }
 }`
@@ -644,6 +660,7 @@ query MangaChapters($mangaId: Int!) {
       uploadDate
       pageCount
       sourceOrder
+      scanlator
     }
   }
 }`

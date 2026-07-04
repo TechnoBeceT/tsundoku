@@ -930,6 +930,60 @@ func TestClient_MangaChapters_NullableFields(t *testing.T) {
 	}
 }
 
+// TestClient_MangaChapters_Scanlator verifies that the chapters query decodes
+// the (nullable) `scanlator` field: a populated value maps straight through,
+// and a null/absent value normalises to "" (never a nil pointer, never a
+// panic) — see the Chapter.Scanlator doc comment for why this is a plain
+// string rather than *string.
+func TestClient_MangaChapters_Scanlator(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := graphqlResponse(t, map[string]any{
+			"chapters": map[string]any{
+				"nodes": []map[string]any{
+					{
+						"id":            301,
+						"url":           "/chapter/301",
+						"name":          "Chapter 1",
+						"chapterNumber": 1.0,
+						"uploadDate":    nil,
+						"pageCount":     10,
+						"sourceOrder":   1,
+						"scanlator":     "Reset Scans",
+					},
+					{
+						"id":            302,
+						"url":           "/chapter/302",
+						"name":          "Chapter 2",
+						"chapterNumber": 2.0,
+						"uploadDate":    nil,
+						"pageCount":     12,
+						"sourceOrder":   2,
+						"scanlator":     nil,
+					},
+				},
+			},
+		}, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	chapters, err := client.MangaChapters(context.Background(), 99)
+	if err != nil {
+		t.Fatalf("MangaChapters() error = %v", err)
+	}
+	if len(chapters) != 2 {
+		t.Fatalf("MangaChapters() got %d chapters, want 2", len(chapters))
+	}
+	if chapters[0].Scanlator != "Reset Scans" {
+		t.Errorf("chapters[0].Scanlator = %q, want %q", chapters[0].Scanlator, "Reset Scans")
+	}
+	if chapters[1].Scanlator != "" {
+		t.Errorf("chapters[1].Scanlator = %q, want \"\" (null scanlator)", chapters[1].Scanlator)
+	}
+}
+
 // --- MangaMeta ---------------------------------------------------------------
 
 // TestClient_MangaMeta verifies that MangaMeta decodes a manga(id) GraphQL
