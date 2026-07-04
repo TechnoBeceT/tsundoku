@@ -10,10 +10,11 @@
  * composable re-implements the same mapping (§2 DRY).
  */
 import type { components } from '~/utils/api/schema.d.ts'
-import type { SearchCandidate, SearchGroup } from '~/components/screens/import.types'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '~/components/screens/import.types'
 
 type SearchCandidateDTO = components['schemas']['SearchCandidate']
 type SearchGroupDTO = components['schemas']['SearchGroup']
+type ScanlatorCoverageDTO = components['schemas']['ScanlatorCoverage']
 
 /** Maps one backend SearchCandidate DTO onto the shared screen type. */
 export function mapCandidate(dto: SearchCandidateDTO): SearchCandidate {
@@ -35,5 +36,19 @@ export function mapGroup(dto: SearchGroupDTO): SearchGroup {
   return {
     title: dto.title,
     candidates: dto.candidates.map(mapCandidate),
+  }
+}
+
+/**
+ * Maps one backend ScanlatorCoverage DTO (from the per-scanlator breakdown
+ * endpoint) onto the shared screen type. Reused by `useImport.loadBreakdowns`
+ * (Adopt wizard auto-split) — the sole consumer today, kept here alongside the
+ * other DTO mappers per this file's single-home convention.
+ */
+export function mapScanlatorCoverage(dto: ScanlatorCoverageDTO): ScanlatorCoverage {
+  return {
+    scanlator: dto.scanlator,
+    count: dto.count,
+    ranges: dto.ranges,
   }
 }

@@ -95,3 +95,82 @@ describe('useImport', () => {
     expect(error.value).toBe('')
   })
 })
+
+describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => {
+  it('fetches every candidate in parallel and maps the DTO scanlators onto the screen type, keyed by source:mangaId', async () => {
+    const breakdownGet = vi.fn((sourceId: string) => {
+      if (sourceId === 'src-1') {
+        return Promise.resolve({
+          data: {
+            total: 101,
+            scanlators: [
+              { scanlator: 'ZScans', count: 90, ranges: '1-90' },
+              { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
+            ],
+          },
+          error: null,
+        })
+      }
+      return Promise.resolve({
+        data: { total: 12, scanlators: [{ scanlator: 'src-2', count: 12, ranges: '1-12' }] },
+        error: null,
+      })
+    })
+    vi.mocked(apiClient.GET).mockImplementation((path: string, opts?: { params?: { path?: { sourceId: string, mangaId: number } } }) => {
+      calls.push({ method: 'GET', path })
+      if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') {
+        return breakdownGet(opts!.params!.path!.sourceId)
+      }
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    })
+
+    const { breakdowns, loadBreakdowns } = useImport()
+    await loadBreakdowns([{ source: 'src-1', mangaId: 1 }, { source: 'src-2', mangaId: 2 }])
+
+    expect(breakdownGet).toHaveBeenCalledTimes(2)
+    expect(breakdowns.value['src-1:1']).toEqual([
+      { scanlator: 'ZScans', count: 90, ranges: '1-90' },
+      { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
+    ])
+    expect(breakdowns.value['src-2:2']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
+  })
+
+  it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
+    const breakdownGet = vi.fn(() => Promise.resolve({
+      data: { total: 12, scanlators: [{ scanlator: 'src-1', count: 12, ranges: '1-12' }] },
+      error: null,
+    }))
+    vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+      calls.push({ method: 'GET', path })
+      if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') return breakdownGet()
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    })
+
+    const { loadBreakdowns } = useImport()
+    const candidate = { source: 'src-1', mangaId: 1 }
+    await loadBreakdowns([candidate])
+    expect(breakdownGet).toHaveBeenCalledTimes(1)
+
+    await loadBreakdowns([candidate])
+    expect(breakdownGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('caches a failed fetch as null (non-fatal — never touches `error`) and never retries it', async () => {
+    const breakdownGet = vi.fn(() => Promise.resolve({ data: null, error: { message: 'upstream failure' } }))
+    vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+      calls.push({ method: 'GET', path })
+      if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') return breakdownGet()
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    })
+
+    const { breakdowns, error, loadBreakdowns } = useImport()
+    const candidate = { source: 'src-1', mangaId: 1 }
+    await loadBreakdowns([candidate])
+
+    expect(breakdowns.value['src-1:1']).toBeNull()
+    expect(error.value).toBe('')
+
+    await loadBreakdowns([candidate])
+    expect(breakdownGet).toHaveBeenCalledTimes(1)
+  })
+})

@@ -12,6 +12,7 @@ import type { StepItem } from '../ui/nav.types'
 import type {
   AdoptRequest,
   ChapterInspect,
+  ScanlatorCoverage,
   SearchCandidate,
   SearchGroup,
   Source,
@@ -23,19 +24,26 @@ import type {
  * selection state via refs, composes the shared atoms (<Stepper>, <SearchInput>,
  * <Chip>, <AppButton>, <Spinner>) + the import organisms (<SearchGroupCard>,
  * <CandidateConfigRow>, <ReviewSourceRow>), and keeps only the flow/layout CSS.
- * Data (sources, search results, inspect chapters) arrives by props and every
- * outward action (search, inspect, adopt, cancel) is emitted — no fetching,
- * routing, or stores. It references only design tokens, so it reads correctly in
- * both themes.
+ * Data (sources, search results, inspect chapters, breakdowns) arrives by props
+ * and every outward action (search, inspect, loadBreakdowns, adopt, cancel) is
+ * emitted — no fetching, routing, or stores. It references only design tokens,
+ * so it reads correctly in both themes.
  *
  * Flow state lives here:
  *  - Stage 1 collects a query + optional source filter, emits `search`, and lists
- *    the returned cross-source `SearchGroup`s. Picking one advances to Stage 2.
- *  - Stage 2 selects which of the group's candidates to adopt, ranks them (higher
- *    rank = higher importance), edits the title + category, and can `inspect` a
- *    candidate's chapter list. "Review" advances to Stage 3.
+ *    the returned cross-source `SearchGroup`s. Picking one advances to Stage 2
+ *    and emits `loadBreakdowns` for the picked group's candidates.
+ *  - Stage 2 auto-splits each candidate whose `breakdowns` entry resolves with
+ *    2+ scanlators into one selectable/rankable row per scanlator (a candidate
+ *    with 0/1 scanlators, or no/failed breakdown, stays a single row — see
+ *    `configRows`); ranks the selected rows (higher rank = higher importance,
+ *    spanning ALL selected rows across every source/scanlator), edits the title
+ *    + category, and can `inspect` a candidate's chapter list (hidden on split
+ *    rows — coverage is already shown inline). "Review" advances to Stage 3.
  *  - Stage 3 reviews the resolved providers (importance = rank weight) and emits
- *    the `adopt` request; on success the parent navigates to the new series.
+ *    the `adopt` request — one `AdoptProvider` per selected row, carrying that
+ *    row's `scanlator` (see `configRows`'s `scanlatorParam`) — on success the
+ *    parent navigates to the new series.
  */
 const props = withDefaults(defineProps<{
   /** Sources available to search (populates the filter chips). */
@@ -54,6 +62,14 @@ const props = withDefaults(defineProps<{
   error?: string
   /** The owner's dynamic category list; the picker defaults to the first category (owner: first = default). */
   categories?: string[]
+  /**
+   * Per-scanlator breakdown cache, keyed by `source:mangaId` (mirrors
+   * `useImport`'s `breakdowns`). An absent key = not yet fetched (or still in
+   * flight) — that candidate renders as a single unchanged row; `null` = the
+   * fetch failed — a single row labelled "Coverage unavailable"; a populated
+   * array drives `configRows`'s auto-split.
+   */
+  breakdowns?: Record<string, ScanlatorCoverage[] | null>
 }>(), {
   searchResults: () => [],
   searching: false,
@@ -62,6 +78,7 @@ const props = withDefaults(defineProps<{
   adopting: false,
   error: '',
   categories: () => ['Manga', 'Manhwa', 'Manhua', 'Comic', 'Other'],
+  breakdowns: () => ({}),
 })
 
 const emit = defineEmits<{
@@ -69,6 +86,8 @@ const emit = defineEmits<{
   search: [payload: { q: string, sources: string[] }]
   /** Fetch the chapter list for one candidate (Stage 2 inspect). */
   inspect: [payload: { source: string, mangaId: number }]
+  /** Fetch the per-scanlator breakdown for every candidate in the picked group (Stage 2 entry). */
+  loadBreakdowns: [candidates: SearchCandidate[]]
   /** Submit the adopt request (Stage 3). */
   adopt: [request: AdoptRequest]
   /** Abandon the flow (Stage 1 cancel). */
@@ -89,12 +108,19 @@ const hasSearched = ref(props.searched)
 const group = ref<SearchGroup | null>(null)
 const title = ref('')
 const category = ref('Other')
-// candidate key → selected?; `order` holds the selected keys in priority order.
+// row key → selected?; `order` holds the selected keys in priority order. A row
+// key is `source:mangaId` (unsplit) or `source:mangaId:scanlator` (once a
+// candidate's breakdown resolves with 2+ scanlators — see the `breakdowns`
+// watch below, which migrates the key(s) in place).
 const selected = ref<Record<string, boolean>>({})
 const order = ref<string[]>([])
 // The candidate whose chapter list is being inspected (key), and its loading flag.
 const inspectKey = ref<string | null>(null)
 const inspecting = ref(false)
+// Candidates (by base `source:mangaId` key) whose breakdown has already been
+// split into per-scanlator row keys — guards the watch below from re-splitting
+// (and duplicating) the same candidate on every unrelated `breakdowns` update.
+const splitApplied = new Set<string>()
 
 // Emit step changes so the parent can react without owning the state.
 watch(stage, s => emit('step', s))
@@ -103,6 +129,50 @@ watch(stage, s => emit('step', s))
 watch(() => props.inspectChapters, value => {
   if (value != null) inspecting.value = false
 })
+
+/**
+ * Once a candidate's breakdown resolves with 2+ scanlators, migrate its single
+ * `source:mangaId` row key to one `source:mangaId:scanlator` key per group —
+ * spliced into `order` at the same position (preserving rank) and defaulted to
+ * the replaced key's own selected state (mirrors `pickGroup`'s "select all"
+ * default: an unsplit row selected when it split stays fully selected; one
+ * deselected before its breakdown resolved stays fully deselected). A 0/1-
+ * scanlator or failed/unloaded breakdown never splits — `configRows` below
+ * renders those straight off the unsplit key with no reconciliation needed.
+ *
+ * Watches BOTH `breakdowns` (the normal case: the fetch resolves after
+ * `pickGroup` already ran) AND `group` (the already-cached case: a candidate's
+ * breakdown was fetched during an earlier visit to Stage 2 and `breakdowns`
+ * already holds 2+ scanlators the moment `pickGroup` sets `group` — a
+ * breakdowns-only watch would never re-fire since the prop itself doesn't
+ * change on a re-pick).
+ */
+watch([() => props.breakdowns, group], () => {
+  const g = group.value
+  if (!g) return
+  for (const c of g.candidates) {
+    const baseKey = candKey(c)
+    if (splitApplied.has(baseKey)) continue
+    const bd = props.breakdowns[baseKey]
+    if (!bd || bd.length < 2) continue
+    splitApplied.add(baseKey)
+
+    const newKeys = bd.map(sc => `${baseKey}:${sc.scanlator}`)
+    const wasSelected = !!selected.value[baseKey]
+    const idx = order.value.indexOf(baseKey)
+    if (idx >= 0) {
+      order.value = [
+        ...order.value.slice(0, idx),
+        ...(wasSelected ? newKeys : []),
+        ...order.value.slice(idx + 1),
+      ]
+    }
+    const { [baseKey]: _removed, ...rest } = selected.value
+    const nextSelected = { ...rest }
+    for (const k of newKeys) nextSelected[k] = wasSelected
+    selected.value = nextSelected
+  }
+}, { deep: true })
 
 // ---- Stage indicator (drives the shared <Stepper>) -------------------------
 const stepItems: StepItem[] = [
@@ -129,7 +199,8 @@ const runSearch = (): void => {
   emit('search', { q: query.value.trim(), sources: [...srcFilter.value] })
 }
 
-// Picking a group seeds Stage 2: all candidates selected, in source order.
+// Picking a group seeds Stage 2: all candidates selected, in source order, and
+// requests the per-scanlator breakdown for each (the auto-split source).
 const pickGroup = (g: SearchGroup): void => {
   const keys = g.candidates.map(candKey)
   group.value = g
@@ -139,42 +210,118 @@ const pickGroup = (g: SearchGroup): void => {
   order.value = keys
   inspectKey.value = null
   inspecting.value = false
+  splitApplied.clear()
   stage.value = 2
+  emit('loadBreakdowns', g.candidates)
 }
 
 // ---- Stage 2: configure ----------------------------------------------------
-// The selected candidates, in current priority order (drives rank + importance).
+// The selected rows, in current priority order (drives rank + importance).
 const orderedKeys = computed(() => order.value.filter(k => selected.value[k]))
 const selectedCount = computed(() => orderedKeys.value.length)
 
-// Per-candidate view rows for the configure list (selection + rank affordances).
-interface CandRow {
+/** One Configure-stage row: either a whole source (unsplit) or one of its scanlators (split). */
+interface ConfigRow {
   key: string
   candidate: SearchCandidate
-  selected: boolean
-  rank: number
-  canUp: boolean
-  canDown: boolean
-  inspected: boolean
-  loadingInspect: boolean
+  /** Scanlator subtitle to show under the source name; "" hides it (untagged/unsplit/unavailable). */
+  scanlator: string
+  /** The value to send as this row's `AdoptProvider.scanlator` ("" = all chapters from the source). */
+  scanlatorParam: string
+  /** Chapter count for this row's coverage, when the breakdown is available. */
+  chapterCount?: number
+  /** Human-readable chapter-range string, e.g. "1-90, 92-101". */
+  chapterRanges: string
+  /** True when this source's breakdown fetch failed (no split, no coverage — "Coverage unavailable"). */
+  coverageUnavailable: boolean
+  /** True for a per-scanlator split row (2+ scanlators) — hides the Inspect button (coverage is already inline). */
+  isSplit: boolean
 }
 
-const candRows = computed<CandRow[]>(() => {
+/**
+ * One row per candidate, auto-split into one row per scanlator once that
+ * candidate's breakdown resolves with 2+ groups (a 0/1-scanlator or
+ * unavailable/unloaded breakdown stays a single row — bullet 2 of the
+ * auto-split spec). A single-scanlator breakdown whose one group is named
+ * after the source itself (the backend's "untagged" convention) resolves to
+ * `scanlator: ''`/no subtitle — it's still an "all chapters" provider, not a
+ * named filter; a split row's group keeps its own name verbatim even in the
+ * rare case one of several groups happens to share the source's name.
+ */
+const configRows = computed<ConfigRow[]>(() => {
   const g = group.value
   if (!g) return []
+  const rows: ConfigRow[] = []
+  for (const c of g.candidates) {
+    const baseKey = candKey(c)
+    const bd = props.breakdowns[baseKey]
+    if (bd && bd.length >= 2) {
+      for (const sc of bd) {
+        // The untagged bucket (SourceBreakdown labels it with the source name)
+        // must adopt as scanlator "" — the backend's filterByScanlator keeps
+        // only chapters whose Chapter.Scanlator EQUALS the param, and untagged
+        // chapters carry "", so sending the source name here would match ZERO
+        // chapters (a silently-empty, never-downloading provider). This mirrors
+        // the single-group branch's collapse; it applies even inside a 2+-group
+        // split where one group IS the source-name bucket.
+        const isUntagged = sc.scanlator === c.sourceName
+        rows.push({
+          key: `${baseKey}:${sc.scanlator}`,
+          candidate: c,
+          scanlator: isUntagged ? '' : sc.scanlator,
+          scanlatorParam: isUntagged ? '' : sc.scanlator,
+          chapterCount: sc.count,
+          chapterRanges: sc.ranges,
+          coverageUnavailable: false,
+          isSplit: true,
+        })
+      }
+    }
+    else if (bd?.length === 1) {
+      const sc = bd[0]!
+      const isUntagged = sc.scanlator === c.sourceName
+      rows.push({
+        key: baseKey,
+        candidate: c,
+        scanlator: isUntagged ? '' : sc.scanlator,
+        scanlatorParam: isUntagged ? '' : sc.scanlator,
+        chapterCount: sc.count,
+        chapterRanges: sc.ranges,
+        coverageUnavailable: false,
+        isSplit: false,
+      })
+    }
+    else {
+      rows.push({
+        key: baseKey,
+        candidate: c,
+        scanlator: '',
+        scanlatorParam: '',
+        chapterCount: undefined,
+        chapterRanges: '',
+        // Only a definite failure (`null`) is "unavailable" — an absent key
+        // (not yet fetched / still in flight) shows no coverage line at all.
+        coverageUnavailable: bd === null,
+        isSplit: false,
+      })
+    }
+  }
+  return rows
+})
+
+/** `configRows` merged with this row's current selection + rank + inspect state. */
+const displayRows = computed(() => {
   const sel = orderedKeys.value
-  return g.candidates.map((c) => {
-    const key = candKey(c)
-    const idx = sel.indexOf(key)
+  return configRows.value.map((row) => {
+    const idx = sel.indexOf(row.key)
     return {
-      key,
-      candidate: c,
-      selected: !!selected.value[key],
+      ...row,
+      selected: !!selected.value[row.key],
       rank: idx + 1,
       canUp: idx > 0,
       canDown: idx >= 0 && idx < sel.length - 1,
-      inspected: inspectKey.value === key && props.inspectChapters != null && !inspecting.value,
-      loadingInspect: inspectKey.value === key && inspecting.value,
+      inspected: inspectKey.value === row.key && props.inspectChapters != null && !inspecting.value,
+      loadingInspect: inspectKey.value === row.key && inspecting.value,
     }
   })
 })
@@ -209,17 +356,16 @@ const onInspect = (c: SearchCandidate): void => {
 }
 
 // ---- Stage 3: review + adopt -----------------------------------------------
-// Importance is derived from rank: the top source gets the highest weight.
-const reviewSources = computed(() => {
-  const g = group.value
-  if (!g) return []
+// Importance is derived from rank: the top row gets the highest weight. Spans
+// ALL selected rows across every source/scanlator — one global ordered list.
+const reviewRows = computed(() => {
   const keys = orderedKeys.value
   const n = keys.length
   return keys.map((k, i) => {
-    const c = g.candidates.find(x => candKey(x) === k)!
+    const row = configRows.value.find(r => r.key === k)!
     return {
       key: k,
-      candidate: c,
+      row,
       rank: i + 1,
       importance: (n - i) * 10,
       preferred: i === 0,
@@ -241,10 +387,11 @@ const submit = (): void => {
   const request: AdoptRequest = {
     title: title.value.trim() || g.title,
     category: category.value,
-    providers: reviewSources.value.map(s => ({
-      source: s.candidate.source,
-      mangaId: s.candidate.mangaId,
+    providers: reviewRows.value.map(s => ({
+      source: s.row.candidate.source,
+      mangaId: s.row.candidate.mangaId,
       importance: s.importance,
+      scanlator: s.row.scanlatorParam,
     })),
   }
   emit('adopt', request)
@@ -342,7 +489,7 @@ const submit = (): void => {
           <p class="imp-eyebrow">Sources to adopt · use arrows to rank priority</p>
 
           <CandidateConfigRow
-            v-for="row in candRows"
+            v-for="row in displayRows"
             :key="row.key"
             :candidate="row.candidate"
             :selected="row.selected"
@@ -352,6 +499,11 @@ const submit = (): void => {
             :inspecting="row.loadingInspect"
             :inspected="row.inspected"
             :chapters="inspectChapters ?? []"
+            :hide-inspect="row.isSplit"
+            :scanlator="row.scanlator"
+            :chapter-count="row.chapterCount"
+            :chapter-ranges="row.chapterRanges"
+            :coverage-unavailable="row.coverageUnavailable"
             @toggle="toggleCand(row.key)"
             @inspect="onInspect(row.candidate)"
             @move="moveCand(row.key, $event)"
@@ -375,12 +527,13 @@ const submit = (): void => {
           <p class="imp-eyebrow">Sources · higher importance is preferred</p>
 
           <ReviewSourceRow
-            v-for="s in reviewSources"
+            v-for="s in reviewRows"
             :key="s.key"
-            :candidate="s.candidate"
+            :candidate="s.row.candidate"
             :rank="s.rank"
             :importance="s.importance"
             :preferred="s.preferred"
+            :scanlator="s.row.scanlator"
           />
 
           <p class="imp-note imp-explainer">

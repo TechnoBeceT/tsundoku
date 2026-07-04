@@ -68,6 +68,26 @@ export interface AdoptProvider {
   mangaId: number
   /** Priority weight — higher = preferred metadata/download source. */
   importance: number
+  /**
+   * Scanlation group this provider tracks; "" (or omitted) = all chapters from
+   * this source. A source can appear more than once under different scanlators,
+   * each ranked independently.
+   */
+  scanlator?: string
+}
+
+/**
+ * ScanlatorCoverage — one scanlator's chapter coverage for a source-manga (from
+ * `GET /api/sources/{sourceId}/manga/{mangaId}/breakdown`). Drives the Configure
+ * stage's auto-split of a source into per-scanlator rows.
+ */
+export interface ScanlatorCoverage {
+  /** Group name; the source name itself when chapters carry no scanlator tag. */
+  scanlator: string
+  /** Number of chapters this scanlator has published. */
+  count: number
+  /** Human-readable coverage string, e.g. "1-90, 92-101". */
+  ranges: string
 }
 
 /**
