@@ -1026,9 +1026,7 @@ func TestService_SourceBreakdown_GroupsByScanlator(t *testing.T) {
 		t.Fatalf("SourceBreakdown: got %d groups, want 3", len(got.Scanlators))
 	}
 
-	// Sorted by Count desc: Alpha Scans (3), then Beta Scans (2) and Alpha
-	// Source (1) tied at... wait Beta=2, Alpha Source=1, so order is
-	// Alpha Scans(3), Beta Scans(2), Alpha Source(1).
+	// Sorted by Count descending: Alpha Scans (3), Beta Scans (2), Alpha Source (1).
 	want := []imports.ScanlatorCoverageDTO{
 		{Scanlator: "Alpha Scans", Count: 3, Ranges: "1-3"},
 		{Scanlator: "Beta Scans", Count: 2, Ranges: "1-2"},
