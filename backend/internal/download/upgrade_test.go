@@ -170,6 +170,101 @@ func TestUpgrade_SwapsFile(t *testing.T) {
 	}
 }
 
+// TestUpgrade_ScanlatorChangeReplacesFile proves the one-file-per-number
+// invariant holds when an upgrade changes ONLY the scanlator (same provider).
+// Since the CBZ filename now encodes "[Provider-Scanlator]" (Task 5), a
+// same-provider scanlator swap still changes the filename, so the old CBZ must
+// be deleted and exactly one CBZ must remain for the chapter's number.
+func TestUpgrade_ScanlatorChangeReplacesFile(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Scanlator Swap").SetSlug("scanlator-swap").SaveX(ctx)
+	spBeta := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("comix").SetScanlator("Beta").SetImportance(2).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spBeta.ID).SetChapterKey("ch-scan").
+		SetURL("https://beta.example.com/ch-scan").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-scan").SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		PerProviderConcurrency: 1, Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce: %v", err)
+	}
+	initial := client.Chapter.GetX(ctx, ch.ID)
+	if initial.State != entchapter.StateDownloaded {
+		t.Fatalf("initial state: want downloaded, got %s", initial.State)
+	}
+	oldFilename := initial.Filename
+	seriesDir := filepath.Join(storageDir, "Other", "Scanlator Swap")
+	oldPath := filepath.Join(seriesDir, oldFilename)
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Fatalf("initial CBZ not found: %v", err)
+	}
+
+	// Same provider ("comix"), a DIFFERENT scanlator, at a strictly higher
+	// importance — this is the swap DetectUpgrades must flag.
+	spAlpha := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("comix").SetScanlator("Alpha").SetImportance(5).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spAlpha.ID).SetChapterKey("ch-scan").
+		SetURL("https://alpha.example.com/ch-scan").SetProviderIndex(0).SaveX(ctx)
+
+	n, err := download.DetectUpgrades(ctx, client)
+	if err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("DetectUpgrades: want 1 flagged, got %d", n)
+	}
+
+	if err := d.Upgrade(ctx, ch.ID); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	final := client.Chapter.GetX(ctx, ch.ID)
+	assertUpgradeProvenance(t, final, spAlpha.ID, 5)
+	assertScanlatorSwapCleanedUp(t, seriesDir, oldFilename, oldPath, final.Filename)
+}
+
+// assertScanlatorSwapCleanedUp asserts that a same-provider scanlator swap
+// changed the filename, wrote the new CBZ, deleted the old one, and left
+// exactly one .cbz in seriesDir (the one-file-per-number invariant).
+func assertScanlatorSwapCleanedUp(t *testing.T, seriesDir, oldFilename, oldPath, newFilename string) {
+	t.Helper()
+
+	if newFilename == oldFilename {
+		t.Fatalf("filename unchanged after scanlator swap: %q — the bracket must encode the scanlator", newFilename)
+	}
+
+	newPath := filepath.Join(seriesDir, newFilename)
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("new CBZ not found at %s: %v", newPath, err)
+	}
+	if _, statErr := os.Stat(oldPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("old CBZ should have been deleted after scanlator swap: stat(%s) = %v", oldPath, statErr)
+	}
+
+	// One-file-per-number: exactly one .cbz must remain in the series dir.
+	entries, err := os.ReadDir(seriesDir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", seriesDir, err)
+	}
+	cbzCount := 0
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".cbz" {
+			cbzCount++
+		}
+	}
+	if cbzCount != 1 {
+		t.Errorf("cbz count after scanlator swap = %d, want 1 (one-file-per-number)", cbzCount)
+	}
+}
+
 // TestUpgrade_NonOtherCategoryUsesRealFolder is the Part C regression proof: a
 // series filed under a REAL category ("Manhwa") must have its CBZ rendered AND
 // its old CBZ deleted under that category's folder — never the hardcoded "Other".

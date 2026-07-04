@@ -471,3 +471,67 @@ func TestReconcile_missing_file_reported(t *testing.T) {
 		t.Errorf("chapter state changed to %s; illegal downloaded→wanted transition must not occur", ch.State)
 	}
 }
+
+// TestReconcile_scanlator_groups is the Task 5 identity proof: a series dir
+// with two CBZs from the SAME provider but DIFFERENT scanlators must reconcile
+// into TWO SeriesProvider rows (one per scanlator), not one — collapsing them
+// would lose the scanlator identity on a DB-loss reconcile.
+func TestReconcile_scanlator_groups(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	max := 2.0
+	num1, num2 := 1.0, 2.0
+
+	renderScanlatorChapter(t, storage, &num1, "1", "Alpha", &max)
+	renderScanlatorChapter(t, storage, &num2, "2", "Beta", &max)
+
+	result, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if result.ProvidersUpserted != 2 {
+		t.Errorf("ProvidersUpserted = %d, want 2 (one per scanlator)", result.ProvidersUpserted)
+	}
+
+	sps := client.SeriesProvider.Query().AllX(ctx)
+	if len(sps) != 2 {
+		t.Fatalf("SeriesProvider rows = %d, want 2", len(sps))
+	}
+	gotScanlators := make(map[string]bool, 2)
+	for _, sp := range sps {
+		if sp.Provider != "Comix" {
+			t.Errorf("provider = %q, want Comix", sp.Provider)
+		}
+		gotScanlators[sp.Scanlator] = true
+	}
+	if !gotScanlators["Alpha"] || !gotScanlators["Beta"] {
+		t.Errorf("scanlators = %v, want both Alpha and Beta present", gotScanlators)
+	}
+}
+
+// renderScanlatorChapter renders a single chapter for provider "Comix" under
+// the given scanlator, producing a real "[Comix-<scanlator>]…" CBZ on disk.
+func renderScanlatorChapter(t *testing.T, storage string, num *float64, key, scanlator string, max *float64) string {
+	t.Helper()
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "Comix",
+			Scanlator:   scanlator,
+			Language:    "en",
+			SeriesTitle: "Two Scanlators",
+			Category:    disk.CategoryManga,
+			Number:      num,
+			MaxChapter:  max,
+			ChapterKey:  key,
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	fn, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter(%q): %v", key, err)
+	}
+	return fn
+}
