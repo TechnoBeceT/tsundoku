@@ -9,6 +9,9 @@ import { ref } from 'vue'
  *
  * SSE event names (verbatim from the backend):
  *   download.start | download.done | download.fail | download.skip
+ *   download.progress → payload { chapter_id, current, total, state } — live
+ *     per-page progress during a download/upgrade fetch. Forwarded raw via `on()`
+ *     (no hub-level interpretation); useDownloads maps it to the row's % + counter.
  *   cycle.start    | cycle.done
  *   refresh.start  | refresh.done
  *   health.summary  → payload { unhealthy: number }
@@ -50,6 +53,7 @@ const NAMED_EVENTS = [
   'download.done',
   'download.fail',
   'download.skip',
+  'download.progress',
   'cycle.start',
   'cycle.done',
   'refresh.start',

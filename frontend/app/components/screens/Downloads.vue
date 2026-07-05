@@ -204,7 +204,8 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
         >
           <template #before-badge>
             <div class="downloads__progress">
-              <ProgressBar tone="linear-gradient(90deg, var(--accent), var(--accentBright))" />
+              <ProgressBar :value="row.progress" tone="linear-gradient(90deg, var(--accent), var(--accentBright))" />
+              <span v-if="row.pagesTotal" class="downloads__pages">{{ row.pagesCurrent ?? 0 }} / {{ row.pagesTotal }}</span>
             </div>
           </template>
         </ChapterDownloadRow>
@@ -423,13 +424,26 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   gap: 10px;
 }
 
-/* ---- Indeterminate progress (active rows) --------------------------------- */
-/* The bar itself is the shared <ProgressBar> atom (indeterminate, gradient tone);
-   this wrapper just pins the prototype's 90px thumb width since the atom is
-   full-width by default. */
+/* ---- Progress (active rows) ----------------------------------------------- */
+/* The bar itself is the shared <ProgressBar> atom (gradient tone): indeterminate
+   until the first download.progress event arrives, then determinate (row.progress).
+   This wrapper pins the prototype's 90px thumb width (the atom is full-width by
+   default) and stacks the "12 / 40" page counter beneath the bar once page totals
+   are known. */
 .downloads__progress {
   width: 90px;
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.downloads__pages {
+  font-size: 10.5px;
+  font-weight: var(--weight-bold);
+  color: var(--faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- Load more (pagination) ----------------------------------------------- */

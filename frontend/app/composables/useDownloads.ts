@@ -183,9 +183,23 @@ export function useDownloads() {
   const unsubCycleDone = on('cycle.done', () => void refresh())
   const unsubDownloadDone = on('download.done', () => void refresh())
 
+  // Live per-page progress: update the matching row IN PLACE (no refetch) so the
+  // Active bar climbs smoothly between the coarse start/done refetches. The SSE
+  // payload is snake_case (mirrors the backend DownloadEvent json tags).
+  const unsubProgress = on('download.progress', (data) => {
+    const p = data as { chapter_id?: string, current?: number, total?: number }
+    if (!p.chapter_id || !p.total || p.total <= 0) return // guard unknown id / divide-by-zero
+    const row = items.value.find((i) => i.chapterId === p.chapter_id)
+    if (!row) return // progress for a chapter not on the loaded page — ignore
+    row.progress = Math.round((100 * (p.current ?? 0)) / p.total)
+    row.pagesCurrent = p.current
+    row.pagesTotal = p.total
+  })
+
   onUnmounted(() => {
     unsubCycleDone()
     unsubDownloadDone()
+    unsubProgress()
   })
 
   async function retry(chapterId: string): Promise<void> {

@@ -57,10 +57,15 @@ export interface DownloadItem {
   /** Human-readable display name of that source; falls back to the id upstream. Shown in place of the id. */
   providerName: string
   /**
-   * Reserved: SSE emits state transitions, not byte progress, so the Active bar
-   * is indeterminate today. Populate once a page-level progress event exists.
+   * Live download percentage (0–100), driven by the `download.progress` SSE
+   * event (round(100 * pagesCurrent / pagesTotal)). Undefined before the first
+   * event → the Active bar stays indeterminate until pages start arriving.
    */
   progress?: number
+  /** Pages fetched so far — powers the "12 / 40" counter (set with `progress`). */
+  pagesCurrent?: number
+  /** Total pages in the chapter — the counter's denominator (set with `progress`). */
+  pagesTotal?: number
   /** Retry attempts so far (failed rows) — drives the "Retry #N" badge. */
   retries?: number
   /** Pre-formatted relative next-attempt, e.g. "in 12m" (failed rows only). */
