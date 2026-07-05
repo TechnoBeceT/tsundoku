@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import CandidatePill from './CandidatePill.vue'
 import { candKey } from '../screens/import.types'
 import type { SearchGroup } from '../screens/import.types'
@@ -6,11 +7,18 @@ import type { SearchGroup } from '../screens/import.types'
 /**
  * SearchGroupCard — one cross-source search group (Stage 1): a header with the
  * matched series title + a source count, over a wrapped row of <CandidatePill>s
- * (one per matched source), plus an "+ Add"/"✓ Added" toggle for the cross-search
- * adopt tray. Presentation-only — the group arrives via the `group` prop and
- * every action is emitted.
+ * (one per matched source), plus — in the Adopt wizard only — an "+ Add"/
+ * "✓ Added" toggle for the cross-search adopt tray. Presentation-only — the
+ * group arrives via the `group` prop and every action is emitted.
  *
- * Affordance rule (owner-approved — see the cross-search-adopt-tray spec):
+ * `trayEnabled` gates the whole Add/Added toggle: the Adopt wizard
+ * (`screens/Import.vue`) sets it true; the two SINGLE-SELECT match surfaces
+ * that reuse this card (`scanLibrary/MatchPanel`,
+ * `seriesDetail/MatchSourceDialog`) leave it off — they have no tray, so they
+ * render just the classic pickable card with no stray toggle.
+ *
+ * Affordance rule (owner-approved — see the cross-search-adopt-tray spec; only
+ * relevant when `trayEnabled`):
  *   - `trayActive` false (nothing gathered yet): the whole card is still the
  *     classic one-tap "choose →" straight to Configure (nothing regresses for
  *     the common single-group case) — clicking anywhere but the toggle emits
@@ -25,11 +33,14 @@ import type { SearchGroup } from '../screens/import.types'
 const props = withDefaults(defineProps<{
   /** The cross-source group this card represents. */
   group: SearchGroup
+  /** Renders the adopt-tray Add/Added toggle; the single-select match surfaces leave it off. */
+  trayEnabled?: boolean
   /** True when every candidate of this group is already in the adopt tray. */
   added?: boolean
   /** True once the tray holds at least one candidate — disables the card's own pick. */
   trayActive?: boolean
 }>(), {
+  trayEnabled: false,
   added: false,
   trayActive: false,
 })
@@ -43,9 +54,12 @@ const emit = defineEmits<{
   remove: [group: SearchGroup]
 }>()
 
+/** True when the card body itself is the pick affordance (keyboard-operable). */
+const bodyClickable = computed(() => !props.trayActive)
+
 /** Card-body click: picks straight to Configure, but only while the tray is empty. */
 function onCardClick(): void {
-  if (!props.trayActive) emit('pick', props.group)
+  if (bodyClickable.value) emit('pick', props.group)
 }
 
 /** The "+ Add" / "✓ Added" toggle — add when not yet fully tracked, else remove. */
@@ -55,11 +69,19 @@ function onToggle(): void {
 </script>
 
 <template>
-  <div class="group" :class="{ 'group--static': trayActive }" @click="onCardClick">
+  <div
+    class="group"
+    :class="{ 'group--static': trayActive }"
+    :role="bodyClickable ? 'button' : undefined"
+    :tabindex="bodyClickable ? 0 : undefined"
+    @click="onCardClick"
+    @keydown.enter="onCardClick"
+    @keydown.space.prevent="onCardClick"
+  >
     <div class="group__head">
       <span class="group__title">{{ group.title }}</span>
       <span class="group__count">
-        {{ group.candidates.length }} sources<template v-if="!trayActive"> · choose →</template>
+        {{ group.candidates.length }} sources<template v-if="bodyClickable"> · choose →</template>
       </span>
     </div>
     <div class="group__cands">
@@ -69,7 +91,7 @@ function onToggle(): void {
         :candidate="c"
       />
     </div>
-    <div class="group__foot">
+    <div v-if="trayEnabled" class="group__foot">
       <button
         type="button"
         class="group__toggle"
@@ -97,6 +119,13 @@ function onToggle(): void {
 
 .group:not(.group--static):hover {
   border-color: var(--accent);
+}
+
+/* Keyboard focus ring for the clickable card body (now a role="button" div). */
+.group[tabindex]:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring-focus);
 }
 
 /* trayActive: the card body no longer picks — no pointer/hover affordance. */

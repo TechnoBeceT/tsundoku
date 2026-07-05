@@ -538,6 +538,7 @@ const submit = (): void => {
               v-for="g in groups"
               :key="g.title"
               :group="g"
+              tray-enabled
               :added="isGroupAdded(g)"
               :tray-active="trayActive"
               @pick="pickGroup"
