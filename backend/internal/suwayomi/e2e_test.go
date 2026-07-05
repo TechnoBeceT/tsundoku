@@ -998,8 +998,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 	hub := sse.NewHub()
 	fetcher := suwayomi.NewFetcher(client)
 	dispatcher := download.New(db, fetcher, hub, download.Config{
-		Storage:                storageDir,
-		PerProviderConcurrency: 1,
+		Storage: storageDir,
 	}, settings.Static{Retries: 1, Backoff: 0})
 
 	if err := dispatcher.RunOnce(ctx); err != nil {

@@ -30,25 +30,22 @@ import (
 )
 
 // Config holds the STRUCTURAL (env-only, restart-scoped) parameters for the
-// Dispatcher. The retry policy (max-retries + backoff base) is NOT here — it is
-// runtime-tunable and read from a RetrySettings at use-time so a settings change
-// takes effect on the next cycle without a restart.
+// Dispatcher. The retry policy (max-retries + backoff base) and the per-source
+// download concurrency are NOT here — they are runtime-tunable and read from a
+// RetrySettings at use-time so a settings change takes effect on the next cycle
+// without a restart.
 type Config struct {
-	// PerProviderConcurrency is the maximum number of chapters from the same
-	// provider that may be downloaded concurrently. Must be >= 1.
-	PerProviderConcurrency int
-
 	// Storage is the root library directory (e.g. "/data/library") passed to
 	// disk.RenderChapter.
 	Storage string
 }
 
-// RetrySettings supplies the runtime-tunable retry policy. The Dispatcher reads
-// it per cycle / per fail-handling (never captured at construction) so an owner's
-// change to the max-retries or backoff base via the settings API takes effect on
-// the next download cycle. *settings.Service and settings.Static both satisfy it;
-// implementations must be safe for concurrent use (handleFailure runs in the
-// per-chapter goroutines).
+// RetrySettings supplies the runtime-tunable download policy. The Dispatcher
+// reads it per cycle / per fail-handling (never captured at construction) so an
+// owner's change to the max-retries, backoff base, or per-source concurrency via
+// the settings API takes effect on the next download cycle. *settings.Service and
+// settings.Static both satisfy it; implementations must be safe for concurrent
+// use (the accessors run in the per-source scheduler + per-chapter goroutines).
 type RetrySettings interface {
 	// MaxRetries is the PER-SOURCE retry budget: how many times the dispatcher
 	// retries a chapter FROM ONE SOURCE before that source is abandoned for it. A
@@ -60,6 +57,11 @@ type RetrySettings interface {
 	// delay before a source's retry attempt n is base×2^n (capped at 1h): the first
 	// retry (n=1) = 2×base, n=2 = 4×base, and so on.
 	RetryBackoff(ctx context.Context) time.Duration
+	// DownloadConcurrency is the PER-SOURCE download concurrency cap: how many of a
+	// source's chapters the dispatcher fetches in parallel (and, equivalently, how
+	// many of that source's queued chapters may be in the downloading state at
+	// once). Read once per cycle for the scheduler + fetch limiter; clamped to >= 1.
+	DownloadConcurrency(ctx context.Context) int
 }
 
 // backoffCurve returns the delay for the given attempt: base×2^attempt, capped at
@@ -108,13 +110,10 @@ type Dispatcher struct {
 }
 
 // New creates a Dispatcher configured with the given client, fetcher, SSE hub,
-// structural Config, and runtime RetrySettings. cfg.PerProviderConcurrency must
-// be >= 1 (clamped if not). The retry policy (max-retries + backoff base) is read
-// from retry at use-time, never captured here.
+// structural Config, and runtime RetrySettings. The download policy (max-retries,
+// backoff base, and per-source concurrency) is read from retry at use-time, never
+// captured here.
 func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config, retry RetrySettings) *Dispatcher {
-	if cfg.PerProviderConcurrency < 1 {
-		cfg.PerProviderConcurrency = 1
-	}
 	return &Dispatcher{
 		client: client,
 		f:      f,
@@ -122,6 +121,18 @@ func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config,
 		cfg:    cfg,
 		retry:  retry,
 	}
+}
+
+// downloadConcurrency reads the current per-source download concurrency cap from
+// the runtime settings, clamped to at least 1. A cap of 0 (e.g. an unset
+// settings.Static field) would make an unbuffered scheduler channel deadlock, so
+// the clamp is a correctness guard, not a nicety.
+func (d *Dispatcher) downloadConcurrency(ctx context.Context) int {
+	n := d.retry.DownloadConcurrency(ctx)
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // MaxRetries returns the current per-source retry budget from the runtime
@@ -134,20 +145,29 @@ func (d *Dispatcher) MaxRetries(ctx context.Context) int {
 }
 
 // RunOnce loads every actionable chapter (state wanted or failed) and processes
-// them concurrently, honouring the per-provider concurrency cap. It waits for all
-// chapters to finish before returning. Per-chapter outcomes (success, source
-// failure, permanent failure) are recorded in the DB and broadcast via SSE, not
-// propagated to the caller — only a hard infrastructure failure loading the work
-// list is returned. Callers can run this method in a ticker loop.
+// them per source: each source's chapters are dispatched in ascending chapter
+// number, up to DownloadConcurrency at a time, with the sources running in
+// parallel. It waits for all chapters to finish before returning. Per-chapter
+// outcomes (success, source failure, permanent failure) are recorded in the DB
+// and broadcast via SSE, not propagated to the caller — only a hard
+// infrastructure failure loading the work list is returned. Callers can run this
+// method in a ticker loop.
 //
-// The per-source retry budget (maxRetries) and the cycle timestamp (now) are read
-// ONCE here so every chapter in the cycle sees a consistent snapshot; a settings
-// change therefore applies from the next cycle. The candidate loop (Process) then
-// decides, per chapter, which source to try — RunOnce no longer pre-resolves a
-// single provider, because a chapter may fall through several sources in one pass.
+// The download policy is read ONCE here so every chapter in the cycle sees a
+// consistent snapshot; a settings change therefore applies from the next cycle:
+//
+//   - maxRetries + now — the per-source retry budget + cooldown horizon.
+//   - concurrency — the per-source start cap (scheduler) AND the per-provider
+//     fetch cap (limiter).
+//
+// A chapter stays in the wanted state (UI "Queued") until the scheduler acquires
+// a start slot for it — only then does it transition to downloading — so at any
+// moment only up to DownloadConcurrency of a source's chapters are downloading and
+// the rest remain queued, draining in ascending order (see schedule.go).
 func (d *Dispatcher) RunOnce(ctx context.Context) error {
 	maxRetries := d.retry.MaxRetries(ctx)
 	now := time.Now()
+	concurrency := d.downloadConcurrency(ctx)
 
 	chapters, err := chapter.WantedChapters(ctx, d.client, 1000)
 	if err != nil {
@@ -157,28 +177,33 @@ func (d *Dispatcher) RunOnce(ctx context.Context) error {
 		return nil
 	}
 
-	limiter := newProviderLimiter(d.cfg.PerProviderConcurrency)
+	// Resolve each chapter's live candidates and partition by primary source
+	// (highest-importance live candidate). No-candidate chapters are handled here
+	// and never occupy a start slot. The limiter is shared across the whole cycle
+	// so a provider's fetch cap holds even for fall-through candidates.
+	groups := d.groupBySource(ctx, chapters, maxRetries, now)
+	limiter := newProviderLimiter(concurrency)
+
 	var wg sync.WaitGroup
-	for _, ch := range chapters {
-		chID := ch.ID
+	for _, items := range groups {
 		wg.Add(1)
-		go func() {
+		go func(items []resolvedChapter) {
 			defer wg.Done()
-			_ = d.processChapter(ctx, chID, maxRetries, now, limiter)
-		}()
+			d.runSourceQueue(ctx, items, concurrency, maxRetries, now, limiter)
+		}(items)
 	}
 	wg.Wait()
 	return nil
 }
 
 // Process runs the full multi-source download pipeline for a single chapter by
-// id, resolving the retry budget and timestamp itself and using a fresh
-// per-provider limiter. RunOnce drives the batch path (shared snapshot + limiter);
-// Process is the standalone single-chapter entry point.
+// id, resolving the download policy itself and using a fresh per-provider limiter.
+// RunOnce drives the ordered batch path (per-source scheduler + shared limiter);
+// Process is the standalone single-chapter entry point, so it needs no scheduler.
 func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
 	maxRetries := d.retry.MaxRetries(ctx)
 	now := time.Now()
-	limiter := newProviderLimiter(d.cfg.PerProviderConcurrency)
+	limiter := newProviderLimiter(d.downloadConcurrency(ctx))
 	return d.processChapter(ctx, chapterID, maxRetries, now, limiter)
 }
 
@@ -214,9 +239,24 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 		return d.handleNoCandidates(ctx, ch, maxRetries)
 	}
 
+	return d.runCandidates(ctx, ch, chapterID, cands, maxRetries, now, limiter)
+}
+
+// runCandidates transitions a chapter with at least one live candidate from
+// wanted/failed → downloading (announcing download.start), then tries each
+// candidate in importance order with immediate fall-through — the first success
+// wins. If every candidate fails this cycle, finalizeAfterAllFailed decides failed
+// vs permanently_failed from the freshly-bumped per-source state.
+//
+// The caller MUST already hold the source's start slot (RunOnce's per-source
+// scheduler acquires it; Process is single-chapter so contention cannot arise):
+// this is what keeps the wanted→downloading transition gated behind slot
+// acquisition, so a queued chapter stays wanted until it truly starts. ch must be
+// loaded WithSeries(WithCategory()) for the render step.
+func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter) error {
 	// Transition wanted / failed → downloading and announce the attempt.
 	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloading); err != nil {
-		return fmt.Errorf("download.Dispatcher.processChapter: transition to downloading for chapter %s: %w", chapterID, err)
+		return fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, err)
 	}
 	d.broadcast("download.start", DownloadEvent{
 		ChapterID: chapterID,
@@ -464,11 +504,19 @@ func (d *Dispatcher) handleNoCandidates(ctx context.Context, ch *ent.Chapter, ma
 	return nil
 }
 
-// providerLimiter caps how many chapters may be fetched concurrently from the
+// providerLimiter caps how many chapters may be FETCHED concurrently from the
 // same provider. It hands out one buffered-channel semaphore per provider name,
-// each of capacity PerProviderConcurrency, so a single busy provider can never
-// monopolise the fetch pool while other providers proceed in parallel. Safe for
-// concurrent use by the per-chapter goroutines.
+// each of capacity = the per-cycle DownloadConcurrency, so a single busy provider
+// can never monopolise the fetch pool while other providers proceed in parallel.
+// Safe for concurrent use by the per-chapter goroutines.
+//
+// It is DISTINCT from the per-source start scheduler (schedule.go): the scheduler
+// orders a source's primary chapters and gates their wanted→downloading
+// transition, while this limiter bounds actual upstream fetch concurrency keyed by
+// the REAL provider being fetched — so it also caps fall-through secondaries and
+// the upgrade path, which the scheduler (keyed by primary source) does not cover.
+// A chapter never acquires two slots of THIS limiter at once, and the scheduler's
+// start channel is a separate object, so no self-deadlock is possible.
 type providerLimiter struct {
 	mu   sync.Mutex
 	cap  int

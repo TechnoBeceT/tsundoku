@@ -11,19 +11,23 @@ import (
 // (download.RetrySettings, job.Intervals, refresh.Concurrency, and the
 // series stale-grace resolver) so either can be threaded into a consumer.
 type Static struct {
-	Download    time.Duration
-	Refresh     time.Duration
-	Concurrency int
-	Retries     int
-	Backoff     time.Duration
-	StaleGrace  int
-	ExtCheck    time.Duration
-	WarmupIv    time.Duration
-	WarmupSlow  int
+	Download     time.Duration
+	DownloadConc int
+	Refresh      time.Duration
+	Concurrency  int
+	Retries      int
+	Backoff      time.Duration
+	StaleGrace   int
+	ExtCheck     time.Duration
+	WarmupIv     time.Duration
+	WarmupSlow   int
 }
 
 // DownloadInterval returns the fixed download ticker period.
 func (s Static) DownloadInterval(context.Context) time.Duration { return s.Download }
+
+// DownloadConcurrency returns the fixed per-source download concurrency cap.
+func (s Static) DownloadConcurrency(context.Context) int { return s.DownloadConc }
 
 // RefreshInterval returns the fixed discovery-sweep period.
 func (s Static) RefreshInterval(context.Context) time.Duration { return s.Refresh }

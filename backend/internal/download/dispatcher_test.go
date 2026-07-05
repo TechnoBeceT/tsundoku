@@ -70,8 +70,6 @@ func TestDispatcher_HappyPath(t *testing.T) {
 
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 2,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
@@ -152,8 +150,6 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 
 	f := fake.New(fake.WithFailFirst())
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: 0})
 
@@ -227,8 +223,6 @@ func TestDispatcher_PermanentFailure(t *testing.T) {
 	alwaysErr := errors.New("permanent fetch error")
 	f := fake.New(fake.WithError(alwaysErr))
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 1, Backoff: 0})
 
@@ -298,10 +292,8 @@ func TestDispatcher_PerProviderConcurrency(t *testing.T) {
 	base := fake.New()
 	cf := &countingFetcher{base: base}
 	d := download.New(client, cf, hub, download.Config{
-		PerProviderConcurrency: cap,
-
 		Storage: storageDir,
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour, DownloadConc: cap})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -335,8 +327,6 @@ func TestDispatcher_SSEEvents(t *testing.T) {
 
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
@@ -391,8 +381,6 @@ func TestDispatcher_BestProviderPicked(t *testing.T) {
 
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
@@ -439,8 +427,6 @@ func TestDispatcher_SSEFail(t *testing.T) {
 	alwaysErr := errors.New("boom")
 	f := fake.New(fake.WithError(alwaysErr))
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 1, Backoff: 0})
 
@@ -499,8 +485,6 @@ func TestDispatcher_NoChapterStrandedInDownloading(t *testing.T) {
 	// Use an always-failing fetcher so handleFailure is exercised.
 	f := fake.New(fake.WithError(errors.New("forced failure")))
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 2, Backoff: 0})
 
@@ -551,8 +535,6 @@ func TestDispatcher_ZeroPadding(t *testing.T) {
 
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
@@ -594,8 +576,6 @@ func TestDispatcher_NoProviderStaysWanted(t *testing.T) {
 
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
@@ -670,8 +650,6 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 	// Use a capturing fetcher to record the FetchRef the dispatcher constructs.
 	cf := &fetchRefCapture{}
 	d := download.New(client, cf, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
@@ -716,8 +694,6 @@ func TestDispatcher_RendersToSeriesCategory(t *testing.T) {
 
 	f := fake.New()
 	d := download.New(client, f, hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 

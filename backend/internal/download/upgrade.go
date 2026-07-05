@@ -150,7 +150,13 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 		State:     string(entchapter.StateUpgrading),
 	})
 
-	res, err := d.fetchAndRender(ctx, ch, chapterID)
+	// The upgrade fetch honours the SAME per-source concurrency cap as the download
+	// path (read at use-time). Upgrades are driven sequentially by the job runner
+	// today, so this limiter rarely blocks; it is here so an upgrade fetch is capped
+	// per provider exactly like a download fetch, and stays correct if upgrades are
+	// ever parallelised.
+	limiter := newProviderLimiter(d.downloadConcurrency(ctx))
+	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter)
 	if err != nil {
 		return d.handleUpgradeFailure(ctx, chapterID, res.pc, err)
 	}
@@ -177,7 +183,7 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 // try) — upgrade failures never spend retry budget, so a preferred source recovers
 // as an upgrade target once it is back. A render failure returns no pc (not the
 // source's fault, so no cooldown).
-func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID) (upgradeResult, error) {
+func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter) (upgradeResult, error) {
 	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), time.Now())
 	if err != nil {
 		return upgradeResult{}, fmt.Errorf("rank live candidates: %w", err)
@@ -193,7 +199,9 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	pc := best.ProviderChapter
 	sp := best.SeriesProvider
 
+	release := limiter.acquire(sp.Provider)
 	pages, err := d.f.Fetch(ctx, buildFetchRef(pc, sp))
+	release()
 	if err != nil {
 		// Carry pc so handleUpgradeFailure bumps this source's per-source retry state.
 		return upgradeResult{pc: pc, sp: sp}, err

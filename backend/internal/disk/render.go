@@ -5,9 +5,28 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/technobecet/tsundoku/internal/fetcher"
 )
+
+// sidecarLocks serialises the per-series tsundoku.json read-modify-write. Now
+// that a source's chapters download in parallel (the download dispatcher runs up
+// to DownloadConcurrency chapters of the SAME series at once), two RenderChapter
+// calls can update one series' sidecar concurrently. Without serialisation they
+// race on the shared JSON — losing a provenance entry (last-writer-wins on the
+// read-modify-write) and colliding on the fixed "tsundoku.json.tmp" path, which
+// intermittently fails the render. The lock is keyed by series directory, so
+// different series never contend.
+var sidecarLocks sync.Map // seriesDir(string) -> *sync.Mutex
+
+// lockSidecar acquires the per-series sidecar mutex and returns its unlock func.
+func lockSidecar(seriesDir string) (unlock func()) {
+	m, _ := sidecarLocks.LoadOrStore(seriesDir, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
 
 // RenderRequest carries everything needed to render one chapter to disk.
 type RenderRequest struct {
@@ -72,6 +91,10 @@ func RenderChapter(req RenderRequest) (filename string, err error) {
 // chapter provenance entry (matching by ChapterKey), and writes the result
 // atomically. It is the sole place responsible for sidecar mutation.
 func upsertSidecar(seriesDir string, m RenderMeta, filename string, pageCount int) error {
+	// Serialise the whole read-modify-write for this series so concurrent renders
+	// of sibling chapters never lose an entry or collide on the shared temp file.
+	defer lockSidecar(seriesDir)()
+
 	existing, err := ReadSidecar(seriesDir)
 	if err != nil {
 		return fmt.Errorf("read: %w", err)

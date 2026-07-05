@@ -118,7 +118,7 @@ func TestUpgrade_SwapsFile(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-upg").SaveX(ctx)
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 1, Storage: storageDir,
+		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
@@ -190,7 +190,7 @@ func TestUpgrade_ScanlatorChangeReplacesFile(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-scan").SaveX(ctx)
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 1, Storage: storageDir,
+		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
@@ -294,7 +294,7 @@ func TestUpgrade_NonOtherCategoryUsesRealFolder(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-manhwa").SaveX(ctx)
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 1, Storage: storageDir,
+		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
@@ -358,7 +358,7 @@ func TestUpgrade_NonDestructiveOnFailure(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-fail").SaveX(ctx)
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 1, Storage: storageDir,
+		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
@@ -387,7 +387,7 @@ func TestUpgrade_NonDestructiveOnFailure(t *testing.T) {
 
 	// Upgrade with a fetcher that always errors — must be non-destructive.
 	dFail := download.New(client, fake.New(fake.WithError(errors.New("simulated fetch failure"))), hub,
-		download.Config{PerProviderConcurrency: 1, Storage: storageDir}, settings.Static{Retries: 3, Backoff: time.Hour})
+		download.Config{Storage: storageDir}, settings.Static{Retries: 3, Backoff: time.Hour})
 	if err := dFail.Upgrade(ctx, ch.ID); err != nil {
 		t.Fatalf("Upgrade returned unexpected hard error: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestDetectUpgrades_StrictlyGreater(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-strict").SaveX(ctx)
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 1, Storage: storageDir,
+		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -490,7 +490,7 @@ func TestUpgrade_SSEEvents(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-sse-upg").SaveX(ctx)
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 1, Storage: storageDir,
+		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)

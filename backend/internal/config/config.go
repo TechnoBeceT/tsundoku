@@ -230,9 +230,12 @@ type JobsConfig struct {
 	DownloadInterval time.Duration
 
 	// DownloadConcurrency bounds how many chapter downloads run in parallel PER
-	// PROVIDER in the dispatcher (each is a live upstream fetch). Default 4 —
-	// unchanged from the previous hardcoded literal. validate() rejects a value
-	// below 1. Set via TSUNDOKU_JOBS_DOWNLOADCONCURRENCY.
+	// SOURCE in the dispatcher (each is a live upstream fetch), and how many of a
+	// source's queued chapters may be "downloading" at once. Default 5 (Kaizoku
+	// parity). This is the env-sourced DEFAULT the runtime settings overlay
+	// (jobs.download_concurrency) can override without a restart — the dispatcher
+	// reads the tunable per cycle, not this value directly. validate() rejects a
+	// value below 1. Set via TSUNDOKU_JOBS_DOWNLOADCONCURRENCY.
 	DownloadConcurrency int
 
 	// RefreshInterval is the tick period for the M5 discovery poll, which
@@ -332,7 +335,7 @@ func defaults() map[string]any {
 		"suwayomi.databasepassword": "",
 		// Jobs — background-job scheduler.
 		"jobs.downloadinterval":       "15m",
-		"jobs.downloadconcurrency":    4,
+		"jobs.downloadconcurrency":    5,
 		"jobs.refreshinterval":        "2h",
 		"jobs.refreshconcurrency":     4,
 		"jobs.maxretries":             3,

@@ -44,6 +44,12 @@ const (
 const (
 	// KeyDownloadInterval is the download ticker period (duration, >= 1m).
 	KeyDownloadInterval = "jobs.download_interval"
+	// KeyDownloadConcurrency is the PER-SOURCE download concurrency cap (int,
+	// 1..32): how many chapters from the same source the dispatcher fetches in
+	// parallel, and how many of a source's queued chapters may be "downloading" at
+	// once. Default 5 (Kaizoku parity). Read at use-time so a change applies on the
+	// next download cycle without a restart.
+	KeyDownloadConcurrency = "jobs.download_concurrency"
 	// KeyRefreshInterval is the discovery-sweep ticker period (duration, >= 10m).
 	KeyRefreshInterval = "jobs.refresh_interval"
 	// KeyRefreshConcurrency bounds parallel provider re-fetches (int, 1..32).
@@ -77,6 +83,7 @@ const (
 // env boundary stays in internal/config.
 type Defaults struct {
 	DownloadInterval       time.Duration
+	DownloadConcurrency    int
 	RefreshInterval        time.Duration
 	RefreshConcurrency     int
 	MaxRetries             int
@@ -105,6 +112,7 @@ type tunable struct {
 // Settings screen renders deterministically and the drift gate stays stable).
 var tunableOrder = []string{
 	KeyDownloadInterval,
+	KeyDownloadConcurrency,
 	KeyRefreshInterval,
 	KeyRefreshConcurrency,
 	KeyMaxRetries,
@@ -121,6 +129,10 @@ var tunables = map[string]tunable{
 	KeyDownloadInterval: durationTunable(
 		KeyDownloadInterval, "duration", time.Minute,
 		func(d Defaults) time.Duration { return d.DownloadInterval },
+	),
+	KeyDownloadConcurrency: intTunable(
+		KeyDownloadConcurrency, "count", 1, 32,
+		func(d Defaults) int { return d.DownloadConcurrency },
 	),
 	KeyRefreshInterval: durationTunable(
 		KeyRefreshInterval, "duration", 10*time.Minute,

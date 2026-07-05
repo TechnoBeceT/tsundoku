@@ -49,8 +49,6 @@ func TestRunner_DownloadCycle_DrainWanted(t *testing.T) {
 	defer unsub()
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 2,
-
 		Storage: storage,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 	r := job.NewRunner(d, client, hub, storage, settings.Static{})
@@ -123,8 +121,6 @@ func TestRunner_DownloadCycle_UpgradePass(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-upg-cycle").SaveX(ctx)
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 2,
-
 		Storage: storage,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 	r := job.NewRunner(d, client, hub, storage, settings.Static{})
@@ -180,8 +176,6 @@ func TestRunner_Start_TicksAndStopsCleanly(t *testing.T) {
 	hub := sse.NewHub()
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storage,
 	}, settings.Static{Retries: 1, Backoff: time.Hour})
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: 20 * time.Millisecond})
@@ -320,7 +314,7 @@ func TestRunner_Start_ReReadsIntervalPerIteration(t *testing.T) {
 	// fast no-op and the loop spins back to re-read the interval.
 	intervals := &countingIntervals{download: 10 * time.Millisecond, refresh: time.Hour}
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 1, Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
 	r := job.NewRunner(d, client, hub, storage, intervals)
 
 	r.Start(ctx)
@@ -364,7 +358,7 @@ func TestRunner_Trigger_RunsCycle(t *testing.T) {
 		SetURL("https://x/ch-1").SetProviderIndex(0).SaveX(ctx)
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-1").SaveX(ctx)
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
 
 	// Long interval so only the trigger can drive the cycle within the test.
@@ -389,7 +383,7 @@ func TestRunner_Trigger_RunsCycle(t *testing.T) {
 func TestRunner_Trigger_Coalesces(t *testing.T) {
 	client := testdb.New(t)
 	r := job.NewRunner(
-		download.New(client, fake.New(), sse.NewHub(), download.Config{PerProviderConcurrency: 1, Storage: t.TempDir()}, settings.Static{Retries: 1, Backoff: time.Hour}),
+		download.New(client, fake.New(), sse.NewHub(), download.Config{Storage: t.TempDir()}, settings.Static{Retries: 1, Backoff: time.Hour}),
 		client, sse.NewHub(), t.TempDir(), settings.Static{},
 	)
 	// No Start → nothing drains the channel. Many triggers must not block/panic.
@@ -463,7 +457,7 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 	fc := fakeSuwayomi{}
 	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, settings.Static{Concurrency: 2})
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour, Refresh: 100 * time.Millisecond})
 
 	r.Start(ctx) // download loop (trigger-driven here)
@@ -528,7 +522,7 @@ func TestRunner_StartExtensionCheck_FetchesAndBroadcasts(t *testing.T) {
 
 	swFake := &extCheckFake{}
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 1, Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
 	// Short ExtCheck so the job fires quickly in the test.
 	r := job.NewRunner(d, client, hub, storage, settings.Static{ExtCheck: 20 * time.Millisecond})
 
@@ -578,7 +572,7 @@ func TestStartRefresh_BroadcastsHealthSummary(t *testing.T) {
 	fc := fakeSuwayomi{}
 	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, settings.Static{Concurrency: 2})
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 2, Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour})
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Refresh: 50 * time.Millisecond})
 
 	// Stub the unhealthy count so the assertion is deterministic.
@@ -656,7 +650,7 @@ func TestRunner_StartWarmup_SeedsAtBoot(t *testing.T) {
 	fc := &warmupFake{fired: make(chan struct{})}
 	warmupSvc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000})
 
-	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 1, Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
 	// A one-hour interval: only the boot seed (top-of-loop pass) can warm within
 	// the test window — an interval-first loop would leave Browse un-called.
 	r := job.NewRunner(d, client, hub, storage, settings.Static{WarmupIv: time.Hour})
@@ -703,8 +697,6 @@ func TestRunner_Reconcile_SmokesWrapper(t *testing.T) {
 	}
 
 	d := download.New(client, fake.New(), hub, download.Config{
-		PerProviderConcurrency: 1,
-
 		Storage: storage,
 	}, settings.Static{Retries: 1, Backoff: time.Hour})
 	r := job.NewRunner(d, client, hub, storage, settings.Static{})

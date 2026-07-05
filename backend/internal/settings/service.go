@@ -33,6 +33,12 @@ func (s *Service) DownloadInterval(ctx context.Context) time.Duration {
 	return s.resolveDuration(ctx, KeyDownloadInterval)
 }
 
+// DownloadConcurrency is the per-source download concurrency cap (DB override
+// else default). The dispatcher reads it per cycle, so a change hot-reloads.
+func (s *Service) DownloadConcurrency(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyDownloadConcurrency)
+}
+
 // RefreshInterval is the discovery-sweep ticker period (DB override else default).
 func (s *Service) RefreshInterval(ctx context.Context) time.Duration {
 	return s.resolveDuration(ctx, KeyRefreshInterval)

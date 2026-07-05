@@ -34,6 +34,7 @@ type testEnv struct {
 func testDefaults() settingssvc.Defaults {
 	return settingssvc.Defaults{
 		DownloadInterval:       15 * time.Minute,
+		DownloadConcurrency:    5,
 		RefreshInterval:        2 * time.Hour,
 		RefreshConcurrency:     4,
 		MaxRetries:             3,
@@ -93,8 +94,8 @@ func TestList_OK(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 9 {
-		t.Fatalf("want 9 settings, got %d", len(got))
+	if len(got) != 10 {
+		t.Fatalf("want 10 settings, got %d", len(got))
 	}
 	if got[0].Key != settingssvc.KeyDownloadInterval || got[0].Value != "15m0s" {
 		t.Errorf("first row = %+v, want download_interval=15m0s", got[0])

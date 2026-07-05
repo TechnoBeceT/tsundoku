@@ -16,6 +16,7 @@ import (
 func testDefaults() settings.Defaults {
 	return settings.Defaults{
 		DownloadInterval:       15 * time.Minute,
+		DownloadConcurrency:    5,
 		RefreshInterval:        2 * time.Hour,
 		RefreshConcurrency:     4,
 		MaxRetries:             3,
@@ -39,6 +40,9 @@ func TestAccessorsReturnDefaultsWhenNoRow(t *testing.T) {
 	}
 	if got := svc.RefreshInterval(ctx); got != 2*time.Hour {
 		t.Errorf("RefreshInterval default = %v, want 2h", got)
+	}
+	if got := svc.DownloadConcurrency(ctx); got != 5 {
+		t.Errorf("DownloadConcurrency default = %d, want 5", got)
 	}
 	if got := svc.RefreshConcurrency(ctx); got != 4 {
 		t.Errorf("RefreshConcurrency default = %d, want 4", got)
@@ -201,8 +205,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 9 {
-		t.Fatalf("List len = %d, want 9", len(list))
+	if len(list) != 10 {
+		t.Fatalf("List len = %d, want 10", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -253,16 +257,30 @@ func findSetting(t *testing.T, list []settings.SettingDTO, key string) settings.
 func TestStaticProviderReturnsFixedValues(t *testing.T) {
 	ctx := context.Background()
 	s := settings.Static{
-		Download: time.Second, Refresh: 2 * time.Second, Concurrency: 2,
+		Download: time.Second, DownloadConc: 6, Refresh: 2 * time.Second, Concurrency: 2,
 		Retries: 5, Backoff: 3 * time.Second, StaleGrace: 7,
 		ExtCheck: 12 * time.Hour, WarmupIv: 15 * time.Minute, WarmupSlow: 4000,
 	}
-	if s.DownloadInterval(ctx) != time.Second || s.RefreshInterval(ctx) != 2*time.Second ||
-		s.RefreshConcurrency(ctx) != 2 || s.MaxRetries(ctx) != 5 ||
-		s.RetryBackoff(ctx) != 3*time.Second || s.StaleGraceDays(ctx) != 7 ||
-		s.ExtensionCheckInterval(ctx) != 12*time.Hour ||
-		s.WarmupInterval(ctx) != 15*time.Minute || s.WarmupSlowThresholdMs(ctx) != 4000 {
-		t.Errorf("Static returned unexpected values: %+v", s)
+	checks := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"DownloadInterval", s.DownloadInterval(ctx), time.Second},
+		{"DownloadConcurrency", s.DownloadConcurrency(ctx), 6},
+		{"RefreshInterval", s.RefreshInterval(ctx), 2 * time.Second},
+		{"RefreshConcurrency", s.RefreshConcurrency(ctx), 2},
+		{"MaxRetries", s.MaxRetries(ctx), 5},
+		{"RetryBackoff", s.RetryBackoff(ctx), 3 * time.Second},
+		{"StaleGraceDays", s.StaleGraceDays(ctx), 7},
+		{"ExtensionCheckInterval", s.ExtensionCheckInterval(ctx), 12 * time.Hour},
+		{"WarmupInterval", s.WarmupInterval(ctx), 15 * time.Minute},
+		{"WarmupSlowThresholdMs", s.WarmupSlowThresholdMs(ctx), 4000},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("Static.%s = %v, want %v", c.name, c.got, c.want)
+		}
 	}
 }
 
@@ -368,5 +386,31 @@ func TestWarmupSlowThresholdMs(t *testing.T) {
 	}
 	if got := svc.WarmupSlowThresholdMs(ctx); got != 8000 {
 		t.Errorf("WarmupSlowThresholdMs after Set = %d, want 8000", got)
+	}
+}
+
+// TestDownloadConcurrency proves the per-source download-concurrency accessor
+// returns the default (5) when unset, rejects out-of-bounds values (below 1 /
+// above 32), and reflects a valid override (the hot-reload contract the dispatcher
+// relies on).
+func TestDownloadConcurrency(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.DownloadConcurrency(ctx); got != 5 {
+		t.Errorf("DownloadConcurrency default = %d, want 5", got)
+	}
+	if err := svc.Set(ctx, settings.KeyDownloadConcurrency, "0"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 0 (below 1): want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyDownloadConcurrency, "33"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 33 (above 32): want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyDownloadConcurrency, "8"); err != nil {
+		t.Fatalf("Set 8: %v", err)
+	}
+	if got := svc.DownloadConcurrency(ctx); got != 8 {
+		t.Errorf("DownloadConcurrency after Set = %d, want 8", got)
 	}
 }

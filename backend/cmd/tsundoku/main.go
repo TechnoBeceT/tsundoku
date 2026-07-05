@@ -103,8 +103,7 @@ func main() {
 	warmupSvc := warmup.NewService(suwayomiClient, metricsSvc, settingsSvc)
 
 	dispatcher := download.New(entClient, suwayomiFetcher, hub, download.Config{
-		PerProviderConcurrency: cfg.Jobs.DownloadConcurrency,
-		Storage:                cfg.Storage.Folder,
+		Storage: cfg.Storage.Folder,
 	}, settingsSvc)
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
@@ -168,6 +167,7 @@ func main() {
 func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 	return settings.Defaults{
 		DownloadInterval:       cfg.Jobs.DownloadInterval,
+		DownloadConcurrency:    cfg.Jobs.DownloadConcurrency,
 		RefreshInterval:        cfg.Jobs.RefreshInterval,
 		RefreshConcurrency:     cfg.Jobs.RefreshConcurrency,
 		MaxRetries:             cfg.Jobs.MaxRetries,

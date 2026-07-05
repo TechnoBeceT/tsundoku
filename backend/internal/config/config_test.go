@@ -715,8 +715,8 @@ func TestValidateRejectsNonPositiveSearchTimeout(t *testing.T) {
 	}
 }
 
-// TestJobsDownloadConcurrencyDefault confirms the per-provider download
-// concurrency defaults to 4 (unchanged from the previous hardcoded literal).
+// TestJobsDownloadConcurrencyDefault confirms the per-source download
+// concurrency defaults to 5 (Kaizoku parity).
 func TestJobsDownloadConcurrencyDefault(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
@@ -725,8 +725,8 @@ func TestJobsDownloadConcurrencyDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Jobs.DownloadConcurrency != 4 {
-		t.Errorf("Jobs.DownloadConcurrency default = %d, want 4", cfg.Jobs.DownloadConcurrency)
+	if cfg.Jobs.DownloadConcurrency != 5 {
+		t.Errorf("Jobs.DownloadConcurrency default = %d, want 5", cfg.Jobs.DownloadConcurrency)
 	}
 }
 
