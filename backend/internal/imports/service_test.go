@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -195,14 +196,40 @@ func makeAdoptChapters(baseID, n int) []suwayomi.Chapter {
 // it is handed, so a test can assert Search records one timing per source that
 // ran (success AND failure), in ONE batch after the fan-out.
 type captureRecorder struct {
+	mu      sync.Mutex
 	batches [][]metrics.Sample
 }
 
 func (r *captureRecorder) Record(_ context.Context, sourceID, sourceName string, latency time.Duration, sourceErr error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.batches = append(r.batches, []metrics.Sample{{SourceID: sourceID, SourceName: sourceName, Latency: latency, Err: sourceErr}})
 }
 func (r *captureRecorder) RecordBatch(_ context.Context, samples []metrics.Sample) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.batches = append(r.batches, samples)
+}
+
+// waitForBatches polls until at least n batches have been captured — recording is
+// asynchronous (a background goroutine in Search) and best-effort — or the short
+// deadline elapses, then returns a snapshot copy safe to read without the lock.
+func (r *captureRecorder) waitForBatches(t *testing.T, n int) [][]metrics.Sample {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r.mu.Lock()
+		got := len(r.batches)
+		snap := append([][]metrics.Sample(nil), r.batches...)
+		r.mu.Unlock()
+		if got >= n {
+			return snap
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d metrics batch(es); got %d", n, got)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // TestSearch_RecordsMetricsBatch proves Search records exactly ONE batch after
@@ -229,11 +256,12 @@ func TestSearch_RecordsMetricsBatch(t *testing.T) {
 		t.Fatalf("Search: %v", err)
 	}
 
-	if len(rec.batches) != 1 {
-		t.Fatalf("recorded %d batches, want exactly 1 (batch-after-fan-out)", len(rec.batches))
+	batches := rec.waitForBatches(t, 1)
+	if len(batches) != 1 {
+		t.Fatalf("recorded %d batches, want exactly 1 (batch-after-fan-out)", len(batches))
 	}
 	byID := map[string]metrics.Sample{}
-	for _, s := range rec.batches[0] {
+	for _, s := range batches[0] {
 		byID[s.SourceID] = s
 	}
 	if len(byID) != 2 {

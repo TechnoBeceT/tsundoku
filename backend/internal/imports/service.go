@@ -37,10 +37,10 @@ import (
 // Search. This bounds upstream load when many sources are installed.
 const searchConcurrency = 8
 
-// recordTimeout bounds the post-fan-out metrics batch write so a stuck DB can
-// never hang the search response. It is applied to a cancellation-detached
-// context (context.WithoutCancel) so the write survives the client disconnect
-// that would otherwise cancel the request context.
+// recordTimeout bounds the background post-fan-out metrics batch write so its
+// goroutine always terminates even against a stuck DB. It is applied to a
+// cancellation-detached context (context.WithoutCancel) so the write survives the
+// client disconnect that would otherwise cancel the request context.
 const recordTimeout = 10 * time.Second
 
 // ErrSourceNotFound is returned by Browse when the requested sourceID is not in
@@ -368,18 +368,23 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 }
 
 // recordSamples writes the per-source search timings collected during a fan-out
-// as ONE metrics batch. It runs on a context derived from the ORIGINAL request
-// context with cancellation stripped (context.WithoutCancel) and a short timeout,
-// so the write survives both the search deadline (sctx) and a client disconnect,
-// yet can't hang forever on a stuck DB. Recording is best-effort and skipped when
-// no recorder is wired (nil) or there is nothing to record.
+// as ONE metrics batch, in the BACKGROUND so a slow metrics write can never add
+// latency to the search response (fast search under the CDN cutoff is the whole
+// point of the feature). The batch runs on a context derived from the ORIGINAL
+// request context with cancellation stripped (context.WithoutCancel) and bounded
+// by recordTimeout, so it survives both the search deadline (sctx) and a client
+// disconnect yet always terminates. Recording is best-effort and skipped when no
+// recorder is wired (nil) or there is nothing to record. Handing `samples` to the
+// goroutine is race-free: g.Wait() has returned, so it is no longer mutated.
 func (s *Service) recordSamples(ctx context.Context, samples []metrics.Sample) {
 	if s.recorder == nil || len(samples) == 0 {
 		return
 	}
-	recCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
-	defer cancel()
-	s.recorder.RecordBatch(recCtx, samples)
+	go func() {
+		recCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+		defer cancel()
+		s.recorder.RecordBatch(recCtx, samples)
+	}()
 }
 
 // resolveSources returns the source list to query, always excluding Suwayomi's
