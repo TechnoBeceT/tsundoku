@@ -25,8 +25,8 @@ type progressEvent struct {
 	Total     int       `json:"total"`
 }
 
-// collectEvents drains the SSE channel until either `done` events of the given
-// terminal type are seen or the timeout elapses, returning all events received.
+// collectEvents drains the SSE channel until the given terminal event type is
+// seen or the timeout elapses, returning all events received (inclusive).
 func collectEvents(events <-chan sse.Event, terminal string, timeout time.Duration) []sse.Event {
 	var got []sse.Event
 	deadline := time.After(timeout)
@@ -56,6 +56,57 @@ func rawOf(t *testing.T, ev sse.Event) []byte {
 	return raw
 }
 
+// decodeProgress returns the decoded download.progress events from got (others
+// are skipped), so tests assert only over the progress stream.
+func decodeProgress(t *testing.T, got []sse.Event) []progressEvent {
+	t.Helper()
+	var out []progressEvent
+	for _, ev := range got {
+		if ev.Type != "download.progress" {
+			continue
+		}
+		var pe progressEvent
+		if err := json.Unmarshal(rawOf(t, ev), &pe); err != nil {
+			t.Fatalf("unmarshal progress event: %v", err)
+		}
+		out = append(out, pe)
+	}
+	return out
+}
+
+// assertProgress checks a single download.progress event's chapter, page counts,
+// and (downloading) state.
+func assertProgress(t *testing.T, pe progressEvent, chID uuid.UUID, current, total int) {
+	t.Helper()
+	if pe.ChapterID != chID {
+		t.Errorf("progress chapter_id: got %s, want %s", pe.ChapterID, chID)
+	}
+	if pe.Current != current || pe.Total != total {
+		t.Errorf("progress pages: got (%d,%d), want (%d,%d)", pe.Current, pe.Total, current, total)
+	}
+	if pe.State != string(entStateDownloading) {
+		t.Errorf("progress state: got %q, want %q", pe.State, entStateDownloading)
+	}
+}
+
+// entStateDownloading is the state string a download-path progress event carries.
+const entStateDownloading = "downloading"
+
+// assertNoProgressKeys asserts the start/done payloads omit the current/total
+// keys (the omitempty guard keeps them byte-identical to pre-feature payloads).
+func assertNoProgressKeys(t *testing.T, got []sse.Event) {
+	t.Helper()
+	for _, ev := range got {
+		if ev.Type != "download.start" && ev.Type != "download.done" {
+			continue
+		}
+		raw := string(rawOf(t, ev))
+		if strings.Contains(raw, "current") || strings.Contains(raw, "total") {
+			t.Errorf("%s payload must omit current/total, got %s", ev.Type, raw)
+		}
+	}
+}
+
 // TestProgressSink_ThrottleAndFinal exercises the throttle rule directly (no DB):
 // two rapid calls within the throttle window emit only the first, and the final
 // page (current == total) ALWAYS emits even when it lands inside the window.
@@ -69,48 +120,19 @@ func TestProgressSink_ThrottleAndFinal(t *testing.T) {
 	// The sink only needs the Dispatcher's hub; client/fetcher/settings are unused.
 	d := download.New(nil, nil, hub, download.Config{}, nil)
 	chapterID := uuid.New()
-	sink := d.ProgressSink(chapterID, "downloading")
+	sink := d.ProgressSink(chapterID, entStateDownloading)
 
-	// total<=0 is a no-op guard (empty chapter): must emit nothing.
-	sink(0, 0)
-	// Three rapid calls: first emits, second is throttled, third is the final page.
-	sink(1, 3)
-	sink(2, 3)
-	sink(3, 3)
+	sink(0, 0) // total<=0 guard (empty chapter): emits nothing.
+	sink(1, 3) // first: emits.
+	sink(2, 3) // within the window: throttled.
+	sink(3, 3) // final page: always emits.
 
-	got := collectEvents(events, "", 500*time.Millisecond)
-
-	var progress []progressEvent
-	for _, ev := range got {
-		if ev.Type != "download.progress" {
-			t.Errorf("unexpected event type %q", ev.Type)
-			continue
-		}
-		var pe progressEvent
-		if err := json.Unmarshal(rawOf(t, ev), &pe); err != nil {
-			t.Fatalf("unmarshal progress event: %v", err)
-		}
-		progress = append(progress, pe)
-	}
-
-	// Only the first (1,3) and the final (3,3) survive the throttle.
+	progress := decodeProgress(t, collectEvents(events, "", 500*time.Millisecond))
 	if len(progress) != 2 {
 		t.Fatalf("progress events: got %d (%+v), want 2", len(progress), progress)
 	}
-	if progress[0].Current != 1 || progress[0].Total != 3 {
-		t.Errorf("first progress: got (%d,%d), want (1,3)", progress[0].Current, progress[0].Total)
-	}
-	if progress[1].Current != 3 || progress[1].Total != 3 {
-		t.Errorf("final progress: got (%d,%d), want (3,3)", progress[1].Current, progress[1].Total)
-	}
-	for _, pe := range progress {
-		if pe.ChapterID != chapterID {
-			t.Errorf("progress chapter_id: got %s, want %s", pe.ChapterID, chapterID)
-		}
-		if pe.State != "downloading" {
-			t.Errorf("progress state: got %q, want downloading", pe.State)
-		}
-	}
+	assertProgress(t, progress[0], chapterID, 1, 3)
+	assertProgress(t, progress[1], chapterID, 3, 3)
 }
 
 // progressDrivingFetcher wraps a base fetcher and, on Fetch, drives the
@@ -131,8 +153,7 @@ func (p *progressDrivingFetcher) Fetch(ctx context.Context, ref fetcher.FetchRef
 
 // TestDispatcher_DownloadProgress verifies that a real download cycle broadcasts
 // download.progress carrying {current,total} (final page always emitted) and that
-// the existing download.start / download.done payloads carry NO current/total keys
-// (the omitempty guard keeps them byte-identical).
+// the existing download.start / download.done payloads carry NO current/total keys.
 func TestDispatcher_DownloadProgress(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -153,50 +174,32 @@ func TestDispatcher_DownloadProgress(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-prog").SaveX(ctx)
 
 	f := &progressDrivingFetcher{base: fake.New(fake.WithPages(3))}
-	d := download.New(client, f, hub, download.Config{
-		Storage: storageDir,
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	d := download.New(client, f, hub, download.Config{Storage: storageDir}, settings.Static{Retries: 3, Backoff: time.Hour})
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
 	got := collectEvents(events, "download.done", 3*time.Second)
+	assertNoProgressKeys(t, got)
 
-	var (
-		sawFinalProgress bool
-		progressCount    int
-	)
-	for _, ev := range got {
-		switch ev.Type {
-		case "download.progress":
-			progressCount++
-			var pe progressEvent
-			if err := json.Unmarshal(rawOf(t, ev), &pe); err != nil {
-				t.Fatalf("unmarshal progress event: %v", err)
-			}
-			if pe.Total <= 0 {
-				t.Errorf("download.progress must carry Total>0, got %+v", pe)
-			}
-			if pe.ChapterID != ch.ID {
-				t.Errorf("download.progress chapter_id: got %s, want %s", pe.ChapterID, ch.ID)
-			}
-			if pe.Current == 3 && pe.Total == 3 {
-				sawFinalProgress = true
-			}
-		case "download.start", "download.done":
-			// omitempty guard: these payloads must NOT contain the progress keys.
-			raw := string(rawOf(t, ev))
-			if strings.Contains(raw, "current") || strings.Contains(raw, "total") {
-				t.Errorf("%s payload must omit current/total, got %s", ev.Type, raw)
-			}
+	progress := decodeProgress(t, got)
+	if len(progress) == 0 {
+		t.Fatal("expected at least one download.progress event, got none")
+	}
+	sawFinal := false
+	for _, pe := range progress {
+		if pe.Total <= 0 {
+			t.Errorf("download.progress must carry Total>0, got %+v", pe)
+		}
+		if pe.ChapterID != ch.ID {
+			t.Errorf("download.progress chapter_id: got %s, want %s", pe.ChapterID, ch.ID)
+		}
+		if pe.Current == 3 && pe.Total == 3 {
+			sawFinal = true
 		}
 	}
-
-	if progressCount == 0 {
-		t.Error("expected at least one download.progress event, got none")
-	}
-	if !sawFinalProgress {
+	if !sawFinal {
 		t.Error("expected a final download.progress {current:3,total:3} (always-emit rule)")
 	}
 }
