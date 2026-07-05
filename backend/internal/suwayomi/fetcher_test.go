@@ -158,6 +158,70 @@ func TestFetcher_HappyPath(t *testing.T) {
 	}
 }
 
+// TestFetcher_EmitsPerPageProgress verifies that Fetch drives the context-carried
+// progress sink once after each successfully fetched page, with (current, total)
+// running (1,N)..(N,N). This is the signal that powers the live download bar.
+func TestFetcher_EmitsPerPageProgress(t *testing.T) {
+	t.Parallel()
+
+	urls := []string{"http://sw/page/0", "http://sw/page/1", "http://sw/page/2"}
+	data := map[string]stubPage{
+		"http://sw/page/0": {data: []byte{0x01}, ext: "jpg"},
+		"http://sw/page/1": {data: []byte{0x02}, ext: "png"},
+		"http://sw/page/2": {data: []byte{0x03}, ext: "webp"},
+	}
+	client := &stubClient{pages: urls, pageData: data}
+
+	type call struct{ current, total int }
+	var seen []call
+	ctx := fetcher.WithProgress(context.Background(), func(current, total int) {
+		seen = append(seen, call{current, total})
+	})
+
+	f := suwayomi.NewFetcher(client)
+	got, err := f.Fetch(ctx, makeRef(42))
+	if err != nil {
+		t.Fatalf("Fetch: unexpected error: %v", err)
+	}
+	if got.PageCount != 3 {
+		t.Errorf("PageCount: got %d, want 3", got.PageCount)
+	}
+
+	want := []call{{1, 3}, {2, 3}, {3, 3}}
+	if len(seen) != len(want) {
+		t.Fatalf("progress calls: got %d (%+v), want %d", len(seen), seen, len(want))
+	}
+	for i, w := range want {
+		if seen[i] != w {
+			t.Errorf("progress call %d: got %+v, want %+v", i, seen[i], w)
+		}
+	}
+}
+
+// TestFetcher_EmptyPageListEmitsNoProgress verifies that a zero-page chapter emits
+// ZERO progress calls (and returns PageCount:0, nil) — so no divide-by-zero can
+// reach a downstream consumer.
+func TestFetcher_EmptyPageListEmitsNoProgress(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{pages: []string{}}
+
+	called := false
+	ctx := fetcher.WithProgress(context.Background(), func(int, int) { called = true })
+
+	f := suwayomi.NewFetcher(client)
+	got, err := f.Fetch(ctx, makeRef(0))
+	if err != nil {
+		t.Fatalf("Fetch on empty page list: unexpected error: %v", err)
+	}
+	if got.PageCount != 0 {
+		t.Errorf("PageCount: got %d, want 0", got.PageCount)
+	}
+	if called {
+		t.Error("progress sink must not be called for a zero-page chapter")
+	}
+}
+
 // TestFetcher_ChapterPagesError verifies that a ChapterPages error is propagated
 // and the returned ChapterPages is the zero value (no partial success).
 func TestFetcher_ChapterPagesError(t *testing.T) {

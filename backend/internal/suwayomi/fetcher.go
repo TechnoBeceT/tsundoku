@@ -63,6 +63,11 @@ func (f *Fetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.Chap
 		return fetcher.ChapterPages{}, fmt.Errorf("suwayomi fetcher: chapter pages: %w", err)
 	}
 
+	// Resolve the caller's per-page progress sink once (nil-safe no-op when the
+	// caller set none). It is driven after each successful page below, so the
+	// dispatcher can broadcast live download progress.
+	progress := fetcher.ProgressFrom(ctx)
+
 	pages := make([]fetcher.PageImage, 0, len(urls))
 	for _, url := range urls {
 		// Re-check ctx before each page download so cancellation is honoured
@@ -77,6 +82,11 @@ func (f *Fetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.Chap
 			return fetcher.ChapterPages{}, fmt.Errorf("suwayomi fetcher: page bytes: %w", err)
 		}
 		pages = append(pages, fetcher.PageImage{Data: data, Ext: ext})
+
+		// Report progress AFTER a page lands: len(pages) is the running count
+		// (1..len(urls)). Only successful pages advance the count — the error path
+		// above returns before reaching here, so a failed fetch emits nothing.
+		progress(len(pages), len(urls))
 	}
 
 	return fetcher.ChapterPages{
