@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
 // upgradeResult holds the artefacts produced by fetchAndRender so that
@@ -199,8 +200,11 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	pc := best.ProviderChapter
 	sp := best.SeriesProvider
 
+	// Carry a per-chapter progress sink so the upgrade fetch reports live per-page
+	// progress too; the sink throttles + broadcasts download.progress ("upgrading").
+	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateUpgrading)))
 	release := limiter.acquire(sp.Provider)
-	pages, err := d.f.Fetch(ctx, buildFetchRef(pc, sp))
+	pages, err := d.f.Fetch(pctx, buildFetchRef(pc, sp))
 	release()
 	if err != nil {
 		// Carry pc so handleUpgradeFailure bumps this source's per-source retry state.

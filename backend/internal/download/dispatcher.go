@@ -86,8 +86,9 @@ func backoffCurve(base time.Duration, attempt int) time.Duration {
 }
 
 // DownloadEvent is the SSE payload broadcast for every download lifecycle
-// transition (start, done, fail). ChapterID identifies the affected chapter;
-// State is the new chapter state; Error is set only on failure.
+// transition (start, done, fail) and for live page-progress (download.progress).
+// ChapterID identifies the affected chapter; State is the new/current chapter
+// state; Error is set only on failure; Current/Total are set only on progress.
 type DownloadEvent struct {
 	// ChapterID is the UUID of the chapter that changed state.
 	ChapterID uuid.UUID `json:"chapter_id"`
@@ -97,6 +98,14 @@ type DownloadEvent struct {
 
 	// Error is the human-readable error message. Set only on failure events.
 	Error string `json:"error,omitempty"`
+
+	// Current is the number of pages fetched so far, set only on download.progress
+	// events. omitempty keeps the start/done/fail/skip payloads byte-identical.
+	Current int `json:"current,omitempty"`
+
+	// Total is the chapter's total page count, set only on download.progress
+	// events. omitempty keeps the start/done/fail/skip payloads byte-identical.
+	Total int `json:"total,omitempty"`
 }
 
 // Dispatcher coordinates the M1 download pipeline. Create one with New and call
@@ -285,8 +294,11 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 // source. The concurrency slot is held only for the network fetch; rendering is
 // local disk work and does not contend for the provider's API.
 func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time) (done bool, cause error) {
+	// Carry a per-chapter progress sink so the suwayomi fetcher can report live
+	// per-page progress; the sink throttles + broadcasts download.progress.
+	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))
 	release := limiter.acquire(cand.SeriesProvider.Provider)
-	pages, fetchErr := d.f.Fetch(ctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
+	pages, fetchErr := d.f.Fetch(pctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
 	release()
 	if fetchErr != nil {
 		d.bumpSourceFailure(ctx, cand.ProviderChapter, fetchErr, now)
