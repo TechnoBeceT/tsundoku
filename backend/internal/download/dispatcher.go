@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -618,8 +619,14 @@ func firstNonEmpty(vals ...string) string {
 // concurrent fetches to the cap per physical source. The rare over-merge — two
 // genuinely different sources that happen to share a display name — is accepted:
 // they conservatively share one cap (owner-ratified).
+//
+// The result is TrimSpace'd: a Kaizoku-import disk provider is parsed from
+// ComicInfo Publisher / the filename bracket (disk/kaizoku.go) and can carry
+// leading/trailing whitespace, so "Comix " (disk) must still collapse onto "Comix"
+// (the Suwayomi provider_name). Case is deliberately NOT folded — case-insensitive
+// merging is a separate over-merge decision the owner has not taken.
 func canonicalSourceKey(sp *ent.SeriesProvider) string {
-	return firstNonEmpty(sp.ProviderName, sp.Provider)
+	return strings.TrimSpace(firstNonEmpty(sp.ProviderName, sp.Provider))
 }
 
 func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesProvider, maxChapter *float64) disk.RenderMeta {

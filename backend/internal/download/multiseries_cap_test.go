@@ -127,18 +127,50 @@ func TestRunOnce_MultiSeriesSharedSourceCap(t *testing.T) {
 // the fetch limiter on that shared label (name-else-id), collapsing both to one
 // group / one cap.
 func TestRunOnce_SamePhysicalSourceTwoProviderStrings(t *testing.T) {
-	ctx := context.Background()
-	client := testdb.New(t)
-
-	const cap = 5
 	// Same physical Comix source, two representations of `provider`:
 	//   - id "7537715367149829912" + name "Comix" (Suwayomi ingest: id in provider,
 	//     resolved display name in provider_name).
 	//   - provider "Comix", no provider_name (disk reconcile / library-import: the
 	//     display name lands directly in provider).
+	assertSharedPhysicalSourceCapHeld(t, "Comix")
+}
+
+// TestRunOnce_WhitespaceVariantProviderNameMergesCap reproduces the Kaizoku-import
+// whitespace-mismatch variant of the shared-source bug: the disk provider string is
+// parsed from ComicInfo Publisher / the filename bracket (disk/kaizoku.go), which can
+// carry a trailing/leading space, so the disk row stores provider="Comix " while the
+// Suwayomi row stores provider_name="Comix". Without trimming the canonical source
+// key, "Comix " and "Comix" are two distinct keys → two groups / two semaphores →
+// 2x the per-source cap. canonicalSourceKey's TrimSpace collapses them to one group,
+// so the downloading-state count must stay ≤ cap. (Case is NOT folded — that is a
+// separate over-merge decision, so this test only exercises whitespace.)
+func TestRunOnce_WhitespaceVariantProviderNameMergesCap(t *testing.T) {
+	// The disk row's provider carries a TRAILING SPACE ("Comix "), as a Kaizoku
+	// import parsed from ComicInfo/filename can; it must still merge onto "Comix".
+	assertSharedPhysicalSourceCapHeld(t, "Comix ")
+}
+
+// assertSharedPhysicalSourceCapHeld drives the shared-physical-source cap scenario
+// and asserts the per-source cap holds. It seeds TWO SeriesProvider rows for the one
+// physical Comix source — a Suwayomi row (id "7537…" + provider_name "Comix") and a
+// disk row whose raw provider is diskProvider (e.g. "Comix" or the whitespace-variant
+// "Comix ") — then runs one download cycle against a gate-closed fetcher (every fetch
+// blocks, holding its slot) and asserts no more than cap of that source's chapters
+// are in the downloading state at once. Keying by the raw provider string splits the
+// source into two groups → two slot channels → 2x the cap; the canonical
+// (trimmed, name-else-id) key collapses both to one group / one cap.
+//
+// Shared by the exact-name and whitespace-variant cases so the seed+run+assert lives
+// in one place (§2 DRY) — the cases differ only in diskProvider.
+func assertSharedPhysicalSourceCapHeld(t *testing.T, diskProvider string) {
+	t.Helper()
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const cap = 5
 	var all []uuid.UUID
 	all = append(all, seedNamedSourceChapters(ctx, t, client, "comix-suwayomi", "7537715367149829912", "Comix", 10, cap)...)
-	all = append(all, seedSourceChapters(ctx, t, client, "comix-disk", "Comix", 5, cap)...)
+	all = append(all, seedSourceChapters(ctx, t, client, "comix-disk", diskProvider, 5, cap)...)
 
 	g := newGateFetcher() // gate closed: every fetch blocks, holding its slot
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
@@ -147,18 +179,17 @@ func TestRunOnce_SamePhysicalSourceTwoProviderStrings(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- d.RunOnce(ctx) }()
 
-	// Both groups can each fill their own cap: 2*cap chapters start and sit in
-	// downloading from the ONE physical source.
+	// A merged group fills exactly cap; a split (raw-string key) would let 2*cap start.
 	g.waitStarted(t, cap)
 	time.Sleep(300 * time.Millisecond)
 
 	counts := countStates(ctx, t, client, all)
 	got := counts[entchapter.StateDownloading]
 	if got > cap {
-		t.Errorf("BUG REPRODUCED: %d chapters downloading from ONE physical source, per-source cap is %d (%.1fx)",
-			got, cap, float64(got)/float64(cap))
+		t.Errorf("BUG REPRODUCED (disk provider %q): %d chapters downloading from ONE physical source, per-source cap is %d (%.1fx)",
+			diskProvider, got, cap, float64(got)/float64(cap))
 	} else {
-		t.Logf("downloading=%d (cap=%d) — cap held", got, cap)
+		t.Logf("downloading=%d (cap=%d) — disk provider %q merged, cap held", got, cap, diskProvider)
 	}
 
 	g.open()
