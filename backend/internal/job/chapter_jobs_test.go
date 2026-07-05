@@ -5,14 +5,19 @@ package job_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/download"
+	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
@@ -710,5 +715,286 @@ func TestRunner_Reconcile_SmokesWrapper(t *testing.T) {
 	}
 	if result.ChaptersUpserted == 0 {
 		t.Error("Reconcile: ChaptersUpserted = 0, want > 0")
+	}
+}
+
+// slowThenFastFetcher sleeps `delay` before succeeding for every chapter of
+// slowProvider, and succeeds INSTANTLY for every other provider. It lets a test
+// build a REALISTIC (not permanently blocked) multi-pass drain for one source
+// while a freshly-adopted source's fetches complete promptly — the shape needed
+// to prove the drain loop lets a mid-cycle adopt run alongside a big, still-
+// draining backlog instead of waiting for it to finish first.
+type slowThenFastFetcher struct {
+	slowProvider string
+	delay        time.Duration
+}
+
+// Fetch sleeps for slowProvider chapters (honouring ctx cancellation), then
+// returns a minimal one-page success for any provider.
+func (f *slowThenFastFetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.ChapterPages, error) {
+	if ref.Provider == f.slowProvider {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return fetcher.ChapterPages{}, ctx.Err()
+		}
+	}
+	return fetcher.ChapterPages{
+		Pages:     []fetcher.PageImage{{Data: []byte{0x02}, Ext: "jpg"}},
+		PageCount: 1,
+	}, nil
+}
+
+// TestRunner_RunDownloadCycle_DrainLoopPicksUpMidCycleAdopt proves the Slice 2
+// fix for bug #2 (mid-cycle adopt starvation): while source A's big backlog is
+// still mid-drain (spanning multiple bounded RunOnce passes), a brand-new
+// source B is inserted directly into the DB — simulating an owner adopting a
+// series mid-cycle. B's chapters must reach downloaded WITHIN THIS SAME
+// RunDownloadCycle call, and — the "ran in parallel, not after" assertion — at
+// the moment B finishes, A must NOT yet be fully drained (proving B joined a
+// later pass alongside A's remaining backlog rather than waiting for all of A
+// to finish first, which is exactly what the pre-Slice-2 unbounded RunOnce
+// would have forced).
+func TestRunner_RunDownloadCycle_DrainLoopPicksUpMidCycleAdopt(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	const cap = 2                // batch = 2*cap = 4 per source per pass
+	const aTotal = 2 * (2 * cap) // 8 chapters: exactly two bounded passes for A alone
+	const aDelay = 300 * time.Millisecond
+
+	sA := seedMidCycleSourceBacklog(ctx, t, client, "series-a-midcycle", "A", aTotal)
+
+	f := &slowThenFastFetcher{slowProvider: "A", delay: aDelay}
+	d := download.New(client, f, hub, download.Config{Storage: storage},
+		settings.Static{Retries: 3, Backoff: time.Hour, DownloadConc: cap})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
+
+	cycleDone := make(chan error, 1)
+	go func() { cycleDone <- r.RunDownloadCycle(ctx) }()
+
+	// Give pass 1 a head start (well under aDelay, so pass 1 cannot possibly have
+	// finished yet), then simulate the mid-cycle adopt: a brand-new source B with
+	// its own small backlog, inserted directly into the DB.
+	time.Sleep(75 * time.Millisecond)
+	sB := seedMidCycleSourceBacklog(ctx, t, client, "series-b-midcycle", "B", 2)
+	bIDs := seriesChapterIDs(ctx, t, client, sB)
+
+	waitAllDownloaded(t, ctx, client, bIDs, 15*time.Second,
+		"source B's chapters did not reach downloaded within the deadline — the mid-cycle adopt was not picked up by the drain loop")
+
+	// At the instant B finished, A must still have undownloaded chapters — proof
+	// B ran ALONGSIDE A's remaining backlog (a later pass), not after it drained
+	// entirely (each of A's two passes takes ~aDelay; B's fetches are instant).
+	if aDownloaded := downloadedCount(ctx, client, sA); aDownloaded >= aTotal {
+		t.Errorf("source A's entire backlog (%d) already finished before B completed — B did not run in parallel with a still-draining backlog, it ran only after", aTotal)
+	}
+
+	if err := <-cycleDone; err != nil {
+		t.Fatalf("RunDownloadCycle: %v", err)
+	}
+	if finalA := downloadedCount(ctx, client, sA); finalA != aTotal {
+		t.Errorf("source A: want all %d downloaded once the cycle finishes, got %d", aTotal, finalA)
+	}
+}
+
+// seedMidCycleSourceBacklog creates a series with n wanted chapters (numbered
+// 1..n) from a single named provider and returns the series. Shared by
+// TestRunner_RunDownloadCycle_DrainLoopPicksUpMidCycleAdopt for both the initial
+// big backlog (source A) and the simulated mid-cycle adopt (source B).
+func seedMidCycleSourceBacklog(ctx context.Context, t *testing.T, client *ent.Client, slug, provider string, n int) *ent.Series {
+	t.Helper()
+	s := client.Series.Create().SetTitle(slug).SetSlug(slug).SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider(provider).SetImportance(10).SaveX(ctx)
+	for i := 0; i < n; i++ {
+		num := float64(i + 1)
+		key := fmt.Sprintf("%s-%d", provider, i+1)
+		client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey(key).
+			SetNillableNumber(&num).SetURL("https://" + provider + "/" + key).SetProviderIndex(i).SaveX(ctx)
+		client.Chapter.Create().SetSeries(s).SetChapterKey(key).SetNillableNumber(&num).SaveX(ctx)
+	}
+	return s
+}
+
+// seriesChapterIDs returns the ids of every Chapter belonging to s.
+func seriesChapterIDs(ctx context.Context, t *testing.T, client *ent.Client, s *ent.Series) []uuid.UUID {
+	t.Helper()
+	chs := client.Chapter.Query().Where(entchapter.SeriesIDEQ(s.ID)).AllX(ctx)
+	ids := make([]uuid.UUID, len(chs))
+	for i, ch := range chs {
+		ids[i] = ch.ID
+	}
+	return ids
+}
+
+// downloadedCount returns how many of series s's chapters are state=downloaded.
+func downloadedCount(ctx context.Context, client *ent.Client, s *ent.Series) int {
+	return client.Chapter.Query().
+		Where(entchapter.SeriesIDEQ(s.ID), entchapter.StateEQ(entchapter.StateDownloaded)).
+		CountX(ctx)
+}
+
+// waitAllDownloaded polls until every chapter in ids is state=downloaded or
+// timeout elapses, failing the test with msg on timeout.
+func waitAllDownloaded(t *testing.T, ctx context.Context, client *ent.Client, ids []uuid.UUID, timeout time.Duration, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if allDownloaded(ctx, client, ids) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(msg)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// allDownloaded reports whether every chapter in ids is currently downloaded.
+func allDownloaded(ctx context.Context, client *ent.Client, ids []uuid.UUID) bool {
+	for _, id := range ids {
+		if client.Chapter.GetX(ctx, id).State != entchapter.StateDownloaded {
+			return false
+		}
+	}
+	return true
+}
+
+// TestRunner_RunDownloadCycle_NoBusySpin_AllOnCooldown verifies the drain
+// loop's termination rule: when every wanted/failed chapter's only source is on
+// cooldown (no live candidate), RunOnce dispatches 0 and the drain loop must
+// stop after that single pass — RunDownloadCycle returns promptly instead of
+// busy-spinning forever on repeated 0-dispatch passes. The cooldown chapter
+// must also be left completely untouched (no fetch attempted).
+func TestRunner_RunDownloadCycle_NoBusySpin_AllOnCooldown(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Cooldown Series").SetSlug("cooldown-series-nospin").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("only").SetImportance(10).SaveX(ctx)
+	future := time.Now().Add(time.Hour)
+	client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("c1").
+		SetURL("https://only/c1").SetProviderIndex(0).SetAttempts(1).SetNextAttemptAt(future).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("c1").SetState(entchapter.StateFailed).SaveX(ctx)
+
+	// A fetcher that would succeed if ever called — proves no fetch happens for
+	// the cooldown-gated chapter.
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage},
+		settings.Static{Retries: 3, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
+
+	done := make(chan error, 1)
+	go func() { done <- r.RunDownloadCycle(ctx) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunDownloadCycle: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunDownloadCycle did not return within 3s — the drain loop appears to be busy-spinning on 0-dispatch passes")
+	}
+
+	got := client.Chapter.GetX(ctx, ch.ID)
+	if got.State != entchapter.StateFailed {
+		t.Errorf("cooldown-gated chapter state = %s, want unchanged failed", got.State)
+	}
+	pc, err := client.ProviderChapter.Query().Only(ctx)
+	if err == nil && pc.Attempts != 1 {
+		t.Errorf("cooldown-gated source attempts = %d, want unchanged 1 (no fetch attempted)", pc.Attempts)
+	}
+}
+
+// TestRunner_RunDownloadCycle_NoBusySpin_EmptyWantedSet verifies the drain
+// loop's other termination case: with NO wanted/failed chapters at all,
+// RunDownloadCycle completes promptly (a single 0-dispatch pass), never
+// spinning.
+func TestRunner_RunDownloadCycle_NoBusySpin_EmptyWantedSet(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage},
+		settings.Static{Retries: 3, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
+
+	done := make(chan error, 1)
+	go func() { done <- r.RunDownloadCycle(ctx) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunDownloadCycle: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunDownloadCycle did not return within 3s on an empty wanted set — possible busy-spin")
+	}
+}
+
+// installClaimWriteFailure hooks the Chapter so every wanted/failed→downloading
+// claim WRITE fails while all reads still succeed (ent hooks fire only on
+// mutations), modelling a writes-fail/reads-succeed DB fault. It targets only the
+// state→downloading update, so seeding and any other write are unaffected. Kept
+// package-local (job_test) since download_test's copy is in a different package.
+func installClaimWriteFailure(client *ent.Client) {
+	client.Chapter.Use(func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+			if cm, ok := m.(*ent.ChapterMutation); ok && cm.Op().Is(ent.OpUpdateOne|ent.OpUpdate) {
+				if st, exists := cm.State(); exists && st == entchapter.StateDownloading {
+					return nil, errors.New("injected write failure: chapter state→downloading")
+				}
+			}
+			return next.Mutate(ctx, m)
+		})
+	})
+}
+
+// TestRunner_RunDownloadCycle_TerminatesWhenClaimWriteFails is the regression
+// proof for the drain-loop livelock: under a writes-fail/reads-succeed DB fault,
+// the wanted→downloading claim fails every pass, so RunOnce reports 0 forward
+// progress and drainDownloads breaks after ONE pass. RunDownloadCycle must RETURN
+// promptly (the runner then retries on its next interval — graceful degradation,
+// matching pre-Slice-2) instead of hot-spinning RunOnce forever. If the drain loop
+// counted mere SELECTION instead of progress, the live-candidate chapter would be
+// re-selected every pass and this cycle would never return. The chapter is left
+// wanted for the next interval.
+func TestRunner_RunDownloadCycle_TerminatesWhenClaimWriteFails(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("WF Cycle").SetSlug("wf-cycle").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("src").SetImportance(10).SaveX(ctx)
+	client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("c1").
+		SetURL("https://src/c1").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("c1").SaveX(ctx)
+
+	// Fail the claim write AFTER seeding — reads succeed, only state→downloading fails.
+	installClaimWriteFailure(client)
+
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage},
+		settings.Static{Retries: 3, Backoff: time.Hour})
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
+
+	done := make(chan error, 1)
+	go func() { done <- r.RunDownloadCycle(ctx) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunDownloadCycle: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunDownloadCycle did not return within 10s — drainDownloads hot-spun on a claim that never makes forward progress (the write-fail livelock)")
+	}
+
+	if got := client.Chapter.GetX(ctx, ch.ID).State; got != entchapter.StateWanted {
+		t.Errorf("chapter state = %s, want wanted (claim write failed; left for the next interval)", got)
 	}
 }

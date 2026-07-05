@@ -117,11 +117,19 @@ func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub
 
 // RunDownloadCycle executes one full download + upgrade pass:
 //  1. Broadcasts cycle.start.
-//  2. Calls dispatcher.RunOnce — downloads all wanted/retryable chapters.
+//  2. Drains the dispatcher in BOUNDED PASSES (drainDownloads) — each call to
+//     dispatcher.RunOnce dispatches only a bounded batch per source, so the
+//     drain loop re-scans the actionable-chapter set between passes and picks
+//     up chapters that became wanted mid-cycle (e.g. a fresh adopt) instead of
+//     waiting out one giant unbounded drain.
 //  3. Calls download.DetectUpgrades — flags any downloaded chapters that now
 //     have a strictly better source.
 //  4. Calls dispatcher.Upgrade for each newly-flagged chapter.
 //  5. Broadcasts cycle.done (with error info if step 2 or 3 failed).
+//
+// cycle.start/cycle.done fire exactly ONCE per RunDownloadCycle call — NOT once
+// per bounded pass — so the SSE cadence is unchanged even though downloading now
+// happens in several internal passes.
 //
 // Per-chapter errors are handled inside the dispatcher and upgrade engine
 // (they record last_error and transition state machine appropriately).
@@ -132,8 +140,8 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 
 	slog.InfoContext(ctx, "job.Runner: download cycle started")
 
-	// Step 1: download all actionable chapters.
-	if err := r.dispatcher.RunOnce(ctx); err != nil {
+	// Step 1: drain all actionable chapters via bounded passes.
+	if err := r.drainDownloads(ctx); err != nil {
 		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: RunOnce: %w", err)
 	}
@@ -163,6 +171,36 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 		"upgraded", upgraded,
 	)
 	return nil
+}
+
+// drainDownloads repeatedly calls dispatcher.RunOnce — each call is ONE BOUNDED
+// PASS that dispatches at most a batch per source — until a pass dispatches
+// nothing (dispatched == 0) or ctx is cancelled. This keeps a single
+// RunDownloadCycle call single-threaded and non-overlapping (the caller still
+// serialises cycles) while letting a mid-cycle change to the actionable-chapter
+// set (e.g. a fresh adopt inserting new wanted chapters) join within the same
+// cycle: because RunOnce re-queries chapter.WantedChapters on every pass, a
+// chapter that became wanted after pass N is visible to pass N+1.
+//
+// NO BUSY-SPIN: a pass dispatches 0 exactly when every remaining wanted/failed
+// chapter has no live candidate this pass (no source, all sources exhausted, or
+// every source on cooldown) — cooldown chapters are simply not re-selected until
+// their backoff elapses on a LATER cycle, so the loop cannot spin forever on
+// them. A hard error from RunOnce (chapter-list load failure) stops the drain
+// immediately and is returned to the caller.
+func (r *Runner) drainDownloads(ctx context.Context) error {
+	for {
+		dispatched, err := r.dispatcher.RunOnce(ctx)
+		if err != nil {
+			return err
+		}
+		if dispatched == 0 {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+	}
 }
 
 // upgradeAll loads all chapters in state=upgrade_available and calls

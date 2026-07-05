@@ -73,7 +73,7 @@ func TestDispatcher_HappyPath(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 
 	// First run: should fail. The per-source retry counter lives on the
 	// ProviderChapter now (NOT the Chapter), so assert attempts there.
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("first RunOnce: %v", err)
 	}
 	after1 := client.Chapter.GetX(ctx, ch.ID)
@@ -175,7 +175,7 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 
 	// The dispatcher uses Backoff:0, so the source's next_attempt_at is already
 	// past — the second run re-selects it as a live candidate without any nudging.
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("second RunOnce: %v", err)
 	}
 	after2 := client.Chapter.GetX(ctx, ch.ID)
@@ -226,7 +226,7 @@ func TestDispatcher_PermanentFailure(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 1, Backoff: 0})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -295,7 +295,7 @@ func TestDispatcher_PerProviderConcurrency(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour, DownloadConc: cap})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -330,7 +330,7 @@ func TestDispatcher_SSEEvents(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -384,7 +384,7 @@ func TestDispatcher_BestProviderPicked(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -430,7 +430,7 @@ func TestDispatcher_SSEFail(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 1, Backoff: 0})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -488,7 +488,7 @@ func TestDispatcher_NoChapterStrandedInDownloading(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 2, Backoff: 0})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -538,7 +538,7 @@ func TestDispatcher_ZeroPadding(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -579,7 +579,7 @@ func TestDispatcher_NoProviderStaysWanted(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -653,7 +653,7 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -697,7 +697,7 @@ func TestDispatcher_RendersToSeriesCategory(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 

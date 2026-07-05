@@ -87,7 +87,7 @@ func TestRunOnce_MultiSeriesSharedSourceCap(t *testing.T) {
 		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
 
 	done := make(chan error, 1)
-	go func() { done <- d.RunOnce(ctx) }()
+	go func() { _, err := d.RunOnce(ctx); done <- err }()
 
 	// Wait for the cap to be reached, then give any OVER-cap fetches a window to
 	// start (they should not, if the cap holds).
@@ -177,7 +177,7 @@ func assertSharedPhysicalSourceCapHeld(t *testing.T, diskProvider string) {
 		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
 
 	done := make(chan error, 1)
-	go func() { done <- d.RunOnce(ctx) }()
+	go func() { _, err := d.RunOnce(ctx); done <- err }()
 
 	// A merged group fills exactly cap; a split (raw-string key) would let 2*cap start.
 	g.waitStarted(t, cap)
@@ -222,7 +222,7 @@ func TestRunOnce_MultiScanlatorSharedSourceCap(t *testing.T) {
 		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
 
 	done := make(chan error, 1)
-	go func() { done <- d.RunOnce(ctx) }()
+	go func() { _, err := d.RunOnce(ctx); done <- err }()
 
 	g.waitStarted(t, cap)
 	time.Sleep(300 * time.Millisecond)

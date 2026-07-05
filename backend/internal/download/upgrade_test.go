@@ -120,7 +120,7 @@ func TestUpgrade_SwapsFile(t *testing.T) {
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
 	initial := client.Chapter.GetX(ctx, ch.ID)
@@ -192,7 +192,7 @@ func TestUpgrade_ScanlatorChangeReplacesFile(t *testing.T) {
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
 	initial := client.Chapter.GetX(ctx, ch.ID)
@@ -296,7 +296,7 @@ func TestUpgrade_NonOtherCategoryUsesRealFolder(t *testing.T) {
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
 	initial := client.Chapter.GetX(ctx, ch.ID)
@@ -360,7 +360,7 @@ func TestUpgrade_NonDestructiveOnFailure(t *testing.T) {
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
 	initial := client.Chapter.GetX(ctx, ch.ID)
@@ -425,7 +425,7 @@ func TestDetectUpgrades_StrictlyGreater(t *testing.T) {
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 	if client.Chapter.GetX(ctx, ch.ID).State != entchapter.StateDownloaded {
@@ -492,7 +492,7 @@ func TestUpgrade_SSEEvents(t *testing.T) {
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
 

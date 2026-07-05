@@ -108,7 +108,7 @@ func TestMultiSource_ImmediateFallThrough(t *testing.T) {
 		Storage: mustTempDir(t),
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
@@ -148,7 +148,7 @@ func TestMultiSource_FastestRelease(t *testing.T) {
 		Storage: mustTempDir(t),
 	}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 	got := client.Chapter.GetX(ctx, ch.ID)
@@ -174,7 +174,7 @@ func TestMultiSource_NoPermaFailWhileALiveSourceRemains(t *testing.T) {
 		Storage: mustTempDir(t),
 	}, settings.Static{Retries: 2, Backoff: 0})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 	got := client.Chapter.GetX(ctx, ch.ID)
@@ -199,7 +199,7 @@ func TestMultiSource_PermaFailOnlyWhenAllExhausted(t *testing.T) {
 	}, settings.Static{Retries: 2, Backoff: 0})
 
 	// Cycle 1: each source tried once (attempts 1/1) — still failed, not permanent.
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("cycle 1 RunOnce: %v", err)
 	}
 	after1 := client.Chapter.GetX(ctx, ch.ID)
@@ -212,7 +212,7 @@ func TestMultiSource_PermaFailOnlyWhenAllExhausted(t *testing.T) {
 
 	// Cycle 2: each source tried a second time (attempts 2/2 == maxRetries) → every
 	// source exhausted → permanently_failed.
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("cycle 2 RunOnce: %v", err)
 	}
 	after2 := client.Chapter.GetX(ctx, ch.ID)
@@ -243,7 +243,7 @@ func TestMultiSource_BackoffGatesUntilNextAttempt(t *testing.T) {
 	}, settings.Static{Retries: 5, Backoff: time.Hour}) // long backoff, budget remaining
 
 	// Cycle 1: the source fails once and is put on a 1h+ cooldown.
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("cycle 1 RunOnce: %v", err)
 	}
 	if st := client.Chapter.GetX(ctx, ch.ID).State; st != entchapter.StateFailed {
@@ -259,7 +259,7 @@ func TestMultiSource_BackoffGatesUntilNextAttempt(t *testing.T) {
 
 	// Cycle 2 (immediately): the source is still on cooldown, so it is NOT a live
 	// candidate — no new attempt is made. The chapter stays failed, attempts unchanged.
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("cycle 2 RunOnce: %v", err)
 	}
 	if st := client.Chapter.GetX(ctx, ch.ID).State; st != entchapter.StateFailed {
@@ -290,7 +290,7 @@ func TestMultiSource_WantedWithExhaustedSourceGoesPermaFail(t *testing.T) {
 		Storage: mustTempDir(t),
 	}, settings.Static{Retries: 3, Backoff: 0})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 	got := client.Chapter.GetX(ctx, ch.ID)
@@ -325,7 +325,7 @@ func TestMultiSource_RetriedSourceRecoversAndDownloads(t *testing.T) {
 	}, settings.Static{Retries: 3, Backoff: 0})
 
 	// With the source exhausted, the chapter permanently fails.
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce (exhausted): %v", err)
 	}
 	if st := client.Chapter.GetX(ctx, ch.ID).State; st != entchapter.StatePermanentlyFailed {
@@ -336,7 +336,7 @@ func TestMultiSource_RetriedSourceRecoversAndDownloads(t *testing.T) {
 	client.ProviderChapter.UpdateOneID(pc.ID).SetAttempts(0).ClearNextAttemptAt().ExecX(ctx)
 	client.Chapter.UpdateOneID(ch.ID).SetState(entchapter.StateWanted).ExecX(ctx)
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce (after reset): %v", err)
 	}
 	if st := client.Chapter.GetX(ctx, ch.ID).State; st != entchapter.StateDownloaded {

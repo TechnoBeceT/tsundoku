@@ -1,11 +1,14 @@
 // Package download implements the M1 state-driven download dispatcher.
 //
-// The dispatcher loads all actionable chapters (state=wanted, or state=failed
-// with retry budget remaining), fetches their pages via the ChapterFetcher
-// port, renders them to disk via the disk.RenderChapter renderer, and advances
+// The dispatcher loads actionable chapters (state=wanted, or state=failed with
+// retry budget remaining), fetches their pages via the ChapterFetcher port,
+// renders them to disk via the disk.RenderChapter renderer, and advances
 // chapter state through the state machine. Per-provider concurrency is capped
 // via buffered-channel semaphores so that a single provider cannot monopolise
-// the worker pool.
+// the worker pool. Since Slice 2 (responsiveness + fairness), RunOnce processes
+// one BOUNDED batch per source per call rather than draining a source's whole
+// backlog — see RunOnce's doc comment and job.Runner.RunDownloadCycle, which
+// loops it to drain a cycle while staying responsive to newly-wanted chapters.
 package download
 
 import (
@@ -15,6 +18,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -110,7 +114,8 @@ type DownloadEvent struct {
 }
 
 // Dispatcher coordinates the M1 download pipeline. Create one with New and call
-// RunOnce to process all currently actionable chapters.
+// RunOnce repeatedly (job.Runner.RunDownloadCycle's drain loop does this) to
+// process all currently actionable chapters in bounded per-source batches.
 type Dispatcher struct {
 	client *ent.Client
 	f      fetcher.ChapterFetcher
@@ -154,56 +159,112 @@ func (d *Dispatcher) MaxRetries(ctx context.Context) int {
 	return d.retry.MaxRetries(ctx)
 }
 
-// RunOnce loads every actionable chapter (state wanted or failed) and processes
-// them per source: each source's chapters are dispatched in ascending chapter
-// number, up to DownloadConcurrency at a time, with the sources running in
-// parallel. It waits for all chapters to finish before returning. Per-chapter
-// outcomes (success, source failure, permanent failure) are recorded in the DB
-// and broadcast via SSE, not propagated to the caller — only a hard
-// infrastructure failure loading the work list is returned. Callers can run this
-// method in a ticker loop.
+// wantedScanLimit bounds how many wanted/failed chapters RunOnce loads per pass.
+// One pass never exceeds this many chapters resolved+grouped, keeping the
+// per-pass query cheap regardless of library size; the drain loop
+// (job.Runner.RunDownloadCycle) simply calls RunOnce again for the rest.
+const wantedScanLimit = 1000
+
+// batchPerSource returns the maximum number of a single source's chapters that
+// ONE RunOnce pass will dispatch (transition to downloading), given the current
+// per-source download concurrency. It is deliberately larger than concurrency
+// (2x) so a pass keeps a source's slots continuously fed — as soon as one
+// chapter finishes another from the same batch is ready to take its slot —
+// instead of a pass that dispatches exactly `concurrency` items and then idles
+// while the last one finishes. The trade-off (owner-picked 2026-07-05): a bigger
+// multiplier raises per-pass throughput but delays how soon a NEWLY wanted
+// chapter (e.g. from a mid-cycle adopt) gets scanned into a future pass, since
+// the current pass must finish its whole batch first. 2x balances the two.
+func batchPerSource(concurrency int) int {
+	return 2 * concurrency
+}
+
+// RunOnce runs ONE BOUNDED PASS over the actionable chapters (state wanted or
+// failed): it loads up to wantedScanLimit of them, groups them by primary
+// source with a round-robin-across-series order (see groupBySource /
+// roundRobinBySeries), then dispatches — per source, in parallel — only the
+// first batchPerSource(concurrency) chapters of each source's queue via the
+// existing ordered scheduler (runSourceQueue), up to DownloadConcurrency
+// in-flight at a time. It waits for that bounded batch to finish before
+// returning `dispatched` = the number of chapters that made FORWARD PROGRESS
+// this pass, i.e. whose atomic wanted/failed→downloading claim SUCCEEDED (each
+// counted via a shared atomic counter incremented in runSourceQueue). Per-chapter
+// outcomes (success, source failure, permanent failure) are recorded in the DB and
+// broadcast via SSE, not propagated to the caller — only a hard infrastructure
+// failure loading the work list is returned.
 //
-// The download policy is read ONCE here so every chapter in the cycle sees a
-// consistent snapshot; a settings change therefore applies from the next cycle:
+// Why forward progress and not the SELECTED count: the drain loop
+// (job.Runner.RunDownloadCycle) terminates on dispatched==0. Counting chapters
+// merely SELECTED into a group (which is computed before the goroutines run) would
+// hot-spin the drain loop under a writes-fail/reads-succeed DB fault (e.g.
+// disk-full or a read-only replica): the claim write fails, the chapter stays
+// wanted/failed and is re-selected every pass, so a selected-count would never
+// reach 0. Counting only successful claims makes dispatched==0 mean "no chapter
+// left the wanted/failed set this pass" → the loop stops and the runner retries on
+// its next interval, degrading gracefully (matching pre-Slice-2 one-pass-per-cycle
+// behaviour). Under a healthy DB every selected chapter claims successfully, so
+// dispatched == selected and behaviour is unchanged.
+//
+// Being bounded (rather than draining every source's whole queue) is what lets
+// job.Runner.RunDownloadCycle's drain loop re-scan WantedChapters between
+// passes, so a chapter that becomes wanted mid-cycle (e.g. a fresh adopt) is
+// picked up within one pass instead of waiting out the entire prior backlog.
+//
+// The download policy is read ONCE here so every chapter in this pass sees a
+// consistent snapshot; a settings change therefore applies from the next pass:
 //
 //   - maxRetries + now — the per-source retry budget + cooldown horizon.
 //   - concurrency — the per-source start cap (scheduler) AND the per-provider
-//     fetch cap (limiter).
+//     fetch cap (limiter), and the batch-size input.
 //
 // A chapter stays in the wanted state (UI "Queued") until the scheduler acquires
 // a start slot for it — only then does it transition to downloading — so at any
 // moment only up to DownloadConcurrency of a source's chapters are downloading and
-// the rest remain queued, draining in ascending order (see schedule.go).
-func (d *Dispatcher) RunOnce(ctx context.Context) error {
+// the rest remain queued, draining in round-robin-across-series order (see
+// schedule.go).
+func (d *Dispatcher) RunOnce(ctx context.Context) (dispatched int, err error) {
 	maxRetries := d.retry.MaxRetries(ctx)
 	now := time.Now()
 	concurrency := d.downloadConcurrency(ctx)
 
-	chapters, err := chapter.WantedChapters(ctx, d.client, 1000)
+	chapters, err := chapter.WantedChapters(ctx, d.client, wantedScanLimit)
 	if err != nil {
-		return fmt.Errorf("download.Dispatcher.RunOnce: load chapters: %w", err)
+		return 0, fmt.Errorf("download.Dispatcher.RunOnce: load chapters: %w", err)
 	}
 	if len(chapters) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// Resolve each chapter's live candidates and partition by primary source
-	// (highest-importance live candidate). No-candidate chapters are handled here
-	// and never occupy a start slot. The limiter is shared across the whole cycle
-	// so a provider's fetch cap holds even for fall-through candidates.
+	// (highest-importance live candidate), round-robin-ordered across series
+	// within each source. No-candidate chapters are handled here and never
+	// occupy a start slot. The limiter is shared across the whole cycle so a
+	// provider's fetch cap holds even for fall-through candidates.
 	groups := d.groupBySource(ctx, chapters, maxRetries, now)
 	limiter := newProviderLimiter(concurrency)
+	batch := batchPerSource(concurrency)
 
+	// progressed counts chapters whose wanted/failed→downloading claim SUCCEEDED.
+	// It is shared across every per-source and per-chapter goroutine (each
+	// runSourceQueue increments it on a claim), so it must be atomic; read once
+	// with .Load() after all goroutines have joined.
+	var progressed atomic.Int64
 	var wg sync.WaitGroup
 	for _, items := range groups {
+		n := min(len(items), batch)
+		if n == 0 {
+			continue
+		}
+		batchItems := items[:n]
+
 		wg.Add(1)
 		go func(items []resolvedChapter) {
 			defer wg.Done()
-			d.runSourceQueue(ctx, items, concurrency, maxRetries, now, limiter)
-		}(items)
+			d.runSourceQueue(ctx, items, concurrency, maxRetries, now, limiter, &progressed)
+		}(batchItems)
 	}
 	wg.Wait()
-	return nil
+	return int(progressed.Load()), nil
 }
 
 // Process runs the full multi-source download pipeline for a single chapter by
@@ -249,7 +310,10 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 		return d.handleNoCandidates(ctx, ch, maxRetries)
 	}
 
-	return d.runCandidates(ctx, ch, chapterID, cands, maxRetries, now, limiter)
+	// Process is the single-chapter entry point; the forward-progress claim flag is
+	// only meaningful for RunOnce's drain-loop accounting, so it is discarded here.
+	_, err = d.runCandidates(ctx, ch, chapterID, cands, maxRetries, now, limiter)
+	return err
 }
 
 // runCandidates transitions a chapter with at least one live candidate from
@@ -258,15 +322,26 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 // wins. If every candidate fails this cycle, finalizeAfterAllFailed decides failed
 // vs permanently_failed from the freshly-bumped per-source state.
 //
+// It returns claimed=true the instant the atomic wanted/failed→downloading
+// transition SUCCEEDS (before the fetch loop), and claimed=false only when that
+// transition itself errors. This is the FORWARD-PROGRESS signal the drain loop
+// relies on: a successful claim moves the chapter out of the wanted/failed set
+// (so it is not re-selected next pass), whereas a failed claim means the chapter
+// made no progress and — critically — must not be counted as dispatched, or a
+// write-failing DB (reads succeed, the claim write fails) would keep re-selecting
+// it forever and hot-spin drainDownloads.
+//
 // The caller MUST already hold the source's start slot (RunOnce's per-source
 // scheduler acquires it; Process is single-chapter so contention cannot arise):
 // this is what keeps the wanted→downloading transition gated behind slot
 // acquisition, so a queued chapter stays wanted until it truly starts. ch must be
 // loaded WithSeries(WithCategory()) for the render step.
-func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter) error {
-	// Transition wanted / failed → downloading and announce the attempt.
-	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloading); err != nil {
-		return fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, err)
+func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter) (claimed bool, err error) {
+	// Transition wanted / failed → downloading and announce the attempt. If this
+	// write fails, the chapter is still wanted/failed — report claimed=false so the
+	// caller does NOT count it as progress.
+	if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloading); setErr != nil {
+		return false, fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
 	}
 	d.broadcast("download.start", DownloadEvent{
 		ChapterID: chapterID,
@@ -277,14 +352,15 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 	for _, cand := range cands {
 		done, cause := d.tryCandidate(ctx, ch, chapterID, cand, limiter, now)
 		if done {
-			return nil
+			return true, nil
 		}
 		lastErr = cause
 	}
 
 	// Every live source failed this cycle. Decide failed vs permanently_failed
-	// from the CURRENT per-source state (the loop just bumped attempts).
-	return d.finalizeAfterAllFailed(ctx, chapterID, maxRetries, lastErr)
+	// from the CURRENT per-source state (the loop just bumped attempts). The claim
+	// already succeeded, so this pass made progress regardless of the outcome.
+	return true, d.finalizeAfterAllFailed(ctx, chapterID, maxRetries, lastErr)
 }
 
 // tryCandidate attempts a single source for a chapter: it fetches under the

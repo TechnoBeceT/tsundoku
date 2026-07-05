@@ -1001,7 +1001,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 1, Backoff: 0})
 
-	if err := dispatcher.RunOnce(ctx); err != nil {
+	if _, err := dispatcher.RunOnce(ctx); err != nil {
 		t.Fatalf("Step 4 — RunOnce: %v", err)
 	}
 	t.Log("Step 4: RunOnce completed")

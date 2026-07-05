@@ -176,7 +176,7 @@ func TestDispatcher_DownloadProgress(t *testing.T) {
 	f := &progressDrivingFetcher{base: fake.New(fake.WithPages(3))}
 	d := download.New(client, f, hub, download.Config{Storage: storageDir}, settings.Static{Retries: 3, Backoff: time.Hour})
 
-	if err := d.RunOnce(ctx); err != nil {
+	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
