@@ -10,6 +10,16 @@ import Stepper from './Stepper.vue'
 const meta = {
   title: 'UI/Stepper',
   component: Stepper,
+  // steps + current are required props; each story sets its own via the render
+  // template, so these defaults only satisfy the CSF3 story typing.
+  args: {
+    steps: [
+      { key: 'search', label: 'Search' },
+      { key: 'configure', label: 'Configure' },
+      { key: 'adopt', label: 'Adopt' },
+    ],
+    current: 'configure',
+  },
 } satisfies Meta<typeof Stepper>
 
 export default meta

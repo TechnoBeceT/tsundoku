@@ -16,6 +16,9 @@ const meta = {
   title: 'Settings/ProxyConfigCard',
   component: ProxyConfigCard,
   parameters: { layout: 'padded' },
+  // modelValue is a required prop; each story renders its own live-model wrapper,
+  // so this default only satisfies the CSF3 story typing.
+  args: { modelValue: suwayomiConfig.socks },
 } satisfies Meta<typeof ProxyConfigCard>
 
 export default meta

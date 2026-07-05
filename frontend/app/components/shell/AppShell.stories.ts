@@ -12,15 +12,6 @@ import { categories, seriesPage } from '../../fixtures/series'
  * Flip the Storybook theme toolbar to confirm the rail + header read correctly
  * in BOTH dark and light.
  */
-const meta = {
-  title: 'Shell/AppShell',
-  component: AppShell,
-  parameters: { layout: 'fullscreen' },
-} satisfies Meta<typeof AppShell>
-
-export default meta
-type Story = StoryObj<typeof meta>
-
 /**
  * The six nav rail items — five primary, plus Settings bottom-pinned. Badges are
  * caller-wired (Downloads → failed count amber, Health → unhealthy rose), proving
@@ -34,6 +25,18 @@ const navItems: NavItem[] = [
   { key: 'categories', label: 'Categories', icon: 'layout-grid' },
   { key: 'settings', label: 'Settings', icon: 'settings', pinned: true },
 ]
+
+const meta = {
+  title: 'Shell/AppShell',
+  component: AppShell,
+  parameters: { layout: 'fullscreen' },
+  // navItems/activeRoute/theme/headerTitle are required props; each story passes
+  // its own in the render template, so these defaults only satisfy CSF3 typing.
+  args: { navItems, activeRoute: 'library', theme: 'dark', headerTitle: 'Library' },
+} satisfies Meta<typeof AppShell>
+
+export default meta
+type Story = StoryObj<typeof meta>
 
 /** A simple placeholder so the chrome can be judged without a real screen. */
 const Placeholder = {

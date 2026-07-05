@@ -172,7 +172,7 @@ export function useSeriesDetail(id: string) {
     mutate(
       () => apiClient.DELETE('/api/series/{id}', { params: { path: { id }, query: { deleteFiles } } }),
       deleteBusy,
-      () => navigateTo('/'),
+      () => { void navigateTo('/') },
     )
 
   const dismissError = (): void => { error.value = null }

@@ -23,6 +23,9 @@ const meta = {
   title: 'Screens/Downloads',
   component: Downloads,
   parameters: { layout: 'fullscreen' },
+  // items is a required prop; the interactive stories pass the fixture in their
+  // render template, so this default only satisfies the CSF3 story typing.
+  args: { items: downloadItems },
 } satisfies Meta<typeof Downloads>
 
 export default meta

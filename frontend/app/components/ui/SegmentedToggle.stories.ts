@@ -10,6 +10,15 @@ import SegmentedToggle from './SegmentedToggle.vue'
 const meta = {
   title: 'UI/SegmentedToggle',
   component: SegmentedToggle,
+  // modelValue + options are required props; each story renders its own live-ref
+  // wrapper, so these defaults only satisfy the CSF3 story typing.
+  args: {
+    modelValue: 'popular',
+    options: [
+      { key: 'popular', label: 'Popular' },
+      { key: 'latest', label: 'Latest' },
+    ],
+  },
 } satisfies Meta<typeof SegmentedToggle>
 
 export default meta

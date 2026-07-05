@@ -18,6 +18,9 @@ const meta = {
   title: 'Screens/Import',
   component: Import,
   parameters: { layout: 'fullscreen' },
+  // sources is a required prop; the play-driven stories set their own args, so
+  // this default only satisfies the CSF3 story typing.
+  args: { sources },
 } satisfies Meta<typeof Import>
 
 export default meta

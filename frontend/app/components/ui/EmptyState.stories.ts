@@ -12,6 +12,9 @@ import AppButton from './AppButton.vue'
 const meta = {
   title: 'UI/EmptyState',
   component: EmptyState,
+  // title is a required prop; each story sets its own via the render template,
+  // so this default only satisfies the CSF3 story typing.
+  args: { title: 'No series yet' },
 } satisfies Meta<typeof EmptyState>
 
 export default meta

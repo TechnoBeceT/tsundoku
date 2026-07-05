@@ -14,6 +14,9 @@ const meta = {
   title: 'Screens/LibraryList',
   component: LibraryList,
   parameters: { layout: 'fullscreen' },
+  // series/categories are required props; the interactive stories pass their own
+  // in the render template, so these defaults only satisfy the CSF3 story typing.
+  args: { series: seriesPage, categories },
 } satisfies Meta<typeof LibraryList>
 
 export default meta

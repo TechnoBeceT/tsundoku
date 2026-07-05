@@ -10,6 +10,15 @@ import SegmentedTabs from './SegmentedTabs.vue'
 const meta = {
   title: 'UI/SegmentedTabs',
   component: SegmentedTabs,
+  // modelValue + tabs are required props; each story renders its own live-ref
+  // wrapper, so these defaults only satisfy the CSF3 story typing.
+  args: {
+    modelValue: 'active',
+    tabs: [
+      { key: 'active', label: 'Active', count: 3 },
+      { key: 'failed', label: 'Failed', count: 12 },
+    ],
+  },
 } satisfies Meta<typeof SegmentedTabs>
 
 export default meta

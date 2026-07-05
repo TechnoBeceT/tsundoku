@@ -140,6 +140,9 @@ export function useCategories() {
 
     const target = list[idx]
     const neighbor = list[neighborIdx]
+    // Both indices were bounds-checked above, so the rows exist; this guard
+    // narrows them out of `undefined` for the swap below (noUncheckedIndexedAccess).
+    if (!target || !neighbor) return
 
     // Give target the neighbor's sortOrder and neighbor the target's old value.
     // Defensive tie-break: if the two share a sortOrder (a legacy collision the

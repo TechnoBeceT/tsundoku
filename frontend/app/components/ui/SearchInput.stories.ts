@@ -14,7 +14,9 @@ const meta = {
     placeholder: { control: 'text' },
     clearable: { control: 'boolean' },
   },
-  args: { placeholder: 'Search a title across sources…', clearable: true },
+  // modelValue is a required prop; every story overrides it with a local ref via
+  // v-model, so this default only satisfies the CSF3 story typing.
+  args: { modelValue: '', placeholder: 'Search a title across sources…', clearable: true },
   render: (args) => ({
     components: { SearchInput },
     setup: () => {

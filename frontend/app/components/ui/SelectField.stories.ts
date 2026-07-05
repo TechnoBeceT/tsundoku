@@ -21,7 +21,9 @@ const meta = {
   argTypes: {
     disabled: { control: 'boolean' },
   },
-  args: { disabled: false, ariaLabel: 'Category' },
+  // modelValue + options are required props; the render overrides them with a
+  // local ref + the categoryOptions list, so these defaults satisfy CSF3 typing.
+  args: { modelValue: 'manhwa', options: categoryOptions, disabled: false, ariaLabel: 'Category' },
   render: (args) => ({
     components: { SelectField },
     setup: () => {

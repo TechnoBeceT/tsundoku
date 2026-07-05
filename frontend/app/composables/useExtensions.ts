@@ -239,7 +239,13 @@ export function useExtensions() {
     if (newIdx < 0 || newIdx >= urls.length) return
 
     const newUrls = [...urls]
-    ;[newUrls[idx], newUrls[newIdx]] = [newUrls[newIdx], newUrls[idx]]
+    // Both indices were bounds-checked above, so both entries exist; pull them
+    // out first so the swap stays string-typed (noUncheckedIndexedAccess).
+    const a = newUrls[idx]
+    const b = newUrls[newIdx]
+    if (a === undefined || b === undefined) return
+    newUrls[idx] = b
+    newUrls[newIdx] = a
 
     await repoMutate(id, newUrls)
   }

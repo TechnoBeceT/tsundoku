@@ -13,6 +13,9 @@ const meta = {
   title: 'Screens/Auth',
   component: Auth,
   parameters: { layout: 'fullscreen' },
+  // mode is a required prop; the interactive stories drive their own via a local
+  // ref, so this default only satisfies the CSF3 story typing.
+  args: { mode: 'login' },
 } satisfies Meta<typeof Auth>
 
 export default meta

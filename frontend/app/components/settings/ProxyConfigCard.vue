@@ -33,7 +33,8 @@ function patch(part: Partial<SocksProxyConfig>) {
 <template>
   <SurfaceCard title="SOCKS proxy" sub="Route source traffic through a SOCKS proxy">
     <template #actions>
-      <Toggle :model-value="modelValue.enabled" aria-label="Enable SOCKS proxy" @update:model-value="patch({ enabled: $event })" />
+      <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+      <Toggle :model-value="modelValue.enabled" :ariaLabel="'Enable SOCKS proxy'" @update:model-value="patch({ enabled: $event })" />
     </template>
     <div v-if="modelValue.enabled" class="field-grid">
       <TextField label="Version" :model-value="modelValue.version" @update:model-value="patch({ version: $event })" />

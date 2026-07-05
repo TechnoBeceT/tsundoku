@@ -86,11 +86,14 @@ const categorySelectOptions = computed<SelectOption[]>(() =>
 
       <!-- Toggles + category select -->
       <div class="controls">
+        <!-- eslint-disable vue/attribute-hyphenation -->
+        <!-- camelCase :ariaLabel binds Toggle's REQUIRED prop; kebab :aria-label
+             routes to the native attr, leaving it unset (vue-tsc error). -->
         <div class="control">
           <Toggle
             :model-value="series.monitored"
             :disabled="saving"
-            aria-label="Monitored"
+            :ariaLabel="'Monitored'"
             @update:model-value="emit('toggleMonitored', $event)"
           />
           <div>
@@ -103,7 +106,7 @@ const categorySelectOptions = computed<SelectOption[]>(() =>
           <Toggle
             :model-value="series.completed"
             :disabled="saving"
-            aria-label="Completed"
+            :ariaLabel="'Completed'"
             @update:model-value="emit('toggleCompleted', $event)"
           />
           <div>
@@ -111,6 +114,7 @@ const categorySelectOptions = computed<SelectOption[]>(() =>
             <div class="control__hint">Mark finished · skip sweeps</div>
           </div>
         </div>
+        <!-- eslint-enable vue/attribute-hyphenation -->
 
         <label class="control control--category">
           <span class="control__catlabel">Category</span>

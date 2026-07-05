@@ -21,7 +21,9 @@ const meta = {
     name: { control: 'text' },
     compact: { control: 'boolean' },
   },
-  args: { label: 'Display name', placeholder: 'e.g. Solo Leveling', disabled: false, mono: false, compact: false },
+  // modelValue is a required prop; every story overrides it with a local ref via
+  // v-model, so this default only satisfies the CSF3 story typing.
+  args: { modelValue: '', label: 'Display name', placeholder: 'e.g. Solo Leveling', disabled: false, mono: false, compact: false },
   render: (args) => ({
     components: { TextField },
     setup: () => {

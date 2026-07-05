@@ -41,7 +41,8 @@ const emit = defineEmits<{
     <span class="repo-row__url">{{ repo.url }}</span>
     <span v-if="repo.isDefault" class="pill">DEFAULT</span>
     <Spinner v-if="busy" :size="13" tone="current" />
-    <IconButton variant="danger" aria-label="Remove" :disabled="busy" @click="emit('remove')">
+    <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+    <IconButton variant="danger" :ariaLabel="'Remove'" :disabled="busy" @click="emit('remove')">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>
     </IconButton>
   </div>

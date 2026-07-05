@@ -25,15 +25,6 @@ import '../../assets/css/tokens/settings.css'
  * story opens on its pane; the sidebar nav stays interactive (clicking switches
  * panes) via a live `activePane` ref.
  */
-const meta = {
-  title: 'Screens/Settings',
-  component: Settings,
-  parameters: { layout: 'fullscreen' },
-} satisfies Meta<typeof Settings>
-
-export default meta
-type Story = StoryObj<typeof meta>
-
 /** Shared props every story passes through to the screen. */
 const baseProps = {
   library: librarySettings,
@@ -46,6 +37,19 @@ const baseProps = {
   repos,
   extCheckInterval,
 }
+
+const meta = {
+  title: 'Screens/Settings',
+  component: Settings,
+  parameters: { layout: 'fullscreen' },
+  // The screen's required props (library/system/engine/suwayomi/…); the interactive
+  // stories pass these via the withPane wrapper, so this default satisfies the
+  // CSF3 story typing (baseProps covers exactly the required set).
+  args: baseProps,
+} satisfies Meta<typeof Settings>
+
+export default meta
+type Story = StoryObj<typeof meta>
 
 /**
  * Renders the screen with a live `activePane` so the sidebar actually switches.

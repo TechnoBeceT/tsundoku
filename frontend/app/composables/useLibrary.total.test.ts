@@ -37,7 +37,7 @@ vi.mock('~/utils/api/client', () => ({
   apiClient: {
     GET: vi.fn().mockImplementation((path: string) => {
       if (path === '/api/series') {
-        const headers =
+        const headers: Record<string, string> =
           seriesTotalHeader === null ? {} : { 'X-Total-Count': seriesTotalHeader }
         return Promise.resolve({
           data: FIVE_ROWS,

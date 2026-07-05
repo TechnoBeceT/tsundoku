@@ -35,18 +35,22 @@ const emit = defineEmits<{
       <path d="M12 8v4M12 16h.01" />
     </svg>
     <span class="banner__msg">{{ message }}</span>
+    <!-- eslint-disable vue/attribute-hyphenation -->
+    <!-- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to
+         the native attr, leaving it unset (vue-tsc error). -->
     <IconButton
       v-if="dismissible"
       class="banner__close"
       variant="danger"
       size="sm"
-      aria-label="Dismiss error"
+      :ariaLabel="'Dismiss error'"
       @click="emit('dismiss')"
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M18 6 6 18M6 6l12 12" />
       </svg>
     </IconButton>
+    <!-- eslint-enable vue/attribute-hyphenation -->
   </div>
 </template>
 

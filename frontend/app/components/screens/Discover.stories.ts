@@ -15,6 +15,9 @@ const meta = {
   title: 'Screens/Discover',
   component: Discover,
   parameters: { layout: 'fullscreen' },
+  // result/sources/activeSource are required props; the interactive stories pass
+  // their own in the render template, so these defaults only satisfy CSF3 typing.
+  args: { result: popularResult, sources, activeSource: sources[0]!.id },
 } satisfies Meta<typeof Discover>
 
 export default meta

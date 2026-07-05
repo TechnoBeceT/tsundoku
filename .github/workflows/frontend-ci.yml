@@ -1,0 +1,76 @@
+# Frontend quality gate — lint, type-check, unit tests, API-type drift, and the
+# Storybook build. Runs on every push to main and every pull request that touches
+# the frontend, so a type-check regression (like the ~78-error debt this workflow
+# was added to prevent recurring) can never land silently again.
+#
+# Mirrors the local gate documented in frontend/package.json + the repo CLAUDE.md:
+#   bun run lint            -> ESLint (0 problems)
+#   bun run typecheck       -> nuxt typecheck / vue-tsc (0 errors)  <-- the re-armed gate
+#   bun run test            -> Vitest unit suite
+#   bun run check:api-drift -> regenerates the TS client from openapi.yaml and
+#                              fails if it diverges from the committed types
+#   bun run build-storybook -> proves every *.stories.ts still compiles
+name: Frontend CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+      - "backend/internal/api/openapi.yaml"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "backend/internal/api/openapi.yaml"
+      - ".github/workflows/frontend-ci.yml"
+
+# Only one run per ref at a time: a newer push cancels the older in-progress run.
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the checks only need to read the repository.
+permissions:
+  contents: read
+
+# Every bun command runs from the frontend package.
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      # check:api-drift reads ../backend/internal/api/openapi.yaml, so we need the
+      # whole repo, not just the frontend directory.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # --frozen-lockfile fails if bun.lock is out of date, so CI installs exactly
+      # what is committed (postinstall runs `nuxt prepare` to generate .nuxt types
+      # that vue-tsc needs).
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Type-check
+        run: bun run typecheck
+
+      - name: Unit tests
+        run: bun run test
+
+      - name: API-type drift
+        run: bun run check:api-drift
+
+      - name: Build Storybook
+        run: bun run build-storybook

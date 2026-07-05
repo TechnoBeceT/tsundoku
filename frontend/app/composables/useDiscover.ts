@@ -138,8 +138,13 @@ export function useDiscover() {
   async function init(): Promise<void> {
     const res = await apiClient.GET('/api/sources')
     if (res.error || !res.data || res.data.length === 0) return
-    sources.value = res.data.map(mapSource)
-    activeSource.value = sources.value[0].id
+    const mapped = res.data.map(mapSource)
+    sources.value = mapped
+    // res.data is non-empty (guarded above), so mapped[0] exists; the guard
+    // narrows it out of `undefined` (noUncheckedIndexedAccess).
+    const first = mapped[0]
+    if (!first) return
+    activeSource.value = first.id
     await loadPage(1)
   }
 

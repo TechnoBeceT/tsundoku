@@ -16,6 +16,9 @@ const meta = {
   title: 'Settings/FlareSolverrCard',
   component: FlareSolverrCard,
   parameters: { layout: 'padded' },
+  // modelValue is a required prop; each story renders its own live-model wrapper,
+  // so this default only satisfies the CSF3 story typing.
+  args: { modelValue: suwayomiConfig.flareSolverr },
 } satisfies Meta<typeof FlareSolverrCard>
 
 export default meta

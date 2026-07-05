@@ -34,7 +34,8 @@ function patch(part: Partial<FlareSolverrConfig>) {
 <template>
   <SurfaceCard title="Cloudflare bypass (FlareSolverr)" sub="Solve Cloudflare challenges for protected sources">
     <template #actions>
-      <Toggle :model-value="modelValue.enabled" aria-label="Enable FlareSolverr" @update:model-value="patch({ enabled: $event })" />
+      <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+      <Toggle :model-value="modelValue.enabled" :ariaLabel="'Enable FlareSolverr'" @update:model-value="patch({ enabled: $event })" />
     </template>
     <div v-if="modelValue.enabled" class="flare-body">
       <TextField class="field--block" label="Server URL" :model-value="modelValue.url" @update:model-value="patch({ url: $event })" />
@@ -49,7 +50,8 @@ function patch(part: Partial<FlareSolverrConfig>) {
           <DurationInput :model-value="modelValue.sessionTtl" @update:model-value="patch({ sessionTtl: $event })" />
         </div>
         <div class="field field--inline">
-          <Toggle :model-value="modelValue.fallback" aria-label="Response fallback" @update:model-value="patch({ fallback: $event })" />
+          <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+          <Toggle :model-value="modelValue.fallback" :ariaLabel="'Response fallback'" @update:model-value="patch({ fallback: $event })" />
           <span class="field__inline-label">Response fallback</span>
         </div>
       </div>

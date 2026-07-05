@@ -73,7 +73,8 @@ function guardClose(event: Event) {
             <DialogTitle>Dialog</DialogTitle>
           </VisuallyHidden>
           <DialogClose v-if="!busy" as-child>
-            <IconButton class="dialog__close" aria-label="Close dialog">
+            <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+            <IconButton class="dialog__close" :ariaLabel="'Close dialog'">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>

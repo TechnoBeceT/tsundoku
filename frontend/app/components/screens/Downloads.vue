@@ -283,7 +283,8 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           <SearchInput v-model="search" placeholder="Search series…" />
         </div>
         <label class="toggle">
-          <Toggle v-model="upgradesOnly" aria-label="Upgrades only" />
+          <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+          <Toggle v-model="upgradesOnly" :ariaLabel="'Upgrades only'" />
           <span class="toggle__label">Upgrades only</span>
         </label>
       </div>

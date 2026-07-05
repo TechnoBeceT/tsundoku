@@ -15,7 +15,9 @@ const meta = {
   argTypes: {
     disabled: { control: 'boolean' },
   },
-  args: { disabled: false },
+  // modelValue is a required prop; the interactive stories override it with a
+  // local ref via v-model, so this default only satisfies the CSF3 story typing.
+  args: { modelValue: { value: 2, unit: 'h' }, disabled: false },
   render: (args) => ({
     components: { DurationInput },
     setup: () => {

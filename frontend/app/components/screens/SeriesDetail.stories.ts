@@ -24,6 +24,9 @@ const meta = {
   title: 'Screens/SeriesDetail',
   component: SeriesDetail,
   parameters: { layout: 'fullscreen' },
+  // series/categoryOptions are required props; the interactive stories pass their
+  // own in the render template, so these defaults only satisfy the CSF3 typing.
+  args: { series: richSeries, categoryOptions },
 } satisfies Meta<typeof SeriesDetail>
 
 export default meta

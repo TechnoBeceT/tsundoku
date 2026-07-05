@@ -56,6 +56,13 @@ function openImport(candidate: DiscoverCandidate): void {
   })
 }
 
+/** Opens a candidate's provider-canonical link in a new tab (noopener). Lives in
+ *  the script (not an inline template handler) so `window` resolves to the DOM
+ *  global rather than a template binding. `isHttpUrl` blocks non-http(s) schemes. */
+function openSourceLink(candidate: DiscoverCandidate): void {
+  if (isHttpUrl(candidate.url)) window.open(candidate.url, '_blank', 'noopener')
+}
+
 /** Debounce window for the hover-details fetch — long enough that scrubbing
  *  across several cards in a row only fires one fetch (for the card the
  *  cursor settles on), short enough to feel instant on a deliberate hover. */
@@ -87,7 +94,7 @@ onBeforeUnmount(() => {
       @retry="retry"
       @inspect="openImport"
       @adopt="openImport"
-      @open-source-link="(c: DiscoverCandidate) => { if (isHttpUrl(c.url)) window.open(c.url, '_blank', 'noopener') }"
+      @open-source-link="openSourceLink"
       @hover="onHover"
     />
   </div>
