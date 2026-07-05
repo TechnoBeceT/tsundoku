@@ -53,7 +53,11 @@ func (d *Dispatcher) groupBySource(ctx context.Context, chapters []*ent.Chapter,
 			}
 			continue
 		}
-		key := cands[0].SeriesProvider.Provider
+		// Key by the canonical physical-source label (name-else-id), NOT the raw
+		// provider string: one physical source can be stored under two provider
+		// strings (Suwayomi numeric id vs disk-reconcile name), and keying by the raw
+		// string would give it two groups → two slot channels → 2x the per-source cap.
+		key := canonicalSourceKey(cands[0].SeriesProvider)
 		groups[key] = append(groups[key], resolvedChapter{chapterID: ch.ID, cands: cands})
 	}
 	return groups

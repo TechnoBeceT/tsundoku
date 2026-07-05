@@ -297,7 +297,7 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	// Carry a per-chapter progress sink so the suwayomi fetcher can report live
 	// per-page progress; the sink throttles + broadcasts download.progress.
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))
-	release := limiter.acquire(cand.SeriesProvider.Provider)
+	release := limiter.acquire(canonicalSourceKey(cand.SeriesProvider))
 	pages, fetchErr := d.f.Fetch(pctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
 	release()
 	if fetchErr != nil {
@@ -517,25 +517,29 @@ func (d *Dispatcher) handleNoCandidates(ctx context.Context, ch *ent.Chapter, ma
 }
 
 // providerLimiter caps how many chapters may be FETCHED concurrently from the
-// same provider. It hands out one buffered-channel semaphore per provider name,
-// each of capacity = the per-cycle DownloadConcurrency, so a single busy provider
-// can never monopolise the fetch pool while other providers proceed in parallel.
-// Safe for concurrent use by the per-chapter goroutines.
+// same physical source. It hands out one buffered-channel semaphore per source
+// KEY (canonicalSourceKey = name-else-id, so both stored representations of one
+// physical source share a single semaphore), each of capacity = the per-cycle
+// DownloadConcurrency, so a single busy source can never monopolise the fetch pool
+// while other sources proceed in parallel. Safe for concurrent use by the
+// per-chapter goroutines.
 //
 // It is DISTINCT from the per-source start scheduler (schedule.go): the scheduler
 // orders a source's primary chapters and gates their wanted→downloading
 // transition, while this limiter bounds actual upstream fetch concurrency keyed by
-// the REAL provider being fetched — so it also caps fall-through secondaries and
-// the upgrade path, which the scheduler (keyed by primary source) does not cover.
-// A chapter never acquires two slots of THIS limiter at once, and the scheduler's
-// start channel is a separate object, so no self-deadlock is possible.
+// the source being fetched — so it also caps fall-through secondaries and the
+// upgrade path, which the scheduler (keyed by primary source) does not cover. Both
+// key by the SAME canonicalSourceKey, so the state-count cap and the fetch cap
+// agree on what "one source" is. A chapter never acquires two slots of THIS limiter
+// at once, and the scheduler's start channel is a separate object, so no
+// self-deadlock is possible.
 type providerLimiter struct {
 	mu   sync.Mutex
 	cap  int
 	sems map[string]chan struct{}
 }
 
-// newProviderLimiter builds a limiter whose per-provider concurrency is capacity
+// newProviderLimiter builds a limiter whose per-source concurrency is capacity
 // (clamped to >= 1).
 func newProviderLimiter(capacity int) *providerLimiter {
 	if capacity < 1 {
@@ -544,14 +548,14 @@ func newProviderLimiter(capacity int) *providerLimiter {
 	return &providerLimiter{cap: capacity, sems: make(map[string]chan struct{})}
 }
 
-// acquire blocks until a concurrency slot for the given provider is free, then
+// acquire blocks until a concurrency slot for the given source key is free, then
 // returns a release func the caller must invoke (once) to free the slot.
-func (l *providerLimiter) acquire(provider string) (release func()) {
+func (l *providerLimiter) acquire(sourceKey string) (release func()) {
 	l.mu.Lock()
-	sem, ok := l.sems[provider]
+	sem, ok := l.sems[sourceKey]
 	if !ok {
 		sem = make(chan struct{}, l.cap)
-		l.sems[provider] = sem
+		l.sems[sourceKey] = sem
 	}
 	l.mu.Unlock()
 
@@ -596,6 +600,28 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
+// canonicalSourceKey returns the single per-physical-source identity used to group
+// chapters for the scheduler AND to key the fetch limiter: the source's display
+// name (provider_name) when known, else its raw provider id. It mirrors
+// series.ProviderLabel, kept local so the low-level download engine does not import
+// the higher-level series domain package (10+ deps, and a latent import-cycle risk
+// if series ever needs the engine); the package already resolves the identical
+// label for the CBZ filename via buildRenderMeta.
+//
+// WHY the label, not the raw provider string: one physical source can be stored
+// under TWO provider strings — the Suwayomi ingest path stores the numeric source
+// id in `provider` with the display name in `provider_name`, while the disk-reconcile
+// path stores that same display name in `provider` with an empty `provider_name`.
+// Keying by the raw string makes two scheduler groups AND two fetch semaphores for
+// the one source, each granted the full per-source concurrency cap ⇒ 2x the cap.
+// Collapsing both to the shared label bounds the downloading-state count AND the
+// concurrent fetches to the cap per physical source. The rare over-merge — two
+// genuinely different sources that happen to share a display name — is accepted:
+// they conservatively share one cap (owner-ratified).
+func canonicalSourceKey(sp *ent.SeriesProvider) string {
+	return firstNonEmpty(sp.ProviderName, sp.Provider)
+}
+
 func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesProvider, maxChapter *float64) disk.RenderMeta {
 	seriesTitle := ""
 	if ch.Edges.Series != nil {
@@ -603,7 +629,7 @@ func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesPro
 	}
 	return disk.RenderMeta{
 		Provider:            sp.Provider,
-		ProviderLabel:       firstNonEmpty(sp.ProviderName, sp.Provider),
+		ProviderLabel:       canonicalSourceKey(sp),
 		Scanlator:           sp.Scanlator,
 		Language:            sp.Language,
 		SeriesTitle:         seriesTitle,

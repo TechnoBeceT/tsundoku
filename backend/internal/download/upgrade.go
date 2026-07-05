@@ -203,7 +203,7 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	// Carry a per-chapter progress sink so the upgrade fetch reports live per-page
 	// progress too; the sink throttles + broadcasts download.progress ("upgrading").
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateUpgrading)))
-	release := limiter.acquire(sp.Provider)
+	release := limiter.acquire(canonicalSourceKey(sp))
 	pages, err := d.f.Fetch(pctx, buildFetchRef(pc, sp))
 	release()
 	if err != nil {
