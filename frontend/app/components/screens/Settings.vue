@@ -5,6 +5,7 @@ import CategoriesPane from '../settings/CategoriesPane.vue'
 import EnginePane from '../settings/EnginePane.vue'
 import SuwayomiPane from '../settings/SuwayomiPane.vue'
 import ExtensionsPane from '../settings/ExtensionsPane.vue'
+import SourceMetricsPane from '../settings/SourceMetricsPane.vue'
 import type {
   DurationValue,
   EngineInfo,
@@ -16,6 +17,7 @@ import type {
   SaveState,
   SettingsCategory,
   SettingsPane,
+  SourceMetric,
   SuwayomiConfig,
   SystemInfo,
   UpgradeStep,
@@ -30,6 +32,7 @@ import type {
  *   - engine      → EnginePane       (read-only status + upgrade stepper)
  *   - suwayomi    → SuwayomiPane      (proxied SOCKS + FlareSolverr config)
  *   - extensions  → ExtensionsPane    (installed / available / repositories)
+ *   - sources     → SourceMetricsPane (per-source search metrics + Warm now)
  *
  * Presentation only: ALL state arrives via props and every mutation is emitted —
  * the panes own their local editable copies (§16 round-trip) and re-emit each
@@ -74,6 +77,18 @@ withDefaults(defineProps<{
   extCheckInterval: DurationValue
   /** Whether a "check for updates" call is in flight. */
   checkingUpdates?: boolean
+  /** Per-source search metrics (2f), slowest-first. */
+  sourceMetrics?: SourceMetric[]
+  /** Whether the source-metrics list is loading. */
+  sourceMetricsPending?: boolean
+  /** A source-metrics load failure, surfaced inline in the pane. */
+  sourceMetricsError?: string | null
+  /** Whether a manual warm-up pass is in flight. */
+  warming?: boolean
+  /** The last warm-up's success note (the warmed count). */
+  warmMessage?: string | null
+  /** The last warm-up's failure message. */
+  warmError?: string | null
   /** When true, the whole screen renders as skeletons. */
   loading?: boolean
 }>(), {
@@ -86,6 +101,12 @@ withDefaults(defineProps<{
   extensionAction: () => ({ busyId: null }),
   repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
+  sourceMetrics: () => [],
+  sourceMetricsPending: false,
+  sourceMetricsError: null,
+  warming: false,
+  warmMessage: null,
+  warmError: null,
   loading: false,
 })
 
@@ -124,6 +145,8 @@ const emit = defineEmits<{
   'reorder-repo': [payload: { id: string, direction: ReorderDirection }]
   /** The extension update-check cadence was changed by the user. */
   'update:ext-check-interval': [DurationValue]
+  /** Trigger a manual warm-up pass across all sources. */
+  'warm-now': []
 }>()
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
@@ -175,7 +198,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
         />
 
         <ExtensionsPane
-          v-else
+          v-else-if="activePane === 'extensions'"
           :extensions="extensions"
           :available-extensions="availableExtensions"
           :repos="repos"
@@ -191,6 +214,17 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @remove-repo="emit('remove-repo', $event)"
           @reorder-repo="emit('reorder-repo', $event)"
           @update:ext-check-interval="emit('update:ext-check-interval', $event)"
+        />
+
+        <SourceMetricsPane
+          v-else
+          :metrics="sourceMetrics"
+          :pending="sourceMetricsPending"
+          :error="sourceMetricsError"
+          :warming="warming"
+          :warm-message="warmMessage"
+          :warm-error="warmError"
+          @warm-now="emit('warm-now')"
         />
       </div>
     </div>

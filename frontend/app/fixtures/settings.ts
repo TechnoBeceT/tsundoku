@@ -14,6 +14,7 @@ import type {
   LibrarySettings,
   Repo,
   SettingsCategory,
+  SourceMetric,
   SuwayomiConfig,
   SystemInfo,
   UpgradeStep,
@@ -122,3 +123,96 @@ export const repos: Repo[] = [
 
 /** Background extension update-check cadence (2e). */
 export const extCheckInterval: DurationValue = { value: 12, unit: 'h' }
+
+/* ---- 2f. Source metrics --------------------------------------------------- */
+
+// Warm/cold is derived from `lastWarmedAt` age against Date.now(), so the
+// timestamps are computed relative to now: a "warm" row was warmed a few minutes
+// ago (< the 15-min window), a "cold" one ~40 min ago. Story-only, so a live
+// Date here is fine.
+const now = Date.now()
+const agoIso = (msAgo: number): string => new Date(now - msAgo).toISOString()
+const MIN = 60_000
+
+/**
+ * A mix of source-performance snapshots (as the backend returns them, sorted
+ * slowest-first by EWMA): a fast+warm source, a slow+warm one, a slow+erroring
+ * cold source, a never-warmed unmeasured source, and a healthy cold source.
+ */
+export const sourceMetrics: SourceMetric[] = [
+  {
+    id: 'src-asura',
+    name: 'Asura Scans',
+    avgLatencyMs: 4200,
+    lastLatencyMs: 5100,
+    searchCount: 120,
+    successCount: 70,
+    failCount: 50,
+    lastError: '',
+    lastErrorAt: null,
+    lastSuccessAt: agoIso(5 * MIN),
+    lastWarmedAt: agoIso(5 * MIN),
+    updatedAt: agoIso(1 * MIN),
+    isSlow: true,
+  },
+  {
+    id: 'src-comick',
+    name: 'ComicK',
+    avgLatencyMs: 1800,
+    lastLatencyMs: 0,
+    searchCount: 80,
+    successCount: 40,
+    failCount: 40,
+    lastError: 'context deadline exceeded: FlareSolverr timed out after 60s while solving the Cloudflare challenge',
+    lastErrorAt: agoIso(3 * MIN),
+    lastSuccessAt: agoIso(50 * MIN),
+    lastWarmedAt: agoIso(40 * MIN),
+    updatedAt: agoIso(3 * MIN),
+    isSlow: true,
+  },
+  {
+    id: 'src-weeb',
+    name: 'Weeb Central',
+    avgLatencyMs: 0,
+    lastLatencyMs: 0,
+    searchCount: 0,
+    successCount: 0,
+    failCount: 0,
+    lastError: '',
+    lastErrorAt: null,
+    lastSuccessAt: null,
+    lastWarmedAt: null,
+    updatedAt: agoIso(2 * 60 * MIN),
+    isSlow: true,
+  },
+  {
+    id: 'src-bili',
+    name: 'BiliBili Comics',
+    avgLatencyMs: 600,
+    lastLatencyMs: 620,
+    searchCount: 40,
+    successCount: 40,
+    failCount: 0,
+    lastError: '',
+    lastErrorAt: null,
+    lastSuccessAt: agoIso(46 * MIN),
+    lastWarmedAt: agoIso(45 * MIN),
+    updatedAt: agoIso(46 * MIN),
+    isSlow: false,
+  },
+  {
+    id: 'src-mangadex',
+    name: 'MangaDex',
+    avgLatencyMs: 240,
+    lastLatencyMs: 210,
+    searchCount: 500,
+    successCount: 492,
+    failCount: 8,
+    lastError: '',
+    lastErrorAt: null,
+    lastSuccessAt: agoIso(2 * MIN),
+    lastWarmedAt: agoIso(3 * MIN),
+    updatedAt: agoIso(2 * MIN),
+    isSlow: false,
+  },
+]

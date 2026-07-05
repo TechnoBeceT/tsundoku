@@ -10,8 +10,8 @@
  * this `.ts` (never exported from a `.vue`) so stories + fixtures import freely.
  */
 
-/** The five settings panes, selected from the sticky sidebar nav. */
-export type SettingsPane = 'library' | 'categories' | 'engine' | 'suwayomi' | 'extensions'
+/** The six settings panes, selected from the sticky sidebar nav. */
+export type SettingsPane = 'library' | 'categories' | 'engine' | 'suwayomi' | 'extensions' | 'sources'
 
 /** Duration unit for the number+unit inputs (serialises to Go `2h`/`15m`/`30s`). */
 export type DurationUnit = 'h' | 'm' | 's'
@@ -237,3 +237,51 @@ export interface Repo {
 
 /** The direction a reorder moves a row: up (−1) or down (+1) in the list. */
 export type ReorderDirection = -1 | 1
+
+/* ---- 2f. Source metrics (search performance) ------------------------------ */
+
+/**
+ * SourceWarmth — a source's warm/cold session state, derived from how recently
+ * it was last warmed (SourceMetricRow computes it from `lastWarmedAt`):
+ *   - 'warm'  → warmed within the recency window (the anti-bot session is fresh)
+ *   - 'cold'  → warmed, but longer ago than the window (session likely expired)
+ *   - 'never' → never warmed (no `lastWarmedAt`)
+ */
+export type SourceWarmth = 'warm' | 'cold' | 'never'
+
+/**
+ * SourceMetric — one source's search-performance snapshot (the Source Metrics
+ * pane). Screen-facing mirror of the backend `SourceMetric` DTO with the usual
+ * mapper RENAMES: sourceId → id, sourceName → name, ewmaLatencyMs → avgLatencyMs;
+ * the three optional timestamps normalise absent → null (matching the other
+ * mappers). `isSlow` is the backend's own derived flag (never measured OR EWMA
+ * over the current slow threshold).
+ */
+export interface SourceMetric {
+  /** Suwayomi source id — the row identity/key. */
+  id: string
+  /** Source display name. */
+  name: string
+  /** Rolling (EWMA) search latency, in milliseconds. */
+  avgLatencyMs: number
+  /** Most recent measured search latency, in milliseconds. */
+  lastLatencyMs: number
+  /** Lifetime number of recorded searches. */
+  searchCount: number
+  /** Lifetime number of successful searches. */
+  successCount: number
+  /** Lifetime number of failed/timed-out searches. */
+  failCount: number
+  /** Most recent failure reason ("" when none). */
+  lastError: string
+  /** When the most recent failure occurred (null if never failed). */
+  lastErrorAt: string | null
+  /** When the most recent success occurred (null if never succeeded). */
+  lastSuccessAt: string | null
+  /** When the source was last warmed (null if never warmed). */
+  lastWarmedAt: string | null
+  /** When this snapshot was last written. */
+  updatedAt: string
+  /** Derived — true when never measured OR EWMA over the slow threshold. */
+  isSlow: boolean
+}

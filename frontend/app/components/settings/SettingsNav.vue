@@ -3,7 +3,7 @@ import type { SettingsPane } from '../screens/settings.types'
 
 /**
  * SettingsNav — the sticky sidebar that switches the Settings screen between its
- * five panes. Presentation-only: the active pane arrives via `active` and every
+ * six panes. Presentation-only: the active pane arrives via `active` and every
  * click is emitted as `select` (the screen owns the controlled pane state).
  *
  *   - `active`: the currently-showing pane (drives the highlighted item).
@@ -20,13 +20,14 @@ const emit = defineEmits<{
   select: [pane: SettingsPane]
 }>()
 
-// The five panes in display order, with their sidebar labels.
+// The six panes in display order, with their sidebar labels.
 const panes: { key: SettingsPane, label: string }[] = [
   { key: 'library', label: 'Schedules & Behavior' },
   { key: 'categories', label: 'Categories' },
   { key: 'engine', label: 'Engine' },
   { key: 'suwayomi', label: 'Server config' },
   { key: 'extensions', label: 'Sources & Extensions' },
+  { key: 'sources', label: 'Source Metrics' },
 ]
 </script>
 

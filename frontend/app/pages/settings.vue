@@ -9,6 +9,7 @@
  *   useSuwayomiSettings() → config + suwayomiSave + save
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
  *                           extCheckInterval — that moved to useSettings)
+ *   useSourceMetrics()    → sourceMetrics + pending/error + warmNow (Warm now)
  *
  * Prop wiring:
  *   :active-pane          — local activePane ref (default 'library')
@@ -30,6 +31,14 @@
  *   :repo-action          — repoAction from useExtensions
  *   :ext-check-interval   — extensionCheckInterval from useSettings (live tunable)
  *   :checking-updates     — checkingUpdates from useExtensions
+ *   :source-metrics       — metrics from useSourceMetrics
+ *   :source-metrics-pending — pending from useSourceMetrics (pane-owned, NOT in
+ *                           the global loading gate so a warm refetch never
+ *                           skeletons the whole screen)
+ *   :source-metrics-error — error from useSourceMetrics
+ *   :warming              — warming from useSourceMetrics
+ *   :warm-message         — warmMessage from useSourceMetrics
+ *   :warm-error           — warmError from useSourceMetrics
  *   :loading              — true while any primary dataset is still fetching
  *
  * Emit wiring:
@@ -50,6 +59,7 @@
  *   @remove-repo                 → removeRepo
  *   @reorder-repo                → reorderRepo
  *   @update:ext-check-interval   → saveExtensionCheckInterval
+ *   @warm-now                    → warmNow
  */
 import type { EngineInfo, SettingsPane } from '~/components/screens/settings.types'
 
@@ -97,6 +107,16 @@ const {
   removeRepo,
   reorderRepo,
 } = useExtensions()
+
+const {
+  metrics: sourceMetrics,
+  pending: sourceMetricsPending,
+  error: sourceMetricsError,
+  warming,
+  warmMessage,
+  warmError,
+  warmNow,
+} = useSourceMetrics()
 
 /**
  * Engine upgrade flow is deferred.
@@ -156,6 +176,12 @@ const loading = computed(
       :repo-action="repoAction"
       :ext-check-interval="extensionCheckInterval"
       :checking-updates="checkingUpdates"
+      :source-metrics="sourceMetrics"
+      :source-metrics-pending="sourceMetricsPending"
+      :source-metrics-error="sourceMetricsError"
+      :warming="warming"
+      :warm-message="warmMessage"
+      :warm-error="warmError"
       :loading="loading"
       @set-pane="setPane"
       @save-library="saveLibrary"
@@ -174,6 +200,7 @@ const loading = computed(
       @remove-repo="removeRepo"
       @reorder-repo="reorderRepo"
       @update:ext-check-interval="saveExtensionCheckInterval"
+      @warm-now="warmNow"
     />
   </div>
 </template>
