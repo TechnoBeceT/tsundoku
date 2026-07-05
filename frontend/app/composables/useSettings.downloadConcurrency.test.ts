@@ -1,21 +1,18 @@
 /**
- * useSettings – extensionCheckInterval standalone tunable.
+ * useSettings – downloadConcurrency (jobs.download_concurrency).
  *
- * Pins two behaviours:
- *   1. The backend key `jobs.extension_check_interval` is parsed into the
- *      standalone `extensionCheckInterval` ref (NOT part of LibrarySettings).
- *   2. `saveExtensionCheckInterval` sends a single-key PATCH and drives
- *      `extSave` through idle → saving → success.
+ * Mirrors useSettings.extCheck.test.ts's structure, but pins the
+ * `jobs.download_concurrency` → `LibrarySettings.downloadConcurrency` mapping
+ * (part of the batched library settings, unlike the standalone extCheck
+ * tunable — so this asserts through `saveLibrary`, not a single-key save).
  *
  * Non-vacuous:
- *   - If `jobs.extension_check_interval` were still missing from the load map,
- *     `extensionCheckInterval.value` would stay at the default {value:24,unit:'h'}
- *     regardless of the server value — the first assertion would still pass, but
- *     it pins the CORRECT default. If the parsing were wrong it would return
- *     {value:0,unit:'s'} and fail.
- *   - If `saveExtensionCheckInterval` PATCHed the full library batch instead of
- *     a single key, `patchBody.settings` would contain 7 keys and the length
- *     assertion would fail.
+ *   - If `jobs.download_concurrency` were missing from the load map, the ref
+ *     would silently keep the DEFAULTS.downloadConcurrency fallback (5) instead
+ *     of the fixture's 7 — the first assertion pins the fixture value, not the
+ *     default, so a dropped mapping fails it.
+ *   - If `saveLibrary` omitted the key from its PATCH batch, the `patchBody`
+ *     assertion (which checks the full 6-key settings array) would fail.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useSettings } from './useSettings'
@@ -29,8 +26,7 @@ const BASE_SETTINGS = [
   { key: 'jobs.max_retries', value: '3' },
   { key: 'health.stale_grace_days', value: '14' },
   { key: 'jobs.refresh_concurrency', value: '4' },
-  { key: 'jobs.download_concurrency', value: '5' },
-  { key: 'jobs.extension_check_interval', value: '24h0m0s' },
+  { key: 'jobs.download_concurrency', value: '7' },
 ]
 
 const SYSTEM_RESPONSE = {
@@ -68,39 +64,44 @@ vi.mock('~/utils/api/client', () => ({
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('useSettings – extensionCheckInterval', () => {
+describe('useSettings – downloadConcurrency', () => {
   beforeEach(() => {
     patchBody = null
   })
 
-  it('maps jobs.extension_check_interval to extensionCheckInterval ref', async () => {
-    const { extensionCheckInterval } = useSettings()
+  it('maps jobs.download_concurrency to library.downloadConcurrency', async () => {
+    const { library } = useSettings()
 
     await vi.waitFor(() => {
-      expect(extensionCheckInterval.value).toEqual({ value: 24, unit: 'h' })
+      expect(library.value.downloadConcurrency).toBe(7)
     })
   })
 
-  it('saveExtensionCheckInterval PATCHes a single key and drives extSave idle→saving→success', async () => {
-    const { extensionCheckInterval, saveExtensionCheckInterval, extSave } = useSettings()
+  it('saveLibrary includes jobs.download_concurrency in the PATCH batch', async () => {
+    const { library, saveLibrary, librarySave } = useSettings()
 
-    // Wait for the initial load to populate the ref.
+    // Wait for the initial load so the edited copy starts from live values.
     await vi.waitFor(() => {
-      expect(extensionCheckInterval.value).toEqual({ value: 24, unit: 'h' })
+      expect(library.value.downloadConcurrency).toBe(7)
     })
 
-    // extSave starts idle.
-    expect(extSave.value.status).toBe('idle')
+    await saveLibrary({ ...library.value, downloadConcurrency: 12 })
 
-    // Trigger save with a 6-hour cadence.
-    await saveExtensionCheckInterval({ value: 6, unit: 'h' })
-
-    // PATCH called with exactly one setting key.
     expect(patchBody).toEqual({
-      settings: [{ key: 'jobs.extension_check_interval', value: '6h' }],
+      settings: [
+        { key: 'jobs.refresh_interval', value: '2h' },
+        { key: 'jobs.download_interval', value: '15m' },
+        { key: 'jobs.retry_backoff', value: '1m' },
+        { key: 'jobs.max_retries', value: '3' },
+        { key: 'health.stale_grace_days', value: '14' },
+        { key: 'jobs.refresh_concurrency', value: '4' },
+        { key: 'jobs.download_concurrency', value: '12' },
+      ],
     })
 
-    // extSave ends at success (library save drives librarySave separately).
-    expect(extSave.value.status).toBe('success')
+    expect(librarySave.value.status).toBe('success')
+    // §16: reseeds from the authoritative response, not the local copy — the
+    // mocked PATCH returns BASE_SETTINGS (download_concurrency: '7').
+    expect(library.value.downloadConcurrency).toBe(7)
   })
 })

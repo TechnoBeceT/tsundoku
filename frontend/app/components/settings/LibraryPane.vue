@@ -47,6 +47,7 @@ const cloneLibrary = (l: LibrarySettings): LibrarySettings => ({
   maxRetries: l.maxRetries,
   staleGraceDays: l.staleGraceDays,
   refreshConcurrency: l.refreshConcurrency,
+  downloadConcurrency: l.downloadConcurrency,
 })
 
 const lib = reactive(cloneLibrary(props.library))
@@ -107,6 +108,10 @@ function onSave() {
         </button>
         <SettingRow v-if="advancedOpen" flush name="Refresh concurrency" hint="Parallel source fetches — be gentle on sources">
           <TextField compact type="number" :model-value="String(lib.refreshConcurrency)" @update:model-value="lib.refreshConcurrency = clampInt($event)" />
+        </SettingRow>
+
+        <SettingRow v-if="advancedOpen" flush name="Download concurrency" hint="Parallel downloads per source — how many of a source's chapters download at once">
+          <TextField compact type="number" :model-value="String(lib.downloadConcurrency)" @update:model-value="lib.downloadConcurrency = clampInt($event)" />
         </SettingRow>
       </div>
 

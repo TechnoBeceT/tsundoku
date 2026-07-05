@@ -71,6 +71,8 @@ export interface LibrarySettings {
   staleGraceDays: number
   /** Parallel source fetches — the "be gentle on sources" advanced knob. */
   refreshConcurrency: number
+  /** Parallel downloads per source — how many of a source's chapters download at once. */
+  downloadConcurrency: number
 }
 
 /** Read-only deploy-time facts shown in the System card (set via env vars). */

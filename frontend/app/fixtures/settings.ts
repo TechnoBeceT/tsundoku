@@ -28,6 +28,7 @@ export const librarySettings: LibrarySettings = {
   maxRetries: 5,
   staleGraceDays: 14,
   refreshConcurrency: 4,
+  downloadConcurrency: 5,
 }
 
 /** Read-only deploy-time facts for the System card (2a). */
