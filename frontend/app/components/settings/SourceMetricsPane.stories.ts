@@ -35,14 +35,17 @@ export const Pending: Story = {
 }
 
 /**
- * §16: a warm-up pass in flight (the Warm-now button spins) with the previous
- * pass's success note shown above the list.
+ * §16: a warm-up pass in flight (the Warm-now button spins) with the just-kicked-off
+ * pass's "started" note shown above the list (the pass runs in the background).
  */
 export const Warming: Story = {
-  args: { warming: true, warmMessage: 'Warmed 12 sources' },
+  args: {
+    warming: true,
+    warmMessage: 'Warm-up started — sources warm in the background (this can take a few minutes)',
+  },
 }
 
 /** §16: a failed warm-up surfaces its error inline — never fires into the void. */
 export const WarmFailed: Story = {
-  args: { warmError: 'Warm-up failed — 502 from the engine.' },
+  args: { warmError: 'Warm-up failed — could not reach the engine.' },
 }

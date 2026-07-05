@@ -11,12 +11,14 @@
  * composable mappers, e.g. UnhealthySourceRow's `string | null`).
  *
  * warmNow() POSTs /api/sources/warmup — the manual "warm everything now" pass
- * that kicks a warm-up across anti-bot sources whose sessions have gone cold.
- * It surfaces the returned count as a transient success message, then refetches
- * so the freshly-warmed timestamps land in the list. Exposes the §16 trio for
- * that action: `warming` (in flight), `warmMessage` (success), `warmError`
- * (failure). An empty metrics list ([]) is handled gracefully — `metrics` simply
- * stays empty and the pane renders its empty state.
+ * that kicks a warm-up across anti-bot sources whose sessions have gone cold. The
+ * endpoint returns 202 {started:true} IMMEDIATELY: the pass runs in the background
+ * (it takes minutes over slow anti-bot sources), so warmNow surfaces a "started"
+ * message rather than a done-count, then schedules a single delayed refetch so any
+ * fast sources' fresh timestamps land without implying the whole pass is done.
+ * Exposes the §16 trio for that action: `warming` (in flight), `warmMessage`
+ * (success), `warmError` (failure). An empty metrics list ([]) is handled
+ * gracefully — `metrics` simply stays empty and the pane renders its empty state.
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -76,9 +78,11 @@ export function useSourceMetrics() {
   }
 
   /**
-   * Trigger a manual warm-up pass across all sources, then reload the list so the
-   * freshly-warmed timestamps show. Surfaces the warmed count as a transient
-   * success message; a failure lands in `warmError` (never swallowed, §16).
+   * Kick off a manual warm-up pass across all sources. The endpoint returns 202
+   * immediately (the pass runs in the background for minutes), so this surfaces a
+   * "started" message rather than a completion count, and schedules ONE delayed
+   * refetch so any fast sources' fresh timestamps land without implying the whole
+   * pass is done. A failure lands in `warmError` (never swallowed, §16).
    */
   async function warmNow(): Promise<void> {
     warming.value = true
@@ -87,9 +91,10 @@ export function useSourceMetrics() {
     try {
       const res = await apiClient.POST('/api/sources/warmup')
       if (res.error) throw new Error(res.error.message)
-      const n = res.data?.warmed ?? 0
-      warmMessage.value = `Warmed ${n} ${n === 1 ? 'source' : 'sources'}`
-      await refetch()
+      warmMessage.value = 'Warm-up started — sources warm in the background (this can take a few minutes)'
+      // One delayed reload so fast sources' fresh timestamps show; the slow ones
+      // keep warming in the background well after this fires.
+      setTimeout(() => { void refetch() }, 4000)
     }
     catch (e) {
       warmError.value = e instanceof Error ? e.message : 'Warm-up failed'

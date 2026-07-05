@@ -374,17 +374,27 @@ func (r *Runner) broadcastExtensionsChecked(updates int) {
 // enabled source (WarmAll, a seed); every pass after warms only the slow /
 // never-measured ones (WarmSlow). An interval of 0 disables the job — the
 // goroutine idles for a fixed fallback period then re-reads the setting, enabling
-// hot-reload. Mirrors StartExtensionCheck's dynamic-timer exactly (re-reads the
-// interval at the top of each pass). Returns immediately.
+// hot-reload. Returns immediately.
+//
+// The seed pass runs at the TOP of the loop (immediately at boot), THEN the loop
+// waits the interval — so a fresh restart warms sources right away instead of
+// leaving a full-interval cold window before the first pass. The period between
+// later passes is unchanged (interval + pass duration); only the first pass moved
+// to t=0. The interval is re-read every iteration (a dynamic timer), so a runtime
+// change to the cadence — including enabling a disabled job — takes effect on the
+// next pass without a restart.
 func (r *Runner) StartWarmup(ctx context.Context, svc *warmup.Service) {
 	go func() {
 		const disabledRecheck = time.Hour
 		seeded := false
 		for {
 			iv := r.intervals.WarmupInterval(ctx)
-			wait := iv
-			if iv <= 0 {
-				wait = disabledRecheck // disabled: idle, re-read later (hot reload)
+			// Run the pass at the top when enabled (seed-at-boot on the first
+			// iteration); a disabled job runs no pass and only idles to re-read.
+			wait := disabledRecheck
+			if iv > 0 {
+				seeded = r.runWarmupPass(ctx, svc, seeded)
+				wait = iv
 			}
 			timer := time.NewTimer(wait)
 			select {
@@ -393,10 +403,6 @@ func (r *Runner) StartWarmup(ctx context.Context, svc *warmup.Service) {
 				slog.InfoContext(ctx, "job.Runner: warm-up loop stopped (context cancelled)")
 				return
 			case <-timer.C:
-				if iv <= 0 {
-					continue // still disabled; re-read interval on the next pass
-				}
-				seeded = r.runWarmupPass(ctx, svc, seeded)
 			}
 		}
 	}()

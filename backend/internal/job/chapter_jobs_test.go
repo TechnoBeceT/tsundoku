@@ -17,10 +17,12 @@ import (
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/job"
+	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
 // TestRunner_DownloadCycle_DrainWanted verifies that RunDownloadCycle with the
@@ -605,6 +607,67 @@ func TestStartRefresh_BroadcastsHealthSummary(t *testing.T) {
 		case <-deadline:
 			t.Fatal("timed out waiting for health.summary")
 		}
+	}
+}
+
+// warmupFake is a suwayomi.Client double for the warm-up seed-at-boot test. It
+// returns one enabled online source and counts + signals every Browse call (the
+// actual warm), so the test can prove the seed pass fires PROMPTLY after
+// StartWarmup rather than only after the first interval elapses. It embeds the
+// Client interface so any unrelated method is a nil-panic (StartWarmup's warm
+// path only calls Sources + Browse).
+type warmupFake struct {
+	suwayomi.Client
+	mu      sync.Mutex
+	browses int
+	fired   chan struct{}
+}
+
+func (f *warmupFake) Sources(context.Context) ([]suwayomi.Source, error) {
+	return []suwayomi.Source{{ID: "warm-1", Name: "Warm One", Lang: "en"}}, nil
+}
+
+func (f *warmupFake) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
+	f.mu.Lock()
+	first := f.browses == 0
+	f.browses++
+	f.mu.Unlock()
+	if first {
+		close(f.fired) // signal the first (seed) warm exactly once
+	}
+	return suwayomi.BrowseResult{}, nil
+}
+
+// TestRunner_StartWarmup_SeedsAtBoot proves StartWarmup runs the seed (WarmAll)
+// pass at the TOP of its loop — promptly at boot — instead of waiting a full
+// interval first. The warm-up interval is set to ONE HOUR, so the only way a
+// Browse (the warm call) can fire within the 2s window is the boot seed. If
+// StartWarmup ever regresses to wait-then-pass, no Browse fires and the test
+// times out. The generous 2s bound (vs. the hour interval) keeps it non-flaky —
+// it asserts "fired promptly", not an exact timing.
+func TestRunner_StartWarmup_SeedsAtBoot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	fc := &warmupFake{fired: make(chan struct{})}
+	warmupSvc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000})
+
+	d := download.New(client, fake.New(), hub, download.Config{PerProviderConcurrency: 1, Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour})
+	// A one-hour interval: only the boot seed (top-of-loop pass) can warm within
+	// the test window — an interval-first loop would leave Browse un-called.
+	r := job.NewRunner(d, client, hub, storage, settings.Static{WarmupIv: time.Hour})
+
+	r.StartWarmup(ctx, warmupSvc)
+
+	select {
+	case <-fc.fired:
+		// Seed warm fired promptly — boot seed, not interval-delayed.
+	case <-time.After(2 * time.Second):
+		t.Fatal("warm-up seed did not fire within 2s of StartWarmup — the boot seed is delayed by the interval")
 	}
 }
 

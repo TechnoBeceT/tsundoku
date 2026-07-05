@@ -29,10 +29,13 @@ type SourceMetricDTO struct {
 	IsSlow bool `json:"isSlow"`
 }
 
-// WarmResultDTO is the JSON body of POST /api/sources/warmup: how many sources
-// were warmed successfully in the pass.
-type WarmResultDTO struct {
-	Warmed int `json:"warmed"`
+// WarmStartedDTO is the JSON body of POST /api/sources/warmup: an acknowledgement
+// that the warm-up pass has been KICKED OFF in the background. It always reports
+// started=true — the pass runs detached (it takes minutes over slow anti-bot
+// sources) and its per-source outcome surfaces in GET /api/sources/metrics
+// (lastWarmedAt / lastError), not in this response.
+type WarmStartedDTO struct {
+	Started bool `json:"started"`
 }
 
 // toSourceMetricDTO maps one ent.SourceMetric to its DTO, computing isSlow

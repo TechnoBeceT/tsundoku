@@ -889,14 +889,18 @@ components:
             Derived flag — true when the source has never been measured OR its
             ewmaLatencyMs exceeds the current slow threshold.
 
-    SourceWarmResult:
+    SourceWarmStarted:
       type: object
-      required: [warmed]
+      required: [started]
       properties:
-        warmed:
-          type: integer
-          description: Number of sources warmed successfully in the pass.
-          example: 12
+        started:
+          type: boolean
+          description: |
+            Always true — acknowledges the warm-up pass was kicked off in the
+            background. The pass runs detached (it takes minutes over slow
+            anti-bot sources); its per-source outcome surfaces in
+            GET /api/sources/metrics (lastWarmedAt / lastError), not here.
+          example: true
 
     SuwayomiSettings:
       type: object
@@ -3401,30 +3405,27 @@ paths:
       operationId: warmupSources
       summary: Trigger an anti-bot session warm-up pass
       description: |
-        Runs a full warm-up pass over every enabled source (a cheap Browse call
-        that refreshes each source's cached anti-bot challenge clearance), so
-        interactive search stays fast. Serial across sources. Returns the number
-        warmed. An upstream Suwayomi failure (e.g. the source list is unreachable)
-        is a 502.
+        Kicks off a full warm-up pass over every enabled source (a cheap Browse
+        call that refreshes each source's cached anti-bot challenge clearance), so
+        interactive search stays fast. The pass warms sources SERIALLY and — with
+        slow anti-bot sources — runs for MINUTES, so it runs on a detached,
+        time-bounded background goroutine: this endpoint returns 202 immediately
+        with {started:true} and never blocks on the pass. Per-source progress and
+        failures surface in GET /api/sources/metrics (lastWarmedAt / lastError),
+        not in this response.
       tags:
         - sources
       security:
         - BearerAuth: []
       responses:
-        "200":
-          description: The warm-up pass completed. Returns the number of sources warmed.
+        "202":
+          description: The warm-up pass was accepted and is running in the background.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SourceWarmResult"
+                $ref: "#/components/schemas/SourceWarmStarted"
         "401":
           description: Missing or invalid Bearer token.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "502":
-          description: Suwayomi was unreachable or returned an error.
           content:
             application/json:
               schema:

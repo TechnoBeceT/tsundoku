@@ -9,7 +9,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -28,17 +30,25 @@ import (
 const testSecret = "sources-handler-test-secret"
 
 // fakeClient is a minimal suwayomi.Client for the warm-up path (embeds the
-// interface, overrides only Sources + Browse).
+// interface, overrides only Sources + Browse). browsed (when non-nil) is closed
+// on the first Browse call so a test can confirm the detached background WarmAll
+// actually ran after the handler returned 202.
 type fakeClient struct {
 	suwayomi.Client
 	sources    []suwayomi.Source
 	sourcesErr error
+
+	browseOnce sync.Once
+	browsed    chan struct{}
 }
 
 func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) {
 	return f.sources, f.sourcesErr
 }
 func (f *fakeClient) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
+	if f.browsed != nil {
+		f.browseOnce.Do(func() { close(f.browsed) })
+	}
 	return suwayomi.BrowseResult{}, nil
 }
 
@@ -120,23 +130,35 @@ func TestMetrics_Unauthorized(t *testing.T) {
 	}
 }
 
-// TestWarmup_OK proves POST triggers WarmAll and returns {warmed:N}.
+// TestWarmup_OK proves POST returns 202 + {started:true} IMMEDIATELY (the pass
+// runs detached in the background) and that the background WarmAll then actually
+// warms the sources (the fake's Browse fires within a bounded wait).
 func TestWarmup_OK(t *testing.T) {
-	fc := &fakeClient{sources: []suwayomi.Source{
-		{ID: "a", Name: "A", Lang: "en"},
-		{ID: "b", Name: "B", Lang: "en"},
-	}}
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "a", Name: "A", Lang: "en"},
+			{ID: "b", Name: "B", Lang: "en"},
+		},
+		browsed: make(chan struct{}),
+	}
 	env := newTestEnv(t, fc)
 	rec := env.do(http.MethodPost, "/api/sources/warmup")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Warmup: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("Warmup: want 202, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	var got handler.WarmResultDTO
+	var got handler.WarmStartedDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Warmed != 2 {
-		t.Errorf("warmed = %d, want 2", got.Warmed)
+	if !got.Started {
+		t.Errorf("started = %v, want true", got.Started)
+	}
+
+	// The detached WarmAll must actually run: its first Browse fires promptly.
+	select {
+	case <-fc.browsed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background WarmAll did not warm any source within 2s of the 202")
 	}
 }
 
@@ -151,13 +173,22 @@ func TestWarmup_Unauthorized(t *testing.T) {
 	}
 }
 
-// TestWarmup_Upstream proves a Suwayomi failure (source list unreachable) maps to
-// a 502.
-func TestWarmup_Upstream(t *testing.T) {
+// TestWarmup_UpstreamFailureStill202 proves the endpoint STILL returns 202 even
+// when Suwayomi is unreachable: the pass runs detached, so a background failure is
+// logged (not returned) and never surfaces as a request error. The owner sees the
+// per-source failure as lastError in GET /api/sources/metrics.
+func TestWarmup_UpstreamFailureStill202(t *testing.T) {
 	env := newTestEnv(t, &fakeClient{sourcesErr: errors.New("suwayomi down")})
 	rec := env.do(http.MethodPost, "/api/sources/warmup")
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("Warmup with upstream failure: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("Warmup with upstream failure: want 202, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got handler.WarmStartedDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Started {
+		t.Errorf("started = %v, want true even on upstream failure", got.Started)
 	}
 }
 

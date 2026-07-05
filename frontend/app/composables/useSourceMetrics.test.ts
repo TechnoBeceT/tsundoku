@@ -5,14 +5,16 @@
  *   1. The initial load maps the SourceMetric DTO → screen SourceMetric with the
  *      RENAMES (sourceId→id, sourceName→name, ewmaLatencyMs→avgLatencyMs) and the
  *      undefined→null timestamp normalisation.
- *   2. warmNow() POSTs /api/sources/warmup, surfaces the returned count in
- *      warmMessage, and then RE-FETCHES the list (a second GET fires).
+ *   2. warmNow() POSTs /api/sources/warmup (which now returns 202 {started:true})
+ *      and surfaces the "started" message (the pass runs in the background — no
+ *      count, and no synchronous refetch; the delayed refetch is timer-driven and
+ *      intentionally NOT coupled to this test).
  *   3. An empty list ([]) is handled gracefully — metrics stays [].
  *   4. A failed load surfaces in `error`; a failed warm-up in `warmError`.
  *
  * Non-vacuous: if the mapper dropped the rename, assertion 1 (id === 'src-1',
- * avgLatencyMs === 320) would fail on undefined; if warmNow did NOT refetch,
- * getCount would stay at 1 and assertion 2 would fail; if the error path
+ * avgLatencyMs === 320) would fail on undefined; if warmNow did NOT post,
+ * postCount would stay at 0 and assertion 2 would fail; if the error path
  * swallowed the failure, `error`/`warmError` would stay null.
  *
  * Note the asymmetry (mirrors useExtensions/useSettings): a failed GET surfaces a
@@ -81,7 +83,7 @@ vi.mock('~/utils/api/client', () => ({
       if (path === '/api/sources/warmup') {
         postCount++
         if (postError) return Promise.resolve({ data: null, error: { message: 'warm failed' } })
-        return Promise.resolve({ data: { warmed: 3 }, error: null })
+        return Promise.resolve({ data: { started: true }, error: null })
       }
       return Promise.resolve({ data: null, error: null })
     }),
@@ -125,7 +127,7 @@ describe('useSourceMetrics', () => {
     expect(metrics.value[1]!.isSlow).toBe(true)
   })
 
-  it('warmNow() POSTs /api/sources/warmup, sets warmMessage, then refetches', async () => {
+  it('warmNow() POSTs /api/sources/warmup and sets the background-started message', async () => {
     const { pending, warmNow, warming, warmMessage } = useSourceMetrics()
 
     await vi.waitFor(() => expect(pending.value).toBe(false))
@@ -133,11 +135,12 @@ describe('useSourceMetrics', () => {
 
     await warmNow()
 
-    // Exactly one warm-up POST + one follow-up refetch GET.
+    // Exactly one warm-up POST; the async pass runs in the background (202) so
+    // warmNow surfaces a "started" note and clears the busy flag. The delayed
+    // refetch is timer-driven and deliberately not asserted here.
     expect(postCount).toBe(1)
-    expect(getCount).toBe(2)
     expect(warming.value).toBe(false)
-    expect(warmMessage.value).toBe('Warmed 3 sources')
+    expect(warmMessage.value).toBe('Warm-up started — sources warm in the background (this can take a few minutes)')
   })
 
   it('handles an empty metrics list gracefully', async () => {

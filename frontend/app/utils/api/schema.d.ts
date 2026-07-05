@@ -918,11 +918,14 @@ export interface paths {
         put?: never;
         /**
          * Trigger an anti-bot session warm-up pass
-         * @description Runs a full warm-up pass over every enabled source (a cheap Browse call
-         *     that refreshes each source's cached anti-bot challenge clearance), so
-         *     interactive search stays fast. Serial across sources. Returns the number
-         *     warmed. An upstream Suwayomi failure (e.g. the source list is unreachable)
-         *     is a 502.
+         * @description Kicks off a full warm-up pass over every enabled source (a cheap Browse
+         *     call that refreshes each source's cached anti-bot challenge clearance), so
+         *     interactive search stays fast. The pass warms sources SERIALLY and — with
+         *     slow anti-bot sources — runs for MINUTES, so it runs on a detached,
+         *     time-bounded background goroutine: this endpoint returns 202 immediately
+         *     with {started:true} and never blocks on the pass. Per-source progress and
+         *     failures surface in GET /api/sources/metrics (lastWarmedAt / lastError),
+         *     not in this response.
          */
         post: operations["warmupSources"];
         delete?: never;
@@ -1735,12 +1738,15 @@ export interface components {
              */
             isSlow: boolean;
         };
-        SourceWarmResult: {
+        SourceWarmStarted: {
             /**
-             * @description Number of sources warmed successfully in the pass.
-             * @example 12
+             * @description Always true — acknowledges the warm-up pass was kicked off in the
+             *     background. The pass runs detached (it takes minutes over slow
+             *     anti-bot sources); its per-source outcome surfaces in
+             *     GET /api/sources/metrics (lastWarmedAt / lastError), not here.
+             * @example true
              */
-            warmed: number;
+            started: boolean;
         };
         /**
          * @description The FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of Suwayomi's
@@ -4102,26 +4108,17 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The warm-up pass completed. Returns the number of sources warmed. */
-            200: {
+            /** @description The warm-up pass was accepted and is running in the background. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SourceWarmResult"];
+                    "application/json": components["schemas"]["SourceWarmStarted"];
                 };
             };
             /** @description Missing or invalid Bearer token. */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Suwayomi was unreachable or returned an error. */
-            502: {
                 headers: {
                     [name: string]: unknown;
                 };
