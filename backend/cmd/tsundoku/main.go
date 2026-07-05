@@ -3,12 +3,16 @@
 // Startup sequence:
 //  1. config.Load — reads env/yaml and validates all required secrets fail-closed.
 //  2. database.Open — opens a pgx pool, runs Ent auto-migration with retry.
-//  3. auth.NewService — builds the HMAC token service from the validated secret.
-//  4. sse.NewHub — allocates the SSE subscriber registry.
-//  5. owner.NewHandler — assembles the claim/login handler.
-//  6. download.New + job.NewRunner — assembles the dispatcher and chapter job runner
+//  3. chapter.ResetOrphanedChapters — one-time startup sweep that re-queues
+//     chapters a crash/restart stranded mid-cycle (downloading → wanted,
+//     upgrading → downloaded), before anything can start a new cycle.
+//     Non-fatal: a failed sweep is logged and startup continues.
+//  4. auth.NewService — builds the HMAC token service from the validated secret.
+//  5. sse.NewHub — allocates the SSE subscriber registry.
+//  6. owner.NewHandler — assembles the claim/login handler.
+//  7. download.New + job.NewRunner — assembles the dispatcher and chapter job runner
 //     with the real Suwayomi ChapterFetcher (M2).
-//  7. Suwayomi engine, branched on cfg.Suwayomi.IsExternal():
+//  8. Suwayomi engine, branched on cfg.Suwayomi.IsExternal():
 //     - EXTERNAL mode (TSUNDOKU_SUWAYOMI_EXTERNALURL set): no ProcessManager is
 //     constructed; the download + refresh tickers start immediately against
 //     the external HTTP target. An unreachable server degrades gracefully.
@@ -17,8 +21,8 @@
 //     launch fails, the error is logged and the goroutine exits cleanly — the
 //     HTTP server keeps serving the API and reconcile; downloads simply will
 //     not run until Suwayomi is available.
-//  8. server.New — wires middleware + routes, returns a ready Echo instance.
-//  9. Graceful shutdown on SIGINT / SIGTERM with a 15-second drain timeout.
+//  9. server.New — wires middleware + routes, returns a ready Echo instance.
+//  10. Graceful shutdown on SIGINT / SIGTERM with a 15-second drain timeout.
 package main
 
 import (
@@ -32,6 +36,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
 	"github.com/technobecet/tsundoku/internal/download"
@@ -72,6 +77,20 @@ func main() {
 			log.Printf("tsundoku: database close: %v", err)
 		}
 	}()
+
+	// Startup orphan-recovery sweep: a crash/restart mid-cycle can strand
+	// chapters in a process-owned state (downloading/upgrading) that the
+	// dispatcher's WantedChapters never selects and SetState can't reach — they
+	// would otherwise be stuck forever. Run this exactly once, before any
+	// download/refresh ticker starts (both embed and external Suwayomi modes go
+	// through startSuwayomiEngine below), so it can never race a live cycle.
+	// Non-fatal: a failed sweep is logged and startup continues — the API must
+	// keep serving even if this best-effort recovery step fails.
+	if result, err := chapter.ResetOrphanedChapters(ctx, entClient); err != nil {
+		slog.Error("startup: reset orphaned chapters failed", "error", err)
+	} else {
+		slog.Info("startup: reset orphaned chapters", "requeued", result.Requeued, "upgrades_reset", result.UpgradesReset)
+	}
 
 	authSvc := auth.NewService(cfg.Auth.Secret)
 	hub := sse.NewHub()
