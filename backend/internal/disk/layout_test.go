@@ -199,6 +199,91 @@ func TestGenerateCBZFilename(t *testing.T) {
 	}
 }
 
+// TestGenerateCBZFilenameProviderLabel verifies the filename provider token is
+// built from RenderMeta.ProviderLabel (the human-readable source name) when set,
+// while falling back to RenderMeta.Provider (the source ID) when the label is
+// empty. Provider (the ID) is what still feeds the sidecar + ComicInfo; only the
+// filename bracket switches to the name.
+func TestGenerateCBZFilenameProviderLabel(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		meta disk.RenderMeta
+		want string
+	}{
+		{
+			name: "label used for token with scanlator",
+			meta: disk.RenderMeta{
+				Provider:      "7537715367149829912", // numeric source ID
+				ProviderLabel: "Comick",
+				Scanlator:     "WebToon",
+				SeriesTitle:   "Tacit",
+				Number:        ptr(39),
+			},
+			// Token uses the NAME, not the ID.
+			want: "[Comick-WebToon] Tacit 39.cbz",
+		},
+		{
+			name: "empty label falls back to provider ID",
+			meta: disk.RenderMeta{
+				Provider:      "7537715367149829912",
+				ProviderLabel: "",
+				Scanlator:     "",
+				SeriesTitle:   "Tacit",
+				Number:        ptr(39),
+			},
+			// No resolved name → the token keeps the ID (old rows still get a token).
+			want: "[7537715367149829912] Tacit 39.cbz",
+		},
+		{
+			name: "hyphen in label sanitized to underscore",
+			meta: disk.RenderMeta{
+				Provider:      "123",
+				ProviderLabel: "Multi-Source",
+				Scanlator:     "",
+				SeriesTitle:   "Tacit",
+				Number:        ptr(39),
+			},
+			// Provider-part hyphen → underscore still applies to the label.
+			want: "[Multi_Source] Tacit 39.cbz",
+		},
+		{
+			name: "spaces and parens in label survive sanitization",
+			meta: disk.RenderMeta{
+				Provider:      "123",
+				ProviderLabel: "Comick  (Unoriginal)",
+				Scanlator:     "",
+				SeriesTitle:   "Tacit",
+				Number:        ptr(39),
+			},
+			// Double space collapses; parens are valid path chars and are kept.
+			want: "[Comick (Unoriginal)] Tacit 39.cbz",
+		},
+		{
+			name: "scanlator equal to label is dropped",
+			meta: disk.RenderMeta{
+				Provider:      "123",
+				ProviderLabel: "Comick",
+				Scanlator:     "Comick", // distinctness now checks the LABEL, not the ID
+				SeriesTitle:   "Tacit",
+				Number:        ptr(39),
+			},
+			want: "[Comick] Tacit 39.cbz",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := disk.GenerateCBZFilename(tc.meta)
+			if got != tc.want {
+				t.Errorf("GenerateCBZFilename() = %q\n\t\t\twant %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBuildChapterStrNilMaxChapter verifies that buildChapterStr with a non-nil
 // number but nil maxChapter returns the raw formatted chapter number without padding.
 // This exercises the nil-maxChapter early return in buildChapterStr.

@@ -26,8 +26,17 @@ const (
 // ComicInfo for a single chapter render. It is shared by layout.go,
 // comicinfo.go, and render.go.
 type RenderMeta struct {
-	// Provider is the source provider name (e.g. "mangadex").
+	// Provider is the source provider IDENTITY (e.g. the numeric Suwayomi source
+	// ID). It is what downloads call Suwayomi with and what feeds the sidecar +
+	// ComicInfo (Publisher + Provider extension) — reconcile reads it back, so it
+	// MUST stay the stable ID, never the display name.
 	Provider string
+
+	// ProviderLabel is the human-readable provider name (e.g. "Comick") used for
+	// the CBZ FILENAME token ONLY. When empty, GenerateCBZFilename falls back to
+	// Provider (the ID) so rows with no resolved name still get a token. It never
+	// feeds the sidecar or ComicInfo — those keep the ID for reconcile-safety.
+	ProviderLabel string
 
 	// Scanlator is the scanlation group name, if known.
 	Scanlator string
@@ -88,8 +97,13 @@ type RenderMeta struct {
 // Format: [Provider-Scanlator][Language] SeriesTitle (ChapterName) ChapterNumber.cbz
 //
 // Rules:
-//   - Hyphens in provider name are replaced by underscores.
-//   - Scanlator is appended with a hyphen when non-empty and distinct from provider.
+//   - The provider token uses ProviderLabel (the human-readable source name),
+//     falling back to Provider (the source ID) when ProviderLabel is empty.
+//     Only the filename token switches to the name; the sidecar + ComicInfo keep
+//     the ID (RenderMeta.Provider) untouched, so reconcile still round-trips.
+//   - Hyphens in the provider token are replaced by underscores.
+//   - Scanlator is appended with a hyphen when non-empty and distinct from the
+//     provider LABEL.
 //   - "[" and "]" in the provider string are converted to "(" and ")".
 //   - Language tag is lowercased and omitted when empty.
 //   - The chapter number is zero-padded in the integer part to match the width of
@@ -104,7 +118,12 @@ type RenderMeta struct {
 // The returned name is byte-identical to the Kaizoku.GO output for the same inputs.
 // chapter.FormatChapterNumber is reused from Task 1; do not duplicate it here.
 func GenerateCBZFilename(m RenderMeta) string {
-	prov := buildProviderToken(m.Provider, m.Scanlator)
+	// Filename token uses the display name; fall back to the ID when unresolved.
+	label := m.ProviderLabel
+	if label == "" {
+		label = m.Provider
+	}
+	prov := buildProviderToken(label, m.Scanlator)
 
 	lang := ""
 	if m.Language != "" {
@@ -125,10 +144,12 @@ func GenerateCBZFilename(m RenderMeta) string {
 	return name + ".cbz"
 }
 
-// buildProviderToken constructs the "[Provider-Scanlator]" token.
-func buildProviderToken(provider, scanlator string) string {
-	prov := strings.ReplaceAll(provider, "-", "_")
-	if scanlator != "" && scanlator != provider {
+// buildProviderToken constructs the "[Label-Scanlator]" token. label is the
+// resolved provider display name (or the ID fallback); scanlator is appended
+// only when non-empty and distinct from the label.
+func buildProviderToken(label, scanlator string) string {
+	prov := strings.ReplaceAll(label, "-", "_")
+	if scanlator != "" && scanlator != label {
 		prov += "-" + scanlator
 	}
 	prov = strings.ReplaceAll(prov, "[", "(")

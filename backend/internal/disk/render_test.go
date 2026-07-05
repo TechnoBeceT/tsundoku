@@ -186,6 +186,67 @@ func TestRenderChapterWritesCBZAndSidecar(t *testing.T) {
 	assertEqual(t, "ci ChapterKey", "5", ci.ChapterKey)
 }
 
+// TestRenderChapterProviderLabelKeepsIDInProvenance proves the ProviderLabel
+// change is reconcile-safe: the CBZ FILENAME carries the human-readable source
+// name (from ProviderLabel), while the sidecar provider and the ComicInfo
+// Publisher + Provider extension all keep the source ID (from Provider) — the
+// values reconcile actually reads back. Only the filename bracket switches.
+func TestRenderChapterProviderLabelKeepsIDInProvenance(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	num := 39.0
+	const sourceID = "7537715367149829912"
+
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:      sourceID, // ID — feeds sidecar + ComicInfo
+			ProviderLabel: "Comick", // name — feeds the filename token only
+			Scanlator:     "",
+			Language:      "",
+			SeriesTitle:   "Tacit",
+			Category:      "Manga",
+			Number:        &num,
+			ChapterKey:    "39",
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x01}, Ext: "jpg"}},
+	}
+
+	filename, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	// Filename must show the NAME, not the ID.
+	if want := "[Comick] Tacit 39.cbz"; filename != want {
+		t.Fatalf("filename = %q, want %q", filename, want)
+	}
+
+	seriesDir := filepath.Join(storage, "Manga", "Tacit")
+
+	// Sidecar provider must remain the ID (reconcile provenance source #1).
+	sidecar, err := disk.ReadSidecar(seriesDir)
+	if err != nil {
+		t.Fatalf("ReadSidecar: %v", err)
+	}
+	if sidecar == nil || len(sidecar.Chapters) != 1 {
+		t.Fatalf("sidecar chapters = %v, want exactly 1", sidecar)
+	}
+	assertEqual(t, "sidecar Provider (must stay ID)", sourceID, sidecar.Chapters[0].Provider)
+
+	// ComicInfo Publisher + Provider ext must remain the ID (reconcile source #2).
+	ci, err := disk.ReadComicInfoFromCBZ(filepath.Join(seriesDir, filename))
+	if err != nil {
+		t.Fatalf("ReadComicInfoFromCBZ: %v", err)
+	}
+	if ci == nil {
+		t.Fatal("ReadComicInfoFromCBZ returned nil")
+	}
+	assertEqual(t, "ci Provider (must stay ID)", sourceID, ci.Provider)
+	assertEqual(t, "ci Publisher (must stay ID)", sourceID, ci.Publisher)
+}
+
 // TestRenderChapterAtomicity verifies that a failed render leaves no partial .cbz.
 func TestRenderChapterAtomicity(t *testing.T) {
 	t.Parallel()

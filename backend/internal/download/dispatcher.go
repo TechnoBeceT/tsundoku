@@ -524,6 +524,18 @@ func (d *Dispatcher) broadcast(eventType string, data DownloadEvent) {
 // Known limitation (matches legacy Kaizoku.GO): as the series max grows,
 // previously-rendered files keep their old (narrower) padding until re-rendered.
 // Acceptable for M1.
+// firstNonEmpty returns the first non-empty string in vals, or "" if all empty.
+// Used to resolve the filename provider label: the source's display name when
+// known, else its ID.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesProvider, maxChapter *float64) disk.RenderMeta {
 	seriesTitle := ""
 	if ch.Edges.Series != nil {
@@ -531,6 +543,7 @@ func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesPro
 	}
 	return disk.RenderMeta{
 		Provider:            sp.Provider,
+		ProviderLabel:       firstNonEmpty(sp.ProviderName, sp.Provider),
 		Scanlator:           sp.Scanlator,
 		Language:            sp.Language,
 		SeriesTitle:         seriesTitle,
