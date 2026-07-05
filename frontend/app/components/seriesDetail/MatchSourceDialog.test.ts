@@ -39,7 +39,7 @@ describe('MatchSourceDialog', () => {
 
   it('advances to the pick stage and lists every candidate after picking a group', async () => {
     const wrapper = mountDialog()
-    await wrapper.findAll('button').find(b => b.text().includes(searchResults[0]!.title))!.trigger('click')
+    await wrapper.find('.group').trigger('click')
 
     for (const candidate of searchResults[0]!.candidates) {
       expect(wrapper.text()).toContain(candidate.sourceName)
@@ -48,7 +48,7 @@ describe('MatchSourceDialog', () => {
 
   it('toggling a candidate then confirming emits confirm with the chosen source/mangaId/importance', async () => {
     const wrapper = mountDialog()
-    await wrapper.findAll('button').find(b => b.text().includes(searchResults[0]!.title))!.trigger('click')
+    await wrapper.find('.group').trigger('click')
 
     const target = searchResults[0]!.candidates[1]!
     await wrapper.find(`[aria-label="Toggle ${target.sourceName}"]`).trigger('click')
@@ -60,7 +60,7 @@ describe('MatchSourceDialog', () => {
 
   it('the Attach button stays disabled when the priority is a non-integer (must POST a clean int)', async () => {
     const wrapper = mountDialog()
-    await wrapper.findAll('button').find(b => b.text().includes(searchResults[0]!.title))!.trigger('click')
+    await wrapper.find('.group').trigger('click')
 
     const target = searchResults[0]!.candidates[1]!
     await wrapper.find(`[aria-label="Toggle ${target.sourceName}"]`).trigger('click')
@@ -76,7 +76,7 @@ describe('MatchSourceDialog', () => {
 
   it('the Attach button stays disabled until a candidate is selected', async () => {
     const wrapper = mountDialog()
-    await wrapper.findAll('button').find(b => b.text().includes(searchResults[0]!.title))!.trigger('click')
+    await wrapper.find('.group').trigger('click')
 
     const attach = wrapper.findAll('button').find(b => b.text() === 'Attach source')!
     expect(attach.attributes('disabled')).toBeDefined()
@@ -89,7 +89,7 @@ describe('MatchSourceDialog', () => {
 
   it('disables the Attach button while saving (blocks a duplicate submit)', async () => {
     const wrapper = mountDialog({ saving: true })
-    await wrapper.findAll('button').find(b => b.text().includes(searchResults[0]!.title))!.trigger('click')
+    await wrapper.find('.group').trigger('click')
 
     const attach = wrapper.findAll('button').find(b => b.text() === 'Attach source')!
     expect(attach.attributes('disabled')).toBeDefined()
@@ -104,7 +104,7 @@ describe('MatchSourceDialog', () => {
 
   it('resets the flow (query, stage, selection) every time it re-opens', async () => {
     const wrapper = mountDialog()
-    await wrapper.findAll('button').find(b => b.text().includes(searchResults[0]!.title))!.trigger('click')
+    await wrapper.find('.group').trigger('click')
     expect(wrapper.text()).toContain('Choose the source to attach')
 
     // Close then re-open — the stale "pick" stage must not survive.

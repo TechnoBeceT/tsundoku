@@ -5,17 +5,19 @@ import Chip from '../ui/Chip.vue'
 import SearchInput from '../ui/SearchInput.vue'
 import Spinner from '../ui/Spinner.vue'
 import Stepper from '../ui/Stepper.vue'
+import AdoptTray from '../import/AdoptTray.vue'
 import CandidateConfigRow from '../import/CandidateConfigRow.vue'
 import ReviewSourceRow from '../import/ReviewSourceRow.vue'
 import SearchGroupCard from '../import/SearchGroupCard.vue'
 import type { StepItem } from '../ui/nav.types'
-import type {
-  AdoptRequest,
-  ChapterInspect,
-  ScanlatorCoverage,
-  SearchCandidate,
-  SearchGroup,
-  Source,
+import {
+  candKey,
+  type AdoptRequest,
+  type ChapterInspect,
+  type ScanlatorCoverage,
+  type SearchCandidate,
+  type SearchGroup,
+  type Source,
 } from './import.types'
 
 /**
@@ -32,7 +34,13 @@ import type {
  * Flow state lives here:
  *  - Stage 1 collects a query + optional source filter, emits `search`, and lists
  *    the returned cross-source `SearchGroup`s. Picking one advances to Stage 2
- *    and emits `loadBreakdowns` for the picked group's candidates.
+ *    and emits `loadBreakdowns` for the picked group's candidates. An owned
+ *    cross-search "adopt tray" (`tray`) accumulates whole groups ACROSS
+ *    searches — independent of the `searchResults` prop, which the data layer
+ *    replaces wholesale on every new search — so the owner can gather sources
+ *    for the same series under several differently-worded queries before
+ *    configuring. Both the classic single-group pick and the tray's
+ *    "Configure N sources →" enter Stage 2 through the same `enterConfigure`.
  *  - Stage 2 auto-splits each candidate whose `breakdowns` entry resolves with
  *    2+ scanlators into one selectable/rankable row per scanlator (a candidate
  *    with 0/1 scanlators, or no/failed breakdown, stays a single row — see
@@ -95,9 +103,6 @@ const emit = defineEmits<{
   /** The active stage changed (1, 2, or 3) — for parent awareness/analytics. */
   step: [stage: number]
 }>()
-
-/** Stable identity for a candidate (a source can appear once per group). */
-const candKey = (c: SearchCandidate): string => `${c.source}:${c.mangaId}`
 
 // ---- Owned flow state ------------------------------------------------------
 const stage = ref<1 | 2 | 3>(1)
@@ -199,12 +204,16 @@ const runSearch = (): void => {
   emit('search', { q: query.value.trim(), sources: [...srcFilter.value] })
 }
 
-// Picking a group seeds Stage 2: all candidates selected, in source order, and
-// requests the per-scanlator breakdown for each (the auto-split source).
-const pickGroup = (g: SearchGroup): void => {
-  const keys = g.candidates.map(candKey)
-  group.value = g
-  title.value = g.title
+/**
+ * Seeds Stage 2 from an arbitrary title + candidate list: all candidates start
+ * selected, in list order, and a breakdown fetch is requested for each. Shared
+ * by the classic single-group `pickGroup` below AND `configureTray` (the tray's
+ * "Configure N sources →"), so Stage 2/3 have exactly one entry point.
+ */
+function enterConfigure(configTitle: string, candidates: SearchCandidate[]): void {
+  const keys = candidates.map(candKey)
+  group.value = { title: configTitle, candidates }
+  title.value = configTitle
   category.value = props.categories[0] ?? 'Other'
   selected.value = Object.fromEntries(keys.map(k => [k, true]))
   order.value = keys
@@ -212,7 +221,66 @@ const pickGroup = (g: SearchGroup): void => {
   inspecting.value = false
   splitApplied.clear()
   stage.value = 2
-  emit('loadBreakdowns', g.candidates)
+  emit('loadBreakdowns', candidates)
+}
+
+// Picking a group seeds Stage 2 from just that group's candidates (the
+// pre-tray classic path — still the fast path when the owner only needs one
+// group's sources).
+const pickGroup = (g: SearchGroup): void => {
+  enterConfigure(g.title, g.candidates)
+}
+
+// ---- Cross-search adopt tray ------------------------------------------------
+// Accumulates matched groups' candidates ACROSS MULTIPLE searches. Owned here
+// (not derived from `searchResults`) so a new search — which replaces that prop
+// wholesale — never drops what the owner already gathered. Add-unit is a whole
+// group; `AdoptTray` still lets individual candidates be dropped one at a time.
+const tray = ref<SearchCandidate[]>([])
+// The groups that contributed to the tray, kept only to pick a representative
+// title for `configureTray`'s synthetic group (dropped again once its whole
+// group is taken back out of the tray).
+const addedGroups = ref<SearchGroup[]>([])
+
+const trayActive = computed(() => tray.value.length > 0)
+
+/** True once every candidate of `g` is already in the tray (drives the "✓ Added" state). */
+const isGroupAdded = (g: SearchGroup): boolean =>
+  g.candidates.length > 0 && g.candidates.every(c => tray.value.some(t => candKey(t) === candKey(c)))
+
+/** Add every not-yet-tracked candidate of `g` to the tray, deduped by `candKey`. */
+const addGroup = (g: SearchGroup): void => {
+  const existing = new Set(tray.value.map(candKey))
+  const toAdd = g.candidates.filter(c => !existing.has(candKey(c)))
+  if (toAdd.length === 0) return
+  tray.value = [...tray.value, ...toAdd]
+  addedGroups.value = [...addedGroups.value, g]
+}
+
+/** Drop every candidate of `g` from the tray (the "✓ Added" toggle, switched off). */
+const removeGroup = (g: SearchGroup): void => {
+  const keys = new Set(g.candidates.map(candKey))
+  tray.value = tray.value.filter(c => !keys.has(candKey(c)))
+  addedGroups.value = addedGroups.value.filter(x => x.title !== g.title)
+}
+
+/** Drop one candidate from the tray by its `candKey` (an `AdoptTray` chip remove). */
+const removeCand = (key: string): void => {
+  tray.value = tray.value.filter(c => candKey(c) !== key)
+}
+
+/**
+ * "Configure N sources →" — builds a synthetic group from every tray candidate
+ * and runs the SAME Stage-2 seeding as a classic pick. The title defaults to
+ * the largest contributing group's title (a reasonable default the owner can
+ * still edit in Stage 2); falls back to the first tray candidate's own title
+ * in the unlikely case no group is tracked (e.g. the tray was rebuilt from
+ * individual adds only).
+ */
+const configureTray = (): void => {
+  if (tray.value.length === 0) return
+  const largest = [...addedGroups.value].sort((a, b) => b.candidates.length - a.candidates.length)[0]
+  enterConfigure(largest?.title ?? tray.value[0]!.title, [...tray.value])
 }
 
 // ---- Stage 2: configure ----------------------------------------------------
@@ -456,13 +524,25 @@ const submit = (): void => {
             Search a title to find sources to adopt from.
           </p>
 
+          <!-- Cross-search adopt tray: persists across a new search, always above the results -->
+          <AdoptTray
+            v-if="trayActive"
+            :candidates="tray"
+            @configure="configureTray"
+            @remove="removeCand"
+          />
+
           <!-- Grouped results -->
           <div v-if="!searching && groups.length" class="imp-groups">
             <SearchGroupCard
               v-for="g in groups"
               :key="g.title"
               :group="g"
+              :added="isGroupAdded(g)"
+              :tray-active="trayActive"
               @pick="pickGroup"
+              @add="addGroup"
+              @remove="removeGroup"
             />
           </div>
 

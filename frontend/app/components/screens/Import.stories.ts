@@ -46,6 +46,26 @@ export const SearchEmpty: Story = {
   },
 }
 
+/**
+ * Stage 1 with a gathered cross-search adopt tray: the play function adds the
+ * first group so the tray bar appears above the results and every card's
+ * affordance flips to the "+ Add"/"✓ Added" toggle (choose→ is disabled while
+ * the tray is non-empty — see the cross-search-adopt-tray spec).
+ */
+export const SearchWithTray: Story = {
+  args: {
+    sources,
+    searchResults,
+    searched: true,
+    categories,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const addButtons = await canvas.findAllByRole('button', { name: '+ Add' })
+    await userEvent.click(addButtons[0]!)
+  },
+}
+
 /** Stage 2 (Configure) — the play function picks the first group to advance. */
 export const Configure: Story = {
   args: {
