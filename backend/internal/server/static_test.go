@@ -10,12 +10,14 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
 // nullSuwayomiClient is a stub suwayomi.Client used by route-level tests that
@@ -103,7 +105,9 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	ownerH := owner.NewHandler(nil, authSvc, false)
 
 	settingsSvc := settings.NewService(nil, settings.Defaults{})
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, func() {}), authSvc
+	metricsSvc := metrics.NewService(nil)
+	warmupSvc := warmup.NewService(nullSuwayomiClient{}, metricsSvc, settingsSvc)
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, func() {}), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

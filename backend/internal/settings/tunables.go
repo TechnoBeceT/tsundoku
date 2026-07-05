@@ -63,6 +63,12 @@ const (
 	// KeyExtensionCheckInterval is the extension auto-check ticker period
 	// (duration, 0 = disabled or >= 1h).
 	KeyExtensionCheckInterval = "jobs.extension_check_interval"
+	// KeyWarmupInterval is the anti-bot session warm-up ticker period
+	// (duration, 0 = disabled or >= 1m).
+	KeyWarmupInterval = "jobs.warmup_interval"
+	// KeyWarmupSlowThresholdMs is the EWMA-latency threshold in milliseconds above
+	// which a source is warmed by the WarmSlow pass (int, 100..600000).
+	KeyWarmupSlowThresholdMs = "jobs.warmup_slow_threshold_ms"
 )
 
 // Defaults carries the config-resolved default for every tunable key. main
@@ -77,6 +83,8 @@ type Defaults struct {
 	RetryBackoff           time.Duration
 	StaleGraceDays         int
 	ExtensionCheckInterval time.Duration
+	WarmupInterval         time.Duration
+	WarmupSlowThresholdMs  int
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -103,6 +111,8 @@ var tunableOrder = []string{
 	KeyRetryBackoff,
 	KeyStaleGraceDays,
 	KeyExtensionCheckInterval,
+	KeyWarmupInterval,
+	KeyWarmupSlowThresholdMs,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -135,6 +145,14 @@ var tunables = map[string]tunable{
 	KeyExtensionCheckInterval: durationTunableMinOrZero(
 		KeyExtensionCheckInterval, "duration", time.Hour,
 		func(d Defaults) time.Duration { return d.ExtensionCheckInterval },
+	),
+	KeyWarmupInterval: durationTunableMinOrZero(
+		KeyWarmupInterval, "duration", time.Minute,
+		func(d Defaults) time.Duration { return d.WarmupInterval },
+	),
+	KeyWarmupSlowThresholdMs: intTunable(
+		KeyWarmupSlowThresholdMs, "milliseconds", 100, 600000,
+		func(d Defaults) int { return d.WarmupSlowThresholdMs },
 	),
 }
 

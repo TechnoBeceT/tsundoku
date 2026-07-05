@@ -39,5 +39,8 @@ type Settings func(*sql.Selector)
 // SourceEvent is the predicate function for sourceevent builders.
 type SourceEvent func(*sql.Selector)
 
+// SourceMetric is the predicate function for sourcemetric builders.
+type SourceMetric func(*sql.Selector)
+
 // SuwayomiSyncState is the predicate function for suwayomisyncstate builders.
 type SuwayomiSyncState func(*sql.Selector)

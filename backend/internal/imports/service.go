@@ -29,12 +29,19 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // searchConcurrency is the maximum number of sources queried in parallel during
 // Search. This bounds upstream load when many sources are installed.
 const searchConcurrency = 8
+
+// recordTimeout bounds the post-fan-out metrics batch write so a stuck DB can
+// never hang the search response. It is applied to a cancellation-detached
+// context (context.WithoutCancel) so the write survives the client disconnect
+// that would otherwise cancel the request context.
+const recordTimeout = 10 * time.Second
 
 // ErrSourceNotFound is returned by Browse when the requested sourceID is not in
 // the live source list (client.Sources). The HTTP handler maps it to 404.
@@ -51,6 +58,7 @@ type Service struct {
 	db            *ent.Client
 	storage       string
 	searchTimeout time.Duration
+	recorder      metrics.Recorder
 }
 
 // NewService constructs a Service backed by the given Suwayomi client.
@@ -63,13 +71,18 @@ type Service struct {
 //
 // ingest, db, and storage back the adopt/import workflow and may be nil/empty
 // for callers that only use the read-only discovery paths.
-func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client, storage string, searchTimeout time.Duration) *Service {
+//
+// recorder receives one batch of per-source search timings after each Search
+// fan-out (see Search); it is best-effort and may be nil (recording is then
+// skipped) for callers/tests that do not exercise metrics.
+func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client, storage string, searchTimeout time.Duration, recorder metrics.Recorder) *Service {
 	return &Service{
 		client:        client,
 		ingest:        ingest,
 		db:            db,
 		storage:       storage,
 		searchTimeout: searchTimeout,
+		recorder:      recorder,
 	}
 }
 
@@ -128,6 +141,28 @@ func isDisabledSource(src suwayomi.Source) bool {
 // the two exclusion rules can never drift apart.
 func excludedFromPicker(src suwayomi.Source) bool {
 	return isLocalSource(src) || isDisabledSource(src)
+}
+
+// EnabledOnlineSources returns every Suwayomi source eligible for the warm-up
+// pass: all installed sources MINUS the built-in Local source and any source the
+// owner has disabled — the SAME exclusion rule Search's fan-out applies
+// (excludedFromPicker). It is exported so the warm-up job (internal/warmup) warms
+// exactly the source set Search hits, without duplicating the exclusion logic
+// (§2 DRY). client is the live Suwayomi client (client.Sources already inlines
+// each source's meta, so the disabled check costs no extra round trip).
+func EnabledOnlineSources(ctx context.Context, client suwayomi.Client) ([]suwayomi.Source, error) {
+	all, err := client.Sources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]suwayomi.Source, 0, len(all))
+	for _, src := range all {
+		if excludedFromPicker(src) {
+			continue
+		}
+		out = append(out, src)
+	}
+	return out, nil
 }
 
 // searchOneSource performs a single-source search against the Suwayomi client
@@ -259,13 +294,19 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 	sem := make(chan struct{}, searchConcurrency)
 	var mu sync.Mutex
 	var candidates []Candidate
+	// samples accumulates one timing per source that actually ran (acquired a
+	// slot and called the client), success or failure. It is recorded ONCE after
+	// the fan-out (see below), not per goroutine, so metrics writes never race
+	// the deadline or add latency to the fan-out.
+	var samples []metrics.Sample
 
 	g, gctx := errgroup.WithContext(sctx)
 	for _, src := range sources {
 		g.Go(func() error {
 			// Acquire a concurrency slot; on deadline/cancel just drop this
 			// source (return nil) so partial results survive — the caller must
-			// never see the deadline as an error.
+			// never see the deadline as an error. A source dropped HERE never
+			// ran, so it contributes no timing sample.
 			select {
 			case sem <- struct{}{}:
 			case <-gctx.Done():
@@ -273,26 +314,43 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 			}
 			defer func() { <-sem }()
 
+			// Measure the whole call. A source that hangs until the deadline
+			// returns a context error here with a latency ~= searchTimeout —
+			// exactly the slow datapoint that must be recorded (that is why the
+			// batch below uses a deadline-detached context, not gctx).
+			start := time.Now()
 			local, err := s.searchOneSource(gctx, src, query)
+			latency := time.Since(start)
+
+			mu.Lock()
+			samples = append(samples, metrics.Sample{
+				SourceID: src.ID, SourceName: src.Name, Latency: latency, Err: err,
+			})
+			if err == nil {
+				candidates = append(candidates, local...)
+			}
+			mu.Unlock()
+
 			if err != nil {
 				slog.WarnContext(gctx, "imports: source search failed",
 					"source", src.ID, "source_name", src.Name, "err", err)
-				return nil // skip failing source; partial results are acceptable
 			}
-
-			mu.Lock()
-			candidates = append(candidates, local...)
-			mu.Unlock()
-			return nil
+			return nil // per-source failures and the deadline both drop that source
 		})
 	}
 
 	// Every goroutine returns nil (per-source failures and the overall deadline
 	// are both treated as "drop that source"), so g.Wait never surfaces an
 	// error — it just joins all goroutines. Once it returns, every mutex-guarded
-	// write has happened-before, so candidates is the complete set as of the
-	// deadline and is safe to read.
+	// write has happened-before, so candidates and samples are the complete sets
+	// as of the deadline and are safe to read.
 	_ = g.Wait()
+
+	// Record the batch AFTER the fan-out on a deadline-detached, short-bounded
+	// context: a source dropped at the 85s deadline still records its slow
+	// latency (sctx is cancelled by now, so recording on it would drop exactly
+	// the datapoints that flag a source slow).
+	s.recordSamples(ctx, samples)
 
 	// Group candidates by title similarity using the Task 2 matcher.
 	groups := groupCandidates(candidates)
@@ -307,6 +365,21 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 		out[i] = SearchGroupDTO{Title: grp.Title, Candidates: cdtos}
 	}
 	return out, nil
+}
+
+// recordSamples writes the per-source search timings collected during a fan-out
+// as ONE metrics batch. It runs on a context derived from the ORIGINAL request
+// context with cancellation stripped (context.WithoutCancel) and a short timeout,
+// so the write survives both the search deadline (sctx) and a client disconnect,
+// yet can't hang forever on a stuck DB. Recording is best-effort and skipped when
+// no recorder is wired (nil) or there is nothing to record.
+func (s *Service) recordSamples(ctx context.Context, samples []metrics.Sample) {
+	if s.recorder == nil || len(samples) == 0 {
+		return
+	}
+	recCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
+	s.recorder.RecordBatch(recCtx, samples)
 }
 
 // resolveSources returns the source list to query, always excluding Suwayomi's

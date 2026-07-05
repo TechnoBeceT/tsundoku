@@ -15,16 +15,19 @@ import (
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
+	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
 	suwayomih "github.com/technobecet/tsundoku/internal/handler/suwayomi"
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
 // registerRoutes wires all HTTP routes onto the provided Echo instance.
@@ -64,6 +67,8 @@ import (
 //   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
+//   - /api/sources/metrics (GET)                   — per-source performance metrics + isSlow (RequireOwner).
+//   - /api/sources/warmup (POST)                   — trigger a full anti-bot warm-up pass (RequireOwner).
 //   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
 //   - /api/suwayomi/settings (GET)                  — read Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
@@ -100,6 +105,8 @@ func registerRoutes(
 	ownerH *owner.Handler,
 	suwayomiClient suwayomi.Client,
 	settingsSvc *settings.Service,
+	metricsSvc *metrics.Service,
+	warmupSvc *warmup.Service,
 	trigger func(),
 ) {
 	// Infrastructure routes — no authentication required.
@@ -141,6 +148,14 @@ func registerRoutes(
 	settingsH := settingsh.NewHandler(settingsSvc)
 	authed.GET("/settings", settingsH.List)
 	authed.PATCH("/settings", settingsH.Update)
+
+	// Source metrics + anti-bot warm-up API. The handler reads the rolling
+	// per-source performance snapshot (metricsSvc) and triggers a manual warm
+	// pass (warmupSvc); the slow threshold is resolved from the settings overlay
+	// at read time (settingsSvc).
+	sourcesH := sourcesh.NewHandler(metricsSvc, warmupSvc, settingsSvc)
+	authed.GET("/sources/metrics", sourcesH.Metrics)
+	authed.POST("/sources/warmup", sourcesH.Warmup)
 
 	// System info — read-only credential-free structural config (storage path,
 	// server port, DB host:port/name). The handler needs only the config struct;
@@ -194,7 +209,7 @@ func registerRoutes(
 	// the same Ent client as the rest of the application; a single suwayomiClient
 	// value is threaded in from main.
 	ingest := suwayomi.NewIngest(suwayomiClient, client)
-	importsSvc := imports.NewService(suwayomiClient, ingest, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout)
+	importsSvc := imports.NewService(suwayomiClient, ingest, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout, metricsSvc)
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, suwayomiClient)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)

@@ -27,6 +27,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
+	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 )
 
@@ -57,6 +58,8 @@ type Client struct {
 	Settings *SettingsClient
 	// SourceEvent is the client for interacting with the SourceEvent builders.
 	SourceEvent *SourceEventClient
+	// SourceMetric is the client for interacting with the SourceMetric builders.
+	SourceMetric *SourceMetricClient
 	// SuwayomiSyncState is the client for interacting with the SuwayomiSyncState builders.
 	SuwayomiSyncState *SuwayomiSyncStateClient
 }
@@ -81,6 +84,7 @@ func (c *Client) init() {
 	c.SeriesProvider = NewSeriesProviderClient(c.config)
 	c.Settings = NewSettingsClient(c.config)
 	c.SourceEvent = NewSourceEventClient(c.config)
+	c.SourceMetric = NewSourceMetricClient(c.config)
 	c.SuwayomiSyncState = NewSuwayomiSyncStateClient(c.config)
 }
 
@@ -185,6 +189,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		SeriesProvider:    NewSeriesProviderClient(cfg),
 		Settings:          NewSettingsClient(cfg),
 		SourceEvent:       NewSourceEventClient(cfg),
+		SourceMetric:      NewSourceMetricClient(cfg),
 		SuwayomiSyncState: NewSuwayomiSyncStateClient(cfg),
 	}, nil
 }
@@ -216,6 +221,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		SeriesProvider:    NewSeriesProviderClient(cfg),
 		Settings:          NewSettingsClient(cfg),
 		SourceEvent:       NewSourceEventClient(cfg),
+		SourceMetric:      NewSourceMetricClient(cfg),
 		SuwayomiSyncState: NewSuwayomiSyncStateClient(cfg),
 	}, nil
 }
@@ -248,7 +254,7 @@ func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
 		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings, c.SourceEvent,
-		c.SuwayomiSyncState,
+		c.SourceMetric, c.SuwayomiSyncState,
 	} {
 		n.Use(hooks...)
 	}
@@ -260,7 +266,7 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
 		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings, c.SourceEvent,
-		c.SuwayomiSyncState,
+		c.SourceMetric, c.SuwayomiSyncState,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -291,6 +297,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Settings.mutate(ctx, m)
 	case *SourceEventMutation:
 		return c.SourceEvent.mutate(ctx, m)
+	case *SourceMetricMutation:
+		return c.SourceMetric.mutate(ctx, m)
 	case *SuwayomiSyncStateMutation:
 		return c.SuwayomiSyncState.mutate(ctx, m)
 	default:
@@ -1937,6 +1945,139 @@ func (c *SourceEventClient) mutate(ctx context.Context, m *SourceEventMutation) 
 	}
 }
 
+// SourceMetricClient is a client for the SourceMetric schema.
+type SourceMetricClient struct {
+	config
+}
+
+// NewSourceMetricClient returns a client for the SourceMetric from the given config.
+func NewSourceMetricClient(c config) *SourceMetricClient {
+	return &SourceMetricClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourcemetric.Hooks(f(g(h())))`.
+func (c *SourceMetricClient) Use(hooks ...Hook) {
+	c.hooks.SourceMetric = append(c.hooks.SourceMetric, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourcemetric.Intercept(f(g(h())))`.
+func (c *SourceMetricClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceMetric = append(c.inters.SourceMetric, interceptors...)
+}
+
+// Create returns a builder for creating a SourceMetric entity.
+func (c *SourceMetricClient) Create() *SourceMetricCreate {
+	mutation := newSourceMetricMutation(c.config, OpCreate)
+	return &SourceMetricCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceMetric entities.
+func (c *SourceMetricClient) CreateBulk(builders ...*SourceMetricCreate) *SourceMetricCreateBulk {
+	return &SourceMetricCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceMetricClient) MapCreateBulk(slice any, setFunc func(*SourceMetricCreate, int)) *SourceMetricCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceMetricCreateBulk{err: fmt.Errorf("calling to SourceMetricClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceMetricCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceMetricCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceMetric.
+func (c *SourceMetricClient) Update() *SourceMetricUpdate {
+	mutation := newSourceMetricMutation(c.config, OpUpdate)
+	return &SourceMetricUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceMetricClient) UpdateOne(_m *SourceMetric) *SourceMetricUpdateOne {
+	mutation := newSourceMetricMutation(c.config, OpUpdateOne, withSourceMetric(_m))
+	return &SourceMetricUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceMetricClient) UpdateOneID(id uuid.UUID) *SourceMetricUpdateOne {
+	mutation := newSourceMetricMutation(c.config, OpUpdateOne, withSourceMetricID(id))
+	return &SourceMetricUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceMetric.
+func (c *SourceMetricClient) Delete() *SourceMetricDelete {
+	mutation := newSourceMetricMutation(c.config, OpDelete)
+	return &SourceMetricDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceMetricClient) DeleteOne(_m *SourceMetric) *SourceMetricDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceMetricClient) DeleteOneID(id uuid.UUID) *SourceMetricDeleteOne {
+	builder := c.Delete().Where(sourcemetric.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceMetricDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceMetric.
+func (c *SourceMetricClient) Query() *SourceMetricQuery {
+	return &SourceMetricQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceMetric},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceMetric entity by its id.
+func (c *SourceMetricClient) Get(ctx context.Context, id uuid.UUID) (*SourceMetric, error) {
+	return c.Query().Where(sourcemetric.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceMetricClient) GetX(ctx context.Context, id uuid.UUID) *SourceMetric {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceMetricClient) Hooks() []Hook {
+	return c.hooks.SourceMetric
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceMetricClient) Interceptors() []Interceptor {
+	return c.inters.SourceMetric
+}
+
+func (c *SourceMetricClient) mutate(ctx context.Context, m *SourceMetricMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceMetricCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceMetricUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceMetricUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceMetricDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceMetric mutation op: %q", m.Op())
+	}
+}
+
 // SuwayomiSyncStateClient is a client for the SuwayomiSyncState schema.
 type SuwayomiSyncStateClient struct {
 	config
@@ -2090,11 +2231,12 @@ func (c *SuwayomiSyncStateClient) mutate(ctx context.Context, m *SuwayomiSyncSta
 type (
 	hooks struct {
 		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner, ProviderChapter,
-		Series, SeriesProvider, Settings, SourceEvent, SuwayomiSyncState []ent.Hook
+		Series, SeriesProvider, Settings, SourceEvent, SourceMetric,
+		SuwayomiSyncState []ent.Hook
 	}
 	inters struct {
 		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner, ProviderChapter,
-		Series, SeriesProvider, Settings, SourceEvent,
+		Series, SeriesProvider, Settings, SourceEvent, SourceMetric,
 		SuwayomiSyncState []ent.Interceptor
 	}
 )

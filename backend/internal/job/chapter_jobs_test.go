@@ -272,6 +272,12 @@ func (c *countingIntervals) ExtensionCheckInterval(context.Context) time.Duratio
 	return 0
 }
 
+// WarmupInterval returns a fixed disabled interval (unused by these tests but
+// required to satisfy job.Intervals after the warm-up interface widening).
+func (c *countingIntervals) WarmupInterval(context.Context) time.Duration {
+	return 0
+}
+
 // setDownload mutates the download interval the next read will observe.
 func (c *countingIntervals) setDownload(d time.Duration) {
 	c.mu.Lock()

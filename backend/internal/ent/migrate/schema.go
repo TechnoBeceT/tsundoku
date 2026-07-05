@@ -260,6 +260,28 @@ var (
 		Columns:    SourceEventsColumns,
 		PrimaryKey: []*schema.Column{SourceEventsColumns[0]},
 	}
+	// SourceMetricsColumns holds the columns for the "source_metrics" table.
+	SourceMetricsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeString, Unique: true},
+		{Name: "source_name", Type: field.TypeString, Default: ""},
+		{Name: "ewma_latency_ms", Type: field.TypeInt, Default: 0},
+		{Name: "last_latency_ms", Type: field.TypeInt, Default: 0},
+		{Name: "search_count", Type: field.TypeInt, Default: 0},
+		{Name: "success_count", Type: field.TypeInt, Default: 0},
+		{Name: "fail_count", Type: field.TypeInt, Default: 0},
+		{Name: "last_error", Type: field.TypeString, Default: ""},
+		{Name: "last_error_at", Type: field.TypeTime, Nullable: true},
+		{Name: "last_success_at", Type: field.TypeTime, Nullable: true},
+		{Name: "last_warmed_at", Type: field.TypeTime, Nullable: true},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourceMetricsTable holds the schema information for the "source_metrics" table.
+	SourceMetricsTable = &schema.Table{
+		Name:       "source_metrics",
+		Columns:    SourceMetricsColumns,
+		PrimaryKey: []*schema.Column{SourceMetricsColumns[0]},
+	}
 	// SuwayomiSyncStatesColumns holds the columns for the "suwayomi_sync_states" table.
 	SuwayomiSyncStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -302,6 +324,7 @@ var (
 		SeriesProvidersTable,
 		SettingsTable,
 		SourceEventsTable,
+		SourceMetricsTable,
 		SuwayomiSyncStatesTable,
 	}
 )

@@ -18,6 +18,8 @@ type Static struct {
 	Backoff     time.Duration
 	StaleGrace  int
 	ExtCheck    time.Duration
+	WarmupIv    time.Duration
+	WarmupSlow  int
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -40,3 +42,9 @@ func (s Static) StaleGraceDays(context.Context) int { return s.StaleGrace }
 
 // ExtensionCheckInterval returns the fixed extension-check ticker period; 0 = disabled.
 func (s Static) ExtensionCheckInterval(context.Context) time.Duration { return s.ExtCheck }
+
+// WarmupInterval returns the fixed warm-up ticker period; 0 = disabled.
+func (s Static) WarmupInterval(context.Context) time.Duration { return s.WarmupIv }
+
+// WarmupSlowThresholdMs returns the fixed slow-latency threshold in milliseconds.
+func (s Static) WarmupSlowThresholdMs(context.Context) int { return s.WarmupSlow }

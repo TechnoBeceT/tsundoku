@@ -36,6 +36,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
 // CycleEvent is the SSE payload broadcast at the start and end of every
@@ -71,6 +72,10 @@ type Intervals interface {
 	// 0 = disabled (the job idles and re-reads the interval on its next pass for
 	// hot-reload — no restart needed to re-enable it).
 	ExtensionCheckInterval(ctx context.Context) time.Duration
+	// WarmupInterval is the period between anti-bot session warm-up passes.
+	// 0 = disabled (same idle-and-re-read hot-reload semantics as
+	// ExtensionCheckInterval).
+	WarmupInterval(ctx context.Context) time.Duration
 }
 
 // Runner orchestrates the chapter download/upgrade cycle, the discovery refresh
@@ -362,6 +367,61 @@ func (r *Runner) broadcastExtensionsChecked(updates int) {
 		return
 	}
 	r.hub.Broadcast(sse.Event{Type: "extensions.checked", Data: json.RawMessage(raw)})
+}
+
+// StartWarmup launches a background goroutine that periodically warms anti-bot
+// Suwayomi sessions so interactive search stays fast. The FIRST pass warms EVERY
+// enabled source (WarmAll, a seed); every pass after warms only the slow /
+// never-measured ones (WarmSlow). An interval of 0 disables the job — the
+// goroutine idles for a fixed fallback period then re-reads the setting, enabling
+// hot-reload. Mirrors StartExtensionCheck's dynamic-timer exactly (re-reads the
+// interval at the top of each pass). Returns immediately.
+func (r *Runner) StartWarmup(ctx context.Context, svc *warmup.Service) {
+	go func() {
+		const disabledRecheck = time.Hour
+		seeded := false
+		for {
+			iv := r.intervals.WarmupInterval(ctx)
+			wait := iv
+			if iv <= 0 {
+				wait = disabledRecheck // disabled: idle, re-read later (hot reload)
+			}
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				slog.InfoContext(ctx, "job.Runner: warm-up loop stopped (context cancelled)")
+				return
+			case <-timer.C:
+				if iv <= 0 {
+					continue // still disabled; re-read interval on the next pass
+				}
+				seeded = r.runWarmupPass(ctx, svc, seeded)
+			}
+		}
+	}()
+}
+
+// runWarmupPass runs one warm-up pass and returns the new "seeded" state. Until a
+// seed (WarmAll) has completed successfully it runs WarmAll; thereafter it runs
+// WarmSlow. A failed seed leaves seeded=false so the next pass retries the seed.
+func (r *Runner) runWarmupPass(ctx context.Context, svc *warmup.Service, seeded bool) bool {
+	if !seeded {
+		n, err := svc.WarmAll(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "job.Runner: warm-up seed failed", "err", err)
+			return false
+		}
+		slog.InfoContext(ctx, "job.Runner: warm-up seed complete", "warmed", n)
+		return true
+	}
+	n, err := svc.WarmSlow(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "job.Runner: warm-up (slow) failed", "err", err)
+		return true
+	}
+	slog.InfoContext(ctx, "job.Runner: warm-up (slow) complete", "warmed", n)
+	return true
 }
 
 // Reconcile wraps disk.Reconcile: it scans the storage root and idempotently

@@ -265,6 +265,20 @@ type JobsConfig struct {
 	// (no extensions are checked until a non-zero interval is configured at
 	// runtime via the settings API). Set via TSUNDOKU_JOBS_EXTENSIONCHECKINTERVAL.
 	ExtensionCheckInterval time.Duration
+
+	// WarmupInterval is the tick period for the anti-bot session warm-up job,
+	// which keeps slow (Cloudflare-protected) sources warm with a cheap Browse
+	// call so interactive search stays fast. Default 15m (comfortably under a
+	// FlareSolverr challenge-clearance TTL). Set to 0 to disable the job. This is
+	// the env DEFAULT the runtime settings overlay can override without a restart.
+	// Set via TSUNDOKU_JOBS_WARMUPINTERVAL.
+	WarmupInterval time.Duration
+
+	// WarmupSlowThresholdMs is the EWMA-latency threshold (milliseconds) above
+	// which a source is considered "slow" and warmed by the WarmSlow pass. Default
+	// 5000. Like WarmupInterval it is the env default behind the runtime settings
+	// overlay. Set via TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS.
+	WarmupSlowThresholdMs int
 }
 
 // HealthConfig tunes the M7 source-health computation.
@@ -324,6 +338,8 @@ func defaults() map[string]any {
 		"jobs.maxretries":             3,
 		"jobs.retrybackoff":           "1m",
 		"jobs.extensioncheckinterval": "24h",
+		"jobs.warmupinterval":         "15m",
+		"jobs.warmupslowthresholdms":  5000,
 		// Health — M7 source-health computation.
 		"health.stalegracedays": 14,
 		"storage.folder":        "/data/manga",
@@ -409,6 +425,8 @@ func Load() (*Config, error) {
 //	TSUNDOKU_JOBS_MAXRETRIES                → jobs.maxretries
 //	TSUNDOKU_JOBS_RETRYBACKOFF              → jobs.retrybackoff
 //	TSUNDOKU_JOBS_EXTENSIONCHECKINTERVAL    → jobs.extensioncheckinterval
+//	TSUNDOKU_JOBS_WARMUPINTERVAL            → jobs.warmupinterval
+//	TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS     → jobs.warmupslowthresholdms
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //
 // Convention: after stripping the prefix the first "_" separates the
@@ -449,6 +467,8 @@ const minAuthSecretLen = 16
 //     would either never time out or reject every request.
 //   - Jobs.DownloadConcurrency must be at least 1 — a non-positive per-provider
 //     concurrency would stall the dispatcher entirely.
+//   - Jobs.WarmupSlowThresholdMs must be at least 1 — a non-positive slow
+//     threshold would flag every source slow on every warm pass.
 func (c *Config) validate() error {
 	var errs []string
 
@@ -486,6 +506,12 @@ func (c *Config) validate() error {
 	if c.Jobs.DownloadConcurrency < 1 {
 		errs = append(errs, fmt.Sprintf(
 			"TSUNDOKU_JOBS_DOWNLOADCONCURRENCY must be at least 1 (got %d)", c.Jobs.DownloadConcurrency,
+		))
+	}
+
+	if c.Jobs.WarmupSlowThresholdMs < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS must be at least 1 (got %d)", c.Jobs.WarmupSlowThresholdMs,
 		))
 	}
 

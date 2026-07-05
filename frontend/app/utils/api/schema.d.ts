@@ -884,6 +884,53 @@ export interface paths {
         patch: operations["updateSettings"];
         trace?: never;
     };
+    "/api/sources/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List per-source search-performance metrics
+         * @description Returns every source's rolling search-performance snapshot (slowest first),
+         *     each with a derived "isSlow" flag computed against the current slow
+         *     threshold. Backs the source-metrics screen and the anti-bot warm-up
+         *     decision (which sources are cold/slow).
+         */
+        get: operations["listSourceMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/warmup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger an anti-bot session warm-up pass
+         * @description Runs a full warm-up pass over every enabled source (a cheap Browse call
+         *     that refreshes each source's cached anti-bot challenge clearance), so
+         *     interactive search stays fast. Serial across sources. Returns the number
+         *     warmed. An upstream Suwayomi failure (e.g. the source list is unreachable)
+         *     is a 502.
+         */
+        post: operations["warmupSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system": {
         parameters: {
             query?: never;
@@ -1639,6 +1686,61 @@ export interface components {
                 /** @example 30m */
                 value: string;
             }[];
+        };
+        /**
+         * @description One source's rolling search-performance snapshot. "isSlow" is derived at
+         *     read time (ewmaLatencyMs > the current slow threshold), never stored — so
+         *     the threshold can be re-tuned without a migration.
+         */
+        SourceMetric: {
+            /** @description The Suwayomi source id. */
+            sourceId: string;
+            /** @description The source's display name (denormalized). */
+            sourceName: string;
+            /** @description Exponentially-weighted rolling search latency, in milliseconds. */
+            ewmaLatencyMs: number;
+            /** @description Most recent measured search latency, in milliseconds. */
+            lastLatencyMs: number;
+            /** @description Lifetime number of recorded searches against this source. */
+            searchCount: number;
+            /** @description Lifetime number of successful searches. */
+            successCount: number;
+            /** @description Lifetime number of failed/timed-out searches. */
+            failCount: number;
+            /** @description Most recent failure reason ("" when none). */
+            lastError: string;
+            /**
+             * Format: date-time
+             * @description When the most recent failure occurred (absent if never failed).
+             */
+            lastErrorAt?: string;
+            /**
+             * Format: date-time
+             * @description When the most recent success occurred (absent if never succeeded).
+             */
+            lastSuccessAt?: string;
+            /**
+             * Format: date-time
+             * @description When the source was last warmed (absent if never warmed).
+             */
+            lastWarmedAt?: string;
+            /**
+             * Format: date-time
+             * @description When this snapshot was last written.
+             */
+            updatedAt: string;
+            /**
+             * @description Derived flag — true when the source has never been measured OR its
+             *     ewmaLatencyMs exceeds the current slow threshold.
+             */
+            isSlow: boolean;
+        };
+        SourceWarmResult: {
+            /**
+             * @description Number of sources warmed successfully in the pass.
+             * @example 12
+             */
+            warmed: number;
         };
         /**
          * @description The FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of Suwayomi's
@@ -3953,6 +4055,73 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSourceMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The per-source metrics, sorted by EWMA latency descending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceMetric"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    warmupSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The warm-up pass completed. Returns the number of sources warmed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceWarmResult"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Suwayomi was unreachable or returned an error. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

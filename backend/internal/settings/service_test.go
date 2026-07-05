@@ -22,6 +22,8 @@ func testDefaults() settings.Defaults {
 		RetryBackoff:           time.Minute,
 		StaleGraceDays:         14,
 		ExtensionCheckInterval: 24 * time.Hour,
+		WarmupInterval:         15 * time.Minute,
+		WarmupSlowThresholdMs:  5000,
 	}
 }
 
@@ -199,8 +201,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 7 {
-		t.Fatalf("List len = %d, want 7", len(list))
+	if len(list) != 9 {
+		t.Fatalf("List len = %d, want 9", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -253,12 +255,13 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 	s := settings.Static{
 		Download: time.Second, Refresh: 2 * time.Second, Concurrency: 2,
 		Retries: 5, Backoff: 3 * time.Second, StaleGrace: 7,
-		ExtCheck: 12 * time.Hour,
+		ExtCheck: 12 * time.Hour, WarmupIv: 15 * time.Minute, WarmupSlow: 4000,
 	}
 	if s.DownloadInterval(ctx) != time.Second || s.RefreshInterval(ctx) != 2*time.Second ||
 		s.RefreshConcurrency(ctx) != 2 || s.MaxRetries(ctx) != 5 ||
 		s.RetryBackoff(ctx) != 3*time.Second || s.StaleGraceDays(ctx) != 7 ||
-		s.ExtensionCheckInterval(ctx) != 12*time.Hour {
+		s.ExtensionCheckInterval(ctx) != 12*time.Hour ||
+		s.WarmupInterval(ctx) != 15*time.Minute || s.WarmupSlowThresholdMs(ctx) != 4000 {
 		t.Errorf("Static returned unexpected values: %+v", s)
 	}
 }
@@ -317,5 +320,53 @@ func TestExtensionCheckIntervalDefaultAccessor(t *testing.T) {
 
 	if got := svc.ExtensionCheckInterval(ctx); got != 24*time.Hour {
 		t.Errorf("ExtensionCheckInterval default = %v, want 24h", got)
+	}
+}
+
+// TestWarmupInterval proves the warm-up interval accessor returns the default
+// (15m) when unset, accepts 0 (disabled) and >= 1m, and rejects sub-1m values.
+func TestWarmupInterval(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.WarmupInterval(ctx); got != 15*time.Minute {
+		t.Errorf("WarmupInterval default = %v, want 15m", got)
+	}
+	if err := svc.Set(ctx, settings.KeyWarmupInterval, "0"); err != nil {
+		t.Fatalf("Set 0: %v", err)
+	}
+	if got := svc.WarmupInterval(ctx); got != 0 {
+		t.Errorf("WarmupInterval after Set 0 = %v, want 0 (disabled)", got)
+	}
+	if err := svc.Set(ctx, settings.KeyWarmupInterval, "30s"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 30s: want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyWarmupInterval, "5m"); err != nil {
+		t.Fatalf("Set 5m: %v", err)
+	}
+	if got := svc.WarmupInterval(ctx); got != 5*time.Minute {
+		t.Errorf("WarmupInterval after Set 5m = %v, want 5m", got)
+	}
+}
+
+// TestWarmupSlowThresholdMs proves the slow-threshold accessor returns the
+// default (5000) when unset, accepts an in-bounds value, and rejects out-of-bounds.
+func TestWarmupSlowThresholdMs(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.WarmupSlowThresholdMs(ctx); got != 5000 {
+		t.Errorf("WarmupSlowThresholdMs default = %d, want 5000", got)
+	}
+	if err := svc.Set(ctx, settings.KeyWarmupSlowThresholdMs, "50"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 50 (below 100): want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyWarmupSlowThresholdMs, "8000"); err != nil {
+		t.Fatalf("Set 8000: %v", err)
+	}
+	if got := svc.WarmupSlowThresholdMs(ctx); got != 8000 {
+		t.Errorf("WarmupSlowThresholdMs after Set = %d, want 8000", got)
 	}
 }

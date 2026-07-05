@@ -252,7 +252,7 @@ func TestValidateAcceptsValidAuthSecret(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 	}
 	if err := config.ExportValidateForTest(cfg); err != nil {
 		t.Fatalf("expected validate to pass, got: %v", err)
@@ -411,7 +411,7 @@ func TestValidateAcceptsExternalURL(t *testing.T) {
 			Database: config.DatabaseConfig{Password: "somepassword"},
 			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 			Suwayomi: config.SuwayomiConfig{ExternalURL: raw, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
-			Jobs:     config.JobsConfig{DownloadConcurrency: 4},
+			Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 		}
 		if err := config.ExportValidateForTest(cfg); err != nil {
 			t.Errorf("validate() rejected ExternalURL %q, want accept: %v", raw, err)
@@ -654,7 +654,7 @@ func TestValidateRejectsNonPositiveHTTPTimeout(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 0}, // invalid
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
@@ -704,7 +704,7 @@ func TestValidateRejectsNonPositiveSearchTimeout(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Suwayomi: config.SuwayomiConfig{HTTPTimeout: time.Minute, SearchTimeout: 0}, // invalid
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
@@ -761,6 +761,61 @@ func TestValidateRejectsDownloadConcurrencyBelowOne(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "TSUNDOKU_JOBS_DOWNLOADCONCURRENCY") {
 		t.Errorf("error should name TSUNDOKU_JOBS_DOWNLOADCONCURRENCY, got: %v", err)
+	}
+}
+
+// TestJobsWarmupDefaults confirms the warm-up interval defaults to 15m and the
+// slow threshold to 5000ms when their env vars are unset.
+func TestJobsWarmupDefaults(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.WarmupInterval != 15*time.Minute {
+		t.Errorf("Jobs.WarmupInterval default = %v, want 15m", cfg.Jobs.WarmupInterval)
+	}
+	if cfg.Jobs.WarmupSlowThresholdMs != 5000 {
+		t.Errorf("Jobs.WarmupSlowThresholdMs default = %d, want 5000", cfg.Jobs.WarmupSlowThresholdMs)
+	}
+}
+
+// TestJobsWarmupEnvOverride confirms the warm-up env vars override the defaults.
+func TestJobsWarmupEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_JOBS_WARMUPINTERVAL", "30m")
+	t.Setenv("TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS", "8000")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.WarmupInterval != 30*time.Minute {
+		t.Errorf("Jobs.WarmupInterval = %v, want 30m", cfg.Jobs.WarmupInterval)
+	}
+	if cfg.Jobs.WarmupSlowThresholdMs != 8000 {
+		t.Errorf("Jobs.WarmupSlowThresholdMs = %d, want 8000", cfg.Jobs.WarmupSlowThresholdMs)
+	}
+}
+
+// TestValidateRejectsWarmupThresholdBelowOne confirms validate() fails closed when
+// the slow threshold is below 1, naming the env var.
+func TestValidateRejectsWarmupThresholdBelowOne(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 0}, // invalid
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for WarmupSlowThresholdMs < 1, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS") {
+		t.Errorf("error should name TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS, got: %v", err)
 	}
 }
 
@@ -850,7 +905,7 @@ func suwayomiDBConfig(dbType, dbURL string) *config.Config {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Suwayomi: config.SuwayomiConfig{DatabaseType: dbType, DatabaseURL: dbURL, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 	}
 }
 

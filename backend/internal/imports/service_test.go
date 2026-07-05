@@ -17,6 +17,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/imports"
+	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -165,7 +166,7 @@ const testSearchTimeout = 30 * time.Second
 
 // newService constructs a Service with a fake client and nil ingest/db (unused in Task 3).
 func newService(fc *fakeClient) *imports.Service {
-	return imports.NewService(fc, nil, nil, "", testSearchTimeout)
+	return imports.NewService(fc, nil, nil, "", testSearchTimeout, nil)
 }
 
 // makeAdoptChapters builds n stub suwayomi.Chapter values anchored to a base ID
@@ -186,6 +187,64 @@ func makeAdoptChapters(baseID, n int) []suwayomi.Chapter {
 		}
 	}
 	return chs
+}
+
+// --- metrics recording (batch-after-fan-out) --------------------------------
+
+// captureRecorder is a metrics.Recorder test double that captures the batch(es)
+// it is handed, so a test can assert Search records one timing per source that
+// ran (success AND failure), in ONE batch after the fan-out.
+type captureRecorder struct {
+	batches [][]metrics.Sample
+}
+
+func (r *captureRecorder) Record(_ context.Context, sourceID, sourceName string, latency time.Duration, sourceErr error) {
+	r.batches = append(r.batches, []metrics.Sample{{SourceID: sourceID, SourceName: sourceName, Latency: latency, Err: sourceErr}})
+}
+func (r *captureRecorder) RecordBatch(_ context.Context, samples []metrics.Sample) {
+	r.batches = append(r.batches, samples)
+}
+
+// TestSearch_RecordsMetricsBatch proves Search records exactly ONE batch after
+// the fan-out with one sample per source that ran — the failing source included
+// (with its Err set), which is the datapoint that flags a source slow.
+func TestSearch_RecordsMetricsBatch(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("cloudflare challenge timed out")
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "ok-src", Name: "OK", Lang: "en"},
+			{ID: "bad-src", Name: "Bad", Lang: "en"},
+		},
+		searchResults: map[string][]suwayomi.Manga{
+			"ok-src": {{ID: 1, Title: "Manga"}},
+		},
+		searchErrs: map[string]error{"bad-src": boom},
+	}
+	rec := &captureRecorder{}
+	svc := imports.NewService(fc, nil, nil, "", testSearchTimeout, rec)
+
+	if _, err := svc.Search(context.Background(), "q", nil); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if len(rec.batches) != 1 {
+		t.Fatalf("recorded %d batches, want exactly 1 (batch-after-fan-out)", len(rec.batches))
+	}
+	byID := map[string]metrics.Sample{}
+	for _, s := range rec.batches[0] {
+		byID[s.SourceID] = s
+	}
+	if len(byID) != 2 {
+		t.Fatalf("batch has %d distinct sources, want 2", len(byID))
+	}
+	if byID["ok-src"].Err != nil {
+		t.Errorf("ok-src sample Err = %v, want nil", byID["ok-src"].Err)
+	}
+	if !errors.Is(byID["bad-src"].Err, boom) {
+		t.Errorf("bad-src sample Err = %v, want the source failure", byID["bad-src"].Err)
+	}
 }
 
 // --- Sources tests -----------------------------------------------------------
@@ -559,7 +618,7 @@ func TestService_Search_PartialResultsOnDeadline(t *testing.T) {
 	}
 	client := &blockingFakeClient{fakeClient: fc, blockID: "slow"}
 	// Short overall deadline so the hung source is dropped quickly.
-	svc := imports.NewService(client, nil, nil, "", 200*time.Millisecond)
+	svc := imports.NewService(client, nil, nil, "", 200*time.Millisecond, nil)
 
 	start := time.Now()
 	got, err := svc.Search(context.Background(), "Naruto", nil)
@@ -1251,7 +1310,7 @@ func newServiceDB(t *testing.T, fc *fakeClient) *imports.Service {
 	t.Helper()
 	db := testdb.New(t)
 	ingest := suwayomi.NewIngest(fc, db)
-	return imports.NewService(fc, ingest, db, "", testSearchTimeout)
+	return imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
 }
 
 // assertAdoptSeries verifies that exactly one Series exists with the expected
@@ -1331,7 +1390,7 @@ func TestService_Adopt_TwoProviders(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
 
 	id, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title: canonicalTitle,
@@ -1392,7 +1451,7 @@ func TestService_Adopt_SameSourceDifferentScanlators(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
 
 	id, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title: canonicalTitle,
@@ -1450,7 +1509,7 @@ func TestService_Adopt_Idempotent(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
 
 	req := imports.AdoptRequest{
 		Title: canonicalTitle,
@@ -1510,7 +1569,7 @@ func TestService_Adopt_AttachToExisting(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
 
 	// First adopt: one provider.
 	if _, err := svc.Adopt(ctx, imports.AdoptRequest{
@@ -1568,7 +1627,7 @@ func TestService_Adopt_Category(t *testing.T) {
 			},
 		}
 		ingest := suwayomi.NewIngest(fc, db)
-		svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
+		svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
 
 		_, err := svc.Adopt(ctx, imports.AdoptRequest{
 			Title:    "Berserk",
@@ -1595,7 +1654,7 @@ func TestService_Adopt_Category(t *testing.T) {
 			},
 		}
 		ingest := suwayomi.NewIngest(fc, db)
-		svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
+		svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
 
 		_, err := svc.Adopt(ctx, imports.AdoptRequest{
 			Title:    "Naruto",
@@ -1642,7 +1701,7 @@ func TestService_Adopt_NoSilentPartial(t *testing.T) {
 		},
 	}
 	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout)
+	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
 
 	req := imports.AdoptRequest{
 		Title: canonicalTitle,

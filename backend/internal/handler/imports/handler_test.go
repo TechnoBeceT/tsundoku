@@ -185,7 +185,7 @@ func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	authSvc := auth.NewService(testSecret)
 
 	ingest := suwayomi.NewIngest(fc, db)
-	importsSvc := imports.NewService(fc, ingest, db, "", 30*time.Second)
+	importsSvc := imports.NewService(fc, ingest, db, "", 30*time.Second, nil)
 	seriesSvc := seriessvc.NewService(db, "", 14)
 
 	triggered := new(int)

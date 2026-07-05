@@ -23,6 +23,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
+	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 )
 
@@ -95,6 +96,7 @@ func checkColumn(t, c string) error {
 			seriesprovider.Table:    seriesprovider.ValidColumn,
 			settings.Table:          settings.ValidColumn,
 			sourceevent.Table:       sourceevent.ValidColumn,
+			sourcemetric.Table:      sourcemetric.ValidColumn,
 			suwayomisyncstate.Table: suwayomisyncstate.ValidColumn,
 		})
 	})

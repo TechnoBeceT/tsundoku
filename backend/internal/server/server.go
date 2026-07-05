@@ -10,11 +10,13 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
 // New constructs and returns a configured Echo instance with all Tsundoku
@@ -45,6 +47,8 @@ func New(
 	ownerH *owner.Handler,
 	suwayomiClient suwayomi.Client,
 	settingsSvc *settings.Service,
+	metricsSvc *metrics.Service,
+	warmupSvc *warmup.Service,
 	trigger func(),
 ) *echo.Echo {
 	e := echo.New()
@@ -68,6 +72,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, trigger)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, trigger)
 	return e
 }

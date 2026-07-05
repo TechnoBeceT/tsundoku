@@ -18,6 +18,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
+	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 )
 
@@ -297,6 +298,46 @@ func init() {
 	sourceeventDescID := sourceeventFields[0].Descriptor()
 	// sourceevent.DefaultID holds the default value on creation for the id field.
 	sourceevent.DefaultID = sourceeventDescID.Default.(func() uuid.UUID)
+	sourcemetricFields := schema.SourceMetric{}.Fields()
+	_ = sourcemetricFields
+	// sourcemetricDescSourceName is the schema descriptor for source_name field.
+	sourcemetricDescSourceName := sourcemetricFields[2].Descriptor()
+	// sourcemetric.DefaultSourceName holds the default value on creation for the source_name field.
+	sourcemetric.DefaultSourceName = sourcemetricDescSourceName.Default.(string)
+	// sourcemetricDescEwmaLatencyMs is the schema descriptor for ewma_latency_ms field.
+	sourcemetricDescEwmaLatencyMs := sourcemetricFields[3].Descriptor()
+	// sourcemetric.DefaultEwmaLatencyMs holds the default value on creation for the ewma_latency_ms field.
+	sourcemetric.DefaultEwmaLatencyMs = sourcemetricDescEwmaLatencyMs.Default.(int)
+	// sourcemetricDescLastLatencyMs is the schema descriptor for last_latency_ms field.
+	sourcemetricDescLastLatencyMs := sourcemetricFields[4].Descriptor()
+	// sourcemetric.DefaultLastLatencyMs holds the default value on creation for the last_latency_ms field.
+	sourcemetric.DefaultLastLatencyMs = sourcemetricDescLastLatencyMs.Default.(int)
+	// sourcemetricDescSearchCount is the schema descriptor for search_count field.
+	sourcemetricDescSearchCount := sourcemetricFields[5].Descriptor()
+	// sourcemetric.DefaultSearchCount holds the default value on creation for the search_count field.
+	sourcemetric.DefaultSearchCount = sourcemetricDescSearchCount.Default.(int)
+	// sourcemetricDescSuccessCount is the schema descriptor for success_count field.
+	sourcemetricDescSuccessCount := sourcemetricFields[6].Descriptor()
+	// sourcemetric.DefaultSuccessCount holds the default value on creation for the success_count field.
+	sourcemetric.DefaultSuccessCount = sourcemetricDescSuccessCount.Default.(int)
+	// sourcemetricDescFailCount is the schema descriptor for fail_count field.
+	sourcemetricDescFailCount := sourcemetricFields[7].Descriptor()
+	// sourcemetric.DefaultFailCount holds the default value on creation for the fail_count field.
+	sourcemetric.DefaultFailCount = sourcemetricDescFailCount.Default.(int)
+	// sourcemetricDescLastError is the schema descriptor for last_error field.
+	sourcemetricDescLastError := sourcemetricFields[8].Descriptor()
+	// sourcemetric.DefaultLastError holds the default value on creation for the last_error field.
+	sourcemetric.DefaultLastError = sourcemetricDescLastError.Default.(string)
+	// sourcemetricDescUpdatedAt is the schema descriptor for updated_at field.
+	sourcemetricDescUpdatedAt := sourcemetricFields[12].Descriptor()
+	// sourcemetric.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourcemetric.DefaultUpdatedAt = sourcemetricDescUpdatedAt.Default.(func() time.Time)
+	// sourcemetric.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourcemetric.UpdateDefaultUpdatedAt = sourcemetricDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourcemetricDescID is the schema descriptor for id field.
+	sourcemetricDescID := sourcemetricFields[0].Descriptor()
+	// sourcemetric.DefaultID holds the default value on creation for the id field.
+	sourcemetric.DefaultID = sourcemetricDescID.Default.(func() uuid.UUID)
 	suwayomisyncstateFields := schema.SuwayomiSyncState{}.Fields()
 	_ = suwayomisyncstateFields
 	// suwayomisyncstateDescLastError is the schema descriptor for last_error field.

@@ -141,6 +141,18 @@ func (f SourceEventFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value,
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceEventMutation", m)
 }
 
+// The SourceMetricFunc type is an adapter to allow the use of ordinary
+// function as SourceMetric mutator.
+type SourceMetricFunc func(context.Context, *ent.SourceMetricMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceMetricFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceMetricMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceMetricMutation", m)
+}
+
 // The SuwayomiSyncStateFunc type is an adapter to allow the use of ordinary
 // function as SuwayomiSyncState mutator.
 type SuwayomiSyncStateFunc func(context.Context, *ent.SuwayomiSyncStateMutation) (ent.Value, error)

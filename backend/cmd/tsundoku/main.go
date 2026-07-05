@@ -37,6 +37,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/job"
+	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/series"
@@ -44,6 +45,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
 // shutdownTimeout is the maximum time allowed for in-flight requests to complete
@@ -82,12 +84,23 @@ func main() {
 	// via the settings API applies on the next cycle without a restart.
 	settingsSvc := settings.NewService(entClient, defaultsFromConfig(cfg))
 
+	// Source-performance metrics store (best-effort recorder + reader). The
+	// imports search fan-out records per-source timings into it; the warm-up job
+	// reads it to target slow sources.
+	metricsSvc := metrics.NewService(entClient)
+
 	// Build the Suwayomi HTTP client and real ChapterFetcher now — these are
 	// just typed values and do not require Suwayomi to be running yet. They are
 	// passed to download.New immediately so the dispatcher is fully wired.
 	httpc := &http.Client{Timeout: cfg.Suwayomi.HTTPTimeout}
 	suwayomiClient := suwayomi.NewClient(cfg.Suwayomi, httpc)
 	suwayomiFetcher := suwayomi.NewFetcher(suwayomiClient)
+
+	// Anti-bot session warm-up job: keeps slow (Cloudflare-protected) sources
+	// warm with a cheap Browse call so interactive search stays fast. Works in
+	// BOTH embedded + external modes — it only needs the Suwayomi client (which
+	// targets BaseURL() either way) and the metrics store.
+	warmupSvc := warmup.NewService(suwayomiClient, metricsSvc, settingsSvc)
 
 	dispatcher := download.New(entClient, suwayomiFetcher, hub, download.Config{
 		PerProviderConcurrency: cfg.Jobs.DownloadConcurrency,
@@ -116,9 +129,9 @@ func main() {
 	// Start the Suwayomi engine. pm is the embedded process manager (nil in
 	// external mode) — the shutdown path guards on pm != nil so Stop() is only
 	// called when tsundoku owns the process.
-	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient)
+	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 
@@ -161,6 +174,8 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		RetryBackoff:           cfg.Jobs.RetryBackoff,
 		StaleGraceDays:         cfg.Health.StaleGraceDays,
 		ExtensionCheckInterval: cfg.Jobs.ExtensionCheckInterval,
+		WarmupInterval:         cfg.Jobs.WarmupInterval,
+		WarmupSlowThresholdMs:  cfg.Jobs.WarmupSlowThresholdMs,
 	}
 }
 
@@ -183,18 +198,21 @@ func startSuwayomiEngine(
 	refreshSvc *refresh.Service,
 	unhealthyCount func(context.Context) (int, error),
 	swClient suwayomi.Client,
+	warmupSvc *warmup.Service,
 ) *suwayomi.ProcessManager {
 	startTickers := func() {
 		// Log the currently-resolved cadence (the loops re-read it each cycle, so
 		// these are the values in force right now, not a fixed schedule).
-		slog.Info("tsundoku: starting download + refresh + extension-check tickers",
+		slog.Info("tsundoku: starting download + refresh + extension-check + warm-up tickers",
 			"download_interval", settingsSvc.DownloadInterval(ctx),
 			"refresh_interval", settingsSvc.RefreshInterval(ctx),
 			"extension_check_interval", settingsSvc.ExtensionCheckInterval(ctx),
+			"warmup_interval", settingsSvc.WarmupInterval(ctx),
 		)
 		runner.Start(ctx)
 		runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 		runner.StartExtensionCheck(ctx, swClient)
+		runner.StartWarmup(ctx, warmupSvc)
 	}
 
 	if cfg.Suwayomi.IsExternal() {

@@ -825,6 +825,79 @@ components:
                 type: string
                 example: 30m
 
+    SourceMetric:
+      type: object
+      description: |
+        One source's rolling search-performance snapshot. "isSlow" is derived at
+        read time (ewmaLatencyMs > the current slow threshold), never stored — so
+        the threshold can be re-tuned without a migration.
+      required:
+        - sourceId
+        - sourceName
+        - ewmaLatencyMs
+        - lastLatencyMs
+        - searchCount
+        - successCount
+        - failCount
+        - lastError
+        - updatedAt
+        - isSlow
+      properties:
+        sourceId:
+          type: string
+          description: The Suwayomi source id.
+        sourceName:
+          type: string
+          description: The source's display name (denormalized).
+        ewmaLatencyMs:
+          type: integer
+          description: Exponentially-weighted rolling search latency, in milliseconds.
+        lastLatencyMs:
+          type: integer
+          description: Most recent measured search latency, in milliseconds.
+        searchCount:
+          type: integer
+          description: Lifetime number of recorded searches against this source.
+        successCount:
+          type: integer
+          description: Lifetime number of successful searches.
+        failCount:
+          type: integer
+          description: Lifetime number of failed/timed-out searches.
+        lastError:
+          type: string
+          description: Most recent failure reason ("" when none).
+        lastErrorAt:
+          type: string
+          format: date-time
+          description: When the most recent failure occurred (absent if never failed).
+        lastSuccessAt:
+          type: string
+          format: date-time
+          description: When the most recent success occurred (absent if never succeeded).
+        lastWarmedAt:
+          type: string
+          format: date-time
+          description: When the source was last warmed (absent if never warmed).
+        updatedAt:
+          type: string
+          format: date-time
+          description: When this snapshot was last written.
+        isSlow:
+          type: boolean
+          description: |
+            Derived flag — true when the source has never been measured OR its
+            ewmaLatencyMs exceeds the current slow threshold.
+
+    SourceWarmResult:
+      type: object
+      required: [warmed]
+      properties:
+        warmed:
+          type: integer
+          description: Number of sources warmed successfully in the pass.
+          example: 12
+
     SuwayomiSettings:
       type: object
       description: |
@@ -3289,6 +3362,69 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/metrics:
+    get:
+      operationId: listSourceMetrics
+      summary: List per-source search-performance metrics
+      description: |
+        Returns every source's rolling search-performance snapshot (slowest first),
+        each with a derived "isSlow" flag computed against the current slow
+        threshold. Backs the source-metrics screen and the anti-bot warm-up
+        decision (which sources are cold/slow).
+      tags:
+        - sources
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The per-source metrics, sorted by EWMA latency descending.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceMetric"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/warmup:
+    post:
+      operationId: warmupSources
+      summary: Trigger an anti-bot session warm-up pass
+      description: |
+        Runs a full warm-up pass over every enabled source (a cheap Browse call
+        that refreshes each source's cached anti-bot challenge clearance), so
+        interactive search stays fast. Serial across sources. Returns the number
+        warmed. An upstream Suwayomi failure (e.g. the source list is unreachable)
+        is a 502.
+      tags:
+        - sources
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The warm-up pass completed. Returns the number of sources warmed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceWarmResult"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Suwayomi was unreachable or returned an error.
           content:
             application/json:
               schema:

@@ -64,6 +64,18 @@ func (s *Service) ExtensionCheckInterval(ctx context.Context) time.Duration {
 	return s.resolveDuration(ctx, KeyExtensionCheckInterval)
 }
 
+// WarmupInterval is the anti-bot session warm-up ticker period; 0 = disabled
+// (DB override else default).
+func (s *Service) WarmupInterval(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeyWarmupInterval)
+}
+
+// WarmupSlowThresholdMs is the EWMA-latency threshold (ms) above which a source
+// is warmed by the WarmSlow pass (DB override else default).
+func (s *Service) WarmupSlowThresholdMs(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyWarmupSlowThresholdMs)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

@@ -24,6 +24,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
+	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 )
 
@@ -47,6 +48,7 @@ const (
 	TypeSeriesProvider    = "SeriesProvider"
 	TypeSettings          = "Settings"
 	TypeSourceEvent       = "SourceEvent"
+	TypeSourceMetric      = "SourceMetric"
 	TypeSuwayomiSyncState = "SuwayomiSyncState"
 )
 
@@ -9209,6 +9211,1160 @@ func (m *SourceEventMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SourceEventMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown SourceEvent edge %s", name)
+}
+
+// SourceMetricMutation represents an operation that mutates the SourceMetric nodes in the graph.
+type SourceMetricMutation struct {
+	config
+	op                 Op
+	typ                string
+	id                 *uuid.UUID
+	source_id          *string
+	source_name        *string
+	ewma_latency_ms    *int
+	addewma_latency_ms *int
+	last_latency_ms    *int
+	addlast_latency_ms *int
+	search_count       *int
+	addsearch_count    *int
+	success_count      *int
+	addsuccess_count   *int
+	fail_count         *int
+	addfail_count      *int
+	last_error         *string
+	last_error_at      *time.Time
+	last_success_at    *time.Time
+	last_warmed_at     *time.Time
+	updated_at         *time.Time
+	clearedFields      map[string]struct{}
+	done               bool
+	oldValue           func(context.Context) (*SourceMetric, error)
+	predicates         []predicate.SourceMetric
+}
+
+var _ ent.Mutation = (*SourceMetricMutation)(nil)
+
+// sourcemetricOption allows management of the mutation configuration using functional options.
+type sourcemetricOption func(*SourceMetricMutation)
+
+// newSourceMetricMutation creates new mutation for the SourceMetric entity.
+func newSourceMetricMutation(c config, op Op, opts ...sourcemetricOption) *SourceMetricMutation {
+	m := &SourceMetricMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceMetric,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceMetricID sets the ID field of the mutation.
+func withSourceMetricID(id uuid.UUID) sourcemetricOption {
+	return func(m *SourceMetricMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceMetric
+		)
+		m.oldValue = func(ctx context.Context) (*SourceMetric, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceMetric.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceMetric sets the old SourceMetric of the mutation.
+func withSourceMetric(node *SourceMetric) sourcemetricOption {
+	return func(m *SourceMetricMutation) {
+		m.oldValue = func(context.Context) (*SourceMetric, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceMetricMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceMetricMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceMetric entities.
+func (m *SourceMetricMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceMetricMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceMetricMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceMetric.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourceMetricMutation) SetSourceID(s string) {
+	m.source_id = &s
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourceMetricMutation) SourceID() (r string, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldSourceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourceMetricMutation) ResetSourceID() {
+	m.source_id = nil
+}
+
+// SetSourceName sets the "source_name" field.
+func (m *SourceMetricMutation) SetSourceName(s string) {
+	m.source_name = &s
+}
+
+// SourceName returns the value of the "source_name" field in the mutation.
+func (m *SourceMetricMutation) SourceName() (r string, exists bool) {
+	v := m.source_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceName returns the old "source_name" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldSourceName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceName: %w", err)
+	}
+	return oldValue.SourceName, nil
+}
+
+// ResetSourceName resets all changes to the "source_name" field.
+func (m *SourceMetricMutation) ResetSourceName() {
+	m.source_name = nil
+}
+
+// SetEwmaLatencyMs sets the "ewma_latency_ms" field.
+func (m *SourceMetricMutation) SetEwmaLatencyMs(i int) {
+	m.ewma_latency_ms = &i
+	m.addewma_latency_ms = nil
+}
+
+// EwmaLatencyMs returns the value of the "ewma_latency_ms" field in the mutation.
+func (m *SourceMetricMutation) EwmaLatencyMs() (r int, exists bool) {
+	v := m.ewma_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEwmaLatencyMs returns the old "ewma_latency_ms" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldEwmaLatencyMs(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEwmaLatencyMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEwmaLatencyMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEwmaLatencyMs: %w", err)
+	}
+	return oldValue.EwmaLatencyMs, nil
+}
+
+// AddEwmaLatencyMs adds i to the "ewma_latency_ms" field.
+func (m *SourceMetricMutation) AddEwmaLatencyMs(i int) {
+	if m.addewma_latency_ms != nil {
+		*m.addewma_latency_ms += i
+	} else {
+		m.addewma_latency_ms = &i
+	}
+}
+
+// AddedEwmaLatencyMs returns the value that was added to the "ewma_latency_ms" field in this mutation.
+func (m *SourceMetricMutation) AddedEwmaLatencyMs() (r int, exists bool) {
+	v := m.addewma_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEwmaLatencyMs resets all changes to the "ewma_latency_ms" field.
+func (m *SourceMetricMutation) ResetEwmaLatencyMs() {
+	m.ewma_latency_ms = nil
+	m.addewma_latency_ms = nil
+}
+
+// SetLastLatencyMs sets the "last_latency_ms" field.
+func (m *SourceMetricMutation) SetLastLatencyMs(i int) {
+	m.last_latency_ms = &i
+	m.addlast_latency_ms = nil
+}
+
+// LastLatencyMs returns the value of the "last_latency_ms" field in the mutation.
+func (m *SourceMetricMutation) LastLatencyMs() (r int, exists bool) {
+	v := m.last_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastLatencyMs returns the old "last_latency_ms" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldLastLatencyMs(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastLatencyMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastLatencyMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastLatencyMs: %w", err)
+	}
+	return oldValue.LastLatencyMs, nil
+}
+
+// AddLastLatencyMs adds i to the "last_latency_ms" field.
+func (m *SourceMetricMutation) AddLastLatencyMs(i int) {
+	if m.addlast_latency_ms != nil {
+		*m.addlast_latency_ms += i
+	} else {
+		m.addlast_latency_ms = &i
+	}
+}
+
+// AddedLastLatencyMs returns the value that was added to the "last_latency_ms" field in this mutation.
+func (m *SourceMetricMutation) AddedLastLatencyMs() (r int, exists bool) {
+	v := m.addlast_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetLastLatencyMs resets all changes to the "last_latency_ms" field.
+func (m *SourceMetricMutation) ResetLastLatencyMs() {
+	m.last_latency_ms = nil
+	m.addlast_latency_ms = nil
+}
+
+// SetSearchCount sets the "search_count" field.
+func (m *SourceMetricMutation) SetSearchCount(i int) {
+	m.search_count = &i
+	m.addsearch_count = nil
+}
+
+// SearchCount returns the value of the "search_count" field in the mutation.
+func (m *SourceMetricMutation) SearchCount() (r int, exists bool) {
+	v := m.search_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSearchCount returns the old "search_count" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldSearchCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSearchCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSearchCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSearchCount: %w", err)
+	}
+	return oldValue.SearchCount, nil
+}
+
+// AddSearchCount adds i to the "search_count" field.
+func (m *SourceMetricMutation) AddSearchCount(i int) {
+	if m.addsearch_count != nil {
+		*m.addsearch_count += i
+	} else {
+		m.addsearch_count = &i
+	}
+}
+
+// AddedSearchCount returns the value that was added to the "search_count" field in this mutation.
+func (m *SourceMetricMutation) AddedSearchCount() (r int, exists bool) {
+	v := m.addsearch_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSearchCount resets all changes to the "search_count" field.
+func (m *SourceMetricMutation) ResetSearchCount() {
+	m.search_count = nil
+	m.addsearch_count = nil
+}
+
+// SetSuccessCount sets the "success_count" field.
+func (m *SourceMetricMutation) SetSuccessCount(i int) {
+	m.success_count = &i
+	m.addsuccess_count = nil
+}
+
+// SuccessCount returns the value of the "success_count" field in the mutation.
+func (m *SourceMetricMutation) SuccessCount() (r int, exists bool) {
+	v := m.success_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSuccessCount returns the old "success_count" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldSuccessCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSuccessCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSuccessCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSuccessCount: %w", err)
+	}
+	return oldValue.SuccessCount, nil
+}
+
+// AddSuccessCount adds i to the "success_count" field.
+func (m *SourceMetricMutation) AddSuccessCount(i int) {
+	if m.addsuccess_count != nil {
+		*m.addsuccess_count += i
+	} else {
+		m.addsuccess_count = &i
+	}
+}
+
+// AddedSuccessCount returns the value that was added to the "success_count" field in this mutation.
+func (m *SourceMetricMutation) AddedSuccessCount() (r int, exists bool) {
+	v := m.addsuccess_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSuccessCount resets all changes to the "success_count" field.
+func (m *SourceMetricMutation) ResetSuccessCount() {
+	m.success_count = nil
+	m.addsuccess_count = nil
+}
+
+// SetFailCount sets the "fail_count" field.
+func (m *SourceMetricMutation) SetFailCount(i int) {
+	m.fail_count = &i
+	m.addfail_count = nil
+}
+
+// FailCount returns the value of the "fail_count" field in the mutation.
+func (m *SourceMetricMutation) FailCount() (r int, exists bool) {
+	v := m.fail_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFailCount returns the old "fail_count" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldFailCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFailCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFailCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFailCount: %w", err)
+	}
+	return oldValue.FailCount, nil
+}
+
+// AddFailCount adds i to the "fail_count" field.
+func (m *SourceMetricMutation) AddFailCount(i int) {
+	if m.addfail_count != nil {
+		*m.addfail_count += i
+	} else {
+		m.addfail_count = &i
+	}
+}
+
+// AddedFailCount returns the value that was added to the "fail_count" field in this mutation.
+func (m *SourceMetricMutation) AddedFailCount() (r int, exists bool) {
+	v := m.addfail_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetFailCount resets all changes to the "fail_count" field.
+func (m *SourceMetricMutation) ResetFailCount() {
+	m.fail_count = nil
+	m.addfail_count = nil
+}
+
+// SetLastError sets the "last_error" field.
+func (m *SourceMetricMutation) SetLastError(s string) {
+	m.last_error = &s
+}
+
+// LastError returns the value of the "last_error" field in the mutation.
+func (m *SourceMetricMutation) LastError() (r string, exists bool) {
+	v := m.last_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastError returns the old "last_error" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldLastError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastError: %w", err)
+	}
+	return oldValue.LastError, nil
+}
+
+// ResetLastError resets all changes to the "last_error" field.
+func (m *SourceMetricMutation) ResetLastError() {
+	m.last_error = nil
+}
+
+// SetLastErrorAt sets the "last_error_at" field.
+func (m *SourceMetricMutation) SetLastErrorAt(t time.Time) {
+	m.last_error_at = &t
+}
+
+// LastErrorAt returns the value of the "last_error_at" field in the mutation.
+func (m *SourceMetricMutation) LastErrorAt() (r time.Time, exists bool) {
+	v := m.last_error_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastErrorAt returns the old "last_error_at" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldLastErrorAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastErrorAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastErrorAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastErrorAt: %w", err)
+	}
+	return oldValue.LastErrorAt, nil
+}
+
+// ClearLastErrorAt clears the value of the "last_error_at" field.
+func (m *SourceMetricMutation) ClearLastErrorAt() {
+	m.last_error_at = nil
+	m.clearedFields[sourcemetric.FieldLastErrorAt] = struct{}{}
+}
+
+// LastErrorAtCleared returns if the "last_error_at" field was cleared in this mutation.
+func (m *SourceMetricMutation) LastErrorAtCleared() bool {
+	_, ok := m.clearedFields[sourcemetric.FieldLastErrorAt]
+	return ok
+}
+
+// ResetLastErrorAt resets all changes to the "last_error_at" field.
+func (m *SourceMetricMutation) ResetLastErrorAt() {
+	m.last_error_at = nil
+	delete(m.clearedFields, sourcemetric.FieldLastErrorAt)
+}
+
+// SetLastSuccessAt sets the "last_success_at" field.
+func (m *SourceMetricMutation) SetLastSuccessAt(t time.Time) {
+	m.last_success_at = &t
+}
+
+// LastSuccessAt returns the value of the "last_success_at" field in the mutation.
+func (m *SourceMetricMutation) LastSuccessAt() (r time.Time, exists bool) {
+	v := m.last_success_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastSuccessAt returns the old "last_success_at" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldLastSuccessAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastSuccessAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastSuccessAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastSuccessAt: %w", err)
+	}
+	return oldValue.LastSuccessAt, nil
+}
+
+// ClearLastSuccessAt clears the value of the "last_success_at" field.
+func (m *SourceMetricMutation) ClearLastSuccessAt() {
+	m.last_success_at = nil
+	m.clearedFields[sourcemetric.FieldLastSuccessAt] = struct{}{}
+}
+
+// LastSuccessAtCleared returns if the "last_success_at" field was cleared in this mutation.
+func (m *SourceMetricMutation) LastSuccessAtCleared() bool {
+	_, ok := m.clearedFields[sourcemetric.FieldLastSuccessAt]
+	return ok
+}
+
+// ResetLastSuccessAt resets all changes to the "last_success_at" field.
+func (m *SourceMetricMutation) ResetLastSuccessAt() {
+	m.last_success_at = nil
+	delete(m.clearedFields, sourcemetric.FieldLastSuccessAt)
+}
+
+// SetLastWarmedAt sets the "last_warmed_at" field.
+func (m *SourceMetricMutation) SetLastWarmedAt(t time.Time) {
+	m.last_warmed_at = &t
+}
+
+// LastWarmedAt returns the value of the "last_warmed_at" field in the mutation.
+func (m *SourceMetricMutation) LastWarmedAt() (r time.Time, exists bool) {
+	v := m.last_warmed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastWarmedAt returns the old "last_warmed_at" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldLastWarmedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastWarmedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastWarmedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastWarmedAt: %w", err)
+	}
+	return oldValue.LastWarmedAt, nil
+}
+
+// ClearLastWarmedAt clears the value of the "last_warmed_at" field.
+func (m *SourceMetricMutation) ClearLastWarmedAt() {
+	m.last_warmed_at = nil
+	m.clearedFields[sourcemetric.FieldLastWarmedAt] = struct{}{}
+}
+
+// LastWarmedAtCleared returns if the "last_warmed_at" field was cleared in this mutation.
+func (m *SourceMetricMutation) LastWarmedAtCleared() bool {
+	_, ok := m.clearedFields[sourcemetric.FieldLastWarmedAt]
+	return ok
+}
+
+// ResetLastWarmedAt resets all changes to the "last_warmed_at" field.
+func (m *SourceMetricMutation) ResetLastWarmedAt() {
+	m.last_warmed_at = nil
+	delete(m.clearedFields, sourcemetric.FieldLastWarmedAt)
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceMetricMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceMetricMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceMetric entity.
+// If the SourceMetric object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceMetricMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceMetricMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourceMetricMutation builder.
+func (m *SourceMetricMutation) Where(ps ...predicate.SourceMetric) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceMetricMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceMetricMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceMetric, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceMetricMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceMetricMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceMetric).
+func (m *SourceMetricMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceMetricMutation) Fields() []string {
+	fields := make([]string, 0, 12)
+	if m.source_id != nil {
+		fields = append(fields, sourcemetric.FieldSourceID)
+	}
+	if m.source_name != nil {
+		fields = append(fields, sourcemetric.FieldSourceName)
+	}
+	if m.ewma_latency_ms != nil {
+		fields = append(fields, sourcemetric.FieldEwmaLatencyMs)
+	}
+	if m.last_latency_ms != nil {
+		fields = append(fields, sourcemetric.FieldLastLatencyMs)
+	}
+	if m.search_count != nil {
+		fields = append(fields, sourcemetric.FieldSearchCount)
+	}
+	if m.success_count != nil {
+		fields = append(fields, sourcemetric.FieldSuccessCount)
+	}
+	if m.fail_count != nil {
+		fields = append(fields, sourcemetric.FieldFailCount)
+	}
+	if m.last_error != nil {
+		fields = append(fields, sourcemetric.FieldLastError)
+	}
+	if m.last_error_at != nil {
+		fields = append(fields, sourcemetric.FieldLastErrorAt)
+	}
+	if m.last_success_at != nil {
+		fields = append(fields, sourcemetric.FieldLastSuccessAt)
+	}
+	if m.last_warmed_at != nil {
+		fields = append(fields, sourcemetric.FieldLastWarmedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourcemetric.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceMetricMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcemetric.FieldSourceID:
+		return m.SourceID()
+	case sourcemetric.FieldSourceName:
+		return m.SourceName()
+	case sourcemetric.FieldEwmaLatencyMs:
+		return m.EwmaLatencyMs()
+	case sourcemetric.FieldLastLatencyMs:
+		return m.LastLatencyMs()
+	case sourcemetric.FieldSearchCount:
+		return m.SearchCount()
+	case sourcemetric.FieldSuccessCount:
+		return m.SuccessCount()
+	case sourcemetric.FieldFailCount:
+		return m.FailCount()
+	case sourcemetric.FieldLastError:
+		return m.LastError()
+	case sourcemetric.FieldLastErrorAt:
+		return m.LastErrorAt()
+	case sourcemetric.FieldLastSuccessAt:
+		return m.LastSuccessAt()
+	case sourcemetric.FieldLastWarmedAt:
+		return m.LastWarmedAt()
+	case sourcemetric.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceMetricMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcemetric.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourcemetric.FieldSourceName:
+		return m.OldSourceName(ctx)
+	case sourcemetric.FieldEwmaLatencyMs:
+		return m.OldEwmaLatencyMs(ctx)
+	case sourcemetric.FieldLastLatencyMs:
+		return m.OldLastLatencyMs(ctx)
+	case sourcemetric.FieldSearchCount:
+		return m.OldSearchCount(ctx)
+	case sourcemetric.FieldSuccessCount:
+		return m.OldSuccessCount(ctx)
+	case sourcemetric.FieldFailCount:
+		return m.OldFailCount(ctx)
+	case sourcemetric.FieldLastError:
+		return m.OldLastError(ctx)
+	case sourcemetric.FieldLastErrorAt:
+		return m.OldLastErrorAt(ctx)
+	case sourcemetric.FieldLastSuccessAt:
+		return m.OldLastSuccessAt(ctx)
+	case sourcemetric.FieldLastWarmedAt:
+		return m.OldLastWarmedAt(ctx)
+	case sourcemetric.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceMetric field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceMetricMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcemetric.FieldSourceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourcemetric.FieldSourceName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceName(v)
+		return nil
+	case sourcemetric.FieldEwmaLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEwmaLatencyMs(v)
+		return nil
+	case sourcemetric.FieldLastLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastLatencyMs(v)
+		return nil
+	case sourcemetric.FieldSearchCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSearchCount(v)
+		return nil
+	case sourcemetric.FieldSuccessCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSuccessCount(v)
+		return nil
+	case sourcemetric.FieldFailCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFailCount(v)
+		return nil
+	case sourcemetric.FieldLastError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastError(v)
+		return nil
+	case sourcemetric.FieldLastErrorAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastErrorAt(v)
+		return nil
+	case sourcemetric.FieldLastSuccessAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastSuccessAt(v)
+		return nil
+	case sourcemetric.FieldLastWarmedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastWarmedAt(v)
+		return nil
+	case sourcemetric.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceMetric field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceMetricMutation) AddedFields() []string {
+	var fields []string
+	if m.addewma_latency_ms != nil {
+		fields = append(fields, sourcemetric.FieldEwmaLatencyMs)
+	}
+	if m.addlast_latency_ms != nil {
+		fields = append(fields, sourcemetric.FieldLastLatencyMs)
+	}
+	if m.addsearch_count != nil {
+		fields = append(fields, sourcemetric.FieldSearchCount)
+	}
+	if m.addsuccess_count != nil {
+		fields = append(fields, sourcemetric.FieldSuccessCount)
+	}
+	if m.addfail_count != nil {
+		fields = append(fields, sourcemetric.FieldFailCount)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceMetricMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourcemetric.FieldEwmaLatencyMs:
+		return m.AddedEwmaLatencyMs()
+	case sourcemetric.FieldLastLatencyMs:
+		return m.AddedLastLatencyMs()
+	case sourcemetric.FieldSearchCount:
+		return m.AddedSearchCount()
+	case sourcemetric.FieldSuccessCount:
+		return m.AddedSuccessCount()
+	case sourcemetric.FieldFailCount:
+		return m.AddedFailCount()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceMetricMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourcemetric.FieldEwmaLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEwmaLatencyMs(v)
+		return nil
+	case sourcemetric.FieldLastLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLastLatencyMs(v)
+		return nil
+	case sourcemetric.FieldSearchCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSearchCount(v)
+		return nil
+	case sourcemetric.FieldSuccessCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSuccessCount(v)
+		return nil
+	case sourcemetric.FieldFailCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddFailCount(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceMetric numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceMetricMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourcemetric.FieldLastErrorAt) {
+		fields = append(fields, sourcemetric.FieldLastErrorAt)
+	}
+	if m.FieldCleared(sourcemetric.FieldLastSuccessAt) {
+		fields = append(fields, sourcemetric.FieldLastSuccessAt)
+	}
+	if m.FieldCleared(sourcemetric.FieldLastWarmedAt) {
+		fields = append(fields, sourcemetric.FieldLastWarmedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceMetricMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceMetricMutation) ClearField(name string) error {
+	switch name {
+	case sourcemetric.FieldLastErrorAt:
+		m.ClearLastErrorAt()
+		return nil
+	case sourcemetric.FieldLastSuccessAt:
+		m.ClearLastSuccessAt()
+		return nil
+	case sourcemetric.FieldLastWarmedAt:
+		m.ClearLastWarmedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceMetric nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceMetricMutation) ResetField(name string) error {
+	switch name {
+	case sourcemetric.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourcemetric.FieldSourceName:
+		m.ResetSourceName()
+		return nil
+	case sourcemetric.FieldEwmaLatencyMs:
+		m.ResetEwmaLatencyMs()
+		return nil
+	case sourcemetric.FieldLastLatencyMs:
+		m.ResetLastLatencyMs()
+		return nil
+	case sourcemetric.FieldSearchCount:
+		m.ResetSearchCount()
+		return nil
+	case sourcemetric.FieldSuccessCount:
+		m.ResetSuccessCount()
+		return nil
+	case sourcemetric.FieldFailCount:
+		m.ResetFailCount()
+		return nil
+	case sourcemetric.FieldLastError:
+		m.ResetLastError()
+		return nil
+	case sourcemetric.FieldLastErrorAt:
+		m.ResetLastErrorAt()
+		return nil
+	case sourcemetric.FieldLastSuccessAt:
+		m.ResetLastSuccessAt()
+		return nil
+	case sourcemetric.FieldLastWarmedAt:
+		m.ResetLastWarmedAt()
+		return nil
+	case sourcemetric.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceMetric field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceMetricMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceMetricMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceMetricMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceMetricMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceMetricMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceMetricMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceMetricMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceMetric unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceMetricMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceMetric edge %s", name)
 }
 
 // SuwayomiSyncStateMutation represents an operation that mutates the SuwayomiSyncState nodes in the graph.
