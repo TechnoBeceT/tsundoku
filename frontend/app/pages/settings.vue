@@ -2,9 +2,11 @@
 /**
  * Settings page — route "/settings".
  *
- * Assembles the 5-pane Settings screen from four composables:
+ * Assembles the 6-pane Settings screen from five composables:
  *   useSettings()         → library knobs + system info + saveLibrary
  *                           + extensionCheckInterval + saveExtensionCheckInterval
+ *                           + sourcesSettings + saveSourcesSettings (warm-up +
+ *                           circuit-breaker knobs, source-politeness spec)
  *   useCategories()       → settingsCategories + categoryAction + CRUD methods
  *   useSuwayomiSettings() → config + suwayomiSave + save
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
@@ -31,6 +33,10 @@
  *   :repo-action          — repoAction from useExtensions
  *   :ext-check-interval   — extensionCheckInterval from useSettings (live tunable)
  *   :checking-updates     — checkingUpdates from useExtensions
+ *   :sources-settings     — sourcesSettings from useSettings (shares its `pending`
+ *                           with library/system — same GET /api/settings call, so
+ *                           it stays in the global loading gate, unlike sourceMetrics)
+ *   :sources-settings-save — sourcesSettingsSave from useSettings
  *   :source-metrics       — metrics from useSourceMetrics
  *   :source-metrics-pending — pending from useSourceMetrics (pane-owned, NOT in
  *                           the global loading gate so a warm refetch never
@@ -59,6 +65,7 @@
  *   @remove-repo                 → removeRepo
  *   @reorder-repo                → reorderRepo
  *   @update:ext-check-interval   → saveExtensionCheckInterval
+ *   @save-sources-settings       → saveSourcesSettings
  *   @warm-now                    → warmNow
  */
 import type { EngineInfo, SettingsPane } from '~/components/screens/settings.types'
@@ -69,6 +76,9 @@ const {
   librarySave,
   extensionCheckInterval,
   saveExtensionCheckInterval,
+  sourcesSettings,
+  sourcesSettingsSave,
+  saveSourcesSettings,
   pending: settingsPending,
   saveLibrary,
 } = useSettings()
@@ -176,6 +186,8 @@ const loading = computed(
       :repo-action="repoAction"
       :ext-check-interval="extensionCheckInterval"
       :checking-updates="checkingUpdates"
+      :sources-settings="sourcesSettings"
+      :sources-settings-save="sourcesSettingsSave"
       :source-metrics="sourceMetrics"
       :source-metrics-pending="sourceMetricsPending"
       :source-metrics-error="sourceMetricsError"
@@ -200,6 +212,7 @@ const loading = computed(
       @remove-repo="removeRepo"
       @reorder-repo="reorderRepo"
       @update:ext-check-interval="saveExtensionCheckInterval"
+      @save-sources-settings="saveSourcesSettings"
       @warm-now="warmNow"
     />
   </div>

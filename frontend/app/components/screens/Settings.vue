@@ -6,6 +6,7 @@ import EnginePane from '../settings/EnginePane.vue'
 import SuwayomiPane from '../settings/SuwayomiPane.vue'
 import ExtensionsPane from '../settings/ExtensionsPane.vue'
 import SourceMetricsPane from '../settings/SourceMetricsPane.vue'
+import SourcesSettingsPane from '../settings/SourcesSettingsPane.vue'
 import type {
   DurationValue,
   EngineInfo,
@@ -18,6 +19,7 @@ import type {
   SettingsCategory,
   SettingsPane,
   SourceMetric,
+  SourcesSettings,
   SuwayomiConfig,
   SystemInfo,
   UpgradeStep,
@@ -32,7 +34,9 @@ import type {
  *   - engine      → EnginePane       (read-only status + upgrade stepper)
  *   - suwayomi    → SuwayomiPane      (proxied SOCKS + FlareSolverr config)
  *   - extensions  → ExtensionsPane    (installed / available / repositories)
- *   - sources     → SourceMetricsPane (per-source search metrics + Warm now)
+ *   - sources     → SourcesSettingsPane (warm-up + circuit-breaker knobs)
+ *                   + SourceMetricsPane (per-source search metrics + Warm now),
+ *                   stacked — mirrors how LibraryPane stacks its own two cards
  *
  * Presentation only: ALL state arrives via props and every mutation is emitted —
  * the panes own their local editable copies (§16 round-trip) and re-emit each
@@ -77,6 +81,10 @@ withDefaults(defineProps<{
   extCheckInterval: DurationValue
   /** Whether a "check for updates" call is in flight. */
   checkingUpdates?: boolean
+  /** The runtime-editable warm-up + circuit-breaker knobs (2f, Sources pane). */
+  sourcesSettings: SourcesSettings
+  /** §16 state of the Sources-pane Save button. */
+  sourcesSettingsSave?: SaveState
   /** Per-source search metrics (2f), slowest-first. */
   sourceMetrics?: SourceMetric[]
   /** Whether the source-metrics list is loading. */
@@ -101,6 +109,7 @@ withDefaults(defineProps<{
   extensionAction: () => ({ busyId: null }),
   repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
+  sourcesSettingsSave: () => ({ status: 'idle' }),
   sourceMetrics: () => [],
   sourceMetricsPending: false,
   sourceMetricsError: null,
@@ -145,6 +154,8 @@ const emit = defineEmits<{
   'reorder-repo': [payload: { id: string, direction: ReorderDirection }]
   /** The extension update-check cadence was changed by the user. */
   'update:ext-check-interval': [DurationValue]
+  /** Persist the edited Sources-pane warm-up/circuit-breaker knobs. */
+  'save-sources-settings': [settings: SourcesSettings]
   /** Trigger a manual warm-up pass across all sources. */
   'warm-now': []
 }>()
@@ -216,16 +227,23 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @update:ext-check-interval="emit('update:ext-check-interval', $event)"
         />
 
-        <SourceMetricsPane
-          v-else
-          :metrics="sourceMetrics"
-          :pending="sourceMetricsPending"
-          :error="sourceMetricsError"
-          :warming="warming"
-          :warm-message="warmMessage"
-          :warm-error="warmError"
-          @warm-now="emit('warm-now')"
-        />
+        <div v-else class="pane-stack">
+          <SourcesSettingsPane
+            :sources="sourcesSettings"
+            :save="sourcesSettingsSave"
+            @save="emit('save-sources-settings', $event)"
+          />
+
+          <SourceMetricsPane
+            :metrics="sourceMetrics"
+            :pending="sourceMetricsPending"
+            :error="sourceMetricsError"
+            :warming="warming"
+            :warm-message="warmMessage"
+            :warm-error="warmError"
+            @warm-now="emit('warm-now')"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -248,6 +266,14 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
 .pane {
   min-width: 0;
+}
+
+/* The Sources pane stacks two cards (settings + metrics) with the shared
+   16px inter-card rhythm — same shape as LibraryPane's own pane-stack. */
+.pane-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 /* ---- Skeletons ------------------------------------------------------------ */

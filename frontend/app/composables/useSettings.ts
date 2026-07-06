@@ -25,11 +25,26 @@
  *
  * Standalone tunables (not part of LibrarySettings — live in other panes):
  *   jobs.extension_check_interval → extensionCheckInterval (DurationValue)
+ *
+ * Sources pane tunables (SourcesSettings — the source-politeness spec):
+ *   jobs.warmup_interval           → warmupInterval        (DurationValue)
+ *   jobs.warmup_slow_threshold_ms  → warmupSlowThresholdMs (number, ms — a
+ *                                    plain int like maxRetries/staleGraceDays)
+ *   sources.failure_threshold      → failureThreshold      (number)
+ *   sources.cooldown               → cooldown              (DurationValue)
+ *   sources.min_request_delay      → minRequestDelayMs     (number, ms — a
+ *                                    true backend DURATION, but edited/
+ *                                    serialised at MILLISECOND granularity
+ *                                    since its default (500ms) and 0=off floor
+ *                                    are sub-minute; see parseGoDurationMs /
+ *                                    formatMsDuration below, NOT parseGoDuration
+ *                                    (that h/m/s parser misreads "500ms" as
+ *                                    500 minutes — the "m" in "ms" collides).
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { DurationValue, LibrarySettings, SystemInfo, SaveState } from '~/components/screens/settings.types'
+import type { DurationValue, LibrarySettings, SourcesSettings, SystemInfo, SaveState } from '~/components/screens/settings.types'
 
 type SettingDTO = components['schemas']['Setting']
 type SystemDTO = components['schemas']['System']
@@ -69,6 +84,47 @@ export function formatGoDuration(d: DurationValue): string {
   return `${d.value}${d.unit}`
 }
 
+// Matches one Go-duration component: an integer or decimal amount followed by
+// its unit suffix. "ms" is listed before "m" in the alternation so "500ms"
+// parses as 500 milliseconds, not 500 minutes ("m" is a prefix of "ms").
+const DURATION_COMPONENT_RE = /(\d+(?:\.\d+)?)(ms|h|m|s)/g
+
+/**
+ * Parse a Go duration string to its total whole milliseconds — used for
+ * `sources.min_request_delay`, a true backend duration whose default (500ms)
+ * and 0=off floor need millisecond, not h/m/s, granularity. Unlike
+ * `parseGoDuration` (which only recognises bare h/m/s and would misread the
+ * "m" inside "500ms" as minutes), this walks every component ("2h", "1m",
+ * "30.5s", "500ms", …) and sums them, so it correctly handles whatever
+ * canonical form `time.Duration.String()` returns (including fractional
+ * seconds, e.g. "2.5s" for a 2500ms delay).
+ *
+ * Edge case: an unparseable/empty string → 0.
+ */
+export function parseGoDurationMs(raw: string): number {
+  let totalMs = 0
+  for (const match of raw.matchAll(DURATION_COMPONENT_RE)) {
+    const amount = Number.parseFloat(match[1])
+    switch (match[2]) {
+      case 'h': totalMs += amount * 3_600_000; break
+      case 'm': totalMs += amount * 60_000; break
+      case 's': totalMs += amount * 1_000; break
+      case 'ms': totalMs += amount; break
+    }
+  }
+  return Math.round(totalMs)
+}
+
+/**
+ * Serialise a millisecond amount to a Go-parseable duration string, e.g.
+ * `formatMsDuration(500)` → `"500ms"`. Always emits the `ms` unit — simplest
+ * canonical form `time.ParseDuration` accepts, round-trips exactly for the
+ * millisecond-granularity `sources.min_request_delay` knob.
+ */
+export function formatMsDuration(ms: number): string {
+  return `${Math.max(0, Math.round(ms))}ms`
+}
+
 // ── Default fallbacks (used when the backend omits a key — should not happen) ─
 
 const DEFAULTS: LibrarySettings = {
@@ -83,6 +139,16 @@ const DEFAULTS: LibrarySettings = {
 
 // Default for the standalone extension-check-interval tunable (Extensions pane).
 const EXT_CHECK_DEFAULT: DurationValue = { value: 24, unit: 'h' }
+
+// Defaults for the Sources pane tunables (source-politeness spec; mirrors the
+// backend config defaults in internal/settings/tunables.go).
+const SOURCES_DEFAULTS: SourcesSettings = {
+  warmupInterval: { value: 15, unit: 'm' },
+  warmupSlowThresholdMs: 5000,
+  failureThreshold: 5,
+  cooldown: { value: 30, unit: 'm' },
+  minRequestDelayMs: 500,
+}
 
 // ── DTO mappers ───────────────────────────────────────────────────────────────
 
@@ -118,6 +184,34 @@ function mapSystem(dto: SystemDTO): SystemInfo {
   }
 }
 
+/** Maps the Sources pane's 5 keys from the settings list (see the key-mapping doc above). */
+function mapSourcesSettings(settings: SettingDTO[]): SourcesSettings {
+  const v = (key: string): string | undefined => settings.find(s => s.key === key)?.value
+
+  const dur = (key: string, fallback: DurationValue): DurationValue => {
+    const raw = v(key)
+    return raw !== undefined ? parseGoDuration(raw) : { ...fallback }
+  }
+
+  const int = (key: string, fallback: number): number => {
+    const raw = v(key)
+    return raw !== undefined ? Number(raw) : fallback
+  }
+
+  const ms = (key: string, fallback: number): number => {
+    const raw = v(key)
+    return raw !== undefined ? parseGoDurationMs(raw) : fallback
+  }
+
+  return {
+    warmupInterval: dur('jobs.warmup_interval', SOURCES_DEFAULTS.warmupInterval),
+    warmupSlowThresholdMs: int('jobs.warmup_slow_threshold_ms', SOURCES_DEFAULTS.warmupSlowThresholdMs),
+    failureThreshold: int('sources.failure_threshold', SOURCES_DEFAULTS.failureThreshold),
+    cooldown: dur('sources.cooldown', SOURCES_DEFAULTS.cooldown),
+    minRequestDelayMs: ms('sources.min_request_delay', SOURCES_DEFAULTS.minRequestDelayMs),
+  }
+}
+
 // ── Composable ────────────────────────────────────────────────────────────────
 
 export function useSettings() {
@@ -136,6 +230,16 @@ export function useSettings() {
   // Standalone tunable: extension-check cadence (Extensions pane, not LibrarySettings).
   const extensionCheckInterval = ref<DurationValue>({ ...EXT_CHECK_DEFAULT })
   const extSave = ref<SaveState>({ status: 'idle' })
+
+  // Sources pane: warm-up + circuit-breaker + politeness-delay tunables.
+  const sourcesSettings = ref<SourcesSettings>({
+    warmupInterval: { ...SOURCES_DEFAULTS.warmupInterval },
+    warmupSlowThresholdMs: SOURCES_DEFAULTS.warmupSlowThresholdMs,
+    failureThreshold: SOURCES_DEFAULTS.failureThreshold,
+    cooldown: { ...SOURCES_DEFAULTS.cooldown },
+    minRequestDelayMs: SOURCES_DEFAULTS.minRequestDelayMs,
+  })
+  const sourcesSettingsSave = ref<SaveState>({ status: 'idle' })
 
   const pending = ref(false)
   const error = ref<string | null>(null)
@@ -157,6 +261,8 @@ export function useSettings() {
       extensionCheckInterval.value = rawExtCheck !== undefined
         ? parseGoDuration(rawExtCheck)
         : { ...EXT_CHECK_DEFAULT }
+      // Sources pane: the same settings list carries all 5 warm-up/politeness keys.
+      sourcesSettings.value = mapSourcesSettings(settingsRes.data)
     }
     catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load settings'
@@ -238,6 +344,41 @@ export function useSettings() {
     }
   }
 
+  /**
+   * §16 save for the Sources pane: builds the 5-key batch from the edited
+   * SourcesSettings, PATCHes /api/settings, drives sourcesSettingsSave through
+   * the SaveState lifecycle, and reseeds sourcesSettings from the authoritative
+   * response (never the local copy) — mirrors saveLibrary.
+   */
+  async function saveSourcesSettings(next: SourcesSettings): Promise<void> {
+    sourcesSettingsSave.value = { status: 'saving' }
+    try {
+      const res = await apiClient.PATCH('/api/settings', {
+        body: {
+          settings: [
+            { key: 'jobs.warmup_interval', value: formatGoDuration(next.warmupInterval) },
+            { key: 'jobs.warmup_slow_threshold_ms', value: String(next.warmupSlowThresholdMs) },
+            { key: 'sources.failure_threshold', value: String(next.failureThreshold) },
+            { key: 'sources.cooldown', value: formatGoDuration(next.cooldown) },
+            { key: 'sources.min_request_delay', value: formatMsDuration(next.minRequestDelayMs) },
+          ],
+        },
+      })
+      if (res.error) {
+        const msg = (res.error as { message?: string }).message ?? 'Save failed'
+        sourcesSettingsSave.value = { status: 'error', message: msg }
+        return
+      }
+      // §16: reseed from the authoritative response body, not the local copy.
+      if (res.data) sourcesSettings.value = mapSourcesSettings(res.data)
+      sourcesSettingsSave.value = { status: 'success' }
+    }
+    catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      sourcesSettingsSave.value = { status: 'error', message: msg }
+    }
+  }
+
   void refresh()
 
   return {
@@ -246,10 +387,13 @@ export function useSettings() {
     librarySave,
     extensionCheckInterval,
     extSave,
+    sourcesSettings,
+    sourcesSettingsSave,
     pending,
     error,
     saveLibrary,
     saveExtensionCheckInterval,
+    saveSourcesSettings,
     refresh,
   }
 }

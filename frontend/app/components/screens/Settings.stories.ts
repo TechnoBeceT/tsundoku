@@ -10,6 +10,7 @@ import {
   librarySettings,
   repos,
   settingsCategories,
+  sourcesSettings,
   suwayomiConfig,
   systemInfo,
   upgradeStepsInProgress,
@@ -36,6 +37,7 @@ const baseProps = {
   availableExtensions,
   repos,
   extCheckInterval,
+  sourcesSettings,
 }
 
 const meta = {
@@ -94,6 +96,11 @@ export const SuwayomiConfig: Story = {
 /** Sources & Extensions — installed / available / repositories segments. */
 export const Extensions: Story = {
   render: () => withPane('extensions'),
+}
+
+/** Sources pane — warm-up/circuit-breaker knobs stacked above search metrics. */
+export const Sources: Story = {
+  render: () => withPane('sources'),
 }
 
 /**

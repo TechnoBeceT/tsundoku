@@ -27,7 +27,7 @@ const panes: { key: SettingsPane, label: string }[] = [
   { key: 'engine', label: 'Engine' },
   { key: 'suwayomi', label: 'Server config' },
   { key: 'extensions', label: 'Sources & Extensions' },
-  { key: 'sources', label: 'Source Metrics' },
+  { key: 'sources', label: 'Sources' },
 ]
 </script>
 

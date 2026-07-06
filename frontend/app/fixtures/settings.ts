@@ -15,6 +15,7 @@ import type {
   Repo,
   SettingsCategory,
   SourceMetric,
+  SourcesSettings,
   SuwayomiConfig,
   SystemInfo,
   UpgradeStep,
@@ -124,6 +125,21 @@ export const repos: Repo[] = [
 
 /** Background extension update-check cadence (2e). */
 export const extCheckInterval: DurationValue = { value: 12, unit: 'h' }
+
+/** The 5 warm-up/politeness knobs (source-politeness spec), at their defaults. */
+export const sourcesSettings: SourcesSettings = {
+  warmupInterval: { value: 15, unit: 'm' },
+  warmupSlowThresholdMs: 5000,
+  failureThreshold: 5,
+  cooldown: { value: 30, unit: 'm' },
+  minRequestDelayMs: 500,
+}
+
+/** Warm-up disabled (0) — the "a source keeps getting IP-blocked" recommendation. */
+export const sourcesSettingsWarmupDisabled: SourcesSettings = {
+  ...sourcesSettings,
+  warmupInterval: { value: 0, unit: 's' },
+}
 
 /* ---- 2f. Source metrics --------------------------------------------------- */
 

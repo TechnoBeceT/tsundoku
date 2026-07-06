@@ -85,6 +85,25 @@ export interface SystemInfo {
   database: string
 }
 
+/**
+ * SourcesSettings — the anti-IP-block runtime knobs (source-politeness spec):
+ * the warm-up job's cadence/threshold plus the per-source circuit-breaker and
+ * politeness-delay tunables. Surfaced in the Sources pane alongside the
+ * existing per-source search metrics.
+ */
+export interface SourcesSettings {
+  /** How often to keep anti-bot source sessions warm; 0 disables. */
+  warmupInterval: DurationValue
+  /** EWMA-latency threshold (ms) above which WarmSlow treats a source as needing warming. */
+  warmupSlowThresholdMs: number
+  /** Consecutive failures before a source's circuit-breaker trips it into cooldown. */
+  failureThreshold: number
+  /** How long a tripped source's circuit-breaker stays open before it's tried again. */
+  cooldown: DurationValue
+  /** Minimum gap (ms) enforced between requests to one source; 0 disables. */
+  minRequestDelayMs: number
+}
+
 /* ---- 2b. Categories ------------------------------------------------------- */
 
 /**
