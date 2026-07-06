@@ -307,13 +307,24 @@ func batchPerSource(concurrency int) int {
 // the rest remain queued, draining in round-robin-across-series order (see
 // schedule.go).
 func (d *Dispatcher) RunOnce(ctx context.Context) (dispatched int, err error) {
+	return d.RunOnceAt(ctx, time.Now())
+}
+
+// RunOnceAt runs one bounded dispatch pass anchored to the given now. The job
+// runner's drain loop (job.Runner.drainDownloads) snapshots now ONCE per
+// download cycle and passes the SAME value to every pass in that cycle, so a
+// source's per-source backoff (next_attempt_at) cannot elapse mid-cycle and
+// collapse its retry spacing — a slow-timeout source gets one attempt per
+// cycle, not one per pass. RunOnce is the thin time.Now()-anchored entry point
+// used by tests and the Process path; all candidacy + backoff decisions in
+// this pass use the now passed here.
+func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time) (dispatched int, err error) {
 	maxRetries := d.retry.MaxRetries(ctx)
-	now := time.Now()
 	concurrency := d.downloadConcurrency(ctx)
 
 	chapters, err := chapter.WantedChapters(ctx, d.client, wantedScanLimit)
 	if err != nil {
-		return 0, fmt.Errorf("download.Dispatcher.RunOnce: load chapters: %w", err)
+		return 0, fmt.Errorf("download.Dispatcher.RunOnceAt: load chapters: %w", err)
 	}
 	if len(chapters) == 0 {
 		return 0, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -289,9 +290,14 @@ func (s *Service) DeleteSeries(ctx context.Context, id uuid.UUID, deleteFiles bo
 		return err
 	}
 	if deleteFiles {
-		if err := disk.RemoveSeriesDir(s.storage, category.NameOf(row), row.Title); err != nil {
+		removed, err := disk.RemoveSeriesDir(s.storage, category.NameOf(row), row.Title)
+		if err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("series.DeleteSeries: %w", err)
+		}
+		if !removed {
+			slog.Warn("series.DeleteSeries: deleteFiles requested but no series folder found — nothing deleted on disk (the on-disk title may have drifted from the DB title)",
+				"series_id", row.ID, "title", row.Title, "category", category.NameOf(row))
 		}
 	}
 	if err := tx.Commit(); err != nil {

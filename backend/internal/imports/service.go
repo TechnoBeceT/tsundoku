@@ -135,12 +135,22 @@ func isDisabledSource(src suwayomi.Source) bool {
 	return src.Disabled
 }
 
+// isBrokenSource reports whether src is a known-broken source Tsundoku must never
+// touch — currently InfinityScans, whose captcha is broken (hitting it wastes
+// requests + risks IP-blocks). Matched by NAME (case-insensitive). REMOVE this
+// predicate (and its entry in excludedFromPicker) once the source's captcha works
+// again.
+func isBrokenSource(src suwayomi.Source) bool {
+	return strings.EqualFold(src.Name, "InfinityScans")
+}
+
 // excludedFromPicker reports whether src must never appear in a Discover/
-// Search/Browse source picker: Suwayomi's built-in Local source (F1) or a
-// source the owner has disabled. Shared by Sources() and resolveSources() so
-// the two exclusion rules can never drift apart.
+// Search/Browse source picker: Suwayomi's built-in Local source (F1), a
+// source the owner has disabled, or a known-broken source (isBrokenSource).
+// Shared by Sources() and resolveSources() so the exclusion rules can never
+// drift apart.
 func excludedFromPicker(src suwayomi.Source) bool {
-	return isLocalSource(src) || isDisabledSource(src)
+	return isLocalSource(src) || isDisabledSource(src) || isBrokenSource(src)
 }
 
 // EnabledOnlineSources returns every Suwayomi source eligible for the warm-up

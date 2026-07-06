@@ -15,6 +15,11 @@ import (
 // shrink it (see export_test.go SetScanTimeout).
 var scanTimeout = 30 * time.Minute
 
+// scanBlock, when non-nil, makes the scan goroutine WAIT before running the real
+// scan — a test-only seam so a watchdog-timeout test can keep resultCh un-ready
+// until the timeout fires deterministically (nil in production: no wait).
+var scanBlock chan struct{}
+
 // StartScan launches a library scan in the background, streaming scan.start /
 // scan.progress / scan.done over the SSE hub, and returns immediately. It
 // exists because a synchronous scan over a 1000+ series NFS library can run
@@ -35,6 +40,20 @@ func (s *Service) StartScan(ctx context.Context) bool {
 	}
 	s.scanning = true
 	s.scanMu.Unlock()
+
+	// Snapshot the test-tunable seams synchronously, in the CALLER's
+	// goroutine, before any concurrent goroutine below ever touches them.
+	// Production never mutates scanTimeout/scanBlock while a scan is in
+	// flight, so this is a no-op behavior-wise; but reading the package vars
+	// only here — instead of from inside the goroutines spawned below —
+	// means every access is fully sequenced with the caller via ordinary
+	// program order. A test can then call its SetScanTimeout/SetScanBlock
+	// restore funcs immediately after StartScan returns without racing a
+	// goroutine's read of the live global (see scanjob_test.go's
+	// TestStartScan_WatchdogTimeoutReleasesLatch, which relies on exactly
+	// this to be -race clean).
+	timeout := scanTimeout
+	block := scanBlock
 
 	go func() {
 		defer func() {
@@ -64,6 +83,12 @@ func (s *Service) StartScan(ctx context.Context) bool {
 		}
 		resultCh := make(chan scanResult, 1)
 		go func() {
+			if block != nil {
+				select {
+				case <-block:
+				case <-scanCtx.Done():
+				}
+			}
 			found, err := s.scanWithProgress(scanCtx)
 			resultCh <- scanResult{found: found, err: err}
 		}()
@@ -75,7 +100,7 @@ func (s *Service) StartScan(ctx context.Context) bool {
 				return
 			}
 			s.broadcastScan("scan.done", ScanEvent{Total: len(res.found), Found: len(res.found)})
-		case <-time.After(scanTimeout):
+		case <-time.After(timeout):
 			// The inner goroutine above is abandoned here: it keeps running
 			// (and will leak forever if the walk is truly wedged) since Go
 			// cannot interrupt a blocked syscall. That leak is accepted under
@@ -84,7 +109,7 @@ func (s *Service) StartScan(ctx context.Context) bool {
 			// latch true and 409-ing every future scan until a process
 			// restart. Emitting a terminal scan.done + releasing the latch
 			// (via the defer above) lets the owner retry immediately.
-			s.broadcastScan("scan.done", ScanEvent{Error: "scan timed out after " + scanTimeout.String()})
+			s.broadcastScan("scan.done", ScanEvent{Error: "scan timed out after " + timeout.String()})
 		}
 	}()
 	return true
