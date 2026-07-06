@@ -85,10 +85,10 @@ type ChapterDTO struct {
 // LastError) are derived on read — never persisted. Linked is false for a
 // disk-origin provider (suwayomi_id == 0 — an "unlinked/unknown group" created
 // by library import/reconcile, never a real Suwayomi source) so the FE can list
-// it as a Match candidate; ChapterCount is how many of the series' chapters
+// it as a Match candidate. MangaID is the source's Suwayomi manga ID; 0 for
+// unlinked disk-origin providers. ChapterCount is how many of the series' chapters
 // this provider currently satisfies (Chapter.satisfied_by_provider_id == this
 // provider) — the coverage the owner sees before choosing what to match it to.
-// MangaID is the source's Suwayomi manga ID; 0 for unlinked disk-origin providers.
 type ProviderDTO struct {
 	ID               string     `json:"id"`
 	Provider         string     `json:"provider"`
