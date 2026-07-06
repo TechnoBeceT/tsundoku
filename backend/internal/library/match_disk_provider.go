@@ -111,16 +111,7 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 		return series.SeriesDetailDTO{}, err
 	}
 
-	done, err := s.relabelOverlap(ctx, row, diskSP, newSP)
-	if err != nil {
-		return series.SeriesDetailDTO{}, err
-	}
-
-	// The TARGET importance is applied only inside commitMatch's tx, atomically
-	// with each chapter's satisfied_importance — see attachRealSource + commitMatch
-	// for why elevating it any earlier would re-arm a re-download.
-	if err := s.commitMatch(ctx, seriesID, diskProviderID, newSP.ID, importance, done); err != nil {
-		s.rollbackRelabels(done)
+	if _, err := s.mergeDiskIntoLive(ctx, row, diskSP, newSP, importance); err != nil {
 		return series.SeriesDetailDTO{}, err
 	}
 
@@ -129,6 +120,39 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 	}
 
 	return s.series.GetSeries(ctx, seriesID)
+}
+
+// mergeDiskIntoLive folds an unlinked disk-origin provider into an already
+// resolved real, linked SeriesProvider WITHOUT re-downloading the disk
+// chapters. It is the shared no-redownload core, reused by three callers that
+// differ only in HOW they obtain liveSP: MatchDiskProvider (the owner picks the
+// source, attachRealSource ingests it), AddProvider (merge-at-attach, the just-
+// ingested source), and DedupProviders (cleanup of an already-drifted pair).
+//
+// It runs the disk-first phase (relabelOverlap: rename each overlapping CBZ +
+// rewrite ComicInfo/sidecar to liveSP's identity, rollback-on-fail) then the
+// all-or-nothing DB phase (commitMatch: re-point each relabeled chapter onto
+// liveSP at targetImportance, elevate liveSP to targetImportance, clear a
+// dangling metadata_provider_id, delete the drained disk provider) — both in
+// the same order MatchDiskProvider always used, so behaviour is unchanged.
+//
+// targetImportance is applied ONLY inside commitMatch's tx, atomically with each
+// chapter's satisfied_importance — see attachRealSource + commitMatch for why
+// elevating it any earlier would re-arm a re-download during the relabel window.
+// A non-nil error means NO net change (a commit failure rolls every relabel
+// back). Returns how many chapters were relabeled + re-pointed.
+func (s *Service) mergeDiskIntoLive(ctx context.Context, row *ent.Series, diskSP, liveSP *ent.SeriesProvider, targetImportance int) (int, error) {
+	done, err := s.relabelOverlap(ctx, row, diskSP, liveSP)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := s.commitMatch(ctx, row.ID, diskSP.ID, liveSP.ID, targetImportance, done); err != nil {
+		s.rollbackRelabels(done)
+		return 0, err
+	}
+
+	return len(done), nil
 }
 
 // attachRealSource ingests the chosen Suwayomi source (idempotent — a repeat
