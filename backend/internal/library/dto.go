@@ -26,3 +26,13 @@ type MatchInput struct {
 	MangaID    int    `json:"mangaId"`
 	Importance int    `json:"importance"`
 }
+
+// ProviderRef identifies one Suwayomi source+manga+scanlator to attach to an
+// existing series via AddProviders (Slice P batch attach). Unlike MatchInput
+// it carries no importance — AddProviders assigns importances itself, below
+// the series' existing providers (decision E, belowExistingImportances).
+type ProviderRef struct {
+	Source    string `json:"source"`
+	MangaID   int    `json:"mangaId"`
+	Scanlator string `json:"scanlator"`
+}
