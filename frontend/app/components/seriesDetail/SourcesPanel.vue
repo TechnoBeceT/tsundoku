@@ -10,7 +10,7 @@ import type { Provider } from '../screens/seriesDetail.types'
  * source-count pill and an Add button, then the importance-ranked `ProviderRow`
  * list (preferred first) or an empty note when nothing is tracked.
  * Presentation-only — the (already-sorted) providers arrive via props; the panel
- * re-emits each row's `move`/`remove` (keyed by source id) plus `addSource`.
+ * re-emits each row's `move`/`remove`/`match` (keyed by source id) plus `addSource`.
  * Wraps the shared PanelCard shell: the count pill rides the header-left `lead`
  * slot (grouped with the title), the Add button the header-right `actions` slot,
  * and the provider list the full-bleed body.
@@ -27,6 +27,8 @@ const emit = defineEmits<{
   move: [id: string, direction: MoveDirection]
   /** A source removal was requested — carries the SeriesProvider id. */
   removeSource: [id: string]
+  /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
+  matchProvider: [id: string]
   /** The Add button was pressed (→ opens the Match Source dialog). */
   addSource: []
 }>()
@@ -62,6 +64,7 @@ const emit = defineEmits<{
         :saving="saving"
         @move="emit('move', p.id, $event)"
         @remove="emit('removeSource', p.id)"
+        @match="emit('matchProvider', p.id)"
       />
 
       <div v-if="providers.length === 0" class="panel__empty">

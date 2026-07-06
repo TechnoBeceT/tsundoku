@@ -10,6 +10,7 @@ import {
   categoryOptions,
   noCoverSeries,
   richSeries,
+  seriesWithUnlinkedGroup,
   singleProviderSeries,
 } from '../../fixtures/seriesDetail'
 
@@ -90,4 +91,9 @@ export const SingleProvider: Story = {
 /** No cover URL — the branded placeholder fills the header + meta cards. */
 export const NoCover: Story = {
   render: () => interactive(noCoverSeries),
+}
+
+/** A library-imported unlinked disk-group alongside linked sources — the "Match to source" row action. */
+export const WithUnlinkedGroup: Story = {
+  render: () => interactive(seriesWithUnlinkedGroup),
 }

@@ -8,11 +8,19 @@ import type { Provider } from '../screens/seriesDetail.types'
 
 /**
  * ProviderRow — one ranked source in the Series-Detail "Sources" list: a
- * `ReorderControl` rank stepper, the source name (+ a PREFERRED chip for rank 1),
- * the language/scanlator/importance meta line, a `HealthBadge` with the
- * chapters-behind note, the synced/newest timestamps, an optional last-error, and
- * a quiet Remove button. Presentation-only — the source + its rank arrive via
- * props; the row emits `move` (re-rank) and `remove`.
+ * `ReorderControl` rank stepper, the source name (+ a PREFERRED chip for rank 1,
+ * or an UNLINKED chip for a disk-origin group), the language/scanlator/
+ * importance meta line, a chapter-count note, a `HealthBadge` with the
+ * chapters-behind note, the synced/newest timestamps, an optional last-error,
+ * and the row actions (a quiet Remove button, plus — for an unlinked
+ * disk-origin group only — a "Match to source" button). Presentation-only —
+ * the source + its rank arrive via props; the row emits `move` (re-rank),
+ * `remove`, and `match` (opens `MatchDiskProviderDialog` for this provider).
+ *
+ * `provider.linked` is false for a disk-origin group created by library
+ * import (no real Suwayomi source attached — `suwayomi_id=0` on the backend);
+ * `chapterCount` is shown for every row so the owner can see how many
+ * chapters an unlinked group carries before matching it.
  */
 const props = defineProps<{
   /** The source to render. */
@@ -34,6 +42,8 @@ const emit = defineEmits<{
   move: [direction: MoveDirection]
   /** The Remove button was pressed. */
   remove: []
+  /** The "Match to source" button was pressed (unlinked groups only). */
+  match: []
 }>()
 
 // Uppercased language code shown in the language Chip (e.g. "EN").
@@ -66,11 +76,16 @@ const rel = (iso: string | null): string => {
       <div class="source__namerow">
         <span class="source__name">{{ provider.providerName }}</span>
         <Chip v-if="preferred" variant="accent">PREFERRED</Chip>
+        <Chip v-if="!provider.linked" variant="neutral">UNLINKED</Chip>
       </div>
       <div class="source__meta">
         <Chip variant="language">{{ language }}</Chip>
         <span v-if="provider.scanlator">{{ provider.scanlator }}</span>
         <span>importance {{ provider.importance }}</span>
+        <span>{{ provider.chapterCount }} chapter{{ provider.chapterCount === 1 ? '' : 's' }}</span>
+      </div>
+      <div v-if="!provider.linked" class="source__unlinked-note">
+        Imported from disk — no real source attached. Match it to link these chapters without re-downloading.
       </div>
       <div class="source__healthrow">
         <HealthBadge :health="provider.health" />
@@ -82,6 +97,12 @@ const rel = (iso: string | null): string => {
       </div>
       <div v-if="provider.lastError" class="source__error">{{ provider.lastError }}</div>
       <div class="source__actions">
+        <button v-if="!provider.linked" type="button" class="btn-match" :disabled="saving" @click="emit('match')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+          Match to source
+        </button>
         <button type="button" class="btn-remove" :disabled="saving" @click="emit('remove')">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
@@ -167,11 +188,22 @@ const rel = (iso: string | null): string => {
   word-break: break-word;
 }
 
+.source__unlinked-note {
+  margin-top: 6px;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 .source__actions {
+  display: flex;
+  gap: 8px;
   margin-top: 9px;
 }
 
-.btn-remove {
+.btn-remove,
+.btn-match {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -179,18 +211,31 @@ const rel = (iso: string | null): string => {
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: transparent;
-  color: var(--danger-bright);
   font-size: 11.5px;
   font-weight: var(--weight-bold);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-remove {
+  color: var(--danger-bright);
 }
 
 .btn-remove:hover {
   background: var(--danger-bg);
 }
 
-.btn-remove:disabled {
+.btn-match {
+  color: var(--accentBright);
+  border-color: var(--accent);
+}
+
+.btn-match:hover {
+  background: var(--accentSoft);
+}
+
+.btn-remove:disabled,
+.btn-match:disabled {
   opacity: 0.5;
   cursor: default;
 }

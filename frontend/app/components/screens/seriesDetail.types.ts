@@ -53,6 +53,16 @@ export interface Provider {
   provider: string
   /** Human-readable source display name (e.g. `WebToon`); falls back to the id upstream. Shown in place of the id. */
   providerName: string
+  /**
+   * False for a disk-origin provider — an unlinked/unknown group created by
+   * library import with no real Suwayomi source attached yet (`suwayomi_id=0`
+   * on the backend); true once a real source is attached via adopt,
+   * add-source, or Match. Unlinked groups are Match candidates (the "Match to
+   * source" row action → `MatchDiskProviderDialog`).
+   */
+  linked: boolean
+  /** How many of the series' chapters this provider currently satisfies. */
+  chapterCount: number
   /** Scanlation group name (may be empty → row omits it). */
   scanlator: string
   /** BCP-47 language code (e.g. `en`, `ko`). */

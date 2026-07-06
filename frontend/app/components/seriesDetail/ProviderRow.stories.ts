@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import ProviderRow from './ProviderRow.vue'
-import { richSeries } from '../../fixtures/seriesDetail'
+import { richSeries, unlinkedProvider } from '../../fixtures/seriesDetail'
 
 /**
  * Stories for one ranked source row — the ReorderControl rank stepper, the
@@ -58,5 +58,16 @@ export const Saving: Story = {
     canUp: true,
     canDown: true,
     saving: true,
+  },
+}
+
+/** An unlinked disk-origin group: UNLINKED chip, note, and the "Match to source" action. */
+export const Unlinked: Story = {
+  args: {
+    provider: unlinkedProvider,
+    rank: 4,
+    preferred: false,
+    canUp: true,
+    canDown: false,
   },
 }

@@ -8,6 +8,7 @@
  */
 import type {
   ChapterInspect,
+  ScanlatorCoverage,
   SearchGroup,
   Source,
 } from '../components/screens/import.types'
@@ -78,6 +79,18 @@ export const searchResults: SearchGroup[] = [
       },
     ],
   },
+]
+
+/**
+ * A sample per-scanlator chapter-coverage breakdown (what
+ * `GET /api/sources/{sourceId}/manga/{mangaId}/breakdown` returns, mapped) —
+ * two scanlation groups covering non-overlapping chapter ranges. Reused by
+ * the Adopt wizard's auto-split stories and the Series-Detail
+ * `MatchDiskProviderDialog` scanlator-pick stories.
+ */
+export const scanlatorBreakdown: ScanlatorCoverage[] = [
+  { scanlator: 'Reset Scans', count: 60, ranges: '1-60' },
+  { scanlator: 'Asura Scans', count: 30, ranges: '61-90' },
 ]
 
 /** A sample chapter-inspect preview (what arrives after `inspect` is emitted). */

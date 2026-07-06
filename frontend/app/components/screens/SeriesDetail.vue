@@ -14,8 +14,10 @@ import type { Chapter, Provider, SeriesDetail } from './seriesDetail.types'
  * SeriesDetail — the full single-series management screen: a thin container that
  * composes the header (cover/title/stats/toggles/category/delete), the (planned)
  * metadata-source picker, the chapter table, the ranked source list (reorder /
- * remove / add), plus the required-choice delete dialog and the remove-source
- * confirm dialog.
+ * remove / add / match-to-source for unlinked disk-origin groups), plus the
+ * required-choice delete dialog and the remove-source confirm dialog. The
+ * `matchProvider` emit (bubbled from `SourcesPanel`'s unlinked-row action)
+ * opens the page's `MatchDiskProviderDialog` for the no-re-download Match.
  *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
@@ -54,6 +56,8 @@ const emit = defineEmits<{
   reorderProviders: [providers: { id: string, importance: number }[]]
   /** A source removal was confirmed — carries the SeriesProvider id. */
   removeSource: [providerId: string]
+  /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
+  matchProvider: [providerId: string]
   /** A metadata source was picked — carries the SeriesProvider id. */
   chooseMetadataSource: [providerId: string]
   /** The series delete was confirmed — carries the required deleteFiles choice. */
@@ -157,6 +161,7 @@ const removeName = computed(
         :saving="saving"
         @move="onMove"
         @remove-source="openRemove"
+        @match-provider="emit('matchProvider', $event)"
         @add-source="emit('addSource')"
       />
     </div>

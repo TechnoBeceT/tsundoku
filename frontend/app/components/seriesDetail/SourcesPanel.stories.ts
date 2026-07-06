@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import SourcesPanel from './SourcesPanel.vue'
-import { richSeries, singleProviderSeries } from '../../fixtures/seriesDetail'
+import { richSeries, singleProviderSeries, seriesWithUnlinkedGroup } from '../../fixtures/seriesDetail'
 
 /**
  * Stories for the Series Detail "Sources" card — the count-pilled header with the
@@ -34,4 +34,9 @@ export const Empty: Story = {
 /** Saving: reorder + remove disabled across every row. */
 export const Saving: Story = {
   args: { providers: richSeries.providers, saving: true },
+}
+
+/** A library-imported unlinked disk-group alongside linked sources — the "Match to source" row action. */
+export const WithUnlinkedGroup: Story = {
+  args: { providers: seriesWithUnlinkedGroup.providers },
 }

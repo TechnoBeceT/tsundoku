@@ -100,6 +100,8 @@ const providers: Provider[] = [
     id: 'prov-1111',
     provider: '2499283573021220255',
     providerName: 'MangaDex',
+    linked: true,
+    chapterCount: 8,
     scanlator: 'Flame Scans',
     language: 'en',
     importance: 30,
@@ -113,6 +115,8 @@ const providers: Provider[] = [
     id: 'prov-2222',
     provider: '2528143451863530665',
     providerName: 'Asura Scans',
+    linked: true,
+    chapterCount: 6,
     scanlator: '',
     language: 'en',
     importance: 20,
@@ -126,6 +130,8 @@ const providers: Provider[] = [
     id: 'prov-3333',
     provider: '5183473065805179973',
     providerName: 'Reaper Scans',
+    linked: true,
+    chapterCount: 2,
     scanlator: 'Reaper',
     language: 'ko',
     importance: 10,
@@ -136,6 +142,23 @@ const providers: Provider[] = [
     lastError: 'HTTP 403: Cloudflare challenge failed (FlareSolverr timeout after 60s)',
   },
 ]
+
+/** An unlinked disk-origin group: imported from disk, no real source attached yet. */
+export const unlinkedProvider: Provider = {
+  id: 'prov-disk-4444',
+  provider: 'disk:kaizoku',
+  providerName: 'Unknown (imported)',
+  linked: false,
+  chapterCount: 45,
+  scanlator: '',
+  language: 'en',
+  importance: 1,
+  health: 'ok',
+  chaptersBehind: 0,
+  newestChapterAt: null,
+  lastSyncedAt: null,
+  lastError: '',
+}
 
 /** A rich series: mixed chapter states + 3 providers of varied health. */
 export const richSeries: SeriesDetail = {
@@ -165,4 +188,15 @@ export const noCoverSeries: SeriesDetail = {
   title: 'Omniscient Reader’s Viewpoint',
   slug: 'omniscient-reader',
   coverUrl: '',
+}
+
+/**
+ * A library-imported series carrying one unlinked disk-origin group alongside
+ * its linked sources — exercises the "Match to source" row action + the
+ * unlinked badge/chapter-count in `SourcesPanel`/`ProviderRow`.
+ */
+export const seriesWithUnlinkedGroup: SeriesDetail = {
+  ...richSeries,
+  id: '0a4d1c8e-2222-4a00-9000-000000000002',
+  providers: [...providers, unlinkedProvider],
 }

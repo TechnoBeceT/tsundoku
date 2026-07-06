@@ -28,6 +28,24 @@ type SeriesDetailDTO = components['schemas']['SeriesDetail']
 type ChapterDTO = components['schemas']['Chapter']
 type ProviderDTO = components['schemas']['Provider']
 
+/**
+ * MatchDiskProviderPayload — the body of `POST
+ * /api/series/{id}/providers/{providerId}/match` (the `AddProviderRequest`
+ * shape): the real Suwayomi source/scanlator to attribute an unlinked
+ * disk-origin provider's existing chapters to, plus the importance to assign
+ * the newly-linked provider.
+ */
+export interface MatchDiskProviderPayload {
+  /** Suwayomi source ID to attach. */
+  source: string
+  /** Suwayomi-internal manga identifier within that source. */
+  mangaId: number
+  /** Priority to assign the newly-linked provider (higher = preferred). */
+  importance: number
+  /** Scanlation group to track; "" (or omitted) = all chapters from the source. */
+  scanlator?: string
+}
+
 function mapChapter(dto: ChapterDTO): Chapter {
   return {
     chapterKey: dto.chapterKey,
@@ -44,6 +62,8 @@ function mapProvider(dto: ProviderDTO): Provider {
     id: dto.id,
     provider: dto.provider,
     providerName: dto.providerName,
+    linked: dto.linked,
+    chapterCount: dto.chapterCount,
     scanlator: dto.scanlator,
     language: dto.language,
     importance: dto.importance,
@@ -85,6 +105,7 @@ export function useSeriesDetail(id: string) {
   const saving = ref(false)
   const deleteBusy = ref(false)
   const removeBusy = ref(false)
+  const matchBusy = ref(false)
 
   async function refresh(): Promise<void> {
     pending.value = true
@@ -175,6 +196,38 @@ export function useSeriesDetail(id: string) {
       () => { void navigateTo('/') },
     )
 
+  /**
+   * Matches a disk-origin (unlinked) provider to a real Suwayomi source: the
+   * backend attaches the source, re-points every chapter it already satisfies
+   * onto it (no re-download), and drops the now-redundant disk-origin row.
+   * Unlike `mutate`'s default onSuccess (a full `refresh()` round-trip) this
+   * reseeds `series` DIRECTLY from the match response — the endpoint already
+   * returns the authoritative, fully-refreshed SeriesDetail, so a second
+   * fetch would be a wasted round-trip (§16 mutate-reseeds-from-response).
+   * Resolves true on success / false on failure (error surfaced via `error`,
+   * never swallowed) so the dialog knows whether to close.
+   */
+  const matchDiskProvider = async (providerId: string, payload: MatchDiskProviderPayload): Promise<boolean> => {
+    matchBusy.value = true
+    error.value = null
+    try {
+      const res = await apiClient.POST('/api/series/{id}/providers/{providerId}/match', {
+        params: { path: { id, providerId } },
+        body: payload,
+      })
+      if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Match failed')
+      series.value = mapDetail(res.data)
+      return true
+    }
+    catch (err) {
+      error.value = err instanceof Error ? err.message : 'Match failed'
+      return false
+    }
+    finally {
+      matchBusy.value = false
+    }
+  }
+
   const dismissError = (): void => { error.value = null }
 
   void refresh()
@@ -187,6 +240,7 @@ export function useSeriesDetail(id: string) {
     saving,
     deleteBusy,
     removeBusy,
+    matchBusy,
     setMonitored,
     setCompleted,
     setCategory,
@@ -194,6 +248,7 @@ export function useSeriesDetail(id: string) {
     removeSource,
     chooseMetadataSource,
     deleteSeries,
+    matchDiskProvider,
     dismissError,
     refresh,
   }
