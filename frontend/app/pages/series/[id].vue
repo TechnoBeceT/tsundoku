@@ -1,12 +1,16 @@
 <script setup lang="ts">
+import type { ProviderRef } from '~/composables/useSourceConfigure'
+
 /**
  * Series detail page — route /series/:id.
  *
  * Delegates all data fetching, mutation state, and §16 error handling to
  * useSeriesDetail(id). Two DISTINCT dialogs both search across sources:
- *   - "Match source" (add-source, the inverse of remove-source) is backed by
- *     its OWN composable, useMatchSource(id) — searching sources is orthogonal
- *     to the series-detail state useSeriesDetail owns.
+ *   - "Add a source" (the inverse of remove-source) is backed by its OWN
+ *     composable, useMatchSource(id) — searching sources is orthogonal to the
+ *     series-detail state useSeriesDetail owns. Slice P rebuilt it onto the
+ *     shared Adopt-wizard Configure powers (multi-select tray, per-scanlator
+ *     coverage, importance ranking) — see MatchSourceDialog's own doc comment.
  *   - "Match to source" (the no-re-download Match for an UNLINKED disk-origin
  *     group) is backed by useMatchDiskProvider() the same way, but its actual
  *     link mutation is useSeriesDetail.matchDiskProvider — that action
@@ -34,11 +38,12 @@
  *   @add-source             → opens MatchSourceDialog (matchOpen = true)
  *   @dismiss-error          → dismissError()
  *
- * Match-source wiring: MatchSourceDialog's `search`/`confirm` emits drive
- * useMatchSource's `search`/`addProvider`. On a successful `addProvider` the
- * dialog closes and `useSeriesDetail.refresh()` reloads the authoritative
- * series state — the same "mutate, then refetch" pattern every other
- * useSeriesDetail mutation already uses (§16 round-trip).
+ * Add-source wiring (Slice P): MatchSourceDialog's `search`/`loadBreakdowns`/
+ * `confirm` emits drive useMatchSource's `search`/`loadBreakdowns`/
+ * `batchAddProviders`. On a successful `batchAddProviders` the dialog closes
+ * and the response's authoritative SeriesDetail is applied directly via
+ * `useSeriesDetail.reseed` — no extra `GET /api/series/{id}` round-trip
+ * (§16 mutate-reseeds-from-response, same shape as `matchDiskProvider`).
  *
  * Match-to-source wiring: `matchTargetId` (set by @match-provider) picks the
  * unlinked provider out of `series.providers` to prefill the dialog's
@@ -47,6 +52,16 @@
  * `search`/`loadBreakdown` and useSeriesDetail's `matchDiskProvider`. A
  * successful match closes the dialog — `series` is already reseeded by
  * `matchDiskProvider` itself, no separate refresh() needed.
+ *
+ * Coverage wiring (Sources panel, LAZY): `providerCoverage` is passed straight
+ * through to `SeriesDetail`/`SourcesPanel`/`ProviderRow`. `@load-coverage`
+ * (a row's "Show coverage" click, carrying the SeriesProvider id) resolves the
+ * full `Provider` from `series.providers` and calls
+ * `useSeriesDetail.loadProviderCoverage(provider)` — the ONLY call site for
+ * that fetch anywhere in the app; it is never invoked from `onMounted` or any
+ * part of the initial series load, so no per-source coverage traffic fires
+ * until the owner explicitly asks for one row's coverage (anti-IP-block
+ * politeness, decision D).
  *
  * §16: pending true during the initial fetch; ErrorBanner shown on hard fetch
  * failure. Mutation errors are surfaced via the :error prop (dismissible banner
@@ -64,6 +79,8 @@ const {
   deleteBusy,
   removeBusy,
   matchBusy,
+  providerCoverage,
+  loadProviderCoverage,
   setMonitored,
   setCompleted,
   setCategory,
@@ -73,25 +90,27 @@ const {
   deleteSeries,
   matchDiskProvider,
   dismissError,
-  refresh,
+  reseed,
 } = useSeriesDetail(id)
 
 const {
   groups: matchGroups,
+  breakdowns: matchBreakdowns,
   searching: matchSearching,
   saving: matchSaving,
   error: matchError,
   search: matchSearch,
-  addProvider: matchAddProvider,
+  loadBreakdowns: matchLoadBreakdowns,
+  batchAddProviders,
 } = useMatchSource(id)
 
 const matchOpen = ref(false)
 
-async function onMatchConfirm(payload: { source: string, mangaId: number, importance: number }): Promise<void> {
-  const detail = await matchAddProvider(payload)
+async function onMatchConfirm(providers: ProviderRef[]): Promise<void> {
+  const detail = await batchAddProviders(providers)
   if (detail) {
     matchOpen.value = false
-    await refresh()
+    reseed(detail)
   }
 }
 
@@ -127,6 +146,14 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
   const ok = await matchDiskProvider(matchTargetId.value, payload)
   if (ok) matchProviderOpen.value = false
 }
+
+// ---- Sources panel: lazy per-source coverage --------------------------------
+// The SOLE call site for loadProviderCoverage — fired only by a row's own
+// "Show coverage" click (never onMounted/the initial series load).
+function onLoadCoverage(providerId: string): void {
+  const provider = series.value?.providers.find((p) => p.id === providerId)
+  if (provider) void loadProviderCoverage(provider)
+}
 </script>
 
 <template>
@@ -143,6 +170,7 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
       :delete-busy="deleteBusy"
       :remove-busy="removeBusy"
       :error="error"
+      :provider-coverage="providerCoverage"
       @change-category="setCategory"
       @toggle-monitored="setMonitored"
       @toggle-completed="setCompleted"
@@ -152,6 +180,7 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
       @choose-metadata-source="chooseMetadataSource"
       @delete-series="deleteSeries"
       @add-source="matchOpen = true"
+      @load-coverage="onLoadCoverage"
       @dismiss-error="dismissError"
     />
 
@@ -160,10 +189,12 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
       v-model:open="matchOpen"
       :series-title="series.title"
       :groups="matchGroups"
+      :breakdowns="matchBreakdowns"
       :searching="matchSearching"
       :saving="matchSaving"
       :error="matchError"
       @search="matchSearch"
+      @load-breakdowns="matchLoadBreakdowns"
       @confirm="onMatchConfirm"
     />
 

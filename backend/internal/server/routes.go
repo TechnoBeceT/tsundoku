@@ -95,6 +95,7 @@ import (
 //   - /api/library/import (POST)                   — import a staged entry without re-downloading (RequireOwner).
 //   - /api/library/import/batch (POST)              — bulk disk-only import of many staged entries (RequireOwner).
 //   - /api/series/:id/providers (POST)             — attach an additional source to an existing series (RequireOwner).
+//   - /api/series/:id/providers/batch (POST)       — attach several sources to an existing series in one call (RequireOwner).
 //   - /api/series/:id/providers/:providerId/match (POST) — attribute existing on-disk chapters to a real source without re-downloading (RequireOwner).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
@@ -236,6 +237,7 @@ func registerRoutes(
 	authed.POST("/library/import/batch", libraryH.Batch)
 	authed.POST("/library/imports/skip", libraryH.Skip)
 	authed.POST("/series/:id/providers", libraryH.AddProvider)
+	authed.POST("/series/:id/providers/batch", libraryH.AddProviders)
 	authed.POST("/series/:id/providers/:providerId/match", libraryH.MatchDiskProvider)
 
 	// SPA static serving + unknown-route handling (registered last).

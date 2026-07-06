@@ -130,7 +130,7 @@ describe('useSettings – sourcesSettings', () => {
 
   it('surfaces a PATCH error naming the bad key instead of silently succeeding', async () => {
     vi.mocked(apiClient.PATCH).mockImplementationOnce(() =>
-      Promise.resolve({ data: null, error: { message: 'sources.failure_threshold must be in [1, 100] (got 0)' } }),
+      Promise.resolve({ error: { message: 'sources.failure_threshold must be in [1, 100] (got 0)' }, response: new Response(null, { status: 400 }) }),
     )
 
     const { sourcesSettings, saveSourcesSettings, sourcesSettingsSave } = useSettings()

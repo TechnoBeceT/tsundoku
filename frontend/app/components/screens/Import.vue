@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import Chip from '../ui/Chip.vue'
 import SearchInput from '../ui/SearchInput.vue'
 import Spinner from '../ui/Spinner.vue'
 import Stepper from '../ui/Stepper.vue'
 import AdoptTray from '../import/AdoptTray.vue'
-import CandidateConfigRow from '../import/CandidateConfigRow.vue'
 import ReviewSourceRow from '../import/ReviewSourceRow.vue'
 import SearchGroupCard from '../import/SearchGroupCard.vue'
+import SourceConfigurePanel from '../import/SourceConfigurePanel.vue'
+import { useSourceConfigure } from '~/composables/useSourceConfigure'
 import type { StepItem } from '../ui/nav.types'
 import {
   candKey,
@@ -22,35 +23,41 @@ import {
 
 /**
  * Import — the three-stage Adopt flow (Search → Configure → Adopt) for adding a
- * new series to the library. This is a THIN container: it owns the flow's step +
- * selection state via refs, composes the shared atoms (<Stepper>, <SearchInput>,
- * <Chip>, <AppButton>, <Spinner>) + the import organisms (<SearchGroupCard>,
- * <CandidateConfigRow>, <ReviewSourceRow>), and keeps only the flow/layout CSS.
- * Data (sources, search results, inspect chapters, breakdowns) arrives by props
- * and every outward action (search, inspect, loadBreakdowns, adopt, cancel) is
- * emitted — no fetching, routing, or stores. It references only design tokens,
- * so it reads correctly in both themes.
+ * new series to the library. This is a THIN container: it owns only the flow's
+ * step + title/category/inspect state via refs, delegates the Configure-stage
+ * orchestration (tray, row selection/order, per-scanlator split, rank) to the
+ * shared `useSourceConfigure` composable (Slice P), composes the shared atoms
+ * (<Stepper>, <SearchInput>, <Chip>, <AppButton>, <Spinner>) + the import
+ * organisms (<SearchGroupCard>, <SourceConfigurePanel>, <ReviewSourceRow>), and
+ * keeps only the flow/layout CSS. Data (sources, search results, inspect
+ * chapters, breakdowns) arrives by props and every outward action (search,
+ * inspect, loadBreakdowns, adopt, cancel) is emitted — no fetching, routing, or
+ * stores. It references only design tokens, so it reads correctly in both
+ * themes.
  *
  * Flow state lives here:
  *  - Stage 1 collects a query + optional source filter, emits `search`, and lists
  *    the returned cross-source `SearchGroup`s. Picking one advances to Stage 2
- *    and emits `loadBreakdowns` for the picked group's candidates. An owned
- *    cross-search "adopt tray" (`tray`) accumulates whole groups ACROSS
- *    searches — independent of the `searchResults` prop, which the data layer
- *    replaces wholesale on every new search — so the owner can gather sources
- *    for the same series under several differently-worded queries before
- *    configuring. Both the classic single-group pick and the tray's
- *    "Configure N sources →" enter Stage 2 through the same `enterConfigure`.
- *  - Stage 2 auto-splits each candidate whose `breakdowns` entry resolves with
- *    2+ scanlators into one selectable/rankable row per scanlator (a candidate
- *    with 0/1 scanlators, or no/failed breakdown, stays a single row — see
- *    `configRows`); ranks the selected rows (higher rank = higher importance,
- *    spanning ALL selected rows across every source/scanlator), edits the title
- *    + category, and can `inspect` a candidate's chapter list (hidden on split
- *    rows — coverage is already shown inline). "Review" advances to Stage 3.
+ *    and emits `loadBreakdowns` for the picked group's candidates (via the
+ *    composable's `enterConfigure`). An owned cross-search "adopt tray" (`tray`,
+ *    from the composable) accumulates whole groups ACROSS searches —
+ *    independent of the `searchResults` prop, which the data layer replaces
+ *    wholesale on every new search — so the owner can gather sources for the
+ *    same series under several differently-worded queries before configuring.
+ *    Both the classic single-group pick (`pickGroup`) and the tray's
+ *    "Configure N sources →" (`onConfigureTray`) enter Stage 2 through the same
+ *    composable `enterConfigure`, seeding this screen's own `title`/`category`
+ *    first.
+ *  - Stage 2 renders the composable's `displayRows` (auto-split into one row
+ *    per scanlator once a candidate's breakdown resolves with 2+ groups) via
+ *    <SourceConfigurePanel>; ranks the selected rows (higher rank = higher
+ *    importance, spanning ALL selected rows across every source/scanlator),
+ *    edits the title + category, and can `inspect` a candidate's chapter list
+ *    (hidden on split rows — coverage is already shown inline). "Review"
+ *    advances to Stage 3.
  *  - Stage 3 reviews the resolved providers (importance = rank weight) and emits
  *    the `adopt` request — one `AdoptProvider` per selected row, carrying that
- *    row's `scanlator` (see `configRows`'s `scanlatorParam`) — on success the
+ *    row's `scanlator` (see `DisplayRow`'s `scanlatorParam`) — on success the
  *    parent navigates to the new series.
  */
 const props = withDefaults(defineProps<{
@@ -75,7 +82,7 @@ const props = withDefaults(defineProps<{
    * `useImport`'s `breakdowns`). An absent key = not yet fetched (or still in
    * flight) — that candidate renders as a single unchanged row; `null` = the
    * fetch failed — a single row labelled "Coverage unavailable"; a populated
-   * array drives `configRows`'s auto-split.
+   * array drives the composable's auto-split (see `useSourceConfigure`).
    */
   breakdowns?: Record<string, ScanlatorCoverage[] | null>
 }>(), {
@@ -110,22 +117,17 @@ const query = ref('')
 const srcFilter = ref<string[]>([])
 const hasSearched = ref(props.searched)
 
-const group = ref<SearchGroup | null>(null)
 const title = ref('')
+// The intended synthetic-group title — the picked group's title (`pickGroup`)
+// or the largest contributing group's title (`onConfigureTray`). Kept here (not
+// read off the composable's `group.title`, which the composable derives from
+// the first candidate's own title) so the adopt-payload + Stage-3 title
+// FALLBACK (`title || groupTitle`) matches the pre-refactor behavior exactly.
+const groupTitle = ref('')
 const category = ref('Other')
-// row key → selected?; `order` holds the selected keys in priority order. A row
-// key is `source:mangaId` (unsplit) or `source:mangaId:scanlator` (once a
-// candidate's breakdown resolves with 2+ scanlators — see the `breakdowns`
-// watch below, which migrates the key(s) in place).
-const selected = ref<Record<string, boolean>>({})
-const order = ref<string[]>([])
 // The candidate whose chapter list is being inspected (key), and its loading flag.
 const inspectKey = ref<string | null>(null)
 const inspecting = ref(false)
-// Candidates (by base `source:mangaId` key) whose breakdown has already been
-// split into per-scanlator row keys — guards the watch below from re-splitting
-// (and duplicating) the same candidate on every unrelated `breakdowns` update.
-const splitApplied = new Set<string>()
 
 // Emit step changes so the parent can react without owning the state.
 watch(stage, s => emit('step', s))
@@ -135,49 +137,30 @@ watch(() => props.inspectChapters, value => {
   if (value != null) inspecting.value = false
 })
 
-/**
- * Once a candidate's breakdown resolves with 2+ scanlators, migrate its single
- * `source:mangaId` row key to one `source:mangaId:scanlator` key per group —
- * spliced into `order` at the same position (preserving rank) and defaulted to
- * the replaced key's own selected state (mirrors `pickGroup`'s "select all"
- * default: an unsplit row selected when it split stays fully selected; one
- * deselected before its breakdown resolved stays fully deselected). A 0/1-
- * scanlator or failed/unloaded breakdown never splits — `configRows` below
- * renders those straight off the unsplit key with no reconciliation needed.
- *
- * Watches BOTH `breakdowns` (the normal case: the fetch resolves after
- * `pickGroup` already ran) AND `group` (the already-cached case: a candidate's
- * breakdown was fetched during an earlier visit to Stage 2 and `breakdowns`
- * already holds 2+ scanlators the moment `pickGroup` sets `group` — a
- * breakdowns-only watch would never re-fire since the prop itself doesn't
- * change on a re-pick).
- */
-watch([() => props.breakdowns, group], () => {
-  const g = group.value
-  if (!g) return
-  for (const c of g.candidates) {
-    const baseKey = candKey(c)
-    if (splitApplied.has(baseKey)) continue
-    const bd = props.breakdowns[baseKey]
-    if (!bd || bd.length < 2) continue
-    splitApplied.add(baseKey)
-
-    const newKeys = bd.map(sc => `${baseKey}:${sc.scanlator}`)
-    const wasSelected = !!selected.value[baseKey]
-    const idx = order.value.indexOf(baseKey)
-    if (idx >= 0) {
-      order.value = [
-        ...order.value.slice(0, idx),
-        ...(wasSelected ? newKeys : []),
-        ...order.value.slice(idx + 1),
-      ]
-    }
-    const { [baseKey]: _removed, ...rest } = selected.value
-    const nextSelected = { ...rest }
-    for (const k of newKeys) nextSelected[k] = wasSelected
-    selected.value = nextSelected
-  }
-}, { deep: true })
+// The Configure-stage orchestration (tray, row selection/order, per-scanlator
+// split, rank) is owned by the shared composable (Slice P) — this screen keeps
+// only title/category + inspect state (Adopt-only concerns; see the
+// composable's own ownership-split doc comment).
+const {
+  tray,
+  trayActive,
+  isGroupAdded,
+  addGroup,
+  removeGroup,
+  removeCand,
+  suggestedTrayTitle,
+  configureTray,
+  group,
+  enterConfigure,
+  displayRows,
+  orderedKeys,
+  selectedCount,
+  toggleCand,
+  moveCand,
+} = useSourceConfigure({
+  breakdowns: toRef(props, 'breakdowns'),
+  onLoadBreakdowns: c => emit('loadBreakdowns', c),
+})
 
 // ---- Stage indicator (drives the shared <Stepper>) -------------------------
 const stepItems: StepItem[] = [
@@ -204,217 +187,33 @@ const runSearch = (): void => {
   emit('search', { q: query.value.trim(), sources: [...srcFilter.value] })
 }
 
-/**
- * Seeds Stage 2 from an arbitrary title + candidate list: all candidates start
- * selected, in list order, and a breakdown fetch is requested for each. Shared
- * by the classic single-group `pickGroup` below AND `configureTray` (the tray's
- * "Configure N sources →"), so Stage 2/3 have exactly one entry point.
- */
-function enterConfigure(configTitle: string, candidates: SearchCandidate[]): void {
-  const keys = candidates.map(candKey)
-  group.value = { title: configTitle, candidates }
-  title.value = configTitle
-  category.value = props.categories[0] ?? 'Other'
-  selected.value = Object.fromEntries(keys.map(k => [k, true]))
-  order.value = keys
-  inspectKey.value = null
-  inspecting.value = false
-  splitApplied.clear()
-  stage.value = 2
-  emit('loadBreakdowns', candidates)
-}
-
 // Picking a group seeds Stage 2 from just that group's candidates (the
 // pre-tray classic path — still the fast path when the owner only needs one
-// group's sources).
+// group's sources). `title`/`category`/inspect state are this screen's own
+// concern (the composable owns only the tray + row selection/order/split).
 const pickGroup = (g: SearchGroup): void => {
-  enterConfigure(g.title, g.candidates)
+  title.value = g.title
+  groupTitle.value = g.title
+  category.value = props.categories[0] ?? 'Other'
+  inspectKey.value = null
+  inspecting.value = false
+  enterConfigure(g.candidates)
+  stage.value = 2
 }
 
-// ---- Cross-search adopt tray ------------------------------------------------
-// Accumulates matched groups' candidates ACROSS MULTIPLE searches. Owned here
-// (not derived from `searchResults`) so a new search — which replaces that prop
-// wholesale — never drops what the owner already gathered. Add-unit is a whole
-// group; `AdoptTray` still lets individual candidates be dropped one at a time.
-const tray = ref<SearchCandidate[]>([])
-// The groups that contributed to the tray, kept only to pick a representative
-// title for `configureTray`'s synthetic group (dropped again once its whole
-// group is taken back out of the tray).
-const addedGroups = ref<SearchGroup[]>([])
-
-const trayActive = computed(() => tray.value.length > 0)
-
-/** True once every candidate of `g` is already in the tray (drives the "✓ Added" state). */
-const isGroupAdded = (g: SearchGroup): boolean =>
-  g.candidates.length > 0 && g.candidates.every(c => tray.value.some(t => candKey(t) === candKey(c)))
-
-/** Add every not-yet-tracked candidate of `g` to the tray, deduped by `candKey`. */
-const addGroup = (g: SearchGroup): void => {
-  const existing = new Set(tray.value.map(candKey))
-  const toAdd = g.candidates.filter(c => !existing.has(candKey(c)))
-  if (toAdd.length === 0) return
-  tray.value = [...tray.value, ...toAdd]
-  addedGroups.value = [...addedGroups.value, g]
-}
-
-/** Drop every candidate of `g` from the tray (the "✓ Added" toggle, switched off). */
-const removeGroup = (g: SearchGroup): void => {
-  const keys = new Set(g.candidates.map(candKey))
-  tray.value = tray.value.filter(c => !keys.has(candKey(c)))
-  addedGroups.value = addedGroups.value.filter(x => x.title !== g.title)
-}
-
-/** Drop one candidate from the tray by its `candKey` (an `AdoptTray` chip remove). */
-const removeCand = (key: string): void => {
-  tray.value = tray.value.filter(c => candKey(c) !== key)
-}
-
-/**
- * "Configure N sources →" — builds a synthetic group from every tray candidate
- * and runs the SAME Stage-2 seeding as a classic pick. The title defaults to
- * the largest contributing group's title (a reasonable default the owner can
- * still edit in Stage 2); falls back to the first tray candidate's own title
- * in the unlikely case no group is tracked (e.g. the tray was rebuilt from
- * individual adds only).
- */
-const configureTray = (): void => {
-  if (tray.value.length === 0) return
-  const largest = [...addedGroups.value].sort((a, b) => b.candidates.length - a.candidates.length)[0]
-  enterConfigure(largest?.title ?? tray.value[0]!.title, [...tray.value])
-}
-
-// ---- Stage 2: configure ----------------------------------------------------
-// The selected rows, in current priority order (drives rank + importance).
-const orderedKeys = computed(() => order.value.filter(k => selected.value[k]))
-const selectedCount = computed(() => orderedKeys.value.length)
-
-/** One Configure-stage row: either a whole source (unsplit) or one of its scanlators (split). */
-interface ConfigRow {
-  key: string
-  candidate: SearchCandidate
-  /** Scanlator subtitle to show under the source name; "" hides it (untagged/unsplit/unavailable). */
-  scanlator: string
-  /** The value to send as this row's `AdoptProvider.scanlator` ("" = all chapters from the source). */
-  scanlatorParam: string
-  /** Chapter count for this row's coverage, when the breakdown is available. */
-  chapterCount?: number
-  /** Human-readable chapter-range string, e.g. "1-90, 92-101". */
-  chapterRanges: string
-  /** True when this source's breakdown fetch failed (no split, no coverage — "Coverage unavailable"). */
-  coverageUnavailable: boolean
-  /** True for a per-scanlator split row (2+ scanlators) — hides the Inspect button (coverage is already inline). */
-  isSplit: boolean
-}
-
-/**
- * One row per candidate, auto-split into one row per scanlator once that
- * candidate's breakdown resolves with 2+ groups (a 0/1-scanlator or
- * unavailable/unloaded breakdown stays a single row — bullet 2 of the
- * auto-split spec). A single-scanlator breakdown whose one group is named
- * after the source itself (the backend's "untagged" convention) resolves to
- * `scanlator: ''`/no subtitle — it's still an "all chapters" provider, not a
- * named filter; a split row's group keeps its own name verbatim even in the
- * rare case one of several groups happens to share the source's name.
- */
-const configRows = computed<ConfigRow[]>(() => {
-  const g = group.value
-  if (!g) return []
-  const rows: ConfigRow[] = []
-  for (const c of g.candidates) {
-    const baseKey = candKey(c)
-    const bd = props.breakdowns[baseKey]
-    if (bd && bd.length >= 2) {
-      for (const sc of bd) {
-        // The untagged bucket (SourceBreakdown labels it with the source name)
-        // must adopt as scanlator "" — the backend's filterByScanlator keeps
-        // only chapters whose Chapter.Scanlator EQUALS the param, and untagged
-        // chapters carry "", so sending the source name here would match ZERO
-        // chapters (a silently-empty, never-downloading provider). This mirrors
-        // the single-group branch's collapse; it applies even inside a 2+-group
-        // split where one group IS the source-name bucket.
-        const isUntagged = sc.scanlator === c.sourceName
-        rows.push({
-          key: `${baseKey}:${sc.scanlator}`,
-          candidate: c,
-          scanlator: isUntagged ? '' : sc.scanlator,
-          scanlatorParam: isUntagged ? '' : sc.scanlator,
-          chapterCount: sc.count,
-          chapterRanges: sc.ranges,
-          coverageUnavailable: false,
-          isSplit: true,
-        })
-      }
-    }
-    else if (bd?.length === 1) {
-      const sc = bd[0]!
-      const isUntagged = sc.scanlator === c.sourceName
-      rows.push({
-        key: baseKey,
-        candidate: c,
-        scanlator: isUntagged ? '' : sc.scanlator,
-        scanlatorParam: isUntagged ? '' : sc.scanlator,
-        chapterCount: sc.count,
-        chapterRanges: sc.ranges,
-        coverageUnavailable: false,
-        isSplit: false,
-      })
-    }
-    else {
-      rows.push({
-        key: baseKey,
-        candidate: c,
-        scanlator: '',
-        scanlatorParam: '',
-        chapterCount: undefined,
-        chapterRanges: '',
-        // Only a definite failure (`null`) is "unavailable" — an absent key
-        // (not yet fetched / still in flight) shows no coverage line at all.
-        coverageUnavailable: bd === null,
-        isSplit: false,
-      })
-    }
-  }
-  return rows
-})
-
-/** `configRows` merged with this row's current selection + rank + inspect state. */
-const displayRows = computed(() => {
-  const sel = orderedKeys.value
-  return configRows.value.map((row) => {
-    const idx = sel.indexOf(row.key)
-    return {
-      ...row,
-      selected: !!selected.value[row.key],
-      rank: idx + 1,
-      canUp: idx > 0,
-      canDown: idx >= 0 && idx < sel.length - 1,
-      inspected: inspectKey.value === row.key && props.inspectChapters != null && !inspecting.value,
-      loadingInspect: inspectKey.value === row.key && inspecting.value,
-    }
-  })
-})
-
-const toggleCand = (key: string): void => {
-  const next = { ...selected.value, [key]: !selected.value[key] }
-  selected.value = next
-  if (next[key]) {
-    if (!order.value.includes(key)) order.value = [...order.value, key]
-  } else {
-    order.value = order.value.filter(k => k !== key)
-  }
-}
-
-// Move a selected candidate up (-1) or down (+1) within the selected ordering.
-const moveCand = (key: string, dir: -1 | 1): void => {
-  const sel = orderedKeys.value
-  const i = sel.indexOf(key)
-  const j = i + dir
-  if (i < 0 || j < 0 || j >= sel.length) return
-  const full = [...order.value]
-  const fi = full.indexOf(sel[i]!)
-  const fj = full.indexOf(sel[j]!)
-  ;[full[fi], full[fj]] = [full[fj]!, full[fi]!]
-  order.value = full
+// "Configure N sources →" — the tray's entry into Stage 2, seeded from every
+// tray candidate as one synthetic group. Title defaults to the largest
+// contributing group's title, falling back to the first tray candidate's own
+// title (mirrors the pre-extraction behavior).
+const onConfigureTray = (): void => {
+  const seed = suggestedTrayTitle.value ?? tray.value[0]?.title ?? ''
+  title.value = seed
+  groupTitle.value = seed
+  category.value = props.categories[0] ?? 'Other'
+  inspectKey.value = null
+  inspecting.value = false
+  configureTray()
+  stage.value = 2
 }
 
 const onInspect = (c: SearchCandidate): void => {
@@ -430,7 +229,7 @@ const reviewRows = computed(() => {
   const keys = orderedKeys.value
   const n = keys.length
   return keys.map((k, i) => {
-    const row = configRows.value.find(r => r.key === k)!
+    const row = displayRows.value.find(r => r.key === k)!
     return {
       key: k,
       row,
@@ -453,7 +252,7 @@ const submit = (): void => {
   const g = group.value
   if (!g || props.adopting) return
   const request: AdoptRequest = {
-    title: title.value.trim() || g.title,
+    title: title.value.trim() || groupTitle.value,
     category: category.value,
     providers: reviewRows.value.map(s => ({
       source: s.row.candidate.source,
@@ -528,7 +327,7 @@ const submit = (): void => {
           <AdoptTray
             v-if="trayActive"
             :candidates="tray"
-            @configure="configureTray"
+            @configure="onConfigureTray"
             @remove="removeCand"
           />
 
@@ -567,27 +366,15 @@ const submit = (): void => {
             </label>
           </div>
 
-          <p class="imp-eyebrow">Sources to adopt · use arrows to rank priority</p>
-
-          <CandidateConfigRow
-            v-for="row in displayRows"
-            :key="row.key"
-            :candidate="row.candidate"
-            :selected="row.selected"
-            :rank="row.rank"
-            :can-up="row.canUp"
-            :can-down="row.canDown"
-            :inspecting="row.loadingInspect"
-            :inspected="row.inspected"
-            :chapters="inspectChapters ?? []"
-            :hide-inspect="row.isSplit"
-            :scanlator="row.scanlator"
-            :chapter-count="row.chapterCount"
-            :chapter-ranges="row.chapterRanges"
-            :coverage-unavailable="row.coverageUnavailable"
-            @toggle="toggleCand(row.key)"
-            @inspect="onInspect(row.candidate)"
-            @move="moveCand(row.key, $event)"
+          <SourceConfigurePanel
+            :rows="displayRows"
+            label="Sources to adopt · use arrows to rank priority"
+            :inspect-key="inspectKey"
+            :inspecting="inspecting"
+            :inspect-chapters="inspectChapters"
+            @toggle="toggleCand"
+            @move="moveCand($event.key, $event.dir)"
+            @inspect="onInspect"
           />
 
           <div class="imp-actions imp-actions--between">
@@ -602,7 +389,7 @@ const submit = (): void => {
         <section v-else class="imp-stage">
           <div class="imp-review-head">
             <Chip variant="accent">{{ category }}</Chip>
-            <span class="imp-review-title">{{ title || (group ? group.title : '') }}</span>
+            <span class="imp-review-title">{{ title || groupTitle }}</span>
           </div>
 
           <p class="imp-eyebrow">Sources · higher importance is preferred</p>

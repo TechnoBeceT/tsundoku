@@ -167,6 +167,37 @@ describe('Import — adopt() with per-scanlator rows', () => {
 })
 
 /**
+ * Import — adopt title FALLBACK when the Series-title input is blanked. Pins the
+ * Slice-P refactor edge-case: the composable derives its synthetic `group.title`
+ * from the first candidate's own title, but the fallback for a blanked input must
+ * remain the GROUP's title (the picked group's `title`, or the largest tray
+ * group's — preserved here via the consumer-owned `groupTitle` ref). Regression
+ * guard: a group whose `title` differs from its first candidate's `title`.
+ */
+describe('Import — blanked-title adopt fallback uses the group title', () => {
+  const groupTitleCand: SearchCandidate = { source: 'gt1', sourceName: 'MangaDex', lang: 'en', mangaId: 501, title: 'First Candidate Title', thumbnailUrl: '' }
+  const groupWithDistinctTitle: SearchGroup = { title: 'Canonical Group Title', candidates: [groupTitleCand] }
+
+  it('falls back to the group title (not the first candidate title) when the Series-title input is cleared', async () => {
+    const wrapper = mount(Import, {
+      props: { sources, searchResults: [groupWithDistinctTitle], searched: true, categories, breakdowns: {} },
+    })
+    await wrapper.find('.group').trigger('click')
+
+    // Blank the Series-title input so `submit()` must use the group-title fallback.
+    await wrapper.find('.imp-input').setValue('')
+
+    await findButtonByText(wrapper, 'Review').trigger('click')
+    await findButtonByText(wrapper, 'Adopt series').trigger('click')
+
+    const emitted = wrapper.emitted('adopt')
+    expect(emitted).toBeTruthy()
+    const request = emitted![0]![0] as { title: string }
+    expect(request.title).toBe('Canonical Group Title')
+  })
+})
+
+/**
  * Import — cross-search adopt tray (GAP: cross-search-adopt-tray). Pins:
  *   1. The tray accumulates a whole group's candidates at a time, deduped by
  *      `source:mangaId`, and SURVIVES a `searchResults` prop change (the data

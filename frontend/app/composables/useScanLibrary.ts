@@ -31,7 +31,7 @@
  * is therefore the classic "the page came back full" heuristic (a full page
  * MAY mean more rows exist; a short page never does).
  *
- * Per-row mutations (`skip`/`importDiskOnly`/`importWithMatch`) follow the
+ * Per-row mutations (`skip`/`importDiskOnly`/`importWithMatches`) follow the
  * shared `mutate(busyId, fn)` convention from `useCategories.ts`: set busy,
  * run the call, refetch the list on success, clear busy. Unlike
  * `useCategories` (whose UI only ever shows one row's error, e.g. inside a
@@ -49,16 +49,36 @@
  * actually looking at. A monotonic generation counter (incremented per
  * `match()` call) ensures only the MOST RECENTLY STARTED request's response
  * is ever written to the shared refs, regardless of resolution order.
+ *
+ * `breakdowns`/`loadBreakdowns` (Slice P) are copied verbatim from
+ * `useMatchSource.loadBreakdowns` (§2 DRY — identical cache/in-flight-guard/
+ * parallel-fetch shape): per-scanlator chapter-coverage for the Match panel's
+ * Configure-stage auto-split, keyed `source:mangaId`, `null` = fetch failed,
+ * an absent key = not yet attempted.
+ *
+ * `importWithMatches` (Slice P, was `importWithMatch`) POSTs `{path, matches}`
+ * — a `ProviderRef[]` gathered via the shared `useSourceConfigure` Configure
+ * stage, replacing the old single `{path, match: {source, mangaId,
+ * importance}}` (a fixed importance of 2). The new `ProviderRef[]` carries no
+ * importance: the backend assigns each provider an importance strictly below
+ * the disk-origin provider's (decision E), in list order. An empty `matches`
+ * array is a valid disk-only import (mirrors `importDiskOnly`).
  */
 import { ref, onUnmounted } from 'vue'
 import { useProgressStream } from '~/composables/useProgressStream'
-import { mapGroup } from '~/composables/importMappers'
+import { mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { SearchGroup } from '~/components/screens/import.types'
+import type { ProviderRef } from '~/composables/useSourceConfigure'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '~/components/screens/import.types'
 
 type FoundSeriesDTO = components['schemas']['FoundSeries']
 type BatchImportFailureDTO = components['schemas']['BatchImportFailure']
+
+/** Stable cache/in-flight key for one (source, mangaId) breakdown fetch (mirrors `useMatchSource`). */
+function breakdownKey(source: string, mangaId: number): string {
+  return `${source}:${mangaId}`
+}
 
 /** Page size for the staged-entries list (mirrors useLibrary's PAGE). */
 const PAGE = 50
@@ -82,16 +102,6 @@ export interface ScanEntry {
   status: string
   /** Whether a Series row with this title/slug already exists in the DB. */
   alreadyInDb: boolean
-}
-
-/** A ranked Suwayomi source to attach when importing a staged entry. */
-export interface ScanMatch {
-  /** Suwayomi source ID the chosen candidate came from. */
-  source: string
-  /** Suwayomi-internal manga identifier within that source. */
-  mangaId: number
-  /** Provider importance to assign (higher number = higher priority). */
-  importance: number
 }
 
 /** One path's failure within a bulk "import all remaining" batch. */
@@ -307,14 +317,60 @@ export function useScanLibrary() {
     })
   }
 
-  /** Imports a staged entry and attaches an owner-matched Suwayomi source. */
-  async function importWithMatch(path: string, match: ScanMatch): Promise<void> {
+  /**
+   * Imports a staged entry and attaches zero or more owner-gathered,
+   * best-first Suwayomi sources (Slice P — was a single fixed-importance
+   * `match`). An empty `matches` array is disk-only, same as `importDiskOnly`.
+   */
+  async function importWithMatches(path: string, matches: ProviderRef[]): Promise<void> {
     await mutate(path, async () => {
-      const res = await apiClient.POST('/api/library/import', { body: { path, match } })
+      const res = await apiClient.POST('/api/library/import', { body: { path, matches } })
       if (res.error || !res.data) {
         throw new Error(res.error && 'message' in res.error ? res.error.message : 'Import failed')
       }
     })
+  }
+
+  // ── Per-scanlator breakdown cache (Configure-stage auto-split, Slice P) ──
+  // Keyed by `source:mangaId`. `null` = fetch attempted and failed (the panel
+  // falls back to a single unsplit row); an absent key = not yet attempted.
+  const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
+  const breakdownsInFlight = new Set<string>()
+
+  /**
+   * Fetches the per-scanlator breakdown for every given candidate IN
+   * PARALLEL, skipping any candidate already cached (success or failure) or
+   * already in flight. Never throws — a per-candidate failure caches `null`
+   * and is otherwise swallowed (non-fatal; the Configure stage renders that
+   * source as a single unsplit row). Copied from `useMatchSource.
+   * loadBreakdowns` (§2 DRY — identical cache/in-flight-guard/parallel-fetch
+   * shape).
+   */
+  async function loadBreakdowns(candidates: SearchCandidate[]): Promise<void> {
+    const toFetch = candidates.filter((c) => {
+      const key = breakdownKey(c.source, c.mangaId)
+      return !(key in breakdowns.value) && !breakdownsInFlight.has(key)
+    })
+    if (toFetch.length === 0) return
+    for (const c of toFetch) breakdownsInFlight.add(breakdownKey(c.source, c.mangaId))
+    await Promise.all(toFetch.map(async (c) => {
+      const key = breakdownKey(c.source, c.mangaId)
+      try {
+        const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
+          params: { path: { sourceId: c.source, mangaId: c.mangaId } },
+        })
+        breakdowns.value = {
+          ...breakdowns.value,
+          [key]: res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage),
+        }
+      }
+      catch {
+        breakdowns.value = { ...breakdowns.value, [key]: null }
+      }
+      finally {
+        breakdownsInFlight.delete(key)
+      }
+    }))
   }
 
   // ── Cross-source match search ────────────────────────────────────────────
@@ -475,7 +531,9 @@ export function useScanLibrary() {
     error: rowError,
     skip,
     importDiskOnly,
-    importWithMatch,
+    importWithMatches,
+    breakdowns,
+    loadBreakdowns,
     matching,
     matchError,
     matchGroups,

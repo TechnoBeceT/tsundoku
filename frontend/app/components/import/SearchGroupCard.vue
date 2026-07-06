@@ -64,7 +64,8 @@ function onCardClick(): void {
 
 /** The "+ Add" / "✓ Added" toggle — add when not yet fully tracked, else remove. */
 function onToggle(): void {
-  emit(props.added ? 'remove' : 'add', props.group)
+  if (props.added) emit('remove', props.group)
+  else emit('add', props.group)
 }
 </script>
 

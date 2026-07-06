@@ -1,22 +1,34 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
-import { expect, fn, userEvent, within } from 'storybook/test'
+import { expect, userEvent, within } from 'storybook/test'
 import MatchPanel from './MatchPanel.vue'
-import { searchResults } from '../../fixtures/import'
+import { candKey } from '../screens/import.types'
+import { scanlatorBreakdown, searchResults } from '../../fixtures/import'
 
 /**
  * Stories for MatchPanel — the Scan Library "Match a source" sub-panel.
- * Reuses the Import/Adopt flow's own fixture (`searchResults`) since the
- * match endpoint returns the identical `SearchGroup`/`SearchCandidate` DTO.
- * Flip the Storybook theme toolbar to confirm both dark and light.
+ * Rebuilt for Slice P onto the shared `useSourceConfigure` Configure powers
+ * (multi-select tray, per-scanlator coverage, importance ranking) — mirrors
+ * `SeriesDetail/MatchSourceDialog`'s own stories, minus the dialog chrome
+ * (this panel renders inline, and its title is a fixed read-only display, not
+ * an editable field). Reuses the Import/Adopt flow's own fixtures
+ * (`searchResults`/`scanlatorBreakdown`) since the match endpoint returns the
+ * identical `SearchGroup`/`SearchCandidate`/`ScanlatorCoverage` DTO. Flip the
+ * Storybook theme toolbar to confirm both dark and light.
  */
+const firstCandidateKey = candKey(searchResults[0]!.candidates[0]!)
+
 const meta = {
   title: 'ScanLibrary/MatchPanel',
   component: MatchPanel,
   parameters: { layout: 'padded' },
   args: {
     title: 'Solo Leveling',
-    onConfirm: fn(),
-    onBack: fn(),
+    groups: searchResults,
+    breakdowns: {},
+    searching: false,
+    searchError: '',
+    busy: false,
+    error: '',
   },
 } satisfies Meta<typeof MatchPanel>
 
@@ -24,45 +36,39 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 /**
- * Stage 1 (Groups) — two cross-source matches for this title. Picking one
- * advances into Stage 2 and shows its candidates.
+ * Groups stage — every cross-source match for this title, tray-enabled
+ * (Slice P widened this surface to multi-select — the owner can gather
+ * several groups' candidates before configuring, or one-tap pick a single
+ * group straight into Configure).
  */
 export const GroupsStage: Story = {
-  args: {
-    groups: searchResults,
-  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await expect(canvas.getByText('2 possible matches · choose one')).toBeInTheDocument()
+    await expect(canvas.getByText('2 possible matches · choose one or gather several')).toBeInTheDocument()
     await expect(canvas.getByText('Solo Leveling')).toBeInTheDocument()
+    // tray-enabled: every group card renders the "+ Add" toggle.
+    await expect(canvas.getAllByText('+ Add').length).toBe(searchResults.length)
   },
 }
 
 /**
- * Stage 2 (Candidates) — the play function picks the first group, then
- * selects a candidate and confirms; asserts the exact `{source, mangaId,
- * importance}` payload the parent needs to call `importWithMatch`.
+ * Configure stage — multi-select (every candidate starts selected), one
+ * candidate's coverage auto-split across two scanlators (via `breakdowns`),
+ * and importance ranking (arrows re-order the selected set). The play
+ * function picks the first group to advance from Groups.
  */
-export const PickAndConfirm: Story = {
+export const ConfigureMulti: Story = {
   args: {
-    groups: searchResults,
+    breakdowns: { [firstCandidateKey]: scanlatorBreakdown },
   },
-  play: async ({ canvasElement, args }) => {
+  play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(await canvas.findByText('Solo Leveling'))
+    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
 
     const firstCandidate = searchResults[0]!.candidates[0]!
-    await userEvent.click(await canvas.findByLabelText(`Toggle ${firstCandidate.sourceName}`))
-
-    const confirmButton = await canvas.findByRole('button', { name: 'Confirm match' })
-    await expect(confirmButton).toBeEnabled()
-    await userEvent.click(confirmButton)
-
-    await expect(args.onConfirm).toHaveBeenCalledWith({
-      source: firstCandidate.source,
-      mangaId: firstCandidate.mangaId,
-      importance: 2,
-    })
+    await expect(canvas.getByLabelText(`Toggle ${firstCandidate.sourceName}`)).toBeInTheDocument()
+    const attach = await canvas.findByRole('button', { name: `Attach ${searchResults[0]!.candidates.length} sources` })
+    await expect(attach).toBeEnabled()
   },
 }
 
@@ -93,25 +99,22 @@ export const NoMatches: Story = {
   },
 }
 
-/** §16 — the confirm mutation itself is in flight: the button spins + disables. */
+/** §16 — the confirm (import) mutation itself is in flight: the button spins + disables. */
 export const Confirming: Story = {
   args: {
-    groups: searchResults,
     busy: true,
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(await canvas.findByText('Solo Leveling'))
-    const firstCandidate = searchResults[0]!.candidates[0]!
-    await userEvent.click(await canvas.findByLabelText(`Toggle ${firstCandidate.sourceName}`))
-    await expect(await canvas.findByRole('button', { name: 'Confirm match' })).toBeDisabled()
+    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
+    const attach = await canvas.findByRole('button', { name: `Attach ${searchResults[0]!.candidates.length} sources` })
+    await expect(attach).toBeDisabled()
   },
 }
 
 /** §16 — the confirm mutation failed: the panel shows the error, selection is preserved. */
 export const ConfirmFailed: Story = {
   args: {
-    groups: searchResults,
     error: 'Import failed — series already exists at that path.',
   },
 }

@@ -12,8 +12,12 @@
  *   4. scan.done carries its `error` string onto scanState (§16 — the wizard
  *      must be able to show "scan timed out / failed").
  *   5. skip(path) POSTs the skip endpoint, then refetches the entries list.
- *   6. importWithMatch(path, match) POSTs /api/library/import with
- *      {path, match} in the body.
+ *   6. importWithMatches(path, matches) POSTs /api/library/import with
+ *      {path, matches} in the body (Slice P — was a single fixed-importance
+ *      `match`).
+ *   7. loadBreakdowns(candidates) fetches every candidate's per-scanlator
+ *      breakdown in parallel and caches it by `source:mangaId` (Slice P,
+ *      copied from `useMatchSource.loadBreakdowns`).
  *
  * Uses the same FakeEventSource stub as useProgressStream.extensions.test.ts /
  * useExtensions.refetch.test.ts so the NAMED_EVENTS loop in useProgressStream
@@ -60,7 +64,12 @@ let pendingSeed: FoundEntryLike[] = []
 
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
-    GET: vi.fn().mockImplementation((path: string, opts?: { params?: { query?: Record<string, unknown> } }) => {
+    GET: vi.fn().mockImplementation((path: string, opts?: {
+      params?: {
+        query?: Record<string, unknown>
+        path?: { sourceId?: string, mangaId?: number }
+      }
+    }) => {
       const query = opts?.params?.query
       calls.push({ method: 'GET', path, query })
       if (path === '/api/library/imports') {
@@ -85,6 +94,14 @@ vi.mock('~/utils/api/client', () => ({
               thumbnailUrl: 'https://example.com/thumb.jpg',
             }],
           }],
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })
+      }
+      if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') {
+        const sourceId = opts?.params?.path?.sourceId ?? ''
+        return Promise.resolve({
+          data: { total: 12, scanlators: [{ scanlator: sourceId, count: 12, ranges: '1-12' }] },
           error: null,
           response: new Response(null, { status: 200 }),
         })
@@ -292,17 +309,79 @@ describe('useScanLibrary', () => {
     expect(calls.some(c => c.method === 'GET' && c.path === '/api/library/imports')).toBe(true)
   })
 
-  it('importWithMatch(path, match) POSTs /api/library/import with {path, match}', async () => {
-    const { importWithMatch } = mountScanLibrary()
+  it('importWithMatches(path, matches) POSTs /api/library/import with {path, matches}', async () => {
+    const { importWithMatches } = mountScanLibrary()
     calls = []
 
-    await importWithMatch('/library/Manga/Foo', { source: 'src-1', mangaId: 42, importance: 2 })
+    await importWithMatches('/library/Manga/Foo', [
+      { source: 'src-1', mangaId: 42, scanlator: '' },
+      { source: 'src-2', mangaId: 7, scanlator: 'Asura Scans' },
+    ])
 
     const importCall = calls.find(c => c.path === '/api/library/import')
     expect(importCall).toBeDefined()
     expect(importCall!.body).toEqual({
       path: '/library/Manga/Foo',
-      match: { source: 'src-1', mangaId: 42, importance: 2 },
+      matches: [
+        { source: 'src-1', mangaId: 42, scanlator: '' },
+        { source: 'src-2', mangaId: 7, scanlator: 'Asura Scans' },
+      ],
+    })
+  })
+
+  it('importWithMatches(path, []) is a valid disk-only import (empty matches, no attach)', async () => {
+    const { importWithMatches } = mountScanLibrary()
+    calls = []
+
+    await importWithMatches('/library/Manga/Foo', [])
+
+    const importCall = calls.find(c => c.path === '/api/library/import')
+    expect(importCall).toBeDefined()
+    expect(importCall!.body).toEqual({ path: '/library/Manga/Foo', matches: [] })
+  })
+
+  describe('loadBreakdowns (per-scanlator auto-split fetch, copied from useMatchSource)', () => {
+    it('fetches every candidate in parallel and caches the mapped scanlators, keyed by source:mangaId', async () => {
+      const { breakdowns, loadBreakdowns } = mountScanLibrary()
+      calls = []
+
+      await loadBreakdowns([
+        { source: 'src-1', mangaId: 1 } as never,
+        { source: 'src-2', mangaId: 2 } as never,
+      ])
+
+      const breakdownCalls = calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
+      expect(breakdownCalls.length).toBe(2)
+      expect(breakdowns.value['src-1:1']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
+      expect(breakdowns.value['src-2:2']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
+    })
+
+    it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
+      const { loadBreakdowns } = mountScanLibrary()
+      calls = []
+      const candidate = { source: 'src-1', mangaId: 1 } as never
+
+      await loadBreakdowns([candidate])
+      expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
+
+      await loadBreakdowns([candidate])
+      expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
+    })
+
+    it('caches a failed fetch as null (non-fatal) and never retries it', async () => {
+      const { breakdowns, loadBreakdowns } = mountScanLibrary()
+      vi.mocked(apiClient.GET).mockImplementationOnce((path: string) => {
+        calls.push({ method: 'GET', path })
+        return Promise.resolve({ data: null, error: { message: 'upstream failure' }, response: new Response(null, { status: 502 }) })
+      })
+      calls = []
+      const candidate = { source: 'src-1', mangaId: 1 } as never
+
+      await loadBreakdowns([candidate])
+      expect(breakdowns.value['src-1:1']).toBeNull()
+
+      await loadBreakdowns([candidate])
+      expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
     })
   })
 

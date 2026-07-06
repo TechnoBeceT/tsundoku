@@ -16,7 +16,6 @@ export type {
   ScanEntry,
   ScanState,
   ScanStatusFilter,
-  ScanMatch,
   BatchImportFailure,
 } from '~/composables/useScanLibrary'
 

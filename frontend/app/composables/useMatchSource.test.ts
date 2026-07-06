@@ -1,14 +1,18 @@
 /**
- * useMatchSource — data layer for the Series-Detail "Match source" dialog.
+ * useMatchSource — data layer for the Series-Detail "Add a source" dialog.
  *
  * Pins:
  *   1. search(q) GETs /api/search?q= and maps the response via the shared
  *      importMappers `mapGroup` (the SAME DTO the Import/Adopt wizard uses).
  *   2. search() failure sets `error` and leaves `groups` empty, never throws.
- *   3. addProvider(payload) POSTs /api/series/{id}/providers with the exact
- *      {source, mangaId, importance} body and resolves the fresh SeriesDetail.
- *   4. addProvider() failure sets `error` and resolves null (the caller decides
- *      whether to close the dialog based on that null).
+ *   3. loadBreakdowns(candidates) fetches every candidate's per-scanlator
+ *      breakdown in parallel, caches by `source:mangaId`, and never touches
+ *      `error` on a per-candidate failure (mirrors `useImport.loadBreakdowns`).
+ *   4. batchAddProviders(providers) POSTs /api/series/{id}/providers/batch
+ *      with the exact {providers} body and resolves the fresh SeriesDetail
+ *      (Slice P — the batch counterpart of the retired single `addProvider`).
+ *   5. batchAddProviders() failure sets `error` and resolves null (the caller
+ *      decides whether to close the dialog based on that null).
  *
  * vi.mock is hoisted by Vitest's transform so the apiClient mock is in place
  * before useMatchSource.ts is evaluated, regardless of import order here.
@@ -21,7 +25,7 @@ interface Call { method: string, path: string, body?: unknown, query?: unknown }
 let calls: Call[] = []
 
 let nextSearchOk = true
-let nextAddOk = true
+let nextBatchAddOk = true
 
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
@@ -56,8 +60,8 @@ vi.mock('~/utils/api/client', () => ({
     }),
     POST: vi.fn().mockImplementation((path: string, opts?: { params?: { path?: Record<string, unknown> }, body?: unknown }) => {
       calls.push({ method: 'POST', path, body: opts?.body })
-      if (path === '/api/series/{id}/providers') {
-        if (!nextAddOk) {
+      if (path === '/api/series/{id}/providers/batch') {
+        if (!nextBatchAddOk) {
           return Promise.resolve({ data: null, error: { message: 'add failed' }, response: new Response(null, { status: 409 }) })
         }
         return Promise.resolve({
@@ -79,7 +83,7 @@ describe('useMatchSource', () => {
   beforeEach(() => {
     calls = []
     nextSearchOk = true
-    nextAddOk = true
+    nextBatchAddOk = true
   })
 
   it('search(q) GETs /api/search with q and maps the response into groups', async () => {
@@ -158,35 +162,123 @@ describe('useMatchSource', () => {
     expect(groups.value).toEqual([])
   })
 
-  it('addProvider(payload) POSTs /api/series/{id}/providers with the exact body and resolves the fresh detail', async () => {
-    const { addProvider } = useMatchSource('series-1')
+  describe('loadBreakdowns (per-scanlator auto-split fetch, copied from useImport)', () => {
+    it('fetches every candidate in parallel and caches the mapped scanlators, keyed by source:mangaId', async () => {
+      const breakdownGet = vi.fn((sourceId: string) => {
+        if (sourceId === 'src-1') {
+          return Promise.resolve({
+            data: {
+              total: 101,
+              scanlators: [
+                { scanlator: 'ZScans', count: 90, ranges: '1-90' },
+                { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
+              ],
+            },
+            error: null,
+          })
+        }
+        return Promise.resolve({
+          data: { total: 12, scanlators: [{ scanlator: 'src-2', count: 12, ranges: '1-12' }] },
+          error: null,
+        })
+      })
+      vi.mocked(apiClient.GET).mockImplementation((path: string, opts?: { params?: { path?: { sourceId: string, mangaId: number } } }) => {
+        calls.push({ method: 'GET', path })
+        if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') {
+          return breakdownGet(opts!.params!.path!.sourceId)
+        }
+        return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+      })
 
-    const result = await addProvider({ source: 'src-1', mangaId: 42, importance: 5 })
+      const { breakdowns, loadBreakdowns } = useMatchSource('series-1')
+      await loadBreakdowns([
+        { source: 'src-1', mangaId: 1 } as never,
+        { source: 'src-2', mangaId: 2 } as never,
+      ])
 
-    const postCall = calls.find(c => c.path === '/api/series/{id}/providers')
-    expect(postCall).toBeDefined()
-    expect(postCall!.body).toEqual({ source: 'src-1', mangaId: 42, importance: 5 })
-    expect(result).toEqual({ id: 'series-1', displayName: 'Solo Leveling' })
+      expect(breakdownGet).toHaveBeenCalledTimes(2)
+      expect(breakdowns.value['src-1:1']).toEqual([
+        { scanlator: 'ZScans', count: 90, ranges: '1-90' },
+        { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
+      ])
+      expect(breakdowns.value['src-2:2']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
+    })
+
+    it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
+      const breakdownGet = vi.fn(() => Promise.resolve({
+        data: { total: 12, scanlators: [{ scanlator: 'src-1', count: 12, ranges: '1-12' }] },
+        error: null,
+      }))
+      vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+        calls.push({ method: 'GET', path })
+        if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') return breakdownGet()
+        return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+      })
+
+      const { loadBreakdowns } = useMatchSource('series-1')
+      const candidate = { source: 'src-1', mangaId: 1 } as never
+      await loadBreakdowns([candidate])
+      expect(breakdownGet).toHaveBeenCalledTimes(1)
+
+      await loadBreakdowns([candidate])
+      expect(breakdownGet).toHaveBeenCalledTimes(1)
+    })
+
+    it('caches a failed fetch as null (non-fatal — never touches `error`) and never retries it', async () => {
+      const breakdownGet = vi.fn(() => Promise.resolve({ data: null, error: { message: 'upstream failure' } }))
+      vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+        calls.push({ method: 'GET', path })
+        if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') return breakdownGet()
+        return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+      })
+
+      const { breakdowns, error, loadBreakdowns } = useMatchSource('series-1')
+      const candidate = { source: 'src-1', mangaId: 1 } as never
+      await loadBreakdowns([candidate])
+
+      expect(breakdowns.value['src-1:1']).toBeNull()
+      expect(error.value).toBeNull()
+
+      await loadBreakdowns([candidate])
+      expect(breakdownGet).toHaveBeenCalledTimes(1)
+    })
   })
 
-  it('addProvider() failure sets error and resolves null', async () => {
-    nextAddOk = false
-    const { error, addProvider } = useMatchSource('series-1')
+  describe('batchAddProviders (Slice P batch attach)', () => {
+    it('POSTs /api/series/{id}/providers/batch with the exact {providers} body and resolves the fresh detail', async () => {
+      const { batchAddProviders } = useMatchSource('series-1')
 
-    const result = await addProvider({ source: 'src-1', mangaId: 42, importance: 5 })
+      const providers = [
+        { source: 'src-1', mangaId: 42, scanlator: '' },
+        { source: 'src-2', mangaId: 7, scanlator: 'Asura Scans' },
+      ]
+      const result = await batchAddProviders(providers)
 
-    expect(result).toBeNull()
-    expect(error.value).toBe('add failed')
-  })
+      const postCall = calls.find(c => c.path === '/api/series/{id}/providers/batch')
+      expect(postCall).toBeDefined()
+      expect(postCall!.body).toEqual({ providers })
+      expect(result).toEqual({ id: 'series-1', displayName: 'Solo Leveling' })
+    })
 
-  it('saving flips true during addProvider and back to false once it resolves', async () => {
-    const { saving, addProvider } = useMatchSource('series-1')
-    expect(saving.value).toBe(false)
+    it('failure sets error and resolves null', async () => {
+      nextBatchAddOk = false
+      const { error, batchAddProviders } = useMatchSource('series-1')
 
-    const promise = addProvider({ source: 'src-1', mangaId: 42, importance: 5 })
-    expect(saving.value).toBe(true)
-    await promise
+      const result = await batchAddProviders([{ source: 'src-1', mangaId: 42, scanlator: '' }])
 
-    expect(saving.value).toBe(false)
+      expect(result).toBeNull()
+      expect(error.value).toBe('add failed')
+    })
+
+    it('saving flips true during batchAddProviders and back to false once it resolves', async () => {
+      const { saving, batchAddProviders } = useMatchSource('series-1')
+      expect(saving.value).toBe(false)
+
+      const promise = batchAddProviders([{ source: 'src-1', mangaId: 42, scanlator: '' }])
+      expect(saving.value).toBe(true)
+      await promise
+
+      expect(saving.value).toBe(false)
+    })
   })
 })

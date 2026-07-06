@@ -191,6 +191,7 @@ components:
         - coverUrl
         - isMetadataSource
         - linked
+        - mangaId
         - chapterCount
         - scanlator
         - language
@@ -225,6 +226,9 @@ components:
             library import — no real Suwayomi source attached yet); true once a
             real source is attached (via adopt, add-source, or Match). Unlinked
             groups are Match candidates (POST .../providers/{providerId}/match).
+        mangaId:
+          type: integer
+          description: Source's Suwayomi manga id; 0 = unlinked disk provider.
         chapterCount:
           type: integer
           description: How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by).
@@ -1350,13 +1354,16 @@ components:
           type: boolean
           description: Whether a Series row with this title/slug already exists in the DB.
 
-    MatchInput:
+    ProviderRef:
       type: object
-      description: An owner-chosen Suwayomi source to attach to a staged entry at import time, or as an additional source on an existing series.
+      description: |
+        Identifies one Suwayomi source+manga+scanlator to attach to a series.
+        Carries no importance — the batch attach (library.AddProviders)
+        assigns importances itself, each strictly below the series' existing
+        providers (decision E), in list order.
       required:
         - source
         - mangaId
-        - importance
       properties:
         source:
           type: string
@@ -1364,21 +1371,30 @@ components:
         mangaId:
           type: integer
           description: Suwayomi-internal manga identifier within that source.
-        importance:
-          type: integer
-          description: Provider importance to assign (higher number = higher priority).
+        scanlator:
+          type: string
+          description: |
+            Selects which scanlation group's chapters this provider tracks; omit or send ""
+            for "all chapters from this source". The same source may be attached again
+            under a different scanlator.
 
     ImportRequest:
       type: object
-      description: Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching an owner-matched Suwayomi source.
+      description: Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching a list of owner-matched Suwayomi sources.
       required:
         - path
       properties:
         path:
           type: string
           description: The staged entry's on-disk path (as returned by a prior scan/list).
-        match:
-          $ref: "#/components/schemas/MatchInput"
+        matches:
+          type: array
+          description: |
+            Owner-chosen Suwayomi sources to attach at import time (empty/absent = disk-only
+            import, no attach). Each lands at an importance strictly below the disk provider's
+            (decision E) via library.AddProviders — no upgrade re-download fires.
+          items:
+            $ref: "#/components/schemas/ProviderRef"
 
     SkipRequest:
       type: object
@@ -1437,9 +1453,26 @@ components:
           items:
             $ref: "#/components/schemas/BatchImportFailure"
 
+    AddProvidersRequest:
+      type: object
+      description: |
+        Attaches several Suwayomi sources to an existing series in one call
+        (Slice P batch attach). Ordered best-first — each entry lands at an
+        importance strictly below the series' existing providers (decision
+        E), assigned by the server, not the caller.
+      required:
+        - providers
+      properties:
+        providers:
+          type: array
+          minItems: 1
+          description: The sources to attach, best-first.
+          items:
+            $ref: "#/components/schemas/ProviderRef"
+
     AddProviderRequest:
       type: object
-      description: Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest).
+      description: Attaches an additional Suwayomi source to an existing series.
       required:
         - source
         - mangaId
@@ -2079,6 +2112,67 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The source is already attached to this series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/providers/batch:
+    post:
+      operationId: addSeriesProviders
+      summary: Attach several sources to an existing series in one call
+      description: |
+        Batch counterpart of POST /api/series/{id}/providers (Slice P): attaches
+        several Suwayomi sources {source, mangaId, scanlator} to an existing
+        series in one request, ordered best-first. Each source is ingested and
+        lands at an importance strictly below the series' existing providers
+        (decision E), assigned by the server. Returns the refreshed series
+        detail (§16 round-trip).
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddProvidersRequest"
+      responses:
+        "200":
+          description: All providers attached. Returns the refreshed series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Malformed id, empty providers list, or an invalid/missing source or mangaId in one of the entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id, or no such Suwayomi source/manga for one of the entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: One of the sources is already attached to this series (sources attached before the failing entry are NOT rolled back).
           content:
             application/json:
               schema:

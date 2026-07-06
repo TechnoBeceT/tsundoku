@@ -6,9 +6,10 @@ import Stepper from '../ui/Stepper.vue'
 import MatchPanel from '../scanLibrary/MatchPanel.vue'
 import ScanProgress from '../scanLibrary/ScanProgress.vue'
 import StagingTable from '../scanLibrary/StagingTable.vue'
+import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { StepItem } from '../ui/nav.types'
-import type { SearchGroup } from './import.types'
-import type { BatchImportResult, ScanEntry, ScanMatch, ScanState, ScanStatusFilter } from './scanLibrary.types'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from './import.types'
+import type { BatchImportResult, ScanEntry, ScanState, ScanStatusFilter } from './scanLibrary.types'
 
 /**
  * ScanLibrary — the Scan Library wizard (migrating an existing on-disk manga
@@ -27,12 +28,14 @@ import type { BatchImportResult, ScanEntry, ScanMatch, ScanState, ScanStatusFilt
  * another pass without losing sight of the table underneath.
  *
  * Within Review, a row's `match` emit opens the `<MatchPanel>` sub-panel
- * (Task 7) IN PLACE of the header + `<StagingTable>` — `matchPath` (set by
- * the page once `useScanLibrary().match(path)` resolves) gates which one
- * renders. The panel's own `confirm`/`back` re-emit as `match-confirm` /
- * `match-back` (carrying the target `path` alongside the picked source, since
- * `<MatchPanel>` itself only knows the selection) for the page to call
- * `importWithMatch` and close the panel.
+ * (Task 7, rebuilt multi-select in Slice P) IN PLACE of the header +
+ * `<StagingTable>` — `matchPath` (set by the page once
+ * `useScanLibrary().match(path)` resolves) gates which one renders. The
+ * panel's own `confirm`/`loadBreakdowns`/`back` re-emit as `match-confirm` /
+ * `load-breakdowns` / `match-back` (carrying the target `path` alongside the
+ * gathered, ranked `ProviderRef[]`, since `<MatchPanel>` itself only knows the
+ * selection) for the page to call `importWithMatches` / `loadBreakdowns` and
+ * close the panel.
  *
  * §16 no-silent-failure: a `scanState.error` (a failed/timed-out scan) is
  * rendered via `<ErrorBanner>` regardless of stage — `scan.done` is terminal
@@ -68,6 +71,8 @@ const props = withDefaults(defineProps<{
   matchTitle?: string
   /** Cross-source candidate groups for the current match target. */
   matchGroups?: SearchGroup[]
+  /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
+  matchBreakdowns?: Record<string, ScanlatorCoverage[] | null>
   /** True while the match search itself (not the confirm mutation) is in flight. */
   matching?: boolean
   /** A match-search failure message, or "" for none. */
@@ -85,6 +90,7 @@ const props = withDefaults(defineProps<{
   matchPath: null,
   matchTitle: '',
   matchGroups: () => [],
+  matchBreakdowns: () => ({}),
   matching: false,
   matchError: '',
 })
@@ -104,8 +110,10 @@ const emit = defineEmits<{
   'skip': [path: string]
   /** Import every remaining pending entry disk-only. */
   'import-all-disk-only': []
-  /** The owner confirmed a source for the current match target. */
-  'match-confirm': [payload: { path: string, match: ScanMatch }]
+  /** The owner confirmed the gathered, ranked sources for the current match target. */
+  'match-confirm': [payload: { path: string, matches: ProviderRef[] }]
+  /** Fetch the per-scanlator breakdown for every given candidate (Configure-stage entry). */
+  'load-breakdowns': [candidates: SearchCandidate[]]
   /** Abandon the match sub-panel and return to the staging table. */
   'match-back': []
 }>()
@@ -169,11 +177,13 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
             v-if="showMatchPanel"
             :title="matchTitle"
             :groups="matchGroups"
+            :breakdowns="matchBreakdowns"
             :searching="matching"
             :search-error="matchError"
             :busy="matchBusy"
             :error="matchRowError"
-            @confirm="emit('match-confirm', { path: matchPath!, match: $event })"
+            @confirm="emit('match-confirm', { path: matchPath!, matches: $event })"
+            @load-breakdowns="emit('load-breakdowns', $event)"
             @back="emit('match-back')"
           />
 

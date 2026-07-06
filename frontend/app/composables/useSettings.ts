@@ -104,7 +104,7 @@ const DURATION_COMPONENT_RE = /(\d+(?:\.\d+)?)(ms|h|m|s)/g
 export function parseGoDurationMs(raw: string): number {
   let totalMs = 0
   for (const match of raw.matchAll(DURATION_COMPONENT_RE)) {
-    const amount = Number.parseFloat(match[1])
+    const amount = Number.parseFloat(match[1] ?? '0')
     switch (match[2]) {
       case 'h': totalMs += amount * 3_600_000; break
       case 'm': totalMs += amount * 60_000; break

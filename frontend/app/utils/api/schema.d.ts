@@ -279,6 +279,31 @@ export interface paths {
         patch: operations["reorderSeriesProviders"];
         trace?: never;
     };
+    "/api/series/{id}/providers/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach several sources to an existing series in one call
+         * @description Batch counterpart of POST /api/series/{id}/providers (Slice P): attaches
+         *     several Suwayomi sources {source, mangaId, scanlator} to an existing
+         *     series in one request, ordered best-first. Each source is ingested and
+         *     lands at an importance strictly below the series' existing providers
+         *     (decision E), assigned by the server. Returns the refreshed series
+         *     detail (§16 round-trip).
+         */
+        post: operations["addSeriesProviders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}/match": {
         parameters: {
             query?: never;
@@ -1394,6 +1419,8 @@ export interface components {
             isMetadataSource: boolean;
             /** @description False for a disk-origin provider (an unlinked/unknown group created by library import — no real Suwayomi source attached yet); true once a real source is attached (via adopt, add-source, or Match). Unlinked groups are Match candidates (POST .../providers/{providerId}/match). */
             linked: boolean;
+            /** @description Source's Suwayomi manga id; 0 = unlinked disk provider. */
+            mangaId: number;
             /** @description How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by). */
             chapterCount: number;
             /** @description Scanlation group (may be empty). */
@@ -2085,20 +2112,34 @@ export interface components {
             /** @description Whether a Series row with this title/slug already exists in the DB. */
             alreadyInDb: boolean;
         };
-        /** @description An owner-chosen Suwayomi source to attach to a staged entry at import time, or as an additional source on an existing series. */
-        MatchInput: {
+        /**
+         * @description Identifies one Suwayomi source+manga+scanlator to attach to a series.
+         *     Carries no importance — the batch attach (library.AddProviders)
+         *     assigns importances itself, each strictly below the series' existing
+         *     providers (decision E), in list order.
+         */
+        ProviderRef: {
             /** @description Suwayomi source ID the chosen candidate came from. */
             source: string;
             /** @description Suwayomi-internal manga identifier within that source. */
             mangaId: number;
-            /** @description Provider importance to assign (higher number = higher priority). */
-            importance: number;
+            /**
+             * @description Selects which scanlation group's chapters this provider tracks; omit or send ""
+             *     for "all chapters from this source". The same source may be attached again
+             *     under a different scanlator.
+             */
+            scanlator?: string;
         };
-        /** @description Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching an owner-matched Suwayomi source. */
+        /** @description Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching a list of owner-matched Suwayomi sources. */
         ImportRequest: {
             /** @description The staged entry's on-disk path (as returned by a prior scan/list). */
             path: string;
-            match?: components["schemas"]["MatchInput"];
+            /**
+             * @description Owner-chosen Suwayomi sources to attach at import time (empty/absent = disk-only
+             *     import, no attach). Each lands at an importance strictly below the disk provider's
+             *     (decision E) via library.AddProviders — no upgrade re-download fires.
+             */
+            matches?: components["schemas"]["ProviderRef"][];
         };
         /** @description Marks a staged library-scan entry as skipped — leave it on disk, stop showing it as pending. */
         SkipRequest: {
@@ -2131,7 +2172,17 @@ export interface components {
             /** @description Per-path failures (empty if every path imported successfully). */
             failed: components["schemas"]["BatchImportFailure"][];
         };
-        /** @description Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest). */
+        /**
+         * @description Attaches several Suwayomi sources to an existing series in one call
+         *     (Slice P batch attach). Ordered best-first — each entry lands at an
+         *     importance strictly below the series' existing providers (decision
+         *     E), assigned by the server, not the caller.
+         */
+        AddProvidersRequest: {
+            /** @description The sources to attach, best-first. */
+            providers: components["schemas"]["ProviderRef"][];
+        };
+        /** @description Attaches an additional Suwayomi source to an existing series. */
         AddProviderRequest: {
             /** @description Suwayomi source ID the chosen candidate came from. */
             source: string;
@@ -2806,6 +2857,69 @@ export interface operations {
             };
             /** @description No series with the given id. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    addSeriesProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddProvidersRequest"];
+            };
+        };
+        responses: {
+            /** @description All providers attached. Returns the refreshed series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed id, empty providers list, or an invalid/missing source or mangaId in one of the entries. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id, or no such Suwayomi source/manga for one of the entries. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description One of the sources is already attached to this series (sources attached before the failing entry are NOT rolled back). */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

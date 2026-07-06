@@ -1,15 +1,19 @@
 /**
- * MatchSourceDialog — drives the search → pick → confirm flow and asserts the
- * emitted payloads, plus the §16 loading/error surfaces.
+ * MatchSourceDialog — Slice P rebuild onto `useSourceConfigure` (multi-select
+ * tray + Configure powers). Drives the search → configure flow and asserts
+ * the emitted payloads (now an ordered `ProviderRef[]`, best-first, instead
+ * of the old single `{source, mangaId, importance}`), plus the §16
+ * loading/error surfaces and the cross-search adopt tray.
  *
  * The real Dialog teleports its body through reka-ui's portal (which does not
  * render in happy-dom), so it is stubbed to render its default + actions
  * slots inline (mirrors ExtensionPreferencesDialog.test.ts). That keeps the
  * assertions on the dialog's OWN behaviour — the two-stage flow, the emitted
- * search/confirm payloads, and the saving/error surfaces — not on reka.
+ * search/loadBreakdowns/confirm payloads, the saving/error surfaces, and the
+ * tray — not on reka.
  */
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import MatchSourceDialog from './MatchSourceDialog.vue'
 import { searchResults } from '../../fixtures/import'
 
@@ -20,6 +24,11 @@ function mountDialog(props: Record<string, unknown> = {}) {
     props: { open: true, seriesTitle: 'Solo Leveling', groups: searchResults, ...props },
     global: { stubs: { Dialog: DialogStub } },
   })
+}
+
+/** Finds one `SearchGroupCard` by its title text (mirrors Import.test.ts's helper). */
+function findGroupCard(wrapper: VueWrapper, title: string) {
+  return wrapper.findAll('.group').find(g => g.text().includes(title))!
 }
 
 describe('MatchSourceDialog', () => {
@@ -37,52 +46,79 @@ describe('MatchSourceDialog', () => {
     expect(wrapper.emitted('search')).toEqual([['naruto']])
   })
 
-  it('advances to the pick stage and lists every candidate after picking a group', async () => {
+  it('advances to the configure stage and lists every candidate, all selected by default, after picking a group', async () => {
     const wrapper = mountDialog()
     await wrapper.find('.group').trigger('click')
 
     for (const candidate of searchResults[0]!.candidates) {
       expect(wrapper.text()).toContain(candidate.sourceName)
     }
+    // Every candidate starts selected (useSourceConfigure.enterConfigure) —
+    // the Attach button is enabled with no toggling required.
+    const attach = wrapper.findAll('button').find(b => b.text() === 'Attach sources')!
+    expect(attach.attributes('disabled')).toBeUndefined()
   })
 
-  it('toggling a candidate then confirming emits confirm with the chosen source/mangaId/importance', async () => {
+  it('emits loadBreakdowns with the picked group\'s candidates when advancing to Configure', async () => {
+    const wrapper = mountDialog()
+    await wrapper.find('.group').trigger('click')
+
+    const emitted = wrapper.emitted('loadBreakdowns')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0]![0]).toEqual(searchResults[0]!.candidates)
+  })
+
+  it('confirming with the default all-selected set emits an ordered ProviderRef[] (best-first, source order)', async () => {
+    const wrapper = mountDialog()
+    await wrapper.find('.group').trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Attach sources')!.trigger('click')
+
+    expect(wrapper.emitted('confirm')).toEqual([[
+      searchResults[0]!.candidates.map(c => ({ source: c.source, mangaId: c.mangaId, scanlator: '' })),
+    ]])
+  })
+
+  it('toggling a candidate off then confirming emits confirm without it', async () => {
     const wrapper = mountDialog()
     await wrapper.find('.group').trigger('click')
 
     const target = searchResults[0]!.candidates[1]!
     await wrapper.find(`[aria-label="Toggle ${target.sourceName}"]`).trigger('click')
-    await wrapper.find('input[type="number"]').setValue(7)
-    await wrapper.findAll('button').find(b => b.text() === 'Attach source')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Attach sources')!.trigger('click')
 
-    expect(wrapper.emitted('confirm')).toEqual([[{ source: target.source, mangaId: target.mangaId, importance: 7 }]])
+    const providers = wrapper.emitted('confirm')![0]![0] as { source: string, mangaId: number }[]
+    expect(providers.some(p => p.source === target.source && p.mangaId === target.mangaId)).toBe(false)
+    expect(providers.length).toBe(searchResults[0]!.candidates.length - 1)
   })
 
-  it('the Attach button stays disabled when the priority is a non-integer (must POST a clean int)', async () => {
+  it('reordering a candidate with the rank arrows changes the emitted order (best-first)', async () => {
     const wrapper = mountDialog()
     await wrapper.find('.group').trigger('click')
 
-    const target = searchResults[0]!.candidates[1]!
-    await wrapper.find(`[aria-label="Toggle ${target.sourceName}"]`).trigger('click')
-    await wrapper.find('input[type="number"]').setValue(1.5)
+    // Move the second candidate up one rank, ahead of the first.
+    const moveUpButtons = wrapper.findAll('[aria-label="Move up"]')
+    await moveUpButtons[1]!.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Attach sources')!.trigger('click')
 
-    const attach = wrapper.findAll('button').find(b => b.text() === 'Attach source')!
-    expect(attach.attributes('disabled')).toBeDefined()
-
-    // Clicking it anyway must not emit confirm with the decimal — no bad POST.
-    await attach.trigger('click')
-    expect(wrapper.emitted('confirm')).toBeUndefined()
+    const providers = wrapper.emitted('confirm')![0]![0] as { source: string, mangaId: number }[]
+    expect(providers[0]!.source).toBe(searchResults[0]!.candidates[1]!.source)
+    expect(providers[1]!.source).toBe(searchResults[0]!.candidates[0]!.source)
   })
 
-  it('the Attach button stays disabled until a candidate is selected', async () => {
+  it('the Attach button stays disabled until at least one candidate is selected', async () => {
     const wrapper = mountDialog()
     await wrapper.find('.group').trigger('click')
 
-    const attach = wrapper.findAll('button').find(b => b.text() === 'Attach source')!
+    // Deselect every candidate.
+    for (const c of searchResults[0]!.candidates) {
+      await wrapper.find(`[aria-label="Toggle ${c.sourceName}"]`).trigger('click')
+    }
+
+    const attach = wrapper.findAll('button').find(b => b.text() === 'Attach sources')!
     expect(attach.attributes('disabled')).toBeDefined()
   })
 
-  it('surfaces a search/add failure via the error banner', () => {
+  it('surfaces a search/attach failure via the error banner', () => {
     const wrapper = mountDialog({ error: 'Suwayomi was unreachable' })
     expect(wrapper.text()).toContain('Suwayomi was unreachable')
   })
@@ -91,7 +127,7 @@ describe('MatchSourceDialog', () => {
     const wrapper = mountDialog({ saving: true })
     await wrapper.find('.group').trigger('click')
 
-    const attach = wrapper.findAll('button').find(b => b.text() === 'Attach source')!
+    const attach = wrapper.findAll('button').find(b => b.text() === 'Attach sources')!
     expect(attach.attributes('disabled')).toBeDefined()
   })
 
@@ -102,17 +138,50 @@ describe('MatchSourceDialog', () => {
     expect(wrapper.text()).toContain('No matches found')
   })
 
-  it('resets the flow (query, stage, selection) every time it re-opens', async () => {
+  it('resets the flow (query, stage, tray, pick) every time it re-opens', async () => {
     const wrapper = mountDialog()
     await wrapper.find('.group').trigger('click')
-    expect(wrapper.text()).toContain('Choose the source to attach')
+    expect(wrapper.text()).toContain('Adding sources to')
 
-    // Close then re-open — the stale "pick" stage must not survive.
+    // Close then re-open — the stale "configure" stage must not survive.
     await wrapper.setProps({ open: false })
     await wrapper.setProps({ open: true })
 
-    expect(wrapper.text()).not.toContain('Choose the source to attach')
+    expect(wrapper.text()).not.toContain('Adding sources to')
     const input = wrapper.find('input[type="search"]')
     expect((input.element as HTMLInputElement).value).toBe('Solo Leveling')
+  })
+
+  // ---- Cross-search adopt tray (this surface is intentionally multi-select) ----
+
+  it('gathers a group into the tray via "+ Add", then "Configure N sources →" enters Configure with every tray candidate', async () => {
+    const wrapper = mountDialog()
+    const [g1, g2] = searchResults
+
+    await findGroupCard(wrapper, g1!.title).find('.group__toggle').trigger('click')
+    expect(wrapper.text()).toContain(`${g1!.candidates.length} sources`)
+
+    // While the tray is non-empty, a card body click no longer picks straight
+    // to Configure — the second group's "+ Add" toggle still works.
+    await findGroupCard(wrapper, g2!.title).find('.group__toggle').trigger('click')
+    expect(wrapper.text()).toContain(`${g1!.candidates.length + g2!.candidates.length} sources`)
+
+    await wrapper.findAll('button').find(b => b.text().startsWith('Configure'))!.trigger('click')
+
+    for (const candidate of [...g1!.candidates, ...g2!.candidates]) {
+      expect(wrapper.text()).toContain(candidate.sourceName)
+    }
+  })
+
+  // ---- Tray-leak guard: this surface intentionally OPTS IN to tray-enabled ----
+  // (contrast with the single-select `MatchDiskProviderDialog`/`MatchPanel`,
+  // which pass no `tray-enabled` prop to `SearchGroupCard` and therefore never
+  // render this toggle — verified by inspection, not exercised here).
+
+  it('renders the "+ Add" tray toggle on every group card (tray-enabled is ON for this surface)', () => {
+    const wrapper = mountDialog()
+    const toggles = wrapper.findAll('.group__toggle')
+    expect(toggles.length).toBe(searchResults.length)
+    for (const t of toggles) expect(t.text()).toBe('+ Add')
   })
 })

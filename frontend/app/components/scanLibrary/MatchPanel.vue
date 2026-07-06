@@ -1,45 +1,79 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, toRef, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import ErrorBanner from '../ui/ErrorBanner.vue'
 import Spinner from '../ui/Spinner.vue'
-import CandidateConfigRow from '../import/CandidateConfigRow.vue'
 import SearchGroupCard from '../import/SearchGroupCard.vue'
-import type { SearchCandidate, SearchGroup } from '../screens/import.types'
-import type { ScanMatch } from '../screens/scanLibrary.types'
+import AdoptTray from '../import/AdoptTray.vue'
+import SourceConfigurePanel from '../import/SourceConfigurePanel.vue'
+import { useSourceConfigure, type ProviderRef } from '~/composables/useSourceConfigure'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens/import.types'
 
 /**
- * MatchPanel — the Scan Library "Match a source" sub-panel: attaches ONE
- * Suwayomi source to a staged (disk-only) entry so future chapters/upgrades
- * work, instead of leaving it disk-only forever. Reuses the SAME grouped
- * candidates the Import/Adopt wizard renders (`GET /api/library/imports/match`
- * returns the identical `SearchGroup`/`SearchCandidate` DTO as `GET
- * /api/search`) via the exact `SearchGroupCard` + `CandidateConfigRow`
- * organisms `Import.vue` composes — this panel never re-implements candidate
- * rendering (§2 DRY / §8 reuse).
+ * MatchPanel — the Scan Library "Match a source" sub-panel: attaches one or
+ * more Suwayomi sources to a staged (disk-only) entry so future chapters/
+ * upgrades work, instead of leaving it disk-only forever. Reuses the SAME
+ * grouped candidates the Import/Adopt wizard renders (`GET
+ * /api/library/imports/match` returns the identical `SearchGroup`/
+ * `SearchCandidate` DTO as `GET /api/search`) and the SAME Configure-stage
+ * powers (multi-select tray, per-scanlator coverage, importance ranking) the
+ * Series-Detail "Add a source" dialog (`MatchSourceDialog`) uses, via the
+ * shared `useSourceConfigure` composable + `SourceConfigurePanel` — this
+ * panel never re-implements candidate rendering, tray, or split logic (§2 DRY
+ * / §8 reuse).
  *
- * Two internal stages, mirroring `Import.vue`'s Stage 1 → Stage 2 shape but
- * simpler: this endpoint attaches exactly ONE provider (unlike Adopt's
- * ranked multi-provider set), so there is no reorder/rank step.
+ * Rebuilt for Slice P (was single-select: one group, one candidate, a fixed
+ * importance of 2, no coverage, no scanlator). The import call itself now
+ * sends the resolved, best-first `ProviderRef[]` — no importance (the
+ * backend assigns each strictly below the disk-origin provider's importance
+ * of 1, decision E, in list order) — instead of the old single
+ * `{source, mangaId, importance}`.
+ *
+ * Two internal stages, mirroring `MatchSourceDialog`'s search/configure split:
  *   1. **Groups** — pick which cross-source group is the right series
- *      (`SearchGroupCard`, one card per group).
- *   2. **Candidates** — pick exactly one source within that group
- *      (`CandidateConfigRow`, driven as a single-select: toggling a row
- *      selects it and deselects any other — `rank`/`canUp`/`canDown` are
- *      always inert since there is nothing to reorder).
+ *      (`SearchGroupCard`, tray-enabled — the owner can gather several
+ *      groups' candidates from the ONE match search before configuring, or
+ *      classic one-tap pick straight into Configure while the tray is empty).
+ *   2. **Configure** — `SourceConfigurePanel` renders the gathered
+ *      candidates' rows (auto-split by scanlator once a breakdown resolves,
+ *      multi-select, re-rankable) from the shared `useSourceConfigure`
+ *      composable's `displayRows`. There is no editable title/category here
+ *      (unlike the Adopt wizard) — the panel header above already shows the
+ *      staged entry's own (fixed) title.
  *
  * Presentation-only: the parent (`ScanLibrary.vue`) owns whether the panel is
  * shown at all and supplies the match search's own loading/error state
  * (`searching`/`searchError`, from `useScanLibrary().matching`/`.matchError`)
  * separately from the CONFIRM mutation's loading/error state (`busy`/`error`,
  * from `useScanLibrary().busy(path)`/`.error(path)`) — two distinct async
- * operations, two distinct §16 state pairs.
+ * operations, two distinct §16 state pairs. `breakdowns` (per-scanlator
+ * coverage cache, keyed `source:mangaId`) arrives the same way, and every
+ * Configure-stage breakdown fetch is emitted via `loadBreakdowns` for the
+ * parent's `useScanLibrary.loadBreakdowns` to run (§16 — no fetching here).
+ *
+ * Resets to the Groups stage (and drops the gathered tray + picked group)
+ * whenever `groups` changes: a fresh match search's results (the owner
+ * clicked Match on a staged entry; `groups` starts `[]` while `searching`,
+ * then updates once the search resolves) must never leave a stale Configure
+ * selection showing. Unlike a dialog's open/close, this panel has no single
+ * "reopen" moment to reset on — the parent mounts it via `v-if` as soon as
+ * the search STARTS (so it can show the spinner), then the SAME instance
+ * re-renders once `groups` actually updates — hence the reset lives on a
+ * `groups` watcher rather than an `open` watcher (see `ScanLibrary.vue`'s
+ * `onMatch`).
+ *
+ * Tray-leak guard: `tray-enabled` is intentionally ON here (Slice P widened
+ * this surface to MULTI-select) — the sibling single-select match surface
+ * `MatchDiskProviderDialog` (the no-re-download link of an unlinked
+ * disk-origin group) is untouched and still leaves it off.
  */
 const props = withDefaults(defineProps<{
   /** The staged entry's title, for the panel header. */
   title: string
   /** Cross-source candidate groups returned by the match search. */
   groups: SearchGroup[]
+  /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
+  breakdowns?: Record<string, ScanlatorCoverage[] | null>
   /** True while the match search itself is in flight. */
   searching?: boolean
   /** A match-search failure message, or "" for none. */
@@ -49,6 +83,7 @@ const props = withDefaults(defineProps<{
   /** The confirmed match's import failure, or "" for none. */
   error?: string
 }>(), {
+  breakdowns: () => ({}),
   searching: false,
   searchError: '',
   busy: false,
@@ -56,84 +91,56 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  /** The owner confirmed a source to attach — importance defaults to outrank disk-only. */
-  confirm: [selection: ScanMatch]
+  /** The owner confirmed the gathered, ranked sources — best-first — to attach at import time. */
+  confirm: [providers: ProviderRef[]]
   /** Abandon the match flow — the parent returns to the staging table. */
   back: []
+  /** Fetch the per-scanlator breakdown for every given candidate (Configure-stage entry). */
+  loadBreakdowns: [candidates: SearchCandidate[]]
 }>()
 
-/** Stable identity for a candidate (a source can appear once per group). */
-const candKey = (c: SearchCandidate): string => `${c.source}:${c.mangaId}`
+const stage = ref<'groups' | 'configure'>('groups')
 
-/**
- * Disk-origin providers are always importance 1 (Phase-A invariant); any
- * matched Suwayomi source must outrank that to trigger the upgrade-swap, so
- * a fresh match is pinned at 2 — the minimum value that satisfies "≥2" from
- * the plan's global constraints. There is only ever one provider attached
- * via this flow, so there is no ranking scheme to derive it from.
- */
-const DEFAULT_IMPORTANCE = 2
+// The Configure-stage orchestration (tray, row selection/order, per-scanlator
+// split, rank) is owned by the shared composable (Slice P) — this panel keeps
+// only `stage` (its own concern; the composable does not own stage, mirroring
+// `MatchSourceDialog`).
+const cfg = useSourceConfigure({
+  breakdowns: toRef(props, 'breakdowns'),
+  onLoadBreakdowns: c => emit('loadBreakdowns', c),
+})
 
-const stage = ref<'groups' | 'candidates'>('groups')
-const pickedGroup = ref<SearchGroup | null>(null)
-const selectedKey = ref<string | null>(null)
-
-// A fresh match search (new `groups` prop, e.g. the owner matched a
-// different row) always restarts at the group-picking stage.
+// A fresh match search (new `groups` prop — the owner matched a different
+// row, or this one's search just resolved) always restarts at the
+// group-picking stage and drops any gathered tray/selection.
 watch(() => props.groups, () => {
   stage.value = 'groups'
-  pickedGroup.value = null
-  selectedKey.value = null
+  cfg.tray.value = []
+  cfg.group.value = null
 })
 
-const pickGroup = (g: SearchGroup): void => {
-  pickedGroup.value = g
-  selectedKey.value = null
-  stage.value = 'candidates'
+// Classic single-group pick (tray empty) — advances straight to Configure.
+function pickGroup(g: SearchGroup): void {
+  cfg.enterConfigure(g.candidates)
+  stage.value = 'configure'
 }
 
-/** Toggles a candidate's selection — selecting one clears any other (single-select). */
-const selectCandidate = (key: string): void => {
-  selectedKey.value = selectedKey.value === key ? null : key
+// The tray's "Configure N sources →" — builds a synthetic group from every
+// gathered candidate and advances to Configure the same way.
+function onConfigureTray(): void {
+  cfg.configureTray()
+  stage.value = 'configure'
 }
 
-interface CandRow {
-  key: string
-  candidate: SearchCandidate
-  selected: boolean
+/** Stage-aware back: from Configure it returns to Groups; from Groups it exits the panel. */
+function handleBack(): void {
+  if (stage.value === 'configure') stage.value = 'groups'
+  else emit('back')
 }
 
-const candRows = computed<CandRow[]>(() => {
-  const g = pickedGroup.value
-  if (!g) return []
-  return g.candidates.map(c => ({
-    key: candKey(c),
-    candidate: c,
-    selected: selectedKey.value === candKey(c),
-  }))
-})
-
-const selectedCandidate = computed<SearchCandidate | null>(() => {
-  const g = pickedGroup.value
-  if (!g || !selectedKey.value) return null
-  return g.candidates.find(c => candKey(c) === selectedKey.value) ?? null
-})
-
-/** Stage-aware back: from Candidates it returns to Groups; from Groups it exits the panel. */
-const handleBack = (): void => {
-  if (stage.value === 'candidates') {
-    stage.value = 'groups'
-    pickedGroup.value = null
-    selectedKey.value = null
-  } else {
-    emit('back')
-  }
-}
-
-const confirm = (): void => {
-  const c = selectedCandidate.value
-  if (!c || props.busy) return
-  emit('confirm', { source: c.source, mangaId: c.mangaId, importance: DEFAULT_IMPORTANCE })
+function confirm(): void {
+  if (cfg.selectedCount.value === 0 || props.busy) return
+  emit('confirm', cfg.orderedProviders.value)
 }
 </script>
 
@@ -159,14 +166,27 @@ const confirm = (): void => {
 
     <template v-else-if="stage === 'groups'">
       <p class="mp-subhead">
-        {{ groups.length }} possible match{{ groups.length === 1 ? '' : 'es' }} · choose one
+        {{ groups.length }} possible match{{ groups.length === 1 ? '' : 'es' }} · choose one or gather several
       </p>
+
+      <AdoptTray
+        v-if="cfg.trayActive.value"
+        :candidates="cfg.tray.value"
+        @configure="onConfigureTray"
+        @remove="cfg.removeCand"
+      />
+
       <div class="mp-groups">
         <SearchGroupCard
           v-for="g in groups"
           :key="g.title"
           :group="g"
+          tray-enabled
+          :added="cfg.isGroupAdded(g)"
+          :tray-active="cfg.trayActive.value"
           @pick="pickGroup"
+          @add="cfg.addGroup"
+          @remove="cfg.removeGroup"
         />
       </div>
       <div class="mp-actions mp-actions--start">
@@ -175,28 +195,22 @@ const confirm = (): void => {
     </template>
 
     <template v-else>
-      <p class="mp-subhead">Pick the source to attach · importance {{ DEFAULT_IMPORTANCE }} (outranks disk-only)</p>
-      <CandidateConfigRow
-        v-for="row in candRows"
-        :key="row.key"
-        :candidate="row.candidate"
-        :selected="row.selected"
-        :rank="row.selected ? 1 : 0"
-        :can-up="false"
-        :can-down="false"
-        :inspecting="false"
-        :inspected="false"
-        :chapters="[]"
+      <SourceConfigurePanel
+        :rows="cfg.displayRows.value"
         hide-inspect
-        hide-reorder
-        @toggle="selectCandidate(row.key)"
-        @inspect="() => {}"
-        @move="() => {}"
+        label="Sources to attach · use arrows to rank priority"
+        @toggle="cfg.toggleCand"
+        @move="cfg.moveCand($event.key, $event.dir)"
       />
       <div class="mp-actions mp-actions--between">
         <AppButton variant="ghost" :disabled="busy" @click="handleBack">Back</AppButton>
-        <AppButton variant="primary" :loading="busy" :disabled="!selectedCandidate || busy" @click="confirm">
-          Confirm match
+        <AppButton
+          variant="primary"
+          :loading="busy"
+          :disabled="cfg.selectedCount.value === 0 || busy"
+          @click="confirm"
+        >
+          Attach {{ cfg.selectedCount.value }} source{{ cfg.selectedCount.value === 1 ? '' : 's' }}
         </AppButton>
       </div>
     </template>

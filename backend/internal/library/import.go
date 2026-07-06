@@ -17,8 +17,8 @@ import (
 var ErrEntryNotFound = errors.New("import entry not found")
 
 // Import registers one staged ImportEntry's on-disk chapters as already
-// downloaded (no re-download), optionally attaching an owner-matched
-// Suwayomi source, and marks the entry imported.
+// downloaded (no re-download), optionally attaching a LIST of owner-matched
+// Suwayomi sources, and marks the entry imported.
 //
 // Algorithm:
 //  1. Look up the ImportEntry by path — ErrEntryNotFound if unstaged.
@@ -28,17 +28,20 @@ var ErrEntryNotFound = errors.New("import entry not found")
 //     the disk-only source, marking every chapter downloaded (importance 1,
 //     no download work needed — the CBZs already exist).
 //  4. Load the just-reconciled Series by slug.
-//  5. If match is non-nil, attach the owner-chosen Suwayomi source via
-//     AddProvider (Task 5) — this ranks the disk copy against a live feed
-//     and can flag upgrades on the next dispatch cycle.
-//  6. Mark the entry "imported" and call s.trigger() (if non-nil) so a
-//     freshly-attached source converges immediately.
-//  7. Return the refreshed series.SeriesDetailDTO (§16 round-trip).
+//  5. If matches is non-empty, attach the owner-chosen Suwayomi sources via
+//     AddProviders (Slice P) — each lands at an importance strictly below
+//     the disk provider's (decision E: gap-fill, never outrank an
+//     already-satisfied chapter), so ONLY the disk provider's SeriesDetailDTO
+//     round-trip below is skipped in favor of AddProviders' own return,
+//     which already re-fetches the series (§16).
+//  6. When matches is empty, mark the entry "imported" and call s.trigger()
+//     (if non-nil) so the plain disk-only import still converges, then
+//     return the refreshed series.SeriesDetailDTO (§16 round-trip).
 //
 // Idempotent: re-importing the same path re-runs ReconcileOne, which
 // find-or-updates the Series by slug (no duplicate row), and re-marks the
 // entry imported.
-func (s *Service) Import(ctx context.Context, path string, match *MatchInput) (series.SeriesDetailDTO, error) {
+func (s *Service) Import(ctx context.Context, path string, matches []ProviderRef) (series.SeriesDetailDTO, error) {
 	entry, err := s.loadEntryByPath(ctx, path)
 	if err != nil {
 		return series.SeriesDetailDTO{}, err
@@ -57,22 +60,38 @@ func (s *Service) Import(ctx context.Context, path string, match *MatchInput) (s
 		return series.SeriesDetailDTO{}, err
 	}
 
-	if match != nil {
-		// MatchInput carries no scanlator field (out of scope for this pass —
-		// see library.Service.AddProvider); "" attaches the whole source, all
-		// scanlators, matching the pre-existing behavior of this path.
-		if _, err := s.AddProvider(ctx, ser.ID, match.Source, match.MangaID, match.Importance, ""); err != nil {
+	if len(matches) > 0 {
+		dto, err := s.AddProviders(ctx, ser.ID, matches)
+		if err != nil {
 			return series.SeriesDetailDTO{}, err
 		}
+		if err := s.markImported(ctx, entry); err != nil {
+			return series.SeriesDetailDTO{}, err
+		}
+		// AddProviders (via AddProvider) already re-fetched the series after
+		// attaching every ref, so its DTO is authoritative — no second
+		// round-trip needed.
+		return dto, nil
 	}
 
-	if _, err := entry.Update().SetStatus(statusImported).Save(ctx); err != nil {
+	if err := s.markImported(ctx, entry); err != nil {
 		return series.SeriesDetailDTO{}, err
+	}
+	return s.series.GetSeries(ctx, ser.ID)
+}
+
+// markImported flips entry to "imported" and fires s.trigger (if non-nil) —
+// the shared tail of both Import branches (§2 DRY), so a matched import and
+// a disk-only import agree on when the entry is considered done and when an
+// immediate download-cycle convergence is requested.
+func (s *Service) markImported(ctx context.Context, entry *ent.ImportEntry) error {
+	if _, err := entry.Update().SetStatus(statusImported).Save(ctx); err != nil {
+		return err
 	}
 	if s.trigger != nil {
 		s.trigger()
 	}
-	return s.series.GetSeries(ctx, ser.ID)
+	return nil
 }
 
 // loadEntryByPath looks up the staged ImportEntry by path, translating a

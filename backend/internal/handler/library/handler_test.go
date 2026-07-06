@@ -86,6 +86,7 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	authed.POST("/library/import/batch", h.Batch)
 	authed.POST("/library/imports/skip", h.Skip)
 	authed.POST("/series/:id/providers", h.AddProvider)
+	authed.POST("/series/:id/providers/batch", h.AddProviders)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -166,6 +167,7 @@ func TestLibraryRoutes_RequireOwner(t *testing.T) {
 		{"GET", "/api/library/imports/match?path=x"},
 		{"POST", "/api/library/imports/skip"},
 		{"POST", "/api/series/" + uuid.New().String() + "/providers"},
+		{"POST", "/api/series/" + uuid.New().String() + "/providers/batch"},
 	} {
 		rec := env.doUnauth(r.method, r.path, "")
 		if rec.Code != http.StatusUnauthorized {
@@ -356,6 +358,28 @@ func TestLibraryImport_MissingPath(t *testing.T) {
 	}
 }
 
+// TestLibraryImport_BadMatchEntry proves each matches[] entry is validated
+// (Slice P: matches is now a LIST): a blank source in any entry is rejected
+// with 400 before the service is ever called.
+func TestLibraryImport_BadMatchEntry(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/import", `{"path":"/some/path","matches":[{"source":"","mangaId":7}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank match source: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLibraryImport_EmptyMatchesIsValid proves an empty matches list is a
+// valid request shape (import-only, no attach) — the path-not-staged 404
+// surfaces, not a validation 400, so an empty list is not itself rejected.
+func TestLibraryImport_EmptyMatchesIsValid(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/import", `{"path":"/nonexistent","matches":[]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("empty matches list: want 404 (entry not found), got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // TestLibraryBatch_PartialSuccess proves the batch endpoint end-to-end: two
 // staged series import cleanly while a third, never-staged path fails —
 // without aborting the other two (partial success, the whole point of the
@@ -440,6 +464,96 @@ func TestLibraryAddProvider_InvalidBody(t *testing.T) {
 	rec := env.do("POST", "/api/series/"+uuid.New().String()+"/providers", `{"mangaId":1,"importance":1}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid body: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAddProvidersHandler exercises POST /api/series/:id/providers/batch
+// (Slice P multi-attach) end-to-end through the real HTTP handler, mirroring
+// the single-attach AddProvider handler's test patterns (validateID,
+// mapServiceError, and — for the happy path — newEnvWithMatchIngest's real
+// suwayomi.Ingest over fakeMatchClient, borrowed from the MatchDiskProvider
+// tests in this same package). See library.Service.AddProviders. Each case
+// is extracted to its own function (rather than inlined in the t.Run
+// closures) to keep this dispatcher's cyclomatic complexity within budget.
+func TestAddProvidersHandler(t *testing.T) {
+	t.Run("401 without auth", testAddProvidersUnauthorized)
+	t.Run("200 attaches a batch of two providers", testAddProvidersSuccess)
+	t.Run("400 empty providers list", testAddProvidersEmptyList)
+	t.Run("409 duplicate provider", testAddProvidersDuplicate)
+	t.Run("404 unknown series id", testAddProvidersUnknownSeries)
+}
+
+func testAddProvidersUnauthorized(t *testing.T) {
+	env := newEnv(t)
+	path := "/api/series/" + uuid.New().String() + "/providers/batch"
+	rec := env.doUnauth("POST", path, `{"providers":[{"source":"weeb","mangaId":1}]}`)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth = %d, want 401", rec.Code)
+	}
+}
+
+func testAddProvidersSuccess(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+	env := newEnvWithMatchIngest(t, storage)
+	ctx := context.Background()
+
+	if _, err := env.svc.Scan(ctx); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	entries, err := env.svc.ListImports(ctx, "pending", 0, 0)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ListImports: %v (entries=%v)", err, entries)
+	}
+	if _, err := env.svc.Import(ctx, entries[0].Path, nil); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	ser := env.client.Series.Query().OnlyX(ctx)
+
+	body := `{"providers":[{"source":"weebA","mangaId":91},{"source":"weebB","mangaId":92}]}`
+	rec := env.do("POST", "/api/series/"+ser.ID.String()+"/providers/batch", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("batch attach = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var got series.SeriesDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Providers) != 3 {
+		t.Fatalf("providers = %d, want 3 (disk + weebA + weebB)", len(got.Providers))
+	}
+}
+
+func testAddProvidersEmptyList(t *testing.T) {
+	env := newEnv(t)
+	path := "/api/series/" + uuid.New().String() + "/providers/batch"
+	rec := env.do("POST", path, `{"providers":[]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty providers: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func testAddProvidersDuplicate(t *testing.T) {
+	env := newEnv(t)
+	ctx := context.Background()
+	ser := env.client.Series.Create().SetTitle("X").SetSlug("x").SaveX(ctx)
+	env.client.SeriesProvider.Create().
+		SetSeriesID(ser.ID).SetProvider("weebA").SetScanlator("").SetImportance(1).
+		SaveX(ctx)
+
+	body := `{"providers":[{"source":"weebA","mangaId":91}]}`
+	rec := env.do("POST", "/api/series/"+ser.ID.String()+"/providers/batch", body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate provider: want 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func testAddProvidersUnknownSeries(t *testing.T) {
+	env := newEnv(t)
+	path := "/api/series/" + uuid.New().String() + "/providers/batch"
+	rec := env.do("POST", path, `{"providers":[{"source":"weebA","mangaId":91}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown series: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
