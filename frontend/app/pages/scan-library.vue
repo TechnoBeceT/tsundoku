@@ -39,11 +39,12 @@
  *   @match               → onMatch(path) — opens the panel + runs match(path)
  *   @skip                → skip(path)
  *   @import-all-disk-only → importAllDiskOnly()
- *   @match-confirm        → onMatchConfirm({path, match}) — importWithMatch
+ *   @match-confirm        → onMatchConfirm({path, matches}) — importWithMatches (Slice P)
+ *   @load-breakdowns      → loadBreakdowns(candidates) — Configure-stage per-scanlator coverage
  *   @match-back           → onMatchBack() — closes the panel, no mutation
  */
 import { computed, ref } from 'vue'
-import type { ScanMatch } from '~/composables/useScanLibrary'
+import type { ProviderRef } from '~/composables/useSourceConfigure'
 
 const {
   scanState,
@@ -59,7 +60,9 @@ const {
   error,
   skip,
   importDiskOnly,
-  importWithMatch,
+  importWithMatches,
+  breakdowns,
+  loadBreakdowns,
   matching,
   matchError,
   matchGroups,
@@ -97,13 +100,13 @@ async function onMatch(path: string): Promise<void> {
 }
 
 /**
- * Confirms the owner's picked source: runs `importWithMatch`, then closes
- * the panel only on success — a failed mutation's error surfaces ON the
- * panel (via the row's busy/error, reused from the table) so the owner can
- * retry without losing their candidate selection.
+ * Confirms the owner's gathered, ranked sources: runs `importWithMatches`,
+ * then closes the panel only on success — a failed mutation's error surfaces
+ * ON the panel (via the row's busy/error, reused from the table) so the
+ * owner can retry without losing their selection.
  */
-async function onMatchConfirm({ path, match: selection }: { path: string, match: ScanMatch }): Promise<void> {
-  await importWithMatch(path, selection)
+async function onMatchConfirm({ path, matches }: { path: string, matches: ProviderRef[] }): Promise<void> {
+  await importWithMatches(path, matches)
   if (!error(path)) matchTarget.value = null
 }
 
@@ -130,6 +133,7 @@ function onMatchBack(): void {
       :match-path="matchTarget?.path ?? null"
       :match-title="matchTarget?.title ?? ''"
       :match-groups="matchGroups"
+      :match-breakdowns="breakdowns"
       :matching="matching"
       :match-error="matchError"
       @start-scan="startScan"
@@ -140,6 +144,7 @@ function onMatchBack(): void {
       @skip="skip"
       @import-all-disk-only="importAllDiskOnly"
       @match-confirm="onMatchConfirm"
+      @load-breakdowns="loadBreakdowns"
       @match-back="onMatchBack"
     />
   </div>
