@@ -36,9 +36,11 @@ func (s *Service) AddProviders(ctx context.Context, seriesID uuid.UUID, refs []P
 		return series.SeriesDetailDTO{}, err
 	}
 	if len(existing) == 0 {
-		// A series with zero providers is only reachable via a not-found id
-		// here; verify existence so we return the not-found sentinel rather
-		// than a silent below-existing computation over an empty set.
+		// Zero providers means either an unknown series id OR a real series
+		// whose last source was removed (M6 leaves a 0-provider series in
+		// place). Distinguish them: a missing row → not-found sentinel; a real
+		// 0-provider series falls through and belowExistingImportances assigns
+		// the Adopt-scale fallback (nothing to be "below").
 		if _, err := s.db.Series.Get(ctx, seriesID); err != nil {
 			if ent.IsNotFound(err) {
 				return series.SeriesDetailDTO{}, ErrSeriesNotFound
