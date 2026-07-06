@@ -154,15 +154,23 @@ func TestStartScan_ErrorReleasesLatch(t *testing.T) {
 // that runs longer than scanTimeout still emits a terminal scan.done (with an
 // Error naming the timeout) and releases the latch, rather than wedging it
 // true forever the way an uninterruptible os.ReadDir hang would without this
-// fix. SetScanTimeout shrinks the watchdog to 1ns — an interval no real
-// scanWithProgress call (which does at least one disk read and one Postgres
-// round-trip) can beat, so the timeout branch of the select deterministically
-// wins the race regardless of machine speed or fixture size (a 1ms watchdog
-// was tried first and occasionally lost the race to a fast local Postgres
-// round-trip, i.e. it was NOT deterministic — hence 1ns here).
+// fix.
+//
+// The watchdog branch of StartScan's select races resultCh against
+// time.After(scanTimeout) — select picks pseudo-randomly when both are ready,
+// and a real scanWithProgress call (disk read + Postgres round-trip) can
+// legitimately finish before even a tiny timeout fires. Shrinking scanTimeout
+// alone therefore cannot make the timeout branch win deterministically. The
+// only deterministic fix is to keep resultCh UN-ready until after the timeout
+// fires: SetScanBlock installs a channel the scan goroutine waits on before
+// calling scanWithProgress, so the goroutine can never race the watchdog — the
+// select's resultCh case is guaranteed not-ready until this test explicitly
+// closes the block, which only happens after the timeout branch has already
+// won and been asserted on.
 func TestStartScan_WatchdogTimeoutReleasesLatch(t *testing.T) {
-	restore := library.SetScanTimeout(1 * time.Nanosecond)
-	defer restore()
+	restoreTimeout := library.SetScanTimeout(10 * time.Millisecond)
+	block := make(chan struct{})
+	restoreBlock := library.SetScanBlock(block)
 
 	storage := t.TempDir()
 	writeKaizokuSeries(t, storage, "Manga", "Slow Series", "mangadex", "Alpha", 2)
@@ -187,14 +195,25 @@ func TestStartScan_WatchdogTimeoutReleasesLatch(t *testing.T) {
 		t.Fatalf("scan.done Error = %q, want it to mention a timeout", done[0].Error)
 	}
 
+	// The first scan's inner goroutine is still blocked on <-block (the
+	// watchdog abandoned it, exactly like a real wedged-NFS timeout would).
+	// Release it now — after the timeout assertion above, so it can never
+	// race the watchdog — and restore both seams BEFORE starting the second
+	// scan. Restoring here (synchronously, in program order, ahead of the
+	// second StartScan call) rather than via a deferred restore that could
+	// still be running as a second scan's goroutine reads scanBlock/
+	// scanTimeout is what fixes the second-drain data race: the Go memory
+	// model guarantees a `go` statement happens-after everything before it in
+	// the launching goroutine, so the second scan's goroutine is guaranteed to
+	// observe the restored values, never a torn/concurrent one.
+	close(block)
+	restoreBlock()
+	restoreTimeout()
+
 	if again := svc.StartScan(context.Background()); !again {
 		t.Fatal("StartScan after a watchdog timeout returned false, want true (latch must be released)")
 	}
-	// Drain the second scan too: its goroutine also reads scanTimeout (still
-	// overridden to 1ns), and it must do so before this test returns and the
-	// deferred restore() mutates the var back — otherwise the read and the
-	// restore race (a race in this test's choreography, not in production
-	// code, which never mutates scanTimeout concurrently).
+	// Drain the second scan too so its goroutine doesn't outlive the test.
 	drainScanEvents(t, ch, 5*time.Second)
 }
 

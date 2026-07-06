@@ -17,3 +17,13 @@ func SetScanTimeout(d time.Duration) (restore func()) {
 	scanTimeout = d
 	return func() { scanTimeout = prev }
 }
+
+// SetScanBlock installs (or clears, with nil) the scan-goroutine block seam and
+// returns a restore func. When set, the scan goroutine waits on the channel (or
+// scan-ctx cancel) before running — letting a test force the watchdog-timeout
+// branch to win deterministically.
+func SetScanBlock(ch chan struct{}) func() {
+	prev := scanBlock
+	scanBlock = ch
+	return func() { scanBlock = prev }
+}
