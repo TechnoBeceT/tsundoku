@@ -48,6 +48,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/warmup"
@@ -108,6 +109,13 @@ func main() {
 	// reads it to target slow sources.
 	metricsSvc := metrics.NewService(entClient)
 
+	// Source-politeness gate: a per-physical-source circuit-breaker (persisted
+	// in SourceCircuitState) + in-memory politeness delay, shared by every
+	// background source-access path below (download, refresh, warm-up) so a
+	// source Cloudflare starts blocking is never hammered further. Thresholds
+	// are the same settingsSvc overlay, resolved at use-time (hot reload).
+	gateSvc := sourcegate.NewService(entClient, settingsSvc)
+
 	// Build the Suwayomi HTTP client and real ChapterFetcher now — these are
 	// just typed values and do not require Suwayomi to be running yet. They are
 	// passed to download.New immediately so the dispatcher is fully wired.
@@ -119,11 +127,11 @@ func main() {
 	// warm with a cheap Browse call so interactive search stays fast. Works in
 	// BOTH embedded + external modes — it only needs the Suwayomi client (which
 	// targets BaseURL() either way) and the metrics store.
-	warmupSvc := warmup.NewService(suwayomiClient, metricsSvc, settingsSvc)
+	warmupSvc := warmup.NewService(suwayomiClient, metricsSvc, settingsSvc, gateSvc)
 
 	dispatcher := download.New(entClient, suwayomiFetcher, hub, download.Config{
 		Storage: cfg.Storage.Folder,
-	}, settingsSvc)
+	}, settingsSvc, gateSvc)
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
 	// Discovery sweep service (M5): re-fetches every monitored series' chapter
@@ -135,6 +143,7 @@ func main() {
 		suwayomi.NewIngest(suwayomiClient, entClient),
 		hub,
 		settingsSvc,
+		gateSvc,
 	)
 
 	// healthSvc is a stateless series.Service instance used only to supply the
@@ -185,16 +194,19 @@ func main() {
 // single env boundary (internal/config) is preserved.
 func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 	return settings.Defaults{
-		DownloadInterval:       cfg.Jobs.DownloadInterval,
-		DownloadConcurrency:    cfg.Jobs.DownloadConcurrency,
-		RefreshInterval:        cfg.Jobs.RefreshInterval,
-		RefreshConcurrency:     cfg.Jobs.RefreshConcurrency,
-		MaxRetries:             cfg.Jobs.MaxRetries,
-		RetryBackoff:           cfg.Jobs.RetryBackoff,
-		StaleGraceDays:         cfg.Health.StaleGraceDays,
-		ExtensionCheckInterval: cfg.Jobs.ExtensionCheckInterval,
-		WarmupInterval:         cfg.Jobs.WarmupInterval,
-		WarmupSlowThresholdMs:  cfg.Jobs.WarmupSlowThresholdMs,
+		DownloadInterval:        cfg.Jobs.DownloadInterval,
+		DownloadConcurrency:     cfg.Jobs.DownloadConcurrency,
+		RefreshInterval:         cfg.Jobs.RefreshInterval,
+		RefreshConcurrency:      cfg.Jobs.RefreshConcurrency,
+		MaxRetries:              cfg.Jobs.MaxRetries,
+		RetryBackoff:            cfg.Jobs.RetryBackoff,
+		StaleGraceDays:          cfg.Health.StaleGraceDays,
+		ExtensionCheckInterval:  cfg.Jobs.ExtensionCheckInterval,
+		WarmupInterval:          cfg.Jobs.WarmupInterval,
+		WarmupSlowThresholdMs:   cfg.Jobs.WarmupSlowThresholdMs,
+		SourcesFailureThreshold: cfg.Sources.FailureThreshold,
+		SourcesCooldown:         cfg.Sources.Cooldown,
+		SourcesMinRequestDelay:  cfg.Sources.MinRequestDelay,
 	}
 }
 

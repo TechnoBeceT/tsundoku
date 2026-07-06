@@ -33,16 +33,19 @@ type testEnv struct {
 // testDefaults mirrors the config defaults so List responses are meaningful.
 func testDefaults() settingssvc.Defaults {
 	return settingssvc.Defaults{
-		DownloadInterval:       15 * time.Minute,
-		DownloadConcurrency:    5,
-		RefreshInterval:        2 * time.Hour,
-		RefreshConcurrency:     4,
-		MaxRetries:             3,
-		RetryBackoff:           time.Minute,
-		StaleGraceDays:         14,
-		ExtensionCheckInterval: 24 * time.Hour,
-		WarmupInterval:         15 * time.Minute,
-		WarmupSlowThresholdMs:  5000,
+		DownloadInterval:        15 * time.Minute,
+		DownloadConcurrency:     5,
+		RefreshInterval:         2 * time.Hour,
+		RefreshConcurrency:      4,
+		MaxRetries:              3,
+		RetryBackoff:            time.Minute,
+		StaleGraceDays:          14,
+		ExtensionCheckInterval:  24 * time.Hour,
+		WarmupInterval:          15 * time.Minute,
+		WarmupSlowThresholdMs:   5000,
+		SourcesFailureThreshold: 5,
+		SourcesCooldown:         30 * time.Minute,
+		SourcesMinRequestDelay:  500 * time.Millisecond,
 	}
 }
 
@@ -94,8 +97,8 @@ func TestList_OK(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 10 {
-		t.Fatalf("want 10 settings, got %d", len(got))
+	if len(got) != 13 {
+		t.Fatalf("want 13 settings, got %d", len(got))
 	}
 	if got[0].Key != settingssvc.KeyDownloadInterval || got[0].Value != "15m0s" {
 		t.Errorf("first row = %+v, want download_interval=15m0s", got[0])

@@ -80,7 +80,7 @@ func TestUpgrade_FailuresNeverExhaustSource_ThenRecovers(t *testing.T) {
 	f := &providerScopedFetcher{failProviders: map[string]bool{"high": true}}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 3, Backoff: 0})
+	}, settings.Static{Retries: 3, Backoff: 0}, nil)
 
 	const cycles = 6 // >> max_retries (3)
 	for i := 0; i < cycles; i++ {
@@ -159,7 +159,7 @@ func TestUpgrade_SuccessResetsWinningSourceRetryState(t *testing.T) {
 	f := &providerScopedFetcher{} // all sources succeed
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 
 	if n, err := download.DetectUpgrades(ctx, client, 3); err != nil || n != 1 {
 		t.Fatalf("DetectUpgrades: n=%d err=%v (want 1, nil)", n, err)

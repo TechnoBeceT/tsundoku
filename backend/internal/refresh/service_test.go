@@ -14,9 +14,11 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
+	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -85,7 +87,7 @@ func num(n float64) *float64 { return &n }
 func newSvc(t *testing.T, db *ent.Client, fc *fakeClient) *refresh.Service {
 	t.Helper()
 	ingest := suwayomi.NewIngest(fc, db)
-	return refresh.NewService(db, ingest, sse.NewHub(), settings.Static{Concurrency: 4})
+	return refresh.NewService(db, ingest, sse.NewHub(), settings.Static{Concurrency: 4}, nil)
 }
 
 // seedMonitoredSeries creates a monitored series with one provider (suwayomiID),
@@ -239,7 +241,7 @@ func TestRefreshAll_EmitsSSEEvents(t *testing.T) {
 	seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
 
 	hub := sse.NewHub()
-	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), hub, settings.Static{Concurrency: 4})
+	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), hub, settings.Static{Concurrency: 4}, nil)
 
 	// Subscribe before the sweep so both buffered events are captured.
 	events, unsub := hub.Subscribe()
@@ -373,5 +375,71 @@ func TestRefreshAll_SkipsCompleted(t *testing.T) {
 	}
 	if res2.SeriesRefreshed != 1 {
 		t.Fatalf("re-opened series not swept: SeriesRefreshed = %d, want 1", res2.SeriesRefreshed)
+	}
+}
+
+// TestRefreshAll_SkipsGatedProvider proves a provider whose physical source is
+// cooled down by the source-politeness gate (internal/sourcegate) is skipped
+// entirely by the sweep — no fetch attempt, not counted as refreshed or
+// errored — while a provider on an AVAILABLE source in the SAME sweep still
+// refreshes normally.
+func TestRefreshAll_SkipsGatedProvider(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
+		10: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}}, // blocked source
+		20: {{ID: 2, Index: 0, Number: num(1), URL: "u2"}}, // available source
+	}}
+	blockedSeries, _ := seedMonitoredSeries(t, ctx, db, "blocked-series", "BlockedSource", 10)
+	seedMonitoredSeries(t, ctx, db, "ok-series", "OkSource", 20)
+
+	// Pre-trip the breaker for "BlockedSource" only.
+	db.SourceCircuitState.Create().
+		SetSourceKey("BlockedSource").
+		SetConsecutiveFailures(5).
+		SetCooldownUntil(time.Now().Add(time.Hour)).
+		SaveX(ctx)
+
+	gate := sourcegate.NewService(db, settings.Static{SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour})
+	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), sse.NewHub(), settings.Static{Concurrency: 4}, gate)
+
+	res, err := svc.RefreshAll(ctx)
+	if err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+	// Only the available source's provider was refreshed; the gated one is
+	// skipped entirely — not counted as an error, not attempted.
+	if res.ProvidersRefreshed != 1 {
+		t.Errorf("ProvidersRefreshed = %d, want 1 (only the available source)", res.ProvidersRefreshed)
+	}
+	if res.Errors != 0 {
+		t.Errorf("Errors = %d, want 0 (a gated-out provider is skipped, not a failure)", res.Errors)
+	}
+	// The blocked series' chapter was never ingested — the gate excluded it
+	// from the sweep's work list entirely, so no fetch was even attempted.
+	if n := db.Chapter.Query().Where(entchapter.HasSeriesWith(entseries.IDEQ(blockedSeries.ID))).CountX(ctx); n != 0 {
+		t.Errorf("blocked series chapter count = %d, want 0 (never fetched)", n)
+	}
+}
+
+// TestRefreshAll_GateAvailableRunsNormally proves that with NO breaker row at
+// all (the common case), the gate never interferes with a normal sweep.
+func TestRefreshAll_GateAvailableRunsNormally(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
+		42: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}},
+	}}
+	seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
+
+	gate := sourcegate.NewService(db, settings.Static{SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour})
+	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), sse.NewHub(), settings.Static{Concurrency: 4}, gate)
+
+	res, err := svc.RefreshAll(ctx)
+	if err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+	if res.ProvidersRefreshed != 1 || res.NewChapters != 1 {
+		t.Errorf("res = %+v, want providers=1 new=1", res)
 	}
 }

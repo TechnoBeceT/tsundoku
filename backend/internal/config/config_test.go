@@ -253,10 +253,19 @@ func TestValidateAcceptsValidAuthSecret(t *testing.T) {
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Sources:  validSourcesConfig(),
 	}
 	if err := config.ExportValidateForTest(cfg); err != nil {
 		t.Fatalf("expected validate to pass, got: %v", err)
 	}
+}
+
+// validSourcesConfig returns a SourcesConfig that passes validate() — the
+// fixture every "happy path" validate() test that doesn't itself exercise the
+// Sources rules threads through, so adding those rules doesn't need to touch
+// every unrelated fixture's Jobs/Suwayomi/Auth values.
+func validSourcesConfig() config.SourcesConfig {
+	return config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Minute, MinRequestDelay: 500 * time.Millisecond}
 }
 
 // TestLoadAuthSecretFromEnv confirms that TSUNDOKU_AUTH_SECRET is loaded and
@@ -412,6 +421,7 @@ func TestValidateAcceptsExternalURL(t *testing.T) {
 			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 			Suwayomi: config.SuwayomiConfig{ExternalURL: raw, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
 			Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+			Sources:  validSourcesConfig(),
 		}
 		if err := config.ExportValidateForTest(cfg); err != nil {
 			t.Errorf("validate() rejected ExternalURL %q, want accept: %v", raw, err)
@@ -819,6 +829,116 @@ func TestValidateRejectsWarmupThresholdBelowOne(t *testing.T) {
 	}
 }
 
+// TestSourcesDefaults confirms the source-politeness defaults (failure
+// threshold 5, cooldown 30m, min request delay 500ms) are applied when their
+// env vars are unset.
+func TestSourcesDefaults(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Sources.FailureThreshold != 5 {
+		t.Errorf("Sources.FailureThreshold default = %d, want 5", cfg.Sources.FailureThreshold)
+	}
+	if cfg.Sources.Cooldown != 30*time.Minute {
+		t.Errorf("Sources.Cooldown default = %v, want 30m", cfg.Sources.Cooldown)
+	}
+	if cfg.Sources.MinRequestDelay != 500*time.Millisecond {
+		t.Errorf("Sources.MinRequestDelay default = %v, want 500ms", cfg.Sources.MinRequestDelay)
+	}
+}
+
+// TestSourcesEnvOverride confirms the TSUNDOKU_SOURCES_* env vars override the
+// source-politeness defaults.
+func TestSourcesEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_SOURCES_FAILURETHRESHOLD", "3")
+	t.Setenv("TSUNDOKU_SOURCES_COOLDOWN", "10m")
+	t.Setenv("TSUNDOKU_SOURCES_MINREQUESTDELAY", "1s")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Sources.FailureThreshold != 3 {
+		t.Errorf("Sources.FailureThreshold = %d, want 3", cfg.Sources.FailureThreshold)
+	}
+	if cfg.Sources.Cooldown != 10*time.Minute {
+		t.Errorf("Sources.Cooldown = %v, want 10m", cfg.Sources.Cooldown)
+	}
+	if cfg.Sources.MinRequestDelay != time.Second {
+		t.Errorf("Sources.MinRequestDelay = %v, want 1s", cfg.Sources.MinRequestDelay)
+	}
+}
+
+// TestValidateRejectsSourcesFailureThresholdBelowOne confirms validate() fails
+// closed when the breaker's trip threshold is below 1, naming the env var.
+func TestValidateRejectsSourcesFailureThresholdBelowOne(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Sources:  config.SourcesConfig{FailureThreshold: 0, Cooldown: 30 * time.Minute}, // invalid
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for FailureThreshold < 1, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_SOURCES_FAILURETHRESHOLD") {
+		t.Errorf("error should name TSUNDOKU_SOURCES_FAILURETHRESHOLD, got: %v", err)
+	}
+}
+
+// TestValidateRejectsSourcesCooldownBelowOneMinute confirms validate() fails
+// closed when the breaker cooldown is below 1 minute, naming the env var.
+func TestValidateRejectsSourcesCooldownBelowOneMinute(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Sources:  config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Second}, // invalid
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for Cooldown < 1m, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_SOURCES_COOLDOWN") {
+		t.Errorf("error should name TSUNDOKU_SOURCES_COOLDOWN, got: %v", err)
+	}
+}
+
+// TestValidateRejectsSourcesMinRequestDelayNegative confirms validate() fails
+// closed on a negative politeness delay, naming the env var. 0 (disabled) must
+// still be accepted.
+func TestValidateRejectsSourcesMinRequestDelayNegative(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Sources:  config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Minute, MinRequestDelay: -time.Second}, // invalid
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for negative MinRequestDelay, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_SOURCES_MINREQUESTDELAY") {
+		t.Errorf("error should name TSUNDOKU_SOURCES_MINREQUESTDELAY, got: %v", err)
+	}
+
+	// 0 (disabled) must still be accepted.
+	cfg.Sources.MinRequestDelay = 0
+	if err := config.ExportValidateForTest(cfg); err != nil {
+		t.Errorf("validate() rejected MinRequestDelay=0 (disabled), want accept: %v", err)
+	}
+}
+
 // TestLoadDefaultsHealthStaleGrace confirms that Load() applies the default
 // value (14) for Health.StaleGraceDays when TSUNDOKU_HEALTH_STALEGRACEDAYS
 // is not set.
@@ -906,6 +1026,7 @@ func suwayomiDBConfig(dbType, dbURL string) *config.Config {
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Suwayomi: config.SuwayomiConfig{DatabaseType: dbType, DatabaseURL: dbURL, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Sources:  validSourcesConfig(),
 	}
 }
 

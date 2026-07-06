@@ -999,7 +999,7 @@ func TestE2E_AddSeriesDispatchDownload(t *testing.T) {
 	fetcher := suwayomi.NewFetcher(client)
 	dispatcher := download.New(db, fetcher, hub, download.Config{
 		Storage: storageDir,
-	}, settings.Static{Retries: 1, Backoff: 0})
+	}, settings.Static{Retries: 1, Backoff: 0}, nil)
 
 	if _, err := dispatcher.RunOnce(ctx); err != nil {
 		t.Fatalf("Step 4 — RunOnce: %v", err)

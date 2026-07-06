@@ -148,8 +148,10 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 
 	// Step 2: detect upgrade candidates among downloaded chapters. Exhausted
 	// sources are excluded using the SAME per-source retry budget the dispatcher
-	// applies, so an upgrade never targets a source that has failed out.
-	flagged, err := download.DetectUpgrades(ctx, r.client, r.dispatcher.MaxRetries(ctx))
+	// applies, so an upgrade never targets a source that has failed out; the
+	// GATED method form additionally excludes a source whose politeness
+	// circuit-breaker is tripped, so a blocked higher source is never flagged.
+	flagged, err := r.dispatcher.DetectUpgrades(ctx, r.dispatcher.MaxRetries(ctx))
 	if err != nil {
 		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: DetectUpgrades: %w", err)

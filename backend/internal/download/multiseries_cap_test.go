@@ -84,7 +84,7 @@ func TestRunOnce_MultiSeriesSharedSourceCap(t *testing.T) {
 
 	g := newGateFetcher() // gate starts closed: every fetch blocks
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour}, nil)
 
 	done := make(chan error, 1)
 	go func() { _, err := d.RunOnce(ctx); done <- err }()
@@ -174,7 +174,7 @@ func assertSharedPhysicalSourceCapHeld(t *testing.T, diskProvider string) {
 
 	g := newGateFetcher() // gate closed: every fetch blocks, holding its slot
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour}, nil)
 
 	done := make(chan error, 1)
 	go func() { _, err := d.RunOnce(ctx); done <- err }()
@@ -219,7 +219,7 @@ func TestRunOnce_MultiScanlatorSharedSourceCap(t *testing.T) {
 
 	g := newGateFetcher()
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour}, nil)
 
 	done := make(chan error, 1)
 	go func() { _, err := d.RunOnce(ctx); done <- err }()

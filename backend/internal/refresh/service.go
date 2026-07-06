@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entsuwayomisyncstate "github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
@@ -45,12 +47,18 @@ type Service struct {
 	ingest      *suwayomi.Ingest
 	hub         *sse.Hub
 	concurrency Concurrency
+	gate        *sourcegate.Service
 }
 
 // NewService constructs a Service. concurrency supplies the runtime-tunable
-// parallel-refetch bound, read at the start of every sweep (hot reload).
-func NewService(client *ent.Client, ingest *suwayomi.Ingest, hub *sse.Hub, concurrency Concurrency) *Service {
-	return &Service{client: client, ingest: ingest, hub: hub, concurrency: concurrency}
+// parallel-refetch bound, read at the start of every sweep (hot reload). gate
+// is the source-politeness circuit-breaker + delay (internal/sourcegate),
+// consulted per provider before re-fetching it — see RefreshAll. gate may be
+// nil (no gate configured): every gate-consulting call site treats a nil gate
+// as "always available, no delay" (today's pre-politeness behaviour), so
+// passing nil is a safe default for callers that do not need the gate.
+func NewService(client *ent.Client, ingest *suwayomi.Ingest, hub *sse.Hub, concurrency Concurrency, gate *sourcegate.Service) *Service {
+	return &Service{client: client, ingest: ingest, hub: hub, concurrency: concurrency, gate: gate}
 }
 
 // RefreshResult summarises one sweep. SeriesRefreshed counts the monitored
@@ -83,32 +91,8 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 
 	s.broadcast("refresh.start", RefreshEvent{Monitored: len(seriesList)})
 
-	// Build a flat work list of (series title, provider, manga id, provider id)
-	// tuples, skipping providers whose suwayomi_id is unknown (0 — cannot fetch).
-	type item struct {
-		title      string
-		provider   string
-		mangaID    int
-		providerID uuid.UUID
-		// scanlator is the STORED scanlator of this SeriesProvider row (set at
-		// create time — see suwayomi.Ingest.upsertSeriesProvider). It MUST be
-		// passed back into AddSeries below so a re-fetch updates this SAME row
-		// instead of find-or-creating a fresh scanlator=="" one: AddSeries keys
-		// SeriesProvider on (series, provider, scanlator), and a mismatched
-		// scanlator here would silently split one provider into two.
-		scanlator string
-	}
-	var items []item
-	for _, sr := range seriesList {
-		for _, p := range sr.Edges.Providers {
-			if p.SuwayomiID == 0 {
-				slog.WarnContext(ctx, "refresh: skipping provider with unknown suwayomi_id",
-					"series", sr.Title, "provider", p.Provider)
-				continue
-			}
-			items = append(items, item{title: sr.Title, provider: p.Provider, mangaID: p.SuwayomiID, providerID: p.ID, scanlator: p.Scanlator})
-		}
-	}
+	now := time.Now()
+	items := s.buildRefreshItems(ctx, seriesList, now)
 
 	var mu sync.Mutex
 	result := RefreshResult{SeriesRefreshed: len(seriesList)}
@@ -119,6 +103,9 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	g.SetLimit(s.refreshLimit(ctx))
 	for _, it := range items {
 		g.Go(func() error {
+			// Politeness delay before the fetch — the runtime-tunable minimum gap
+			// between successive requests to this physical source.
+			s.gateWait(gctx, it.sourceKey)
 			res, addErr := s.ingest.AddSeries(gctx, it.provider, it.mangaID, it.title, it.scanlator)
 
 			// Persist polling health; upsertSyncState skips on ctx-cancel.
@@ -131,7 +118,8 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 			defer mu.Unlock()
 			if addErr != nil {
 				// Context cancellation (shutdown/timeout) is not a provider error —
-				// skip counting and logging to avoid false error inflation on clean exit.
+				// skip counting, logging, AND gate bookkeeping to avoid false error
+				// inflation (or a false trip) on clean exit.
 				if errors.Is(addErr, context.Canceled) || errors.Is(addErr, context.DeadlineExceeded) {
 					return nil
 				}
@@ -139,10 +127,12 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 				slog.ErrorContext(gctx, "refresh: provider re-fetch failed",
 					"series", it.title, "provider", it.provider, "err", addErr)
 				result.Errors++
+				s.gateRecordFailure(gctx, it.sourceKey, addErr, now)
 				return nil
 			}
 			result.ProvidersRefreshed++
 			result.NewChapters += res.NewChapters
+			s.gateRecordSuccess(gctx, it.sourceKey)
 			return nil
 		})
 	}
@@ -167,6 +157,99 @@ func (s *Service) refreshLimit(ctx context.Context) int {
 		return limit
 	}
 	return 1
+}
+
+// refreshItem is one (series, provider) pair queued for re-fetch by a sweep.
+type refreshItem struct {
+	title      string
+	provider   string
+	mangaID    int
+	providerID uuid.UUID
+	sourceKey  string
+	// scanlator is the STORED scanlator of this SeriesProvider row (set at
+	// create time — see suwayomi.Ingest.upsertSeriesProvider). It MUST be
+	// passed back into AddSeries so a re-fetch updates this SAME row instead
+	// of find-or-creating a fresh scanlator=="" one: AddSeries keys
+	// SeriesProvider on (series, provider, scanlator), and a mismatched
+	// scanlator here would silently split one provider into two.
+	scanlator string
+}
+
+// buildRefreshItems flattens every monitored series' providers into a work
+// list, skipping a provider whose suwayomi_id is unknown (0 — cannot fetch)
+// OR whose physical source is currently cooled down by the source-politeness
+// gate (a tripped source is excluded from the sweep entirely this cycle,
+// mirroring the download dispatcher's candidacy exclusion). Extracted from
+// RefreshAll to keep its cyclomatic complexity low.
+func (s *Service) buildRefreshItems(ctx context.Context, seriesList []*ent.Series, now time.Time) []refreshItem {
+	var items []refreshItem
+	for _, sr := range seriesList {
+		for _, p := range sr.Edges.Providers {
+			if p.SuwayomiID == 0 {
+				slog.WarnContext(ctx, "refresh: skipping provider with unknown suwayomi_id",
+					"series", sr.Title, "provider", p.Provider)
+				continue
+			}
+			key := sourceKey(p)
+			if !s.gateAvailable(ctx, key, now) {
+				slog.WarnContext(ctx, "refresh: skipping provider — source cooled down by politeness gate",
+					"series", sr.Title, "provider", p.Provider, "source_key", key)
+				continue
+			}
+			items = append(items, refreshItem{title: sr.Title, provider: p.Provider, mangaID: p.SuwayomiID, providerID: p.ID, sourceKey: key, scanlator: p.Scanlator})
+		}
+	}
+	return items
+}
+
+// sourceKey returns the physical-source identity used to key the
+// source-politeness gate for a SeriesProvider: its display name
+// (provider_name) when known, else its raw provider id, trimmed. It mirrors
+// download.canonicalSourceKey — kept as a small local copy rather than a
+// cross-package import so refresh does not need to know about the download
+// engine's internals for this one shared concept.
+func sourceKey(sp *ent.SeriesProvider) string {
+	name := sp.ProviderName
+	if name == "" {
+		name = sp.Provider
+	}
+	return strings.TrimSpace(name)
+}
+
+// gateAvailable reports whether sourceKey's circuit-breaker currently permits
+// access. A nil gate (no gate configured) is always available.
+func (s *Service) gateAvailable(ctx context.Context, sourceKey string, now time.Time) bool {
+	if s.gate == nil {
+		return true
+	}
+	return s.gate.IsAvailable(ctx, sourceKey, now)
+}
+
+// gateWait enforces the politeness delay for sourceKey before a fetch. A nil
+// gate is a no-op.
+func (s *Service) gateWait(ctx context.Context, sourceKey string) {
+	if s.gate == nil {
+		return
+	}
+	s.gate.Wait(ctx, sourceKey)
+}
+
+// gateRecordSuccess reports a successful re-fetch from sourceKey to the
+// breaker. A nil gate is a no-op.
+func (s *Service) gateRecordSuccess(ctx context.Context, sourceKey string) {
+	if s.gate == nil {
+		return
+	}
+	s.gate.RecordSuccess(ctx, sourceKey)
+}
+
+// gateRecordFailure reports a failed re-fetch from sourceKey to the breaker. A
+// nil gate is a no-op.
+func (s *Service) gateRecordFailure(ctx context.Context, sourceKey string, cause error, now time.Time) {
+	if s.gate == nil {
+		return
+	}
+	s.gate.RecordFailure(ctx, sourceKey, cause, now)
 }
 
 // upsertSyncState records the outcome of refreshing one provider into its

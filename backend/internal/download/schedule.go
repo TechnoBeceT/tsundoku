@@ -47,6 +47,11 @@ func (d *Dispatcher) groupBySource(ctx context.Context, chapters []*ent.Chapter,
 			)
 			continue
 		}
+		// Exclude any candidate whose physical source is currently cooled down by
+		// the source-politeness gate — a chapter whose ONLY live candidates are
+		// all cooled down is handled exactly like "no live candidate" below (stays
+		// wanted, never churned through downloading→failed).
+		cands = d.filterGated(ctx, cands, now)
 		if len(cands) == 0 {
 			if err := d.handleNoCandidates(ctx, ch, maxRetries); err != nil {
 				slog.WarnContext(ctx, "download.RunOnce: handleNoCandidates failed — skipping chapter this cycle",

@@ -10,11 +10,14 @@ package warmup
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/metrics"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -33,11 +36,17 @@ type Service struct {
 	client  suwayomi.Client
 	metrics *metrics.Service
 	slow    SlowThreshold
+	gate    *sourcegate.Service
 }
 
-// NewService constructs a warm-up Service.
-func NewService(client suwayomi.Client, m *metrics.Service, slow SlowThreshold) *Service {
-	return &Service{client: client, metrics: m, slow: slow}
+// NewService constructs a warm-up Service. gate is the source-politeness
+// circuit-breaker + delay (internal/sourcegate), consulted before each source
+// is warmed — see warmOne. gate may be nil (no gate configured): every
+// gate-consulting call site treats a nil gate as "always available, no
+// delay" (today's pre-politeness behaviour), so passing nil is a safe
+// default for callers that do not need the gate.
+func NewService(client suwayomi.Client, m *metrics.Service, slow SlowThreshold, gate *sourcegate.Service) *Service {
+	return &Service{client: client, metrics: m, slow: slow, gate: gate}
 }
 
 // WarmAll warms EVERY enabled online source (the seed pass). It uses the SAME
@@ -94,21 +103,83 @@ func (s *Service) warmSources(ctx context.Context, sources []suwayomi.Source) in
 }
 
 // warmOne warms a single source with the cheapest call that refreshes its anti-bot
-// session — Browse(POPULAR, page 1). It records the timing + outcome as a metrics
-// sample regardless of success (a slow/failed warm is itself signal), then stamps
+// session — Browse(POPULAR, page 1). It first checks the source-politeness gate
+// (a cooled-down source is skipped entirely, returning a descriptive error so
+// warmSources logs + skips it without a wasted Browse call — repeatedly warming
+// a source that is already tripped would only prolong the block), then enforces
+// the politeness delay, then records the timing + outcome as a metrics sample
+// regardless of success (a slow/failed warm is itself signal), then stamps
 // last_warmed_at ONLY on success (a failed warm did not actually warm the
-// session). Returns the Browse error so warmSources can skip + log it.
+// session). Returns the Browse (or gate) error so warmSources can skip + log it.
 func (s *Service) warmOne(ctx context.Context, src suwayomi.Source) error {
+	key := sourceKey(src)
+	if !s.gateAvailable(ctx, key, time.Now()) {
+		return errGateCooldown
+	}
+	s.gateWait(ctx, key)
+
 	start := time.Now()
 	_, err := s.client.Browse(ctx, src.ID, suwayomi.BrowsePopular, 1)
-	s.metrics.Record(ctx, src.ID, src.Name, time.Since(start), err)
+	now := time.Now()
+	s.metrics.Record(ctx, src.ID, src.Name, now.Sub(start), err)
 	if err != nil {
+		s.gateRecordFailure(ctx, key, err, now)
 		return err
 	}
-	if serr := s.metrics.SetWarmed(ctx, src.ID, src.Name, time.Now()); serr != nil {
+	s.gateRecordSuccess(ctx, key)
+	if serr := s.metrics.SetWarmed(ctx, src.ID, src.Name, now); serr != nil {
 		// Best-effort: the source WAS warmed even if the stamp write failed.
 		slog.WarnContext(ctx, "warmup: set last_warmed_at failed",
 			"source", src.ID, "err", serr)
 	}
 	return nil
+}
+
+// errGateCooldown is returned by warmOne when the source-politeness gate has
+// the source cooled down, so warmSources logs + skips it as it would any other
+// warm failure.
+var errGateCooldown = errors.New("warmup: source cooled down by politeness gate")
+
+// sourceKey returns the physical-source identity used to key the
+// source-politeness gate for a Suwayomi Source: its trimmed display name. It
+// mirrors download.canonicalSourceKey / refresh.sourceKey — kept as a small
+// local copy rather than a cross-package import.
+func sourceKey(src suwayomi.Source) string {
+	return strings.TrimSpace(src.Name)
+}
+
+// gateAvailable reports whether sourceKey's circuit-breaker currently permits
+// access. A nil gate (no gate configured) is always available.
+func (s *Service) gateAvailable(ctx context.Context, sourceKey string, now time.Time) bool {
+	if s.gate == nil {
+		return true
+	}
+	return s.gate.IsAvailable(ctx, sourceKey, now)
+}
+
+// gateWait enforces the politeness delay for sourceKey before a Browse call. A
+// nil gate is a no-op.
+func (s *Service) gateWait(ctx context.Context, sourceKey string) {
+	if s.gate == nil {
+		return
+	}
+	s.gate.Wait(ctx, sourceKey)
+}
+
+// gateRecordSuccess reports a successful warm from sourceKey to the breaker. A
+// nil gate is a no-op.
+func (s *Service) gateRecordSuccess(ctx context.Context, sourceKey string) {
+	if s.gate == nil {
+		return
+	}
+	s.gate.RecordSuccess(ctx, sourceKey)
+}
+
+// gateRecordFailure reports a failed warm from sourceKey to the breaker. A nil
+// gate is a no-op.
+func (s *Service) gateRecordFailure(ctx context.Context, sourceKey string, cause error, now time.Time) {
+	if s.gate == nil {
+		return
+	}
+	s.gate.RecordFailure(ctx, sourceKey, cause, now)
 }

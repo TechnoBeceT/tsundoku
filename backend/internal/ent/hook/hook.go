@@ -129,6 +129,18 @@ func (f SettingsFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, er
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SettingsMutation", m)
 }
 
+// The SourceCircuitStateFunc type is an adapter to allow the use of ordinary
+// function as SourceCircuitState mutator.
+type SourceCircuitStateFunc func(context.Context, *ent.SourceCircuitStateMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceCircuitStateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceCircuitStateMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceCircuitStateMutation", m)
+}
+
 // The SourceEventFunc type is an adapter to allow the use of ordinary
 // function as SourceEvent mutator.
 type SourceEventFunc func(context.Context, *ent.SourceEventMutation) (ent.Value, error)

@@ -15,6 +15,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/fetcher"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
 
 // upgradeResult holds the artefacts produced by fetchAndRender so that
@@ -46,7 +47,30 @@ type upgradeResult struct {
 //
 // Returns the number of chapters flagged. now is read once by the caller so every
 // chapter in the scan sees a consistent cooldown horizon.
+//
+// This is the GATE-FREE form (no source-politeness circuit-breaker). Production
+// calls (*Dispatcher).DetectUpgrades, which additionally excludes a source whose
+// breaker is tripped from being chosen as an upgrade target; this package
+// function is kept for callers that hold no gate (tests, non-dispatcher callers)
+// and is equivalent to the method with a nil gate.
 func DetectUpgrades(ctx context.Context, client *ent.Client, maxRetries int) (int, error) {
+	return detectUpgrades(ctx, client, nil, maxRetries)
+}
+
+// DetectUpgrades is the GATED form used in production. It excludes a source
+// whose source-politeness circuit-breaker is tripped (cooled down) from being
+// chosen as an upgrade target, so a Cloudflare-blocked higher-importance source
+// is never FLAGGED for upgrade. This prevents an upgrade_available → upgrading →
+// downloaded flag/revert flap every cycle while the source is down (the actual
+// fetch would be blocked anyway by fetchAndRender's gate — this stops the churn
+// at the source). A nil gate makes it identical to the package function.
+func (d *Dispatcher) DetectUpgrades(ctx context.Context, maxRetries int) (int, error) {
+	return detectUpgrades(ctx, d.client, d.gate, maxRetries)
+}
+
+// detectUpgrades is the shared implementation behind both DetectUpgrades forms.
+// gate may be nil (gate-free): every gated-candidate exclusion is a no-op then.
+func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Service, maxRetries int) (int, error) {
 	now := time.Now()
 	chapters, err := client.Chapter.Query().
 		Where(entchapter.StateEQ(entchapter.StateDownloaded)).
@@ -57,7 +81,7 @@ func DetectUpgrades(ctx context.Context, client *ent.Client, maxRetries int) (in
 
 	flagged := 0
 	for _, ch := range chapters {
-		n, err := detectUpgradeForChapter(ctx, client, ch, maxRetries, now)
+		n, err := detectUpgradeForChapter(ctx, client, gate, ch, maxRetries, now)
 		if err != nil {
 			return flagged, err
 		}
@@ -70,7 +94,7 @@ func DetectUpgrades(ctx context.Context, client *ent.Client, maxRetries int) (in
 // upgrade_available when a strictly higher-importance provider exists.
 // Returns 1 if flagged, 0 if skipped or unchanged, and a non-nil error only
 // for hard failures (state transition errors) that should abort the scan.
-func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
+func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
 	// Defensive path: satisfied_importance should always be set for a downloaded
 	// chapter (a successful download always writes it). Skip to avoid a nil-deref.
 	if ch.SatisfiedImportance == nil {
@@ -81,7 +105,7 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Ch
 		return 0, nil
 	}
 
-	maxImportance, err := maxImportanceForChapter(ctx, client, ch, maxRetries, now)
+	maxImportance, err := maxImportanceForChapter(ctx, client, gate, ch, maxRetries, now)
 	if err != nil {
 		// Log and continue — one chapter failing to scan should not abort all others.
 		slog.WarnContext(ctx, "download.DetectUpgrades: failed to query max importance for chapter — skipping",
@@ -102,16 +126,20 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Ch
 	return 1, nil
 }
 
-// maxImportanceForChapter returns the highest importance among the LIVE sources
-// offering ch's chapter_key within the same series (attempts < maxRetries AND past
-// cooldown). Returns 0 if no eligible source exists. It reuses
-// chapter.RankedLiveCandidates so the "live, importance-ranked" rule is defined
-// once and is identical to the download path (§2 DRY).
-func maxImportanceForChapter(ctx context.Context, client *ent.Client, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
+// maxImportanceForChapter returns the highest importance among the LIVE,
+// NON-GATED sources offering ch's chapter_key within the same series (attempts <
+// maxRetries AND past per-source cooldown AND circuit-breaker not tripped).
+// Returns 0 if no eligible source exists. It reuses chapter.RankedLiveCandidates
+// so the "live, importance-ranked" rule is defined once and is identical to the
+// download path (§2 DRY), then applies the shared gate filter so a
+// breaker-tripped higher source is never counted as an upgrade target (nil gate
+// never filters).
+func maxImportanceForChapter(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
 	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now)
 	if err != nil {
 		return 0, fmt.Errorf("rank live candidates for chapter %s: %w", ch.ID, err)
 	}
+	cands = gateFilterCandidates(ctx, gate, cands, now)
 	if len(cands) == 0 {
 		return 0, nil
 	}
@@ -185,31 +213,50 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 // as an upgrade target once it is back. A render failure returns no pc (not the
 // source's fault, so no cooldown).
 func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter) (upgradeResult, error) {
-	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), time.Now())
+	now := time.Now()
+	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), now)
 	if err != nil {
 		return upgradeResult{}, fmt.Errorf("rank live candidates: %w", err)
 	}
+	// Defense-in-depth: exclude sources cooled down by the politeness gate so a
+	// blocked source is never fetched by the upgrade path even if a stale
+	// upgrade_available flag survived (nil gate never filters).
+	cands = d.filterGated(ctx, cands, now)
 	if len(cands) == 0 {
-		// Defensive path: DetectUpgrades only flags a chapter when a live higher
-		// source exists, so there is normally at least one candidate here; a
-		// concurrent RemoveProvider / owner action, or a cooldown elapsing between
-		// the flag and this call, could empty it.
+		// Reachable when: DetectUpgrades flagged a chapter but the only better
+		// source was then tripped/cooled/removed before this fetch (or a concurrent
+		// owner action emptied it). Returning an error routes to handleUpgradeFailure
+		// with a nil failedPC — the chapter transitions back to downloaded (working
+		// copy intact), NOT stranded in upgrade_available.
 		return upgradeResult{}, fmt.Errorf("no live source available for chapter %s", chapterID)
 	}
 	best := cands[0]
 	pc := best.ProviderChapter
 	sp := best.SeriesProvider
+	sourceKey := canonicalSourceKey(sp)
 
 	// Carry a per-chapter progress sink so the upgrade fetch reports live per-page
 	// progress too; the sink throttles + broadcasts download.progress ("upgrading").
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateUpgrading)))
-	release := limiter.acquire(canonicalSourceKey(sp))
+	// Politeness delay before the fetch (runtime-tunable per-source minimum gap).
+	d.gateWait(pctx, sourceKey)
+	release := limiter.acquire(sourceKey)
 	pages, err := d.f.Fetch(pctx, buildFetchRef(pc, sp))
 	release()
 	if err != nil {
+		// Circuit-breaker: a failed upgrade fetch is a "source down entirely"
+		// signal, same as the download path. Skip on a shutdown-induced
+		// cancellation (parent ctx done); a real per-fetch timeout still counts.
+		if shouldRecordGateFailure(ctx) {
+			d.gateRecordFailure(ctx, sourceKey, err, time.Now())
+		}
 		// Carry pc so handleUpgradeFailure bumps this source's per-source retry state.
 		return upgradeResult{pc: pc, sp: sp}, err
 	}
+	// The fetch succeeded → the source is reachable; clear its breaker state.
+	// (A later render/persist failure is not the source's fault, so it does not
+	// touch the breaker.)
+	d.gateRecordSuccess(ctx, sourceKey)
 
 	maxChap := maxChapterNumber(ctx, d.client, ch.SeriesID)
 	newFilename, err := disk.RenderChapter(disk.RenderRequest{

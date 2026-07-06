@@ -82,7 +82,7 @@ func TestProcess_SingleChapterFallThrough(t *testing.T) {
 	f := &providerScopedFetcher{failProviders: map[string]bool{"high": true}}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 
 	if err := d.Process(ctx, ch.ID); err != nil {
 		t.Fatalf("Process: %v", err)
@@ -106,7 +106,7 @@ func TestMultiSource_ImmediateFallThrough(t *testing.T) {
 	f := &providerScopedFetcher{failProviders: map[string]bool{"high": true}}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -146,7 +146,7 @@ func TestMultiSource_FastestRelease(t *testing.T) {
 	f := &providerScopedFetcher{}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -172,7 +172,7 @@ func TestMultiSource_NoPermaFailWhileALiveSourceRemains(t *testing.T) {
 	f := &providerScopedFetcher{failProviders: map[string]bool{"high": true}}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 2, Backoff: 0})
+	}, settings.Static{Retries: 2, Backoff: 0}, nil)
 
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -196,7 +196,7 @@ func TestMultiSource_PermaFailOnlyWhenAllExhausted(t *testing.T) {
 	f := &providerScopedFetcher{failProviders: map[string]bool{"low": true, "high": true}}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 2, Backoff: 0})
+	}, settings.Static{Retries: 2, Backoff: 0}, nil)
 
 	// Cycle 1: each source tried once (attempts 1/1) — still failed, not permanent.
 	if _, err := d.RunOnce(ctx); err != nil {
@@ -240,7 +240,7 @@ func TestMultiSource_BackoffGatesUntilNextAttempt(t *testing.T) {
 	f := &providerScopedFetcher{failProviders: map[string]bool{"only": true}}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 5, Backoff: time.Hour}) // long backoff, budget remaining
+	}, settings.Static{Retries: 5, Backoff: time.Hour}, nil) // long backoff, budget remaining
 
 	// Cycle 1: the source fails once and is put on a 1h+ cooldown.
 	if _, err := d.RunOnce(ctx); err != nil {
@@ -288,7 +288,7 @@ func TestMultiSource_WantedWithExhaustedSourceGoesPermaFail(t *testing.T) {
 	f := &providerScopedFetcher{}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 3, Backoff: 0})
+	}, settings.Static{Retries: 3, Backoff: 0}, nil)
 
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -322,7 +322,7 @@ func TestMultiSource_RetriedSourceRecoversAndDownloads(t *testing.T) {
 	f := &providerScopedFetcher{} // would succeed
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
-	}, settings.Static{Retries: 3, Backoff: 0})
+	}, settings.Static{Retries: 3, Backoff: 0}, nil)
 
 	// With the source exhausted, the chapter permanently fails.
 	if _, err := d.RunOnce(ctx); err != nil {

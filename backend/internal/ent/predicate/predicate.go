@@ -36,6 +36,9 @@ type SeriesProvider func(*sql.Selector)
 // Settings is the predicate function for settings builders.
 type Settings func(*sql.Selector)
 
+// SourceCircuitState is the predicate function for sourcecircuitstate builders.
+type SourceCircuitState func(*sql.Selector)
+
 // SourceEvent is the predicate function for sourceevent builders.
 type SourceEvent func(*sql.Selector)
 

@@ -63,7 +63,7 @@ func TestRunOnce_ClaimWriteFails_ReturnsZeroProgress(t *testing.T) {
 	installClaimWriteFailure(client)
 
 	d := download.New(client, fake.New(), sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		settings.Static{Retries: 3, Backoff: time.Hour})
+		settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 
 	dispatched, err := d.RunOnce(ctx)
 	if err != nil {

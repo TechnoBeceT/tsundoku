@@ -31,6 +31,7 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/fetcher"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -122,20 +123,103 @@ type Dispatcher struct {
 	hub    *sse.Hub
 	cfg    Config
 	retry  RetrySettings
+	gate   *sourcegate.Service
 }
 
 // New creates a Dispatcher configured with the given client, fetcher, SSE hub,
 // structural Config, and runtime RetrySettings. The download policy (max-retries,
 // backoff base, and per-source concurrency) is read from retry at use-time, never
 // captured here.
-func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config, retry RetrySettings) *Dispatcher {
+//
+// gate is the source-politeness circuit-breaker + delay (internal/sourcegate),
+// consulted before a chapter's candidates are dispatched and around every fetch
+// (see filterGated / tryCandidate) so a source Cloudflare is blocking never gets
+// hammered further. gate may be nil (no gate configured): every gate-consulting
+// call site treats a nil gate as "always available, no delay" — i.e. today's
+// pre-politeness behaviour — so passing nil is a safe default for callers that
+// do not need the gate (tests exercising unrelated dispatcher behaviour).
+func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config, retry RetrySettings, gate *sourcegate.Service) *Dispatcher {
 	return &Dispatcher{
 		client: client,
 		f:      f,
 		hub:    hub,
 		cfg:    cfg,
 		retry:  retry,
+		gate:   gate,
 	}
+}
+
+// gateWait enforces the politeness delay for sourceKey before a fetch. A nil
+// gate is a no-op.
+func (d *Dispatcher) gateWait(ctx context.Context, sourceKey string) {
+	if d.gate == nil {
+		return
+	}
+	d.gate.Wait(ctx, sourceKey)
+}
+
+// gateRecordSuccess reports a successful fetch from sourceKey to the breaker
+// (resets its consecutive-failure counter and clears any cooldown). A nil
+// gate is a no-op.
+func (d *Dispatcher) gateRecordSuccess(ctx context.Context, sourceKey string) {
+	if d.gate == nil {
+		return
+	}
+	d.gate.RecordSuccess(ctx, sourceKey)
+}
+
+// gateRecordFailure reports a failed fetch from sourceKey to the breaker
+// (bumps its consecutive-failure counter, tripping it into cooldown once the
+// runtime threshold is reached). A nil gate is a no-op.
+func (d *Dispatcher) gateRecordFailure(ctx context.Context, sourceKey string, cause error, now time.Time) {
+	if d.gate == nil {
+		return
+	}
+	d.gate.RecordFailure(ctx, sourceKey, cause, now)
+}
+
+// filterGated removes candidates whose physical source is currently cooled
+// down by the source-politeness gate, so a Cloudflare-blocked (or otherwise
+// tripped) source is excluded from candidacy entirely — not merely
+// deprioritised. If this empties the candidate list, the caller's existing
+// no-candidate handling applies (handleNoCandidates on the download path: the
+// chapter stays wanted, exactly like the pre-existing per-source
+// next_attempt_at cooldown UX — this is a SEPARATE, coarser-grained "this
+// source is down entirely" gate on top of that per-chapter one). A nil gate
+// never filters anything. It delegates to gateFilterCandidates so the download
+// AND upgrade paths share one definition of the exclusion rule (§2 DRY).
+func (d *Dispatcher) filterGated(ctx context.Context, cands []chapter.Candidate, now time.Time) []chapter.Candidate {
+	return gateFilterCandidates(ctx, d.gate, cands, now)
+}
+
+// gateFilterCandidates is the free-function core of the candidacy exclusion:
+// it drops candidates whose physical source's circuit-breaker is tripped. A nil
+// gate never filters. Shared by the download path (Dispatcher.filterGated) and
+// the gate-aware upgrade detection (detectUpgrades / fetchAndRender), which is
+// why it takes an explicit *sourcegate.Service rather than reading d.gate — the
+// upgrade package-level DetectUpgrades has no dispatcher.
+func gateFilterCandidates(ctx context.Context, gate *sourcegate.Service, cands []chapter.Candidate, now time.Time) []chapter.Candidate {
+	if gate == nil {
+		return cands
+	}
+	out := make([]chapter.Candidate, 0, len(cands))
+	for _, c := range cands {
+		if gate.IsAvailable(ctx, canonicalSourceKey(c.SeriesProvider), now) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// shouldRecordGateFailure reports whether a fetch error should count against
+// the source's circuit-breaker. A fetch error that arrives because the PARENT
+// context was cancelled (graceful shutdown) is NOT evidence the source is down,
+// so it must not trip the breaker — mirroring refresh.RefreshAll's ctx-cancel
+// skip. A per-fetch deadline that fires while the parent context is still alive
+// DOES count: that slow/blocked latency is exactly the signal the breaker
+// exists to catch.
+func shouldRecordGateFailure(ctx context.Context) bool {
+	return ctx.Err() == nil
 }
 
 // downloadConcurrency reads the current per-source download concurrency cap from
@@ -306,6 +390,7 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.processChapter: rank candidates for chapter %s: %w", chapterID, err)
 	}
+	cands = d.filterGated(ctx, cands, now)
 	if len(cands) == 0 {
 		return d.handleNoCandidates(ctx, ch, maxRetries)
 	}
@@ -374,11 +459,24 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	// Carry a per-chapter progress sink so the suwayomi fetcher can report live
 	// per-page progress; the sink throttles + broadcasts download.progress.
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))
-	release := limiter.acquire(canonicalSourceKey(cand.SeriesProvider))
+	sourceKey := canonicalSourceKey(cand.SeriesProvider)
+	// Politeness delay BEFORE the fetch: enforces the runtime-tunable minimum
+	// gap between successive requests to this physical source (independent of
+	// the per-source concurrency cap below).
+	d.gateWait(pctx, sourceKey)
+	release := limiter.acquire(sourceKey)
 	pages, fetchErr := d.f.Fetch(pctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
 	release()
 	if fetchErr != nil {
 		d.bumpSourceFailure(ctx, cand.ProviderChapter, fetchErr, now)
+		// Circuit-breaker bookkeeping is SEPARATE from the per-chapter retry
+		// state above: it tracks whether this source is down ENTIRELY (see
+		// filterGated), not whether it can serve this one chapter. Skip it on a
+		// shutdown-induced cancellation (parent ctx done) so a graceful stop
+		// never trips the breaker; a real per-fetch timeout still counts.
+		if shouldRecordGateFailure(ctx) {
+			d.gateRecordFailure(ctx, sourceKey, fetchErr, now)
+		}
 		return false, fetchErr
 	}
 
@@ -386,9 +484,12 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 		// A render/persist failure is not the source's fault, but bumping it (and
 		// falling through) keeps the chapter from stranding in downloading and lets
 		// another source deliver it. On retry RenderChapter safely upserts the CBZ.
+		// The gate is deliberately NOT touched here — the fetch itself succeeded,
+		// so this is not evidence the source is unavailable.
 		d.bumpSourceFailure(ctx, cand.ProviderChapter, err, now)
 		return false, err
 	}
+	d.gateRecordSuccess(ctx, sourceKey)
 	return true, nil
 }
 

@@ -118,7 +118,7 @@ func TestProgressSink_ThrottleAndFinal(t *testing.T) {
 	defer unsub()
 
 	// The sink only needs the Dispatcher's hub; client/fetcher/settings are unused.
-	d := download.New(nil, nil, hub, download.Config{}, nil)
+	d := download.New(nil, nil, hub, download.Config{}, nil, nil)
 	chapterID := uuid.New()
 	sink := d.ProgressSink(chapterID, entStateDownloading)
 
@@ -174,7 +174,7 @@ func TestDispatcher_DownloadProgress(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-prog").SaveX(ctx)
 
 	f := &progressDrivingFetcher{base: fake.New(fake.WithPages(3))}
-	d := download.New(client, f, hub, download.Config{Storage: storageDir}, settings.Static{Retries: 3, Backoff: time.Hour})
+	d := download.New(client, f, hub, download.Config{Storage: storageDir}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)

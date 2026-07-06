@@ -26,6 +26,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
+	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
@@ -56,6 +57,8 @@ type Client struct {
 	SeriesProvider *SeriesProviderClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
+	// SourceCircuitState is the client for interacting with the SourceCircuitState builders.
+	SourceCircuitState *SourceCircuitStateClient
 	// SourceEvent is the client for interacting with the SourceEvent builders.
 	SourceEvent *SourceEventClient
 	// SourceMetric is the client for interacting with the SourceMetric builders.
@@ -83,6 +86,7 @@ func (c *Client) init() {
 	c.Series = NewSeriesClient(c.config)
 	c.SeriesProvider = NewSeriesProviderClient(c.config)
 	c.Settings = NewSettingsClient(c.config)
+	c.SourceCircuitState = NewSourceCircuitStateClient(c.config)
 	c.SourceEvent = NewSourceEventClient(c.config)
 	c.SourceMetric = NewSourceMetricClient(c.config)
 	c.SuwayomiSyncState = NewSuwayomiSyncStateClient(c.config)
@@ -176,21 +180,22 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:               ctx,
-		config:            cfg,
-		Category:          NewCategoryClient(cfg),
-		Chapter:           NewChapterClient(cfg),
-		EtagCache:         NewEtagCacheClient(cfg),
-		ImportEntry:       NewImportEntryClient(cfg),
-		LatestSeries:      NewLatestSeriesClient(cfg),
-		Owner:             NewOwnerClient(cfg),
-		ProviderChapter:   NewProviderChapterClient(cfg),
-		Series:            NewSeriesClient(cfg),
-		SeriesProvider:    NewSeriesProviderClient(cfg),
-		Settings:          NewSettingsClient(cfg),
-		SourceEvent:       NewSourceEventClient(cfg),
-		SourceMetric:      NewSourceMetricClient(cfg),
-		SuwayomiSyncState: NewSuwayomiSyncStateClient(cfg),
+		ctx:                ctx,
+		config:             cfg,
+		Category:           NewCategoryClient(cfg),
+		Chapter:            NewChapterClient(cfg),
+		EtagCache:          NewEtagCacheClient(cfg),
+		ImportEntry:        NewImportEntryClient(cfg),
+		LatestSeries:       NewLatestSeriesClient(cfg),
+		Owner:              NewOwnerClient(cfg),
+		ProviderChapter:    NewProviderChapterClient(cfg),
+		Series:             NewSeriesClient(cfg),
+		SeriesProvider:     NewSeriesProviderClient(cfg),
+		Settings:           NewSettingsClient(cfg),
+		SourceCircuitState: NewSourceCircuitStateClient(cfg),
+		SourceEvent:        NewSourceEventClient(cfg),
+		SourceMetric:       NewSourceMetricClient(cfg),
+		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
 	}, nil
 }
 
@@ -208,21 +213,22 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:               ctx,
-		config:            cfg,
-		Category:          NewCategoryClient(cfg),
-		Chapter:           NewChapterClient(cfg),
-		EtagCache:         NewEtagCacheClient(cfg),
-		ImportEntry:       NewImportEntryClient(cfg),
-		LatestSeries:      NewLatestSeriesClient(cfg),
-		Owner:             NewOwnerClient(cfg),
-		ProviderChapter:   NewProviderChapterClient(cfg),
-		Series:            NewSeriesClient(cfg),
-		SeriesProvider:    NewSeriesProviderClient(cfg),
-		Settings:          NewSettingsClient(cfg),
-		SourceEvent:       NewSourceEventClient(cfg),
-		SourceMetric:      NewSourceMetricClient(cfg),
-		SuwayomiSyncState: NewSuwayomiSyncStateClient(cfg),
+		ctx:                ctx,
+		config:             cfg,
+		Category:           NewCategoryClient(cfg),
+		Chapter:            NewChapterClient(cfg),
+		EtagCache:          NewEtagCacheClient(cfg),
+		ImportEntry:        NewImportEntryClient(cfg),
+		LatestSeries:       NewLatestSeriesClient(cfg),
+		Owner:              NewOwnerClient(cfg),
+		ProviderChapter:    NewProviderChapterClient(cfg),
+		Series:             NewSeriesClient(cfg),
+		SeriesProvider:     NewSeriesProviderClient(cfg),
+		Settings:           NewSettingsClient(cfg),
+		SourceCircuitState: NewSourceCircuitStateClient(cfg),
+		SourceEvent:        NewSourceEventClient(cfg),
+		SourceMetric:       NewSourceMetricClient(cfg),
+		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
 	}, nil
 }
 
@@ -253,8 +259,8 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
-		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings, c.SourceEvent,
-		c.SourceMetric, c.SuwayomiSyncState,
+		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings,
+		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SuwayomiSyncState,
 	} {
 		n.Use(hooks...)
 	}
@@ -265,8 +271,8 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
-		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings, c.SourceEvent,
-		c.SourceMetric, c.SuwayomiSyncState,
+		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings,
+		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SuwayomiSyncState,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -295,6 +301,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SeriesProvider.mutate(ctx, m)
 	case *SettingsMutation:
 		return c.Settings.mutate(ctx, m)
+	case *SourceCircuitStateMutation:
+		return c.SourceCircuitState.mutate(ctx, m)
 	case *SourceEventMutation:
 		return c.SourceEvent.mutate(ctx, m)
 	case *SourceMetricMutation:
@@ -1812,6 +1820,139 @@ func (c *SettingsClient) mutate(ctx context.Context, m *SettingsMutation) (Value
 	}
 }
 
+// SourceCircuitStateClient is a client for the SourceCircuitState schema.
+type SourceCircuitStateClient struct {
+	config
+}
+
+// NewSourceCircuitStateClient returns a client for the SourceCircuitState from the given config.
+func NewSourceCircuitStateClient(c config) *SourceCircuitStateClient {
+	return &SourceCircuitStateClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourcecircuitstate.Hooks(f(g(h())))`.
+func (c *SourceCircuitStateClient) Use(hooks ...Hook) {
+	c.hooks.SourceCircuitState = append(c.hooks.SourceCircuitState, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourcecircuitstate.Intercept(f(g(h())))`.
+func (c *SourceCircuitStateClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceCircuitState = append(c.inters.SourceCircuitState, interceptors...)
+}
+
+// Create returns a builder for creating a SourceCircuitState entity.
+func (c *SourceCircuitStateClient) Create() *SourceCircuitStateCreate {
+	mutation := newSourceCircuitStateMutation(c.config, OpCreate)
+	return &SourceCircuitStateCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceCircuitState entities.
+func (c *SourceCircuitStateClient) CreateBulk(builders ...*SourceCircuitStateCreate) *SourceCircuitStateCreateBulk {
+	return &SourceCircuitStateCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceCircuitStateClient) MapCreateBulk(slice any, setFunc func(*SourceCircuitStateCreate, int)) *SourceCircuitStateCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceCircuitStateCreateBulk{err: fmt.Errorf("calling to SourceCircuitStateClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceCircuitStateCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceCircuitStateCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceCircuitState.
+func (c *SourceCircuitStateClient) Update() *SourceCircuitStateUpdate {
+	mutation := newSourceCircuitStateMutation(c.config, OpUpdate)
+	return &SourceCircuitStateUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceCircuitStateClient) UpdateOne(_m *SourceCircuitState) *SourceCircuitStateUpdateOne {
+	mutation := newSourceCircuitStateMutation(c.config, OpUpdateOne, withSourceCircuitState(_m))
+	return &SourceCircuitStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceCircuitStateClient) UpdateOneID(id uuid.UUID) *SourceCircuitStateUpdateOne {
+	mutation := newSourceCircuitStateMutation(c.config, OpUpdateOne, withSourceCircuitStateID(id))
+	return &SourceCircuitStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceCircuitState.
+func (c *SourceCircuitStateClient) Delete() *SourceCircuitStateDelete {
+	mutation := newSourceCircuitStateMutation(c.config, OpDelete)
+	return &SourceCircuitStateDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceCircuitStateClient) DeleteOne(_m *SourceCircuitState) *SourceCircuitStateDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceCircuitStateClient) DeleteOneID(id uuid.UUID) *SourceCircuitStateDeleteOne {
+	builder := c.Delete().Where(sourcecircuitstate.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceCircuitStateDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceCircuitState.
+func (c *SourceCircuitStateClient) Query() *SourceCircuitStateQuery {
+	return &SourceCircuitStateQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceCircuitState},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceCircuitState entity by its id.
+func (c *SourceCircuitStateClient) Get(ctx context.Context, id uuid.UUID) (*SourceCircuitState, error) {
+	return c.Query().Where(sourcecircuitstate.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceCircuitStateClient) GetX(ctx context.Context, id uuid.UUID) *SourceCircuitState {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceCircuitStateClient) Hooks() []Hook {
+	return c.hooks.SourceCircuitState
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceCircuitStateClient) Interceptors() []Interceptor {
+	return c.inters.SourceCircuitState
+}
+
+func (c *SourceCircuitStateClient) mutate(ctx context.Context, m *SourceCircuitStateMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceCircuitStateCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceCircuitStateUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceCircuitStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceCircuitStateDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceCircuitState mutation op: %q", m.Op())
+	}
+}
+
 // SourceEventClient is a client for the SourceEvent schema.
 type SourceEventClient struct {
 	config
@@ -2231,12 +2372,12 @@ func (c *SuwayomiSyncStateClient) mutate(ctx context.Context, m *SuwayomiSyncSta
 type (
 	hooks struct {
 		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner, ProviderChapter,
-		Series, SeriesProvider, Settings, SourceEvent, SourceMetric,
-		SuwayomiSyncState []ent.Hook
+		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
+		SourceMetric, SuwayomiSyncState []ent.Hook
 	}
 	inters struct {
 		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner, ProviderChapter,
-		Series, SeriesProvider, Settings, SourceEvent, SourceMetric,
-		SuwayomiSyncState []ent.Interceptor
+		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
+		SourceMetric, SuwayomiSyncState []ent.Interceptor
 	}
 )

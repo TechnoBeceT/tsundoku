@@ -23,6 +23,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
+	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
@@ -37,19 +38,20 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
-	TypeCategory          = "Category"
-	TypeChapter           = "Chapter"
-	TypeEtagCache         = "EtagCache"
-	TypeImportEntry       = "ImportEntry"
-	TypeLatestSeries      = "LatestSeries"
-	TypeOwner             = "Owner"
-	TypeProviderChapter   = "ProviderChapter"
-	TypeSeries            = "Series"
-	TypeSeriesProvider    = "SeriesProvider"
-	TypeSettings          = "Settings"
-	TypeSourceEvent       = "SourceEvent"
-	TypeSourceMetric      = "SourceMetric"
-	TypeSuwayomiSyncState = "SuwayomiSyncState"
+	TypeCategory           = "Category"
+	TypeChapter            = "Chapter"
+	TypeEtagCache          = "EtagCache"
+	TypeImportEntry        = "ImportEntry"
+	TypeLatestSeries       = "LatestSeries"
+	TypeOwner              = "Owner"
+	TypeProviderChapter    = "ProviderChapter"
+	TypeSeries             = "Series"
+	TypeSeriesProvider     = "SeriesProvider"
+	TypeSettings           = "Settings"
+	TypeSourceCircuitState = "SourceCircuitState"
+	TypeSourceEvent        = "SourceEvent"
+	TypeSourceMetric       = "SourceMetric"
+	TypeSuwayomiSyncState  = "SuwayomiSyncState"
 )
 
 // CategoryMutation represents an operation that mutates the Category nodes in the graph.
@@ -8717,6 +8719,612 @@ func (m *SettingsMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SettingsMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown Settings edge %s", name)
+}
+
+// SourceCircuitStateMutation represents an operation that mutates the SourceCircuitState nodes in the graph.
+type SourceCircuitStateMutation struct {
+	config
+	op                      Op
+	typ                     string
+	id                      *uuid.UUID
+	source_key              *string
+	consecutive_failures    *int
+	addconsecutive_failures *int
+	cooldown_until          *time.Time
+	last_error              *string
+	updated_at              *time.Time
+	clearedFields           map[string]struct{}
+	done                    bool
+	oldValue                func(context.Context) (*SourceCircuitState, error)
+	predicates              []predicate.SourceCircuitState
+}
+
+var _ ent.Mutation = (*SourceCircuitStateMutation)(nil)
+
+// sourcecircuitstateOption allows management of the mutation configuration using functional options.
+type sourcecircuitstateOption func(*SourceCircuitStateMutation)
+
+// newSourceCircuitStateMutation creates new mutation for the SourceCircuitState entity.
+func newSourceCircuitStateMutation(c config, op Op, opts ...sourcecircuitstateOption) *SourceCircuitStateMutation {
+	m := &SourceCircuitStateMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceCircuitState,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceCircuitStateID sets the ID field of the mutation.
+func withSourceCircuitStateID(id uuid.UUID) sourcecircuitstateOption {
+	return func(m *SourceCircuitStateMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceCircuitState
+		)
+		m.oldValue = func(ctx context.Context) (*SourceCircuitState, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceCircuitState.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceCircuitState sets the old SourceCircuitState of the mutation.
+func withSourceCircuitState(node *SourceCircuitState) sourcecircuitstateOption {
+	return func(m *SourceCircuitStateMutation) {
+		m.oldValue = func(context.Context) (*SourceCircuitState, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceCircuitStateMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceCircuitStateMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceCircuitState entities.
+func (m *SourceCircuitStateMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceCircuitStateMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceCircuitStateMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceCircuitState.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceKey sets the "source_key" field.
+func (m *SourceCircuitStateMutation) SetSourceKey(s string) {
+	m.source_key = &s
+}
+
+// SourceKey returns the value of the "source_key" field in the mutation.
+func (m *SourceCircuitStateMutation) SourceKey() (r string, exists bool) {
+	v := m.source_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceKey returns the old "source_key" field's value of the SourceCircuitState entity.
+// If the SourceCircuitState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCircuitStateMutation) OldSourceKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceKey: %w", err)
+	}
+	return oldValue.SourceKey, nil
+}
+
+// ResetSourceKey resets all changes to the "source_key" field.
+func (m *SourceCircuitStateMutation) ResetSourceKey() {
+	m.source_key = nil
+}
+
+// SetConsecutiveFailures sets the "consecutive_failures" field.
+func (m *SourceCircuitStateMutation) SetConsecutiveFailures(i int) {
+	m.consecutive_failures = &i
+	m.addconsecutive_failures = nil
+}
+
+// ConsecutiveFailures returns the value of the "consecutive_failures" field in the mutation.
+func (m *SourceCircuitStateMutation) ConsecutiveFailures() (r int, exists bool) {
+	v := m.consecutive_failures
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConsecutiveFailures returns the old "consecutive_failures" field's value of the SourceCircuitState entity.
+// If the SourceCircuitState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCircuitStateMutation) OldConsecutiveFailures(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConsecutiveFailures is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConsecutiveFailures requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConsecutiveFailures: %w", err)
+	}
+	return oldValue.ConsecutiveFailures, nil
+}
+
+// AddConsecutiveFailures adds i to the "consecutive_failures" field.
+func (m *SourceCircuitStateMutation) AddConsecutiveFailures(i int) {
+	if m.addconsecutive_failures != nil {
+		*m.addconsecutive_failures += i
+	} else {
+		m.addconsecutive_failures = &i
+	}
+}
+
+// AddedConsecutiveFailures returns the value that was added to the "consecutive_failures" field in this mutation.
+func (m *SourceCircuitStateMutation) AddedConsecutiveFailures() (r int, exists bool) {
+	v := m.addconsecutive_failures
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetConsecutiveFailures resets all changes to the "consecutive_failures" field.
+func (m *SourceCircuitStateMutation) ResetConsecutiveFailures() {
+	m.consecutive_failures = nil
+	m.addconsecutive_failures = nil
+}
+
+// SetCooldownUntil sets the "cooldown_until" field.
+func (m *SourceCircuitStateMutation) SetCooldownUntil(t time.Time) {
+	m.cooldown_until = &t
+}
+
+// CooldownUntil returns the value of the "cooldown_until" field in the mutation.
+func (m *SourceCircuitStateMutation) CooldownUntil() (r time.Time, exists bool) {
+	v := m.cooldown_until
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCooldownUntil returns the old "cooldown_until" field's value of the SourceCircuitState entity.
+// If the SourceCircuitState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCircuitStateMutation) OldCooldownUntil(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCooldownUntil is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCooldownUntil requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCooldownUntil: %w", err)
+	}
+	return oldValue.CooldownUntil, nil
+}
+
+// ClearCooldownUntil clears the value of the "cooldown_until" field.
+func (m *SourceCircuitStateMutation) ClearCooldownUntil() {
+	m.cooldown_until = nil
+	m.clearedFields[sourcecircuitstate.FieldCooldownUntil] = struct{}{}
+}
+
+// CooldownUntilCleared returns if the "cooldown_until" field was cleared in this mutation.
+func (m *SourceCircuitStateMutation) CooldownUntilCleared() bool {
+	_, ok := m.clearedFields[sourcecircuitstate.FieldCooldownUntil]
+	return ok
+}
+
+// ResetCooldownUntil resets all changes to the "cooldown_until" field.
+func (m *SourceCircuitStateMutation) ResetCooldownUntil() {
+	m.cooldown_until = nil
+	delete(m.clearedFields, sourcecircuitstate.FieldCooldownUntil)
+}
+
+// SetLastError sets the "last_error" field.
+func (m *SourceCircuitStateMutation) SetLastError(s string) {
+	m.last_error = &s
+}
+
+// LastError returns the value of the "last_error" field in the mutation.
+func (m *SourceCircuitStateMutation) LastError() (r string, exists bool) {
+	v := m.last_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastError returns the old "last_error" field's value of the SourceCircuitState entity.
+// If the SourceCircuitState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCircuitStateMutation) OldLastError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastError: %w", err)
+	}
+	return oldValue.LastError, nil
+}
+
+// ResetLastError resets all changes to the "last_error" field.
+func (m *SourceCircuitStateMutation) ResetLastError() {
+	m.last_error = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceCircuitStateMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceCircuitStateMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceCircuitState entity.
+// If the SourceCircuitState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCircuitStateMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceCircuitStateMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourceCircuitStateMutation builder.
+func (m *SourceCircuitStateMutation) Where(ps ...predicate.SourceCircuitState) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceCircuitStateMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceCircuitStateMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceCircuitState, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceCircuitStateMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceCircuitStateMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceCircuitState).
+func (m *SourceCircuitStateMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceCircuitStateMutation) Fields() []string {
+	fields := make([]string, 0, 5)
+	if m.source_key != nil {
+		fields = append(fields, sourcecircuitstate.FieldSourceKey)
+	}
+	if m.consecutive_failures != nil {
+		fields = append(fields, sourcecircuitstate.FieldConsecutiveFailures)
+	}
+	if m.cooldown_until != nil {
+		fields = append(fields, sourcecircuitstate.FieldCooldownUntil)
+	}
+	if m.last_error != nil {
+		fields = append(fields, sourcecircuitstate.FieldLastError)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourcecircuitstate.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceCircuitStateMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcecircuitstate.FieldSourceKey:
+		return m.SourceKey()
+	case sourcecircuitstate.FieldConsecutiveFailures:
+		return m.ConsecutiveFailures()
+	case sourcecircuitstate.FieldCooldownUntil:
+		return m.CooldownUntil()
+	case sourcecircuitstate.FieldLastError:
+		return m.LastError()
+	case sourcecircuitstate.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceCircuitStateMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcecircuitstate.FieldSourceKey:
+		return m.OldSourceKey(ctx)
+	case sourcecircuitstate.FieldConsecutiveFailures:
+		return m.OldConsecutiveFailures(ctx)
+	case sourcecircuitstate.FieldCooldownUntil:
+		return m.OldCooldownUntil(ctx)
+	case sourcecircuitstate.FieldLastError:
+		return m.OldLastError(ctx)
+	case sourcecircuitstate.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceCircuitState field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceCircuitStateMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcecircuitstate.FieldSourceKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceKey(v)
+		return nil
+	case sourcecircuitstate.FieldConsecutiveFailures:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConsecutiveFailures(v)
+		return nil
+	case sourcecircuitstate.FieldCooldownUntil:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCooldownUntil(v)
+		return nil
+	case sourcecircuitstate.FieldLastError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastError(v)
+		return nil
+	case sourcecircuitstate.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceCircuitState field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceCircuitStateMutation) AddedFields() []string {
+	var fields []string
+	if m.addconsecutive_failures != nil {
+		fields = append(fields, sourcecircuitstate.FieldConsecutiveFailures)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceCircuitStateMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourcecircuitstate.FieldConsecutiveFailures:
+		return m.AddedConsecutiveFailures()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceCircuitStateMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourcecircuitstate.FieldConsecutiveFailures:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddConsecutiveFailures(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceCircuitState numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceCircuitStateMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourcecircuitstate.FieldCooldownUntil) {
+		fields = append(fields, sourcecircuitstate.FieldCooldownUntil)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceCircuitStateMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceCircuitStateMutation) ClearField(name string) error {
+	switch name {
+	case sourcecircuitstate.FieldCooldownUntil:
+		m.ClearCooldownUntil()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceCircuitState nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceCircuitStateMutation) ResetField(name string) error {
+	switch name {
+	case sourcecircuitstate.FieldSourceKey:
+		m.ResetSourceKey()
+		return nil
+	case sourcecircuitstate.FieldConsecutiveFailures:
+		m.ResetConsecutiveFailures()
+		return nil
+	case sourcecircuitstate.FieldCooldownUntil:
+		m.ResetCooldownUntil()
+		return nil
+	case sourcecircuitstate.FieldLastError:
+		m.ResetLastError()
+		return nil
+	case sourcecircuitstate.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceCircuitState field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceCircuitStateMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceCircuitStateMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceCircuitStateMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceCircuitStateMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceCircuitStateMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceCircuitStateMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceCircuitStateMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceCircuitState unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceCircuitStateMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceCircuitState edge %s", name)
 }
 
 // SourceEventMutation represents an operation that mutates the SourceEvent nodes in the graph.

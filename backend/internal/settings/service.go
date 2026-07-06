@@ -82,6 +82,26 @@ func (s *Service) WarmupSlowThresholdMs(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyWarmupSlowThresholdMs)
 }
 
+// SourcesFailureThreshold is the consecutive-failure count above which the
+// source-politeness circuit-breaker (internal/sourcegate) trips a physical
+// source into cooldown (DB override else default).
+func (s *Service) SourcesFailureThreshold(ctx context.Context) int {
+	return s.resolveInt(ctx, KeySourcesFailureThreshold)
+}
+
+// SourcesCooldown is how long a tripped source's circuit-breaker stays open
+// before it is available again (DB override else default).
+func (s *Service) SourcesCooldown(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeySourcesCooldown)
+}
+
+// SourcesMinRequestDelay is the minimum politeness delay enforced between
+// successive requests to the same physical source; 0 disables it (DB override
+// else default).
+func (s *Service) SourcesMinRequestDelay(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeySourcesMinRequestDelay)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

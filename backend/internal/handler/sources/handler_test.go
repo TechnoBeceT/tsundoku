@@ -69,7 +69,7 @@ func newTestEnv(t *testing.T, fc suwayomi.Client) *testEnv {
 
 	metricsSvc := metrics.NewService(client)
 	threshold := settings.Static{WarmupSlow: 5000}
-	warmupSvc := warmup.NewService(fc, metricsSvc, threshold)
+	warmupSvc := warmup.NewService(fc, metricsSvc, threshold, nil)
 	h := handler.NewHandler(metricsSvc, warmupSvc, threshold)
 
 	e := echo.New()

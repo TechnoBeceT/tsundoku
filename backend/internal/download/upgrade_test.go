@@ -119,7 +119,7 @@ func TestUpgrade_SwapsFile(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestUpgrade_ScanlatorChangeReplacesFile(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestUpgrade_NonOtherCategoryUsesRealFolder(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestUpgrade_NonDestructiveOnFailure(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestUpgrade_NonDestructiveOnFailure(t *testing.T) {
 
 	// Upgrade with a fetcher that always errors — must be non-destructive.
 	dFail := download.New(client, fake.New(fake.WithError(errors.New("simulated fetch failure"))), hub,
-		download.Config{Storage: storageDir}, settings.Static{Retries: 3, Backoff: time.Hour})
+		download.Config{Storage: storageDir}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	if err := dFail.Upgrade(ctx, ch.ID); err != nil {
 		t.Fatalf("Upgrade returned unexpected hard error: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestDetectUpgrades_StrictlyGreater(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestUpgrade_SSEEvents(t *testing.T) {
 
 	d := download.New(client, fake.New(), hub, download.Config{
 		Storage: storageDir,
-	}, settings.Static{Retries: 3, Backoff: time.Hour})
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("initial RunOnce: %v", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
+	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
@@ -284,6 +285,26 @@ func init() {
 	settingsDescID := settingsFields[0].Descriptor()
 	// settings.DefaultID holds the default value on creation for the id field.
 	settings.DefaultID = settingsDescID.Default.(func() uuid.UUID)
+	sourcecircuitstateFields := schema.SourceCircuitState{}.Fields()
+	_ = sourcecircuitstateFields
+	// sourcecircuitstateDescConsecutiveFailures is the schema descriptor for consecutive_failures field.
+	sourcecircuitstateDescConsecutiveFailures := sourcecircuitstateFields[2].Descriptor()
+	// sourcecircuitstate.DefaultConsecutiveFailures holds the default value on creation for the consecutive_failures field.
+	sourcecircuitstate.DefaultConsecutiveFailures = sourcecircuitstateDescConsecutiveFailures.Default.(int)
+	// sourcecircuitstateDescLastError is the schema descriptor for last_error field.
+	sourcecircuitstateDescLastError := sourcecircuitstateFields[4].Descriptor()
+	// sourcecircuitstate.DefaultLastError holds the default value on creation for the last_error field.
+	sourcecircuitstate.DefaultLastError = sourcecircuitstateDescLastError.Default.(string)
+	// sourcecircuitstateDescUpdatedAt is the schema descriptor for updated_at field.
+	sourcecircuitstateDescUpdatedAt := sourcecircuitstateFields[5].Descriptor()
+	// sourcecircuitstate.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourcecircuitstate.DefaultUpdatedAt = sourcecircuitstateDescUpdatedAt.Default.(func() time.Time)
+	// sourcecircuitstate.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourcecircuitstate.UpdateDefaultUpdatedAt = sourcecircuitstateDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourcecircuitstateDescID is the schema descriptor for id field.
+	sourcecircuitstateDescID := sourcecircuitstateFields[0].Descriptor()
+	// sourcecircuitstate.DefaultID holds the default value on creation for the id field.
+	sourcecircuitstate.DefaultID = sourcecircuitstateDescID.Default.(func() uuid.UUID)
 	sourceeventFields := schema.SourceEvent{}.Fields()
 	_ = sourceeventFields
 	// sourceeventDescPayload is the schema descriptor for payload field.

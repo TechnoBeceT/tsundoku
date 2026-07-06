@@ -42,6 +42,8 @@ type Config struct {
 	Jobs JobsConfig
 	// Health holds M7 source-health computation settings.
 	Health HealthConfig
+	// Sources holds the source-politeness circuit-breaker + delay defaults.
+	Sources SourcesConfig
 }
 
 // AuthConfig holds HMAC signing settings for the single-owner auth layer.
@@ -284,6 +286,29 @@ type JobsConfig struct {
 	WarmupSlowThresholdMs int
 }
 
+// SourcesConfig holds the env-sourced DEFAULTS for the source-politeness
+// circuit-breaker + politeness delay (internal/sourcegate) — the runtime
+// settings overlay (jobs sources.*) can override each without a restart; the
+// dispatcher/refresh/warm-up gate reads the tunable at use-time, not this
+// struct directly.
+type SourcesConfig struct {
+	// FailureThreshold is how many CONSECUTIVE failures against one physical
+	// source trip its circuit-breaker into cooldown. Default 5. validate()
+	// rejects a value below 1 (a source must always get at least one try).
+	// Set via TSUNDOKU_SOURCES_FAILURETHRESHOLD.
+	FailureThreshold int
+	// Cooldown is how long a tripped source's circuit-breaker stays open before
+	// it is available again. Default 30m. validate() rejects a value below 1m.
+	// Set via TSUNDOKU_SOURCES_COOLDOWN.
+	Cooldown time.Duration
+	// MinRequestDelay is the minimum politeness delay enforced between
+	// successive requests to the SAME physical source, independent of the
+	// per-source concurrency cap. Default 500ms (Kaizoku.GO parity); 0 disables
+	// it. validate() rejects a negative value. Set via
+	// TSUNDOKU_SOURCES_MINREQUESTDELAY.
+	MinRequestDelay time.Duration
+}
+
 // HealthConfig tunes the M7 source-health computation.
 type HealthConfig struct {
 	// StaleGraceDays is how old a source's newest chapter must be — on top of
@@ -346,6 +371,10 @@ func defaults() map[string]any {
 		// Health — M7 source-health computation.
 		"health.stalegracedays": 14,
 		"storage.folder":        "/data/manga",
+		// Sources — source-politeness circuit-breaker + delay defaults.
+		"sources.failurethreshold": 5,
+		"sources.cooldown":         "30m",
+		"sources.minrequestdelay":  "500ms",
 	}
 }
 
@@ -431,6 +460,9 @@ func Load() (*Config, error) {
 //	TSUNDOKU_JOBS_WARMUPINTERVAL            → jobs.warmupinterval
 //	TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS     → jobs.warmupslowthresholdms
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
+//	TSUNDOKU_SOURCES_FAILURETHRESHOLD       → sources.failurethreshold
+//	TSUNDOKU_SOURCES_COOLDOWN               → sources.cooldown
+//	TSUNDOKU_SOURCES_MINREQUESTDELAY        → sources.minrequestdelay
 //
 // Convention: after stripping the prefix the first "_" separates the
 // top-level struct key from the field name; the remainder is kept as-is
@@ -472,6 +504,12 @@ const minAuthSecretLen = 16
 //     concurrency would stall the dispatcher entirely.
 //   - Jobs.WarmupSlowThresholdMs must be at least 1 — a non-positive slow
 //     threshold would flag every source slow on every warm pass.
+//   - Sources.FailureThreshold must be at least 1 — a source must always get
+//     at least one try before its circuit-breaker can trip.
+//   - Sources.Cooldown must be at least 1 minute — an effectively-zero cooldown
+//     would let a tripped source re-trip immediately, defeating the breaker.
+//   - Sources.MinRequestDelay must not be negative — a negative politeness
+//     delay is meaningless (0 is the valid "disabled" sentinel).
 func (c *Config) validate() error {
 	var errs []string
 
@@ -518,10 +556,38 @@ func (c *Config) validate() error {
 		))
 	}
 
+	errs = append(errs, validateSourcesConfig(c.Sources)...)
+
 	if len(errs) > 0 {
 		return errors.New("config: invalid configuration: " + strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// validateSourcesConfig fails closed on an invalid source-politeness
+// configuration: the failure threshold must allow at least one try before a
+// source's circuit-breaker can trip, the cooldown must be long enough to
+// actually protect a blocked source, and the politeness delay must not be
+// negative (0 is the valid "disabled" sentinel). Extracted from validate() to
+// keep its cyclomatic complexity low.
+func validateSourcesConfig(s SourcesConfig) []string {
+	var errs []string
+	if s.FailureThreshold < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_SOURCES_FAILURETHRESHOLD must be at least 1 (got %d)", s.FailureThreshold,
+		))
+	}
+	if s.Cooldown < time.Minute {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_SOURCES_COOLDOWN must be at least 1m (got %s)", s.Cooldown,
+		))
+	}
+	if s.MinRequestDelay < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_SOURCES_MINREQUESTDELAY must not be negative (got %s)", s.MinRequestDelay,
+		))
+	}
+	return errs
 }
 
 // validateExternalURL fails closed on a malformed Suwayomi external target.

@@ -75,6 +75,28 @@ const (
 	// KeyWarmupSlowThresholdMs is the EWMA-latency threshold in milliseconds above
 	// which a source is warmed by the WarmSlow pass (int, 100..600000).
 	KeyWarmupSlowThresholdMs = "jobs.warmup_slow_threshold_ms"
+	// KeySourcesFailureThreshold is the consecutive-failure count (int, >= 1)
+	// after which the source-politeness circuit-breaker (internal/sourcegate)
+	// trips a physical source into cooldown. Default 5.
+	//
+	// RELATIONSHIP TO jobs.max_retries: the breaker counts CONSECUTIVE failures
+	// ACROSS chapters for one physical source, whereas max_retries is the
+	// PER-(source,chapter) budget. So a genuinely-down source with many failing
+	// chapters trips the breaker quickly (protecting the IP), but a very small
+	// backlog — fewer wanted chapters than failure_threshold — may per-chapter
+	// exhaust (each chapter hits max_retries) before the breaker ever trips.
+	// That is acceptable (a tiny backlog is not the IP-block scenario the breaker
+	// guards); tune failure_threshold DOWN if a deployment wants the breaker to
+	// engage on a smaller run of failures.
+	KeySourcesFailureThreshold = "sources.failure_threshold"
+	// KeySourcesCooldown is how long a tripped source's circuit-breaker stays
+	// open (duration, >= 1m) before it is available again. Default 30m.
+	KeySourcesCooldown = "sources.cooldown"
+	// KeySourcesMinRequestDelay is the minimum politeness delay (duration, 0 =
+	// disabled) enforced between successive requests to the SAME physical
+	// source, independent of the per-source concurrency cap. Default 500ms
+	// (Kaizoku.GO parity).
+	KeySourcesMinRequestDelay = "sources.min_request_delay"
 )
 
 // Defaults carries the config-resolved default for every tunable key. main
@@ -82,16 +104,19 @@ const (
 // it into NewService, so the settings layer never touches os.Getenv — the single
 // env boundary stays in internal/config.
 type Defaults struct {
-	DownloadInterval       time.Duration
-	DownloadConcurrency    int
-	RefreshInterval        time.Duration
-	RefreshConcurrency     int
-	MaxRetries             int
-	RetryBackoff           time.Duration
-	StaleGraceDays         int
-	ExtensionCheckInterval time.Duration
-	WarmupInterval         time.Duration
-	WarmupSlowThresholdMs  int
+	DownloadInterval        time.Duration
+	DownloadConcurrency     int
+	RefreshInterval         time.Duration
+	RefreshConcurrency      int
+	MaxRetries              int
+	RetryBackoff            time.Duration
+	StaleGraceDays          int
+	ExtensionCheckInterval  time.Duration
+	WarmupInterval          time.Duration
+	WarmupSlowThresholdMs   int
+	SourcesFailureThreshold int
+	SourcesCooldown         time.Duration
+	SourcesMinRequestDelay  time.Duration
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -121,6 +146,9 @@ var tunableOrder = []string{
 	KeyExtensionCheckInterval,
 	KeyWarmupInterval,
 	KeyWarmupSlowThresholdMs,
+	KeySourcesFailureThreshold,
+	KeySourcesCooldown,
+	KeySourcesMinRequestDelay,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -165,6 +193,24 @@ var tunables = map[string]tunable{
 	KeyWarmupSlowThresholdMs: intTunable(
 		KeyWarmupSlowThresholdMs, "milliseconds", 100, 600000,
 		func(d Defaults) int { return d.WarmupSlowThresholdMs },
+	),
+	// KeySourcesFailureThreshold's upper bound (100) is not spec-mandated — it is
+	// a sanity ceiling consistent with the other bounded int tunables, since a
+	// threshold that high would make the breaker effectively never trip.
+	KeySourcesFailureThreshold: intTunable(
+		KeySourcesFailureThreshold, "count", 1, 100,
+		func(d Defaults) int { return d.SourcesFailureThreshold },
+	),
+	KeySourcesCooldown: durationTunable(
+		KeySourcesCooldown, "duration", time.Minute,
+		func(d Defaults) time.Duration { return d.SourcesCooldown },
+	),
+	// KeySourcesMinRequestDelay allows 0 (politeness disabled, pure concurrency
+	// behaviour) or any positive duration — there is no floor above 0, unlike
+	// the other "0 or >= min" tunables, so durationTunableMinOrZero's minVal is 0.
+	KeySourcesMinRequestDelay: durationTunableMinOrZero(
+		KeySourcesMinRequestDelay, "duration", 0,
+		func(d Defaults) time.Duration { return d.SourcesMinRequestDelay },
 	),
 }
 

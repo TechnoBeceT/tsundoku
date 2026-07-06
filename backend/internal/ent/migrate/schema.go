@@ -246,6 +246,21 @@ var (
 		Columns:    SettingsColumns,
 		PrimaryKey: []*schema.Column{SettingsColumns[0]},
 	}
+	// SourceCircuitStatesColumns holds the columns for the "source_circuit_states" table.
+	SourceCircuitStatesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_key", Type: field.TypeString, Unique: true},
+		{Name: "consecutive_failures", Type: field.TypeInt, Default: 0},
+		{Name: "cooldown_until", Type: field.TypeTime, Nullable: true},
+		{Name: "last_error", Type: field.TypeString, Default: ""},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourceCircuitStatesTable holds the schema information for the "source_circuit_states" table.
+	SourceCircuitStatesTable = &schema.Table{
+		Name:       "source_circuit_states",
+		Columns:    SourceCircuitStatesColumns,
+		PrimaryKey: []*schema.Column{SourceCircuitStatesColumns[0]},
+	}
 	// SourceEventsColumns holds the columns for the "source_events" table.
 	SourceEventsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -323,6 +338,7 @@ var (
 		SeriesTable,
 		SeriesProvidersTable,
 		SettingsTable,
+		SourceCircuitStatesTable,
 		SourceEventsTable,
 		SourceMetricsTable,
 		SuwayomiSyncStatesTable,

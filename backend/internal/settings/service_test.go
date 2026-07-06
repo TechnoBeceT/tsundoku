@@ -15,16 +15,19 @@ import (
 // testDefaults mirrors the config defaults so resolution tests are meaningful.
 func testDefaults() settings.Defaults {
 	return settings.Defaults{
-		DownloadInterval:       15 * time.Minute,
-		DownloadConcurrency:    5,
-		RefreshInterval:        2 * time.Hour,
-		RefreshConcurrency:     4,
-		MaxRetries:             3,
-		RetryBackoff:           time.Minute,
-		StaleGraceDays:         14,
-		ExtensionCheckInterval: 24 * time.Hour,
-		WarmupInterval:         15 * time.Minute,
-		WarmupSlowThresholdMs:  5000,
+		DownloadInterval:        15 * time.Minute,
+		DownloadConcurrency:     5,
+		RefreshInterval:         2 * time.Hour,
+		RefreshConcurrency:      4,
+		MaxRetries:              3,
+		RetryBackoff:            time.Minute,
+		StaleGraceDays:          14,
+		ExtensionCheckInterval:  24 * time.Hour,
+		WarmupInterval:          15 * time.Minute,
+		WarmupSlowThresholdMs:   5000,
+		SourcesFailureThreshold: 5,
+		SourcesCooldown:         30 * time.Minute,
+		SourcesMinRequestDelay:  500 * time.Millisecond,
 	}
 }
 
@@ -205,8 +208,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 10 {
-		t.Fatalf("List len = %d, want 10", len(list))
+	if len(list) != 13 {
+		t.Fatalf("List len = %d, want 13", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -260,6 +263,7 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 		Download: time.Second, DownloadConc: 6, Refresh: 2 * time.Second, Concurrency: 2,
 		Retries: 5, Backoff: 3 * time.Second, StaleGrace: 7,
 		ExtCheck: 12 * time.Hour, WarmupIv: 15 * time.Minute, WarmupSlow: 4000,
+		SourcesFailureThresh: 8, SourcesCooldownIv: 45 * time.Minute, SourcesMinDelay: 750 * time.Millisecond,
 	}
 	checks := []struct {
 		name string
@@ -276,6 +280,9 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 		{"ExtensionCheckInterval", s.ExtensionCheckInterval(ctx), 12 * time.Hour},
 		{"WarmupInterval", s.WarmupInterval(ctx), 15 * time.Minute},
 		{"WarmupSlowThresholdMs", s.WarmupSlowThresholdMs(ctx), 4000},
+		{"SourcesFailureThreshold", s.SourcesFailureThreshold(ctx), 8},
+		{"SourcesCooldown", s.SourcesCooldown(ctx), 45 * time.Minute},
+		{"SourcesMinRequestDelay", s.SourcesMinRequestDelay(ctx), 750 * time.Millisecond},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -412,5 +419,98 @@ func TestDownloadConcurrency(t *testing.T) {
 	}
 	if got := svc.DownloadConcurrency(ctx); got != 8 {
 		t.Errorf("DownloadConcurrency after Set = %d, want 8", got)
+	}
+}
+
+// TestSourcesFailureThreshold proves the circuit-breaker trip-threshold accessor
+// returns the default (5) when unset, rejects a value below 1, and reflects a
+// valid override (source-politeness Task 2).
+func TestSourcesFailureThreshold(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.SourcesFailureThreshold(ctx); got != 5 {
+		t.Errorf("SourcesFailureThreshold default = %d, want 5", got)
+	}
+	if err := svc.Set(ctx, settings.KeySourcesFailureThreshold, "0"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 0 (below 1): want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeySourcesFailureThreshold, "3"); err != nil {
+		t.Fatalf("Set 3: %v", err)
+	}
+	if got := svc.SourcesFailureThreshold(ctx); got != 3 {
+		t.Errorf("SourcesFailureThreshold after Set = %d, want 3", got)
+	}
+}
+
+// TestSourcesCooldown proves the circuit-breaker cooldown accessor returns the
+// default (30m) when unset, rejects a value below 1m, and reflects a valid
+// override.
+func TestSourcesCooldown(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.SourcesCooldown(ctx); got != 30*time.Minute {
+		t.Errorf("SourcesCooldown default = %v, want 30m", got)
+	}
+	if err := svc.Set(ctx, settings.KeySourcesCooldown, "30s"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 30s (below 1m): want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeySourcesCooldown, "10m"); err != nil {
+		t.Fatalf("Set 10m: %v", err)
+	}
+	if got := svc.SourcesCooldown(ctx); got != 10*time.Minute {
+		t.Errorf("SourcesCooldown after Set = %v, want 10m", got)
+	}
+}
+
+// TestSourcesMinRequestDelay_Default proves the politeness-delay accessor
+// returns the config default (500ms) when the Settings table has no override.
+func TestSourcesMinRequestDelay_Default(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+
+	if got := svc.SourcesMinRequestDelay(context.Background()); got != 500*time.Millisecond {
+		t.Errorf("SourcesMinRequestDelay default = %v, want 500ms", got)
+	}
+}
+
+// TestSourcesMinRequestDelay_SetValidation is table-driven over the shapes the
+// politeness delay must accept or reject: 0 (disabled), an arbitrary positive
+// duration, and a rejected negative duration — proving the resolved accessor
+// value matches what was stored for every accepted case.
+func TestSourcesMinRequestDelay_SetValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		wantErr bool
+		want    time.Duration
+	}{
+		{name: "zero disables politeness", raw: "0", want: 0},
+		{name: "arbitrary positive duration", raw: "1200ms", want: 1200 * time.Millisecond},
+		{name: "negative duration rejected", raw: "-5s", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testdb.New(t)
+			svc := settings.NewService(db, testDefaults())
+			ctx := context.Background()
+
+			err := svc.Set(ctx, settings.KeySourcesMinRequestDelay, tc.raw)
+			if tc.wantErr {
+				if !errors.Is(err, settings.ErrInvalidSetting) {
+					t.Fatalf("Set(%q): want ErrInvalidSetting, got %v", tc.raw, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Set(%q): %v", tc.raw, err)
+			}
+			if got := svc.SourcesMinRequestDelay(ctx); got != tc.want {
+				t.Errorf("SourcesMinRequestDelay after Set(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
 	}
 }

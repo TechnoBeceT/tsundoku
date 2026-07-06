@@ -32,6 +32,8 @@ type Tx struct {
 	SeriesProvider *SeriesProviderClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
+	// SourceCircuitState is the client for interacting with the SourceCircuitState builders.
+	SourceCircuitState *SourceCircuitStateClient
 	// SourceEvent is the client for interacting with the SourceEvent builders.
 	SourceEvent *SourceEventClient
 	// SourceMetric is the client for interacting with the SourceMetric builders.
@@ -179,6 +181,7 @@ func (tx *Tx) init() {
 	tx.Series = NewSeriesClient(tx.config)
 	tx.SeriesProvider = NewSeriesProviderClient(tx.config)
 	tx.Settings = NewSettingsClient(tx.config)
+	tx.SourceCircuitState = NewSourceCircuitStateClient(tx.config)
 	tx.SourceEvent = NewSourceEventClient(tx.config)
 	tx.SourceMetric = NewSourceMetricClient(tx.config)
 	tx.SuwayomiSyncState = NewSuwayomiSyncStateClient(tx.config)

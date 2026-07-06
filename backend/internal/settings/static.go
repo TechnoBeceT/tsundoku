@@ -21,6 +21,11 @@ type Static struct {
 	ExtCheck     time.Duration
 	WarmupIv     time.Duration
 	WarmupSlow   int
+	// SourcesFailureThresh / SourcesCooldownIv / SourcesMinDelay back the
+	// source-politeness gate (internal/sourcegate) accessors below.
+	SourcesFailureThresh int
+	SourcesCooldownIv    time.Duration
+	SourcesMinDelay      time.Duration
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -52,3 +57,12 @@ func (s Static) WarmupInterval(context.Context) time.Duration { return s.WarmupI
 
 // WarmupSlowThresholdMs returns the fixed slow-latency threshold in milliseconds.
 func (s Static) WarmupSlowThresholdMs(context.Context) int { return s.WarmupSlow }
+
+// SourcesFailureThreshold returns the fixed circuit-breaker trip threshold.
+func (s Static) SourcesFailureThreshold(context.Context) int { return s.SourcesFailureThresh }
+
+// SourcesCooldown returns the fixed circuit-breaker cooldown duration.
+func (s Static) SourcesCooldown(context.Context) time.Duration { return s.SourcesCooldownIv }
+
+// SourcesMinRequestDelay returns the fixed per-source politeness delay; 0 disables it.
+func (s Static) SourcesMinRequestDelay(context.Context) time.Duration { return s.SourcesMinDelay }

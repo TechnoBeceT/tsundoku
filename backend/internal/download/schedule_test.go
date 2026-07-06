@@ -241,7 +241,7 @@ func TestRunOnce_QueuedUntilSlotAcquired(t *testing.T) {
 
 	g := newGateFetcher()
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour}, nil)
 
 	done := make(chan error, 1)
 	go func() { _, err := d.RunOnce(ctx); done <- err }()
@@ -284,7 +284,7 @@ func TestRunOnce_StartsInNumberOrder(t *testing.T) {
 	g := newGateFetcher()
 	g.open() // non-blocking: serial cap=1 execution records the true start order
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: 1, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: 1, retries: 3, backoff: time.Hour}, nil)
 
 	for {
 		dispatched, err := d.RunOnce(ctx)
@@ -318,7 +318,7 @@ func TestRunOnce_DownloadConcurrencyReadAtUse(t *testing.T) {
 
 	ms := &mutableSettings{conc: 1, retries: 3, backoff: time.Hour}
 	g := newGateFetcher()
-	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, ms)
+	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, ms, nil)
 
 	// Cycle 1 at cap=1: only one chapter may be downloading while the gate is
 	// shut. Seed exactly the batch (2*cap = 2) so ONE bounded pass dispatches the
@@ -374,7 +374,7 @@ func TestRunOnce_NoCrossSourceHeadOfLineBlocking(t *testing.T) {
 	g.blockProviders = map[string]bool{"A": true} // only A blocks; B passes through
 
 	d := download.New(client, g, hub, download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: 2, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: 2, retries: 3, backoff: time.Hour}, nil)
 
 	done := make(chan error, 1)
 	go func() { _, err := d.RunOnce(ctx); done <- err }()
@@ -439,7 +439,7 @@ func TestRunOnce_BoundedBatchPerPass(t *testing.T) {
 	g := newGateFetcher()
 	g.open() // non-blocking: this test asserts the COUNT bound, not timing
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour}, nil)
 
 	dispatched, err := d.RunOnce(ctx)
 	if err != nil {
@@ -473,7 +473,7 @@ func TestRunOnce_BoundedBatch_UnderBatchDispatchesAll(t *testing.T) {
 	g := newGateFetcher()
 	g.open()
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour}, nil)
 
 	dispatched, err := d.RunOnce(ctx)
 	if err != nil {
@@ -520,7 +520,7 @@ func TestRunOnce_RoundRobinAcrossSeries_LateJoinerNotStarved(t *testing.T) {
 
 	g := newGateFetcher() // gate closed: hold the batch mid-flight to inspect it
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour}, nil)
 
 	done := make(chan error, 1)
 	go func() { _, err := d.RunOnce(ctx); done <- err }()
@@ -559,7 +559,7 @@ func TestRunOnce_CrossSourceParallelismWithinOnePass(t *testing.T) {
 
 	g := newGateFetcher() // gate closed: every fetch from either source blocks
 	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
-		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour})
+		&mutableSettings{conc: cap, retries: 3, backoff: time.Hour}, nil)
 
 	done := make(chan error, 1)
 	go func() { _, err := d.RunOnce(ctx); done <- err }()

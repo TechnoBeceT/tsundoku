@@ -8,11 +8,13 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
@@ -64,7 +66,7 @@ func TestWarmAll(t *testing.T) {
 			{ID: "off-src", Name: "Off", Lang: "en", Disabled: true},
 		},
 	}
-	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000})
+	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000}, nil)
 
 	n, err := svc.WarmAll(ctx)
 	if err != nil {
@@ -97,7 +99,7 @@ func TestWarmSlow(t *testing.T) {
 		{ID: "slow", Name: "Slow", Lang: "en"},
 		{ID: "fresh", Name: "Fresh", Lang: "en"},
 	}}
-	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000})
+	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000}, nil)
 
 	n, err := svc.WarmSlow(ctx)
 	if err != nil {
@@ -126,7 +128,7 @@ func TestWarmSlow_OneFailureDoesNotAbort(t *testing.T) {
 		},
 		browseErrs: map[string]error{"a": errors.New("boom")},
 	}
-	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000})
+	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000}, nil)
 
 	n, err := svc.WarmSlow(ctx) // both never-measured ⇒ both slow
 	if err != nil {
@@ -144,6 +146,69 @@ func TestWarmSlow_OneFailureDoesNotAbort(t *testing.T) {
 	}
 	if !warmed(t, client, "b") {
 		t.Error("successful source 'b' should be stamped warmed")
+	}
+}
+
+// TestWarmAll_SkipsGatedSource proves a source whose physical name is cooled
+// down by the source-politeness gate (internal/sourcegate) is skipped
+// entirely — no Browse call, not counted as warmed, not stamped — while an
+// available source in the same pass still warms normally.
+func TestWarmAll_SkipsGatedSource(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "blocked-src", Name: "Blocked", Lang: "en"},
+			{ID: "ok-src", Name: "OK", Lang: "en"},
+		},
+	}
+
+	// Pre-trip the breaker keyed by the source's NAME (not its id).
+	client.SourceCircuitState.Create().
+		SetSourceKey("Blocked").
+		SetConsecutiveFailures(5).
+		SetCooldownUntil(time.Now().Add(time.Hour)).
+		SaveX(ctx)
+
+	gate := sourcegate.NewService(client, settings.Static{SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour})
+	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000}, gate)
+
+	n, err := svc.WarmAll(ctx)
+	if err != nil {
+		t.Fatalf("WarmAll: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("warmed = %d, want 1 (blocked source excluded)", n)
+	}
+	for _, id := range fc.calls {
+		if id == "blocked-src" {
+			t.Errorf("blocked source must not be Browse'd; calls = %v", fc.calls)
+		}
+	}
+	if warmed(t, client, "blocked-src") {
+		t.Error("blocked source should not be stamped warmed")
+	}
+	if !warmed(t, client, "ok-src") {
+		t.Error("available source should be stamped warmed")
+	}
+}
+
+// TestWarmAll_GateAvailableRunsNormally proves that with no breaker row at
+// all, the gate never interferes with a normal warm pass.
+func TestWarmAll_GateAvailableRunsNormally(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	fc := &fakeClient{sources: []suwayomi.Source{{ID: "en-src", Name: "EN", Lang: "en"}}}
+
+	gate := sourcegate.NewService(client, settings.Static{SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour})
+	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000}, gate)
+
+	n, err := svc.WarmAll(ctx)
+	if err != nil {
+		t.Fatalf("WarmAll: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("warmed = %d, want 1", n)
 	}
 }
 
