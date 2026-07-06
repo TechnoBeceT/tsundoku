@@ -118,6 +118,12 @@ const srcFilter = ref<string[]>([])
 const hasSearched = ref(props.searched)
 
 const title = ref('')
+// The intended synthetic-group title — the picked group's title (`pickGroup`)
+// or the largest contributing group's title (`onConfigureTray`). Kept here (not
+// read off the composable's `group.title`, which the composable derives from
+// the first candidate's own title) so the adopt-payload + Stage-3 title
+// FALLBACK (`title || groupTitle`) matches the pre-refactor behavior exactly.
+const groupTitle = ref('')
 const category = ref('Other')
 // The candidate whose chapter list is being inspected (key), and its loading flag.
 const inspectKey = ref<string | null>(null)
@@ -187,6 +193,7 @@ const runSearch = (): void => {
 // concern (the composable owns only the tray + row selection/order/split).
 const pickGroup = (g: SearchGroup): void => {
   title.value = g.title
+  groupTitle.value = g.title
   category.value = props.categories[0] ?? 'Other'
   inspectKey.value = null
   inspecting.value = false
@@ -199,7 +206,9 @@ const pickGroup = (g: SearchGroup): void => {
 // contributing group's title, falling back to the first tray candidate's own
 // title (mirrors the pre-extraction behavior).
 const onConfigureTray = (): void => {
-  title.value = suggestedTrayTitle.value ?? tray.value[0]?.title ?? ''
+  const seed = suggestedTrayTitle.value ?? tray.value[0]?.title ?? ''
+  title.value = seed
+  groupTitle.value = seed
   category.value = props.categories[0] ?? 'Other'
   inspectKey.value = null
   inspecting.value = false
@@ -243,7 +252,7 @@ const submit = (): void => {
   const g = group.value
   if (!g || props.adopting) return
   const request: AdoptRequest = {
-    title: title.value.trim() || g.title,
+    title: title.value.trim() || groupTitle.value,
     category: category.value,
     providers: reviewRows.value.map(s => ({
       source: s.row.candidate.source,
@@ -380,7 +389,7 @@ const submit = (): void => {
         <section v-else class="imp-stage">
           <div class="imp-review-head">
             <Chip variant="accent">{{ category }}</Chip>
-            <span class="imp-review-title">{{ title || (group ? group.title : '') }}</span>
+            <span class="imp-review-title">{{ title || groupTitle }}</span>
           </div>
 
           <p class="imp-eyebrow">Sources · higher importance is preferred</p>
