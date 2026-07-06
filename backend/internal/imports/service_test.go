@@ -383,6 +383,34 @@ func TestService_Sources_ExcludesDisabledSource(t *testing.T) {
 	}
 }
 
+// TestService_Sources_ExcludesInfinityScans verifies that InfinityScans — a
+// known-broken source whose captcha is broken (hitting it wastes requests and
+// risks IP-blocks) — is excluded from the Discover/Search source list, matched
+// by name case-insensitively, while an unrelated source is kept.
+func TestService_Sources_ExcludesInfinityScans(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []suwayomi.Source{
+			{ID: "src-a", Name: "InfinityScans", Lang: "en"},
+			{ID: "src-b", Name: "infinityscans", Lang: "en"},
+			{ID: "src-c", Name: "MangaDex", Lang: "en"},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Sources: got %d DTOs, want 1 (InfinityScans excluded regardless of case): %+v", len(got), got)
+	}
+	if got[0].ID != "src-c" {
+		t.Errorf("Sources: got %+v, want only src-c (MangaDex)", got)
+	}
+}
+
 // --- Search tests ------------------------------------------------------------
 
 // TestService_Search_AllSources verifies that Search(query, nil) fans across
