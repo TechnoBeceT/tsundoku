@@ -19,6 +19,9 @@
  *   :total            — server total for the active tab (load-more affordance)
  *   :has-more         — whether more pages exist for the active tab
  *   :loading-more     — whether a load-more fetch is in flight
+ *   :running          — "Download now" trigger in flight
+ *   :run-message      — "Download now" success note
+ *   :run-error        — "Download now" failure message
  *
  * Emit wiring:
  *   @set-tab        → setTab(tab)
@@ -27,6 +30,7 @@
  *   @open-series    → navigateTo('/series/' + id)
  *   @dismiss-error  → dismissError()
  *   @load-more      → loadMore()
+ *   @run-now        → runNow()
  */
 const {
   items,
@@ -41,10 +45,14 @@ const {
   retryError,
   cycleActive,
   nextCycleMinutes,
+  running,
+  runMessage,
+  runError,
   setTab,
   loadMore,
   retry,
   retryAll,
+  runNow,
   dismissError,
 } = useDownloads()
 </script>
@@ -64,12 +72,16 @@ const {
       :total="total"
       :has-more="hasMore"
       :loading-more="loadingMore"
+      :running="running"
+      :run-message="runMessage"
+      :run-error="runError"
       @set-tab="setTab"
       @retry="retry"
       @retry-all="retryAll"
       @open-series="(id: string) => navigateTo(`/series/${id}`)"
       @dismiss-error="dismissError"
       @load-more="loadMore"
+      @run-now="runNow"
     />
   </div>
 </template>

@@ -22,6 +22,12 @@
  * current while a download cycle is active. cycleActive is forwarded from
  * useProgressStream (true on cycle.start, false on cycle.done).
  *
+ * "Download now": runNow() — POST /api/downloads/run; mirrors useSourceMetrics'
+ * warmNow() §16 pattern (busy → started-message, never swallowed). The endpoint
+ * returns 202 immediately (the cycle runs via the existing SSE-driven job), so
+ * this does not refetch itself — the cycle.done listener above already refetches
+ * once the triggered cycle completes.
+ *
  * Documented caveat: client-side search / fail sub-tabs / upgrades-only toggle
  * operate over the *loaded* pages of the active tab. Tab badge counts + bulk gating
  * are exact (server totals). Pushing search to the server (q param) is a deliberate
@@ -93,6 +99,11 @@ export function useDownloads() {
   const retryingIds = ref<string[]>([])
   const retryingAll = ref<RetryAllState | null>(null)
   const retryError = ref<string>('')
+
+  // §16 state of the manual "Download now" action.
+  const running = ref(false)
+  const runMessage = ref<string>('')
+  const runError = ref<string>('')
 
   // Pagination state
   const total = ref(0)
@@ -243,6 +254,31 @@ export function useDownloads() {
     retryError.value = ''
   }
 
+  /**
+   * Kick off an immediate download cycle ("Download now") — POST
+   * /api/downloads/run. The endpoint returns 202 immediately (the cycle runs
+   * via the existing job.Runner + SSE stream), so this only surfaces a
+   * "started" message; the cycle.done listener above refetches once the
+   * triggered cycle actually finishes. A failure lands in runError, never
+   * swallowed (§16).
+   */
+  async function runNow(): Promise<void> {
+    running.value = true
+    runMessage.value = ''
+    runError.value = ''
+    try {
+      const res = await apiClient.POST('/api/downloads/run')
+      if (res.error) throw new Error('Failed to start download cycle')
+      runMessage.value = 'Download cycle started'
+    }
+    catch (e) {
+      runError.value = e instanceof Error ? e.message : 'Failed to start download cycle'
+    }
+    finally {
+      running.value = false
+    }
+  }
+
   void refresh()
 
   return {
@@ -258,10 +294,14 @@ export function useDownloads() {
     retryError,
     cycleActive,
     nextCycleMinutes,
+    running,
+    runMessage,
+    runError,
     setTab,
     loadMore,
     retry,
     retryAll,
+    runNow,
     dismissError,
     refresh,
   }

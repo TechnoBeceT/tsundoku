@@ -42,17 +42,22 @@ type testEnv struct {
 	token    string
 	failedID uuid.UUID
 	wantedID uuid.UUID
+	// triggerCalls counts invocations of the capture-fake trigger func passed to
+	// NewHandler, so tests can assert it fires on success only.
+	triggerCalls int
 }
 
 // newTestEnv stands up a fully-wired Echo with the downloads routes behind
 // RequireOwner (so the 401 proofs hit the real middleware), a downloads.Service
-// over a fresh testdb client, and a valid owner Bearer token.
+// over a fresh testdb client, a capture-fake trigger (bumps env.triggerCalls),
+// and a valid owner Bearer token.
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
-	h := handler.NewHandler(downloadssvc.NewService(client))
+	env := &testEnv{client: client}
+	h := handler.NewHandler(downloadssvc.NewService(client), func() { env.triggerCalls++ })
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -60,12 +65,15 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.GET("/downloads", h.List)
 	authed.POST("/downloads/retry-all", h.RetryAll)
 	authed.POST("/chapters/:id/retry", h.RetryChapter)
+	authed.POST("/downloads/run", h.Run)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
 		t.Fatalf("Issue token: %v", err)
 	}
-	return &testEnv{e: e, client: client, token: token}
+	env.e = e
+	env.token = token
+	return env
 }
 
 // seed creates a single series with a failed chapter (full failure bookkeeping)
@@ -175,6 +183,10 @@ func TestRetryChapter_OK(t *testing.T) {
 		ch.ErrorCategory != "" || ch.NextAttemptAt != nil {
 		t.Errorf("retry did not reset: %+v", ch)
 	}
+	// Dispatch responsiveness: a successful retry starts an immediate cycle.
+	if env.triggerCalls != 1 {
+		t.Errorf("want trigger called once on successful retry, got %d", env.triggerCalls)
+	}
 }
 
 func TestRetryChapter_BadUUID(t *testing.T) {
@@ -191,6 +203,10 @@ func TestRetryChapter_NotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("not found: want 404, got %d", rec.Code)
 	}
+	// A 404 must NOT start a cycle.
+	if env.triggerCalls != 0 {
+		t.Errorf("want trigger NOT called on 404, got %d calls", env.triggerCalls)
+	}
 }
 
 func TestRetryChapter_Conflict(t *testing.T) {
@@ -201,6 +217,10 @@ func TestRetryChapter_Conflict(t *testing.T) {
 	rec := env.do(http.MethodPost, "/api/chapters/"+env.wantedID.String()+"/retry")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("non-retryable: want 409, got %d", rec.Code)
+	}
+	// A 409 must NOT start a cycle.
+	if env.triggerCalls != 0 {
+		t.Errorf("want trigger NOT called on 409, got %d calls", env.triggerCalls)
 	}
 }
 
@@ -220,6 +240,10 @@ func TestRetryAll_OK(t *testing.T) {
 	if got.Retried != 1 {
 		t.Errorf("want retried=1, got %d", got.Retried)
 	}
+	// Dispatch responsiveness: a successful bulk retry starts an immediate cycle.
+	if env.triggerCalls != 1 {
+		t.Errorf("want trigger called once on successful retry-all, got %d", env.triggerCalls)
+	}
 }
 
 func TestRetryAll_NonRetryableState(t *testing.T) {
@@ -228,6 +252,9 @@ func TestRetryAll_NonRetryableState(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("non-retryable state param: want 400, got %d", rec.Code)
 	}
+	if env.triggerCalls != 0 {
+		t.Errorf("want trigger NOT called on 400, got %d calls", env.triggerCalls)
+	}
 }
 
 func TestRetryAll_BadSeriesID(t *testing.T) {
@@ -235,6 +262,30 @@ func TestRetryAll_BadSeriesID(t *testing.T) {
 	rec := env.do(http.MethodPost, "/api/downloads/retry-all?series_id=nope")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad series_id: want 400, got %d", rec.Code)
+	}
+	if env.triggerCalls != 0 {
+		t.Errorf("want trigger NOT called on 400, got %d calls", env.triggerCalls)
+	}
+}
+
+// TestRun_OK proves POST /api/downloads/run returns 202 + {"started":true}
+// immediately and calls the injected trigger exactly once (the "Download now"
+// manual dispatch).
+func TestRun_OK(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodPost, "/api/downloads/run")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("run: want 202, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got handler.RunResultDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Started {
+		t.Error("started = false, want true")
+	}
+	if env.triggerCalls != 1 {
+		t.Errorf("want trigger called once, got %d", env.triggerCalls)
 	}
 }
 
@@ -246,6 +297,7 @@ func TestRoutes_RequireAuth(t *testing.T) {
 		{http.MethodGet, "/api/downloads?state=failed"},
 		{http.MethodPost, "/api/downloads/retry-all"},
 		{http.MethodPost, "/api/chapters/" + uuid.New().String() + "/retry"},
+		{http.MethodPost, "/api/downloads/run"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {

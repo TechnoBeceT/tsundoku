@@ -110,3 +110,48 @@ export const WithLoadMore: Story = {
     counts: { active: 2, failed: 5, terminal: 1, queued: 250 },
   },
 }
+
+/**
+ * "Download now" — idle state: the manual trigger button sits beside the cycle
+ * banner, ready to kick an immediate cycle without waiting for the timer.
+ */
+export const DownloadNowIdle: Story = {
+  args: {
+    items: queuedItems,
+    activeTab: 'queued',
+    counts: { active: 2, failed: 5, terminal: 1, queued: 3 },
+  },
+}
+
+/**
+ * "Download now" — busy + success states (§16): while `running` the button
+ * shows a spinner + "Starting…"; once the request completes, `runMessage`
+ * surfaces a quiet success note above the list (never a silent fire-and-forget).
+ */
+export const DownloadNowBusy: Story = {
+  args: {
+    items: queuedItems,
+    activeTab: 'queued',
+    counts: { active: 2, failed: 5, terminal: 1, queued: 3 },
+    running: true,
+  },
+}
+
+export const DownloadNowStarted: Story = {
+  args: {
+    items: queuedItems,
+    activeTab: 'queued',
+    counts: { active: 2, failed: 5, terminal: 1, queued: 3 },
+    runMessage: 'Download cycle started',
+  },
+}
+
+/** "Download now" failure — surfaced inline, never swallowed (§16). */
+export const DownloadNowFailed: Story = {
+  args: {
+    items: queuedItems,
+    activeTab: 'queued',
+    counts: { active: 2, failed: 5, terminal: 1, queued: 3 },
+    runError: 'Failed to start download cycle',
+  },
+}

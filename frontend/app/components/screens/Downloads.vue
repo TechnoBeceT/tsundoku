@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import EmptyState from '../ui/EmptyState.vue'
 import ErrorBanner from '../ui/ErrorBanner.vue'
+import FormError from '../ui/FormError.vue'
 import SearchInput from '../ui/SearchInput.vue'
 import SegmentedTabs from '../ui/SegmentedTabs.vue'
 import ProgressBar from '../ui/ProgressBar.vue'
@@ -56,6 +57,12 @@ const props = withDefaults(defineProps<{
   hasMore?: boolean
   /** Whether a load-more fetch is in flight — disables the load-more button. */
   loadingMore?: boolean
+  /** Whether the manual "Download now" trigger is in flight (§16 busy state). */
+  running?: boolean
+  /** The last "Download now" success note (e.g. "Download cycle started"). */
+  runMessage?: string
+  /** The last "Download now" failure message, surfaced inline + never swallowed (§16). */
+  runError?: string
 }>(), {
   activeTab: 'active',
   cycleActive: false,
@@ -68,6 +75,9 @@ const props = withDefaults(defineProps<{
   total: 0,
   hasMore: false,
   loadingMore: false,
+  running: false,
+  runMessage: '',
+  runError: '',
 })
 
 const emit = defineEmits<{
@@ -83,6 +93,8 @@ const emit = defineEmits<{
   'dismiss-error': []
   /** Load the next page of the active tab and append the results. */
   'load-more': []
+  /** Trigger an immediate download cycle ("Download now"). */
+  'run-now': []
 }>()
 
 // ---- Local view state (presentation only, never round-trips) ----------------
@@ -167,11 +179,24 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
 <template>
   <div class="downloads">
-    <!-- Top-level tabs + cycle banner -->
+    <!-- Top-level tabs + cycle banner + manual "Download now" trigger -->
     <div class="downloads__head">
       <SegmentedTabs :model-value="activeTab" :tabs="mainTabs" @update:model-value="selectTab($event as DownloadTab)" />
       <CycleBanner class="downloads__cycle" :cycle-active="cycleActive" :next-cycle-minutes="nextCycleMinutes" />
+      <AppButton variant="mini" size="sm" :loading="running" @click="emit('run-now')">
+        <template #icon>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+            <path d="M21 3v6h-6" />
+          </svg>
+        </template>
+        {{ running ? 'Starting…' : 'Download now' }}
+      </AppButton>
     </div>
+
+    <!-- §16 "Download now" result: success note or failure, never swallowed. -->
+    <p v-if="runMessage" class="run-note">{{ runMessage }}</p>
+    <FormError v-if="runError" class="run-error" :message="runError" />
 
     <!-- Loading skeletons -->
     <div v-if="loading" class="rows">
@@ -358,9 +383,22 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   margin-bottom: 18px;
 }
 
-/* The cycle pill sits at the far right of the head row. */
+/* The cycle pill (+ the "Download now" button that follows it) sits at the far
+   right of the head row. */
 .downloads__cycle {
   margin-left: auto;
+}
+
+/* ---- "Download now" result (§16) ------------------------------------------ */
+.run-note {
+  margin: -6px 0 14px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--dl-ok-icon);
+}
+
+.run-error {
+  margin: -6px 0 14px;
 }
 
 /* ---- Failed sub-head + bulk actions --------------------------------------- */

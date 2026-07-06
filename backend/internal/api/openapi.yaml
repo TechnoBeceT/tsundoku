@@ -902,6 +902,20 @@ components:
             GET /api/sources/metrics (lastWarmedAt / lastError), not here.
           example: true
 
+    RunDownloadsResult:
+      type: object
+      required: [started]
+      properties:
+        started:
+          type: boolean
+          description: |
+            Always true — acknowledges an immediate download cycle was
+            triggered. The trigger is non-blocking + cap-1 coalescing, so this
+            response does not distinguish a freshly-started cycle from one that
+            was already running; watch the cycle.start/cycle.done/download.*
+            SSE stream for actual progress.
+          example: true
+
     SuwayomiSettings:
       type: object
       description: |
@@ -2935,7 +2949,9 @@ paths:
         last_error, error_category, retries and next_attempt_at) so the next download
         cycle re-attempts them. `state` defaults to failed + permanently_failed when
         omitted; supplying a non-retryable state is rejected. Optionally scoped to one
-        series. Returns the number of chapters reset.
+        series. Returns the number of chapters reset. On success this also triggers an
+        immediate download cycle (the same coalescing trigger as POST
+        /api/downloads/run) so the reset chapters do not wait for the next timer tick.
       tags:
         - downloads
       security:
@@ -2984,7 +3000,10 @@ paths:
         next download cycle re-attempts it, clearing the failure bookkeeping
         (last_error, error_category, retries, next_attempt_at). This is a state reset,
         never a delete (the never-auto-delete invariant holds — a failed chapter has no
-        downloaded file). Returns 409 when the chapter is not in a retryable state.
+        downloaded file). Returns 409 when the chapter is not in a retryable state. On
+        success this also triggers an immediate download cycle (the same coalescing
+        trigger as POST /api/downloads/run) so the chapter does not wait for the next
+        timer tick.
       tags:
         - downloads
       security:
@@ -3020,6 +3039,39 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Chapter is not in a retryable state (only failed/permanently_failed may be retried).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/downloads/run:
+    post:
+      operationId: runDownloads
+      summary: Trigger an immediate download cycle ("Download now")
+      description: |
+        Starts a download cycle immediately instead of waiting for the next
+        `jobs.download_interval` timer tick — the manual counterpart to the
+        automatic triggers already fired by Adopt, provider re-rank, and the
+        retry endpoints. The underlying trigger is non-blocking and cap-1
+        coalescing, so repeated calls (e.g. a double-click) collapse into at
+        most one extra cycle. This does NOT bypass the per-source circuit
+        breaker or backoff — a cooled-down/blocked source's chapters still wait
+        out their cooldown; it only starts the cycle sooner. Returns 202
+        immediately; the cycle itself runs in the background (progress is
+        visible via the existing cycle.start/cycle.done/download.* SSE stream).
+      tags:
+        - downloads
+      security:
+        - BearerAuth: []
+      responses:
+        "202":
+          description: The download cycle was accepted and is starting in the background.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunDownloadsResult"
+        "401":
+          description: Missing or invalid Bearer token.
           content:
             application/json:
               schema:

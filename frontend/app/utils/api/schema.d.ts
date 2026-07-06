@@ -668,7 +668,9 @@ export interface paths {
          *     last_error, error_category, retries and next_attempt_at) so the next download
          *     cycle re-attempts them. `state` defaults to failed + permanently_failed when
          *     omitted; supplying a non-retryable state is rejected. Optionally scoped to one
-         *     series. Returns the number of chapters reset.
+         *     series. Returns the number of chapters reset. On success this also triggers an
+         *     immediate download cycle (the same coalescing trigger as POST
+         *     /api/downloads/run) so the reset chapters do not wait for the next timer tick.
          */
         post: operations["retryAllDownloads"];
         delete?: never;
@@ -692,9 +694,41 @@ export interface paths {
          *     next download cycle re-attempts it, clearing the failure bookkeeping
          *     (last_error, error_category, retries, next_attempt_at). This is a state reset,
          *     never a delete (the never-auto-delete invariant holds — a failed chapter has no
-         *     downloaded file). Returns 409 when the chapter is not in a retryable state.
+         *     downloaded file). Returns 409 when the chapter is not in a retryable state. On
+         *     success this also triggers an immediate download cycle (the same coalescing
+         *     trigger as POST /api/downloads/run) so the chapter does not wait for the next
+         *     timer tick.
          */
         post: operations["retryChapter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger an immediate download cycle ("Download now")
+         * @description Starts a download cycle immediately instead of waiting for the next
+         *     `jobs.download_interval` timer tick — the manual counterpart to the
+         *     automatic triggers already fired by Adopt, provider re-rank, and the
+         *     retry endpoints. The underlying trigger is non-blocking and cap-1
+         *     coalescing, so repeated calls (e.g. a double-click) collapse into at
+         *     most one extra cycle. This does NOT bypass the per-source circuit
+         *     breaker or backoff — a cooled-down/blocked source's chapters still wait
+         *     out their cooldown; it only starts the cycle sooner. Returns 202
+         *     immediately; the cycle itself runs in the background (progress is
+         *     visible via the existing cycle.start/cycle.done/download.* SSE stream).
+         */
+        post: operations["runDownloads"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1744,6 +1778,17 @@ export interface components {
              *     background. The pass runs detached (it takes minutes over slow
              *     anti-bot sources); its per-source outcome surfaces in
              *     GET /api/sources/metrics (lastWarmedAt / lastError), not here.
+             * @example true
+             */
+            started: boolean;
+        };
+        RunDownloadsResult: {
+            /**
+             * @description Always true — acknowledges an immediate download cycle was
+             *     triggered. The trigger is non-blocking + cap-1 coalescing, so this
+             *     response does not distinguish a freshly-started cycle from one that
+             *     was already running; watch the cycle.start/cycle.done/download.*
+             *     SSE stream for actual progress.
              * @example true
              */
             started: boolean;
@@ -3715,6 +3760,35 @@ export interface operations {
             };
             /** @description Chapter is not in a retryable state (only failed/permanently_failed may be retried). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    runDownloads: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The download cycle was accepted and is starting in the background. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDownloadsResult"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

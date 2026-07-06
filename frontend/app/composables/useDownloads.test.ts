@@ -51,6 +51,8 @@ const ACTIVE_ITEMS = Array.from({ length: 3 }, (_, i) => makeDto(i + 1, 'downloa
 
 // Mutable binding — the mock closes over this variable; beforeEach reassigns it.
 let getCalls: { path: string; state: string; limit: number | undefined; offset: number | undefined }[] = []
+let postCount = 0
+let runError = false
 
 // ---- Module mock ------------------------------------------------------------
 
@@ -88,7 +90,14 @@ vi.mock('~/utils/api/client', () => ({
       // Active tab page fetch (or any other tab).
       return Promise.resolve({ data: { total: 3, items: ACTIVE_ITEMS }, error: null })
     }),
-    POST: vi.fn(),
+    POST: vi.fn().mockImplementation((path: string) => {
+      if (path === '/api/downloads/run') {
+        postCount++
+        if (runError) return Promise.resolve({ data: null, error: { message: 'boom' } })
+        return Promise.resolve({ data: { started: true }, error: null })
+      }
+      return Promise.resolve({ data: null, error: null })
+    }),
     PATCH: vi.fn(),
     DELETE: vi.fn(),
     use: vi.fn(),
@@ -101,6 +110,8 @@ vi.mock('~/utils/api/client', () => ({
 describe('useDownloads – per-tab pagination + server counts', () => {
   beforeEach(() => {
     getCalls = []
+    postCount = 0
+    runError = false
   })
 
   it('initial load fires active-tab page fetch + 4 count probes', async () => {
@@ -183,5 +194,40 @@ describe('useDownloads – per-tab pagination + server counts', () => {
 
     // counts not re-probed by loadMore — queued count stays at 250.
     expect(counts.value.queued).toBe(250)
+  })
+})
+
+describe('useDownloads – runNow() "Download now" action', () => {
+  beforeEach(() => {
+    getCalls = []
+    postCount = 0
+    runError = false
+  })
+
+  it('POSTs /api/downloads/run and surfaces a started message', async () => {
+    const { loading, running, runNow, runMessage, runError: runErrorRef } = useDownloads()
+
+    await vi.waitFor(() => expect(loading.value).toBe(false))
+    expect(postCount).toBe(0)
+
+    await runNow()
+
+    expect(postCount).toBe(1)
+    expect(running.value).toBe(false)
+    expect(runMessage.value).toBe('Download cycle started')
+    expect(runErrorRef.value).toBe('')
+  })
+
+  it('surfaces a failure in runError and never swallows it (§16)', async () => {
+    runError = true
+    const { loading, runNow, runError: runErrorRef, runMessage } = useDownloads()
+
+    await vi.waitFor(() => expect(loading.value).toBe(false))
+
+    await runNow()
+
+    expect(postCount).toBe(1)
+    expect(runErrorRef.value).toBe('Failed to start download cycle')
+    expect(runMessage.value).toBe('')
   })
 })

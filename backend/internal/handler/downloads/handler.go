@@ -12,12 +12,18 @@ import (
 // Handler holds the dependencies for the download-activity HTTP handlers. All
 // business logic lives in the downloads.Service; the handler is thin.
 type Handler struct {
-	svc *downloadssvc.Service
+	svc     *downloadssvc.Service
+	trigger func()
 }
 
-// NewHandler constructs a Handler bound to a downloads.Service.
-func NewHandler(svc *downloadssvc.Service) *Handler {
-	return &Handler{svc: svc}
+// NewHandler constructs a Handler bound to a downloads.Service and an
+// auto-converge trigger (identical wiring to handler/series — bound to
+// runner.Trigger in main.go). RetryChapter and RetryAll call it after a
+// SUCCESSFUL reset so an owner retry starts an immediate download cycle
+// instead of waiting for the next timer tick; Run calls it directly for the
+// explicit "Download now" action.
+func NewHandler(svc *downloadssvc.Service, trigger func()) *Handler {
+	return &Handler{svc: svc, trigger: trigger}
 }
 
 // List handles GET /api/downloads.
@@ -53,7 +59,9 @@ func (h *Handler) List(c echo.Context) error {
 //
 // It parses the :id path param as a UUID (malformed → 400) and resets that
 // chapter back to wanted (clearing the failure bookkeeping). Returns 204 on
-// success; a missing chapter yields 404; a non-retryable state yields 409.
+// success; a missing chapter yields 404; a non-retryable state yields 409. On
+// success ONLY (never on 404/409) it calls the injected trigger so the reset
+// chapter downloads immediately instead of waiting for the next cycle.
 func (h *Handler) RetryChapter(c echo.Context) error {
 	id, err := validateID(c.Param("id"), "chapter id")
 	if err != nil {
@@ -62,6 +70,7 @@ func (h *Handler) RetryChapter(c echo.Context) error {
 	if err := h.svc.RetryChapter(c.Request().Context(), id); err != nil {
 		return mapServiceError(err)
 	}
+	h.trigger()
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -71,6 +80,8 @@ func (h *Handler) RetryChapter(c echo.Context) error {
 // state → 400; absent defaults to failed + permanently_failed) and the optional
 // ?series_id scope (malformed → 400), bulk-resets every matching chapter to
 // wanted, and returns 200 with {"retried": N} — the number of chapters reset.
+// On success ONLY it calls the injected trigger so the reset chapters download
+// immediately instead of waiting for the next cycle.
 func (h *Handler) RetryAll(c echo.Context) error {
 	states, err := parseRetryStates(c.QueryParam("state"))
 	if err != nil {
@@ -88,7 +99,21 @@ func (h *Handler) RetryAll(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+	h.trigger()
 	return c.JSON(http.StatusOK, downloadssvc.RetryAllResultDTO{Retried: n})
+}
+
+// Run handles POST /api/downloads/run — the explicit "Download now" action.
+//
+// It calls the injected trigger and returns 202 Accepted immediately (mirrors
+// POST /api/sources/warmup's fire-and-forget shape). runner.Trigger is already
+// non-blocking and cap-1 coalescing, so a double-click is a no-op; the
+// triggered cycle runs downloads AND upgrades exactly as the timer-driven cycle
+// does — it does NOT bypass the per-source circuit breaker, so a
+// cooled-down/blocked source's chapters still wait out their backoff.
+func (h *Handler) Run(c echo.Context) error {
+	h.trigger()
+	return c.JSON(http.StatusAccepted, RunResultDTO{Started: true})
 }
 
 // mapServiceError translates a downloads.Service sentinel error into the matching

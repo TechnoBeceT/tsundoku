@@ -88,6 +88,7 @@ import (
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
+//   - /api/downloads/run (POST)                    — trigger an immediate download cycle ("Download now") (RequireOwner).
 //   - /api/library/scan (POST)                     — scan on-disk storage, stage found series (RequireOwner).
 //   - /api/library/imports (GET)                   — list staged imports (?status=) (RequireOwner).
 //   - /api/library/imports/match (GET)             — search sources for a staged entry's title (?path=) (RequireOwner).
@@ -200,10 +201,11 @@ func registerRoutes(
 	// exported series resolvers for name/display/cover enrichment, so it needs
 	// only the Ent client.
 	downloadsSvc := downloads.NewService(client)
-	downloadsH := downloadsh.NewHandler(downloadsSvc)
+	downloadsH := downloadsh.NewHandler(downloadsSvc, trigger)
 	authed.GET("/downloads", downloadsH.List)
 	authed.POST("/downloads/retry-all", downloadsH.RetryAll)
 	authed.POST("/chapters/:id/retry", downloadsH.RetryChapter)
+	authed.POST("/downloads/run", downloadsH.Run)
 
 	// Imports (discovery + adoption) API. The ingest is built here so it shares
 	// the same Ent client as the rest of the application; a single suwayomiClient
