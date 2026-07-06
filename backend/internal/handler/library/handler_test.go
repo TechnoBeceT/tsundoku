@@ -356,6 +356,28 @@ func TestLibraryImport_MissingPath(t *testing.T) {
 	}
 }
 
+// TestLibraryImport_BadMatchEntry proves each matches[] entry is validated
+// (Slice P: matches is now a LIST): a blank source in any entry is rejected
+// with 400 before the service is ever called.
+func TestLibraryImport_BadMatchEntry(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/import", `{"path":"/some/path","matches":[{"source":"","mangaId":7}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank match source: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLibraryImport_EmptyMatchesIsValid proves an empty matches list is a
+// valid request shape (import-only, no attach) — the path-not-staged 404
+// surfaces, not a validation 400, so an empty list is not itself rejected.
+func TestLibraryImport_EmptyMatchesIsValid(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/import", `{"path":"/nonexistent","matches":[]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("empty matches list: want 404 (entry not found), got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // TestLibraryBatch_PartialSuccess proves the batch endpoint end-to-end: two
 // staged series import cleanly while a third, never-staged path fails —
 // without aborting the other two (partial success, the whole point of the

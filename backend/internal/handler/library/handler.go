@@ -101,11 +101,13 @@ func (h *Handler) Match(c echo.Context) error {
 
 // Import handles POST /api/library/import.
 //
-// The body carries {path, match?}: path (required) identifies a previously
-// staged ImportEntry; match (optional) attaches an owner-chosen Suwayomi
-// source at import time (source, mangaId, importance — all required together
-// when match is present). Returns the imported series.SeriesDetailDTO (§16
-// round-trip).
+// The body carries {path, matches?}: path (required) identifies a previously
+// staged ImportEntry; matches (optional) is a LIST of owner-chosen Suwayomi
+// sources to attach at import time (each source non-blank + mangaId > 0;
+// scanlator optional) — attached via library.AddProviders, each landing at an
+// importance strictly below the disk provider's (decision E). An
+// empty/absent matches list is a valid import-only request (no attach).
+// Returns the imported series.SeriesDetailDTO (§16 round-trip).
 func (h *Handler) Import(c echo.Context) error {
 	var body importBody
 	if err := c.Bind(&body); err != nil {
@@ -115,16 +117,12 @@ func (h *Handler) Import(c echo.Context) error {
 		return err
 	}
 
-	var match *library.MatchInput
-	if body.Match != nil {
-		match = &library.MatchInput{
-			Source:     body.Match.Source,
-			MangaID:    body.Match.MangaID,
-			Importance: body.Match.Importance,
-		}
+	refs := make([]library.ProviderRef, len(body.Matches))
+	for i, m := range body.Matches {
+		refs[i] = library.ProviderRef{Source: m.Source, MangaID: m.MangaID, Scanlator: m.Scanlator}
 	}
 
-	out, err := h.svc.Import(c.Request().Context(), body.Path, match)
+	out, err := h.svc.Import(c.Request().Context(), body.Path, refs)
 	if err != nil {
 		return mapServiceError(err)
 	}
@@ -244,7 +242,12 @@ func (h *Handler) MatchDiskProvider(c echo.Context) error {
 // library.AddProvider, which wraps it via errors.Join so errors.Is still
 // matches through the join); ErrProviderNotInSeries / ErrNotADiskProvider
 // (MatchDiskProvider) → 400 (a malformed request referencing the wrong
-// provider or one that is already a real, linked source).
+// provider or one that is already a real, linked source); ErrNoProviders
+// (library.AddProviders called with an empty batch) → 400 — reachable from
+// Import only in principle (validateImportBody already rejects an empty-body
+// match entry per-item, but an all-empty non-nil matches slice with zero
+// elements is caught by the handler building a zero-length refs slice, which
+// AddProviders itself guards).
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, library.ErrSeriesNotFound):
@@ -259,6 +262,8 @@ func mapServiceError(err error) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "provider does not belong to series")
 	case errors.Is(err, library.ErrNotADiskProvider):
 		return echo.NewHTTPError(http.StatusBadRequest, "provider is not an unlinked disk-origin provider")
+	case errors.Is(err, library.ErrNoProviders):
+		return echo.NewHTTPError(http.StatusBadRequest, "no providers supplied")
 	default:
 		return err
 	}

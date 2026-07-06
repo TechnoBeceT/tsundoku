@@ -2087,20 +2087,34 @@ export interface components {
             /** @description Whether a Series row with this title/slug already exists in the DB. */
             alreadyInDb: boolean;
         };
-        /** @description An owner-chosen Suwayomi source to attach to a staged entry at import time, or as an additional source on an existing series. */
-        MatchInput: {
+        /**
+         * @description Identifies one Suwayomi source+manga+scanlator to attach to a series.
+         *     Carries no importance — the batch attach (library.AddProviders)
+         *     assigns importances itself, each strictly below the series' existing
+         *     providers (decision E), in list order.
+         */
+        ProviderRef: {
             /** @description Suwayomi source ID the chosen candidate came from. */
             source: string;
             /** @description Suwayomi-internal manga identifier within that source. */
             mangaId: number;
-            /** @description Provider importance to assign (higher number = higher priority). */
-            importance: number;
+            /**
+             * @description Selects which scanlation group's chapters this provider tracks; omit or send ""
+             *     for "all chapters from this source". The same source may be attached again
+             *     under a different scanlator.
+             */
+            scanlator?: string;
         };
-        /** @description Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching an owner-matched Suwayomi source. */
+        /** @description Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching a list of owner-matched Suwayomi sources. */
         ImportRequest: {
             /** @description The staged entry's on-disk path (as returned by a prior scan/list). */
             path: string;
-            match?: components["schemas"]["MatchInput"];
+            /**
+             * @description Owner-chosen Suwayomi sources to attach at import time (empty/absent = disk-only
+             *     import, no attach). Each lands at an importance strictly below the disk provider's
+             *     (decision E) via library.AddProviders — no upgrade re-download fires.
+             */
+            matches?: components["schemas"]["ProviderRef"][];
         };
         /** @description Marks a staged library-scan entry as skipped — leave it on disk, stop showing it as pending. */
         SkipRequest: {
@@ -2133,7 +2147,7 @@ export interface components {
             /** @description Per-path failures (empty if every path imported successfully). */
             failed: components["schemas"]["BatchImportFailure"][];
         };
-        /** @description Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest). */
+        /** @description Attaches an additional Suwayomi source to an existing series. */
         AddProviderRequest: {
             /** @description Suwayomi source ID the chosen candidate came from. */
             source: string;

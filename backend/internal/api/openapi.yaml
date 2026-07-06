@@ -1354,13 +1354,16 @@ components:
           type: boolean
           description: Whether a Series row with this title/slug already exists in the DB.
 
-    MatchInput:
+    ProviderRef:
       type: object
-      description: An owner-chosen Suwayomi source to attach to a staged entry at import time, or as an additional source on an existing series.
+      description: |
+        Identifies one Suwayomi source+manga+scanlator to attach to a series.
+        Carries no importance — the batch attach (library.AddProviders)
+        assigns importances itself, each strictly below the series' existing
+        providers (decision E), in list order.
       required:
         - source
         - mangaId
-        - importance
       properties:
         source:
           type: string
@@ -1368,21 +1371,30 @@ components:
         mangaId:
           type: integer
           description: Suwayomi-internal manga identifier within that source.
-        importance:
-          type: integer
-          description: Provider importance to assign (higher number = higher priority).
+        scanlator:
+          type: string
+          description: |
+            Selects which scanlation group's chapters this provider tracks; omit or send ""
+            for "all chapters from this source". The same source may be attached again
+            under a different scanlator.
 
     ImportRequest:
       type: object
-      description: Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching an owner-matched Suwayomi source.
+      description: Registers a staged library-scan entry as already downloaded (no re-download), optionally attaching a list of owner-matched Suwayomi sources.
       required:
         - path
       properties:
         path:
           type: string
           description: The staged entry's on-disk path (as returned by a prior scan/list).
-        match:
-          $ref: "#/components/schemas/MatchInput"
+        matches:
+          type: array
+          description: |
+            Owner-chosen Suwayomi sources to attach at import time (empty/absent = disk-only
+            import, no attach). Each lands at an importance strictly below the disk provider's
+            (decision E) via library.AddProviders — no upgrade re-download fires.
+          items:
+            $ref: "#/components/schemas/ProviderRef"
 
     SkipRequest:
       type: object
@@ -1443,7 +1455,7 @@ components:
 
     AddProviderRequest:
       type: object
-      description: Attaches an additional Suwayomi source to an existing series (also used as the "match" shape on ImportRequest).
+      description: Attaches an additional Suwayomi source to an existing series.
       required:
         - source
         - mangaId
