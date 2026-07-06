@@ -1394,6 +1394,8 @@ export interface components {
             isMetadataSource: boolean;
             /** @description False for a disk-origin provider (an unlinked/unknown group created by library import — no real Suwayomi source attached yet); true once a real source is attached (via adopt, add-source, or Match). Unlinked groups are Match candidates (POST .../providers/{providerId}/match). */
             linked: boolean;
+            /** @description Source's Suwayomi manga id; 0 = unlinked disk provider. */
+            mangaId: number;
             /** @description How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by). */
             chapterCount: number;
             /** @description Scanlation group (may be empty). */

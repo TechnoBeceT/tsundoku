@@ -88,6 +88,7 @@ type ChapterDTO struct {
 // it as a Match candidate; ChapterCount is how many of the series' chapters
 // this provider currently satisfies (Chapter.satisfied_by_provider_id == this
 // provider) — the coverage the owner sees before choosing what to match it to.
+// MangaID is the source's Suwayomi manga ID; 0 for unlinked disk-origin providers.
 type ProviderDTO struct {
 	ID               string     `json:"id"`
 	Provider         string     `json:"provider"`
@@ -96,6 +97,7 @@ type ProviderDTO struct {
 	CoverURL         string     `json:"coverUrl"`
 	IsMetadataSource bool       `json:"isMetadataSource"`
 	Linked           bool       `json:"linked"`
+	MangaID          int        `json:"mangaId"`
 	ChapterCount     int        `json:"chapterCount"`
 	Scanlator        string     `json:"scanlator"`
 	Language         string     `json:"language"`
@@ -193,6 +195,7 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 		CoverURL:         coverURL,
 		IsMetadataSource: isMetadataSource,
 		Linked:           p.SuwayomiID != 0,
+		MangaID:          p.SuwayomiID,
 		ChapterCount:     chapterCount,
 		Scanlator:        p.Scanlator,
 		Language:         p.Language,
