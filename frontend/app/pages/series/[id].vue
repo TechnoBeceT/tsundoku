@@ -1,12 +1,16 @@
 <script setup lang="ts">
+import type { ProviderRef } from '~/composables/useSourceConfigure'
+
 /**
  * Series detail page — route /series/:id.
  *
  * Delegates all data fetching, mutation state, and §16 error handling to
  * useSeriesDetail(id). Two DISTINCT dialogs both search across sources:
- *   - "Match source" (add-source, the inverse of remove-source) is backed by
- *     its OWN composable, useMatchSource(id) — searching sources is orthogonal
- *     to the series-detail state useSeriesDetail owns.
+ *   - "Add a source" (the inverse of remove-source) is backed by its OWN
+ *     composable, useMatchSource(id) — searching sources is orthogonal to the
+ *     series-detail state useSeriesDetail owns. Slice P rebuilt it onto the
+ *     shared Adopt-wizard Configure powers (multi-select tray, per-scanlator
+ *     coverage, importance ranking) — see MatchSourceDialog's own doc comment.
  *   - "Match to source" (the no-re-download Match for an UNLINKED disk-origin
  *     group) is backed by useMatchDiskProvider() the same way, but its actual
  *     link mutation is useSeriesDetail.matchDiskProvider — that action
@@ -34,11 +38,12 @@
  *   @add-source             → opens MatchSourceDialog (matchOpen = true)
  *   @dismiss-error          → dismissError()
  *
- * Match-source wiring: MatchSourceDialog's `search`/`confirm` emits drive
- * useMatchSource's `search`/`addProvider`. On a successful `addProvider` the
- * dialog closes and `useSeriesDetail.refresh()` reloads the authoritative
- * series state — the same "mutate, then refetch" pattern every other
- * useSeriesDetail mutation already uses (§16 round-trip).
+ * Add-source wiring (Slice P): MatchSourceDialog's `search`/`loadBreakdowns`/
+ * `confirm` emits drive useMatchSource's `search`/`loadBreakdowns`/
+ * `batchAddProviders`. On a successful `batchAddProviders` the dialog closes
+ * and the response's authoritative SeriesDetail is applied directly via
+ * `useSeriesDetail.reseed` — no extra `GET /api/series/{id}` round-trip
+ * (§16 mutate-reseeds-from-response, same shape as `matchDiskProvider`).
  *
  * Match-to-source wiring: `matchTargetId` (set by @match-provider) picks the
  * unlinked provider out of `series.providers` to prefill the dialog's
@@ -73,25 +78,27 @@ const {
   deleteSeries,
   matchDiskProvider,
   dismissError,
-  refresh,
+  reseed,
 } = useSeriesDetail(id)
 
 const {
   groups: matchGroups,
+  breakdowns: matchBreakdowns,
   searching: matchSearching,
   saving: matchSaving,
   error: matchError,
   search: matchSearch,
-  addProvider: matchAddProvider,
+  loadBreakdowns: matchLoadBreakdowns,
+  batchAddProviders,
 } = useMatchSource(id)
 
 const matchOpen = ref(false)
 
-async function onMatchConfirm(payload: { source: string, mangaId: number, importance: number }): Promise<void> {
-  const detail = await matchAddProvider(payload)
+async function onMatchConfirm(providers: ProviderRef[]): Promise<void> {
+  const detail = await batchAddProviders(providers)
   if (detail) {
     matchOpen.value = false
-    await refresh()
+    reseed(detail)
   }
 }
 
@@ -160,10 +167,12 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
       v-model:open="matchOpen"
       :series-title="series.title"
       :groups="matchGroups"
+      :breakdowns="matchBreakdowns"
       :searching="matchSearching"
       :saving="matchSaving"
       :error="matchError"
       @search="matchSearch"
+      @load-breakdowns="matchLoadBreakdowns"
       @confirm="onMatchConfirm"
     />
 

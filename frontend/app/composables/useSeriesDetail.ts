@@ -230,6 +230,19 @@ export function useSeriesDetail(id: string) {
 
   const dismissError = (): void => { error.value = null }
 
+  /**
+   * Reseeds `series` directly from an authoritative SeriesDetail returned by
+   * a mutation the PARENT drove through its own composable — e.g.
+   * `useMatchSource.batchAddProviders` (Slice P's "Add a source" dialog).
+   * Mirrors `matchDiskProvider`'s own direct reseed: the endpoint already
+   * returns the fresh, fully-refreshed SeriesDetail, so a second
+   * `GET /api/series/{id}` round-trip would be wasted (§16
+   * mutate-reseeds-from-response).
+   */
+  const reseed = (dto: SeriesDetailDTO): void => {
+    series.value = mapDetail(dto)
+  }
+
   void refresh()
 
   return {
@@ -251,5 +264,6 @@ export function useSeriesDetail(id: string) {
     matchDiskProvider,
     dismissError,
     refresh,
+    reseed,
   }
 }

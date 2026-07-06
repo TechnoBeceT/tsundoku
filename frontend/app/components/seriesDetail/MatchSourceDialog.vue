@@ -1,60 +1,84 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import Dialog from '../ui/Dialog.vue'
 import AppButton from '../ui/AppButton.vue'
 import SearchInput from '../ui/SearchInput.vue'
 import Spinner from '../ui/Spinner.vue'
 import ErrorBanner from '../ui/ErrorBanner.vue'
 import SearchGroupCard from '../import/SearchGroupCard.vue'
-import CandidateConfigRow from '../import/CandidateConfigRow.vue'
-import type { SearchCandidate, SearchGroup } from '../screens/import.types'
+import AdoptTray from '../import/AdoptTray.vue'
+import SourceConfigurePanel from '../import/SourceConfigurePanel.vue'
+import { useSourceConfigure, type ProviderRef } from '~/composables/useSourceConfigure'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens/import.types'
 
 /**
- * MatchSourceDialog — the Series-Detail "Match source" dialog: the inverse of
+ * MatchSourceDialog — the Series-Detail "Add a source" dialog: the inverse of
  * removing a source. Search by the series' OWN title (it's already imported —
- * this is NOT the Scan-Library path-based match step), pick one cross-source
- * group, choose exactly one of its candidates, set the priority to assign it,
- * and confirm.
+ * this is NOT the Scan-Library path-based match step), gather one or more
+ * cross-source candidates via the shared Adopt-wizard Configure powers
+ * (multi-select tray, per-scanlator coverage, importance ranking), and attach
+ * them all in one batch call.
  *
- * Presentation-only, mirroring `ExtensionPreferencesDialog`: built on
- * `ui/Dialog.vue`, all data arrives via props and every network-touching
- * action (`search`, `confirm`) is emitted for the parent's `useMatchSource`
- * composable to run. The two-stage flow (search → pick) is owned locally as
- * plain refs — the same shape `Import.vue` uses for its own multi-stage flow,
- * even though that component is likewise props-in/emits-out.
+ * Rebuilt for Slice P (was single-select: one group, one candidate, one
+ * priority number) onto the same `useSourceConfigure` composable +
+ * `SourceConfigurePanel` that `Import.vue` uses — no reimplemented row,
+ * tray, or split logic (§2 DRY). Title/category are NOT editable here: this
+ * dialog only ADDS sources to a series that already exists, so the Configure
+ * stage shows the series' own (fixed) title read-only.
+ *
+ * Presentation-only, mirroring `Import.vue`: all data arrives via props and
+ * every network-touching action (`search`, `loadBreakdowns`, `confirm`) is
+ * emitted for the parent's `useMatchSource` composable to run. The two-stage
+ * flow (search → configure) is owned locally as a plain `stage` ref — the
+ * composable itself does not own stage (mirrors `Import.vue`'s ownership
+ * split, documented on `useSourceConfigure`).
  *
  *   - `open` (v-model:open): whether the dialog is shown.
- *   - `seriesTitle`: the series' own title — prefills the search box and is
- *     restored every time the dialog re-opens.
+ *   - `seriesTitle`: the series' own title — prefills the search box, shown
+ *     read-only in the Configure stage, and restored every time the dialog
+ *     re-opens.
  *   - `groups`: the current cross-source search results.
+ *   - `breakdowns`: per-scanlator coverage cache, keyed `source:mangaId`
+ *     (mirrors `Import.vue`'s prop of the same name) — drives the
+ *     composable's auto-split of a source into per-scanlator rows.
  *   - `searching`: a search is in flight (spinner + disabled Search button).
- *   - `saving`: the addProvider POST is in flight — spins + disables the
+ *   - `saving`: the batch-attach POST is in flight — spins + disables the
  *     confirm button and blocks the dialog from being dismissed (§16).
- *   - `error`: a search-or-add failure message, or null for none.
+ *   - `error`: a search-or-attach failure message, or null for none.
  *
- * Resets its local flow state (query/stage/pick/importance) every time it
- * opens, so a re-open never inherits a stale selection (mirrors
- * `DeleteSeriesDialog`'s reset-on-open).
+ * Resets its local flow state (query/stage) AND the composable's own tray +
+ * picked group every time it opens, so a re-open never inherits a stale
+ * gather/selection (mirrors `DeleteSeriesDialog`'s reset-on-open).
  *
- * Emits `update:open` (v-model), `search` (the trimmed query string), and
- * `confirm` (the chosen `{source, mangaId, importance}`).
+ * Emits `update:open` (v-model), `search` (the trimmed query string),
+ * `loadBreakdowns` (the picked/tray-configured candidates, for the parent to
+ * fetch coverage), and `confirm` (the ordered, best-first `ProviderRef[]` to
+ * attach).
+ *
+ * Tray-leak guard: `tray-enabled` is intentionally ON here (this surface is
+ * MULTI-select) — the single-select match surfaces that reuse
+ * `SearchGroupCard` (`scanLibrary/MatchPanel`, this dialog's sibling
+ * `MatchDiskProviderDialog`) leave it off and are untouched by this change.
  */
 const props = withDefaults(defineProps<{
   /** Whether the dialog is shown (v-model:open). */
   open: boolean
-  /** The series' own title — prefills the search box. */
+  /** The series' own title — prefills the search box, shown read-only in Configure. */
   seriesTitle?: string
   /** The current cross-source search results. */
   groups?: SearchGroup[]
+  /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
+  breakdowns?: Record<string, ScanlatorCoverage[] | null>
   /** A search is in flight. */
   searching?: boolean
-  /** The addProvider POST is in flight. */
+  /** The batch-attach POST is in flight. */
   saving?: boolean
-  /** A search-or-add failure message, or null for none. */
+  /** A search-or-attach failure message, or null for none. */
   error?: string | null
 }>(), {
   seriesTitle: '',
   groups: () => [],
+  breakdowns: () => ({}),
   searching: false,
   saving: false,
   error: null,
@@ -65,30 +89,48 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
   /** Run a search for the trimmed query. */
   'search': [q: string]
-  /** Attach the chosen candidate at the given priority. */
-  'confirm': [payload: { source: string, mangaId: number, importance: number }]
+  /** Fetch the per-scanlator breakdown for every given candidate (Configure-stage entry). */
+  'loadBreakdowns': [candidates: SearchCandidate[]]
+  /** Attach the gathered, ranked sources — best-first. */
+  'confirm': [providers: ProviderRef[]]
 }>()
 
-/** Stable identity for a candidate (a source can appear once per group). */
-const candKey = (c: SearchCandidate): string => `${c.source}:${c.mangaId}`
-
 const query = ref(props.seriesTitle)
-const stage = ref<'search' | 'pick'>('search')
+const stage = ref<'search' | 'configure'>('search')
 const searched = ref(false)
-const pickedGroup = ref<SearchGroup | null>(null)
-const selectedKey = ref<string | null>(null)
-const importance = ref(2)
 
-// Reset the whole flow every time the dialog opens — a re-open never inherits
-// a stale query, pick, or importance value.
+// The Configure-stage orchestration (tray, row selection/order, per-scanlator
+// split, rank) is owned by the shared composable (Slice P) — this dialog
+// keeps only query/stage/searched (its own concerns).
+const {
+  tray,
+  trayActive,
+  isGroupAdded,
+  addGroup,
+  removeGroup,
+  removeCand,
+  configureTray,
+  group,
+  enterConfigure,
+  displayRows,
+  selectedCount,
+  toggleCand,
+  moveCand,
+  orderedProviders,
+} = useSourceConfigure({
+  breakdowns: toRef(props, 'breakdowns'),
+  onLoadBreakdowns: c => emit('loadBreakdowns', c),
+})
+
+// Reset the whole flow every time the dialog opens — a re-open never
+// inherits a stale query, tray, or picked group.
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     query.value = props.seriesTitle
     stage.value = 'search'
     searched.value = false
-    pickedGroup.value = null
-    selectedKey.value = null
-    importance.value = 2
+    tray.value = []
+    group.value = null
   }
 })
 
@@ -99,62 +141,31 @@ function runSearch(): void {
   emit('search', query.value.trim())
 }
 
-function pickGroup(group: SearchGroup): void {
-  pickedGroup.value = group
-  selectedKey.value = null
-  stage.value = 'pick'
+// Classic single-group pick (tray empty) — advances straight to Configure.
+function pickGroup(g: SearchGroup): void {
+  enterConfigure(g.candidates)
+  stage.value = 'configure'
+}
+
+// The tray's "Configure N sources →" — builds a synthetic group from every
+// gathered candidate and advances to Configure the same way.
+function onConfigureTray(): void {
+  configureTray()
+  stage.value = 'configure'
 }
 
 function back(): void {
   stage.value = 'search'
-  pickedGroup.value = null
-  selectedKey.value = null
-}
-
-function toggleCandidate(key: string): void {
-  selectedKey.value = selectedKey.value === key ? null : key
-}
-
-interface CandRow {
-  key: string
-  candidate: SearchCandidate
-  selected: boolean
-}
-
-// A single-selection view of the picked group's candidates — only ever one
-// row selected at a time (this dialog attaches exactly one new source).
-const candRows = computed<CandRow[]>(() => {
-  const group = pickedGroup.value
-  if (!group) return []
-  return group.candidates.map(c => ({
-    key: candKey(c),
-    candidate: c,
-    selected: selectedKey.value === candKey(c),
-  }))
-})
-
-// The backend's importance column is a Go `int` — a decimal (e.g. 1.5, which
-// `type="number"` + `v-model.number` happily produces) would fail server-side
-// unmarshalling and surface as an ugly generic banner. Require a clean
-// integer client-side instead so that failure mode can't happen.
-const canConfirm = computed(() =>
-  selectedKey.value !== null
-  && Number.isInteger(importance.value)
-  && importance.value >= 1
-  && !props.saving,
-)
-
-function confirm(): void {
-  const group = pickedGroup.value
-  if (!group || !canConfirm.value) return
-  const candidate = group.candidates.find(c => candKey(c) === selectedKey.value)
-  if (!candidate) return
-  emit('confirm', { source: candidate.source, mangaId: candidate.mangaId, importance: importance.value })
 }
 
 function onBackOrCancel(): void {
-  if (stage.value === 'pick') back()
+  if (stage.value === 'configure') back()
   else emit('update:open', false)
+}
+
+function confirm(): void {
+  if (selectedCount.value === 0 || props.saving) return
+  emit('confirm', orderedProviders.value)
 }
 </script>
 
@@ -162,7 +173,7 @@ function onBackOrCancel(): void {
   <Dialog
     :open="open"
     :busy="saving"
-    title="Match a source"
+    title="Add a source"
     @update:open="emit('update:open', $event)"
   >
     <ErrorBanner v-if="error" class="match__error" :message="error" :dismissible="false" />
@@ -188,63 +199,55 @@ function onBackOrCancel(): void {
       </div>
       <p v-else-if="noResults" class="match-note">No matches found. Try another title.</p>
 
+      <!-- Cross-search gather tray: persists across a new search, always above the results -->
+      <AdoptTray
+        v-if="trayActive"
+        :candidates="tray"
+        @configure="onConfigureTray"
+        @remove="removeCand"
+      />
+
       <div v-if="!searching && groups.length" class="match-groups">
         <SearchGroupCard
           v-for="g in groups"
           :key="g.title"
           :group="g"
+          tray-enabled
+          :added="isGroupAdded(g)"
+          :tray-active="trayActive"
           @pick="pickGroup"
+          @add="addGroup"
+          @remove="removeGroup"
         />
       </div>
     </section>
 
-    <!-- ============= Pick stage ============= -->
+    <!-- ============= Configure stage ============= -->
     <section v-else class="match-stage">
-      <p class="match-eyebrow">Choose the source to attach</p>
+      <p class="match-eyebrow">Adding sources to</p>
+      <p class="match-series-title">{{ seriesTitle }}</p>
 
-      <CandidateConfigRow
-        v-for="row in candRows"
-        :key="row.key"
-        :candidate="row.candidate"
-        :selected="row.selected"
-        :rank="1"
-        :can-up="false"
-        :can-down="false"
-        :inspecting="false"
-        :inspected="false"
-        :chapters="[]"
+      <SourceConfigurePanel
+        :rows="displayRows"
         hide-inspect
-        hide-reorder
-        @toggle="toggleCandidate(row.key)"
+        label="Sources to attach · use arrows to rank priority"
+        @toggle="toggleCand"
+        @move="moveCand($event.key, $event.dir)"
       />
-
-      <label class="match-importance">
-        <span class="match-importance__label">Priority</span>
-        <input
-          v-model.number="importance"
-          type="number"
-          min="1"
-          step="1"
-          class="match-importance__input"
-        >
-        <span class="match-importance__hint">
-          Higher number = higher priority — set above your existing sources to prefer this one.
-        </span>
-      </label>
     </section>
 
     <template #actions>
       <AppButton variant="ghost" :disabled="saving" @click="onBackOrCancel">
-        {{ stage === 'pick' ? 'Back' : 'Cancel' }}
+        {{ stage === 'configure' ? 'Back' : 'Cancel' }}
       </AppButton>
       <AppButton
-        v-if="stage === 'pick'"
+        v-if="stage === 'configure'"
         variant="primary"
         :loading="saving"
-        :disabled="!canConfirm"
+        :disabled="selectedCount === 0 || saving"
         @click="confirm"
       >
-        Attach source
+        Attach sources
       </AppButton>
     </template>
   </Dialog>
@@ -294,7 +297,7 @@ function onBackOrCancel(): void {
 }
 
 .match-eyebrow {
-  margin: 0 0 11px;
+  margin: 0 0 3px;
   font-size: var(--text-xs);
   font-weight: var(--weight-extrabold);
   text-transform: uppercase;
@@ -302,42 +305,11 @@ function onBackOrCancel(): void {
   color: var(--faint);
 }
 
-.match-importance {
-  display: block;
-  margin-top: 14px;
-}
-
-.match-importance__label {
-  display: block;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--faint);
-  margin-bottom: 7px;
-}
-
-.match-importance__input {
-  width: 90px;
-  padding: 9px 11px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border2);
-  background: var(--bg2);
+.match-series-title {
+  margin: 0 0 16px;
+  font-family: var(--font-display);
+  font-weight: var(--weight-black);
+  font-size: var(--text-xl);
   color: var(--text);
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  outline: none;
-}
-
-.match-importance__input:focus {
-  border-color: var(--accent);
-  box-shadow: var(--ring-focus);
-}
-
-.match-importance__hint {
-  display: block;
-  margin-top: 7px;
-  font-size: 12px;
-  color: var(--faint);
 }
 </style>
