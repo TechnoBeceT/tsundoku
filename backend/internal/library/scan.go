@@ -24,12 +24,14 @@ func (s *Service) Scan(ctx context.Context) ([]FoundSeriesDTO, error) {
 // StartScan. It walks storage via disk.ScanLibrary, upserts one ImportEntry
 // per series directory found (keyed by path) — a series whose title already
 // exists in the DB (by slug) is marked status="imported" so the owner can see
-// it needs no further action, and an entry already marked "imported" is never
-// silently downgraded back to "pending" by a re-scan — and broadcasts a
-// scan.progress SSE event after each series is staged, so a long-running scan
-// gives the owner live feedback instead of silence until it completes.
-// Broadcasting into a hub with no subscribers (as when Scan is called
-// directly in tests) is a harmless no-op — see sse.Hub.Broadcast.
+// it needs no further action, and a series that is NOT (or no longer) present
+// is marked "pending" so it can be (re-)imported — status always reflects
+// real DB existence as of THIS scan, never a stale prior value (see
+// upsertEntry) — and broadcasts a scan.progress SSE event after each series
+// is staged, so a long-running scan gives the owner live feedback instead of
+// silence until it completes. Broadcasting into a hub with no subscribers (as
+// when Scan is called directly in tests) is a harmless no-op — see
+// sse.Hub.Broadcast.
 func (s *Service) scanWithProgress(ctx context.Context) ([]FoundSeriesDTO, error) {
 	facts, err := disk.ScanLibrary(s.storage)
 	if err != nil {
@@ -94,10 +96,17 @@ func foundBlob(sf disk.SeriesFacts) (map[string]any, error) {
 	return found, nil
 }
 
-// upsertEntry creates or updates the ImportEntry for path. An existing row
-// already marked "imported" keeps that status regardless of the freshly
-// computed one — a re-scan never downgrades an imported series back to
-// pending.
+// upsertEntry creates or updates the ImportEntry for path. status is always
+// the freshly computed value (statusImported when a Series with this title's
+// slug currently exists in the DB, else statusPending) — a re-scan reflects
+// REAL DB existence every time. This means a series that was imported and
+// later deleted (or whose import never landed) downgrades back to pending on
+// the next scan, so the owner can re-import it; a series that is still
+// present in the DB is recomputed as imported regardless of its prior stored
+// status. Previously this only ever upgraded pending→imported and never
+// downgraded, permanently stranding a removed series as "imported" with no
+// way to re-import it (the re-import-stuck bug, GAP/spec
+// library-match-and-source-management Slice R).
 func (s *Service) upsertEntry(ctx context.Context, path string, sf disk.SeriesFacts, count int, status string, found map[string]any) error {
 	existing, err := s.db.ImportEntry.Query().Where(importentry.Path(path)).Only(ctx)
 	if ent.IsNotFound(err) {
@@ -110,12 +119,8 @@ func (s *Service) upsertEntry(ctx context.Context, path string, sf disk.SeriesFa
 		return err
 	}
 
-	upd := existing.Update().SetTitle(sf.Title).SetCategory(sf.Category).
-		SetChapterCount(count).SetFound(found)
-	if existing.Status != statusImported {
-		upd = upd.SetStatus(status)
-	}
-	_, uerr := upd.Save(ctx)
+	_, uerr := existing.Update().SetTitle(sf.Title).SetCategory(sf.Category).
+		SetChapterCount(count).SetFound(found).SetStatus(status).Save(ctx)
 	return uerr
 }
 

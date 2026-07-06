@@ -279,6 +279,35 @@ export interface paths {
         patch: operations["reorderSeriesProviders"];
         trace?: never;
     };
+    "/api/series/{id}/providers/{providerId}/match": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attribute existing on-disk chapters to a real source without re-downloading
+         * @description Attributes a series' EXISTING imported/on-disk chapters — currently
+         *     satisfied by the UNLINKED disk-origin provider at {providerId} (see
+         *     Provider.linked) — to a real Suwayomi source {source, mangaId,
+         *     scanlator, importance} WITHOUT re-downloading them. The real source is
+         *     attached, every chapter it also offers is re-pointed onto it (so no
+         *     upgrade is ever triggered for them), its CBZ is renamed + its embedded
+         *     ComicInfo rewritten to the source's identity, and the now-empty disk
+         *     provider is deleted. A chapter the disk group had but the new source
+         *     lacks keeps its prior watermark (never re-downloaded, never dropped).
+         *     Returns the refreshed series detail (§16 round-trip).
+         */
+        post: operations["matchDiskProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}": {
         parameters: {
             query?: never;
@@ -1363,6 +1392,10 @@ export interface components {
             coverUrl: string;
             /** @description True for the provider currently supplying DisplayName and CoverURL for this series. */
             isMetadataSource: boolean;
+            /** @description False for a disk-origin provider (an unlinked/unknown group created by library import — no real Suwayomi source attached yet); true once a real source is attached (via adopt, add-source, or Match). Unlinked groups are Match candidates (POST .../providers/{providerId}/match). */
+            linked: boolean;
+            /** @description How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by). */
+            chapterCount: number;
             /** @description Scanlation group (may be empty). */
             scanlator: string;
             /** @description Language code (e.g. en). */
@@ -2772,6 +2805,62 @@ export interface operations {
                 };
             };
             /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    matchDiskProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description The disk-origin (unlinked) SeriesProvider UUID to match away from. */
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddProviderRequest"];
+            };
+        };
+        responses: {
+            /** @description Chapters re-attributed. Returns the refreshed series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed id/providerId, invalid/missing source, mangaId, or importance, the provider does not belong to the series, or the provider is already a real (linked) source, not a disk-origin one. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id, or no such Suwayomi source/manga. */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -205,13 +205,46 @@ func (h *Handler) AddProvider(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// MatchDiskProvider handles POST /api/series/:id/providers/:providerId/match.
+//
+// It attributes a series' EXISTING on-disk chapters — currently satisfied by
+// the unlinked disk-origin provider at :providerId (see ProviderDTO.Linked)
+// — to a real Suwayomi source {source, mangaId, scanlator, importance}
+// WITHOUT re-downloading them (see library.Service.MatchDiskProvider). Returns
+// the refreshed series.SeriesDetailDTO (§16).
+func (h *Handler) MatchDiskProvider(c echo.Context) error {
+	id, err := validateID(c.Param("id"))
+	if err != nil {
+		return err
+	}
+	providerID, err := validateID(c.Param("providerId"))
+	if err != nil {
+		return err
+	}
+	var body addProviderBody
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+	if err := validateAddProviderBody(body); err != nil {
+		return err
+	}
+
+	out, err := h.svc.MatchDiskProvider(c.Request().Context(), id, providerID, body.Source, body.MangaID, body.Scanlator, body.Importance)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // mapServiceError translates a library.Service sentinel error into the
 // matching HTTP status, leaving any unexpected error to fall through to the
 // central middleware as a 500. ErrSeriesNotFound / ErrEntryNotFound → 404;
 // ErrProviderAlreadyPresent → 409; ErrSourceNotFound → 404 (a Suwayomi
 // manga-fetch miss is treated the same as an unknown resource — see
 // library.AddProvider, which wraps it via errors.Join so errors.Is still
-// matches through the join).
+// matches through the join); ErrProviderNotInSeries / ErrNotADiskProvider
+// (MatchDiskProvider) → 400 (a malformed request referencing the wrong
+// provider or one that is already a real, linked source).
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, library.ErrSeriesNotFound):
@@ -222,6 +255,10 @@ func mapServiceError(err error) error {
 		return echo.NewHTTPError(http.StatusConflict, "provider already attached to series")
 	case errors.Is(err, library.ErrSourceNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "source not found")
+	case errors.Is(err, library.ErrProviderNotInSeries):
+		return echo.NewHTTPError(http.StatusBadRequest, "provider does not belong to series")
+	case errors.Is(err, library.ErrNotADiskProvider):
+		return echo.NewHTTPError(http.StatusBadRequest, "provider is not an unlinked disk-origin provider")
 	default:
 		return err
 	}

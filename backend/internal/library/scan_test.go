@@ -135,7 +135,14 @@ func TestScan_MarksImportedWhenSeriesExists(t *testing.T) {
 	}
 }
 
-func TestScan_NeverDowngradesImportedRow(t *testing.T) {
+// TestScan_DowngradesRemovedSeriesToPending is the Slice R regression test
+// (spec/library-match-and-source-management, plan/library-match-backend Task
+// 0): a series marked "imported" whose Series row has since been deleted (or
+// was never actually created, e.g. after a failed import) must downgrade back
+// to "pending" on the next scan so the owner can re-import it. Before the
+// fix, upsertEntry's never-downgrade guard kept a removed series permanently
+// stuck as "imported" with no way to re-import it.
+func TestScan_DowngradesRemovedSeriesToPending(t *testing.T) {
 	storage := t.TempDir()
 	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
 
@@ -153,17 +160,62 @@ func TestScan_NeverDowngradesImportedRow(t *testing.T) {
 		t.Fatalf("first scan status = %q, want pending", got)
 	}
 
-	// Owner (or a later task) promotes the staged row to imported.
+	// Simulate a stale "imported" marking (e.g. the Series row was later
+	// deleted by DeleteSeries, or import failed after marking imported).
 	client.ImportEntry.Update().
 		Where(importentry.Path(path)).
 		SetStatus("imported").
 		SaveX(ctx)
 
-	// Re-scan with the Series STILL absent from the DB must not downgrade it.
+	// The Series row is STILL absent from the DB — a re-scan must downgrade
+	// the entry back to pending, not preserve the stale "imported" status.
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatalf("re-scan: %v", err)
+	}
+	if got := statusForPath(t, client, ctx, path); got != "pending" {
+		t.Fatalf("after re-scan status = %q, want pending (downgraded — re-importable)", got)
+	}
+}
+
+// TestScan_StaysImportedWhenSeriesStillPresent proves the companion half of
+// the Slice R fix: a series whose Series row genuinely exists is recomputed as
+// "imported" on every re-scan (not just left alone) — status always reflects
+// live DB state, in both directions.
+func TestScan_StaysImportedWhenSeriesStillPresent(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+
+	client := testdb.New(t)
+	ctx := context.Background()
+	client.Series.Create().
+		SetTitle("My Series").
+		SetSlug(disk.Slugify("My Series")).
+		SaveX(ctx)
+
+	svc := library.NewService(client, nil, nil, nil, func() {}, storage, sse.NewHub())
+
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	path := statusForPathByTitle(t, client, ctx)
+	if got := statusForPath(t, client, ctx, path); got != "imported" {
+		t.Fatalf("first scan status = %q, want imported", got)
+	}
+
+	// Re-scan with the Series STILL present must keep it imported.
 	if _, err := svc.Scan(ctx); err != nil {
 		t.Fatalf("re-scan: %v", err)
 	}
 	if got := statusForPath(t, client, ctx, path); got != "imported" {
-		t.Fatalf("after re-scan status = %q, want imported (never downgraded)", got)
+		t.Fatalf("after re-scan status = %q, want imported (still present)", got)
 	}
+}
+
+// statusForPathByTitle returns the single staged ImportEntry's path — a small
+// helper for tests that don't already have the path in hand from Scan's
+// return value.
+func statusForPathByTitle(t *testing.T, client *ent.Client, ctx context.Context) string {
+	t.Helper()
+	e := client.ImportEntry.Query().OnlyX(ctx)
+	return e.Path
 }

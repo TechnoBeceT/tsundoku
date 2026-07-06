@@ -190,6 +190,8 @@ components:
         - title
         - coverUrl
         - isMetadataSource
+        - linked
+        - chapterCount
         - scanlator
         - language
         - importance
@@ -216,6 +218,16 @@ components:
         isMetadataSource:
           type: boolean
           description: True for the provider currently supplying DisplayName and CoverURL for this series.
+        linked:
+          type: boolean
+          description: >-
+            False for a disk-origin provider (an unlinked/unknown group created by
+            library import — no real Suwayomi source attached yet); true once a
+            real source is attached (via adopt, add-source, or Match). Unlinked
+            groups are Match candidates (POST .../providers/{providerId}/match).
+        chapterCount:
+          type: integer
+          description: How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by).
         scanlator:
           type: string
           description: Scanlation group (may be empty).
@@ -2067,6 +2079,75 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The source is already attached to this series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/providers/{providerId}/match:
+    post:
+      operationId: matchDiskProvider
+      summary: Attribute existing on-disk chapters to a real source without re-downloading
+      description: |
+        Attributes a series' EXISTING imported/on-disk chapters — currently
+        satisfied by the UNLINKED disk-origin provider at {providerId} (see
+        Provider.linked) — to a real Suwayomi source {source, mangaId,
+        scanlator, importance} WITHOUT re-downloading them. The real source is
+        attached, every chapter it also offers is re-pointed onto it (so no
+        upgrade is ever triggered for them), its CBZ is renamed + its embedded
+        ComicInfo rewritten to the source's identity, and the now-empty disk
+        provider is deleted. A chapter the disk group had but the new source
+        lacks keeps its prior watermark (never re-downloaded, never dropped).
+        Returns the refreshed series detail (§16 round-trip).
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: providerId
+          in: path
+          required: true
+          description: The disk-origin (unlinked) SeriesProvider UUID to match away from.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddProviderRequest"
+      responses:
+        "200":
+          description: Chapters re-attributed. Returns the refreshed series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: >-
+            Malformed id/providerId, invalid/missing source, mangaId, or
+            importance, the provider does not belong to the series, or the
+            provider is already a real (linked) source, not a disk-origin one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id, or no such Suwayomi source/manga.
           content:
             application/json:
               schema:

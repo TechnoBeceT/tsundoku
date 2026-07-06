@@ -11,7 +11,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
-// Sentinel errors returned by AddProvider (provider.go).
+// Sentinel errors returned by AddProvider (provider.go) and MatchDiskProvider
+// (match_disk_provider.go).
 var (
 	// ErrSeriesNotFound is returned when the target series id does not exist.
 	ErrSeriesNotFound = errors.New("series not found")
@@ -21,6 +22,9 @@ var (
 	// ErrSourceNotFound is returned when the Suwayomi source/manga fetch fails
 	// (wrapped via errors.Join with the underlying client error).
 	ErrSourceNotFound = errors.New("source not found")
+	// ErrProviderNotInSeries is returned by MatchDiskProvider when the target
+	// SeriesProvider id does not belong to the given series.
+	ErrProviderNotInSeries = errors.New("provider does not belong to series")
 )
 
 // Staging statuses for ImportEntry.status — the single source of truth so

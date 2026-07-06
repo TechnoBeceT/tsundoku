@@ -443,10 +443,11 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	now := time.Now().UTC()
 	grace := s.staleGrace(ctx) // read at use-time (hot-reloadable)
+	chapterCounts := providerChapterCounts(row)
 	providers := make([]ProviderDTO, len(row.Edges.Providers))
 	for i, p := range row.Edges.Providers {
 		isMetaSrc := metaProv != nil && p.ID == metaProv.ID
-		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, now, grace), row.ID, isMetaSrc)
+		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, now, grace), row.ID, isMetaSrc, chapterCounts[p.ID])
 	}
 
 	return SeriesDetailDTO{
@@ -515,12 +516,13 @@ func (s *Service) loadSeriesWithHealthData(ctx context.Context) ([]*ent.Series, 
 func (s *Service) sickSources(row *ent.Series, now time.Time, grace int) []ProviderDTO {
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	metaProv := MetadataProvider(row)
+	chapterCounts := providerChapterCounts(row)
 	var sick []ProviderDTO
 	for _, p := range row.Edges.Providers {
 		h := s.providerHealth(p, keys, maxNumber, multi, row.Completed, now, grace)
 		if h.Status == HealthStale || h.Status == HealthErroring {
 			isMetaSrc := metaProv != nil && p.ID == metaProv.ID
-			sick = append(sick, newProviderDTO(p, h, row.ID, isMetaSrc))
+			sick = append(sick, newProviderDTO(p, h, row.ID, isMetaSrc, chapterCounts[p.ID]))
 		}
 	}
 	return sick

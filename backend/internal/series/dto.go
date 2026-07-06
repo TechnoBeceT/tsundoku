@@ -82,7 +82,12 @@ type ChapterDTO struct {
 // ("/api/series/{sid}/providers/{pid}/cover"). IsMetadataSource is true for the
 // resolved metadata provider (the one currently supplying DisplayName + CoverURL).
 // The health fields (Health, ChaptersBehind, NewestChapterAt, LastSyncedAt,
-// LastError) are derived on read — never persisted.
+// LastError) are derived on read — never persisted. Linked is false for a
+// disk-origin provider (suwayomi_id == 0 — an "unlinked/unknown group" created
+// by library import/reconcile, never a real Suwayomi source) so the FE can list
+// it as a Match candidate; ChapterCount is how many of the series' chapters
+// this provider currently satisfies (Chapter.satisfied_by_provider_id == this
+// provider) — the coverage the owner sees before choosing what to match it to.
 type ProviderDTO struct {
 	ID               string     `json:"id"`
 	Provider         string     `json:"provider"`
@@ -90,6 +95,8 @@ type ProviderDTO struct {
 	Title            string     `json:"title"`
 	CoverURL         string     `json:"coverUrl"`
 	IsMetadataSource bool       `json:"isMetadataSource"`
+	Linked           bool       `json:"linked"`
+	ChapterCount     int        `json:"chapterCount"`
 	Scanlator        string     `json:"scanlator"`
 	Language         string     `json:"language"`
 	Importance       int        `json:"importance"`
@@ -173,7 +180,7 @@ func chapterDisplayName(name string, number *float64) string {
 // cover_url, else "" (mirroring the series-level SeriesDisplay behaviour so the
 // SPA never fires a cover fetch that would 404). Title is the provider's own
 // title for the series (set at ingest, may be "").
-func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID, isMetadataSource bool) ProviderDTO {
+func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID, isMetadataSource bool, chapterCount int) ProviderDTO {
 	var coverURL string
 	if p.CoverURL != "" {
 		coverURL = "/api/series/" + seriesID.String() + "/providers/" + p.ID.String() + "/cover"
@@ -185,6 +192,8 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 		Title:            p.Title,
 		CoverURL:         coverURL,
 		IsMetadataSource: isMetadataSource,
+		Linked:           p.SuwayomiID != 0,
+		ChapterCount:     chapterCount,
 		Scanlator:        p.Scanlator,
 		Language:         p.Language,
 		Importance:       p.Importance,
@@ -194,4 +203,19 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 		LastSyncedAt:     h.LastSyncedAt,
 		LastError:        h.LastError,
 	}
+}
+
+// providerChapterCounts tallies, for one loaded series, how many chapters each
+// provider currently satisfies (Chapter.satisfied_by_provider_id). row must
+// have its Chapters edge eagerly loaded (GetSeries / loadSeriesWithHealthData
+// both do) — this is an in-memory rollup, no extra query (no N+1).
+func providerChapterCounts(row *ent.Series) map[uuid.UUID]int {
+	counts := make(map[uuid.UUID]int, len(row.Edges.Providers))
+	for _, ch := range row.Edges.Chapters {
+		if ch.SatisfiedByProviderID == nil {
+			continue
+		}
+		counts[*ch.SatisfiedByProviderID]++
+	}
+	return counts
 }

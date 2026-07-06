@@ -28,14 +28,26 @@ import (
 // searchTitle configures Sources/Search to return one candidate manga (for
 // the MatchCandidates test, via newFakeClientWithSearch); it is left zero for
 // newFakeClientWithFeed, preserving that constructor's original empty-search
-// behavior.
+// behavior. chapters overrides FetchChapters' fixed 2-chapter ("1","2") feed
+// when non-nil — used by the MatchDiskProvider partial-overlap test (see
+// newFakeClientWithChapters, match_disk_provider_test.go) to simulate a real
+// source that only offers SOME of the disk-imported chapter keys.
 type fakeAddProviderClient struct {
 	searchTitle string
+	chapters    []suwayomi.Chapter
 }
 
 func newFakeClientWithFeed(t *testing.T) *fakeAddProviderClient {
 	t.Helper()
 	return &fakeAddProviderClient{}
+}
+
+// newFakeClientWithChapters returns a fake whose FetchChapters reports exactly
+// chapters (overriding the default fixed 2-chapter feed) — used to simulate a
+// real source with partial (or otherwise custom) coverage of a series.
+func newFakeClientWithChapters(t *testing.T, chapters []suwayomi.Chapter) *fakeAddProviderClient {
+	t.Helper()
+	return &fakeAddProviderClient{chapters: chapters}
 }
 
 // newFakeClientWithSearch returns a fake whose Sources/Search report one
@@ -62,6 +74,9 @@ func (f *fakeAddProviderClient) Browse(ctx context.Context, sourceID string, t s
 	return suwayomi.BrowseResult{}, nil
 }
 func (f *fakeAddProviderClient) FetchChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+	if f.chapters != nil {
+		return f.chapters, nil
+	}
 	one, two := 1.0, 2.0
 	return []suwayomi.Chapter{
 		{ID: 101, Index: 0, Name: "Chapter 1", Number: &one},
