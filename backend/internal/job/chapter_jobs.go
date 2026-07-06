@@ -190,9 +190,16 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 // their backoff elapses on a LATER cycle, so the loop cannot spin forever on
 // them. A hard error from RunOnce (chapter-list load failure) stops the drain
 // immediately and is returned to the caller.
+//
+// now is snapshotted ONCE for the whole cycle (not re-read per pass) and passed
+// to every RunOnceAt call: without this, a slow-timeout source's per-source
+// backoff (next_attempt_at) set on an early pass could already be in the past
+// by a later pass of the SAME cycle, re-qualifying the source and burning its
+// whole retry budget in one cycle instead of one attempt per cycle.
 func (r *Runner) drainDownloads(ctx context.Context) error {
+	now := time.Now()
 	for {
-		dispatched, err := r.dispatcher.RunOnce(ctx)
+		dispatched, err := r.dispatcher.RunOnceAt(ctx, now)
 		if err != nil {
 			return err
 		}

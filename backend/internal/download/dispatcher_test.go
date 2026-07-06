@@ -737,3 +737,55 @@ func (c *fetchRefCapture) Fetch(_ context.Context, ref fetcher.FetchRef) (fetche
 
 // Ensure uuid is used to keep the import — used in table-driven extensions.
 var _ = uuid.Nil
+
+// TestRunOnceAt_UsesPassedNowForCandidacy proves RunOnceAt anchors candidacy to
+// the PASSED now, not to wall-clock time.Now() — the fix for a slow-timeout
+// source's per-source backoff (next_attempt_at) elapsing mid-cycle (between
+// drainDownloads passes) and re-qualifying within the SAME download cycle,
+// burning its whole retry budget in one cycle instead of one attempt per cycle.
+func TestRunOnceAt_UsesPassedNowForCandidacy(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Cooldown Series").SetSlug("cooldown-series").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
+	cooldownUntil := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).
+		SetChapterKey("ch-cooldown").
+		SetURL("https://mangadex.org/ch-cooldown").
+		SetProviderIndex(0).
+		SetNextAttemptAt(cooldownUntil).
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("ch-cooldown").SaveX(ctx)
+
+	f := fake.New()
+	d := download.New(client, f, hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+
+	// Passed now is still before the cooldown horizon: the source is not yet a
+	// live candidate, regardless of real wall-clock time.
+	dispatched, err := d.RunOnceAt(ctx, cooldownUntil.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("RunOnceAt (before cooldown): %v", err)
+	}
+	if dispatched != 0 {
+		t.Errorf("dispatched before cooldown horizon: want 0, got %d", dispatched)
+	}
+	stillWanted := client.Chapter.Query().Where(entchapter.ChapterKeyEQ("ch-cooldown")).OnlyX(ctx)
+	if stillWanted.State != entchapter.StateWanted {
+		t.Errorf("state before cooldown horizon: want wanted, got %s", stillWanted.State)
+	}
+
+	// Passed now is past the cooldown horizon: the source re-qualifies.
+	dispatched, err = d.RunOnceAt(ctx, cooldownUntil.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RunOnceAt (after cooldown): %v", err)
+	}
+	if dispatched != 1 {
+		t.Errorf("dispatched after cooldown horizon: want 1, got %d", dispatched)
+	}
+}
