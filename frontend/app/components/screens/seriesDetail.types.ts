@@ -54,6 +54,13 @@ export interface Provider {
   /** Human-readable source display name (e.g. `WebToon`); falls back to the id upstream. Shown in place of the id. */
   providerName: string
   /**
+   * Source's Suwayomi manga id; `0` = unlinked disk-origin provider (nothing
+   * to fetch). Gates the per-row lazy "Show coverage" affordance — only a
+   * provider with `mangaId > 0` can hit `GET /api/sources/{provider}/manga/
+   * {mangaId}/breakdown`.
+   */
+  mangaId: number
+  /**
    * False for a disk-origin provider — an unlinked/unknown group created by
    * library import with no real Suwayomi source attached yet (`suwayomi_id=0`
    * on the backend); true once a real source is attached via adopt,

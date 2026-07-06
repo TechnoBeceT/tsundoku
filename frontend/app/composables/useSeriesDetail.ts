@@ -17,11 +17,17 @@
  *   metadataProviderId ← providers.find(isMetadataSource)?.id ?? null
  *   Chapter.state is typed as string in the DTO → cast to ChapterState
  *   Provider.newestChapterAt / lastSyncedAt are optional in DTO → ?? null
+ *
+ * providerCoverage / loadProviderCoverage: the Sources panel's LAZY per-source
+ * coverage (Slice P follow-up) — see the doc comments on the two below. Fetched
+ * ONLY on a row's "Show coverage" click, never as part of `refresh()`.
  */
 import { ref } from 'vue'
 import type { Ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
+import { mapScanlatorCoverage } from '~/composables/importMappers'
+import type { ScanlatorCoverage } from '~/components/screens/import.types'
 import type { SeriesDetail, Chapter, ChapterState, Provider } from '~/components/screens/seriesDetail.types'
 
 type SeriesDetailDTO = components['schemas']['SeriesDetail']
@@ -63,6 +69,7 @@ function mapProvider(dto: ProviderDTO): Provider {
     provider: dto.provider,
     providerName: dto.providerName,
     linked: dto.linked,
+    mangaId: dto.mangaId,
     chapterCount: dto.chapterCount,
     scanlator: dto.scanlator,
     language: dto.language,
@@ -107,6 +114,19 @@ export function useSeriesDetail(id: string) {
   const removeBusy = ref(false)
   const matchBusy = ref(false)
 
+  // ---- providerCoverage (lazy per-source coverage, Sources panel) ------------
+  // Keyed by SeriesProvider `id`. An absent key = never fetched (the row shows
+  // "Show coverage"); `null` = fetch attempted and failed (row shows "Coverage
+  // unavailable"); an array = the loaded per-scanlator breakdown. NEVER fetched
+  // eagerly — `loadProviderCoverage` is called ONLY from the row's own
+  // "Show coverage" user action (see pages/series/[id].vue), never from
+  // `refresh()`/onMounted. This is deliberate anti-IP-block politeness: the
+  // `/breakdown` endpoint does a LIVE source fetch, and an eager fetch across
+  // every tracked source on every Series-Detail visit is exactly the traffic
+  // that got the owner Cloudflare-IP-blocked.
+  const providerCoverage = ref<Record<string, ScanlatorCoverage[] | null>>({})
+  const providerCoverageInFlight = new Set<string>()
+
   async function refresh(): Promise<void> {
     pending.value = true
     error.value = null
@@ -133,6 +153,41 @@ export function useSeriesDetail(id: string) {
     }
     finally {
       pending.value = false
+    }
+  }
+
+  /**
+   * Lazily fetches the per-scanlator coverage breakdown for ONE source row —
+   * the SOLE call site is the row's "Show coverage" click, never `refresh()`
+   * or `onMounted` (see the `providerCoverage` doc comment above). No-ops for
+   * an unlinked disk provider (`mangaId <= 0` — nothing to fetch) or a
+   * provider whose coverage is already cached (loaded or previously failed)
+   * or already in flight. Never throws — a failure caches `null` under the
+   * provider's id so the row renders "Coverage unavailable". Reuses the same
+   * `GET /api/sources/{sourceId}/manga/{mangaId}/breakdown` fetch shape as
+   * `useImport.loadBreakdowns`/`useMatchSource.loadBreakdowns` (§2 DRY — same
+   * endpoint, same cache/in-flight-guard pattern), just keyed by the
+   * SeriesProvider `id` instead of `source:mangaId` since this is a single
+   * already-resolved row, not a set of adopt candidates.
+   */
+  const loadProviderCoverage = async (provider: Provider): Promise<void> => {
+    if (provider.mangaId <= 0) return
+    if (provider.id in providerCoverage.value || providerCoverageInFlight.has(provider.id)) return
+    providerCoverageInFlight.add(provider.id)
+    try {
+      const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
+        params: { path: { sourceId: provider.provider, mangaId: provider.mangaId } },
+      })
+      providerCoverage.value = {
+        ...providerCoverage.value,
+        [provider.id]: res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage),
+      }
+    }
+    catch {
+      providerCoverage.value = { ...providerCoverage.value, [provider.id]: null }
+    }
+    finally {
+      providerCoverageInFlight.delete(provider.id)
     }
   }
 
@@ -254,6 +309,8 @@ export function useSeriesDetail(id: string) {
     deleteBusy,
     removeBusy,
     matchBusy,
+    providerCoverage,
+    loadProviderCoverage,
     setMonitored,
     setCompleted,
     setCategory,

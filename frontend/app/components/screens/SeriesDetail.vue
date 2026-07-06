@@ -9,21 +9,29 @@ import RemoveSourceDialog from '../seriesDetail/RemoveSourceDialog.vue'
 import SeriesHeader from '../seriesDetail/SeriesHeader.vue'
 import SourcesPanel from '../seriesDetail/SourcesPanel.vue'
 import type { Chapter, Provider, SeriesDetail } from './seriesDetail.types'
+import type { ScanlatorCoverage } from './import.types'
 
 /**
  * SeriesDetail — the full single-series management screen: a thin container that
  * composes the header (cover/title/stats/toggles/category/delete), the (planned)
  * metadata-source picker, the chapter table, the ranked source list (reorder /
- * remove / add / match-to-source for unlinked disk-origin groups), plus the
- * required-choice delete dialog and the remove-source confirm dialog. The
- * `matchProvider` emit (bubbled from `SourcesPanel`'s unlinked-row action)
- * opens the page's `MatchDiskProviderDialog` for the no-re-download Match.
+ * remove / add / match-to-source for unlinked disk-origin groups / lazy
+ * per-source coverage), plus the required-choice delete dialog and the
+ * remove-source confirm dialog. The `matchProvider` emit (bubbled from
+ * `SourcesPanel`'s unlinked-row action) opens the page's
+ * `MatchDiskProviderDialog` for the no-re-download Match.
  *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
  * surfacing loading (busy spinners / disabled controls) and error (a dismissible
  * banner) states; success is reflected when the parent feeds back an updated
  * `series` prop. Token-only colours, so it reads correctly in both themes.
+ *
+ * `providerCoverage` is a plain passthrough to `SourcesPanel` (this screen
+ * never fetches it) — it's just threaded through so the page's
+ * `useSeriesDetail.providerCoverage` map reaches the row that renders it;
+ * `loadCoverage` bubbles a row's "Show coverage" click back to the page,
+ * which drives the actual lazy fetch (`useSeriesDetail.loadProviderCoverage`).
  */
 const props = withDefaults(defineProps<{
   /** The series to render (summary fields + chapters + providers). */
@@ -38,11 +46,14 @@ const props = withDefaults(defineProps<{
   removeBusy?: boolean
   /** A failed-mutation message to surface, or null/"" when there is none. */
   error?: string | null
+  /** Per-provider cached coverage, keyed by SeriesProvider id — passthrough to `SourcesPanel`. */
+  providerCoverage?: Record<string, ScanlatorCoverage[] | null>
 }>(), {
   saving: false,
   deleteBusy: false,
   removeBusy: false,
   error: null,
+  providerCoverage: () => ({}),
 })
 
 const emit = defineEmits<{
@@ -58,6 +69,8 @@ const emit = defineEmits<{
   removeSource: [providerId: string]
   /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
   matchProvider: [providerId: string]
+  /** A row's "Show coverage" button was pressed — carries its SeriesProvider id. */
+  loadCoverage: [providerId: string]
   /** A metadata source was picked — carries the SeriesProvider id. */
   chooseMetadataSource: [providerId: string]
   /** The series delete was confirmed — carries the required deleteFiles choice. */
@@ -159,9 +172,11 @@ const removeName = computed(
       <SourcesPanel
         :providers="sortedProviders"
         :saving="saving"
+        :provider-coverage="providerCoverage"
         @move="onMove"
         @remove-source="openRemove"
         @match-provider="emit('matchProvider', $event)"
+        @load-coverage="emit('loadCoverage', $event)"
         @add-source="emit('addSource')"
       />
     </div>

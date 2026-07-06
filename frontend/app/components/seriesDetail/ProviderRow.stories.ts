@@ -71,3 +71,49 @@ export const Unlinked: Story = {
     canDown: false,
   },
 }
+
+/** mangaId === 0 (unlinked disk provider): no coverage affordance renders at all. */
+export const NoCoverage: Story = {
+  args: {
+    provider: unlinkedProvider,
+    rank: 4,
+    preferred: false,
+    canUp: true,
+    canDown: false,
+  },
+}
+
+/** mangaId > 0, coverage never fetched (`coverage` undefined): the "Show coverage" button. */
+export const CoverageCollapsed: Story = {
+  args: {
+    provider: richSeries.providers[0]!,
+    rank: 1,
+    preferred: true,
+    canUp: false,
+    canDown: true,
+  },
+}
+
+/** Coverage loaded and a scanlator entry matches this row's own scanlator: count + ranges shown. */
+export const CoverageLoaded: Story = {
+  args: {
+    provider: richSeries.providers[0]!,
+    rank: 1,
+    preferred: true,
+    canUp: false,
+    canDown: true,
+    coverage: [{ scanlator: 'Flame Scans', count: 42, ranges: '1-42' }],
+  },
+}
+
+/** Coverage fetch resolved but failed (`null`): "Coverage unavailable". */
+export const CoverageUnavailable: Story = {
+  args: {
+    provider: richSeries.providers[0]!,
+    rank: 1,
+    preferred: true,
+    canUp: false,
+    canDown: true,
+    coverage: null,
+  },
+}

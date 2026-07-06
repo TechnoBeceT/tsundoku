@@ -5,6 +5,7 @@ import HealthBadge from '../ui/HealthBadge.vue'
 import ReorderControl from '../ui/ReorderControl.vue'
 import type { MoveDirection } from '../ui/controls.types'
 import type { Provider } from '../screens/seriesDetail.types'
+import type { ScanlatorCoverage } from '../screens/import.types'
 
 /**
  * ProviderRow — one ranked source in the Series-Detail "Sources" list: a
@@ -12,15 +13,30 @@ import type { Provider } from '../screens/seriesDetail.types'
  * or an UNLINKED chip for a disk-origin group), the language/scanlator/
  * importance meta line, a chapter-count note, a `HealthBadge` with the
  * chapters-behind note, the synced/newest timestamps, an optional last-error,
- * and the row actions (a quiet Remove button, plus — for an unlinked
- * disk-origin group only — a "Match to source" button). Presentation-only —
- * the source + its rank arrive via props; the row emits `move` (re-rank),
- * `remove`, and `match` (opens `MatchDiskProviderDialog` for this provider).
+ * a LAZY per-source coverage affordance, and the row actions (a quiet Remove
+ * button, plus — for an unlinked disk-origin group only — a "Match to
+ * source" button). Presentation-only — the source + its rank arrive via
+ * props; the row emits `move` (re-rank), `remove`, `match` (opens
+ * `MatchDiskProviderDialog` for this provider), and `loadCoverage` (the
+ * "Show coverage" click).
  *
  * `provider.linked` is false for a disk-origin group created by library
  * import (no real Suwayomi source attached — `suwayomi_id=0` on the backend);
  * `chapterCount` is shown for every row so the owner can see how many
  * chapters an unlinked group carries before matching it.
+ *
+ * Coverage affordance (LAZY — never fetched by this component; it only
+ * displays whatever `coverage` the parent hands it and emits `loadCoverage`
+ * on click): a provider with `mangaId <= 0` (unlinked disk provider — nothing
+ * to fetch) renders no affordance at all. Otherwise: `coverage === undefined`
+ * (never fetched) shows a "Show coverage" button; once `coverage` is an
+ * array or `null` (fetch resolved), the button is replaced by either the
+ * matching scanlator's `{count} chapters · {ranges}` or, if there is no
+ * match or the fetch failed (`null`), "Coverage unavailable". The match rule
+ * mirrors the Adopt wizard's untagged-scanlator convention (`useSourceConfigure`):
+ * this row's `scanlator === ''` matches the coverage entry whose `scanlator`
+ * equals the row's `providerName` (the backend's untagged/source-name
+ * bucket); a non-empty `scanlator` matches by exact name.
  */
 const props = defineProps<{
   /** The source to render. */
@@ -35,6 +51,14 @@ const props = defineProps<{
   canDown: boolean
   /** True while a mutation is in flight — disables reorder + remove. */
   saving?: boolean
+  /**
+   * This row's per-scanlator coverage breakdown: `undefined` = never fetched
+   * (shows the "Show coverage" button), `null` = fetch attempted and failed
+   * (shows "Coverage unavailable"), an array = the loaded breakdown (shows
+   * the matching scanlator's count/ranges, or "Coverage unavailable" if none
+   * matches). Never fetched by this component — see `loadCoverage`.
+   */
+  coverage?: ScanlatorCoverage[] | null
 }>()
 
 const emit = defineEmits<{
@@ -44,10 +68,22 @@ const emit = defineEmits<{
   remove: []
   /** The "Match to source" button was pressed (unlinked groups only). */
   match: []
+  /** The "Show coverage" button was pressed — the parent should fetch this row's coverage. */
+  loadCoverage: []
 }>()
 
 // Uppercased language code shown in the language Chip (e.g. "EN").
 const language = computed(() => props.provider.language.toUpperCase())
+
+// The coverage entry for THIS row's scanlator, or null when not (yet) resolvable
+// (coverage not loaded, the fetch failed, or no scanlator in the breakdown matches).
+const coverageMatch = computed<ScanlatorCoverage | null>(() => {
+  if (!props.coverage) return null
+  const match = props.coverage.find((sc) =>
+    props.provider.scanlator === '' ? sc.scanlator === props.provider.providerName : sc.scanlator === props.provider.scanlator,
+  )
+  return match ?? null
+})
 
 // Relative-time label for the sync/newest timestamps (null → "never").
 const rel = (iso: string | null): string => {
@@ -90,6 +126,21 @@ const rel = (iso: string | null): string => {
       <div class="source__healthrow">
         <HealthBadge :health="provider.health" />
         <span v-if="provider.chaptersBehind > 0" class="source__behind">{{ provider.chaptersBehind }} behind</span>
+      </div>
+      <div v-if="provider.mangaId > 0" class="source__coverage">
+        <button
+          v-if="coverage === undefined"
+          type="button"
+          class="btn-coverage"
+          :disabled="saving"
+          @click="emit('loadCoverage')"
+        >
+          Show coverage
+        </button>
+        <span v-else-if="coverageMatch" class="source__coverage-text">
+          {{ coverageMatch.count }} chapter{{ coverageMatch.count === 1 ? '' : 's' }} · {{ coverageMatch.ranges }}
+        </span>
+        <span v-else class="source__coverage-unavailable">Coverage unavailable</span>
       </div>
       <div class="source__times">
         <span>Synced {{ rel(provider.lastSyncedAt) }}</span>
@@ -164,6 +215,39 @@ const rel = (iso: string | null): string => {
 
 .source__behind {
   font-size: var(--text-xs);
+  color: var(--faint);
+}
+
+.source__coverage {
+  margin-top: 8px;
+}
+
+.btn-coverage {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accentBright);
+  font-size: 11.5px;
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+}
+
+.btn-coverage:hover {
+  text-decoration: underline;
+}
+
+.btn-coverage:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.source__coverage-text {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.source__coverage-unavailable {
+  font-size: 11.5px;
   color: var(--faint);
 }
 

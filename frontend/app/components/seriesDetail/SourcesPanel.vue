@@ -4,23 +4,36 @@ import AppButton from '../ui/AppButton.vue'
 import ProviderRow from './ProviderRow.vue'
 import type { MoveDirection } from '../ui/controls.types'
 import type { Provider } from '../screens/seriesDetail.types'
+import type { ScanlatorCoverage } from '../screens/import.types'
 
 /**
  * SourcesPanel — the Series-Detail "Sources" card: a titled header with the
  * source-count pill and an Add button, then the importance-ranked `ProviderRow`
  * list (preferred first) or an empty note when nothing is tracked.
  * Presentation-only — the (already-sorted) providers arrive via props; the panel
- * re-emits each row's `move`/`remove`/`match` (keyed by source id) plus `addSource`.
- * Wraps the shared PanelCard shell: the count pill rides the header-left `lead`
- * slot (grouped with the title), the Add button the header-right `actions` slot,
- * and the provider list the full-bleed body.
+ * re-emits each row's `move`/`remove`/`match`/`loadCoverage` (keyed by source id)
+ * plus `addSource`. Wraps the shared PanelCard shell: the count pill rides the
+ * header-left `lead` slot (grouped with the title), the Add button the
+ * header-right `actions` slot, and the provider list the full-bleed body.
+ *
+ * `providerCoverage` is a passthrough map (SeriesProvider id → that row's
+ * cached coverage, or `undefined`/absent when never fetched) — this panel
+ * never fetches anything itself; it only threads each row's slice of the map
+ * down to `ProviderRow` and bubbles the row's `loadCoverage` click back up to
+ * the screen (which owns the actual lazy fetch, `useSeriesDetail.
+ * loadProviderCoverage`).
  */
-defineProps<{
+withDefaults(defineProps<{
   /** The sources to list, importance-descending (preferred first). */
   providers: Provider[]
   /** True while a mutation is in flight — disables reorder + remove. */
   saving?: boolean
-}>()
+  /** Per-provider cached coverage, keyed by SeriesProvider id (see doc above). */
+  providerCoverage?: Record<string, ScanlatorCoverage[] | null>
+}>(), {
+  saving: false,
+  providerCoverage: () => ({}),
+})
 
 const emit = defineEmits<{
   /** A source was re-ranked — carries its id and the direction (-1 up / 1 down). */
@@ -29,6 +42,8 @@ const emit = defineEmits<{
   removeSource: [id: string]
   /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
   matchProvider: [id: string]
+  /** A row's "Show coverage" button was pressed — carries its SeriesProvider id. */
+  loadCoverage: [id: string]
   /** The Add button was pressed (→ opens the Match Source dialog). */
   addSource: []
 }>()
@@ -62,9 +77,11 @@ const emit = defineEmits<{
         :can-up="idx !== 0"
         :can-down="idx !== providers.length - 1"
         :saving="saving"
+        :coverage="providerCoverage[p.id]"
         @move="emit('move', p.id, $event)"
         @remove="emit('removeSource', p.id)"
         @match="emit('matchProvider', p.id)"
+        @load-coverage="emit('loadCoverage', p.id)"
       />
 
       <div v-if="providers.length === 0" class="panel__empty">

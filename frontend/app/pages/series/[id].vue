@@ -53,6 +53,16 @@ import type { ProviderRef } from '~/composables/useSourceConfigure'
  * successful match closes the dialog — `series` is already reseeded by
  * `matchDiskProvider` itself, no separate refresh() needed.
  *
+ * Coverage wiring (Sources panel, LAZY): `providerCoverage` is passed straight
+ * through to `SeriesDetail`/`SourcesPanel`/`ProviderRow`. `@load-coverage`
+ * (a row's "Show coverage" click, carrying the SeriesProvider id) resolves the
+ * full `Provider` from `series.providers` and calls
+ * `useSeriesDetail.loadProviderCoverage(provider)` — the ONLY call site for
+ * that fetch anywhere in the app; it is never invoked from `onMounted` or any
+ * part of the initial series load, so no per-source coverage traffic fires
+ * until the owner explicitly asks for one row's coverage (anti-IP-block
+ * politeness, decision D).
+ *
  * §16: pending true during the initial fetch; ErrorBanner shown on hard fetch
  * failure. Mutation errors are surfaced via the :error prop (dismissible banner
  * inside SeriesDetail).
@@ -69,6 +79,8 @@ const {
   deleteBusy,
   removeBusy,
   matchBusy,
+  providerCoverage,
+  loadProviderCoverage,
   setMonitored,
   setCompleted,
   setCategory,
@@ -134,6 +146,14 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
   const ok = await matchDiskProvider(matchTargetId.value, payload)
   if (ok) matchProviderOpen.value = false
 }
+
+// ---- Sources panel: lazy per-source coverage --------------------------------
+// The SOLE call site for loadProviderCoverage — fired only by a row's own
+// "Show coverage" click (never onMounted/the initial series load).
+function onLoadCoverage(providerId: string): void {
+  const provider = series.value?.providers.find((p) => p.id === providerId)
+  if (provider) void loadProviderCoverage(provider)
+}
 </script>
 
 <template>
@@ -150,6 +170,7 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
       :delete-busy="deleteBusy"
       :remove-busy="removeBusy"
       :error="error"
+      :provider-coverage="providerCoverage"
       @change-category="setCategory"
       @toggle-monitored="setMonitored"
       @toggle-completed="setCompleted"
@@ -159,6 +180,7 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
       @choose-metadata-source="chooseMetadataSource"
       @delete-series="deleteSeries"
       @add-source="matchOpen = true"
+      @load-coverage="onLoadCoverage"
       @dismiss-error="dismissError"
     />
 
