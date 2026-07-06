@@ -203,6 +203,39 @@ func (h *Handler) AddProvider(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// AddProviders handles POST /api/series/:id/providers/batch.
+//
+// It attaches SEVERAL Suwayomi sources to an EXISTING series in one call
+// (body: {"providers":[{"source","mangaId","scanlator"}]}, ordered
+// best-first) — the batch counterpart of AddProvider (see
+// library.Service.AddProviders): each ref lands at an importance strictly
+// below the series' existing providers, assigned by the service, not the
+// caller. Returns the refreshed series.SeriesDetailDTO (§16).
+func (h *Handler) AddProviders(c echo.Context) error {
+	id, err := validateID(c.Param("id"))
+	if err != nil {
+		return err
+	}
+	var body addProvidersBody
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+	if err := validateProviderRefs(body.Providers); err != nil {
+		return err
+	}
+
+	refs := make([]library.ProviderRef, len(body.Providers))
+	for i, p := range body.Providers {
+		refs[i] = library.ProviderRef{Source: p.Source, MangaID: p.MangaID, Scanlator: p.Scanlator}
+	}
+
+	out, err := h.svc.AddProviders(c.Request().Context(), id, refs)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // MatchDiskProvider handles POST /api/series/:id/providers/:providerId/match.
 //
 // It attributes a series' EXISTING on-disk chapters — currently satisfied by

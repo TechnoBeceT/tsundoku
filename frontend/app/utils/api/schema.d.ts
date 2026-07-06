@@ -279,6 +279,31 @@ export interface paths {
         patch: operations["reorderSeriesProviders"];
         trace?: never;
     };
+    "/api/series/{id}/providers/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach several sources to an existing series in one call
+         * @description Batch counterpart of POST /api/series/{id}/providers (Slice P): attaches
+         *     several Suwayomi sources {source, mangaId, scanlator} to an existing
+         *     series in one request, ordered best-first. Each source is ingested and
+         *     lands at an importance strictly below the series' existing providers
+         *     (decision E), assigned by the server. Returns the refreshed series
+         *     detail (§16 round-trip).
+         */
+        post: operations["addSeriesProviders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}/match": {
         parameters: {
             query?: never;
@@ -2147,6 +2172,16 @@ export interface components {
             /** @description Per-path failures (empty if every path imported successfully). */
             failed: components["schemas"]["BatchImportFailure"][];
         };
+        /**
+         * @description Attaches several Suwayomi sources to an existing series in one call
+         *     (Slice P batch attach). Ordered best-first — each entry lands at an
+         *     importance strictly below the series' existing providers (decision
+         *     E), assigned by the server, not the caller.
+         */
+        AddProvidersRequest: {
+            /** @description The sources to attach, best-first. */
+            providers: components["schemas"]["ProviderRef"][];
+        };
         /** @description Attaches an additional Suwayomi source to an existing series. */
         AddProviderRequest: {
             /** @description Suwayomi source ID the chosen candidate came from. */
@@ -2822,6 +2857,69 @@ export interface operations {
             };
             /** @description No series with the given id. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    addSeriesProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddProvidersRequest"];
+            };
+        };
+        responses: {
+            /** @description All providers attached. Returns the refreshed series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed id, empty providers list, or an invalid/missing source or mangaId in one of the entries. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id, or no such Suwayomi source/manga for one of the entries. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description One of the sources is already attached to this series (sources attached before the failing entry are NOT rolled back). */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

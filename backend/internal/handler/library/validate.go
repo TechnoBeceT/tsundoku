@@ -44,6 +44,14 @@ type addProviderBody struct {
 	Scanlator string `json:"scanlator"`
 }
 
+// addProvidersBody is the wire shape for POST /api/series/:id/providers/batch
+// (Slice P batch attach). Providers is ordered best-first; each entry mirrors
+// library.ProviderRef (source/mangaId/scanlator, no importance — the service
+// assigns importances below the series' existing providers, decision E).
+type addProvidersBody struct {
+	Providers []providerRefBody `json:"providers"`
+}
+
 // skipBody is the wire shape for POST /api/library/imports/skip.
 type skipBody struct {
 	Path string `json:"path"`
@@ -116,6 +124,24 @@ func validateProviderRef(m providerRefBody) error {
 	}
 	if m.MangaID <= 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "mangaId must be > 0")
+	}
+	return nil
+}
+
+// validateProviderRefs validates the POST /api/series/:id/providers/batch
+// body: providers must be non-empty (else there is nothing to attach — mirrors
+// library.ErrNoProviders, which the service would otherwise have to surface
+// for a request the handler could reject up front) and each entry is checked
+// via the shared validateProviderRef (§2 DRY — same source/mangaId shape as
+// the matches list and the single-attach body).
+func validateProviderRefs(providers []providerRefBody) error {
+	if len(providers) == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "providers must not be empty")
+	}
+	for _, p := range providers {
+		if err := validateProviderRef(p); err != nil {
+			return err
+		}
 	}
 	return nil
 }

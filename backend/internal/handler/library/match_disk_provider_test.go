@@ -110,6 +110,7 @@ func newEnvWithMatchIngest(t *testing.T, storage string) *testEnv {
 	e.HTTPErrorHandler = middleware.ErrorHandler
 	authed := e.Group("/api", middleware.RequireOwner(authSvc, false))
 	authed.POST("/series/:id/providers", h.AddProvider)
+	authed.POST("/series/:id/providers/batch", h.AddProviders)
 	authed.POST("/series/:id/providers/:providerId/match", h.MatchDiskProvider)
 
 	token, err := authSvc.Issue(uuid.New())
