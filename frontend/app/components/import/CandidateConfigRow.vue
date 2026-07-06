@@ -21,13 +21,15 @@ import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
  * `radius` prop; only the smaller initial-glyph size still needs a scoped
  * `:deep` override (CoverImage exposes no prop for the initial-letter size).
  *
- * `hideInspect`/`hideReorder` are opt-in escape hatches for the two
- * SINGLE-SELECT match surfaces (`scanLibrary/MatchPanel`,
- * `seriesDetail/MatchSourceDialog`) that reuse this row but have no live
- * chapter-inspect endpoint and nothing to reorder (exactly one provider is
- * ever attached). Both default `false` so the real Adopt wizard
- * (`screens/Import.vue`, multi-source ranking + live inspect) renders
- * byte-for-byte unchanged with zero prop changes.
+ * `hideInspect`/`hideReorder` are opt-in escape hatches. `hideInspect` is set by
+ * `SourceConfigurePanel` (the shared Configure block behind Adopt / Add-source /
+ * Import-match) for split-scanlator rows + surfaces with no live inspect endpoint.
+ * `hideReorder` is set by the single-select `seriesDetail/MatchDiskProviderDialog`
+ * (the no-re-download Match: pick exactly one source+scanlator for a disk group —
+ * nothing to rank). Both default `false` so the real Adopt wizard
+ * (`screens/Import.vue`, multi-source ranking + live inspect) renders unchanged.
+ * (The old single-select `MatchPanel`/`MatchSourceDialog` are now multi-select,
+ * ranked surfaces that render this row via `SourceConfigurePanel`.)
  *
  * `scanlator`/`chapterCount`/`chapterRanges`/`coverageUnavailable` are a
  * second set of opt-in props (all default off/empty/undefined) driving the
