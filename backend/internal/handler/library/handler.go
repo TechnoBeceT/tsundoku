@@ -19,6 +19,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/series"
 )
 
 // Handler holds the dependencies for the library-import HTTP handlers. All
@@ -265,6 +266,43 @@ func (h *Handler) MatchDiskProvider(c echo.Context) error {
 		return mapServiceError(err)
 	}
 	return c.JSON(http.StatusOK, out)
+}
+
+// providerDedupResponse is the wire shape returned by POST
+// /api/series/:id/providers/dedup: merged is how many drifted disk/live source
+// pairs were folded into one, skipped is how many were left alone (a matching
+// linked twin with an empty feed — merging would orphan the disk chapters), and
+// series is the refreshed detail after the cleanup.
+type providerDedupResponse struct {
+	Merged  int                    `json:"merged"`
+	Skipped int                    `json:"skipped"`
+	Series  series.SeriesDetailDTO `json:"series"`
+}
+
+// DedupProviders handles POST /api/series/:id/providers/dedup.
+//
+// It folds every pair of same-physical-source providers on the series — an
+// unlinked disk-origin provider and its already-drifted linked twin (same
+// display name + scanlator) — into one row WITHOUT re-downloading (see
+// library.Service.DedupProviders), then returns the merged/skipped counts plus
+// the refreshed series detail (§16 round-trip).
+func (h *Handler) DedupProviders(c echo.Context) error {
+	id, err := validateID(c.Param("id"))
+	if err != nil {
+		return err
+	}
+
+	merged, skipped, err := h.svc.DedupProviders(c.Request().Context(), id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+
+	detail, err := h.svc.SeriesDetail(c.Request().Context(), id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+
+	return c.JSON(http.StatusOK, providerDedupResponse{Merged: merged, Skipped: skipped, Series: detail})
 }
 
 // mapServiceError translates a library.Service sentinel error into the

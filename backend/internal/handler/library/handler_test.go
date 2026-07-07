@@ -87,6 +87,7 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	authed.POST("/library/imports/skip", h.Skip)
 	authed.POST("/series/:id/providers", h.AddProvider)
 	authed.POST("/series/:id/providers/batch", h.AddProviders)
+	authed.POST("/series/:id/providers/dedup", h.DedupProviders)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -168,6 +169,7 @@ func TestLibraryRoutes_RequireOwner(t *testing.T) {
 		{"POST", "/api/library/imports/skip"},
 		{"POST", "/api/series/" + uuid.New().String() + "/providers"},
 		{"POST", "/api/series/" + uuid.New().String() + "/providers/batch"},
+		{"POST", "/api/series/" + uuid.New().String() + "/providers/dedup"},
 	} {
 		rec := env.doUnauth(r.method, r.path, "")
 		if rec.Code != http.StatusUnauthorized {

@@ -333,6 +333,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/providers/dedup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge already-drifted disk/live source pairs on a series
+         * @description Cleans up source-identity drift that already happened: a series carrying
+         *     BOTH an unlinked disk-origin provider AND a real linked provider that are
+         *     actually the same physical source (same display name + scanlator). Each
+         *     such pair is folded into one row WITHOUT re-downloading — the disk
+         *     chapters are relabeled onto the linked source and the drained disk row is
+         *     deleted. A pair whose linked twin has no fetched chapters yet is skipped
+         *     (merging would orphan the disk chapters). Idempotent: with no drifted
+         *     pairs it changes nothing. Returns the merged/skipped counts plus the
+         *     refreshed series detail (§16 round-trip).
+         */
+        post: operations["dedupSeriesProviders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}": {
         parameters: {
             query?: never;
@@ -2197,6 +2225,18 @@ export interface components {
              */
             scanlator?: string;
         };
+        /**
+         * @description Result of an owner-triggered provider dedup: how many drifted
+         *     disk/live source pairs were merged, how many were skipped, and the
+         *     refreshed series detail after the cleanup.
+         */
+        ProviderDedupResult: {
+            /** @description Number of drifted disk/live source pairs folded into one row. */
+            merged: number;
+            /** @description Number of matching pairs left untouched because the linked twin has no fetched chapters yet (merging would orphan the disk chapters). */
+            skipped: number;
+            series: components["schemas"]["SeriesDetail"];
+        };
     };
     responses: never;
     parameters: never;
@@ -2975,6 +3015,56 @@ export interface operations {
                 };
             };
             /** @description No series with the given id, or no such Suwayomi source/manga. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    dedupSeriesProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dedup complete. Returns counts and the refreshed series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderDedupResult"];
+                };
+            };
+            /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
             404: {
                 headers: {
                     [name: string]: unknown;
