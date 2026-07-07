@@ -79,18 +79,18 @@ func (s *Service) dedupDriftedPairs(ctx context.Context, row *ent.Series) (merge
 			return merged, skipped, fmt.Errorf("library.DedupProviders: load providers: %w", qErr)
 		}
 
-		diskSP, liveSP := findDriftedPair(providers, skippedDisk)
+		diskSP, liveSP, feedPresent, fErr := s.findDriftedPair(ctx, providers, skippedDisk)
+		if fErr != nil {
+			return merged, skipped, fErr
+		}
 		if diskSP == nil {
 			return merged, skipped, nil
 		}
-
-		hasFeed, fErr := s.db.ProviderChapter.Query().
-			Where(entproviderchapter.SeriesProviderID(liveSP.ID)).
-			Exist(ctx)
-		if fErr != nil {
-			return merged, skipped, fmt.Errorf("library.DedupProviders: check feed: %w", fErr)
-		}
-		if !hasFeed {
+		if !feedPresent {
+			// Every matching linked twin has an empty feed — merging would
+			// relabel nothing then delete the disk row, orphaning its chapters.
+			// Skip this disk row (remembered so the loop never retries it) and
+			// let the owner refresh the source before re-running dedup.
 			skippedDisk[diskSP.ID] = true
 			skipped++
 			continue
@@ -103,25 +103,69 @@ func (s *Service) dedupDriftedPairs(ctx context.Context, row *ent.Series) (merge
 	}
 }
 
-// findDriftedPair returns the first (unlinked disk provider, linked twin) pair
-// in providers that are the same physical source — the disk row's identity name
-// matches the linked row's display name (providerNameMatches) under the same
-// scanlator — skipping any disk row in skip. Returns (nil, nil) when none drift.
-func findDriftedPair(providers []*ent.SeriesProvider, skip map[uuid.UUID]bool) (disk, live *ent.SeriesProvider) {
+// findDriftedPair returns the first actionable (unlinked disk provider, linked
+// twin) pair — the disk row's identity name matches the twin's display name
+// (providerNameMatches) under the same scanlator — skipping any disk row in
+// skip. feedPresent reports whether the chosen twin has a non-empty chapter feed
+// (a mergeable pair); among a disk row's matching twins it PREFERS a feed-bearing
+// one, only reporting feedPresent=false when ALL of them are empty (so the caller
+// skips rather than merging into an unfetched source). Returns a nil disk when no
+// unlinked row has any matching twin.
+func (s *Service) findDriftedPair(ctx context.Context, providers []*ent.SeriesProvider, skip map[uuid.UUID]bool) (disk, live *ent.SeriesProvider, feedPresent bool, err error) {
 	for _, d := range providers {
 		if d.SuwayomiID != 0 || skip[d.ID] {
 			continue
 		}
-		for _, l := range providers {
-			if l.SuwayomiID == 0 || l.Scanlator != d.Scanlator {
-				continue
-			}
-			if providerNameMatches(d.Provider, l.ProviderName) {
-				return d, l
-			}
+		twin, feed, pErr := s.pickTwin(ctx, d, providers)
+		if pErr != nil {
+			return nil, nil, false, pErr
+		}
+		if twin != nil {
+			return d, twin, feed, nil
 		}
 	}
-	return nil, nil
+	return nil, nil, false, nil
+}
+
+// pickTwin finds the linked twin to fold the disk row into: among the linked
+// providers matching the disk row's name + scanlator it returns the FIRST one
+// with a non-empty feed (feedPresent=true); if none has a feed but at least one
+// matches, it returns that empty-feed twin with feedPresent=false (the caller
+// skips it); (nil, false, nil) when no twin matches at all.
+func (s *Service) pickTwin(ctx context.Context, disk *ent.SeriesProvider, providers []*ent.SeriesProvider) (*ent.SeriesProvider, bool, error) {
+	var emptyTwin *ent.SeriesProvider
+	for _, l := range providers {
+		if l.SuwayomiID == 0 || l.Scanlator != disk.Scanlator {
+			continue
+		}
+		if !providerNameMatches(disk.Provider, l.ProviderName) {
+			continue
+		}
+		hasFeed, err := s.providerHasFeed(ctx, l.ID)
+		if err != nil {
+			return nil, false, err
+		}
+		if hasFeed {
+			return l, true, nil
+		}
+		if emptyTwin == nil {
+			emptyTwin = l
+		}
+	}
+	if emptyTwin != nil {
+		return emptyTwin, false, nil
+	}
+	return nil, false, nil
+}
+
+// providerHasFeed reports whether a provider has at least one ProviderChapter
+// row (a non-empty availability feed). Shared by merge-at-attach (provider.go)
+// and DedupProviders so both gate a merge on the live source actually having
+// chapters — merging into an empty feed would orphan the disk chapters (§2 DRY).
+func (s *Service) providerHasFeed(ctx context.Context, providerID uuid.UUID) (bool, error) {
+	return s.db.ProviderChapter.Query().
+		Where(entproviderchapter.SeriesProviderID(providerID)).
+		Exist(ctx)
 }
 
 // providerNameMatches reports whether a disk-origin provider's identity name

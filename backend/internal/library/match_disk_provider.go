@@ -141,18 +141,58 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 // elevating it any earlier would re-arm a re-download during the relabel window.
 // A non-nil error means NO net change (a commit failure rolls every relabel
 // back). Returns how many chapters were relabeled + re-pointed.
+//
+// IMPORTANCE PARKING (centralised here so EVERY caller is race-safe): the
+// background upgrade ticker runs DetectUpgrades unsynchronised with this merge.
+// If liveSP already outranks the disk chapters' satisfied_importance when the
+// relabel window opens, DetectUpgrades (strict `>`) could flag them mid-relabel
+// and re-download onto a filename this merge is renaming (CBZ collision). So at
+// entry we DB-park liveSP at importance 0 (<= any watermark) BEFORE relabelling,
+// let commitMatch elevate it to targetImportance atomically with the re-point on
+// success, and RESTORE its original importance on any failure. For the
+// MatchDiskProvider / merge-at-attach callers liveSP is already at 0 (parked by
+// attachRealSource / freshly ingested), so originalImp == 0 makes both the park
+// and the restore no-ops — behaviour there is unchanged. Only DedupProviders,
+// whose live twin carries a real importance, actually parks + restores.
 func (s *Service) mergeDiskIntoLive(ctx context.Context, row *ent.Series, diskSP, liveSP *ent.SeriesProvider, targetImportance int) (int, error) {
+	originalImp := liveSP.Importance
+	if originalImp != 0 {
+		if err := s.db.SeriesProvider.UpdateOneID(liveSP.ID).SetImportance(0).Exec(ctx); err != nil {
+			return 0, fmt.Errorf("library.mergeDiskIntoLive: park live provider importance: %w", err)
+		}
+	}
+
 	done, err := s.relabelOverlap(ctx, row, diskSP, liveSP)
 	if err != nil {
+		s.restoreImportance(ctx, liveSP.ID, originalImp)
 		return 0, err
 	}
 
 	if err := s.commitMatch(ctx, row.ID, diskSP.ID, liveSP.ID, targetImportance, done); err != nil {
 		s.rollbackRelabels(done)
+		s.restoreImportance(ctx, liveSP.ID, originalImp)
 		return 0, err
 	}
 
 	return len(done), nil
+}
+
+// restoreImportance puts a parked live provider back to its original importance
+// after a failed merge. It is a no-op when originalImp is 0 (the provider was
+// never parked — see mergeDiskIntoLive). Best-effort: a restore-write failure is
+// logged, not returned, so it never masks the primary merge error; leaving the
+// provider at 0 is safe (0 <= any watermark, so DetectUpgrades never fires).
+func (s *Service) restoreImportance(ctx context.Context, providerID uuid.UUID, originalImp int) {
+	if originalImp == 0 {
+		return
+	}
+	if err := s.db.SeriesProvider.UpdateOneID(providerID).SetImportance(originalImp).Exec(ctx); err != nil {
+		slog.Error("library.mergeDiskIntoLive: failed to restore parked live-provider importance after a failed merge — left at 0 (safe, no re-download)",
+			"provider_id", providerID,
+			"original_importance", originalImp,
+			"err", err,
+		)
+	}
 }
 
 // attachRealSource ingests the chosen Suwayomi source (idempotent — a repeat

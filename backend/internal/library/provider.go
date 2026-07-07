@@ -93,10 +93,18 @@ func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source st
 
 // linkAttachedProvider finishes an AddProvider attach for the just-ingested live
 // row sp: if an existing UNLINKED disk-origin provider is really the same
-// physical source (matchingUnlinkedDiskProvider on sp.ProviderName + scanlator),
-// it folds that disk group into sp (merge-at-attach — no re-download, disk row
-// deleted); otherwise it just sets the requested importance on sp so the upgrade
-// engine converges normally. Either way sp ends up carrying `importance`.
+// physical source (matchingUnlinkedDiskProvider on sp.ProviderName + scanlator)
+// AND sp actually ingested a non-empty chapter feed, it folds that disk group
+// into sp (merge-at-attach — no re-download, disk row deleted); otherwise it
+// just sets the requested importance on sp so the upgrade engine converges
+// normally. Either way sp ends up carrying `importance`.
+//
+// The non-empty-feed condition MIRRORS DedupProviders' guard: merging into a
+// live source that returned no chapters for the matched scanlator would relabel
+// nothing and then delete the disk row — orphaning the downloaded chapters'
+// provenance. In that case the ordinary new-row path runs, so the disk row and
+// the (empty) live row coexist with no data loss; a later refresh + dedup can
+// fold them once the source actually has chapters.
 func (s *Service) linkAttachedProvider(ctx context.Context, ser *ent.Series, sp *ent.SeriesProvider, importance int, scanlator string) error {
 	providers, err := s.db.SeriesProvider.Query().
 		Where(seriesprovider.SeriesID(ser.ID)).
@@ -105,8 +113,14 @@ func (s *Service) linkAttachedProvider(ctx context.Context, ser *ent.Series, sp 
 		return err
 	}
 	if diskSP := matchingUnlinkedDiskProvider(providers, sp.ProviderName, scanlator); diskSP != nil {
-		_, err = s.mergeDiskIntoLive(ctx, ser, diskSP, sp, importance)
-		return err
+		hasFeed, err := s.providerHasFeed(ctx, sp.ID)
+		if err != nil {
+			return err
+		}
+		if hasFeed {
+			_, err = s.mergeDiskIntoLive(ctx, ser, diskSP, sp, importance)
+			return err
+		}
 	}
 	_, err = sp.Update().SetImportance(importance).Save(ctx)
 	return err
