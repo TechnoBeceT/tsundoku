@@ -239,6 +239,7 @@ func registerRoutes(
 	authed.POST("/series/:id/providers", libraryH.AddProvider)
 	authed.POST("/series/:id/providers/batch", libraryH.AddProviders)
 	authed.POST("/series/:id/providers/:providerId/match", libraryH.MatchDiskProvider)
+	authed.POST("/series/:id/providers/dedup", libraryH.DedupProviders)
 
 	// SPA static serving + unknown-route handling (registered last).
 	registerStaticSPA(e)

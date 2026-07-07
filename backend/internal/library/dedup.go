@@ -11,7 +11,16 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/series"
 )
+
+// SeriesDetail returns the refreshed series-detail DTO for id. The dedup handler
+// renders this after DedupProviders (which returns only the merged/skipped
+// counts) so the response still carries the up-to-date series shape (§16
+// round-trip). It is a thin delegate to the underlying series read service.
+func (s *Service) SeriesDetail(ctx context.Context, id uuid.UUID) (series.SeriesDetailDTO, error) {
+	return s.series.GetSeries(ctx, id)
+}
 
 // DedupProviders is the owner-triggered cleanup for source-identity drift that
 // ALREADY happened (before merge-at-attach existed): a series carrying both an
@@ -30,9 +39,6 @@ import (
 // and changes nothing. trigger() fires only when at least one merge happened.
 // ErrSeriesNotFound is returned for an unknown series id.
 func (s *Service) DedupProviders(ctx context.Context, seriesID uuid.UUID) (merged, skipped int, err error) {
-	// WithCategory so mergeDiskIntoLive → relabelOverlap can resolve the on-disk
-	// series folder. The category never changes across merges, so this single
-	// load is reused for every pass.
 	// WithCategory so mergeDiskIntoLive → relabelOverlap can resolve the on-disk
 	// series folder. The category never changes across merges, so this single
 	// load is reused for every pass inside dedupDriftedPairs.

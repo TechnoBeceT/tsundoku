@@ -1494,6 +1494,28 @@ components:
             for "all chapters from this source". The same source may be attached again
             under a different scanlator.
 
+    ProviderDedupResult:
+      type: object
+      description: |
+        Result of an owner-triggered provider dedup: how many drifted
+        disk/live source pairs were merged, how many were skipped, and the
+        refreshed series detail after the cleanup.
+      required:
+        - merged
+        - skipped
+        - series
+      properties:
+        merged:
+          type: integer
+          description: Number of drifted disk/live source pairs folded into one row.
+        skipped:
+          type: integer
+          description: >-
+            Number of matching pairs left untouched because the linked twin has
+            no fetched chapters yet (merging would orphan the disk chapters).
+        series:
+          $ref: "#/components/schemas/SeriesDetail"
+
 paths:
   /health:
     get:
@@ -2242,6 +2264,58 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No series with the given id, or no such Suwayomi source/manga.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/providers/dedup:
+    post:
+      operationId: dedupSeriesProviders
+      summary: Merge already-drifted disk/live source pairs on a series
+      description: |
+        Cleans up source-identity drift that already happened: a series carrying
+        BOTH an unlinked disk-origin provider AND a real linked provider that are
+        actually the same physical source (same display name + scanlator). Each
+        such pair is folded into one row WITHOUT re-downloading — the disk
+        chapters are relabeled onto the linked source and the drained disk row is
+        deleted. A pair whose linked twin has no fetched chapters yet is skipped
+        (merging would orphan the disk chapters). Idempotent: with no drifted
+        pairs it changes nothing. Returns the merged/skipped counts plus the
+        refreshed series detail (§16 round-trip).
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Dedup complete. Returns counts and the refreshed series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderDedupResult"
+        "400":
+          description: Malformed series id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
           content:
             application/json:
               schema:
