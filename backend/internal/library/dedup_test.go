@@ -2,6 +2,7 @@ package library_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -216,5 +217,127 @@ func assertProviderCount(t *testing.T, client *ent.Client, ctx context.Context, 
 	got := client.SeriesProvider.Query().Where(seriesprovider.SeriesID(seriesID)).CountX(ctx)
 	if got != want {
 		t.Fatalf("SeriesProvider rows = %d, want %d", got, want)
+	}
+}
+
+// setupDriftedSeries writes+imports a disk series ("mangadex"/"Alpha", 2 CBZs),
+// then manually attaches a LINKED twin — a real source whose provider_name
+// ("mangadex") + scanlator ("Alpha") match the disk row, i.e. the exact
+// source-identity drift DedupProviders exists to clean up. withFeed controls
+// whether the linked twin carries a ProviderChapter feed for keys "1"/"2"
+// (needed for a merge; an empty feed must be SKIPPED). Returns the series and
+// the linked twin.
+func setupDriftedSeries(t *testing.T, client *ent.Client, storage string, importance int, withFeed bool) (*ent.Series, *ent.SeriesProvider) {
+	t.Helper()
+	ctx := context.Background()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+	facts, err := diskScanFirst(t, storage)
+	if err != nil {
+		t.Fatalf("diskScanFirst: %v", err)
+	}
+	importOneFromFacts(t, client, facts)
+	ser := client.Series.Query().OnlyX(ctx)
+
+	live := client.SeriesProvider.Create().
+		SetSeriesID(ser.ID).
+		SetProvider("weeb").
+		SetProviderName("mangadex").
+		SetScanlator("Alpha").
+		SetSuwayomiID(99).
+		SetImportance(importance).
+		SaveX(ctx)
+	if withFeed {
+		one, two := 1.0, 2.0
+		client.ProviderChapter.Create().SetSeriesProviderID(live.ID).SetChapterKey("1").SetNumber(one).SaveX(ctx)
+		client.ProviderChapter.Create().SetSeriesProviderID(live.ID).SetChapterKey("2").SetNumber(two).SaveX(ctx)
+	}
+	return ser, live
+}
+
+// TestDedupProviders_MergesDriftedPair is the core cleanup proof: a series
+// carrying a disk-origin provider AND its already-drifted linked twin (same
+// name+scanlator, feed present) collapses to ONE provider — merged=1, skipped=0,
+// both chapters re-pointed onto the linked source, the disk row gone, no
+// upgrades flagged.
+func TestDedupProviders_MergesDriftedPair(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	ser, live := setupDriftedSeries(t, client, storage, 5, true)
+	svc := library.NewService(client, nil, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+
+	merged, skipped, err := svc.DedupProviders(ctx, ser.ID)
+	if err != nil {
+		t.Fatalf("DedupProviders: %v", err)
+	}
+	if merged != 1 || skipped != 0 {
+		t.Fatalf("DedupProviders = (merged=%d, skipped=%d), want (1, 0)", merged, skipped)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 1)
+	for _, key := range []string{"1", "2"} {
+		assertChapterSatisfaction(t, client, ctx, ser.ID, key, &live.ID, 5)
+	}
+	assertNoUpgradesFlagged(t, ctx, client)
+}
+
+// TestDedupProviders_SkipsEmptyFeedTwin proves the safety guard: when the
+// drifted linked twin has NO ProviderChapter feed, the pair is SKIPPED (merging
+// would relabel nothing then orphan the disk chapters) — merged=0, skipped=1,
+// and BOTH providers remain untouched.
+func TestDedupProviders_SkipsEmptyFeedTwin(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	ser, _ := setupDriftedSeries(t, client, storage, 5, false)
+	svc := library.NewService(client, nil, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+
+	merged, skipped, err := svc.DedupProviders(ctx, ser.ID)
+	if err != nil {
+		t.Fatalf("DedupProviders: %v", err)
+	}
+	if merged != 0 || skipped != 1 {
+		t.Fatalf("DedupProviders = (merged=%d, skipped=%d), want (0, 1)", merged, skipped)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 2)
+}
+
+// TestDedupProviders_NoPairsIsNoOp proves idempotence: a series with only a
+// disk provider (no drifted twin) returns (0, 0) and changes nothing.
+func TestDedupProviders_NoPairsIsNoOp(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+	facts, err := diskScanFirst(t, storage)
+	if err != nil {
+		t.Fatalf("diskScanFirst: %v", err)
+	}
+	importOneFromFacts(t, client, facts)
+	ser := client.Series.Query().OnlyX(ctx)
+	svc := library.NewService(client, nil, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+
+	merged, skipped, err := svc.DedupProviders(ctx, ser.ID)
+	if err != nil {
+		t.Fatalf("DedupProviders: %v", err)
+	}
+	if merged != 0 || skipped != 0 {
+		t.Fatalf("DedupProviders = (merged=%d, skipped=%d), want (0, 0)", merged, skipped)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 1)
+}
+
+// TestDedupProviders_UnknownSeries proves the guard: an unknown series id yields
+// ErrSeriesNotFound.
+func TestDedupProviders_UnknownSeries(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	svc := library.NewService(client, nil, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+	if _, _, err := svc.DedupProviders(ctx, uuid.New()); !errors.Is(err, library.ErrSeriesNotFound) {
+		t.Fatalf("want ErrSeriesNotFound, got %v", err)
 	}
 }
