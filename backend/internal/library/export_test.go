@@ -27,3 +27,10 @@ func SetScanBlock(ch chan struct{}) func() {
 	scanBlock = ch
 	return func() { scanBlock = prev }
 }
+
+// ProviderNameMatches exposes the unexported provider-name equality rule
+// (case-insensitive, trimmed, blank-never-matches) to the black-box test
+// package so it can be table-tested in isolation.
+func ProviderNameMatches(diskProviderName, liveDisplayName string) bool {
+	return providerNameMatches(diskProviderName, liveDisplayName)
+}
