@@ -174,6 +174,127 @@ func TestDetectSupersededParts_DisabledRevertsAll(t *testing.T) {
 	runRevertScenario(t, "supersede-disabled", "Supersede Disabled", entchapter.StateDownloaded, false)
 }
 
+// TestDetectSupersededParts_CountsButDoesNotSupersedeFailedPart proves the
+// subtlest rule: the >=2-parts-under-N count includes parts in ANY state, but
+// only wanted/downloaded parts are actually transitioned to superseded. A
+// failed (or downloading) part under a downloaded whole is counted toward the
+// threshold yet is left untouched.
+func TestDetectSupersededParts_CountsButDoesNotSupersedeFailedPart(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+
+	s := seedSupersessionSeries(ctx, t, client, "supersede-count-not-touch", "Supersede Count Not Touch")
+
+	whole1 := createChapter(ctx, t, client, s, "ch-1", 1, entchapter.StateDownloaded, "")
+	part11Failed := createChapter(ctx, t, client, s, "ch-1.1", 1.1, entchapter.StateFailed, "")
+	part12Wanted := createChapter(ctx, t, client, s, "ch-1.2", 1.2, entchapter.StateWanted, "")
+
+	whole2 := createChapter(ctx, t, client, s, "ch-2", 2, entchapter.StateDownloaded, "")
+	part21Downloading := createChapter(ctx, t, client, s, "ch-2.1", 2.1, entchapter.StateDownloading, "")
+	part22Wanted := createChapter(ctx, t, client, s, "ch-2.2", 2.2, entchapter.StateWanted, "")
+
+	d := newSupersessionDispatcher(client, storageDir, true)
+	superseded, reverted, err := d.DetectSupersededParts(ctx)
+	if err != nil {
+		t.Fatalf("DetectSupersededParts: %v", err)
+	}
+	if superseded != 2 {
+		t.Errorf("superseded = %d, want 2", superseded)
+	}
+	if reverted != 0 {
+		t.Errorf("reverted = %d, want 0", reverted)
+	}
+
+	assertChapterState(ctx, t, client, part11Failed.ID, entchapter.StateFailed, "part 1.1 (failed, counted but not superseded)")
+	assertChapterState(ctx, t, client, part12Wanted.ID, entchapter.StateSuperseded, "part 1.2")
+	assertChapterState(ctx, t, client, whole1.ID, entchapter.StateDownloaded, "whole 1 (untouched)")
+
+	assertChapterState(ctx, t, client, part21Downloading.ID, entchapter.StateDownloading, "part 2.1 (downloading, counted but not superseded)")
+	assertChapterState(ctx, t, client, part22Wanted.ID, entchapter.StateSuperseded, "part 2.2")
+	assertChapterState(ctx, t, client, whole2.ID, entchapter.StateDownloaded, "whole 2 (untouched)")
+}
+
+// TestDetectSupersededParts_MultiSeriesIsolation proves the detector processes
+// each series independently in one pass: supersession in series A never
+// affects series B and both are handled by a single DetectSupersededParts call.
+func TestDetectSupersededParts_MultiSeriesIsolation(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+
+	seriesA := seedSupersessionSeries(ctx, t, client, "supersede-multi-a", "Supersede Multi A")
+	wholeA := createChapter(ctx, t, client, seriesA, "a-1", 1, entchapter.StateDownloaded, "")
+	partA1 := createChapter(ctx, t, client, seriesA, "a-1.1", 1.1, entchapter.StateWanted, "")
+	partA2 := createChapter(ctx, t, client, seriesA, "a-1.2", 1.2, entchapter.StateWanted, "")
+
+	seriesB := seedSupersessionSeries(ctx, t, client, "supersede-multi-b", "Supersede Multi B")
+	wholeB := createChapter(ctx, t, client, seriesB, "b-5", 5, entchapter.StateDownloaded, "")
+	partB1 := createChapter(ctx, t, client, seriesB, "b-5.1", 5.1, entchapter.StateWanted, "")
+	partB2 := createChapter(ctx, t, client, seriesB, "b-5.2", 5.2, entchapter.StateWanted, "")
+
+	d := newSupersessionDispatcher(client, storageDir, true)
+	superseded, reverted, err := d.DetectSupersededParts(ctx)
+	if err != nil {
+		t.Fatalf("DetectSupersededParts: %v", err)
+	}
+	if superseded != 4 {
+		t.Errorf("superseded = %d, want 4", superseded)
+	}
+	if reverted != 0 {
+		t.Errorf("reverted = %d, want 0", reverted)
+	}
+
+	assertChapterState(ctx, t, client, partA1.ID, entchapter.StateSuperseded, "series A part 1.1")
+	assertChapterState(ctx, t, client, partA2.ID, entchapter.StateSuperseded, "series A part 1.2")
+	assertChapterState(ctx, t, client, wholeA.ID, entchapter.StateDownloaded, "series A whole 1 (untouched)")
+
+	assertChapterState(ctx, t, client, partB1.ID, entchapter.StateSuperseded, "series B part 5.1")
+	assertChapterState(ctx, t, client, partB2.ID, entchapter.StateSuperseded, "series B part 5.2")
+	assertChapterState(ctx, t, client, wholeB.ID, entchapter.StateDownloaded, "series B whole 5 (untouched)")
+}
+
+// TestDetectSupersededParts_MissingFileTolerated proves that superseding a
+// downloaded part whose CBZ is already gone from disk (RemoveChapterFile
+// no-ops with removed=false, err=nil) still transitions the part to superseded
+// and clears its filename — no error surfaces.
+func TestDetectSupersededParts_MissingFileTolerated(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+
+	s := seedSupersessionSeries(ctx, t, client, "supersede-missing-file", "Supersede Missing File")
+
+	createChapter(ctx, t, client, s, "ch-1", 1, entchapter.StateDownloaded, "")
+	// Both parts carry a filename but the CBZ is never written to disk.
+	part11 := createChapter(ctx, t, client, s, "ch-1.1", 1.1, entchapter.StateDownloaded, "[src] Supersede Missing File 001.1.cbz")
+	part12 := createChapter(ctx, t, client, s, "ch-1.2", 1.2, entchapter.StateDownloaded, "[src] Supersede Missing File 001.2.cbz")
+
+	d := newSupersessionDispatcher(client, storageDir, true)
+	superseded, reverted, err := d.DetectSupersededParts(ctx)
+	if err != nil {
+		t.Fatalf("DetectSupersededParts: %v", err)
+	}
+	if superseded != 2 {
+		t.Errorf("superseded = %d, want 2", superseded)
+	}
+	if reverted != 0 {
+		t.Errorf("reverted = %d, want 0", reverted)
+	}
+
+	assertChapterState(ctx, t, client, part11.ID, entchapter.StateSuperseded, "part 1.1")
+	assertChapterState(ctx, t, client, part12.ID, entchapter.StateSuperseded, "part 1.2")
+
+	got11 := client.Chapter.GetX(ctx, part11.ID)
+	if got11.Filename != "" {
+		t.Errorf("part 1.1 filename = %q, want cleared", got11.Filename)
+	}
+	got12 := client.Chapter.GetX(ctx, part12.ID)
+	if got12.Filename != "" {
+		t.Errorf("part 1.2 filename = %q, want cleared", got12.Filename)
+	}
+}
+
 // TestDetectSupersededParts_Idempotent proves a second run of the supersession
 // scenario finds nothing new to supersede.
 func TestDetectSupersededParts_Idempotent(t *testing.T) {
