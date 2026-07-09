@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MatchDiskProviderDialog from './MatchDiskProviderDialog.vue'
 import { searchResults, scanlatorBreakdown } from '../../fixtures/import'
+import type { ScanlatorCoverage } from '../screens/import.types'
 
 const DialogStub = { template: '<div class="dialog-stub"><slot /><slot name="actions" /></div>' }
 
@@ -130,6 +131,31 @@ describe('MatchDiskProviderDialog', () => {
       mangaId: firstCandidate.mangaId,
       scanlator: scanlatorBreakdown[0]!.scanlator,
       importance: 3,
+    }]])
+  })
+
+  it('collapses the untagged (source-name) group to an empty scanlator on confirm', async () => {
+    // The breakdown labels a source's untagged chapters under the SOURCE NAME;
+    // picking that group must send scanlator "" (all chapters), never the source
+    // name — else ingest's filterByScanlator matches zero chapters.
+    const untaggedBreakdown: ScanlatorCoverage[] = [
+      { scanlator: firstCandidate.sourceName, count: 100, ranges: '1-100' },
+      { scanlator: 'Reset Scans', count: 20, ranges: '101-120' },
+    ]
+    const wrapper = mountDialog({ breakdown: untaggedBreakdown })
+    await pickGroupAndCandidate(wrapper)
+
+    // The untagged scan-row's label equals the candidate's sourceName, so target
+    // the scan-row by its class to avoid the candidate row's identical aria-label.
+    const untaggedRow = wrapper.findAll('.scan-row').find(r => r.text().includes(firstCandidate.sourceName))!
+    await untaggedRow.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Link chapters')!.trigger('click')
+
+    expect(wrapper.emitted('confirm')).toEqual([[{
+      source: firstCandidate.source,
+      mangaId: firstCandidate.mangaId,
+      scanlator: '',
+      importance: 1,
     }]])
   })
 

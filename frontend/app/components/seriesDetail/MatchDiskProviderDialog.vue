@@ -9,6 +9,7 @@ import SearchGroupCard from '../import/SearchGroupCard.vue'
 import CandidateConfigRow from '../import/CandidateConfigRow.vue'
 import { candKey } from '../screens/import.types'
 import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens/import.types'
+import { collapseUntaggedScanlator } from '~/utils/scanlator'
 
 /**
  * MatchDiskProviderDialog — the Series-Detail "Match to source" dialog: links
@@ -234,7 +235,10 @@ function confirm(): void {
   emit('confirm', {
     source: candidate.source,
     mangaId: candidate.mangaId,
-    scanlator: selectedScanlator.value,
+    // Collapse the untagged bucket (the breakdown labels it with the source
+    // name) to "" so it links ALL chapters, not a zero-match phantom provider —
+    // the same shared collapse the Adopt wizard applies (see useSourceConfigure).
+    scanlator: collapseUntaggedScanlator(selectedScanlator.value, candidate.sourceName),
     importance: importance.value,
   })
 }
