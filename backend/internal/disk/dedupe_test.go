@@ -101,6 +101,65 @@ func TestRemoveOtherChapterFiles_MissingDir(t *testing.T) {
 	}
 }
 
+// TestRemoveOtherChapterFiles_IgnoresJunkTokenFilenames is the false-delete
+// guard for imported libraries: files whose final token is NOT a clean number —
+// "10th", "5-extra", "1e3" — must NEVER be treated as a chapter-number duplicate
+// (the loose fmt.Sscanf parser would partial-parse them to 10/5/1000). A sweep of
+// chapter 10 removes the genuine "[B] 010.cbz" duplicate and leaves every
+// junk-token file (and the winner) untouched.
+func TestRemoveOtherChapterFiles_IgnoresJunkTokenFilenames(t *testing.T) {
+	storage := t.TempDir()
+	const category, title = "Manga", "Imported Series"
+	seriesDir := disk.SeriesDir(storage, category, title)
+
+	writeStubCBZ(t, seriesDir, "[A] 010.cbz")        // winner (kept)
+	writeStubCBZ(t, seriesDir, "[B] 010.cbz")        // genuine duplicate of ch10 (removed)
+	writeStubCBZ(t, seriesDir, "Something 10th.cbz") // "10th" → 10 under loose parse; MUST survive
+	writeStubCBZ(t, seriesDir, "Weird 5-extra.cbz")  // "5-extra" → 5 under loose parse; MUST survive
+	writeStubCBZ(t, seriesDir, "X 1e3.cbz")          // "1e3" → 1000 under loose parse; MUST survive
+
+	removed, err := disk.RemoveOtherChapterFiles(storage, category, title, "10", "[A] 010.cbz")
+	if err != nil {
+		t.Fatalf("RemoveOtherChapterFiles: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("removed = %d, want 1 (only the genuine [B] 010.cbz duplicate)", removed)
+	}
+
+	got := remainingCBZs(t, seriesDir)
+	want := []string{"Something 10th.cbz", "Weird 5-extra.cbz", "X 1e3.cbz", "[A] 010.cbz"}
+	if len(got) != len(want) {
+		t.Fatalf("remaining = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("remaining = %v, want %v", got, want)
+			break
+		}
+	}
+}
+
+// TestRemoveOtherChapterFiles_JunkTargetDeletesNothing proves that a non-clean
+// target number (defensive) sweeps nothing rather than risk an ambiguous match.
+func TestRemoveOtherChapterFiles_JunkTargetDeletesNothing(t *testing.T) {
+	storage := t.TempDir()
+	const category, title = "Manga", "Junk Target"
+	seriesDir := disk.SeriesDir(storage, category, title)
+	writeStubCBZ(t, seriesDir, "[A] 010.cbz")
+	writeStubCBZ(t, seriesDir, "[B] 010.cbz")
+
+	removed, err := disk.RemoveOtherChapterFiles(storage, category, title, "10th", "[A] 010.cbz")
+	if err != nil {
+		t.Fatalf("RemoveOtherChapterFiles: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d, want 0 (junk target must match nothing)", removed)
+	}
+	if got := remainingCBZs(t, seriesDir); len(got) != 2 {
+		t.Errorf("remaining = %v, want both files intact", got)
+	}
+}
+
 // TestRemoveOtherChapterFiles_NumericEquivalence proves the match is by PARSED
 // number, not string: a "10" target matches a "010"-padded filename, and a
 // decimal "12.5" matches its padded form while a non-matching number is kept.
