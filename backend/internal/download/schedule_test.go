@@ -25,10 +25,11 @@ import (
 // changed between cycles, so a test can prove the dispatcher reads the cap at
 // use-time (hot reload) rather than capturing it at construction.
 type mutableSettings struct {
-	mu      sync.Mutex
-	conc    int
-	retries int
-	backoff time.Duration
+	mu       sync.Mutex
+	conc     int
+	retries  int
+	backoff  time.Duration
+	suppress bool
 }
 
 func (m *mutableSettings) MaxRetries(context.Context) int {
@@ -47,6 +48,12 @@ func (m *mutableSettings) DownloadConcurrency(context.Context) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.conc
+}
+
+func (m *mutableSettings) SuppressSplitParts(context.Context) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.suppress
 }
 
 func (m *mutableSettings) setConc(n int) {
