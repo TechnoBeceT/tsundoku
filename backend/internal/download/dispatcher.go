@@ -68,6 +68,10 @@ type RetrySettings interface {
 	// many of that source's queued chapters may be in the downloading state at
 	// once). Read once per cycle for the scheduler + fetch limiter; clamped to >= 1.
 	DownloadConcurrency(ctx context.Context) int
+	// SuppressSplitParts reports whether fractional-part suppression is enabled
+	// (DetectSupersededParts, superseded.go). Read at use-time so a settings change
+	// takes effect on the next sweep.
+	SuppressSplitParts(ctx context.Context) bool
 }
 
 // backoffCurve returns the delay for the given attempt: base×2^attempt, capped at

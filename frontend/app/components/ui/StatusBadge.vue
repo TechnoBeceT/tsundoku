@@ -11,7 +11,7 @@ import type { ChapterState } from './types'
  * one palette. The dot is the solid status colour; the pill is the soft tint
  * with the foreground text colour.
  *
- *   - `state` (required): one of the seven `ChapterState` values.
+ *   - `state` (required): one of the eight `ChapterState` values.
  */
 const props = defineProps<{
   /** The chapter state to render — drives both the label and the colour. */
@@ -28,6 +28,7 @@ const LABELS: Record<ChapterState, string> = {
   upgrading: 'Upgrading',
   failed: 'Failed',
   permanently_failed: 'Failed · final',
+  superseded: 'Superseded',
 }
 
 const label = computed(() => LABELS[props.state])

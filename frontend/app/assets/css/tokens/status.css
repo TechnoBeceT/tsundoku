@@ -66,4 +66,11 @@
   --state-permanently_failed-fg: #f87171;
   --state-permanently_failed-bg: rgba(239, 68, 68, 0.22);
   --state-permanently_failed-dot: #ef4444;
+
+  /* superseded — faint neutral: split-part chapter merged into its whole.
+   * Hidden from the Series-Detail chapter list, but the token triple stays
+   * defined so ChapterState/StatusBadge remain exhaustive and sound. */
+  --state-superseded-fg: #78758c;
+  --state-superseded-bg: rgba(120, 117, 140, 0.14);
+  --state-superseded-dot: #6b6880;
 }

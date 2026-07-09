@@ -62,3 +62,22 @@ func TestCanTransition(t *testing.T) {
 		})
 	}
 }
+
+func TestCanTransition_Superseded(t *testing.T) {
+	cases := []struct {
+		from, to entchapter.State
+		want     bool
+	}{
+		{entchapter.StateWanted, entchapter.StateSuperseded, true},
+		{entchapter.StateDownloaded, entchapter.StateSuperseded, true},
+		{entchapter.StateSuperseded, entchapter.StateWanted, true},
+		{entchapter.StateSuperseded, entchapter.StateDownloading, false},
+		{entchapter.StateSuperseded, entchapter.StateSuperseded, false},
+		{entchapter.StateFailed, entchapter.StateSuperseded, false}, // failed is NOT a supersede source edge
+	}
+	for _, c := range cases {
+		if got := chapter.CanTransition(c.from, c.to); got != c.want {
+			t.Errorf("CanTransition(%s→%s) = %v, want %v", c.from, c.to, got, c.want)
+		}
+	}
+}

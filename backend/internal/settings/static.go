@@ -26,6 +26,8 @@ type Static struct {
 	SourcesFailureThresh int
 	SourcesCooldownIv    time.Duration
 	SourcesMinDelay      time.Duration
+	// SuppressParts backs the SuppressSplitParts accessor.
+	SuppressParts bool
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -66,3 +68,6 @@ func (s Static) SourcesCooldown(context.Context) time.Duration { return s.Source
 
 // SourcesMinRequestDelay returns the fixed per-source politeness delay; 0 disables it.
 func (s Static) SourcesMinRequestDelay(context.Context) time.Duration { return s.SourcesMinDelay }
+
+// SuppressSplitParts returns the fixed fractional-part-suppression flag.
+func (s Static) SuppressSplitParts(context.Context) bool { return s.SuppressParts }

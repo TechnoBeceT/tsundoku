@@ -477,7 +477,7 @@ components:
           description: Chapter display title from the best provider's feed (empty when no provider titles it).
         state:
           type: string
-          enum: [wanted, downloading, downloaded, upgrade_available, upgrading, failed, permanently_failed]
+          enum: [wanted, downloading, downloaded, upgrade_available, upgrading, failed, permanently_failed, superseded]
           description: Chapter download state.
         provider:
           type: string
@@ -824,8 +824,8 @@ components:
           example: 15m0s
         type:
           type: string
-          description: Value representation — "duration" (Go duration string) or "int".
-          enum: [duration, int]
+          description: Value representation — "duration" (Go duration string), "int", or "bool".
+          enum: [duration, int, bool]
         unit:
           type: string
           description: Semantic unit hint for the UI (e.g. "duration", "count", "days").

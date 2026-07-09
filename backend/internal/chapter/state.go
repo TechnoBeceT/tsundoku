@@ -51,6 +51,7 @@ var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	entchapter.StateWanted: {
 		entchapter.StateDownloading:       {},
 		entchapter.StatePermanentlyFailed: {}, // all sources already exhausted on entry
+		entchapter.StateSuperseded:        {}, // whole N downloaded + >=2 parts (fractional-part suppression)
 	},
 	entchapter.StateDownloading: {
 		entchapter.StateDownloaded:        {},
@@ -59,6 +60,7 @@ var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	},
 	entchapter.StateDownloaded: {
 		entchapter.StateUpgradeAvailable: {},
+		entchapter.StateSuperseded:       {}, // an already-downloaded part superseded by its whole
 	},
 	entchapter.StateUpgradeAvailable: {
 		entchapter.StateUpgrading: {},
@@ -73,6 +75,9 @@ var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	},
 	entchapter.StatePermanentlyFailed: {
 		entchapter.StateWanted: {}, // owner reset — the single terminal escape
+	},
+	entchapter.StateSuperseded: {
+		entchapter.StateWanted: {}, // reversal: whole N gone, or setting disabled — the single escape
 	},
 }
 

@@ -29,7 +29,7 @@ var (
 		{Name: "id", Type: field.TypeUUID, Unique: true},
 		{Name: "chapter_key", Type: field.TypeString},
 		{Name: "number", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "numeric"}},
-		{Name: "state", Type: field.TypeEnum, Enums: []string{"wanted", "downloading", "downloaded", "upgrade_available", "upgrading", "failed", "permanently_failed"}, Default: "wanted"},
+		{Name: "state", Type: field.TypeEnum, Enums: []string{"wanted", "downloading", "downloaded", "upgrade_available", "upgrading", "failed", "permanently_failed", "superseded"}, Default: "wanted"},
 		{Name: "satisfied_importance", Type: field.TypeInt, Nullable: true},
 		{Name: "page_count", Type: field.TypeInt, Nullable: true},
 		{Name: "filename", Type: field.TypeString, Default: ""},

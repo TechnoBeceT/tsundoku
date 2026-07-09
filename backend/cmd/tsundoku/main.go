@@ -207,6 +207,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		SourcesFailureThreshold: cfg.Sources.FailureThreshold,
 		SourcesCooldown:         cfg.Sources.Cooldown,
 		SourcesMinRequestDelay:  cfg.Sources.MinRequestDelay,
+		SuppressSplitParts:      cfg.Jobs.SuppressSplitParts,
 	}
 }
 

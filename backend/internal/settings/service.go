@@ -102,6 +102,12 @@ func (s *Service) SourcesMinRequestDelay(ctx context.Context) time.Duration {
 	return s.resolveDuration(ctx, KeySourcesMinRequestDelay)
 }
 
+// SuppressSplitParts reports whether fractional-part suppression is enabled
+// (DB override else default). Read at use-time (hot reload).
+func (s *Service) SuppressSplitParts(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeySuppressSplitParts)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {
@@ -237,4 +243,21 @@ func (s *Service) defaultDuration(key string) time.Duration {
 func (s *Service) defaultInt(key string) int {
 	n, _ := strconv.Atoi(tunables[key].def(s.defaults))
 	return n
+}
+
+// resolveBool parses a bool-typed key's resolved canonical value, with the same
+// defensive fallback as resolveDuration/resolveInt.
+func (s *Service) resolveBool(ctx context.Context, key string) bool {
+	b, err := strconv.ParseBool(s.resolve(ctx, key))
+	if err != nil {
+		return s.defaultBool(key)
+	}
+	return b
+}
+
+// defaultBool returns a key's injected default in its native type (used only on
+// the defensive parse-failure path of resolveBool).
+func (s *Service) defaultBool(key string) bool {
+	b, _ := strconv.ParseBool(tunables[key].def(s.defaults))
+	return b
 }

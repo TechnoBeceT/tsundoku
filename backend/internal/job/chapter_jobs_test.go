@@ -166,6 +166,48 @@ func TestRunner_DownloadCycle_UpgradePass(t *testing.T) {
 	}
 }
 
+// TestRunner_RunDownloadCycle_SupersedesSplitParts verifies RunDownloadCycle
+// wires in DetectSupersededParts (Step 4 of the cycle): a downloaded whole
+// chapter with >=2 wanted fractional parts under it must have both parts
+// transitioned to superseded by the end of a single cycle, with suppression
+// enabled via settings.Static.SuppressParts.
+func TestRunner_RunDownloadCycle_SupersedesSplitParts(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Split Cycle Series").SetSlug("split-cycle-series").SaveX(ctx)
+
+	whole := 1.0
+	wholeCh := client.Chapter.Create().SetSeries(s).SetChapterKey("split-1").
+		SetNumber(whole).SetState(entchapter.StateDownloaded).SaveX(ctx)
+
+	p1, p2 := 1.1, 1.2
+	part1 := client.Chapter.Create().SetSeries(s).SetChapterKey("split-1.1").
+		SetNumber(p1).SetState(entchapter.StateWanted).SaveX(ctx)
+	part2 := client.Chapter.Create().SetSeries(s).SetChapterKey("split-1.2").
+		SetNumber(p2).SetState(entchapter.StateWanted).SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage},
+		settings.Static{Retries: 3, Backoff: time.Hour, SuppressParts: true}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
+
+	if err := r.RunDownloadCycle(ctx); err != nil {
+		t.Fatalf("RunDownloadCycle: %v", err)
+	}
+
+	if got := client.Chapter.GetX(ctx, wholeCh.ID).State; got != entchapter.StateDownloaded {
+		t.Errorf("whole chapter state = %s, want unchanged downloaded", got)
+	}
+	if got := client.Chapter.GetX(ctx, part1.ID).State; got != entchapter.StateSuperseded {
+		t.Errorf("part 1.1 state = %s, want superseded", got)
+	}
+	if got := client.Chapter.GetX(ctx, part2.ID).State; got != entchapter.StateSuperseded {
+		t.Errorf("part 1.2 state = %s, want superseded", got)
+	}
+}
+
 // TestRunner_Start_TicksAndStopsCleanly verifies that Start ticks at least once
 // and that its goroutine actually exits when the context is cancelled (no leak).
 //
