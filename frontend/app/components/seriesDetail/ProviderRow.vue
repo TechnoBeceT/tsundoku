@@ -51,6 +51,8 @@ const props = defineProps<{
   canDown: boolean
   /** True while a mutation is in flight — disables reorder + remove. */
   saving?: boolean
+  /** True when this row is an unlinked disk provider with a mergeable linked twin (drift). Renders a DUPLICATE chip. */
+  duplicate?: boolean
   /**
    * This row's per-scanlator coverage breakdown: `undefined` = never fetched
    * (shows the "Show coverage" button), `null` = fetch attempted and failed
@@ -113,6 +115,7 @@ const rel = (iso: string | null): string => {
         <span class="source__name">{{ provider.providerName }}</span>
         <Chip v-if="preferred" variant="accent">PREFERRED</Chip>
         <Chip v-if="!provider.linked" variant="neutral">UNLINKED</Chip>
+        <Chip v-if="duplicate" variant="accent">DUPLICATE</Chip>
       </div>
       <div class="source__meta">
         <Chip variant="language">{{ language }}</Chip>

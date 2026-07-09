@@ -72,6 +72,18 @@ export const Unlinked: Story = {
   },
 }
 
+/** An unlinked disk-origin group with a mergeable linked twin (drift): DUPLICATE chip alongside UNLINKED. */
+export const Duplicate: Story = {
+  args: {
+    provider: unlinkedProvider,
+    rank: 4,
+    preferred: false,
+    canUp: true,
+    canDown: false,
+    duplicate: true,
+  },
+}
+
 /** mangaId === 0 (unlinked disk provider): no coverage affordance renders at all. */
 export const NoCoverage: Story = {
   args: {
