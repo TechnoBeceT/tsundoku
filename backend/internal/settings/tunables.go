@@ -37,6 +37,8 @@ const (
 	TypeDuration Type = "duration"
 	// TypeInt is a base-10 integer.
 	TypeInt Type = "int"
+	// TypeBool is a boolean ("true"/"false").
+	TypeBool Type = "bool"
 )
 
 // The closed allowlist of runtime-tunable keys. These are the ONLY keys the
@@ -97,6 +99,8 @@ const (
 	// source, independent of the per-source concurrency cap. Default 500ms
 	// (Kaizoku.GO parity).
 	KeySourcesMinRequestDelay = "sources.min_request_delay"
+	// KeySuppressSplitParts toggles fractional-part suppression.
+	KeySuppressSplitParts = "jobs.suppress_split_parts"
 )
 
 // Defaults carries the config-resolved default for every tunable key. main
@@ -117,6 +121,7 @@ type Defaults struct {
 	SourcesFailureThreshold int
 	SourcesCooldown         time.Duration
 	SourcesMinRequestDelay  time.Duration
+	SuppressSplitParts      bool
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -149,6 +154,7 @@ var tunableOrder = []string{
 	KeySourcesFailureThreshold,
 	KeySourcesCooldown,
 	KeySourcesMinRequestDelay,
+	KeySuppressSplitParts,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -211,6 +217,10 @@ var tunables = map[string]tunable{
 	KeySourcesMinRequestDelay: durationTunableMinOrZero(
 		KeySourcesMinRequestDelay, "duration", 0,
 		func(d Defaults) time.Duration { return d.SourcesMinRequestDelay },
+	),
+	KeySuppressSplitParts: boolTunable(
+		KeySuppressSplitParts,
+		func(d Defaults) bool { return d.SuppressSplitParts },
 	),
 }
 
@@ -279,5 +289,23 @@ func intTunable(key, unit string, lo, hi int, def func(Defaults) int) tunable {
 			return strconv.Itoa(n), nil
 		},
 		def: func(d Defaults) string { return strconv.Itoa(def(d)) },
+	}
+}
+
+// boolTunable builds a bool-typed tunable, storing the canonical
+// "true"/"false" string form.
+func boolTunable(key string, def func(Defaults) bool) tunable {
+	return tunable{
+		key:  key,
+		typ:  TypeBool,
+		unit: "",
+		validate: func(raw string) (string, error) {
+			b, err := strconv.ParseBool(strings.TrimSpace(raw))
+			if err != nil {
+				return "", fmt.Errorf("%w: %s %q is not a valid boolean", ErrInvalidSetting, key, raw)
+			}
+			return strconv.FormatBool(b), nil
+		},
+		def: func(d Defaults) string { return strconv.FormatBool(def(d)) },
 	}
 }

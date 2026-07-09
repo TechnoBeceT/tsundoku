@@ -28,6 +28,7 @@ func testDefaults() settings.Defaults {
 		SourcesFailureThreshold: 5,
 		SourcesCooldown:         30 * time.Minute,
 		SourcesMinRequestDelay:  500 * time.Millisecond,
+		SuppressSplitParts:      true,
 	}
 }
 
@@ -208,8 +209,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 13 {
-		t.Fatalf("List len = %d, want 13", len(list))
+	if len(list) != 14 {
+		t.Fatalf("List len = %d, want 14", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -230,15 +231,19 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 }
 
 // assertAllRowsAtDefault fails if any row's current value differs from its
-// default or is missing type/unit metadata.
+// default or is missing type metadata. Unit is required for every type except
+// bool (a bool tunable has no unit of measure).
 func assertAllRowsAtDefault(t *testing.T, list []settings.SettingDTO) {
 	t.Helper()
 	for _, row := range list {
 		if row.Value != row.Default {
 			t.Errorf("%s: current %q != default %q before any override", row.Key, row.Value, row.Default)
 		}
-		if row.Type == "" || row.Unit == "" {
-			t.Errorf("%s: missing type %q / unit %q", row.Key, row.Type, row.Unit)
+		if row.Type == "" {
+			t.Errorf("%s: missing type %q", row.Key, row.Type)
+		}
+		if row.Unit == "" && row.Type != string(settings.TypeBool) {
+			t.Errorf("%s: missing unit %q", row.Key, row.Unit)
 		}
 	}
 }
@@ -512,5 +517,27 @@ func TestSourcesMinRequestDelay_SetValidation(t *testing.T) {
 				t.Errorf("SourcesMinRequestDelay after Set(%q) = %v, want %v", tc.raw, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSuppressSplitParts_DefaultAndOverride proves the fractional-part-
+// suppression flag defaults to the injected value, round-trips through Set,
+// and rejects a non-boolean value (fail-closed).
+func TestSuppressSplitParts_DefaultAndOverride(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if !svc.SuppressSplitParts(ctx) {
+		t.Fatal("default SuppressSplitParts = false, want true")
+	}
+	if err := svc.Set(ctx, settings.KeySuppressSplitParts, "false"); err != nil {
+		t.Fatalf("Set false: %v", err)
+	}
+	if svc.SuppressSplitParts(ctx) {
+		t.Fatal("after Set false, SuppressSplitParts = true, want false")
+	}
+	if err := svc.Set(ctx, settings.KeySuppressSplitParts, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
 	}
 }

@@ -284,6 +284,10 @@ type JobsConfig struct {
 	// 5000. Like WarmupInterval it is the env default behind the runtime settings
 	// overlay. Set via TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS.
 	WarmupSlowThresholdMs int
+
+	// SuppressSplitParts enables fractional-part suppression (skip N.1..N.x when
+	// the whole N is downloaded). Set via TSUNDOKU_JOBS_SUPPRESSSPLITPARTS.
+	SuppressSplitParts bool
 }
 
 // SourcesConfig holds the env-sourced DEFAULTS for the source-politeness
@@ -368,6 +372,7 @@ func defaults() map[string]any {
 		"jobs.extensioncheckinterval": "24h",
 		"jobs.warmupinterval":         "15m",
 		"jobs.warmupslowthresholdms":  5000,
+		"jobs.suppresssplitparts":     true,
 		// Health — M7 source-health computation.
 		"health.stalegracedays": 14,
 		"storage.folder":        "/data/manga",
