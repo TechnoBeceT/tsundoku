@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
@@ -277,6 +278,167 @@ func TestIngest_AddSeries_Basic(t *testing.T) {
 	sp := assertSeriesProvider(t, ctx, client, sourceName, mangaID, mangaTitle)
 	assertProviderChapterIDs(t, ctx, client, sp.ID, buildWantIDs(stubs))
 	assertChapterCount(t, ctx, client, k)
+}
+
+// TestIngest_AddSeries_CollapsesSourceNameScanlator proves the defensive
+// scanlator collapse: when the caller passes the SOURCE'S OWN display name as the
+// scanlator (the untagged bucket, uncollapsed by a stale/other FE surface),
+// AddSeries treats it as "" (all/untagged) so the source's untagged chapters are
+// ingested — instead of being silently filtered to an empty feed (the
+// source-identity scanlator-leak that produced a phantom 0-chapter provider).
+// Mirrors the FE collapseUntaggedScanlator, enforced at the ingest chokepoint.
+func TestIngest_AddSeries_CollapsesSourceNameScanlator(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID    = 42
+		mangaTitle = "The Novel's Extra"
+		sourceID   = "src-asura"
+		sourceName = "Asura Scans"
+		k          = 3
+	)
+
+	// Untagged chapters (Scanlator == "") — the group's OWN site tags nothing.
+	stubs := makeChapters(k)
+	sc := &ingestStubClient{
+		chapters:  stubs,
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
+		sources:   []suwayomi.Source{{ID: sourceID, Name: sourceName}},
+	}
+
+	ing := suwayomi.NewIngest(sc, client)
+	// The LEAK: pass the source's own display name as the scanlator.
+	result, err := ing.AddSeries(ctx, sourceID, mangaID, mangaTitle, sourceName)
+	if err != nil {
+		t.Fatalf("AddSeries: %v", err)
+	}
+
+	// The collapse must have kept ALL k untagged chapters, not filtered to 0.
+	if result.NewProviderChapters != k {
+		t.Errorf("NewProviderChapters got %d, want %d (source-name scanlator must collapse to \"\")", result.NewProviderChapters, k)
+	}
+	// And the stored provider row's scanlator is the collapsed "".
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Scanlator != "" {
+		t.Errorf("SeriesProvider.Scanlator got %q, want \"\" (collapsed)", sp.Scanlator)
+	}
+}
+
+// TestIngest_AddSeries_KeepsDistinctScanlator proves the collapse is precise: a
+// scanlator that is NOT the source's own name (e.g. the Comix aggregator hosting
+// the "Asura Scans" group) is preserved, and only that scanlator's chapters are
+// ingested — the collapse must never over-fire.
+func TestIngest_AddSeries_KeepsDistinctScanlator(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID    = 7
+		mangaTitle = "The Novel's Extra"
+		sourceID   = "src-comix"
+		sourceName = "Comix"
+		scanlator  = "Asura Scans"
+	)
+
+	// Two chapters tagged "Asura Scans" + one under another group.
+	stubs := []suwayomi.Chapter{
+		{ID: 200, Index: 0, Name: "Chapter 1", Number: ptrF64(1), URL: "u1", Scanlator: scanlator},
+		{ID: 201, Index: 1, Name: "Chapter 2", Number: ptrF64(2), URL: "u2", Scanlator: scanlator},
+		{ID: 202, Index: 2, Name: "Chapter 3", Number: ptrF64(3), URL: "u3", Scanlator: "Other Group"},
+	}
+	sc := &ingestStubClient{
+		chapters:  stubs,
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
+		sources:   []suwayomi.Source{{ID: sourceID, Name: sourceName}},
+	}
+
+	ing := suwayomi.NewIngest(sc, client)
+	result, err := ing.AddSeries(ctx, sourceID, mangaID, mangaTitle, scanlator)
+	if err != nil {
+		t.Fatalf("AddSeries: %v", err)
+	}
+
+	// Only the two "Asura Scans" chapters ingested — the collapse did NOT fire.
+	if result.NewProviderChapters != 2 {
+		t.Errorf("NewProviderChapters got %d, want 2 (distinct scanlator preserved)", result.NewProviderChapters)
+	}
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Scanlator != scanlator {
+		t.Errorf("SeriesProvider.Scanlator got %q, want %q (not collapsed)", sp.Scanlator, scanlator)
+	}
+}
+
+// TestIngest_AddSeries_RepairsBrokenScanlatorRowInPlace proves the self-heal: a
+// SeriesProvider left broken by the pre-fix leak (scanlator == source display
+// name, empty feed, owner-set importance) is REPAIRED IN PLACE on the next
+// AddSeries — its scanlator repointed to "", its feed repopulated, and crucially
+// its importance PRESERVED — instead of being duplicated with importance reset to
+// 0 (the deployment hazard the fresh review caught).
+func TestIngest_AddSeries_RepairsBrokenScanlatorRowInPlace(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID    = 42
+		mangaTitle = "The Novel's Extra"
+		sourceID   = "src-asura"
+		sourceName = "Asura Scans"
+		k          = 3
+	)
+
+	// Pre-create the Series + a BROKEN provider row exactly as the pre-fix bug
+	// left it: scanlator = the source display name, an owner-set importance, and
+	// NO ProviderChapter feed.
+	cat, err := category.ResolveDefault(ctx, client)
+	if err != nil {
+		t.Fatalf("resolve default category: %v", err)
+	}
+	sr := client.Series.Create().
+		SetTitle(mangaTitle).
+		SetSlug(disk.Slugify(mangaTitle)).
+		SetCategoryID(cat.ID).
+		SaveX(ctx)
+	broken := client.SeriesProvider.Create().
+		SetSeriesID(sr.ID).
+		SetProvider(sourceID).
+		SetProviderName(sourceName).
+		SetScanlator(sourceName). // the leak
+		SetSuwayomiID(mangaID).
+		SetImportance(5).
+		SaveX(ctx)
+
+	stubs := makeChapters(k)
+	sc := &ingestStubClient{
+		chapters:  stubs,
+		mangaMeta: suwayomi.Manga{Title: mangaTitle},
+		sources:   []suwayomi.Source{{ID: sourceID, Name: sourceName}},
+	}
+	ing := suwayomi.NewIngest(sc, client)
+	if _, err := ing.AddSeries(ctx, sourceID, mangaID, mangaTitle, sourceName); err != nil {
+		t.Fatalf("AddSeries: %v", err)
+	}
+
+	// Exactly ONE provider row — the broken one, repaired, NOT a duplicate.
+	sps := client.SeriesProvider.Query().AllX(ctx)
+	if len(sps) != 1 {
+		t.Fatalf("SeriesProvider count got %d, want 1 (repaired in place, no duplicate)", len(sps))
+	}
+	sp := sps[0]
+	if sp.ID != broken.ID {
+		t.Errorf("repaired row id changed: got %s, want %s (should reuse the broken row)", sp.ID, broken.ID)
+	}
+	if sp.Scanlator != "" {
+		t.Errorf("Scanlator got %q, want \"\" (repaired)", sp.Scanlator)
+	}
+	if sp.Importance != 5 {
+		t.Errorf("Importance got %d, want 5 (preserved, not reset)", sp.Importance)
+	}
+	// Feed repopulated on the SAME row.
+	n := client.ProviderChapter.Query().Where(entproviderchapter.SeriesProviderID(sp.ID)).CountX(ctx)
+	if n != k {
+		t.Errorf("ProviderChapter feed got %d, want %d (repopulated in place)", n, k)
+	}
 }
 
 // TestIngest_AddSeries_Idempotent verifies that calling AddSeries twice for the

@@ -104,6 +104,26 @@ func (i *Ingest) AddSeries(
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: fetch chapters for manga %d: %w", mangaID, err)
 	}
 
+	// Resolve the source's display name ONCE (best-effort; "" when unresolved) —
+	// reused for the defensive scanlator collapse below AND stored as
+	// provider_name in upsertSeriesProvider, so ingest makes a single Sources()
+	// call per AddSeries.
+	providerName := i.resolveProviderName(ctx, sourceName)
+
+	// Defensive scanlator collapse (mirrors the FE collapseUntaggedScanlator, but
+	// enforced at the ingest chokepoint so NO surface — a stale FE, a direct API
+	// call, a future caller — can leak). SourceBreakdown labels a source's
+	// UNTAGGED chapters (Chapter.Scanlator == "") under the SOURCE NAME; if that
+	// bucket is passed uncollapsed, filterByScanlator matches ZERO chapters and
+	// creates a phantom 0-chapter provider (the source-identity scanlator-leak).
+	// Treating "scanlator == source display name" as "" keeps the source's own
+	// (untagged) chapters. It never mis-collapses a DISTINCT scanlator on an
+	// aggregator (e.g. Comix hosting "Asura Scans"): that scanlator differs from
+	// the aggregator's own name.
+	if scanlator != "" && providerName != "" && strings.EqualFold(scanlator, providerName) {
+		scanlator = ""
+	}
+
 	// 2. Upsert the Series row, keyed by slug = disk.Slugify(title).
 	series, err := i.upsertSeries(ctx, title)
 	if err != nil {
@@ -113,7 +133,7 @@ func (i *Ingest) AddSeries(
 	// 3. Upsert the SeriesProvider row, keyed by (series_id, provider, scanlator).
 	//    MangaMeta is called inside upsertSeriesProvider to populate the source's
 	//    own title and cover URL — distinct from the canonical series title above.
-	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID, scanlator)
+	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID, scanlator, providerName)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: upsert series provider %q (scanlator %q) for series %s: %w", sourceName, scanlator, series.ID, err)
 	}
@@ -205,6 +225,7 @@ func (i *Ingest) upsertSeriesProvider(
 	provider string,
 	suwayomiMangaID int,
 	scanlator string,
+	providerName string,
 ) (*ent.SeriesProvider, error) {
 	// Fetch the source's own title and cover so SeriesProvider reflects what
 	// this specific source knows about the manga, not the canonical adopt title.
@@ -218,11 +239,11 @@ func (i *Ingest) upsertSeriesProvider(
 		cover = *meta.ThumbnailURL
 	}
 
-	// Resolve the source's human-readable display name (e.g. "WebToon") from the
-	// live source list so it is stored durably alongside the numeric id. Runs on
-	// both create and update, so an existing row backfills its name on the next
-	// refresh sweep. Best-effort: "" when unresolved (the DTO falls back to the id).
-	providerName := i.resolveProviderName(ctx, provider)
+	// providerName is the source's human-readable display name (e.g. "WebToon"),
+	// resolved ONCE by the caller (AddSeries) and passed in so it is stored durably
+	// alongside the numeric id. Runs on both create and update, so an existing row
+	// backfills its name on the next refresh sweep. Best-effort: "" when unresolved
+	// (the DTO falls back to the id), and a "" must never clobber a stored good name.
 
 	existing, existErr := i.db.SeriesProvider.Query().
 		Where(
@@ -235,10 +256,23 @@ func (i *Ingest) upsertSeriesProvider(
 		// Defensive path: reachable only on DB connection loss or cancelled context.
 		return nil, fmt.Errorf("query (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, existErr)
 	}
+
+	// Self-heal a row broken by the pre-fix scanlator-leak (see
+	// existingOrSelfHealTwin): adopt it so the update path below repairs it in
+	// place instead of Create()ing a duplicate on the next refresh sweep.
+	existing, existErr = i.existingOrSelfHealTwin(ctx, existing, seriesID, provider, scanlator, providerName)
+	if existErr != nil {
+		return nil, existErr
+	}
+
 	if existing != nil {
 		// Keep suwayomi_id, source title and cover fresh in case the manga was
 		// re-added from a different Suwayomi instance or updated upstream.
+		// SetScanlator is idempotent on the exact-match path (existing.Scanlator
+		// already == scanlator) and REPAIRS a self-healed broken twin (source-name
+		// → "").
 		update := i.db.SeriesProvider.UpdateOne(existing).
+			SetScanlator(scanlator).
 			SetSuwayomiID(suwayomiMangaID).
 			SetTitle(srcTitle).
 			SetCoverURL(cover)
@@ -272,6 +306,37 @@ func (i *Ingest) upsertSeriesProvider(
 		return nil, fmt.Errorf("create (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, createErr)
 	}
 	return created, nil
+}
+
+// existingOrSelfHealTwin returns `existing` unchanged when it is already set or
+// when there is nothing to self-heal (the collapsed scanlator is non-empty, or no
+// source display name resolved). Otherwise it looks for a row broken by the
+// pre-fix scanlator-leak — same (series, provider) but scanlator == the source's
+// own display name (which the AddSeries collapse turned into "", so the
+// exact-match lookup missed it) — and returns it so upsertSeriesProvider repairs
+// it IN PLACE (repoints scanlator to "", repopulates its empty feed, keeps the
+// owner's importance) rather than Create()ing a duplicate + resetting importance
+// to 0 on the next refresh sweep. Returns (nil, nil) when no twin exists. No
+// unique (series,provider,scanlator) index — query-then-update; race-benign for a
+// single owner.
+func (i *Ingest) existingOrSelfHealTwin(ctx context.Context, existing *ent.SeriesProvider, seriesID uuid.UUID, provider, scanlator, providerName string) (*ent.SeriesProvider, error) {
+	if existing != nil || scanlator != "" || providerName == "" {
+		return existing, nil
+	}
+	broken, err := i.db.SeriesProvider.Query().
+		Where(
+			entseriesprovider.SeriesID(seriesID),
+			entseriesprovider.Provider(provider),
+			entseriesprovider.ScanlatorEqualFold(providerName),
+		).
+		First(ctx)
+	if ent.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query broken scanlator twin (series=%s provider=%q name=%q): %w", seriesID, provider, providerName, err)
+	}
+	return broken, nil
 }
 
 // resolveProviderName returns the human-readable display name for a source id
