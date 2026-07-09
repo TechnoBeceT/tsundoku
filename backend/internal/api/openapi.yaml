@@ -1329,6 +1329,16 @@ components:
           type: boolean
           description: true if this call launched the scan; false if a scan was already running (single-flight guard).
 
+    LibraryDedupStarted:
+      type: object
+      description: Result of a POST /api/library/dedup-providers call — the library-wide dedup sweep has been launched in the background.
+      required:
+        - started
+      properties:
+        started:
+          type: boolean
+          description: Always true — the library-wide dedup sweep has been launched in the background.
+
     FoundSeries:
       type: object
       description: One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB).
@@ -3429,6 +3439,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ScanStarted"
+
+  /api/library/dedup-providers:
+    post:
+      operationId: dedupAllProviders
+      summary: Merge drifted duplicate sources across the whole library (fire-and-forget)
+      description: |
+        Runs the per-series provider dedup across every series, folding
+        already-drifted disk/live source pairs into one row without
+        re-downloading. Returns 202 immediately; the sweep runs in the
+        background and per-series results appear as each series is next viewed.
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      responses:
+        "202":
+          description: Dedup sweep started in the background.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryDedupStarted"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/library/imports:
     get:

@@ -13,8 +13,11 @@
 package library
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -303,6 +306,39 @@ func (h *Handler) DedupProviders(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, providerDedupResponse{Merged: merged, Skipped: skipped, Series: detail})
+}
+
+// dedupAllTimeout bounds the detached background library-wide dedup sweep a
+// DedupAllProviders request kicks off. Dedup is DB + CBZ-relabel only (no live
+// source fetch), so it is far faster than a warm-up pass, but the cap guarantees
+// the background goroutine + its context can never leak.
+const dedupAllTimeout = 10 * time.Minute
+
+// libraryDedupStartedResponse is the JSON body of POST /api/library/dedup-providers:
+// {"started":true} on 202 once the async library-wide dedup sweep is launched.
+// The sweep runs detached (it can touch every series); per-series outcomes are
+// logged server-side and surface in each series' refreshed detail on next view.
+type libraryDedupStartedResponse struct {
+	Started bool `json:"started"`
+}
+
+// DedupAllProviders handles POST /api/library/dedup-providers. The sweep runs
+// DedupProviders across every series; over a large library that can take a
+// while, so — like POST /api/sources/warmup — it runs on a detached,
+// time-bounded background goroutine and returns 202 immediately. A background
+// failure is logged, never returned.
+func (h *Handler) DedupAllProviders(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request().Context()), dedupAllTimeout)
+	go func() {
+		defer cancel()
+		processed, merged, skipped, err := h.svc.DedupAllProviders(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "library: background dedup sweep failed", "err", err)
+			return
+		}
+		slog.InfoContext(ctx, "library: dedup sweep complete", "series_processed", processed, "merged", merged, "skipped", skipped)
+	}()
+	return c.JSON(http.StatusAccepted, libraryDedupStartedResponse{Started: true})
 }
 
 // mapServiceError translates a library.Service sentinel error into the

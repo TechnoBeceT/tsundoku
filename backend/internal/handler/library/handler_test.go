@@ -88,6 +88,7 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	authed.POST("/series/:id/providers", h.AddProvider)
 	authed.POST("/series/:id/providers/batch", h.AddProviders)
 	authed.POST("/series/:id/providers/dedup", h.DedupProviders)
+	authed.POST("/library/dedup-providers", h.DedupAllProviders)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -170,6 +171,7 @@ func TestLibraryRoutes_RequireOwner(t *testing.T) {
 		{"POST", "/api/series/" + uuid.New().String() + "/providers"},
 		{"POST", "/api/series/" + uuid.New().String() + "/providers/batch"},
 		{"POST", "/api/series/" + uuid.New().String() + "/providers/dedup"},
+		{"POST", "/api/library/dedup-providers"},
 	} {
 		rec := env.doUnauth(r.method, r.path, "")
 		if rec.Code != http.StatusUnauthorized {
@@ -186,6 +188,25 @@ func TestLibraryScan_Accepted(t *testing.T) {
 	rec := env.do("POST", "/api/library/scan", "")
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("scan = %d, want 202 (%s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Started bool `json:"started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Started {
+		t.Fatalf("started = %v, want true", got.Started)
+	}
+}
+
+// TestLibraryDedupAll_Accepted proves POST /api/library/dedup-providers returns
+// 202 {started:true} — the sweep runs detached.
+func TestLibraryDedupAll_Accepted(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do("POST", "/api/library/dedup-providers", "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
 	}
 	var got struct {
 		Started bool `json:"started"`
