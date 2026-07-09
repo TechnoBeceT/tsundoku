@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import PanelCard from './PanelCard.vue'
 import AppButton from '../ui/AppButton.vue'
 import ProviderRow from './ProviderRow.vue'
@@ -22,17 +23,36 @@ import type { ScanlatorCoverage } from '../screens/import.types'
  * down to `ProviderRow` and bubbles the row's `loadCoverage` click back up to
  * the screen (which owns the actual lazy fetch, `useSeriesDetail.
  * loadProviderCoverage`).
+ *
+ * `driftedIds` (SeriesProvider ids the screen has flagged as drifted
+ * duplicates, e.g. via `findDriftedProviderIds`) drives a danger banner +
+ * "Clean up" button at the top of the body plus a DUPLICATE badge on the
+ * matching `ProviderRow`(s); `dedupMessage` shows the last action's transient
+ * result. The panel itself never computes drift or calls the API — it only
+ * re-emits `dedupProviders`/`dedupeFiles` for the screen to handle.
  */
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   /** The sources to list, importance-descending (preferred first). */
   providers: Provider[]
   /** True while a mutation is in flight — disables reorder + remove. */
   saving?: boolean
   /** Per-provider cached coverage, keyed by SeriesProvider id (see doc above). */
   providerCoverage?: Record<string, ScanlatorCoverage[] | null>
+  /** SeriesProvider ids flagged as drifted duplicates (drives the banner + per-row badge). */
+  driftedIds?: string[]
+  /** True while the dedup-providers request is in flight. */
+  dedupBusy?: boolean
+  /** True while the dedupe-files request is in flight. */
+  dedupeFilesBusy?: boolean
+  /** Transient result message from the last dedup / dedupe-files action (null when none). */
+  dedupMessage?: string | null
 }>(), {
   saving: false,
   providerCoverage: () => ({}),
+  driftedIds: () => [],
+  dedupBusy: false,
+  dedupeFilesBusy: false,
+  dedupMessage: null,
 })
 
 const emit = defineEmits<{
@@ -46,7 +66,13 @@ const emit = defineEmits<{
   loadCoverage: [id: string]
   /** The Add button was pressed (→ opens the Match Source dialog). */
   addSource: []
+  /** "Clean up duplicate sources" was pressed. */
+  dedupProviders: []
+  /** "Remove duplicate files" was pressed. */
+  dedupeFiles: []
 }>()
+
+const driftedSet = computed(() => new Set(props.driftedIds))
 </script>
 
 <template>
@@ -55,6 +81,9 @@ const emit = defineEmits<{
       <span class="count-pill">{{ providers.length }}</span>
     </template>
     <template #actions>
+      <AppButton variant="mini" size="sm" :disabled="dedupeFilesBusy" @click="emit('dedupeFiles')">
+        {{ dedupeFilesBusy ? 'Removing…' : 'Remove duplicate files' }}
+      </AppButton>
       <AppButton variant="mini" size="sm" @click="emit('addSource')">
         <template #icon>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
@@ -66,6 +95,16 @@ const emit = defineEmits<{
     </template>
 
     <div class="panel__body">
+      <div v-if="driftedIds.length > 0" class="dup-banner">
+        <span class="dup-banner__text">
+          {{ driftedIds.length }} duplicate source{{ driftedIds.length === 1 ? '' : 's' }} detected
+        </span>
+        <AppButton variant="mini" size="sm" :disabled="dedupBusy" @click="emit('dedupProviders')">
+          {{ dedupBusy ? 'Cleaning…' : 'Clean up' }}
+        </AppButton>
+      </div>
+      <div v-if="dedupMessage" class="dup-message">{{ dedupMessage }}</div>
+
       <div v-if="providers.length > 0" class="panel__eyebrow">Preferred first</div>
 
       <ProviderRow
@@ -77,6 +116,7 @@ const emit = defineEmits<{
         :can-up="idx !== 0"
         :can-down="idx !== providers.length - 1"
         :saving="saving"
+        :duplicate="driftedSet.has(p.id)"
         :coverage="providerCoverage[p.id]"
         @move="emit('move', p.id, $event)"
         @remove="emit('removeSource', p.id)"
@@ -119,5 +159,29 @@ const emit = defineEmits<{
   text-align: center;
   font-size: 12.5px;
   color: var(--faint);
+}
+
+.dup-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 4px 10px;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.dup-banner__text {
+  font-size: 12px;
+  font-weight: var(--weight-bold);
+  color: var(--danger-text);
+}
+
+.dup-message {
+  margin: 0 4px 10px;
+  font-size: 11.5px;
+  color: var(--muted);
 }
 </style>
