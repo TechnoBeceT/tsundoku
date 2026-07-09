@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -579,5 +580,66 @@ func TestDetectUpgrades_SkipsWhenBestIsCurrentSatisfier(t *testing.T) {
 	}
 	if after.SatisfiedImportance == nil || *after.SatisfiedImportance != 5 {
 		t.Errorf("satisfied_importance: want 5 (watermark refreshed to the source's current importance), got %v", after.SatisfiedImportance)
+	}
+}
+
+// TestUpgrade_NoOpWhenBestIsCurrentSatisfier is the defence-in-depth partner to
+// the DetectUpgrades guard: even if a chapter somehow carries a STALE
+// upgrade_available flag whose only live candidate is its current satisfier,
+// Upgrade must NOT fetch or re-render. It refreshes the watermark and returns the
+// chapter to downloaded with its file untouched (fetcher never called).
+func TestUpgrade_NoOpWhenBestIsCurrentSatisfier(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Stale Flag Series").SetSlug("stale-flag-series").SaveX(ctx)
+	spP := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-p").SetImportance(2).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spP.ID).SetChapterKey("ch-stale").
+		SetURL("https://p.example.com/ch-stale").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-stale").SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce: %v", err)
+	}
+	downloaded := client.Chapter.GetX(ctx, ch.ID)
+	originalFilename := downloaded.Filename
+	if originalFilename == "" {
+		t.Fatal("expected a filename after the initial download")
+	}
+
+	// Force a STALE upgrade_available flag (bypass the state machine) with the
+	// satisfier as the only source, and raise its importance so a naive upgrade
+	// would re-fetch from it.
+	client.SeriesProvider.UpdateOneID(spP.ID).SetImportance(9).ExecX(ctx)
+	client.Chapter.UpdateOneID(ch.ID).SetState(entchapter.StateUpgradeAvailable).ExecX(ctx)
+
+	counter := &countingFetcher{base: fake.New()}
+	dCount := download.New(client, counter, hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+
+	if err := dCount.Upgrade(ctx, ch.ID); err != nil {
+		t.Fatalf("Upgrade returned unexpected error: %v", err)
+	}
+
+	if got := atomic.LoadInt64(&counter.calls); got != 0 {
+		t.Errorf("fetcher call count: want 0 (self-satisfier no-op), got %d", got)
+	}
+	after := client.Chapter.GetX(ctx, ch.ID)
+	if after.State != entchapter.StateDownloaded {
+		t.Errorf("state: want downloaded (stale flag cleared), got %s", after.State)
+	}
+	if after.Filename != originalFilename {
+		t.Errorf("filename: want %q (unchanged), got %q", originalFilename, after.Filename)
+	}
+	if after.SatisfiedImportance == nil || *after.SatisfiedImportance != 9 {
+		t.Errorf("satisfied_importance: want 9 (watermark refreshed), got %v", after.SatisfiedImportance)
 	}
 }

@@ -2,6 +2,7 @@ package download
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,6 +18,14 @@ import (
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
+
+// errUpgradeNoLongerNeeded signals that fetchAndRender found the chapter's
+// current satisfier is still the best live source, so no fetch is warranted (a
+// stale upgrade_available flag). It is NOT a failure: Upgrade returns the chapter
+// to downloaded cleanly (the watermark was already refreshed), without recording
+// last_error or emitting upgrade.fail. This is the defence-in-depth partner to
+// DetectUpgrades' self-churn guard.
+var errUpgradeNoLongerNeeded = errors.New("upgrade no longer needed: current satisfier is already the best source")
 
 // upgradeResult holds the artefacts produced by fetchAndRender so that
 // Upgrade can persist them in a single update call.
@@ -208,6 +217,9 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	limiter := newProviderLimiter(d.downloadConcurrency(ctx))
 	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter)
 	if err != nil {
+		if errors.Is(err, errUpgradeNoLongerNeeded) {
+			return d.finishStaleUpgrade(ctx, chapterID)
+		}
 		return d.handleUpgradeFailure(ctx, chapterID, res.pc, err)
 	}
 
@@ -252,6 +264,22 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		return upgradeResult{}, fmt.Errorf("no live source available for chapter %s", chapterID)
 	}
 	best := cands[0]
+
+	// Defence-in-depth against a stale upgrade_available flag: if the best live
+	// source IS the chapter's current satisfier, an upgrade would re-fetch from the
+	// SAME source (the self-churn bug DetectUpgrades now prevents at the source).
+	// Refresh the frozen satisfied_importance watermark to the source's current
+	// importance and signal a clean no-op — no fetch, no re-render (mirrors the
+	// len(cands)==0 early return, but without treating it as a failure).
+	if ch.SatisfiedByProviderID != nil && best.SeriesProvider.ID == *ch.SatisfiedByProviderID {
+		if err := d.client.Chapter.UpdateOneID(chapterID).
+			SetSatisfiedImportance(best.SeriesProvider.Importance).
+			Exec(ctx); err != nil {
+			return upgradeResult{}, fmt.Errorf("refresh satisfied_importance: %w", err)
+		}
+		return upgradeResult{}, errUpgradeNoLongerNeeded
+	}
+
 	pc := best.ProviderChapter
 	sp := best.SeriesProvider
 	sourceKey := canonicalSourceKey(sp)
@@ -369,6 +397,30 @@ func (d *Dispatcher) tryDeleteOldCBZ(ctx context.Context, chapterID uuid.UUID, c
 			"err", err,
 		)
 	}
+}
+
+// finishStaleUpgrade cleanly resolves a stale upgrade_available flag whose best
+// live source is the chapter's current satisfier (fetchAndRender returned
+// errUpgradeNoLongerNeeded after already refreshing the watermark). It transitions
+// upgrading → downloaded and broadcasts download.done — no fetch happened, the
+// working copy is untouched, and NO last_error / upgrade.fail is recorded (this is
+// not a failure). Always returns nil so callers treat it as a handled outcome.
+func (d *Dispatcher) finishStaleUpgrade(ctx context.Context, chapterID uuid.UUID) error {
+	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
+		// Defensive path: only reachable on a DB failure between the upgrading
+		// transition and here. Log but return nil so the chapter is not stranded in
+		// upgrading — the next DetectUpgrades run re-evaluates it.
+		slog.ErrorContext(ctx, "download.Dispatcher.finishStaleUpgrade: could not transition upgrading→downloaded",
+			"chapter_id", chapterID,
+			"set_state_err", err,
+		)
+		return nil
+	}
+	d.broadcast("download.done", DownloadEvent{
+		ChapterID: chapterID,
+		State:     string(entchapter.StateDownloaded),
+	})
+	return nil
 }
 
 // handleUpgradeFailure is the upgrade-specific failure handler.

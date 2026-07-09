@@ -240,15 +240,18 @@ func TestDispatcher_PermanentFailure(t *testing.T) {
 }
 
 // countingFetcher wraps a base fetcher and records the peak concurrent
-// inflight count for a given provider.
+// inflight count for a given provider, plus the total number of Fetch calls
+// (calls) so a test can prove an upgrade did NOT fetch at all.
 type countingFetcher struct {
 	base     fetcher.ChapterFetcher
 	mu       sync.Mutex
 	inflight int64
 	peak     int64
+	calls    int64
 }
 
 func (c *countingFetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.ChapterPages, error) {
+	atomic.AddInt64(&c.calls, 1)
 	cur := atomic.AddInt64(&c.inflight, 1)
 	c.mu.Lock()
 	if cur > c.peak {
