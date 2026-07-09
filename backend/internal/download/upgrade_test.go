@@ -524,3 +524,60 @@ func TestUpgrade_SSEEvents(t *testing.T) {
 		t.Errorf("second event: want download.done, got %q", got[1].Type)
 	}
 }
+
+// TestDetectUpgrades_SkipsWhenBestIsCurrentSatisfier is the self-churn cure: a
+// downloaded chapter whose ONLY live source is the one that already satisfies it
+// must NOT be flagged for upgrade even when that source's importance has since
+// been raised above the frozen satisfied_importance watermark. Re-fetching from
+// the same source would be pure churn. DetectUpgrades instead refreshes the
+// stale watermark to the source's current importance and leaves the chapter
+// downloaded.
+func TestDetectUpgrades_SkipsWhenBestIsCurrentSatisfier(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Self Sat Series").SetSlug("self-sat-series").SaveX(ctx)
+	spP := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-p").SetImportance(1).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spP.ID).SetChapterKey("ch-self").
+		SetURL("https://p.example.com/ch-self").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-self").SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce: %v", err)
+	}
+	downloaded := client.Chapter.GetX(ctx, ch.ID)
+	if downloaded.State != entchapter.StateDownloaded {
+		t.Fatalf("initial state: want downloaded, got %s", downloaded.State)
+	}
+	if downloaded.SatisfiedImportance == nil || *downloaded.SatisfiedImportance != 1 {
+		t.Fatalf("initial satisfied_importance: want 1, got %v", downloaded.SatisfiedImportance)
+	}
+
+	// Raise the SAME (and only) source's importance well above the frozen
+	// watermark. The old maxImportanceForChapter model would re-fire an upgrade
+	// from this very source; the fixed model must not.
+	client.SeriesProvider.UpdateOneID(spP.ID).SetImportance(5).ExecX(ctx)
+
+	n, err := download.DetectUpgrades(ctx, client, 3)
+	if err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("DetectUpgrades: want 0 flagged (best source IS the current satisfier), got %d", n)
+	}
+
+	after := client.Chapter.GetX(ctx, ch.ID)
+	if after.State != entchapter.StateDownloaded {
+		t.Errorf("state: want downloaded (no upgrade), got %s", after.State)
+	}
+	if after.SatisfiedImportance == nil || *after.SatisfiedImportance != 5 {
+		t.Errorf("satisfied_importance: want 5 (watermark refreshed to the source's current importance), got %v", after.SatisfiedImportance)
+	}
+}

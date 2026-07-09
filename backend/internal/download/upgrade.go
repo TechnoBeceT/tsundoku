@@ -105,18 +105,40 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 		return 0, nil
 	}
 
-	maxImportance, err := maxImportanceForChapter(ctx, client, gate, ch, maxRetries, now)
+	best, err := bestUpgradeCandidate(ctx, client, gate, ch, maxRetries, now)
 	if err != nil {
 		// Log and continue — one chapter failing to scan should not abort all others.
-		slog.WarnContext(ctx, "download.DetectUpgrades: failed to query max importance for chapter — skipping",
+		slog.WarnContext(ctx, "download.DetectUpgrades: failed to rank candidates for chapter — skipping",
 			"chapter_id", ch.ID,
 			"err", err,
 		)
 		return 0, nil
 	}
+	// No live, non-gated source offers this chapter right now — nothing to upgrade to.
+	if best == nil {
+		return 0, nil
+	}
 
-	// Strict comparison: only flag when a strictly higher-importance source exists.
-	if maxImportance <= *ch.SatisfiedImportance {
+	// Self-churn guard: if the best live source IS the one that already satisfies
+	// this chapter, an "upgrade" would re-fetch from the SAME source — pure churn
+	// (the root bug: satisfied_importance is a frozen snapshot, so raising a
+	// source's importance would otherwise re-fire an upgrade from that source).
+	// Never flag; instead refresh the stale watermark to the source's current
+	// importance so the chapter is not re-scanned as an upgrade next cycle.
+	if ch.SatisfiedByProviderID != nil && best.SeriesProvider.ID == *ch.SatisfiedByProviderID {
+		if best.SeriesProvider.Importance != *ch.SatisfiedImportance {
+			if err := client.Chapter.UpdateOneID(ch.ID).
+				SetSatisfiedImportance(best.SeriesProvider.Importance).
+				Exec(ctx); err != nil {
+				return 0, fmt.Errorf("download.DetectUpgrades: refresh satisfied_importance for chapter %s: %w", ch.ID, err)
+			}
+		}
+		return 0, nil
+	}
+
+	// Strict comparison: only flag when a DIFFERENT source is strictly higher than
+	// the current satisfied_importance watermark.
+	if best.SeriesProvider.Importance <= *ch.SatisfiedImportance {
 		return 0, nil
 	}
 
@@ -126,25 +148,24 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 	return 1, nil
 }
 
-// maxImportanceForChapter returns the highest importance among the LIVE,
-// NON-GATED sources offering ch's chapter_key within the same series (attempts <
-// maxRetries AND past per-source cooldown AND circuit-breaker not tripped).
-// Returns 0 if no eligible source exists. It reuses chapter.RankedLiveCandidates
-// so the "live, importance-ranked" rule is defined once and is identical to the
-// download path (§2 DRY), then applies the shared gate filter so a
-// breaker-tripped higher source is never counted as an upgrade target (nil gate
-// never filters).
-func maxImportanceForChapter(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
+// bestUpgradeCandidate returns the highest-importance LIVE, NON-GATED source
+// offering ch's chapter_key within the same series (attempts < maxRetries AND
+// past per-source cooldown AND circuit-breaker not tripped), or nil when no
+// eligible source exists. It reuses chapter.RankedLiveCandidates so the "live,
+// importance-ranked" rule is defined once and is identical to the download path
+// (§2 DRY), then applies the shared gate filter so a breaker-tripped higher
+// source is never chosen as an upgrade target (nil gate never filters).
+func bestUpgradeCandidate(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (*chapter.Candidate, error) {
 	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now)
 	if err != nil {
-		return 0, fmt.Errorf("rank live candidates for chapter %s: %w", ch.ID, err)
+		return nil, fmt.Errorf("rank live candidates for chapter %s: %w", ch.ID, err)
 	}
 	cands = gateFilterCandidates(ctx, gate, cands, now)
 	if len(cands) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	// RankedLiveCandidates is importance-DESC, so the first is the highest.
-	return cands[0].SeriesProvider.Importance, nil
+	return &cands[0], nil
 }
 
 // Upgrade executes a non-destructive atomic upgrade for the given chapter.
