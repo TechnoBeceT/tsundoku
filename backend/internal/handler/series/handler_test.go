@@ -586,21 +586,24 @@ func TestReorderProviders_OK(t *testing.T) {
 
 	provID := firstProviderID(t, env, env.mangaID.String())
 
+	// The submitted importance (5) expresses only order — the service normalizes
+	// it to a clean non-negative spread, so a single provider becomes (n-idx)*10
+	// = 10 (n=1). Only the relative order is honoured, not the absolute value.
 	body := `{"providers":[{"id":"` + provID + `","importance":5}]}`
 	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/providers", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ReorderProviders: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	assertProviderImportance(t, rec.Body.Bytes(), provID, 5)
+	assertProviderImportance(t, rec.Body.Bytes(), provID, 10)
 
-	// DB round-trip: the importance must be persisted, not just echoed in the response.
+	// DB round-trip: the normalized importance must be persisted, not just echoed.
 	provUUID, err := uuid.Parse(provID)
 	if err != nil {
 		t.Fatalf("ReorderProviders: parse provID: %v", err)
 	}
 	dbProv := env.client.SeriesProvider.GetX(ctx, provUUID)
-	if dbProv.Importance != 5 {
-		t.Fatalf("ReorderProviders: DB importance want 5, got %d", dbProv.Importance)
+	if dbProv.Importance != 10 {
+		t.Fatalf("ReorderProviders: DB importance want 10 (normalized), got %d", dbProv.Importance)
 	}
 }
 
