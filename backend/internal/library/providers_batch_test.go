@@ -42,9 +42,11 @@ func newAddProvidersSvc(t *testing.T) (*library.Service, *ent.Client, context.Co
 }
 
 // TestAddProviders_AttachesBelowExisting attaches two sources to a series whose
-// only provider is the disk provider (importance 1); the batch lands strictly
-// below it in list order (-9, -19) per decision E, so no upgrade re-download
-// fires. Asserted both via a direct Ent query and via the returned DTO.
+// only provider is the disk provider (importance 1). There is no room below
+// importance 1 for a non-negative batch, so belowExistingImportances RENUMBERS
+// the disk provider up (1 → 30) and lands the batch below it in list order
+// (weebA 20, weebB 10) — all NON-NEGATIVE (the old scheme returned -9, -19,
+// which broke the reorder endpoint). Asserted via direct Ent query + the DTO.
 func TestAddProviders_AttachesBelowExisting(t *testing.T) {
 	svc, client, ctx := newAddProvidersSvc(t)
 	ser := client.Series.Query().OnlyX(ctx)
@@ -68,28 +70,32 @@ func TestAddProviders_AttachesBelowExisting(t *testing.T) {
 		t.Fatalf("providers = %d, want 3 (disk + weebA + weebB)", len(dto.Providers))
 	}
 
-	wantImportance := map[string]int{"weebA": -9, "weebB": -19}
-	for provider, wantImp := range wantImportance {
-		sp, err := client.SeriesProvider.Query().
-			Where(seriesprovider.SeriesID(ser.ID), seriesprovider.Provider(provider), seriesprovider.Scanlator("")).
-			Only(ctx)
-		if err != nil {
-			t.Fatalf("query %s: %v", provider, err)
-		}
-		if sp.Importance != wantImp {
-			t.Errorf("%s importance = %d, want %d", provider, sp.Importance, wantImp)
-		}
-	}
+	// New sources: non-negative, below the renumbered disk provider, in list order.
+	// The disk provider was renumbered up (1 → 30) so the batch could stay
+	// non-negative below it; it must still rank ABOVE every new source.
+	assertProviderImportanceDB(t, ctx, client, ser.ID, "weebA", 20)
+	assertProviderImportanceDB(t, ctx, client, ser.ID, "weebB", 10)
+	assertProviderImportanceDB(t, ctx, client, ser.ID, "mangadex", 30)
 
 	found := make(map[string]int, len(dto.Providers))
 	for _, p := range dto.Providers {
 		found[p.Provider] = p.Importance
 	}
-	if found["weebA"] != -9 {
-		t.Errorf("DTO weebA importance = %d, want -9", found["weebA"])
+	if found["weebA"] != 20 || found["weebB"] != 10 {
+		t.Errorf("DTO importances = weebA:%d weebB:%d, want 20/10", found["weebA"], found["weebB"])
 	}
-	if found["weebB"] != -19 {
-		t.Errorf("DTO weebB importance = %d, want -19", found["weebB"])
+}
+
+// assertProviderImportanceDB fails unless the series' provider row with the
+// given provider name (unique per name in this fixture) carries the wanted
+// importance.
+func assertProviderImportanceDB(t *testing.T, ctx context.Context, client *ent.Client, seriesID uuid.UUID, provider string, want int) {
+	t.Helper()
+	sp := client.SeriesProvider.Query().
+		Where(seriesprovider.SeriesID(seriesID), seriesprovider.Provider(provider)).
+		OnlyX(ctx)
+	if sp.Importance != want {
+		t.Errorf("%s importance = %d, want %d", provider, sp.Importance, want)
 	}
 }
 
