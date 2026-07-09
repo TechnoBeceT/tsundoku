@@ -535,6 +535,17 @@ components:
           type: integer
           description: Number of chapters reset back to wanted by the bulk retry.
 
+    DedupeFilesResult:
+      type: object
+      required:
+        - removed
+      properties:
+        removed:
+          type: integer
+          description: >-
+            Number of superseded duplicate CBZ files removed from disk by the
+            owner-triggered dedupe-files sweep. Winning files are never removed.
+
     Source:
       type: object
       required:
@@ -2302,6 +2313,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProviderDedupResult"
+        "400":
+          description: Malformed series id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/dedupe-files:
+    post:
+      operationId: dedupeSeriesFiles
+      summary: Remove superseded duplicate CBZ files for a series
+      description: |
+        Owner-triggered duplicate-CBZ sweep. For every downloaded chapter it
+        removes any OTHER CBZ in the series folder that shares that chapter's
+        number, keeping the chapter's winning file — converging the on-disk state
+        to one file per chapter number (the Komga contract). This is the bulk
+        counterpart to the automatic per-convergence cleanup on upgrade; it
+        cleans up a library that accumulated duplicates before convergence
+        existed (e.g. an imported Kaizoku library). Performs NO DB writes and
+        never deletes a winning file. Returns the number of files removed.
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Sweep complete. Returns the number of files removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DedupeFilesResult"
         "400":
           description: Malformed series id.
           content:

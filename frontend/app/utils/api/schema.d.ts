@@ -361,6 +361,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/dedupe-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove superseded duplicate CBZ files for a series
+         * @description Owner-triggered duplicate-CBZ sweep. For every downloaded chapter it
+         *     removes any OTHER CBZ in the series folder that shares that chapter's
+         *     number, keeping the chapter's winning file — converging the on-disk state
+         *     to one file per chapter number (the Komga contract). This is the bulk
+         *     counterpart to the automatic per-convergence cleanup on upgrade; it
+         *     cleans up a library that accumulated duplicates before convergence
+         *     existed (e.g. an imported Kaizoku library). Performs NO DB writes and
+         *     never deletes a winning file. Returns the number of files removed.
+         */
+        post: operations["dedupeSeriesFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}": {
         parameters: {
             query?: never;
@@ -1626,6 +1653,10 @@ export interface components {
         RetryAllResult: {
             /** @description Number of chapters reset back to wanted by the bulk retry. */
             retried: number;
+        };
+        DedupeFilesResult: {
+            /** @description Number of superseded duplicate CBZ files removed from disk by the owner-triggered dedupe-files sweep. Winning files are never removed. */
+            removed: number;
         };
         Source: {
             /**
@@ -3044,6 +3075,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderDedupResult"];
+                };
+            };
+            /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    dedupeSeriesFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sweep complete. Returns the number of files removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DedupeFilesResult"];
                 };
             };
             /** @description Malformed series id. */
