@@ -19,6 +19,7 @@ import {
   type SearchCandidate,
   type SearchGroup,
 } from '~/components/screens/import.types'
+import { collapseUntaggedScanlator } from '~/utils/scanlator'
 
 /** One Configure-stage row: either a whole source (unsplit) or one of its scanlators (split). */
 export interface ConfigRow {
@@ -232,15 +233,15 @@ export function useSourceConfigure(opts: {
           // must adopt as scanlator "" — the backend's filterByScanlator keeps
           // only chapters whose Chapter.Scanlator EQUALS the param, and untagged
           // chapters carry "", so sending the source name here would match ZERO
-          // chapters (a silently-empty, never-downloading provider). This mirrors
-          // the single-group branch's collapse; it applies even inside a 2+-group
-          // split where one group IS the source-name bucket.
-          const isUntagged = sc.scanlator === c.sourceName
+          // chapters (a silently-empty, never-downloading provider). The collapse
+          // lives in the shared collapseUntaggedScanlator helper; it applies even
+          // inside a 2+-group split where one group IS the source-name bucket.
+          const param = collapseUntaggedScanlator(sc.scanlator, c.sourceName)
           rows.push({
             key: `${baseKey}:${sc.scanlator}`,
             candidate: c,
-            scanlator: isUntagged ? '' : sc.scanlator,
-            scanlatorParam: isUntagged ? '' : sc.scanlator,
+            scanlator: param,
+            scanlatorParam: param,
             chapterCount: sc.count,
             chapterRanges: sc.ranges,
             coverageUnavailable: false,
@@ -250,12 +251,12 @@ export function useSourceConfigure(opts: {
       }
       else if (bd?.length === 1) {
         const sc = bd[0]!
-        const isUntagged = sc.scanlator === c.sourceName
+        const param = collapseUntaggedScanlator(sc.scanlator, c.sourceName)
         rows.push({
           key: baseKey,
           candidate: c,
-          scanlator: isUntagged ? '' : sc.scanlator,
-          scanlatorParam: isUntagged ? '' : sc.scanlator,
+          scanlator: param,
+          scanlatorParam: param,
           chapterCount: sc.count,
           chapterRanges: sc.ranges,
           coverageUnavailable: false,

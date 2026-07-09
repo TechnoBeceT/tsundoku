@@ -78,6 +78,25 @@ describe('MatchSourceDialog', () => {
     ]])
   })
 
+  it('collapses the untagged (source-name) breakdown group to an empty scanlator on confirm', async () => {
+    // The breakdown labels a source's untagged chapters under the SOURCE NAME;
+    // via useSourceConfigure's shared collapse the emitted payload must be ""
+    // (all chapters) — NOT the source name (which would match zero chapters).
+    const first = searchResults[0]!.candidates[0]! // MangaDex / 1001
+    const breakdowns = {
+      [`${first.source}:${first.mangaId}`]: [
+        { scanlator: first.sourceName, count: 100, ranges: '1-100' },
+      ],
+    }
+    const wrapper = mountDialog({ breakdowns })
+    await wrapper.find('.group').trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Attach sources')!.trigger('click')
+
+    const providers = wrapper.emitted('confirm')![0]![0] as { source: string, mangaId: number, scanlator: string }[]
+    const mangadex = providers.find(p => p.source === first.source && p.mangaId === first.mangaId)!
+    expect(mangadex.scanlator).toBe('')
+  })
+
   it('toggling a candidate off then confirming emits confirm without it', async () => {
     const wrapper = mountDialog()
     await wrapper.find('.group').trigger('click')
