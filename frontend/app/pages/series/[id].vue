@@ -25,6 +25,9 @@ import type { ProviderRef } from '~/composables/useSourceConfigure'
  *   :delete-busy       — true while the delete request is in flight
  *   :remove-busy       — true while a remove-source request is in flight
  *   :error             — latest mutation error message (null when none)
+ *   :dedup-busy        — true while a dedup-providers request is in flight
+ *   :dedupe-files-busy — true while a dedupe-files request is in flight
+ *   :dedup-message     — transient dedup/dedupe-files result message
  *
  * Emit wiring (every emit the screen declares, per the SFC defineEmits contract):
  *   @change-category        → setCategory(name)
@@ -37,6 +40,8 @@ import type { ProviderRef } from '~/composables/useSourceConfigure'
  *   @delete-series          → deleteSeries(deleteFiles)   (navigates to / on success)
  *   @add-source             → opens MatchSourceDialog (matchOpen = true)
  *   @dismiss-error          → dismissError()
+ *   @dedup-providers        → dedupProviders()   (merges drifted disk/live twins)
+ *   @dedupe-files           → dedupeFiles()      (sweeps orphan/duplicate CBZs)
  *
  * Add-source wiring (Slice P): MatchSourceDialog's `search`/`loadBreakdowns`/
  * `confirm` emits drive useMatchSource's `search`/`loadBreakdowns`/
@@ -91,6 +96,11 @@ const {
   matchDiskProvider,
   dismissError,
   reseed,
+  dedupBusy,
+  dedupeFilesBusy,
+  dedupMessage,
+  dedupProviders,
+  dedupeFiles,
 } = useSeriesDetail(id)
 
 const {
@@ -171,6 +181,9 @@ function onLoadCoverage(providerId: string): void {
       :remove-busy="removeBusy"
       :error="error"
       :provider-coverage="providerCoverage"
+      :dedup-busy="dedupBusy"
+      :dedupe-files-busy="dedupeFilesBusy"
+      :dedup-message="dedupMessage"
       @change-category="setCategory"
       @toggle-monitored="setMonitored"
       @toggle-completed="setCompleted"
@@ -182,6 +195,8 @@ function onLoadCoverage(providerId: string): void {
       @add-source="matchOpen = true"
       @load-coverage="onLoadCoverage"
       @dismiss-error="dismissError"
+      @dedup-providers="dedupProviders"
+      @dedupe-files="dedupeFiles"
     />
 
     <MatchSourceDialog
