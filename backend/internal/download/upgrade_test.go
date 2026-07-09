@@ -171,6 +171,79 @@ func TestUpgrade_SwapsFile(t *testing.T) {
 	}
 }
 
+// TestUpgrade_RemovesDuplicateCBZsOnConvergence proves the Task 5 wiring: on a
+// successful upgrade of a NUMBERED chapter, Upgrade removes EVERY other CBZ that
+// shares the chapter number — the previous winner AND any pre-existing orphan
+// duplicate — keeping only the new winning file (one file per chapter number).
+func TestUpgrade_RemovesDuplicateCBZsOnConvergence(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Dedup Series").SetSlug("dedup-series").SaveX(ctx)
+	spLow := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-low").SetImportance(2).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spLow.ID).SetChapterKey("10").SetNumber(10).
+		SetURL("https://low.example.com/10").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("10").SetNumber(10).SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce: %v", err)
+	}
+	initial := client.Chapter.GetX(ctx, ch.ID)
+	if initial.State != entchapter.StateDownloaded {
+		t.Fatalf("initial state: want downloaded, got %s", initial.State)
+	}
+	seriesDir := filepath.Join(storageDir, "Other", "Dedup Series")
+
+	// Plant a pre-existing ORPHAN duplicate CBZ for the same chapter number.
+	orphanPath := filepath.Join(seriesDir, "[orphan] Dedup Series 10.cbz")
+	if err := os.WriteFile(orphanPath, []byte("orphan"), 0o600); err != nil {
+		t.Fatalf("plant orphan CBZ: %v", err)
+	}
+
+	// Add a higher-importance provider for the same chapter and converge.
+	spHigh := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-high").SetImportance(5).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spHigh.ID).SetChapterKey("10").SetNumber(10).
+		SetURL("https://high.example.com/10").SetProviderIndex(0).SaveX(ctx)
+	if _, err := download.DetectUpgrades(ctx, client, 3); err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+	if err := d.Upgrade(ctx, ch.ID); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	final := client.Chapter.GetX(ctx, ch.ID)
+	assertUpgradeProvenance(t, final, spHigh.ID, 5)
+
+	// The planted orphan (same number) must be gone.
+	if _, err := os.Stat(orphanPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("planted orphan duplicate should have been removed on convergence: stat = %v", err)
+	}
+
+	// Exactly ONE .cbz must remain for chapter 10 — the new winner.
+	entries, err := os.ReadDir(seriesDir)
+	if err != nil {
+		t.Fatalf("read series dir: %v", err)
+	}
+	var cbzs []string
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".cbz" {
+			cbzs = append(cbzs, e.Name())
+		}
+	}
+	if len(cbzs) != 1 || cbzs[0] != final.Filename {
+		t.Errorf("remaining CBZs = %v, want exactly [%s] (the new winner)", cbzs, final.Filename)
+	}
+}
+
 // TestUpgrade_ScanlatorChangeReplacesFile proves the one-file-per-number
 // invariant holds when an upgrade changes ONLY the scanlator (same provider).
 // Since the CBZ filename now encodes "[Provider-Scanlator]" (Task 5), a

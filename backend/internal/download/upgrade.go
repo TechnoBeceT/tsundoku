@@ -371,27 +371,51 @@ func (d *Dispatcher) persistUpgradeSuccess(ctx context.Context, chapterID uuid.U
 	return nil
 }
 
-// tryDeleteOldCBZ performs a best-effort removal of the old CBZ file when the
-// filename changed (indicating a different provider/scanlator). It logs but
-// does not fail on removal errors — Task 7 reconcile will clean up any orphans.
+// tryDeleteOldCBZ performs a best-effort cleanup of superseded CBZs after a
+// successful convergence. For a NUMBERED chapter it removes EVERY other CBZ in the
+// series folder that shares this chapter's number — not just the single tracked
+// old filename — keeping only newFilename (the new winning file). This converges
+// the on-disk state to one file per chapter number: the previous winner AND any
+// pre-existing duplicate provenance for the same chapter are cleaned up in one
+// pass (disk.RemoveOtherChapterFiles). For an UN-numbered chapter (no number to
+// match on) it falls back to removing just the single old filename when it changed.
 //
 // It resolves the series' REAL category folder via the shared seriesCategoryName
-// (the same resolver buildRenderMeta uses to WRITE the file), so the delete looks
-// in the exact folder the CBZ was rendered into. Previously it hardcoded "Other",
-// so upgrading a chapter in a non-Other series looked in the wrong folder and
-// left the old CBZ orphaned. ch is loaded WithSeries(WithCategory()) by Upgrade.
+// (the same resolver buildRenderMeta uses to WRITE the file). Removal errors are
+// logged, never fatal — a reconcile will clean up any straggler. ch is loaded
+// WithSeries(WithCategory()) by Upgrade.
 func (d *Dispatcher) tryDeleteOldCBZ(ctx context.Context, chapterID uuid.UUID, ch *ent.Chapter, newFilename string) {
-	oldFilename := ch.Filename
-	if oldFilename == "" || oldFilename == newFilename {
-		return
-	}
+	category := seriesCategoryName(ch)
 	seriesTitle := ""
 	if ch.Edges.Series != nil {
 		seriesTitle = ch.Edges.Series.Title
 	}
-	oldPath := filepath.Join(disk.SeriesDir(d.cfg.Storage, seriesCategoryName(ch), seriesTitle), oldFilename)
+
+	if ch.Number != nil {
+		removed, err := disk.RemoveOtherChapterFiles(d.cfg.Storage, category, seriesTitle,
+			chapter.FormatChapterNumber(*ch.Number), newFilename)
+		if err != nil {
+			slog.WarnContext(ctx, "download.Dispatcher.Upgrade: best-effort duplicate-CBZ cleanup failed — a reconcile will clean it up",
+				"chapter_id", chapterID,
+				"err", err,
+			)
+		} else if removed > 0 {
+			slog.InfoContext(ctx, "download.Dispatcher.Upgrade: removed superseded duplicate CBZs on convergence",
+				"chapter_id", chapterID,
+				"removed", removed,
+			)
+		}
+		return
+	}
+
+	// Un-numbered chapter: no number to dedup by — remove just the old file if it changed.
+	oldFilename := ch.Filename
+	if oldFilename == "" || oldFilename == newFilename {
+		return
+	}
+	oldPath := filepath.Join(disk.SeriesDir(d.cfg.Storage, category, seriesTitle), oldFilename)
 	if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
-		slog.WarnContext(ctx, "download.Dispatcher.Upgrade: best-effort delete of old CBZ failed — Task 7 reconcile will clean it up",
+		slog.WarnContext(ctx, "download.Dispatcher.Upgrade: best-effort delete of old CBZ failed — a reconcile will clean it up",
 			"chapter_id", chapterID,
 			"old_path", oldPath,
 			"err", err,
