@@ -476,9 +476,12 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 	titles := ChapterTitles(row.Edges.Providers)
 
 	chapters := make([]ChapterDTO, len(row.Edges.Chapters))
-	counts := ChapterCounts{Total: len(row.Edges.Chapters)}
+	counts := ChapterCounts{}
 	for i, ch := range row.Edges.Chapters {
 		chapters[i] = newChapterDTO(ch, titles[ch.ChapterKey])
+		if ch.State != entchapter.StateSuperseded {
+			counts.Total++
+		}
 		addToCounts(&counts, ch.State)
 	}
 
@@ -740,6 +743,9 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 	}
 
 	for _, r := range rows {
+		if r.State == entchapter.StateSuperseded {
+			continue // superseded parts are merged into their whole — not counted
+		}
 		c := out[r.SeriesID]
 		c.Total += r.Count
 		switch r.State {

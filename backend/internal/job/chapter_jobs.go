@@ -125,7 +125,10 @@ func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub
 //  3. Calls download.DetectUpgrades — flags any downloaded chapters that now
 //     have a strictly better source.
 //  4. Calls dispatcher.Upgrade for each newly-flagged chapter.
-//  5. Broadcasts cycle.done (with error info if step 2 or 3 failed).
+//  5. Calls dispatcher.DetectSupersededParts — fractional-part suppression:
+//     supersedes split parts of a downloaded whole (and reverts when the whole
+//     is gone or the setting is off).
+//  6. Broadcasts cycle.done (with error info if any prior step failed).
 //
 // cycle.start/cycle.done fire exactly ONCE per RunDownloadCycle call — NOT once
 // per bounded pass — so the SSE cadence is unchanged even though downloading now
@@ -165,6 +168,13 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 			r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Error: err.Error()})
 			return fmt.Errorf("job.Runner.RunDownloadCycle: upgrade: %w", err)
 		}
+	}
+
+	// Step 4: fractional-part suppression — supersede split parts of downloaded
+	// wholes (and revert when the whole is gone or the setting is off).
+	if _, _, serr := r.dispatcher.DetectSupersededParts(ctx); serr != nil {
+		r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Upgraded: upgraded, Error: serr.Error()})
+		return fmt.Errorf("job.Runner.RunDownloadCycle: DetectSupersededParts: %w", serr)
 	}
 
 	r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Upgraded: upgraded})

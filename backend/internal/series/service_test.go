@@ -270,6 +270,87 @@ func TestGetSeriesReturnsDetail(t *testing.T) {
 	assertProviderNames(t, got.Providers)
 }
 
+// TestChapterCountsExcludeSuperseded verifies both ListSeries' rollup and
+// GetSeries' in-memory Total exclude entchapter.StateSuperseded chapters: a
+// superseded part is merged into its whole and must not inflate the visible
+// chapter count. Fixture: a downloaded whole (chapter 1) + two superseded
+// parts (1.1, 1.2, split chapters folded into the whole) + one wanted chapter
+// (2) — want Total == 2 (the whole + chapter 2), NOT 4.
+func TestChapterCountsExcludeSuperseded(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	s := client.Series.Create().
+		SetTitle("Gamma Split").
+		SetSlug("gamma-split").
+		SetCategoryID(catID(ctx, client, "Manga")).
+		SaveX(ctx)
+
+	whole := 1.0
+	client.Chapter.Create().
+		SetSeriesID(s.ID).
+		SetChapterKey("gamma-1").
+		SetNumber(whole).
+		SetState(entchapter.StateDownloaded).
+		SaveX(ctx)
+
+	part1, part2 := 1.1, 1.2
+	client.Chapter.Create().
+		SetSeriesID(s.ID).
+		SetChapterKey("gamma-1.1").
+		SetNumber(part1).
+		SetState(entchapter.StateSuperseded).
+		SaveX(ctx)
+	client.Chapter.Create().
+		SetSeriesID(s.ID).
+		SetChapterKey("gamma-1.2").
+		SetNumber(part2).
+		SetState(entchapter.StateSuperseded).
+		SaveX(ctx)
+
+	two := 2.0
+	client.Chapter.Create().
+		SetSeriesID(s.ID).
+		SetChapterKey("gamma-2").
+		SetNumber(two).
+		SetState(entchapter.StateWanted).
+		SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir(), 14)
+
+	list, err := svc.ListSeries(ctx, series.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+	var summary series.SeriesSummaryDTO
+	found := false
+	for _, sm := range list {
+		if sm.Title == "Gamma Split" {
+			summary, found = sm, true
+		}
+	}
+	if !found {
+		t.Fatalf("ListSeries: Gamma Split not found in %+v", list)
+	}
+	wantCounts := series.ChapterCounts{Total: 2, Downloaded: 1, Wanted: 1, Failed: 0}
+	if summary.ChapterCounts != wantCounts {
+		t.Fatalf("ListSeries: Gamma Split counts: want %+v, got %+v (superseded parts must not inflate Total)", wantCounts, summary.ChapterCounts)
+	}
+
+	detail, err := svc.GetSeries(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if detail.ChapterCounts != wantCounts {
+		t.Fatalf("GetSeries: counts: want %+v, got %+v", wantCounts, detail.ChapterCounts)
+	}
+	// The DTO chapter slice still carries every chapter, incl. superseded ones —
+	// only the rollup Total excludes them.
+	if len(detail.Chapters) != 4 {
+		t.Fatalf("GetSeries: want 4 chapters in DTO slice (incl. superseded), got %d", len(detail.Chapters))
+	}
+}
+
 // assertProviderNames checks the ProviderDTO display-vs-id fallback: flame has a
 // provider_name ("Flame Scans") so it is shown, asura has none so it falls back
 // to the raw provider id ("asura").
