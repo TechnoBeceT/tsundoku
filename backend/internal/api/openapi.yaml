@@ -477,7 +477,7 @@ components:
           description: Chapter display title from the best provider's feed (empty when no provider titles it).
         state:
           type: string
-          enum: [wanted, downloading, downloaded, upgrade_available, upgrading, failed, permanently_failed]
+          enum: [wanted, downloading, downloaded, upgrade_available, upgrading, failed, permanently_failed, superseded]
           description: Chapter download state.
         provider:
           type: string

@@ -1618,7 +1618,7 @@ export interface components {
              * @description Chapter download state.
              * @enum {string}
              */
-            state: "wanted" | "downloading" | "downloaded" | "upgrade_available" | "upgrading" | "failed" | "permanently_failed";
+            state: "wanted" | "downloading" | "downloaded" | "upgrade_available" | "upgrading" | "failed" | "permanently_failed" | "superseded";
             /** @description Raw Suwayomi source-ID key (SeriesProvider.provider) of the satisfying source, else the series' top source. */
             provider: string;
             /** @description Human-readable source display name of that source; falls back to the id when unresolved. Shown in the UI in place of the id. */
