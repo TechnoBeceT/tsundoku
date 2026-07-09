@@ -34,7 +34,8 @@ import type {
  *   - engine      → EnginePane       (read-only status + upgrade stepper)
  *   - suwayomi    → SuwayomiPane      (proxied SOCKS + FlareSolverr config)
  *   - extensions  → ExtensionsPane    (installed / available / repositories)
- *   - sources     → SourcesSettingsPane (warm-up + circuit-breaker knobs)
+ *   - sources     → SourcesSettingsPane (warm-up + circuit-breaker knobs +
+ *                   the library-wide dedup-sweep trigger)
  *                   + SourceMetricsPane (per-source search metrics + Warm now),
  *                   stacked — mirrors how LibraryPane stacks its own two cards
  *
@@ -97,6 +98,12 @@ withDefaults(defineProps<{
   warmMessage?: string | null
   /** The last warm-up's failure message. */
   warmError?: string | null
+  /** True while the library-wide dedup sweep request is in flight. */
+  dedupAllBusy?: boolean
+  /** Started/success message from the last dedup sweep trigger. */
+  dedupAllMessage?: string | null
+  /** Error from the last dedup sweep trigger. */
+  dedupAllError?: string | null
   /** When true, the whole screen renders as skeletons. */
   loading?: boolean
 }>(), {
@@ -116,6 +123,9 @@ withDefaults(defineProps<{
   warming: false,
   warmMessage: null,
   warmError: null,
+  dedupAllBusy: false,
+  dedupAllMessage: null,
+  dedupAllError: null,
   loading: false,
 })
 
@@ -158,6 +168,8 @@ const emit = defineEmits<{
   'save-sources-settings': [settings: SourcesSettings]
   /** Trigger a manual warm-up pass across all sources. */
   'warm-now': []
+  /** Trigger the library-wide duplicate-source dedup sweep. */
+  'dedup-all': []
 }>()
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
@@ -231,7 +243,11 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           <SourcesSettingsPane
             :sources="sourcesSettings"
             :save="sourcesSettingsSave"
+            :dedup-all-busy="dedupAllBusy"
+            :dedup-all-message="dedupAllMessage"
+            :dedup-all-error="dedupAllError"
             @save="emit('save-sources-settings', $event)"
+            @dedup-all="emit('dedup-all')"
           />
 
           <SourceMetricsPane
