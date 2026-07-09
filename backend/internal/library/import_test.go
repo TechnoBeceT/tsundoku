@@ -85,11 +85,12 @@ func TestImport_UnknownPathReturnsErrEntryNotFound(t *testing.T) {
 
 // TestImportWithMatchList proves Import's matches-LIST attach (Slice P): a
 // staged disk-only series, once imported, can have a list of Suwayomi
-// sources attached in the SAME call via AddProviders — each landing at an
-// importance strictly BELOW the disk provider's (decision E,
-// belowExistingImportances: minExisting(1) - 10 = -9) with its own
-// scanlator — while a nil matches list stays import-only exactly as before
-// (only the disk provider present, no attach).
+// sources attached in the SAME call via AddProviders — each landing at a
+// NON-NEGATIVE importance below the disk provider's. With the disk provider at
+// importance 1 there is no room below, so belowExistingImportances renumbers the
+// disk provider up (1 → 20) and the attached source lands at 10 (below it) with
+// its own scanlator — while a nil matches list stays import-only exactly as
+// before (only the disk provider present, no attach).
 func TestImportWithMatchList(t *testing.T) {
 	storage := t.TempDir()
 	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
@@ -122,8 +123,17 @@ func TestImportWithMatchList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query weeb/Reset: %v", err)
 	}
-	if weeb.Importance != -9 {
-		t.Fatalf("weeb/Reset importance = %d, want -9 (below disk provider's 1)", weeb.Importance)
+	if weeb.Importance != 10 {
+		t.Fatalf("weeb/Reset importance = %d, want 10 (non-negative, below the renumbered disk provider)", weeb.Importance)
+	}
+
+	// The disk provider was renumbered up so the attach could stay non-negative
+	// below it — it must still outrank the newly attached source.
+	disk := client.SeriesProvider.Query().
+		Where(seriesprovider.SeriesID(ser.ID), seriesprovider.Provider("mangadex")).
+		OnlyX(ctx)
+	if disk.Importance != 20 {
+		t.Fatalf("disk provider importance = %d, want 20 (renumbered above the attached source)", disk.Importance)
 	}
 
 	// A nil matches list stays import-only: only the disk provider present.

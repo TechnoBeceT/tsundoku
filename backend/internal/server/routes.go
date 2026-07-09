@@ -141,6 +141,7 @@ func registerRoutes(
 	authed.PATCH("/series/:id/providers", seriesH.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", seriesH.RemoveProvider)
 	authed.DELETE("/series/:id", seriesH.DeleteSeries)
+	authed.POST("/series/:id/dedupe-files", seriesH.DedupeFiles)
 	authed.GET("/series/:id/cover", seriesH.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", seriesH.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)

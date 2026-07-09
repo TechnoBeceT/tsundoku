@@ -151,6 +151,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/series/:id/providers", h.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", h.RemoveProvider)
 	authed.DELETE("/series/:id", h.DeleteSeries)
+	authed.POST("/series/:id/dedupe-files", h.DedupeFiles)
 	authed.GET("/series/:id/cover", h.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", h.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", h.SetMetadataSource)
@@ -464,6 +465,7 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPatch, "/api/series/" + id + "/providers"},
 		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
 		{http.MethodDelete, "/api/series/" + id + "?deleteFiles=true"},
+		{http.MethodPost, "/api/series/" + id + "/dedupe-files"},
 		{http.MethodGet, "/api/series/" + id + "/cover"},
 		{http.MethodGet, "/api/series/" + id + "/providers/" + id + "/cover"},
 		{http.MethodPatch, "/api/series/" + id + "/metadata-source"},
@@ -476,6 +478,55 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 				t.Fatalf("%s %s: want 401, got %d", tc.method, tc.target, rec.Code)
 			}
 		})
+	}
+}
+
+// TestDedupeFiles_OK confirms POST /api/series/:id/dedupe-files removes a
+// duplicate CBZ for a downloaded chapter, keeps the winner, and returns
+// {removed: N}.
+func TestDedupeFiles_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	// Alpha Saga's chapter 1 winner is "[mangadex][en] Alpha Saga 001.cbz".
+	seriesDir := disk.SeriesDir(env.storage, "Manga", "Alpha Saga")
+	if err := os.MkdirAll(seriesDir, 0o750); err != nil {
+		t.Fatalf("mkdir series dir: %v", err)
+	}
+	for _, name := range []string{"[mangadex][en] Alpha Saga 001.cbz", "[old][en] Alpha Saga 001.cbz"} {
+		if err := os.WriteFile(filepath.Join(seriesDir, name), []byte("stub"), 0o600); err != nil {
+			t.Fatalf("write %q: %v", name, err)
+		}
+	}
+
+	rec := env.do(http.MethodPost, "/api/series/"+env.mangaID.String()+"/dedupe-files", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DedupeFiles: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got handler.DedupeFilesResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("DedupeFiles: decode: %v", err)
+	}
+	if got.Removed != 1 {
+		t.Fatalf("DedupeFiles: removed want 1, got %d", got.Removed)
+	}
+
+	// The winner survives; the orphan is gone.
+	if _, err := os.Stat(filepath.Join(seriesDir, "[mangadex][en] Alpha Saga 001.cbz")); err != nil {
+		t.Errorf("winner CBZ should survive: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(seriesDir, "[old][en] Alpha Saga 001.cbz")); !os.IsNotExist(err) {
+		t.Errorf("orphan CBZ should have been removed: stat = %v", err)
+	}
+}
+
+// TestDedupeFiles_NotFound confirms an unknown series id yields 404.
+func TestDedupeFiles_NotFound(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/dedupe-files", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("DedupeFiles(unknown): want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -586,21 +637,24 @@ func TestReorderProviders_OK(t *testing.T) {
 
 	provID := firstProviderID(t, env, env.mangaID.String())
 
+	// The submitted importance (5) expresses only order — the service normalizes
+	// it to a clean non-negative spread, so a single provider becomes (n-idx)*10
+	// = 10 (n=1). Only the relative order is honoured, not the absolute value.
 	body := `{"providers":[{"id":"` + provID + `","importance":5}]}`
 	rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/providers", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ReorderProviders: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	assertProviderImportance(t, rec.Body.Bytes(), provID, 5)
+	assertProviderImportance(t, rec.Body.Bytes(), provID, 10)
 
-	// DB round-trip: the importance must be persisted, not just echoed in the response.
+	// DB round-trip: the normalized importance must be persisted, not just echoed.
 	provUUID, err := uuid.Parse(provID)
 	if err != nil {
 		t.Fatalf("ReorderProviders: parse provID: %v", err)
 	}
 	dbProv := env.client.SeriesProvider.GetX(ctx, provUUID)
-	if dbProv.Importance != 5 {
-		t.Fatalf("ReorderProviders: DB importance want 5, got %d", dbProv.Importance)
+	if dbProv.Importance != 10 {
+		t.Fatalf("ReorderProviders: DB importance want 10 (normalized), got %d", dbProv.Importance)
 	}
 }
 

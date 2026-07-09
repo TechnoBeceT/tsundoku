@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -61,11 +62,40 @@ func NewServiceWithStaleGrace(client *ent.Client, storage string, staleGrace fun
 	return &Service{client: client, storage: storage, staleGrace: staleGrace}
 }
 
+// importanceStep is the spacing between adjacent providers on the clean
+// importance spread ReorderProviders normalizes to. Higher importance = higher
+// priority (see CLAUDE.md "Provider importance — higher number = higher priority").
+const importanceStep = 10
+
 // ProviderRank pairs a SeriesProvider UUID with the desired importance value. Used
 // by ReorderProviders to update provider priority in a single transaction.
 type ProviderRank struct {
 	SeriesProviderID uuid.UUID
 	Importance       int
+}
+
+// normalizeRanks reassigns the given ranks onto a clean, non-negative,
+// strictly-descending importance spread: the ranks are ordered by their
+// SUBMITTED importance (descending; ties keep their original slice position),
+// then each is given importance (n-idx)*importanceStep so the highest-priority
+// provider gets the largest value and the lowest gets importanceStep. Only the
+// relative ORDER of the submitted importances is honoured — the absolute values
+// are canonicalised. This self-heals any legacy negative or duplicated
+// importances (e.g. the old below-existing spread that could go negative) into a
+// coherent order every time the owner reorders, so the reorder can never fail on
+// out-of-range input.
+func normalizeRanks(ranks []ProviderRank) []ProviderRank {
+	sorted := make([]ProviderRank, len(ranks))
+	copy(sorted, ranks)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].Importance > sorted[j].Importance
+	})
+	n := len(sorted)
+	out := make([]ProviderRank, n)
+	for i, r := range sorted {
+		out[i] = ProviderRank{SeriesProviderID: r.SeriesProviderID, Importance: (n - i) * importanceStep}
+	}
+	return out
 }
 
 // SetMonitored updates the monitored flag for the series identified by id.
@@ -103,15 +133,24 @@ func (s *Service) SetCompleted(ctx context.Context, id uuid.UUID, completed bool
 // ReorderProviders updates the importance values for a set of SeriesProviders in
 // a single all-or-nothing transaction.
 //
-// M4 ONLY PERSISTS importance — the upgrade re-evaluation that consumes the new
-// ranking is M5 / the next download ticker cycle. This method does NOT trigger
-// any re-evaluation or upgrade logic.
+// The submitted importances express only the desired ORDER: they are normalized
+// (normalizeRanks) to a clean non-negative descending spread before persisting,
+// so a submitted negative importance (legacy bad data from the old below-existing
+// spread) is tolerated and self-healed rather than rejected. Only the relative
+// order of the submitted importances is honoured — the persisted values are
+// canonicalised.
+//
+// This ONLY PERSISTS importance — the upgrade re-evaluation that consumes the new
+// ranking is the next download ticker cycle. This method does NOT trigger any
+// re-evaluation or upgrade logic.
 //
 // Error semantics:
 //   - id not found → ErrSeriesNotFound (whole tx rolled back).
 //   - any rank's SeriesProviderID does not belong to id → ErrProviderNotInSeries
 //     (whole tx rolled back; importances are ALL-OR-NOTHING — no partial update).
 func (s *Service) ReorderProviders(ctx context.Context, id uuid.UUID, ranks []ProviderRank) error {
+	ranks = normalizeRanks(ranks)
+
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("series.ReorderProviders: begin tx: %w", err)

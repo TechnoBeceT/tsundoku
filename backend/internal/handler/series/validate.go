@@ -103,7 +103,10 @@ func validateSetCompleted(req SetCompletedRequest) error {
 type ProviderRankBody struct {
 	// ID is the SeriesProvider UUID to update.
 	ID string `json:"id"`
-	// Importance is the new priority/quality rank (non-negative; higher = preferred).
+	// Importance expresses the desired priority ORDER (higher = preferred). Any
+	// integer is accepted — the service normalizes the submitted importances to a
+	// clean non-negative descending spread, so even a legacy negative value is
+	// tolerated and self-healed rather than rejected.
 	Importance int `json:"importance"`
 }
 
@@ -154,9 +157,13 @@ func validateSetMetadataSource(req SetMetadataSourceRequest) (*uuid.UUID, error)
 	return &id, nil
 }
 
-// validateReorderProviders validates the PATCH body: at least one entry is required,
-// each id must parse as a valid UUID, and each importance must be non-negative.
-// Returns a []seriessvc.ProviderRank ready for the service, or a 400 echo.HTTPError.
+// validateReorderProviders validates the PATCH body: at least one entry is
+// required and each id must parse as a valid UUID. The importance value is NOT
+// range-checked here — the service normalizes the submitted importances to a
+// clean non-negative descending spread (only their relative order matters), so a
+// negative importance (legacy bad data) is tolerated and self-healed rather than
+// rejected with a 400. Returns a []seriessvc.ProviderRank ready for the service,
+// or a 400 echo.HTTPError.
 func validateReorderProviders(req ReorderProvidersRequest) ([]seriessvc.ProviderRank, error) {
 	if len(req.Providers) == 0 {
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "providers must have at least one entry")
@@ -166,9 +173,6 @@ func validateReorderProviders(req ReorderProvidersRequest) ([]seriessvc.Provider
 		id, err := uuid.Parse(p.ID)
 		if err != nil {
 			return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid provider id: "+p.ID)
-		}
-		if p.Importance < 0 {
-			return nil, echo.NewHTTPError(http.StatusBadRequest, "importance must be non-negative")
 		}
 		ranks[i] = seriessvc.ProviderRank{SeriesProviderID: id, Importance: p.Importance}
 	}

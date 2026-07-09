@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -167,6 +168,85 @@ func TestUpgrade_SwapsFile(t *testing.T) {
 		if _, statErr := os.Stat(oldPath); !errors.Is(statErr, os.ErrNotExist) {
 			t.Errorf("old CBZ should have been deleted after filename change: stat(%s) = %v", oldPath, statErr)
 		}
+	}
+}
+
+// TestUpgrade_RemovesDuplicateCBZsOnConvergence proves the Task 5 wiring: on a
+// successful upgrade of a NUMBERED chapter, Upgrade removes EVERY other CBZ that
+// shares the chapter number — the previous winner AND any pre-existing orphan
+// duplicate — keeping only the new winning file (one file per chapter number).
+func TestUpgrade_RemovesDuplicateCBZsOnConvergence(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Dedup Series").SetSlug("dedup-series").SaveX(ctx)
+	spLow := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-low").SetImportance(2).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spLow.ID).SetChapterKey("10").SetNumber(10).
+		SetURL("https://low.example.com/10").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("10").SetNumber(10).SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce: %v", err)
+	}
+	initial := client.Chapter.GetX(ctx, ch.ID)
+	if initial.State != entchapter.StateDownloaded {
+		t.Fatalf("initial state: want downloaded, got %s", initial.State)
+	}
+	seriesDir := filepath.Join(storageDir, "Other", "Dedup Series")
+
+	// Plant a pre-existing ORPHAN duplicate CBZ for the same chapter number.
+	orphanPath := filepath.Join(seriesDir, "[orphan] Dedup Series 10.cbz")
+	if err := os.WriteFile(orphanPath, []byte("orphan"), 0o600); err != nil {
+		t.Fatalf("plant orphan CBZ: %v", err)
+	}
+
+	// Add a higher-importance provider for the same chapter and converge.
+	spHigh := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-high").SetImportance(5).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spHigh.ID).SetChapterKey("10").SetNumber(10).
+		SetURL("https://high.example.com/10").SetProviderIndex(0).SaveX(ctx)
+	if _, err := download.DetectUpgrades(ctx, client, 3); err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+	if err := d.Upgrade(ctx, ch.ID); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	final := client.Chapter.GetX(ctx, ch.ID)
+	assertUpgradeProvenance(t, final, spHigh.ID, 5)
+
+	// The planted orphan (same number) must be gone.
+	if _, err := os.Stat(orphanPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("planted orphan duplicate should have been removed on convergence: stat = %v", err)
+	}
+
+	// Exactly ONE .cbz must remain for chapter 10 — the new winner.
+	assertOnlyCBZ(t, seriesDir, final.Filename)
+}
+
+// assertOnlyCBZ fails unless dir contains exactly one .cbz file named want.
+func assertOnlyCBZ(t *testing.T, dir, want string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir %q: %v", dir, err)
+	}
+	var cbzs []string
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".cbz" {
+			cbzs = append(cbzs, e.Name())
+		}
+	}
+	if len(cbzs) != 1 || cbzs[0] != want {
+		t.Errorf("remaining CBZs = %v, want exactly [%s]", cbzs, want)
 	}
 }
 
@@ -522,5 +602,123 @@ func TestUpgrade_SSEEvents(t *testing.T) {
 	}
 	if got[1].Type != "download.done" {
 		t.Errorf("second event: want download.done, got %q", got[1].Type)
+	}
+}
+
+// TestDetectUpgrades_SkipsWhenBestIsCurrentSatisfier is the self-churn cure: a
+// downloaded chapter whose ONLY live source is the one that already satisfies it
+// must NOT be flagged for upgrade even when that source's importance has since
+// been raised above the frozen satisfied_importance watermark. Re-fetching from
+// the same source would be pure churn. DetectUpgrades instead refreshes the
+// stale watermark to the source's current importance and leaves the chapter
+// downloaded.
+func TestDetectUpgrades_SkipsWhenBestIsCurrentSatisfier(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Self Sat Series").SetSlug("self-sat-series").SaveX(ctx)
+	spP := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-p").SetImportance(1).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spP.ID).SetChapterKey("ch-self").
+		SetURL("https://p.example.com/ch-self").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-self").SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce: %v", err)
+	}
+	downloaded := client.Chapter.GetX(ctx, ch.ID)
+	if downloaded.State != entchapter.StateDownloaded {
+		t.Fatalf("initial state: want downloaded, got %s", downloaded.State)
+	}
+	if downloaded.SatisfiedImportance == nil || *downloaded.SatisfiedImportance != 1 {
+		t.Fatalf("initial satisfied_importance: want 1, got %v", downloaded.SatisfiedImportance)
+	}
+
+	// Raise the SAME (and only) source's importance well above the frozen
+	// watermark. The old maxImportanceForChapter model would re-fire an upgrade
+	// from this very source; the fixed model must not.
+	client.SeriesProvider.UpdateOneID(spP.ID).SetImportance(5).ExecX(ctx)
+
+	n, err := download.DetectUpgrades(ctx, client, 3)
+	if err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("DetectUpgrades: want 0 flagged (best source IS the current satisfier), got %d", n)
+	}
+
+	after := client.Chapter.GetX(ctx, ch.ID)
+	if after.State != entchapter.StateDownloaded {
+		t.Errorf("state: want downloaded (no upgrade), got %s", after.State)
+	}
+	if after.SatisfiedImportance == nil || *after.SatisfiedImportance != 5 {
+		t.Errorf("satisfied_importance: want 5 (watermark refreshed to the source's current importance), got %v", after.SatisfiedImportance)
+	}
+}
+
+// TestUpgrade_NoOpWhenBestIsCurrentSatisfier is the defence-in-depth partner to
+// the DetectUpgrades guard: even if a chapter somehow carries a STALE
+// upgrade_available flag whose only live candidate is its current satisfier,
+// Upgrade must NOT fetch or re-render. It refreshes the watermark and returns the
+// chapter to downloaded with its file untouched (fetcher never called).
+func TestUpgrade_NoOpWhenBestIsCurrentSatisfier(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+	hub := sse.NewHub()
+
+	s := client.Series.Create().SetTitle("Stale Flag Series").SetSlug("stale-flag-series").SaveX(ctx)
+	spP := client.SeriesProvider.Create().
+		SetSeries(s).SetProvider("prov-p").SetImportance(2).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spP.ID).SetChapterKey("ch-stale").
+		SetURL("https://p.example.com/ch-stale").SetProviderIndex(0).SaveX(ctx)
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-stale").SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce: %v", err)
+	}
+	downloaded := client.Chapter.GetX(ctx, ch.ID)
+	originalFilename := downloaded.Filename
+	if originalFilename == "" {
+		t.Fatal("expected a filename after the initial download")
+	}
+
+	// Force a STALE upgrade_available flag (bypass the state machine) with the
+	// satisfier as the only source, and raise its importance so a naive upgrade
+	// would re-fetch from it.
+	client.SeriesProvider.UpdateOneID(spP.ID).SetImportance(9).ExecX(ctx)
+	client.Chapter.UpdateOneID(ch.ID).SetState(entchapter.StateUpgradeAvailable).ExecX(ctx)
+
+	counter := &countingFetcher{base: fake.New()}
+	dCount := download.New(client, counter, hub, download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+
+	if err := dCount.Upgrade(ctx, ch.ID); err != nil {
+		t.Fatalf("Upgrade returned unexpected error: %v", err)
+	}
+
+	if got := atomic.LoadInt64(&counter.calls); got != 0 {
+		t.Errorf("fetcher call count: want 0 (self-satisfier no-op), got %d", got)
+	}
+	after := client.Chapter.GetX(ctx, ch.ID)
+	if after.State != entchapter.StateDownloaded {
+		t.Errorf("state: want downloaded (stale flag cleared), got %s", after.State)
+	}
+	if after.Filename != originalFilename {
+		t.Errorf("filename: want %q (unchanged), got %q", originalFilename, after.Filename)
+	}
+	if after.SatisfiedImportance == nil || *after.SatisfiedImportance != 9 {
+		t.Errorf("satisfied_importance: want 9 (watermark refreshed), got %v", after.SatisfiedImportance)
 	}
 }

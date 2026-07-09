@@ -265,6 +265,30 @@ func (h *Handler) DeleteSeries(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// DedupeFilesResult is the JSON response for POST /api/series/:id/dedupe-files:
+// the number of superseded duplicate CBZ files removed from disk.
+type DedupeFilesResult struct {
+	// Removed is the count of duplicate CBZ files deleted by the sweep.
+	Removed int `json:"removed"`
+}
+
+// DedupeFiles handles POST /api/series/:id/dedupe-files. It runs the owner-
+// triggered duplicate-CBZ sweep over the series — removing every superseded CBZ
+// that does not match a chapter's winning filename while keeping the winners —
+// and returns {removed: N}. It performs no DB writes. A missing series yields 404.
+func (h *Handler) DedupeFiles(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+
+	removed, err := h.svc.DedupeFiles(c.Request().Context(), id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, DedupeFilesResult{Removed: removed})
+}
+
 // LibraryHealth handles GET /api/health — the library-wide source-health scan:
 // every series with at least one stale or erroring source.
 func (h *Handler) LibraryHealth(c echo.Context) error {

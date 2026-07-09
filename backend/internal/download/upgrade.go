@@ -2,6 +2,7 @@ package download
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,6 +18,14 @@ import (
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
+
+// errUpgradeNoLongerNeeded signals that fetchAndRender found the chapter's
+// current satisfier is still the best live source, so no fetch is warranted (a
+// stale upgrade_available flag). It is NOT a failure: Upgrade returns the chapter
+// to downloaded cleanly (the watermark was already refreshed), without recording
+// last_error or emitting upgrade.fail. This is the defence-in-depth partner to
+// DetectUpgrades' self-churn guard.
+var errUpgradeNoLongerNeeded = errors.New("upgrade no longer needed: current satisfier is already the best source")
 
 // upgradeResult holds the artefacts produced by fetchAndRender so that
 // Upgrade can persist them in a single update call.
@@ -105,18 +114,40 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 		return 0, nil
 	}
 
-	maxImportance, err := maxImportanceForChapter(ctx, client, gate, ch, maxRetries, now)
+	best, err := bestUpgradeCandidate(ctx, client, gate, ch, maxRetries, now)
 	if err != nil {
 		// Log and continue — one chapter failing to scan should not abort all others.
-		slog.WarnContext(ctx, "download.DetectUpgrades: failed to query max importance for chapter — skipping",
+		slog.WarnContext(ctx, "download.DetectUpgrades: failed to rank candidates for chapter — skipping",
 			"chapter_id", ch.ID,
 			"err", err,
 		)
 		return 0, nil
 	}
+	// No live, non-gated source offers this chapter right now — nothing to upgrade to.
+	if best == nil {
+		return 0, nil
+	}
 
-	// Strict comparison: only flag when a strictly higher-importance source exists.
-	if maxImportance <= *ch.SatisfiedImportance {
+	// Self-churn guard: if the best live source IS the one that already satisfies
+	// this chapter, an "upgrade" would re-fetch from the SAME source — pure churn
+	// (the root bug: satisfied_importance is a frozen snapshot, so raising a
+	// source's importance would otherwise re-fire an upgrade from that source).
+	// Never flag; instead refresh the stale watermark to the source's current
+	// importance so the chapter is not re-scanned as an upgrade next cycle.
+	if ch.SatisfiedByProviderID != nil && best.SeriesProvider.ID == *ch.SatisfiedByProviderID {
+		if best.SeriesProvider.Importance != *ch.SatisfiedImportance {
+			if err := client.Chapter.UpdateOneID(ch.ID).
+				SetSatisfiedImportance(best.SeriesProvider.Importance).
+				Exec(ctx); err != nil {
+				return 0, fmt.Errorf("download.DetectUpgrades: refresh satisfied_importance for chapter %s: %w", ch.ID, err)
+			}
+		}
+		return 0, nil
+	}
+
+	// Strict comparison: only flag when a DIFFERENT source is strictly higher than
+	// the current satisfied_importance watermark.
+	if best.SeriesProvider.Importance <= *ch.SatisfiedImportance {
 		return 0, nil
 	}
 
@@ -126,25 +157,24 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 	return 1, nil
 }
 
-// maxImportanceForChapter returns the highest importance among the LIVE,
-// NON-GATED sources offering ch's chapter_key within the same series (attempts <
-// maxRetries AND past per-source cooldown AND circuit-breaker not tripped).
-// Returns 0 if no eligible source exists. It reuses chapter.RankedLiveCandidates
-// so the "live, importance-ranked" rule is defined once and is identical to the
-// download path (§2 DRY), then applies the shared gate filter so a
-// breaker-tripped higher source is never counted as an upgrade target (nil gate
-// never filters).
-func maxImportanceForChapter(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
+// bestUpgradeCandidate returns the highest-importance LIVE, NON-GATED source
+// offering ch's chapter_key within the same series (attempts < maxRetries AND
+// past per-source cooldown AND circuit-breaker not tripped), or nil when no
+// eligible source exists. It reuses chapter.RankedLiveCandidates so the "live,
+// importance-ranked" rule is defined once and is identical to the download path
+// (§2 DRY), then applies the shared gate filter so a breaker-tripped higher
+// source is never chosen as an upgrade target (nil gate never filters).
+func bestUpgradeCandidate(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (*chapter.Candidate, error) {
 	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now)
 	if err != nil {
-		return 0, fmt.Errorf("rank live candidates for chapter %s: %w", ch.ID, err)
+		return nil, fmt.Errorf("rank live candidates for chapter %s: %w", ch.ID, err)
 	}
 	cands = gateFilterCandidates(ctx, gate, cands, now)
 	if len(cands) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	// RankedLiveCandidates is importance-DESC, so the first is the highest.
-	return cands[0].SeriesProvider.Importance, nil
+	return &cands[0], nil
 }
 
 // Upgrade executes a non-destructive atomic upgrade for the given chapter.
@@ -187,6 +217,9 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	limiter := newProviderLimiter(d.downloadConcurrency(ctx))
 	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter)
 	if err != nil {
+		if errors.Is(err, errUpgradeNoLongerNeeded) {
+			return d.finishStaleUpgrade(ctx, chapterID)
+		}
 		return d.handleUpgradeFailure(ctx, chapterID, res.pc, err)
 	}
 
@@ -231,6 +264,22 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		return upgradeResult{}, fmt.Errorf("no live source available for chapter %s", chapterID)
 	}
 	best := cands[0]
+
+	// Defence-in-depth against a stale upgrade_available flag: if the best live
+	// source IS the chapter's current satisfier, an upgrade would re-fetch from the
+	// SAME source (the self-churn bug DetectUpgrades now prevents at the source).
+	// Refresh the frozen satisfied_importance watermark to the source's current
+	// importance and signal a clean no-op — no fetch, no re-render (mirrors the
+	// len(cands)==0 early return, but without treating it as a failure).
+	if ch.SatisfiedByProviderID != nil && best.SeriesProvider.ID == *ch.SatisfiedByProviderID {
+		if err := d.client.Chapter.UpdateOneID(chapterID).
+			SetSatisfiedImportance(best.SeriesProvider.Importance).
+			Exec(ctx); err != nil {
+			return upgradeResult{}, fmt.Errorf("refresh satisfied_importance: %w", err)
+		}
+		return upgradeResult{}, errUpgradeNoLongerNeeded
+	}
+
 	pc := best.ProviderChapter
 	sp := best.SeriesProvider
 	sourceKey := canonicalSourceKey(sp)
@@ -322,32 +371,80 @@ func (d *Dispatcher) persistUpgradeSuccess(ctx context.Context, chapterID uuid.U
 	return nil
 }
 
-// tryDeleteOldCBZ performs a best-effort removal of the old CBZ file when the
-// filename changed (indicating a different provider/scanlator). It logs but
-// does not fail on removal errors — Task 7 reconcile will clean up any orphans.
+// tryDeleteOldCBZ performs a best-effort cleanup of superseded CBZs after a
+// successful convergence. For a NUMBERED chapter it removes EVERY other CBZ in the
+// series folder that shares this chapter's number — not just the single tracked
+// old filename — keeping only newFilename (the new winning file). This converges
+// the on-disk state to one file per chapter number: the previous winner AND any
+// pre-existing duplicate provenance for the same chapter are cleaned up in one
+// pass (disk.RemoveOtherChapterFiles). For an UN-numbered chapter (no number to
+// match on) it falls back to removing just the single old filename when it changed.
 //
 // It resolves the series' REAL category folder via the shared seriesCategoryName
-// (the same resolver buildRenderMeta uses to WRITE the file), so the delete looks
-// in the exact folder the CBZ was rendered into. Previously it hardcoded "Other",
-// so upgrading a chapter in a non-Other series looked in the wrong folder and
-// left the old CBZ orphaned. ch is loaded WithSeries(WithCategory()) by Upgrade.
+// (the same resolver buildRenderMeta uses to WRITE the file). Removal errors are
+// logged, never fatal — a reconcile will clean up any straggler. ch is loaded
+// WithSeries(WithCategory()) by Upgrade.
 func (d *Dispatcher) tryDeleteOldCBZ(ctx context.Context, chapterID uuid.UUID, ch *ent.Chapter, newFilename string) {
-	oldFilename := ch.Filename
-	if oldFilename == "" || oldFilename == newFilename {
-		return
-	}
+	category := seriesCategoryName(ch)
 	seriesTitle := ""
 	if ch.Edges.Series != nil {
 		seriesTitle = ch.Edges.Series.Title
 	}
-	oldPath := filepath.Join(disk.SeriesDir(d.cfg.Storage, seriesCategoryName(ch), seriesTitle), oldFilename)
+
+	if ch.Number != nil {
+		removed, err := disk.RemoveOtherChapterFiles(d.cfg.Storage, category, seriesTitle,
+			chapter.FormatChapterNumber(*ch.Number), newFilename)
+		if err != nil {
+			slog.WarnContext(ctx, "download.Dispatcher.Upgrade: best-effort duplicate-CBZ cleanup failed — a reconcile will clean it up",
+				"chapter_id", chapterID,
+				"err", err,
+			)
+		} else if removed > 0 {
+			slog.InfoContext(ctx, "download.Dispatcher.Upgrade: removed superseded duplicate CBZs on convergence",
+				"chapter_id", chapterID,
+				"removed", removed,
+			)
+		}
+		return
+	}
+
+	// Un-numbered chapter: no number to dedup by — remove just the old file if it changed.
+	oldFilename := ch.Filename
+	if oldFilename == "" || oldFilename == newFilename {
+		return
+	}
+	oldPath := filepath.Join(disk.SeriesDir(d.cfg.Storage, category, seriesTitle), oldFilename)
 	if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
-		slog.WarnContext(ctx, "download.Dispatcher.Upgrade: best-effort delete of old CBZ failed — Task 7 reconcile will clean it up",
+		slog.WarnContext(ctx, "download.Dispatcher.Upgrade: best-effort delete of old CBZ failed — a reconcile will clean it up",
 			"chapter_id", chapterID,
 			"old_path", oldPath,
 			"err", err,
 		)
 	}
+}
+
+// finishStaleUpgrade cleanly resolves a stale upgrade_available flag whose best
+// live source is the chapter's current satisfier (fetchAndRender returned
+// errUpgradeNoLongerNeeded after already refreshing the watermark). It transitions
+// upgrading → downloaded and broadcasts download.done — no fetch happened, the
+// working copy is untouched, and NO last_error / upgrade.fail is recorded (this is
+// not a failure). Always returns nil so callers treat it as a handled outcome.
+func (d *Dispatcher) finishStaleUpgrade(ctx context.Context, chapterID uuid.UUID) error {
+	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
+		// Defensive path: only reachable on a DB failure between the upgrading
+		// transition and here. Log but return nil so the chapter is not stranded in
+		// upgrading — the next DetectUpgrades run re-evaluates it.
+		slog.ErrorContext(ctx, "download.Dispatcher.finishStaleUpgrade: could not transition upgrading→downloaded",
+			"chapter_id", chapterID,
+			"set_state_err", err,
+		)
+		return nil
+	}
+	d.broadcast("download.done", DownloadEvent{
+		ChapterID: chapterID,
+		State:     string(entchapter.StateDownloaded),
+	})
+	return nil
 }
 
 // handleUpgradeFailure is the upgrade-specific failure handler.

@@ -832,6 +832,47 @@ func TestReorderProvidersUpdatesImportances(t *testing.T) {
 	}
 }
 
+// TestReorderProvidersNormalizesNegativeInput proves the self-healing normalization:
+// a reorder whose submitted list contains a NEGATIVE importance (legacy bad data
+// from the old below-existing spread) succeeds and persists a clean non-negative
+// spread that preserves the submitted ORDER (higher submitted importance ranks
+// higher), rather than being rejected.
+func TestReorderProvidersNormalizesNegativeInput(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	seed := seedProviders(ctx, t, client)
+
+	svc := series.NewService(client, t.TempDir(), 14)
+
+	// A submitted above B; B carries a negative importance. Order by submitted
+	// importance: A(10) > B(-3) ⇒ normalized A=20, B=10, both non-negative.
+	ranks := []series.ProviderRank{
+		{SeriesProviderID: seed.providerAID, Importance: 10},
+		{SeriesProviderID: seed.providerBID, Importance: -3},
+	}
+	if err := svc.ReorderProviders(ctx, seed.seriesID, ranks); err != nil {
+		t.Fatalf("ReorderProviders(negative input): want success, got %v", err)
+	}
+
+	detail, err := svc.GetSeries(ctx, seed.seriesID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	got := map[string]int{}
+	for _, p := range detail.Providers {
+		if p.Importance < 0 {
+			t.Fatalf("provider %s importance = %d is negative after normalization", p.Provider, p.Importance)
+		}
+		got[p.Provider] = p.Importance
+	}
+	if got["mangadex"] != 20 { // providerA, submitted highest
+		t.Fatalf("mangadex (A) importance = %d, want 20 (highest of the spread)", got["mangadex"])
+	}
+	if got["asura"] != 10 { // providerB, submitted negative → still ranks below A, non-negative
+		t.Fatalf("asura (B) importance = %d, want 10 (below A, non-negative)", got["asura"])
+	}
+}
+
 // TestReorderProvidersNotFound verifies that a random series UUID yields ErrSeriesNotFound.
 func TestReorderProvidersNotFound(t *testing.T) {
 	client := testdb.New(t)
