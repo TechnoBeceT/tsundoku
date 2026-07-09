@@ -85,9 +85,11 @@ const emit = defineEmits<{
 // Chapters ordered by number (null sorts as 0) then by stable key — matches the
 // backend's "ordered by number then chapterKey" contract.
 const sortedChapters = computed<Chapter[]>(() =>
-  [...props.series.chapters].sort(
-    (a, b) => (a.number ?? 0) - (b.number ?? 0) || a.chapterKey.localeCompare(b.chapterKey),
-  ),
+  [...props.series.chapters]
+    .filter((c) => c.state !== 'superseded')
+    .sort(
+      (a, b) => (a.number ?? 0) - (b.number ?? 0) || a.chapterKey.localeCompare(b.chapterKey),
+    ),
 )
 
 // Sources ordered by importance descending — the top one is "Preferred".
