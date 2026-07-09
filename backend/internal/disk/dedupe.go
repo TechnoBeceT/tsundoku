@@ -44,26 +44,39 @@ func RemoveOtherChapterFiles(storage, category, title, chapterNumber, keepFilena
 	}
 
 	for _, e := range entries {
-		if e.IsDir() {
+		if !isRemovableDuplicate(e, keepFilename, targetKey) {
 			continue
 		}
-		name := e.Name()
-		if name == keepFilename || filepath.Ext(name) != ".cbz" {
-			continue
-		}
-		num, ok := chapterNumberFromFilename(name)
-		if !ok || chapter.FormatChapterNumber(num) != targetKey {
-			continue
-		}
-		if rmErr := os.Remove(filepath.Join(dir, name)); rmErr != nil {
+		path := filepath.Join(dir, e.Name())
+		if rmErr := os.Remove(path); rmErr != nil {
 			// Best-effort: log and keep sweeping the rest of the directory.
 			slog.Warn("disk.RemoveOtherChapterFiles: best-effort delete of duplicate CBZ failed",
-				"path", filepath.Join(dir, name), "err", rmErr)
+				"path", path, "err", rmErr)
 			continue
 		}
 		removed++
 	}
 	return removed, nil
+}
+
+// isRemovableDuplicate reports whether a directory entry is a CBZ (other than
+// keepFilename) whose parsed chapter number canonicalises to targetKey — i.e. a
+// superseded duplicate of the same chapter that RemoveOtherChapterFiles should
+// delete. Directories, non-.cbz files, the keeper, and un-numbered/unparseable
+// names are never removable.
+func isRemovableDuplicate(e os.DirEntry, keepFilename, targetKey string) bool {
+	if e.IsDir() {
+		return false
+	}
+	name := e.Name()
+	if name == keepFilename || filepath.Ext(name) != ".cbz" {
+		return false
+	}
+	num, ok := chapterNumberFromFilename(name)
+	if !ok {
+		return false
+	}
+	return chapter.FormatChapterNumber(num) == targetKey
 }
 
 // chapterNumberFromFilename extracts a chapter number from a CBZ filename.

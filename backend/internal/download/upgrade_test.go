@@ -229,9 +229,15 @@ func TestUpgrade_RemovesDuplicateCBZsOnConvergence(t *testing.T) {
 	}
 
 	// Exactly ONE .cbz must remain for chapter 10 — the new winner.
-	entries, err := os.ReadDir(seriesDir)
+	assertOnlyCBZ(t, seriesDir, final.Filename)
+}
+
+// assertOnlyCBZ fails unless dir contains exactly one .cbz file named want.
+func assertOnlyCBZ(t *testing.T, dir, want string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("read series dir: %v", err)
+		t.Fatalf("read dir %q: %v", dir, err)
 	}
 	var cbzs []string
 	for _, e := range entries {
@@ -239,8 +245,8 @@ func TestUpgrade_RemovesDuplicateCBZsOnConvergence(t *testing.T) {
 			cbzs = append(cbzs, e.Name())
 		}
 	}
-	if len(cbzs) != 1 || cbzs[0] != final.Filename {
-		t.Errorf("remaining CBZs = %v, want exactly [%s] (the new winner)", cbzs, final.Filename)
+	if len(cbzs) != 1 || cbzs[0] != want {
+		t.Errorf("remaining CBZs = %v, want exactly [%s]", cbzs, want)
 	}
 }
 
