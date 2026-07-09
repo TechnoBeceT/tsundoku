@@ -12,6 +12,8 @@
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
  *                           extCheckInterval — that moved to useSettings)
  *   useSourceMetrics()    → sourceMetrics + pending/error + warmNow (Warm now)
+ *   useLibraryMaintenance() → dedupAllBusy/Message/Error + dedupAllProviders
+ *                           (library-wide duplicate-source dedup sweep)
  *
  * Prop wiring:
  *   :active-pane          — local activePane ref (default 'library')
@@ -45,6 +47,9 @@
  *   :warming              — warming from useSourceMetrics
  *   :warm-message         — warmMessage from useSourceMetrics
  *   :warm-error           — warmError from useSourceMetrics
+ *   :dedup-all-busy       — dedupAllBusy from useLibraryMaintenance
+ *   :dedup-all-message    — dedupAllMessage from useLibraryMaintenance
+ *   :dedup-all-error      — dedupAllError from useLibraryMaintenance
  *   :loading              — true while any primary dataset is still fetching
  *
  * Emit wiring:
@@ -67,6 +72,7 @@
  *   @update:ext-check-interval   → saveExtensionCheckInterval
  *   @save-sources-settings       → saveSourcesSettings
  *   @warm-now                    → warmNow
+ *   @dedup-all                   → dedupAllProviders
  */
 import type { EngineInfo, SettingsPane } from '~/components/screens/settings.types'
 
@@ -127,6 +133,13 @@ const {
   warmError,
   warmNow,
 } = useSourceMetrics()
+
+const {
+  dedupAllBusy,
+  dedupAllMessage,
+  dedupAllError,
+  dedupAllProviders,
+} = useLibraryMaintenance()
 
 /**
  * Engine upgrade flow is deferred.
@@ -194,6 +207,9 @@ const loading = computed(
       :warming="warming"
       :warm-message="warmMessage"
       :warm-error="warmError"
+      :dedup-all-busy="dedupAllBusy"
+      :dedup-all-message="dedupAllMessage"
+      :dedup-all-error="dedupAllError"
       :loading="loading"
       @set-pane="setPane"
       @save-library="saveLibrary"
@@ -214,6 +230,7 @@ const loading = computed(
       @update:ext-check-interval="saveExtensionCheckInterval"
       @save-sources-settings="saveSourcesSettings"
       @warm-now="warmNow"
+      @dedup-all="dedupAllProviders"
     />
   </div>
 </template>

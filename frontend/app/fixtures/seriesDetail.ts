@@ -204,3 +204,33 @@ export const seriesWithUnlinkedGroup: SeriesDetail = {
   id: '0a4d1c8e-2222-4a00-9000-000000000002',
   providers: [...providers, unlinkedProvider],
 }
+
+/**
+ * A drifted duplicate: an unlinked disk-origin group whose `providerName` +
+ * `scanlator` match a linked, feed-bearing provider (`prov-1111` / MangaDex /
+ * Flame Scans) — the same physical source now split across two rows. Exercises
+ * `SourcesPanel`'s duplicate banner + "Clean up" + per-row DUPLICATE badge.
+ */
+export const duplicateProvider: Provider = {
+  id: 'prov-disk-5555',
+  provider: 'disk:kaizoku-dup',
+  providerName: 'MangaDex',
+  linked: false,
+  mangaId: 0,
+  chapterCount: 8,
+  scanlator: 'Flame Scans',
+  language: 'en',
+  importance: 1,
+  health: 'ok',
+  chaptersBehind: 0,
+  newestChapterAt: null,
+  lastSyncedAt: null,
+  lastError: '',
+}
+
+/** A series with a drifted duplicate source pair (see `duplicateProvider`). */
+export const seriesWithDuplicateProviders: SeriesDetail = {
+  ...richSeries,
+  id: '0a4d1c8e-3333-4a00-9000-000000000003',
+  providers: [...providers, duplicateProvider],
+}

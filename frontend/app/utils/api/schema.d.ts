@@ -876,6 +876,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/dedup-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge drifted duplicate sources across the whole library (fire-and-forget)
+         * @description Runs the per-series provider dedup across every series, folding
+         *     already-drifted disk/live source pairs into one row without
+         *     re-downloading. Returns 202 immediately; the sweep runs in the
+         *     background and per-series results appear as each series is next viewed.
+         */
+        post: operations["dedupAllProviders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/imports": {
         parameters: {
             query?: never;
@@ -2152,6 +2175,11 @@ export interface components {
         /** @description Result of a POST /api/library/scan call — whether this call launched the background scan (202) or one was already in flight (409). */
         ScanStarted: {
             /** @description true if this call launched the scan; false if a scan was already running (single-flight guard). */
+            started: boolean;
+        };
+        /** @description Result of a POST /api/library/dedup-providers call — the library-wide dedup sweep has been launched in the background. */
+        LibraryDedupStarted: {
+            /** @description Always true — the library-wide dedup sweep has been launched in the background. */
             started: boolean;
         };
         /** @description One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB). */
@@ -4206,6 +4234,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScanStarted"];
+                };
+            };
+        };
+    };
+    dedupAllProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dedup sweep started in the background. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryDedupStarted"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

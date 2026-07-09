@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
+import AppButton from '../ui/AppButton.vue'
 import DurationInput from '../ui/DurationInput.vue'
 import SaveFooter from '../ui/SaveFooter.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
@@ -22,20 +23,38 @@ import type { SaveState, SourcesSettings } from '../screens/settings.types'
  *   - `sources`: the 5 runtime-editable knobs (the source of truth).
  *   - `save`: the §16 state of the Save button.
  *
- * Emits `save` with the full edited copy.
+ * Also renders a second "Library maintenance" card: a one-shot button that
+ * triggers the library-wide duplicate-source dedup sweep
+ * (`POST /api/library/dedup-providers`, fire-and-forget 202 — see
+ * useLibraryMaintenance). `dedupAllBusy`/`dedupAllMessage`/`dedupAllError`
+ * are the §16 trio for that action, owned by the parent (mirrors how
+ * SourceMetricsPane owns `warming`/`warmMessage`/`warmError`).
+ *
+ * Emits `save` with the full edited copy, and `dedupAll` to trigger the sweep.
  */
 const props = withDefaults(defineProps<{
   /** The runtime-editable warm-up/politeness knobs. */
   sources: SourcesSettings
   /** §16 state of the Save button. */
   save?: SaveState
+  /** True while the library-wide dedup sweep request is in flight. */
+  dedupAllBusy?: boolean
+  /** Started/success message from the last dedup sweep trigger. */
+  dedupAllMessage?: string | null
+  /** Error from the last dedup sweep trigger. */
+  dedupAllError?: string | null
 }>(), {
   save: () => ({ status: 'idle' }),
+  dedupAllBusy: false,
+  dedupAllMessage: null,
+  dedupAllError: null,
 })
 
 const emit = defineEmits<{
   /** Persist the edited knobs — carries the full edited copy. */
   save: [settings: SourcesSettings]
+  /** Trigger the library-wide duplicate-source dedup sweep. */
+  dedupAll: []
 }>()
 
 // Deep-clone so the local copy is fully detached from the prop object.
@@ -97,4 +116,37 @@ function onSave() {
 
     <SaveFooter :state="footerState" :dirty="dirty" label="Save changes" @save="onSave" />
   </SurfaceCard>
+
+  <SurfaceCard
+    title="Library maintenance"
+    sub="One-shot cleanup. Merges the same physical source represented twice on a series (a disk-import artifact) across your whole library — no re-downloading."
+  >
+    <div class="maint-row">
+      <AppButton :disabled="dedupAllBusy" @click="emit('dedupAll')">
+        {{ dedupAllBusy ? 'Starting…' : 'Clean up duplicate sources (library-wide)' }}
+      </AppButton>
+      <p v-if="dedupAllMessage" class="maint-msg">{{ dedupAllMessage }}</p>
+      <p v-if="dedupAllError" class="maint-err">{{ dedupAllError }}</p>
+    </div>
+  </SurfaceCard>
 </template>
+
+<style scoped>
+.maint-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0;
+}
+
+.maint-msg {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.maint-err {
+  font-size: 12px;
+  color: var(--danger-text);
+}
+</style>

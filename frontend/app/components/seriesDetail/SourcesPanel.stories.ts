@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import SourcesPanel from './SourcesPanel.vue'
-import { richSeries, singleProviderSeries, seriesWithUnlinkedGroup } from '../../fixtures/seriesDetail'
+import { richSeries, singleProviderSeries, seriesWithUnlinkedGroup, seriesWithDuplicateProviders } from '../../fixtures/seriesDetail'
 
 /**
  * Stories for the Series Detail "Sources" card — the count-pilled header with the
@@ -39,4 +39,12 @@ export const Saving: Story = {
 /** A library-imported unlinked disk-group alongside linked sources — the "Match to source" row action. */
 export const WithUnlinkedGroup: Story = {
   args: { providers: seriesWithUnlinkedGroup.providers },
+}
+
+/** A drifted duplicate pair — the banner + "Clean up" and per-row DUPLICATE badge. */
+export const WithDuplicates: Story = {
+  args: {
+    providers: seriesWithDuplicateProviders.providers,
+    driftedIds: [seriesWithDuplicateProviders.providers.find(p => !p.linked)!.id],
+  },
 }

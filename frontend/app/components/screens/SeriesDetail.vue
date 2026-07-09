@@ -10,6 +10,7 @@ import SeriesHeader from '../seriesDetail/SeriesHeader.vue'
 import SourcesPanel from '../seriesDetail/SourcesPanel.vue'
 import type { Chapter, Provider, SeriesDetail } from './seriesDetail.types'
 import type { ScanlatorCoverage } from './import.types'
+import { findDriftedProviderIds } from '~/utils/providerDedup'
 
 /**
  * SeriesDetail — the full single-series management screen: a thin container that
@@ -48,12 +49,21 @@ const props = withDefaults(defineProps<{
   error?: string | null
   /** Per-provider cached coverage, keyed by SeriesProvider id — passthrough to `SourcesPanel`. */
   providerCoverage?: Record<string, ScanlatorCoverage[] | null>
+  /** True while the dedup-providers request is in flight. */
+  dedupBusy?: boolean
+  /** True while the dedupe-files request is in flight. */
+  dedupeFilesBusy?: boolean
+  /** Transient dedup/dedupe-files result message. */
+  dedupMessage?: string | null
 }>(), {
   saving: false,
   deleteBusy: false,
   removeBusy: false,
   error: null,
   providerCoverage: () => ({}),
+  dedupBusy: false,
+  dedupeFilesBusy: false,
+  dedupMessage: null,
 })
 
 const emit = defineEmits<{
@@ -79,6 +89,10 @@ const emit = defineEmits<{
   addSource: []
   /** The error banner was dismissed. */
   dismissError: []
+  /** "Clean up duplicate sources" pressed. */
+  dedupProviders: []
+  /** "Remove duplicate files" pressed. */
+  dedupeFiles: []
 }>()
 
 // ---- Derived data ----------------------------------------------------------
@@ -96,6 +110,10 @@ const sortedChapters = computed<Chapter[]>(() =>
 const sortedProviders = computed<Provider[]>(() =>
   [...props.series.providers].sort((a, b) => b.importance - a.importance),
 )
+
+// SeriesProvider ids involved in a same-physical-source drift (disk/live twin) —
+// surfaces the "Clean up duplicate sources" affordance in SourcesPanel.
+const driftedIds = computed(() => findDriftedProviderIds(props.series.providers))
 
 // The preferred (rank-1) source id, and the active metadata source (pinned, else
 // the preferred one when auto/unset).
@@ -175,11 +193,17 @@ const removeName = computed(
         :providers="sortedProviders"
         :saving="saving"
         :provider-coverage="providerCoverage"
+        :drifted-ids="driftedIds"
+        :dedup-busy="dedupBusy"
+        :dedupe-files-busy="dedupeFilesBusy"
+        :dedup-message="dedupMessage"
         @move="onMove"
         @remove-source="openRemove"
         @match-provider="emit('matchProvider', $event)"
         @load-coverage="emit('loadCoverage', $event)"
         @add-source="emit('addSource')"
+        @dedup-providers="emit('dedupProviders')"
+        @dedupe-files="emit('dedupeFiles')"
       />
     </div>
 

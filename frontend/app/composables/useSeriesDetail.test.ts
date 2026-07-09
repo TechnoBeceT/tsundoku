@@ -42,6 +42,8 @@ interface Call { method: string, path: string, body?: unknown, params?: unknown 
 let calls: Call[] = []
 let nextMatchOk = true
 let nextBreakdownOk = true
+let nextDedupOk = true
+let nextDedupeFilesOk = true
 
 const initialDetail = {
   id: 'series-1',
@@ -135,6 +137,22 @@ vi.mock('~/utils/api/client', () => ({
           return Promise.resolve({ data: null, error: { message: 'match failed' }, response: new Response(null, { status: 400 }) })
         }
         return Promise.resolve({ data: matchedDetail, error: null, response: new Response(null, { status: 200 }) })
+      }
+      if (path === '/api/series/{id}/providers/dedup') {
+        if (!nextDedupOk) {
+          return Promise.resolve({ data: null, error: { message: 'dedup failed' }, response: new Response(null, { status: 500 }) })
+        }
+        return Promise.resolve({
+          data: { merged: 1, skipped: 0, series: { ...matchedDetail } },
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })
+      }
+      if (path === '/api/series/{id}/dedupe-files') {
+        if (!nextDedupeFilesOk) {
+          return Promise.resolve({ data: null, error: { message: 'dedupe-files failed' }, response: new Response(null, { status: 500 }) })
+        }
+        return Promise.resolve({ data: { removed: 3 }, error: null, response: new Response(null, { status: 200 }) })
       }
       return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
     }),
@@ -269,5 +287,55 @@ describe('useSeriesDetail — loadProviderCoverage (lazy per-source coverage)', 
 
     expect(calls.some((c) => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')).toBe(false)
     expect(providerCoverage.value['disk-provider-1']).toBeUndefined()
+  })
+})
+
+describe('useSeriesDetail — dedupProviders / dedupeFiles', () => {
+  beforeEach(() => {
+    calls = []
+    nextDedupOk = true
+    nextDedupeFilesOk = true
+  })
+
+  it('dedupProviders reseeds series from the response and sets the message', async () => {
+    const { series, refresh, dedupProviders, dedupMessage } = useSeriesDetail('series-1')
+    await refresh()
+    const getBefore = calls.filter(c => c.method === 'GET' && c.path === '/api/series/{id}').length
+
+    await dedupProviders()
+
+    // Reseeded from the POST response (matchedDetail has one linked provider).
+    expect(series.value?.providers).toHaveLength(1)
+    expect(series.value?.providers[0]?.linked).toBe(true)
+    expect(dedupMessage.value).toContain('1')
+    // No extra GET — reseed came from the response.
+    const getAfter = calls.filter(c => c.method === 'GET' && c.path === '/api/series/{id}').length
+    expect(getAfter).toBe(getBefore)
+  })
+
+  it('dedupProviders failure sets error and leaves series untouched', async () => {
+    nextDedupOk = false
+    const { series, error, refresh, dedupProviders } = useSeriesDetail('series-1')
+    await refresh()
+    await dedupProviders()
+    expect(error.value).toBeTruthy()
+    expect(series.value?.providers).toHaveLength(2)
+  })
+
+  it('dedupeFiles sets the removed message and does not reseed', async () => {
+    const { series, refresh, dedupeFiles, dedupMessage } = useSeriesDetail('series-1')
+    await refresh()
+    await dedupeFiles()
+    expect(dedupMessage.value).toContain('3')
+    // dedupe-files makes no DB change → providers unchanged (still 2).
+    expect(series.value?.providers).toHaveLength(2)
+  })
+
+  it('dedupeFiles failure sets error', async () => {
+    nextDedupeFilesOk = false
+    const { error, refresh, dedupeFiles } = useSeriesDetail('series-1')
+    await refresh()
+    await dedupeFiles()
+    expect(error.value).toBeTruthy()
   })
 })

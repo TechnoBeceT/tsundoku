@@ -113,6 +113,9 @@ export function useSeriesDetail(id: string) {
   const deleteBusy = ref(false)
   const removeBusy = ref(false)
   const matchBusy = ref(false)
+  const dedupBusy = ref(false)
+  const dedupeFilesBusy = ref(false)
+  const dedupMessage = ref<string | null>(null)
 
   // ---- providerCoverage (lazy per-source coverage, Sources panel) ------------
   // Keyed by SeriesProvider `id`. An absent key = never fetched (the row shows
@@ -283,6 +286,58 @@ export function useSeriesDetail(id: string) {
     }
   }
 
+  /**
+   * Folds every already-drifted disk/live duplicate source pair on this series
+   * into one row (no re-download) via POST /api/series/{id}/providers/dedup.
+   * Reseeds `series` DIRECTLY from the authoritative response (§16, like
+   * matchDiskProvider), and surfaces the merged/skipped counts in dedupMessage.
+   * Errors set `error`, never swallowed; `series` is left untouched on failure.
+   */
+  const dedupProviders = async (): Promise<void> => {
+    dedupBusy.value = true
+    error.value = null
+    dedupMessage.value = null
+    try {
+      const res = await apiClient.POST('/api/series/{id}/providers/dedup', { params: { path: { id } } })
+      if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Dedup failed')
+      series.value = mapDetail(res.data.series)
+      const { merged, skipped } = res.data
+      dedupMessage.value = skipped > 0
+        ? `Merged ${merged} duplicate source${merged === 1 ? '' : 's'}, skipped ${skipped}`
+        : `Merged ${merged} duplicate source${merged === 1 ? '' : 's'}`
+    }
+    catch (err) {
+      error.value = err instanceof Error ? err.message : 'Dedup failed'
+    }
+    finally {
+      dedupBusy.value = false
+    }
+  }
+
+  /**
+   * Sweeps this series' orphan/duplicate CBZ files (any .cbz that is not a
+   * chapter's current winning filename) via POST /api/series/{id}/dedupe-files.
+   * A pure on-disk sweep — NO DB/series change — so it does not reseed; it only
+   * reports how many files were removed in dedupMessage. Errors set `error`.
+   */
+  const dedupeFiles = async (): Promise<void> => {
+    dedupeFilesBusy.value = true
+    error.value = null
+    dedupMessage.value = null
+    try {
+      const res = await apiClient.POST('/api/series/{id}/dedupe-files', { params: { path: { id } } })
+      if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Dedupe files failed')
+      const { removed } = res.data
+      dedupMessage.value = `Removed ${removed} duplicate file${removed === 1 ? '' : 's'}`
+    }
+    catch (err) {
+      error.value = err instanceof Error ? err.message : 'Dedupe files failed'
+    }
+    finally {
+      dedupeFilesBusy.value = false
+    }
+  }
+
   const dismissError = (): void => { error.value = null }
 
   /**
@@ -309,6 +364,9 @@ export function useSeriesDetail(id: string) {
     deleteBusy,
     removeBusy,
     matchBusy,
+    dedupBusy,
+    dedupeFilesBusy,
+    dedupMessage,
     providerCoverage,
     loadProviderCoverage,
     setMonitored,
@@ -319,6 +377,8 @@ export function useSeriesDetail(id: string) {
     chooseMetadataSource,
     deleteSeries,
     matchDiskProvider,
+    dedupProviders,
+    dedupeFiles,
     dismissError,
     refresh,
     reseed,
