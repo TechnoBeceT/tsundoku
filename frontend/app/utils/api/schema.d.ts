@@ -1821,10 +1821,10 @@ export interface components {
              */
             default: string;
             /**
-             * @description Value representation — "duration" (Go duration string) or "int".
+             * @description Value representation — "duration" (Go duration string), "int", or "bool".
              * @enum {string}
              */
-            type: "duration" | "int";
+            type: "duration" | "int" | "bool";
             /**
              * @description Semantic unit hint for the UI (e.g. "duration", "count", "days").
              * @example duration
