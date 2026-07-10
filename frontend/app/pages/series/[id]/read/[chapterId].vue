@@ -1,19 +1,24 @@
 <script setup lang="ts">
+import { computed, onBeforeUnmount } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { useReader } from '~/composables/useReader'
+import { useReadingProgress } from '~/composables/useReadingProgress'
 
 /**
  * Reader route — /series/:id/read/:chapterId.
  *
  * A fullscreen long-strip reader (bare layout, no app nav chrome). Delegates all
- * data + windowing to useReader(id, chapterId) and renders the ReaderStrip fed by
- * it; the strip's `near-tail` drives the window append, while `centered` and
- * `chapter-finished` are wired to Slice-3 progress stubs here (this slice emits
- * them but does not persist).
+ * data + windowing to useReader(id, chapterId), progress persistence to
+ * useReadingProgress, and renders the ReaderStrip fed by both: the strip's
+ * `near-tail` drives the window append, `centered` records the live position
+ * (debounced), `chapter-finished` marks a chapter read, and the computed
+ * `resumeTarget` opens the strip at the last-read page.
  *
  * §16: the initial load shows a visible loading state, a hard failure shows the
  * ErrorBanner, and an empty (no downloaded chapters) series shows an EmptyState —
- * never a blank fullscreen. Reader chrome + settings are Slice 4; a minimal "back
- * to series" affordance keeps the owner from being trapped until then.
+ * never a blank fullscreen. Progress writes are the sanctioned best-effort
+ * exception (see useReadingProgress). Reader chrome + settings are Slice 4; a
+ * minimal "back to series" affordance keeps the owner from being trapped.
  */
 definePageMeta({ layout: 'bare' })
 
@@ -22,19 +27,30 @@ const id = route.params.id as string
 const chapterId = route.params.chapterId as string
 
 const { chapters, mountedChapters, pageUrl, onNearTail, loading, error } = useReader(id, chapterId)
+const { record, markRead, resumeTarget, flush } = useReadingProgress(chapters, chapterId)
 
-// Slice 3 (progress + resume) consumes these; for now they are no-ops.
-function onCentered(_payload: { chapterId: string, page: number }): void {
-  // Slice 3: progress — persist the current reading position (chapterId + page).
+// Resume anchor: recomputed from the loaded chapters; ReaderStrip applies it once
+// on mount (it only mounts after chapters load, so the target is ready by then).
+const resume = computed(() => resumeTarget(chapters.value))
+
+/** Persist the live reading position as the owner scrolls (debounced + deduped). */
+function onCentered(payload: { chapterId: string, page: number }): void {
+  record(payload.chapterId, payload.page)
 }
 
-function onChapterFinished(_chapterId: string): void {
-  // Slice 3: progress — mark the finished chapter read.
+/** Mark a chapter read once its end-divider scrolls past — at its last page. */
+function onChapterFinished(finishedId: string): void {
+  const chapter = chapters.value.find((c) => c.id === finishedId)
+  markRead(finishedId, chapter?.pageCount ?? 0)
 }
 
 function backToSeries(): void {
   void navigateTo(`/series/${id}`)
 }
+
+// Flush the pending debounced write on leave so the last position is never lost.
+onBeforeUnmount(flush)
+onBeforeRouteLeave(() => { flush() })
 </script>
 
 <template>
@@ -60,6 +76,7 @@ function backToSeries(): void {
       :chapters="chapters"
       :mounted-chapters="mountedChapters"
       :page-url="pageUrl"
+      :initial-scroll-to="resume"
       @near-tail="onNearTail"
       @centered="onCentered"
       @chapter-finished="onChapterFinished"
