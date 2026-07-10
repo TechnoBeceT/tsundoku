@@ -21,6 +21,7 @@ export const categoryOptions: string[] = ['Manga', 'Manhwa', 'Manhua', 'Comic', 
 // (null-number) chapter to prove the "—" placeholders.
 const chapters: Chapter[] = [
   {
+    id: 'chapter-0001',
     chapterKey: 'ch-0001',
     number: 1,
     name: 'The Weakest Hunter',
@@ -29,6 +30,7 @@ const chapters: Chapter[] = [
     pageCount: 42,
   },
   {
+    id: 'chapter-0002',
     chapterKey: 'ch-0002',
     number: 2,
     name: 'If I Had Been A Little Stronger',
@@ -37,6 +39,7 @@ const chapters: Chapter[] = [
     pageCount: 38,
   },
   {
+    id: 'chapter-0003',
     chapterKey: 'ch-0003',
     number: 3,
     name: 'It’s Like a Game',
@@ -45,6 +48,7 @@ const chapters: Chapter[] = [
     pageCount: 40,
   },
   {
+    id: 'chapter-0004',
     chapterKey: 'ch-0004',
     number: 4,
     name: 'A Bigger Reward',
@@ -53,6 +57,7 @@ const chapters: Chapter[] = [
     pageCount: 41,
   },
   {
+    id: 'chapter-0005',
     chapterKey: 'ch-0005',
     number: 5,
     name: 'You’ve Been Hiding Your Skills',
@@ -61,6 +66,7 @@ const chapters: Chapter[] = [
     pageCount: null,
   },
   {
+    id: 'chapter-0006',
     chapterKey: 'ch-0006',
     number: 6,
     name: '',
@@ -69,6 +75,7 @@ const chapters: Chapter[] = [
     pageCount: null,
   },
   {
+    id: 'chapter-0007',
     chapterKey: 'ch-0007',
     number: 7,
     name: 'Level Up',
@@ -77,6 +84,7 @@ const chapters: Chapter[] = [
     pageCount: null,
   },
   {
+    id: 'chapter-0008',
     chapterKey: 'ch-0008',
     number: 8,
     name: 'A Discovery',
@@ -85,6 +93,7 @@ const chapters: Chapter[] = [
     pageCount: null,
   },
   {
+    id: 'chapter-0009',
     chapterKey: 'ch-0009-extra',
     number: null,
     name: '',

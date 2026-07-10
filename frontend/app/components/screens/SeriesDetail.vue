@@ -93,6 +93,8 @@ const emit = defineEmits<{
   dedupProviders: []
   /** "Remove duplicate files" pressed. */
   dedupeFiles: []
+  /** A chapter's "Read" was clicked — carries the chapter UUID (→ opens the reader). */
+  read: [chapterId: string]
 }>()
 
 // ---- Derived data ----------------------------------------------------------
@@ -188,7 +190,7 @@ const removeName = computed(
     />
 
     <div class="columns">
-      <ChaptersPanel :chapters="sortedChapters" :total="series.chapterCounts.total" />
+      <ChaptersPanel :chapters="sortedChapters" :total="series.chapterCounts.total" @read="emit('read', $event)" />
       <SourcesPanel
         :providers="sortedProviders"
         :saving="saving"

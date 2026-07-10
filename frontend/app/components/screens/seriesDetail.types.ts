@@ -28,6 +28,8 @@ export type ProviderHealth = 'ok' | 'stale' | 'erroring'
  * only once the CBZ is on disk; `pageCount` is null until then.
  */
 export interface Chapter {
+  /** Chapter UUID — the identifier the reader's page/progress endpoints key on. */
+  id: string
   /** Stable identity (NOT the number). */
   chapterKey: string
   /** Display/sort number (e.g. 1, 1.5); null when unknown. */

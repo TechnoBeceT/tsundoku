@@ -188,14 +188,14 @@ function onScroll(): void {
   if (remaining <= 0) {
     lastRun = now
     runScroll()
+    return
   }
-  else if (!pendingTimer) {
-    pendingTimer = setTimeout(() => {
-      pendingTimer = null
-      lastRun = Date.now()
-      runScroll()
-    }, remaining)
-  }
+  // Schedule a single trailing run; the guard is the ??= (only sets when idle).
+  pendingTimer ??= setTimeout(() => {
+    pendingTimer = null
+    lastRun = Date.now()
+    runScroll()
+  }, remaining)
 }
 
 onMounted(() => {

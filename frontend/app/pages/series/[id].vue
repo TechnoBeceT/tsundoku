@@ -180,6 +180,11 @@ function onLoadCoverage(providerId: string): void {
   const provider = series.value?.providers.find((p) => p.id === providerId)
   if (provider) void loadProviderCoverage(provider)
 }
+
+// Open a downloaded chapter in the long-strip reader (a ChapterRow "Read" click).
+function openReader(chapterId: string): void {
+  void navigateTo(`/series/${id}/read/${chapterId}`)
+}
 </script>
 
 <template>
@@ -213,6 +218,7 @@ function onLoadCoverage(providerId: string): void {
       @dismiss-error="dismissError"
       @dedup-providers="dedupProviders"
       @dedupe-files="dedupeFiles"
+      @read="openReader"
     />
 
     <MatchSourceDialog
