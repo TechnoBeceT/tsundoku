@@ -3548,6 +3548,14 @@ paths:
           description: The staged entry's on-disk path (as returned by scan/list).
           schema:
             type: string
+        - name: sources
+          in: query
+          required: false
+          description: |
+            Comma-separated list of source IDs to restrict the search to.
+            Unknown IDs are silently dropped by the service.
+          schema:
+            type: string
       responses:
         "200":
           description: Cross-source search results, grouped by title similarity.

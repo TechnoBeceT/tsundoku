@@ -21,6 +21,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/handler/sourcefilter"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
 )
@@ -87,16 +88,19 @@ func (h *Handler) ListImports(c echo.Context) error {
 //
 // path is a REQUIRED query param — never a URL path segment, since it is a
 // filesystem path (encoding it as a segment would need extra escaping this
-// API deliberately avoids). It searches every Suwayomi source for the staged
-// entry's title and returns the grouped candidates as
-// []imports.SearchGroupDTO, so the owner can pick one to pass as `match` on
-// the subsequent Import call.
+// API deliberately avoids). An optional ?sources CSV param narrows the search
+// to named source IDs (unknown IDs silently dropped — same contract as
+// GET /api/search, via the shared sourcefilter.Parse). It searches the
+// Suwayomi sources for the staged entry's title and returns the grouped
+// candidates as []imports.SearchGroupDTO, so the owner can pick one to pass as
+// `match` on the subsequent Import call.
 func (h *Handler) Match(c echo.Context) error {
 	path, err := validatePath(c.QueryParam("path"))
 	if err != nil {
 		return err
 	}
-	out, err := h.svc.MatchCandidates(c.Request().Context(), path)
+	sourceIDs := sourcefilter.Parse(c.QueryParam("sources"))
+	out, err := h.svc.MatchCandidates(c.Request().Context(), path, sourceIDs)
 	if err != nil {
 		return mapServiceError(err)
 	}

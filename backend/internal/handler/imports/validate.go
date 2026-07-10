@@ -50,28 +50,6 @@ func parseQuery(raw string) (string, error) {
 	return q, nil
 }
 
-// parseSourcesFilter parses the optional ?sources CSV query parameter. An empty
-// or absent parameter returns nil (meaning "all sources"). Non-empty tokens that
-// appear after splitting are returned as-is; unknown source IDs are silently
-// dropped by the service's resolveSources (documented choice: validating against
-// the live client list here would require a round-trip before the search itself).
-func parseSourcesFilter(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if t := strings.TrimSpace(p); t != "" {
-			out = append(out, t)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 // parseBrowseType maps the ?type query parameter to a suwayomi.BrowseType.
 // "popular" → POPULAR, "latest" → LATEST; any other value (including empty)
 // yields a 400 echo.HTTPError — type is a required closed enum.

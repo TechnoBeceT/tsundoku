@@ -4319,6 +4319,11 @@ export interface operations {
             query: {
                 /** @description The staged entry's on-disk path (as returned by scan/list). */
                 path: string;
+                /**
+                 * @description Comma-separated list of source IDs to restrict the search to.
+                 *     Unknown IDs are silently dropped by the service.
+                 */
+                sources?: string;
             };
             header?: never;
             path?: never;

@@ -6,12 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	handler "github.com/technobecet/tsundoku/internal/handler/library"
+	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
@@ -230,5 +234,95 @@ func assertMatchedProviderDTO(t *testing.T, got series.SeriesDetailDTO) {
 	}
 	if p.ChapterCount != 2 {
 		t.Fatalf("provider ChapterCount = %d, want 2 (both re-pointed chapters)", p.ChapterCount)
+	}
+}
+
+// capturingSearchClient embeds fakeMatchClient but exposes two named sources
+// and records which source IDs imports.Service.Search actually fanned out to.
+// It lets the GET /api/library/imports/match test prove the ?sources CSV
+// filter is parsed (via the shared sourcefilter.Parse) and threaded through
+// MatchCandidates into the search fan-out — a source id the handler drops
+// never reaches the fake's Search.
+type capturingSearchClient struct {
+	*fakeMatchClient
+	mu      sync.Mutex
+	queried []string
+}
+
+func (c *capturingSearchClient) Sources(ctx context.Context) ([]suwayomi.Source, error) {
+	return []suwayomi.Source{
+		{ID: "weeb", Name: "Weeb Source", Lang: "en"},
+		{ID: "other", Name: "Other Source", Lang: "en"},
+	}, nil
+}
+
+func (c *capturingSearchClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
+	c.mu.Lock()
+	c.queried = append(c.queried, sourceID)
+	c.mu.Unlock()
+	return []suwayomi.Manga{{ID: 1, Title: query}}, nil
+}
+
+// queriedIDs returns a copy of the source IDs Search was invoked for (lock-safe;
+// the fan-out is concurrent).
+func (c *capturingSearchClient) queriedIDs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.queried...)
+}
+
+// newEnvWithMatchImports wires a REAL imports.Service over a capturingSearchClient
+// and registers the GET /api/library/imports/match route, so the ?sources filter
+// can be exercised end-to-end through the HTTP handler.
+func newEnvWithMatchImports(t *testing.T, storage string) (*testEnv, *capturingSearchClient) {
+	t.Helper()
+	client := testdb.New(t)
+	authSvc := auth.NewService(testSecret)
+	seriesSvc := series.NewService(client, storage, 14)
+	fc := &capturingSearchClient{fakeMatchClient: &fakeMatchClient{}}
+	ingest := suwayomi.NewIngest(fc, client)
+	importsSvc := imports.NewService(fc, ingest, client, storage, 30*time.Second, nil)
+	svc := library.NewService(client, ingest, importsSvc, seriesSvc, func() {}, storage, sse.NewHub())
+	h := handler.NewHandler(svc)
+
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authed := e.Group("/api", middleware.RequireOwner(authSvc, false))
+	authed.GET("/library/imports/match", h.Match)
+
+	token, err := authSvc.Issue(uuid.New())
+	if err != nil {
+		t.Fatalf("Issue token: %v", err)
+	}
+	return &testEnv{e: e, client: client, token: token, svc: svc}, fc
+}
+
+// TestLibraryMatch_SourcesFilterReachesService proves the ?sources CSV query
+// param is parsed and threaded through the Match handler into the search
+// fan-out: with sources=weeb, ONLY the "weeb" source is queried (the "other"
+// source the client also exposes is never fanned out to), which can only hold
+// if the parsed filter reached MatchCandidates → imports.Service.Search.
+func TestLibraryMatch_SourcesFilterReachesService(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 1)
+	env, fc := newEnvWithMatchImports(t, storage)
+
+	staged, err := env.svc.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(staged) != 1 {
+		t.Fatalf("staged len = %d, want 1", len(staged))
+	}
+
+	target := "/api/library/imports/match?path=" + url.QueryEscape(staged[0].Path) + "&sources=weeb"
+	rec := env.do("GET", target, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("match = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	got := fc.queriedIDs()
+	if len(got) != 1 || got[0] != "weeb" {
+		t.Fatalf("fan-out queried sources = %v, want [weeb] (the ?sources filter must reach Search)", got)
 	}
 }
