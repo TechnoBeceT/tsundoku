@@ -155,6 +155,7 @@ components:
     Chapter:
       type: object
       required:
+        - id
         - chapterKey
         - number
         - name
@@ -164,6 +165,10 @@ components:
         - read
         - lastReadPage
       properties:
+        id:
+          type: string
+          format: uuid
+          description: Chapter UUID — the identifier the reader's page-bytes and progress endpoints key on.
         chapterKey:
           type: string
           description: Stable per-series chapter identity (never the number).

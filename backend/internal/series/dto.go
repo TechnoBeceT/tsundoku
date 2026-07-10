@@ -60,12 +60,16 @@ type SeriesDetailDTO struct {
 	Providers     []ProviderDTO `json:"providers"`
 }
 
-// ChapterDTO is one chapter in a series-detail response. Number is the display/
+// ChapterDTO is one chapter in a series-detail response. ID is the Chapter UUID —
+// the identifier the in-app reader's page-bytes (GET …/chapters/{chapterId}/pages/{n})
+// and progress (PATCH /api/chapters/{id}/progress) endpoints key on, so the client
+// can open the reader straight from a chapter row. Number is the display/
 // sort value (nullable — never identity, that is ChapterKey). PageCount is
 // nullable until the chapter is downloaded (nil = unknown). Read and LastReadPage
 // carry the in-app reader's owner progress (Read defaults false, LastReadPage 0);
 // the reader uses PageCount + LastReadPage to resume mid-chapter.
 type ChapterDTO struct {
+	ID           string   `json:"id"`
 	ChapterKey   string   `json:"chapterKey"`
 	Number       *float64 `json:"number"`
 	Name         string   `json:"name"`
@@ -161,6 +165,7 @@ func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
 // name left. If even the number is absent (a rare corner) the name stays blank.
 func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
 	return ChapterDTO{
+		ID:           c.ID.String(),
 		ChapterKey:   c.ChapterKey,
 		Number:       c.Number,
 		Name:         chapterDisplayName(name, c.Number),

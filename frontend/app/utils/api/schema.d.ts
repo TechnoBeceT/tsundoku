@@ -1516,6 +1516,11 @@ export interface components {
             chapterCounts: components["schemas"]["ChapterCounts"];
         };
         Chapter: {
+            /**
+             * Format: uuid
+             * @description Chapter UUID — the identifier the reader's page-bytes and progress endpoints key on.
+             */
+            id: string;
             /** @description Stable per-series chapter identity (never the number). */
             chapterKey: string;
             /** @description Display/sort number; null when unknown. Never identity. */
