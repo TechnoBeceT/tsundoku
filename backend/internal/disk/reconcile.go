@@ -319,6 +319,16 @@ func reconcileChapters(
 ) error {
 	for _, cf := range chapters {
 		if !cf.FileExists {
+			// A downloaded-but-missing chapter is only COUNTED, never downgraded:
+			// its Chapter row stays in whatever state it holds (e.g. StateDownloaded)
+			// and reconcile forces NO transition. This is deliberate (owner-ratified)
+			// and upholds reconcile's "no forced transition" contract: a transient
+			// scan fault (e.g. an NFS blip hiding a file) must not spuriously flip a
+			// present chapter to a re-download. A consequence worth knowing: a
+			// fractional part superseded under this whole will NOT auto-revert, since
+			// download.revertOrphaned keys off the whole's DB state (StateDownloaded),
+			// not disk presence. Recovery of a genuinely-lost file is a manual owner
+			// retry, not an automatic downgrade here.
 			result.MissingFiles++
 			continue
 		}
