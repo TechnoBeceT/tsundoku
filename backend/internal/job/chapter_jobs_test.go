@@ -166,6 +166,180 @@ func TestRunner_DownloadCycle_UpgradePass(t *testing.T) {
 	}
 }
 
+// TestRunner_DownloadCycle_UpgradeAll_Parallel verifies that upgradeAll
+// upgrades ALL flagged chapters when parallelized up to download_concurrency:
+// it flags N chapters upgrade_available (by adding a strictly
+// higher-importance provider carrying the same chapter key to each of N
+// already-downloaded chapters, one per series) and asserts the second cycle
+// upgrades every one of them — correct count, all end downloaded with a
+// higher satisfied_importance, no chapter dropped or double-processed.
+// download_concurrency is set below N so the bounded-concurrency pool must
+// actually run multiple batches, exercising the parallel path rather than a
+// single batch that happens to cover everything.
+func TestRunner_DownloadCycle_UpgradeAll_Parallel(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	const n = 6
+	const concurrency = 2
+
+	seeded := seedUpgradeParallelChapters(ctx, client, n)
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		Storage: storage,
+	}, settings.Static{Retries: 3, Backoff: time.Hour, DownloadConc: concurrency}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
+
+	// First cycle: download every chapter from its low-importance provider.
+	if err := r.RunDownloadCycle(ctx); err != nil {
+		t.Fatalf("first RunDownloadCycle: %v", err)
+	}
+	initialImportance := requireAllDownloaded(t, ctx, client, seeded)
+
+	// Add a strictly higher-importance provider carrying the SAME chapter key
+	// to every seeded series, flagging all N chapters upgrade_available on the
+	// next DetectUpgrades pass.
+	addHigherImportanceProviders(ctx, client, seeded)
+
+	events, unsub := hub.Subscribe()
+	defer unsub()
+
+	// Second cycle: DetectUpgrades should flag all N, and the parallel
+	// upgradeAll pool (bounded to `concurrency` < n) must upgrade every one.
+	if err := r.RunDownloadCycle(ctx); err != nil {
+		t.Fatalf("second RunDownloadCycle: %v", err)
+	}
+
+	assertAllUpgraded(t, ctx, client, seeded, initialImportance)
+
+	evt := waitCycleDoneEvent(events, 2*time.Second)
+	if evt == nil {
+		t.Fatal("expected a cycle.done SSE event, got none")
+	}
+	if evt.Flagged != n {
+		t.Errorf("cycle.done Flagged: want %d, got %d", n, evt.Flagged)
+	}
+	if evt.Upgraded != n {
+		t.Errorf("cycle.done Upgraded: want %d (all N upgraded, none dropped or double-processed), got %d", n, evt.Upgraded)
+	}
+	if evt.Error != "" {
+		t.Errorf("cycle.done Error: want empty, got %q", evt.Error)
+	}
+}
+
+// seededUpgradeChapter is one series+chapter seeded by
+// seedUpgradeParallelChapters, wired to a single low-importance provider.
+type seededUpgradeChapter struct {
+	series    *ent.Series
+	chapterID uuid.UUID
+	key       string
+}
+
+// seedUpgradeParallelChapters creates n independent series, each with one
+// chapter satisfied by a low-importance provider carrying a unique chapter
+// key, ready to be flagged upgrade_available by
+// addHigherImportanceProviders.
+func seedUpgradeParallelChapters(ctx context.Context, client *ent.Client, n int) []seededUpgradeChapter {
+	seeded := make([]seededUpgradeChapter, 0, n)
+	for i := range n {
+		key := fmt.Sprintf("ch-upg-par-%d", i)
+		s := client.Series.Create().
+			SetTitle(fmt.Sprintf("Upg Par Series %d", i)).
+			SetSlug(fmt.Sprintf("upg-par-series-%d", i)).
+			SaveX(ctx)
+		spLow := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-low").SetImportance(2).SaveX(ctx)
+		client.ProviderChapter.Create().
+			SetSeriesProviderID(spLow.ID).
+			SetChapterKey(key).
+			SetURL(fmt.Sprintf("https://low.example.com/%s", key)).
+			SetProviderIndex(0).
+			SaveX(ctx)
+		ch := client.Chapter.Create().SetSeries(s).SetChapterKey(key).SaveX(ctx)
+		seeded = append(seeded, seededUpgradeChapter{series: s, chapterID: ch.ID, key: key})
+	}
+	return seeded
+}
+
+// addHigherImportanceProviders adds a strictly higher-importance provider
+// carrying the same chapter key to every seeded series, so the next
+// DetectUpgrades pass flags all of them upgrade_available.
+func addHigherImportanceProviders(ctx context.Context, client *ent.Client, seeded []seededUpgradeChapter) {
+	for _, sc := range seeded {
+		spHigh := client.SeriesProvider.Create().SetSeries(sc.series).SetProvider("prov-high").SetImportance(10).SaveX(ctx)
+		client.ProviderChapter.Create().
+			SetSeriesProviderID(spHigh.ID).
+			SetChapterKey(sc.key).
+			SetURL(fmt.Sprintf("https://high.example.com/%s", sc.key)).
+			SetProviderIndex(0).
+			SaveX(ctx)
+	}
+}
+
+// requireAllDownloaded fails the test unless every seeded chapter is
+// state=downloaded with a satisfied_importance set, and returns each
+// chapter's initial satisfied_importance for a later strictly-greater check.
+func requireAllDownloaded(t *testing.T, ctx context.Context, client *ent.Client, seeded []seededUpgradeChapter) map[uuid.UUID]int {
+	t.Helper()
+	initial := make(map[uuid.UUID]int, len(seeded))
+	for _, sc := range seeded {
+		got := client.Chapter.GetX(ctx, sc.chapterID)
+		if got.State != entchapter.StateDownloaded {
+			t.Fatalf("chapter %s should be downloaded after first cycle, got %s", sc.chapterID, got.State)
+		}
+		if got.SatisfiedImportance == nil {
+			t.Fatalf("chapter %s satisfied_importance must be set after first cycle", sc.chapterID)
+		}
+		initial[sc.chapterID] = *got.SatisfiedImportance
+	}
+	return initial
+}
+
+// assertAllUpgraded checks every seeded chapter ended state=downloaded with a
+// satisfied_importance strictly greater than its pre-upgrade value.
+func assertAllUpgraded(t *testing.T, ctx context.Context, client *ent.Client, seeded []seededUpgradeChapter, initial map[uuid.UUID]int) {
+	t.Helper()
+	for _, sc := range seeded {
+		final := client.Chapter.GetX(ctx, sc.chapterID)
+		if final.State != entchapter.StateDownloaded {
+			t.Errorf("chapter %s state after upgrade cycle: want downloaded, got %s", sc.chapterID, final.State)
+		}
+		if final.SatisfiedImportance == nil || *final.SatisfiedImportance <= initial[sc.chapterID] {
+			t.Errorf("chapter %s satisfied_importance after upgrade: want > %d, got %v",
+				sc.chapterID, initial[sc.chapterID], final.SatisfiedImportance)
+		}
+	}
+}
+
+// waitCycleDoneEvent drains events until a cycle.done event is observed or the
+// timeout expires, returning its decoded payload (nil on timeout).
+func waitCycleDoneEvent(events <-chan sse.Event, timeout time.Duration) *job.CycleEvent {
+	timer := time.After(timeout)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return nil
+			}
+			if ev.Type != "cycle.done" {
+				continue
+			}
+			raw, ok := ev.Data.(json.RawMessage)
+			if !ok {
+				return nil
+			}
+			var payload job.CycleEvent
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				return nil
+			}
+			return &payload
+		case <-timer:
+			return nil
+		}
+	}
+}
+
 // TestRunner_RunDownloadCycle_SupersedesSplitParts verifies RunDownloadCycle
 // wires in DetectSupersededParts (Step 4 of the cycle): a downloaded whole
 // chapter with >=2 wanted fractional parts under it must have both parts

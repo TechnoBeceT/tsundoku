@@ -247,6 +247,15 @@ func (d *Dispatcher) MaxRetries(ctx context.Context) int {
 	return d.retry.MaxRetries(ctx)
 }
 
+// DownloadConcurrency returns the current per-source download concurrency cap
+// (clamped to at least 1), read at call time. It lets callers outside this
+// package — e.g. job.Runner.upgradeAll, which parallelizes convergence
+// upgrades — size their own concurrency pool to the same bound the dispatcher
+// itself uses, without duplicating the settings read or the clamp.
+func (d *Dispatcher) DownloadConcurrency(ctx context.Context) int {
+	return d.downloadConcurrency(ctx)
+}
+
 // wantedScanLimit bounds how many wanted/failed chapters RunOnce loads per pass.
 // One pass never exceeds this many chapters resolved+grouped, keeping the
 // per-pass query cheap regardless of library size; the drain loop
