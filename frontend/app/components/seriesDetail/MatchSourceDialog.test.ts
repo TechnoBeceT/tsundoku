@@ -19,9 +19,17 @@ import { searchResults } from '../../fixtures/import'
 
 const DialogStub = { template: '<div class="dialog-stub"><slot /><slot name="actions" /></div>' }
 
+// Every candidate's breakdown resolved (as a failed/unavailable lookup, `null`)
+// by default — so `breakdownsResolving` is false and the Configure-stage
+// Attach button is enabled out of the box, mirroring a settled real fetch.
+// Tests that care about the split behaviour override individual keys.
+const resolvedBreakdowns = Object.fromEntries(
+  searchResults[0]!.candidates.map(c => [`${c.source}:${c.mangaId}`, null]),
+)
+
 function mountDialog(props: Record<string, unknown> = {}) {
   return mount(MatchSourceDialog, {
-    props: { open: true, seriesTitle: 'Solo Leveling', groups: searchResults, ...props },
+    props: { open: true, seriesTitle: 'Solo Leveling', groups: searchResults, breakdowns: resolvedBreakdowns, ...props },
     global: { stubs: { Dialog: DialogStub } },
   })
 }
@@ -84,6 +92,7 @@ describe('MatchSourceDialog', () => {
     // (all chapters) — NOT the source name (which would match zero chapters).
     const first = searchResults[0]!.candidates[0]! // MangaDex / 1001
     const breakdowns = {
+      ...resolvedBreakdowns,
       [`${first.source}:${first.mangaId}`]: [
         { scanlator: first.sourceName, count: 100, ranges: '1-100' },
       ],

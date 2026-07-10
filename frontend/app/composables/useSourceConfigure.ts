@@ -76,6 +76,7 @@ export function useSourceConfigure(opts: {
   toggleCand: (key: string) => void
   moveCand: (key: string, dir: -1 | 1) => void
   orderedProviders: ComputedRef<ProviderRef[]>
+  breakdownsResolving: ComputedRef<boolean>
 } {
   const group = ref<SearchGroup | null>(null)
   // row key → selected?; `order` holds the selected keys in priority order. A row
@@ -91,13 +92,17 @@ export function useSourceConfigure(opts: {
 
   /**
    * Once a candidate's breakdown resolves with 2+ scanlators, migrate its single
-   * `source:mangaId` row key to one `source:mangaId:scanlator` key per group —
-   * spliced into `order` at the same position (preserving rank) and defaulted to
-   * the replaced key's own selected state (mirrors `enterConfigure`'s "select
-   * all" default: an unsplit row selected when it split stays fully selected;
-   * one deselected before its breakdown resolved stays fully deselected). A 0/1-
-   * scanlator or failed/unloaded breakdown never splits — `configRows` below
+   * `source:mangaId` row key to one `source:mangaId:scanlator` key per group. A
+   * 0/1-scanlator or failed/unloaded breakdown never splits — `configRows` below
    * renders those straight off the unsplit key with no reconciliation needed.
+   *
+   * Owner-chosen (2026-07-10): a source that splits into 2+ scanlators starts
+   * with NONE of its scanlators selected — the user explicitly picks (a slow
+   * aggregator breakdown must never auto-attach every scanlator just because it
+   * resolved after "select all" already ran). The unsplit base key is dropped
+   * from `order` + `selected`; the per-scanlator rows render deselected (an
+   * absent `selected[key]` reads falsy via `configRows`/`displayRows`) until the
+   * user checks them via `toggleCand`.
    *
    * Watches BOTH `opts.breakdowns` (the normal case: the fetch resolves after
    * `enterConfigure` already ran) AND `group` (the already-cached case: a
@@ -116,22 +121,24 @@ export function useSourceConfigure(opts: {
       if (!bd || bd.length < 2) continue
       splitApplied.add(baseKey)
 
-      const newKeys = bd.map(sc => `${baseKey}:${sc.scanlator}`)
-      const wasSelected = !!selected.value[baseKey]
-      const idx = order.value.indexOf(baseKey)
-      if (idx >= 0) {
-        order.value = [
-          ...order.value.slice(0, idx),
-          ...(wasSelected ? newKeys : []),
-          ...order.value.slice(idx + 1),
-        ]
-      }
+      order.value = order.value.filter(k => k !== baseKey)
       const { [baseKey]: _removed, ...rest } = selected.value
-      const nextSelected = { ...rest }
-      for (const k of newKeys) nextSelected[k] = wasSelected
-      selected.value = nextSelected
+      selected.value = rest
     }
   }, { deep: true })
+
+  /**
+   * True while any candidate in the active group still has an unresolved
+   * breakdown (its key is absent from the breakdowns cache — a null value =
+   * resolved-failed, which does NOT block). Consumers disable "Attach
+   * sources"/proceed while true so a slow aggregator's per-scanlator rows
+   * always appear before the user can attach.
+   */
+  const breakdownsResolving = computed(() => {
+    const g = group.value
+    if (!g) return false
+    return g.candidates.some(c => !(candKey(c) in opts.breakdowns.value))
+  })
 
   /**
    * Seeds Stage 2 from an arbitrary candidate list: all candidates start
@@ -345,5 +352,6 @@ export function useSourceConfigure(opts: {
     toggleCand,
     moveCand,
     orderedProviders,
+    breakdownsResolving,
   }
 }
