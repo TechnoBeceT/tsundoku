@@ -63,6 +63,7 @@ import (
 //   - /api/series/:id/cover                        — metadata-source cover proxy (RequireOwner).
 //   - /api/series/:id/providers/:providerId/cover  — per-provider cover proxy (RequireOwner).
 //   - /api/series/:id/metadata-source              — pin metadata source (RequireOwner).
+//   - /api/series/:id/chapters/:chapterId/pages/:n — in-app reader CBZ page bytes (RequireOwner).
 //   - /api/categories (GET)                        — list categories with counts (RequireOwner).
 //   - /api/categories (POST)                       — create a category (RequireOwner).
 //   - /api/categories/:id (PATCH)                  — rename and/or reorder a category (RequireOwner).
@@ -151,6 +152,7 @@ func registerRoutes(
 	authed.GET("/series/:id/cover", seriesH.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", seriesH.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)
+	authed.GET("/series/:id/chapters/:chapterId/pages/:n", seriesH.ChapterPage)
 	authed.GET("/health", seriesH.LibraryHealth)
 
 	// Settings (runtime tunables) API. The service is built in main.go (it shares

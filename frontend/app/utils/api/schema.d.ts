@@ -815,6 +815,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/chapters/{chapterId}/pages/{n}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream one CBZ page image (in-app reader)
+         * @description Streams the raw bytes of the n-th page (0-based, natural page order) of a
+         *     downloaded chapter's CBZ as an image blob, for the in-app long-strip
+         *     reader. The chapter must belong to the series. Responses carry
+         *     `Cache-Control: public, max-age=31536000, immutable` because a chapter's
+         *     pages never change once rendered. Returns 404 when the chapter, its CBZ,
+         *     or the requested page index does not exist, and 502 when the archive is
+         *     present but cannot be decoded.
+         */
+        get: operations["getChapterPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/downloads/run": {
         parameters: {
             query?: never;
@@ -4164,6 +4190,69 @@ export interface operations {
             };
             /** @description Chapter is not in a retryable state (only failed/permanently_failed may be retried). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getChapterPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description Chapter UUID (must belong to the series). */
+                chapterId: string;
+                /** @description 0-based page index in natural page order. */
+                n: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Page image bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description Malformed series/chapter id or non-integer page index. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown chapter/series, missing CBZ, or page index out of range. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The CBZ exists but a page could not be decoded. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

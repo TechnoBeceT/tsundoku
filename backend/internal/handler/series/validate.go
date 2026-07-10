@@ -8,6 +8,7 @@ package series
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -132,6 +133,19 @@ func validateDeleteFiles(raw string) (bool, error) {
 	default:
 		return false, echo.NewHTTPError(http.StatusBadRequest, "deleteFiles must be true or false")
 	}
+}
+
+// validatePageIndex parses the :n page-index path param for the reader page-bytes
+// endpoint. It must be a non-negative integer; a non-integer or negative value
+// yields a 400. An in-range-but-too-large index is NOT a validation error — the
+// service maps it to a 404 via disk.ErrPageOutOfRange, because how many pages a
+// chapter has is data, not request shape.
+func validatePageIndex(raw string) (int, error) {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid page index")
+	}
+	return n, nil
 }
 
 // SetMetadataSourceRequest is the PATCH /api/series/{id}/metadata-source request body.

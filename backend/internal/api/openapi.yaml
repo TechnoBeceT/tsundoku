@@ -3369,6 +3369,77 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/series/{id}/chapters/{chapterId}/pages/{n}:
+    get:
+      operationId: getChapterPage
+      summary: Stream one CBZ page image (in-app reader)
+      description: |
+        Streams the raw bytes of the n-th page (0-based, natural page order) of a
+        downloaded chapter's CBZ as an image blob, for the in-app long-strip
+        reader. The chapter must belong to the series. Responses carry
+        `Cache-Control: public, max-age=31536000, immutable` because a chapter's
+        pages never change once rendered. Returns 404 when the chapter, its CBZ,
+        or the requested page index does not exist, and 502 when the archive is
+        present but cannot be decoded.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: chapterId
+          in: path
+          required: true
+          description: Chapter UUID (must belong to the series).
+          schema:
+            type: string
+            format: uuid
+        - name: n
+          in: path
+          required: true
+          description: 0-based page index in natural page order.
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Page image bytes.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Malformed series/chapter id or non-integer page index.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown chapter/series, missing CBZ, or page index out of range.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The CBZ exists but a page could not be decoded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/downloads/run:
     post:
       operationId: runDownloads
