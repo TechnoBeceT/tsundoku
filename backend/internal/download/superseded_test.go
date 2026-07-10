@@ -254,6 +254,51 @@ func TestDetectSupersededParts_MultiSeriesIsolation(t *testing.T) {
 	assertChapterState(ctx, t, client, wholeB.ID, entchapter.StateDownloaded, "series B whole 5 (untouched)")
 }
 
+// TestDetectSupersededParts_WholeOnlySeriesUntouched proves the M2 query-narrowing:
+// a series that has ONLY whole-numbered chapters (no fractional part) is never
+// superseded/reverted, while a fractional (split-parts) series in the SAME
+// DetectSupersededParts pass is handled normally. The narrowing loads/groups only
+// series that own a fractional chapter; a whole-only series produces no state
+// change either way, so this asserts the observable contract (whole-only untouched,
+// fractional superseded) that the narrowed query must preserve.
+func TestDetectSupersededParts_WholeOnlySeriesUntouched(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+
+	// Whole-only series: two downloaded whole chapters, no fractional parts.
+	wholeOnly := seedSupersessionSeries(ctx, t, client, "supersede-whole-only", "Supersede Whole Only")
+	w1 := createChapter(ctx, t, client, wholeOnly, "wo-1", 1, entchapter.StateDownloaded, "")
+	w2 := createChapter(ctx, t, client, wholeOnly, "wo-2", 2, entchapter.StateDownloaded, "")
+
+	// Fractional (split-parts) series: downloaded whole with two wanted parts.
+	fractional := seedSupersessionSeries(ctx, t, client, "supersede-fractional", "Supersede Fractional")
+	fWhole := createChapter(ctx, t, client, fractional, "f-1", 1, entchapter.StateDownloaded, "")
+	fPart1 := createChapter(ctx, t, client, fractional, "f-1.1", 1.1, entchapter.StateWanted, "")
+	fPart2 := createChapter(ctx, t, client, fractional, "f-1.2", 1.2, entchapter.StateWanted, "")
+
+	d := newSupersessionDispatcher(client, storageDir, true)
+	superseded, reverted, err := d.DetectSupersededParts(ctx)
+	if err != nil {
+		t.Fatalf("DetectSupersededParts: %v", err)
+	}
+	if superseded != 2 {
+		t.Errorf("superseded = %d, want 2 (only the fractional series' two parts)", superseded)
+	}
+	if reverted != 0 {
+		t.Errorf("reverted = %d, want 0", reverted)
+	}
+
+	// Whole-only series is completely untouched.
+	assertChapterState(ctx, t, client, w1.ID, entchapter.StateDownloaded, "whole-only ch 1 (untouched)")
+	assertChapterState(ctx, t, client, w2.ID, entchapter.StateDownloaded, "whole-only ch 2 (untouched)")
+
+	// Fractional series is superseded as usual.
+	assertChapterState(ctx, t, client, fWhole.ID, entchapter.StateDownloaded, "fractional whole 1 (untouched)")
+	assertChapterState(ctx, t, client, fPart1.ID, entchapter.StateSuperseded, "fractional part 1.1")
+	assertChapterState(ctx, t, client, fPart2.ID, entchapter.StateSuperseded, "fractional part 1.2")
+}
+
 // TestDetectSupersededParts_MissingFileTolerated proves that superseding a
 // downloaded part whose CBZ is already gone from disk (RemoveChapterFile
 // no-ops with removed=false, err=nil) still transitions the part to superseded

@@ -239,6 +239,17 @@ func (r *Runner) drainDownloads(ctx context.Context) error {
 // pipelines fetch+render across chapters/sources without increasing the
 // hit-rate against any single source. The Dispatcher is built for concurrent
 // use (per-series sidecar lock on render, per-provider limiter).
+//
+// Cancellation is guarded twice so no Upgrade runs after ctx is cancelled (or a
+// sibling recorded the group's first error): the OUTER check before g.Go avoids
+// even queueing a closure in the common case, while the INNER check as the first
+// statement of the closure covers the window where g.Go itself BLOCKS on the
+// errgroup semaphore (g.SetLimit) — a closure queued just before the cancel
+// would otherwise launch and call Upgrade once more. The inner short-circuit
+// returns nil (not gctx.Err()): if the cancel came from a sibling's hard error
+// that error is already the group's first error, and if it came from parent
+// teardown returning nil lets the cycle wind down with a partial count rather
+// than surfacing a spurious context.Canceled.
 func (r *Runner) upgradeAll(ctx context.Context) (int, error) {
 	chapters, err := r.client.Chapter.Query().
 		Where(entchapter.StateEQ(entchapter.StateUpgradeAvailable)).
@@ -265,6 +276,13 @@ func (r *Runner) upgradeAll(ctx context.Context) (int, error) {
 			break
 		}
 		g.Go(func() error {
+			// Inner guard: g.Go blocks on the semaphore, so this closure may
+			// have been queued before ctx was cancelled. Skip Upgrade (and the
+			// count) rather than fetch once more after cancellation. Return nil
+			// — see the doc comment for why not gctx.Err().
+			if gctx.Err() != nil {
+				return nil
+			}
 			if err := r.dispatcher.Upgrade(ctx, ch.ID); err != nil {
 				// Hard error from Upgrade — propagate so the cycle can record
 				// it. Defensive path: Upgrade normally returns nil even on

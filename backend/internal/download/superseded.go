@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"math"
 
+	"entgo.io/ent/dialect/sql"
+	"github.com/google/uuid"
+
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -29,8 +32,30 @@ import (
 func (d *Dispatcher) DetectSupersededParts(ctx context.Context) (superseded, reverted int, err error) {
 	enabled := d.retry.SuppressSplitParts(ctx)
 
+	// EFFICIENCY (M2): NARROW THE QUERY. A series with no fractional-numbered
+	// chapter can never have a superseded/eligible part, so grouping + scanning it
+	// is pure waste (supersedeSeriesGroup on a whole-only group does no DB writes —
+	// downloadedWholes is populated but partsByWhole is empty, making the
+	// supersede/revert loops no-ops — so the real cost was the full-table load).
+	// So we first find the series that actually own a fractional chapter, then load
+	// numbered chapters ONLY for those series. The first query returns full rows for
+	// the (small) fractional subset only; the heavy per-series load is scoped by an
+	// IN predicate. Loading fractional rows as full ent entities (rather than a
+	// Select+Scan of series_id) keeps uuid handling on the framework's own value
+	// scanner instead of a hand-rolled column scan.
+	fractionalSeriesIDs, err := d.seriesWithFractionalChapters(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(fractionalSeriesIDs) == 0 {
+		return 0, 0, nil
+	}
+
 	chapters, err := d.client.Chapter.Query().
-		Where(entchapter.NumberNotNil()).
+		Where(
+			entchapter.NumberNotNil(),
+			entchapter.SeriesIDIn(fractionalSeriesIDs...),
+		).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
 		All(ctx)
 	if err != nil {
@@ -45,14 +70,52 @@ func (d *Dispatcher) DetectSupersededParts(ctx context.Context) (superseded, rev
 
 	for _, group := range bySeries {
 		s, r, gerr := d.supersedeSeriesGroup(ctx, group, enabled)
+		// M4: add the PARTIAL counts even on error. supersedeSeriesGroup may have
+		// already applied some DB transitions before failing mid-group, so the
+		// returned totals must reflect DB reality — dropping s/r on a mid-group
+		// error would under-report what actually happened.
+		superseded += s
+		reverted += r
 		if gerr != nil {
 			slog.WarnContext(ctx, "download.DetectSupersededParts: series group failed, skipping", "err", gerr)
 			continue
 		}
-		superseded += s
-		reverted += r
 	}
 	return superseded, reverted, nil
+}
+
+// seriesWithFractionalChapters returns the distinct series ids that own at least
+// one fractional-numbered chapter (a chapter whose number has a non-zero
+// fractional part). Ent has no built-in "is fractional" predicate, so the filter
+// drops to a custom SQL predicate (number <> trunc(number)); Postgres trunc() is
+// exact on the NUMERIC number column and NULLs are already excluded by
+// NumberNotNil. The fractional subset is small, so loading it as full ent rows and
+// de-duplicating series ids in memory is cheap and avoids a hand-rolled uuid
+// column scan.
+func (d *Dispatcher) seriesWithFractionalChapters(ctx context.Context) ([]uuid.UUID, error) {
+	fractional, err := d.client.Chapter.Query().
+		Where(
+			entchapter.NumberNotNil(),
+			func(s *sql.Selector) {
+				col := s.C(entchapter.FieldNumber)
+				s.Where(sql.ExprP(fmt.Sprintf("%s <> trunc(%s)", col, col)))
+			},
+		).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("download.DetectSupersededParts: query fractional chapters: %w", err)
+	}
+
+	seen := make(map[uuid.UUID]struct{}, len(fractional))
+	ids := make([]uuid.UUID, 0, len(fractional))
+	for _, ch := range fractional {
+		if _, ok := seen[ch.SeriesID]; ok {
+			continue
+		}
+		seen[ch.SeriesID] = struct{}{}
+		ids = append(ids, ch.SeriesID)
+	}
+	return ids, nil
 }
 
 // isWholeNumber reports whether n has no fractional part (n == trunc(n)).
@@ -113,6 +176,14 @@ func (d *Dispatcher) revertAll(ctx context.Context, parts []*ent.Chapter) (int, 
 
 // revertOrphaned reverts superseded parts whose whole is no longer downloaded
 // back to wanted.
+//
+// The "whole is gone" test keys off DB TRUTH — whether the whole's Chapter row is
+// in StateDownloaded (downloadedWholes) — NOT disk presence. A downloaded-but-
+// missing-on-disk whole is deliberately left as StateDownloaded by disk.Reconcile
+// (see reconcileChapters), so a part superseded under it does NOT auto-revert on a
+// transient scan fault (e.g. an NFS blip). This is owner-ratified: auto-downgrading
+// a whole on a scan glitch would trigger needless re-downloads; recovery of a
+// genuinely-lost whole is a manual owner retry.
 func (d *Dispatcher) revertOrphaned(ctx context.Context, parts []*ent.Chapter, downloadedWholes map[float64]bool) (int, error) {
 	reverted := 0
 	for _, p := range parts {
@@ -129,6 +200,15 @@ func (d *Dispatcher) revertOrphaned(ctx context.Context, parts []*ent.Chapter, d
 
 // supersedeEligible supersedes every wanted/downloaded part under a downloaded
 // whole that has >=2 fractional parts (counting ALL parts regardless of state).
+//
+// The len(parts) < 2 gate is a split-parts heuristic: a genuine side-story is
+// almost always a single .5, whereas >=2 fractional parts under a downloaded whole
+// N is the split-chapter signature (N.1, N.2, … that together ARE N). Owner-
+// ratified known edge: if a series genuinely has >=2 DISTINCT side-stories under a
+// downloaded whole (e.g. a real N.1 AND N.2 that are NOT split-parts of N), they
+// are superseded and their CBZs best-effort removed. This is accepted and fully
+// reversible — supersede never deletes a Chapter row, so recovery is a manual
+// re-download (the part reverts to wanted, then downloads again).
 func (d *Dispatcher) supersedeEligible(ctx context.Context, partsByWhole map[float64][]*ent.Chapter, downloadedWholes map[float64]bool) (int, error) {
 	superseded := 0
 	for whole, parts := range partsByWhole {

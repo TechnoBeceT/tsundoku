@@ -2,6 +2,7 @@ package metrics_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/metrics"
@@ -50,4 +51,41 @@ func TestIsSlow(t *testing.T) {
 	if metrics.IsSlow(atThreshold, threshold) {
 		t.Error("IsSlow(at threshold): want false (strictly greater is slow)")
 	}
+}
+
+// TestIsStaleWarm proves a never-measured (nil) source and a never-warmed (nil
+// LastWarmedAt) source are stale, a just-warmed source is not, an over-TTL warm is
+// stale, and exactly at the TTL boundary is not stale (strictly greater).
+func TestIsStaleWarm(t *testing.T) {
+	const ttl = 12 * time.Minute
+	now := time.Now()
+
+	if !metrics.IsStaleWarm(nil, ttl, now) {
+		t.Error("IsStaleWarm(nil): want true (never measured is stale)")
+	}
+
+	neverWarmed := &ent.SourceMetric{EwmaLatencyMs: 1000} // LastWarmedAt nil
+	if !metrics.IsStaleWarm(neverWarmed, ttl, now) {
+		t.Error("IsStaleWarm(never warmed): want true")
+	}
+
+	justWarmed := warmedAt(now.Add(-time.Minute))
+	if metrics.IsStaleWarm(justWarmed, ttl, now) {
+		t.Error("IsStaleWarm(warmed 1m ago): want false")
+	}
+
+	overTTL := warmedAt(now.Add(-13 * time.Minute))
+	if !metrics.IsStaleWarm(overTTL, ttl, now) {
+		t.Error("IsStaleWarm(warmed 13m ago): want true (older than 12m TTL)")
+	}
+
+	atBoundary := warmedAt(now.Add(-ttl))
+	if metrics.IsStaleWarm(atBoundary, ttl, now) {
+		t.Error("IsStaleWarm(warmed exactly ttl ago): want false (strictly greater is stale)")
+	}
+}
+
+// warmedAt returns a SourceMetric whose LastWarmedAt is the given instant.
+func warmedAt(t time.Time) *ent.SourceMetric {
+	return &ent.SourceMetric{LastWarmedAt: &t}
 }

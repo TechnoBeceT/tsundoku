@@ -89,9 +89,10 @@ func TestWarmSlow(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 
-	// Seed metrics: "fast" is measured & under threshold; "slow" is over; "fresh"
-	// has never been measured (no row).
-	mustCreate(t, client, "fast", 1000)
+	// Seed metrics: "fast" is measured, under threshold, AND warmed recently (so
+	// neither the slow arm nor the TTL arm selects it); "slow" is over threshold;
+	// "fresh" has never been measured (no row).
+	mustCreateWarmed(t, client, "fast", 1000, time.Now().Add(-time.Minute))
 	mustCreate(t, client, "slow", 9000)
 
 	fc := &fakeClient{sources: []suwayomi.Source{
@@ -212,6 +213,39 @@ func TestWarmAll_GateAvailableRunsNormally(t *testing.T) {
 	}
 }
 
+// TestWarmSlow_StaleWarmSelectsFastButCold proves the TTL arm of WarmSlow: a
+// source that is FAST (EWMA under threshold, so metrics.IsSlow is false) but was
+// last warmed longer ago than sessionWarmTTL is still selected for warming (its
+// anti-bot clearance may have lapsed), while an equally-fast source warmed
+// recently is skipped.
+func TestWarmSlow_StaleWarmSelectsFastButCold(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	// "cold": fast (under threshold) but warmed 20m ago (> 12m TTL) → must warm.
+	mustCreateWarmed(t, client, "cold", 1000, now.Add(-20*time.Minute))
+	// "hot": fast AND warmed 1m ago (< 12m TTL) → must be skipped.
+	mustCreateWarmed(t, client, "hot", 1000, now.Add(-1*time.Minute))
+
+	fc := &fakeClient{sources: []suwayomi.Source{
+		{ID: "cold", Name: "Cold", Lang: "en"},
+		{ID: "hot", Name: "Hot", Lang: "en"},
+	}}
+	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000}, nil)
+
+	n, err := svc.WarmSlow(ctx)
+	if err != nil {
+		t.Fatalf("WarmSlow: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("warmed = %d, want 1 (only the stale-but-fast source)", n)
+	}
+	if len(fc.calls) != 1 || fc.calls[0] != "cold" {
+		t.Errorf("Browse calls = %v, want [cold] (fast-recently-warmed 'hot' skipped)", fc.calls)
+	}
+}
+
 // mustCreate seeds a measured metric row with the given EWMA latency.
 func mustCreate(t *testing.T, client *ent.Client, sourceID string, ewmaMs int) {
 	t.Helper()
@@ -223,5 +257,21 @@ func mustCreate(t *testing.T, client *ent.Client, sourceID string, ewmaMs int) {
 		SetSuccessCount(1).
 		Exec(context.Background()); err != nil {
 		t.Fatalf("seed metric %q: %v", sourceID, err)
+	}
+}
+
+// mustCreateWarmed seeds a measured metric row with the given EWMA latency and a
+// last_warmed_at stamp, so WarmSlow's stale-warm (TTL) arm can be exercised.
+func mustCreateWarmed(t *testing.T, client *ent.Client, sourceID string, ewmaMs int, warmedAt time.Time) {
+	t.Helper()
+	if err := client.SourceMetric.Create().
+		SetSourceID(sourceID).
+		SetSourceName(sourceID).
+		SetEwmaLatencyMs(ewmaMs).
+		SetSearchCount(1).
+		SetSuccessCount(1).
+		SetLastWarmedAt(warmedAt).
+		Exec(context.Background()); err != nil {
+		t.Fatalf("seed warmed metric %q: %v", sourceID, err)
 	}
 }

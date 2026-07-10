@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"math"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 )
@@ -33,4 +34,17 @@ func IsSlow(m *ent.SourceMetric, thresholdMs int) bool {
 		return true
 	}
 	return m.EwmaLatencyMs > thresholdMs
+}
+
+// IsStaleWarm reports whether a source's cached anti-bot clearance may have lapsed
+// and should be re-warmed, based on how long ago it was last successfully warmed. A
+// nil metric (never measured) or a nil LastWarmedAt (never warmed) counts as stale.
+// Otherwise stale when now - last_warmed_at > ttl (STRICTLY greater — exactly at the
+// TTL boundary is not yet stale). Independent of latency (IsSlow) — a source can be
+// fast yet cold if its clearance TTL elapsed.
+func IsStaleWarm(m *ent.SourceMetric, ttl time.Duration, now time.Time) bool {
+	if m == nil || m.LastWarmedAt == nil {
+		return true
+	}
+	return now.Sub(*m.LastWarmedAt) > ttl
 }

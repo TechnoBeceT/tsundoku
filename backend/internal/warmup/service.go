@@ -21,6 +21,14 @@ import (
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
+// sessionWarmTTL is how long a warmed anti-bot session is trusted before WarmSlow
+// re-warms it. Set below the typical FlareSolverr clearance TTL (~15m, matching the
+// frontend's warm-badge cutoff) so a scheduled pass refreshes a source's clearance
+// before it lapses. Deliberately a constant, not a settings tunable, to avoid the
+// SlowThreshold-interface blast radius for a single Minor; promote to a settings key
+// later if runtime tuning is wanted.
+const sessionWarmTTL = 12 * time.Minute
+
 // SlowThreshold supplies the EWMA-latency threshold (ms) above which a source is
 // considered slow. *settings.Service and settings.Static both satisfy it; it is
 // read at use-time so an owner's change applies on the next pass (hot reload).
@@ -61,10 +69,16 @@ func (s *Service) WarmAll(ctx context.Context) (int, error) {
 	return s.warmSources(ctx, sources), nil
 }
 
-// WarmSlow warms only the sources that need it: those never measured (absent from
-// the metrics snapshot) OR whose rolling EWMA latency exceeds the current slow
-// threshold (metrics.IsSlow). It reads both the eligible source set and the
-// threshold at use-time. Returns the number of sources warmed successfully.
+// WarmSlow warms only the sources that need it, on EITHER of two additive arms:
+//   - SLOW: never measured (absent from the metrics snapshot) OR whose rolling EWMA
+//     latency exceeds the current slow threshold (metrics.IsSlow).
+//   - STALE-WARM: warmed too long ago (or never), so its cached anti-bot clearance
+//     may have lapsed (metrics.IsStaleWarm with sessionWarmTTL) — independent of
+//     latency, since a fast source still goes cold once its clearance TTL elapses.
+//
+// It reads the eligible source set and the threshold at use-time, and snapshots now
+// once so every source is judged against the same clock. Returns the number of
+// sources warmed successfully.
 func (s *Service) WarmSlow(ctx context.Context) (int, error) {
 	sources, err := imports.EnabledOnlineSources(ctx, s.client)
 	if err != nil {
@@ -75,10 +89,12 @@ func (s *Service) WarmSlow(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	threshold := s.slow.WarmupSlowThresholdMs(ctx)
+	now := time.Now()
 
 	slow := make([]suwayomi.Source, 0, len(sources))
 	for _, src := range sources {
-		if metrics.IsSlow(snap[src.ID], threshold) {
+		m := snap[src.ID]
+		if metrics.IsSlow(m, threshold) || metrics.IsStaleWarm(m, sessionWarmTTL, now) {
 			slow = append(slow, src)
 		}
 	}
