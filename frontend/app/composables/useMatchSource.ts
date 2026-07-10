@@ -5,10 +5,16 @@
  * one or more candidates (via the shared `useSourceConfigure` tray/Configure
  * flow), and attach them all in one batch call.
  *
- * search(q) reuses the SAME cross-source `GET /api/search` endpoint (and the
- * shared `mapGroup` mapper) the Import/Adopt wizard uses — the backend returns
- * the identical SearchGroup/SearchCandidate DTO either way (§2 DRY: no second
- * mapper for the same shape).
+ * search({q, sources}) reuses the SAME cross-source `GET /api/search` endpoint
+ * (and the shared `mapGroup` mapper) the Import/Adopt wizard uses — the backend
+ * returns the identical SearchGroup/SearchCandidate DTO either way (§2 DRY: no
+ * second mapper for the same shape). `sources` is an optional list of source
+ * IDs to restrict the search to (from the `SourceFilterChips` row); an empty
+ * list searches every source, matching `useImport.search`.
+ *
+ * loadSources() lazily fetches the `GET /api/sources` list (mapped via the same
+ * 1:1 `mapSource` as `useImport`) the first time the dialog opens — guarded so
+ * it fetches at most once — to populate the filter chips.
  *
  * loadBreakdowns(candidates) is copied from `useImport.loadBreakdowns` (same
  * cache/in-flight-guard/parallel-fetch shape, §2 DRY): fetches the
@@ -39,9 +45,19 @@ import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import { mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '~/components/screens/import.types'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '~/components/screens/import.types'
 
 type SeriesDetailDTO = components['schemas']['SeriesDetail']
+type SourceDTO = components['schemas']['Source']
+
+/**
+ * Maps the `GET /api/sources` DTO onto the screen `Source` type. Re-declared
+ * from `useImport` (a trivial 3-line 1:1 mapper) rather than exported+shared —
+ * keeping the tiny mapper local avoids widening `useImport`'s public surface.
+ */
+function mapSource(dto: SourceDTO): Source {
+  return { id: dto.id, name: dto.name, lang: dto.lang }
+}
 
 /** Stable cache/in-flight key for one (source, mangaId) breakdown fetch (mirrors `useImport`). */
 function breakdownKey(source: string, mangaId: number): string {
@@ -55,6 +71,23 @@ export function useMatchSource(seriesId: string) {
   const error = ref<string | null>(null)
   /** Monotonic request-generation counter for `search()`'s stale-response guard (see above). */
   let searchGeneration = 0
+
+  // ---- sources (the source-filter chip list, loaded lazily on first open) ----
+  // Unlike the Import wizard (which loads sources eagerly on mount), this dialog
+  // only needs the list once the owner opens it, so `loadSources` is called
+  // on-demand and guarded to fetch at most once for the composable's lifetime.
+  const sources = ref<Source[]>([])
+  let sourcesLoaded = false
+
+  /** Fetch the source list once — a no-op on every call after the first. */
+  async function loadSources(): Promise<void> {
+    if (sourcesLoaded) return
+    sourcesLoaded = true
+    const res = await apiClient.GET('/api/sources')
+    if (res.data) {
+      sources.value = res.data.map(mapSource)
+    }
+  }
 
   // ---- breakdowns (per-scanlator coverage, Configure-stage auto-split) -------
   // Keyed by `source:mangaId`. `null` = fetch attempted and failed (the dialog
@@ -72,13 +105,18 @@ export function useMatchSource(seriesId: string) {
    * this call is still the most recently started one — a superseded
    * response (even one for the same query re-run) is discarded.
    */
-  async function search(q: string): Promise<void> {
+  async function search(payload: { q: string, sources: string[] }): Promise<void> {
     const generation = ++searchGeneration
     searching.value = true
     error.value = null
     groups.value = []
     try {
-      const res = await apiClient.GET('/api/search', { params: { query: { q } } })
+      // Omit sources param when empty (all sources searched); join as CSV when set (mirrors `useImport.search`).
+      const query: { q: string, sources?: string } = { q: payload.q }
+      if (payload.sources.length > 0) {
+        query.sources = payload.sources.join(',')
+      }
+      const res = await apiClient.GET('/api/search', { params: { query } })
       if (res.error || !res.data) {
         throw new Error(res.error ? res.error.message : 'Search failed')
       }
@@ -160,5 +198,5 @@ export function useMatchSource(seriesId: string) {
     }
   }
 
-  return { groups, searching, saving, error, breakdowns, search, loadBreakdowns, batchAddProviders }
+  return { sources, groups, searching, saving, error, breakdowns, loadSources, search, loadBreakdowns, batchAddProviders }
 }
