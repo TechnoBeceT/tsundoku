@@ -14,6 +14,7 @@ import (
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/warmup"
@@ -49,6 +50,8 @@ func New(
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
 	warmupSvc *warmup.Service,
+	gate *sourcegate.Service,
+	chapterCache *suwayomi.ChapterCache,
 	trigger func(),
 ) *echo.Echo {
 	e := echo.New()
@@ -72,6 +75,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, trigger)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, trigger)
 	return e
 }

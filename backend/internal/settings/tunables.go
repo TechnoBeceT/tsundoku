@@ -77,6 +77,15 @@ const (
 	// KeyWarmupSlowThresholdMs is the EWMA-latency threshold in milliseconds above
 	// which a source is warmed by the WarmSlow pass (int, 100..600000).
 	KeyWarmupSlowThresholdMs = "jobs.warmup_slow_threshold_ms"
+	// KeySearchCacheTTL is the lifetime of a cached interactive Search fan-out
+	// result (duration, 0 = caching disabled or >= 1s). Read PER-Get by the search
+	// cache, so a change hot-reloads and applies to entries already stored.
+	KeySearchCacheTTL = "jobs.search_cache_ttl"
+	// KeyChapterCacheTTL is the lifetime of a cached FetchChapters result for the
+	// interactive coverage→configure→adopt discovery flow (duration, 0 = caching
+	// disabled or >= 1s). Read PER-Get (hot reload). The refresh sweep bypasses this
+	// cache (it fetches fresh), so a long TTL here never stales-out discovery.
+	KeyChapterCacheTTL = "jobs.chapter_cache_ttl"
 	// KeySourcesFailureThreshold is the consecutive-failure count (int, >= 1)
 	// after which the source-politeness circuit-breaker (internal/sourcegate)
 	// trips a physical source into cooldown. Default 5.
@@ -118,6 +127,8 @@ type Defaults struct {
 	ExtensionCheckInterval  time.Duration
 	WarmupInterval          time.Duration
 	WarmupSlowThresholdMs   int
+	SearchCacheTTL          time.Duration
+	ChapterCacheTTL         time.Duration
 	SourcesFailureThreshold int
 	SourcesCooldown         time.Duration
 	SourcesMinRequestDelay  time.Duration
@@ -151,6 +162,8 @@ var tunableOrder = []string{
 	KeyExtensionCheckInterval,
 	KeyWarmupInterval,
 	KeyWarmupSlowThresholdMs,
+	KeySearchCacheTTL,
+	KeyChapterCacheTTL,
 	KeySourcesFailureThreshold,
 	KeySourcesCooldown,
 	KeySourcesMinRequestDelay,
@@ -199,6 +212,17 @@ var tunables = map[string]tunable{
 	KeyWarmupSlowThresholdMs: intTunable(
 		KeyWarmupSlowThresholdMs, "milliseconds", 100, 600000,
 		func(d Defaults) int { return d.WarmupSlowThresholdMs },
+	),
+	// KeySearchCacheTTL / KeyChapterCacheTTL: 0 = caching disabled, else >= 1s.
+	// durationTunableMinOrZero gives them the same "off or floor" shape as the
+	// warm-up interval so an owner can turn a cache off live.
+	KeySearchCacheTTL: durationTunableMinOrZero(
+		KeySearchCacheTTL, "duration", time.Second,
+		func(d Defaults) time.Duration { return d.SearchCacheTTL },
+	),
+	KeyChapterCacheTTL: durationTunableMinOrZero(
+		KeyChapterCacheTTL, "duration", time.Second,
+		func(d Defaults) time.Duration { return d.ChapterCacheTTL },
 	),
 	// KeySourcesFailureThreshold's upper bound (100) is not spec-mandated — it is
 	// a sanity ceiling consistent with the other bounded int tunables, since a

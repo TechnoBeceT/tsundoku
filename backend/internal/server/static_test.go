@@ -107,7 +107,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	settingsSvc := settings.NewService(nil, settings.Defaults{})
 	metricsSvc := metrics.NewService(nil)
 	warmupSvc := warmup.NewService(nullSuwayomiClient{}, metricsSvc, settingsSvc, nil)
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, func() {}), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, func() {}), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

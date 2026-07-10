@@ -285,6 +285,21 @@ type JobsConfig struct {
 	// overlay. Set via TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS.
 	WarmupSlowThresholdMs int
 
+	// SearchCacheTTL is the lifetime of a cached INTERACTIVE Search fan-out result
+	// (the heaviest anti-bot amplifier). Default 1h. This is the env DEFAULT behind
+	// the runtime settings overlay (jobs.search_cache_ttl); the search path reads
+	// the tunable per Get (hot reload) and 0 disables the cache. Set via
+	// TSUNDOKU_JOBS_SEARCHCACHETTL.
+	SearchCacheTTL time.Duration
+
+	// ChapterCacheTTL is the lifetime of a cached FetchChapters result for the
+	// interactive coverage→configure→adopt discovery flow. Default 1h. Env DEFAULT
+	// behind the runtime settings overlay (jobs.chapter_cache_ttl), read per Get
+	// (hot reload); 0 disables the cache. The refresh sweep does NOT use this cache
+	// (it fetches fresh each sweep), so a long TTL here never stales-out discovery.
+	// Set via TSUNDOKU_JOBS_CHAPTERCACHETTL.
+	ChapterCacheTTL time.Duration
+
 	// SuppressSplitParts enables fractional-part suppression (skip N.1..N.x when
 	// the whole N is downloaded). Set via TSUNDOKU_JOBS_SUPPRESSSPLITPARTS.
 	SuppressSplitParts bool
@@ -372,6 +387,8 @@ func defaults() map[string]any {
 		"jobs.extensioncheckinterval": "24h",
 		"jobs.warmupinterval":         "15m",
 		"jobs.warmupslowthresholdms":  5000,
+		"jobs.searchcachettl":         "1h",
+		"jobs.chaptercachettl":        "1h",
 		"jobs.suppresssplitparts":     true,
 		// Health — M7 source-health computation.
 		"health.stalegracedays": 14,
@@ -464,6 +481,8 @@ func Load() (*Config, error) {
 //	TSUNDOKU_JOBS_EXTENSIONCHECKINTERVAL    → jobs.extensioncheckinterval
 //	TSUNDOKU_JOBS_WARMUPINTERVAL            → jobs.warmupinterval
 //	TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS     → jobs.warmupslowthresholdms
+//	TSUNDOKU_JOBS_SEARCHCACHETTL            → jobs.searchcachettl
+//	TSUNDOKU_JOBS_CHAPTERCACHETTL           → jobs.chaptercachettl
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //	TSUNDOKU_SOURCES_FAILURETHRESHOLD       → sources.failurethreshold
 //	TSUNDOKU_SOURCES_COOLDOWN               → sources.cooldown

@@ -82,6 +82,18 @@ func (s *Service) WarmupSlowThresholdMs(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyWarmupSlowThresholdMs)
 }
 
+// SearchCacheTTL is the interactive Search result-cache lifetime; 0 = disabled
+// (DB override else default). Read per Get by the search cache (hot reload).
+func (s *Service) SearchCacheTTL(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeySearchCacheTTL)
+}
+
+// ChapterCacheTTL is the interactive FetchChapters cache lifetime; 0 = disabled
+// (DB override else default). Read per Get by the chapter cache (hot reload).
+func (s *Service) ChapterCacheTTL(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeyChapterCacheTTL)
+}
+
 // SourcesFailureThreshold is the consecutive-failure count above which the
 // source-politeness circuit-breaker (internal/sourcegate) trips a physical
 // source into cooldown (DB override else default).

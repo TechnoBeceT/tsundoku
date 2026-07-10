@@ -26,8 +26,10 @@ package suwayomi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -38,20 +40,58 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
+
+// ErrSourceCooledDown is returned by AddSeries when the source-politeness gate
+// reports the target physical source is currently in circuit-breaker cooldown,
+// so the adopt/attach fetch is refused rather than hammering a source that is
+// likely blocking us. Callers (imports.Adopt, library.AddProvider) surface it up
+// the stack. Nil gate ⇒ never returned (no gating).
+var ErrSourceCooledDown = errors.New("source in circuit-breaker cooldown")
 
 // Ingest bridges the Suwayomi client and the M1 chapter-ingest engine.
 // Create one with NewIngest and call AddSeries to populate the DB so the
 // M1 download dispatcher has chapters to process.
+//
+// cache and gate are anti-ban de-amplification collaborators, both nil-safe:
+//   - cache (*ChapterCache) memoizes the raw client.FetchChapters result so a
+//     coverage→configure→adopt session fetches a source-manga ONCE (see
+//     AddSeries / fetchForAdopt). A nil cache means every fetch hits upstream
+//     (today's behaviour) — this is the case for the plain NewIngest used by
+//     tests. Only the interactive adopt path is cached; the refresh sweep fetches
+//     fresh (FetchChaptersUncached), so the cache never stales-out discovery.
+//   - gate (*sourcegate.Service) is the per-physical-source circuit-breaker +
+//     politeness delay; AddSeries routes its ONE upstream fetch through it (see
+//     gatedUpstream). A nil gate means no gating. The refresh sweep instead
+//     fetches via FetchChaptersUncached (no cache, no gate) and applies its own
+//     gate around that pre-fetch, so the shared cache stays interactive-only.
 type Ingest struct {
 	client Client
 	db     *ent.Client
+	cache  *ChapterCache
+	gate   *sourcegate.Service
 }
 
 // NewIngest constructs an Ingest backed by the given Suwayomi client and ent
-// database client.
+// database client, with NO chapter cache and NO source-politeness gate — every
+// AddSeries fetch hits upstream, exactly as before this de-amplification work.
+// This preserves the behaviour every existing test relies on; production wires
+// the shared cache + gate via NewIngestWithGate.
 func NewIngest(client Client, db *ent.Client) *Ingest {
 	return &Ingest{client: client, db: db}
+}
+
+// NewIngestWithGate constructs an Ingest that SHARES the given chapter cache
+// (so the discovery coverage path and this adopt path collapse onto one upstream
+// fetch per source-manga) and routes its adopt/attach fetch through the given
+// source-politeness gate. Either may be nil (falling back to NewIngest's
+// behaviour for that collaborator). This is the production constructor
+// (cmd/tsundoku/main.go) — it mirrors series.NewServiceWithStaleGrace: a wider
+// constructor for the wired app, the narrow one kept for call sites that don't
+// need the extra collaborators.
+func NewIngestWithGate(client Client, db *ent.Client, cache *ChapterCache, gate *sourcegate.Service) *Ingest {
+	return &Ingest{client: client, db: db, cache: cache, gate: gate}
 }
 
 // Search delegates to the underlying Suwayomi client, returning all manga
@@ -91,25 +131,67 @@ func (i *Ingest) AddSeries(
 	title string,
 	scanlator string,
 ) (chapter.IngestResult, error) {
-	// 1. Fetch all chapters from Suwayomi via the fetchChapters mutation. This
-	//    contacts the upstream source and populates Suwayomi's internal cache
-	//    before we touch our own DB, so that a client failure does not leave
+	// Resolve the source's display name ONCE (best-effort; "" when unresolved) —
+	// reused as the source-politeness gate key below AND passed into
+	// addSeriesWithChapters for the scanlator collapse + provider_name storage,
+	// so a whole AddSeries makes a single Sources() call.
+	providerName := i.resolveProviderName(ctx, sourceName)
+
+	// 1. Fetch all chapters from Suwayomi via the fetchChapters mutation, THROUGH
+	//    the source-politeness gate (Task B) and the shared chapter cache (Task
+	//    C2). This contacts the upstream source and populates Suwayomi's internal
+	//    cache before we touch our own DB, so that a client failure does not leave
 	//    partially-created rows. FetchChapters must be called (not MangaChapters)
 	//    because after Search the manga exists in Suwayomi but chapters are not
 	//    cached yet (they require an explicit source fetch first). The result is
 	//    UNFILTERED — it holds every scanlator's chapters; filtering happens in
-	//    mapToFetchedChapters below.
-	swChapters, err := i.client.FetchChapters(ctx, mangaID)
+	//    mapToFetchedChapters below. On a cache hit NO upstream request is made,
+	//    so the gate is legitimately bypassed (there is nothing to throttle).
+	swChapters, err := i.fetchForAdopt(ctx, sourceName, mangaID, providerName)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: fetch chapters for manga %d: %w", mangaID, err)
 	}
 
-	// Resolve the source's display name ONCE (best-effort; "" when unresolved) —
-	// reused for the defensive scanlator collapse below AND stored as
-	// provider_name in upsertSeriesProvider, so ingest makes a single Sources()
-	// call per AddSeries.
-	providerName := i.resolveProviderName(ctx, sourceName)
+	return i.addSeriesWithChapters(ctx, sourceName, mangaID, title, scanlator, providerName, swChapters)
+}
 
+// AddSeriesWithChapters is AddSeries WITHOUT the upstream fetch: it ingests the
+// caller-supplied raw (all-scanlators) chapter list for this source-manga. The
+// refresh sweep uses it to fetch a source-manga ONCE (via FetchChaptersUncached)
+// and ingest every (source, scanlator) provider that shares it from that single
+// result (Task A), instead of re-fetching per scanlator. Because the caller
+// already performed (and gated) the fetch, this path applies NO gate — gating it
+// again would double-Wait a source that was already throttled for the pre-fetch.
+//
+// raw must be the UNFILTERED list (every scanlator); it is filtered to this
+// provider's scanlator by mapToFetchedChapters / filterByScanlator, exactly as
+// AddSeries does.
+func (i *Ingest) AddSeriesWithChapters(
+	ctx context.Context,
+	sourceName string,
+	mangaID int,
+	title string,
+	scanlator string,
+	raw []Chapter,
+) (chapter.IngestResult, error) {
+	providerName := i.resolveProviderName(ctx, sourceName)
+	return i.addSeriesWithChapters(ctx, sourceName, mangaID, title, scanlator, providerName, raw)
+}
+
+// addSeriesWithChapters is the shared ingest body for AddSeries and
+// AddSeriesWithChapters: given an already-fetched raw chapter list and the
+// already-resolved provider display name, it upserts the Series + SeriesProvider
+// rows, delegates dedup/identity to the M1 chapter engine, and backfills each
+// ProviderChapter's suwayomi_chapter_id. It performs NO upstream chapter fetch.
+func (i *Ingest) addSeriesWithChapters(
+	ctx context.Context,
+	sourceName string,
+	mangaID int,
+	title string,
+	scanlator string,
+	providerName string,
+	swChapters []Chapter,
+) (chapter.IngestResult, error) {
 	// Defensive scanlator collapse (mirrors the FE collapseUntaggedScanlator, but
 	// enforced at the ingest chokepoint so NO surface — a stale FE, a direct API
 	// call, a future caller — can leak). SourceBreakdown labels a source's
@@ -357,6 +439,104 @@ func (i *Ingest) resolveProviderName(ctx context.Context, sourceID string) strin
 		}
 	}
 	return ""
+}
+
+// FetchChaptersUncached returns the raw, unfiltered chapter list for mangaID
+// straight from the client, deliberately BYPASSING the shared chapter cache. It
+// is the refresh sweep's single per-source-manga pre-fetch (Task A): the sweep
+// already dedups each (source, manga) to ONE fetch per sweep via its own
+// grouping, and it needs a FRESH result every sweep so the long, interactive
+// cache TTL can never stale-out new-chapter discovery. The sweep applies its OWN
+// source-politeness gate (Wait + breaker bookkeeping) around this call, so it is
+// also deliberately UNGATED here (no double-Wait). Keeping refresh off the shared
+// cache is what lets that cache be a long-lived, interactive-only memo.
+func (i *Ingest) FetchChaptersUncached(ctx context.Context, mangaID int) ([]Chapter, error) {
+	return i.client.FetchChapters(ctx, mangaID)
+}
+
+// fetchForAdopt returns the raw chapter list for the adopt/attach path: cached
+// (Task C2) AND, on a cache miss, gated (Task B). The gate wraps the ONE real
+// upstream fetch, so a cache hit makes no request and correctly skips the gate.
+func (i *Ingest) fetchForAdopt(ctx context.Context, sourceID string, mangaID int, providerName string) ([]Chapter, error) {
+	return i.chaptersThroughCache(ctx, sourceID, mangaID, func() ([]Chapter, error) {
+		return i.gatedUpstream(ctx, sourceID, mangaID, providerName)
+	})
+}
+
+// chaptersThroughCache routes fetch through the shared chapter cache when one is
+// wired, else calls fetch directly (nil cache = today's uncached behaviour).
+func (i *Ingest) chaptersThroughCache(ctx context.Context, sourceID string, mangaID int, fetch func() ([]Chapter, error)) ([]Chapter, error) {
+	if i.cache == nil {
+		return fetch()
+	}
+	return i.cache.Get(ctx, sourceID, mangaID, fetch)
+}
+
+// gatedUpstream performs exactly ONE client.FetchChapters wrapped in the
+// source-politeness gate: refuse when the source's breaker is in cooldown
+// (ErrSourceCooledDown), enforce the politeness delay, then record the outcome
+// so the breaker converges. A nil gate makes every step a no-op (ungated fetch).
+// The gate key is the physical-source identity (provider display name else raw
+// source id, trimmed) — the SAME key refresh/download use, so one source's
+// breaker state is shared across every path.
+func (i *Ingest) gatedUpstream(ctx context.Context, sourceID string, mangaID int, providerName string) ([]Chapter, error) {
+	key := gateKey(providerName, sourceID)
+	now := time.Now()
+	if !i.gateAvailable(ctx, key, now) {
+		return nil, fmt.Errorf("%w: %s", ErrSourceCooledDown, key)
+	}
+	i.gateWait(ctx, key)
+	chs, err := i.client.FetchChapters(ctx, mangaID)
+	if err != nil {
+		i.gateRecordFailure(ctx, key, err, now)
+		return nil, err
+	}
+	i.gateRecordSuccess(ctx, key)
+	return chs, nil
+}
+
+// gateKey is the physical-source identity used to key the source-politeness gate
+// for an ingest fetch: the resolved display name when known, else the raw source
+// id, trimmed. Mirrors refresh.sourceKey / download.canonicalSourceKey so the
+// breaker is keyed consistently across every source-access path.
+func gateKey(providerName, sourceID string) string {
+	name := providerName
+	if name == "" {
+		name = sourceID
+	}
+	return strings.TrimSpace(name)
+}
+
+// gateAvailable reports whether key's breaker permits access. Nil gate ⇒ true.
+func (i *Ingest) gateAvailable(ctx context.Context, key string, now time.Time) bool {
+	if i.gate == nil {
+		return true
+	}
+	return i.gate.IsAvailable(ctx, key, now)
+}
+
+// gateWait enforces the politeness delay before a fetch. Nil gate ⇒ no-op.
+func (i *Ingest) gateWait(ctx context.Context, key string) {
+	if i.gate == nil {
+		return
+	}
+	i.gate.Wait(ctx, key)
+}
+
+// gateRecordSuccess reports a successful fetch to the breaker. Nil gate ⇒ no-op.
+func (i *Ingest) gateRecordSuccess(ctx context.Context, key string) {
+	if i.gate == nil {
+		return
+	}
+	i.gate.RecordSuccess(ctx, key)
+}
+
+// gateRecordFailure reports a failed fetch to the breaker. Nil gate ⇒ no-op.
+func (i *Ingest) gateRecordFailure(ctx context.Context, key string, cause error, now time.Time) {
+	if i.gate == nil {
+		return
+	}
+	i.gate.RecordFailure(ctx, key, cause, now)
 }
 
 // filterByScanlator returns the subset of chs that belong to scanlator.

@@ -811,6 +811,43 @@ func TestJobsWarmupEnvOverride(t *testing.T) {
 	}
 }
 
+// TestJobsCacheTTLDefaults confirms the interactive-cache TTL fields default to
+// 1h when their env vars are unset.
+func TestJobsCacheTTLDefaults(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.SearchCacheTTL != time.Hour {
+		t.Errorf("Jobs.SearchCacheTTL default = %v, want 1h", cfg.Jobs.SearchCacheTTL)
+	}
+	if cfg.Jobs.ChapterCacheTTL != time.Hour {
+		t.Errorf("Jobs.ChapterCacheTTL default = %v, want 1h", cfg.Jobs.ChapterCacheTTL)
+	}
+}
+
+// TestJobsCacheTTLEnvOverride confirms the cache-TTL env vars override the defaults.
+func TestJobsCacheTTLEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_JOBS_SEARCHCACHETTL", "30m")
+	t.Setenv("TSUNDOKU_JOBS_CHAPTERCACHETTL", "2h")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.SearchCacheTTL != 30*time.Minute {
+		t.Errorf("Jobs.SearchCacheTTL = %v, want 30m", cfg.Jobs.SearchCacheTTL)
+	}
+	if cfg.Jobs.ChapterCacheTTL != 2*time.Hour {
+		t.Errorf("Jobs.ChapterCacheTTL = %v, want 2h", cfg.Jobs.ChapterCacheTTL)
+	}
+}
+
 // TestValidateRejectsWarmupThresholdBelowOne confirms validate() fails closed when
 // the slow threshold is below 1, naming the env var.
 func TestValidateRejectsWarmupThresholdBelowOne(t *testing.T) {

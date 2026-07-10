@@ -25,6 +25,8 @@ func testDefaults() settings.Defaults {
 		ExtensionCheckInterval:  24 * time.Hour,
 		WarmupInterval:          15 * time.Minute,
 		WarmupSlowThresholdMs:   5000,
+		SearchCacheTTL:          time.Hour,
+		ChapterCacheTTL:         time.Hour,
 		SourcesFailureThreshold: 5,
 		SourcesCooldown:         30 * time.Minute,
 		SourcesMinRequestDelay:  500 * time.Millisecond,
@@ -209,8 +211,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 14 {
-		t.Fatalf("List len = %d, want 14", len(list))
+	if len(list) != 16 {
+		t.Fatalf("List len = %d, want 16", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -398,6 +400,49 @@ func TestWarmupSlowThresholdMs(t *testing.T) {
 	}
 	if got := svc.WarmupSlowThresholdMs(ctx); got != 8000 {
 		t.Errorf("WarmupSlowThresholdMs after Set = %d, want 8000", got)
+	}
+}
+
+// TestCacheTTLs proves the two interactive-cache TTL accessors return the default
+// (1h) when unset, accept 0 (caching disabled) and >= 1s, reject sub-1s values,
+// and reflect a valid override (the hot-reload contract the caches rely on).
+func TestCacheTTLs(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		key  string
+		get  func(context.Context) time.Duration
+	}{
+		{"search", settings.KeySearchCacheTTL, svc.SearchCacheTTL},
+		{"chapter", settings.KeyChapterCacheTTL, svc.ChapterCacheTTL},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.get(ctx); got != time.Hour {
+				t.Errorf("%s default = %v, want 1h", c.name, got)
+			}
+			// 0 = disabled is accepted.
+			if err := svc.Set(ctx, c.key, "0"); err != nil {
+				t.Fatalf("Set 0: %v", err)
+			}
+			if got := c.get(ctx); got != 0 {
+				t.Errorf("%s after Set 0 = %v, want 0 (disabled)", c.name, got)
+			}
+			// A positive value below the 1s floor is rejected.
+			if err := svc.Set(ctx, c.key, "500ms"); !errors.Is(err, settings.ErrInvalidSetting) {
+				t.Fatalf("Set 500ms: want ErrInvalidSetting, got %v", err)
+			}
+			// A valid override round-trips.
+			if err := svc.Set(ctx, c.key, "2h"); err != nil {
+				t.Fatalf("Set 2h: %v", err)
+			}
+			if got := c.get(ctx); got != 2*time.Hour {
+				t.Errorf("%s after Set 2h = %v, want 2h", c.name, got)
+			}
+		})
 	}
 }
 

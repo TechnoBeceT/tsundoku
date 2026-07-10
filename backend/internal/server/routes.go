@@ -2,6 +2,9 @@
 package server
 
 import (
+	"context"
+	"time"
+
 	"github.com/labstack/echo/v4"
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/config"
@@ -25,6 +28,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/warmup"
@@ -110,6 +114,8 @@ func registerRoutes(
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
 	warmupSvc *warmup.Service,
+	gate *sourcegate.Service,
+	chapterCache *suwayomi.ChapterCache,
 	trigger func(),
 ) {
 	// Infrastructure routes — no authentication required.
@@ -213,8 +219,18 @@ func registerRoutes(
 	// Imports (discovery + adoption) API. The ingest is built here so it shares
 	// the same Ent client as the rest of the application; a single suwayomiClient
 	// value is threaded in from main.
-	ingest := suwayomi.NewIngest(suwayomiClient, client)
-	importsSvc := imports.NewService(suwayomiClient, ingest, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout, metricsSvc)
+	// Anti-ban de-amplification: the ingest routes its adopt/attach fetch through
+	// the shared source-politeness gate (Task B) and the shared chapter cache
+	// (Task C2 — the SAME instance the imports coverage paths use, so a
+	// coverage→configure→adopt session fetches a source-manga once). imports uses
+	// NewServiceWithCaches so its coverage + Search paths are cached too (C1/C2).
+	ingest := suwayomi.NewIngestWithGate(suwayomiClient, client, chapterCache, gate)
+	importsSvc := imports.NewServiceWithCaches(
+		suwayomiClient, ingest, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout, metricsSvc, chapterCache,
+		// Search-cache TTL read per Get from the settings overlay (jobs.search_cache_ttl,
+		// hot reload); 0 disables the search cache at runtime.
+		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
+	)
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, suwayomiClient)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)

@@ -59,6 +59,16 @@ type Service struct {
 	storage       string
 	searchTimeout time.Duration
 	recorder      metrics.Recorder
+
+	// chapterCache memoizes the raw client.FetchChapters result so coverage
+	// (SourceBreakdown) / InspectChapters / Adopt fetch a source-manga ONCE (Task
+	// C2). It is the SAME instance the adopt-side suwayomi.Ingest holds, so a
+	// coverage→configure→adopt session collapses onto a single upstream fetch. Nil
+	// ⇒ no chapter caching (each call hits upstream — the plain NewService case).
+	chapterCache *suwayomi.ChapterCache
+	// searchCache memoizes Search fan-out results (Task C1). Nil ⇒ no search
+	// caching (every Search fans out — the plain NewService case).
+	searchCache *searchCache
 }
 
 // NewService constructs a Service backed by the given Suwayomi client.
@@ -84,6 +94,21 @@ func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client,
 		searchTimeout: searchTimeout,
 		recorder:      recorder,
 	}
+}
+
+// NewServiceWithCaches is NewService plus the anti-ban de-amplification caches:
+// chapterCache (SHARED with the adopt-side suwayomi.Ingest so coverage→adopt
+// fetches a source-manga once — Task C2) and an internally-built search-result
+// cache (Task C1). It is the production constructor (server.registerRoutes); the
+// plain NewService (no caches) is kept so the many read-only/test call sites need
+// no change. chapterCache may be nil (chapter caching then disabled). searchTTL
+// supplies the search cache's lifetime PER-Get (jobs.search_cache_ttl, hot
+// reload); a searchTTL returning 0 or less disables the search cache at runtime.
+func NewServiceWithCaches(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client, storage string, searchTimeout time.Duration, recorder metrics.Recorder, chapterCache *suwayomi.ChapterCache, searchTTL func(context.Context) time.Duration) *Service {
+	s := NewService(client, ingest, db, storage, searchTimeout, recorder)
+	s.chapterCache = chapterCache
+	s.searchCache = newSearchCache(searchTTL)
+	return s
 }
 
 // Sources returns all Suwayomi sources as SourceDTOs, excluding Suwayomi's
@@ -289,6 +314,21 @@ func newSearchCandidateDTO(c Candidate) SearchCandidateDTO {
 // already honours. The deadline is never surfaced as an error (a slow source is
 // not a failed search).
 func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) ([]SearchGroupDTO, error) {
+	// Short-TTL memo (Task C1): a repeated identical (query, sources) search
+	// within the TTL returns the prior result and does ZERO upstream fan-out — the
+	// heaviest anti-bot amplifier. Nil cache (plain NewService) ⇒ always fan out.
+	if s.searchCache == nil {
+		return s.searchUncached(ctx, query, sourceIDs)
+	}
+	return s.searchCache.Get(ctx, query, sourceIDs, func() ([]SearchGroupDTO, error) {
+		return s.searchUncached(ctx, query, sourceIDs)
+	})
+}
+
+// searchUncached is the live Search fan-out: it always queries upstream sources.
+// Search wraps it with the short-TTL result cache; every doc note on Search's
+// deadline / partial-results contract applies here.
+func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []string) ([]SearchGroupDTO, error) {
 	// Resolve the source set to query.
 	sources, err := s.resolveSources(ctx, sourceIDs)
 	if err != nil {
@@ -361,6 +401,18 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 	// latency (sctx is cancelled by now, so recording on it would drop exactly
 	// the datapoints that flag a source slow).
 	s.recordSamples(ctx, samples)
+
+	// If the PARENT request context was cancelled (client disconnected / navigated
+	// away), do NOT return — and therefore do NOT let Search cache — a truncated
+	// result. A cancelled fan-out drops out early, so candidates may hold only a
+	// few sources (or none); caching that would poison the shared searchCache for
+	// the whole TTL and serve the empty/partial result to unrelated later callers.
+	// This is deliberately distinct from our OWN searchTimeout firing (that bounds
+	// sctx while ctx stays live — the documented partial-results contract, which IS
+	// safe to cache): only a cancelled PARENT ctx short-circuits here.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Group candidates by title similarity using the Task 2 matcher.
 	groups := groupCandidates(candidates)
@@ -497,15 +549,34 @@ func (s *Service) resolveSource(ctx context.Context, sourceID string) (suwayomi.
 	return suwayomi.Source{}, ErrSourceNotFound
 }
 
+// fetchChapters returns the raw, unfiltered chapter list for (sourceID, mangaID)
+// through the shared chapter cache (Task C2) when one is wired, else straight
+// from the client. It is the single point the read-only discovery paths
+// (SourceBreakdown, InspectChapters) fetch chapters, so they share their result
+// with each other AND with the adopt-side suwayomi.Ingest (same cache instance)
+// — a coverage→configure→adopt session triggers ONE upstream FetchChapters.
+func (s *Service) fetchChapters(ctx context.Context, sourceID string, mangaID int) ([]suwayomi.Chapter, error) {
+	fetch := func() ([]suwayomi.Chapter, error) {
+		return s.client.FetchChapters(ctx, mangaID)
+	}
+	if s.chapterCache == nil {
+		return fetch()
+	}
+	return s.chapterCache.Get(ctx, sourceID, mangaID, fetch)
+}
+
 // InspectChapters fetches the live chapter list for mangaID from sourceID and
 // returns a lightweight preview as []ChapterInspectDTO.
 //
-// NOTE: This calls FetchChapters, which is a Suwayomi mutation — it contacts
-// the upstream source and populates Suwayomi's internal chapter cache. This is
-// intentional: it gives the user an up-to-date chapter count before adopting.
-// For already-cached data use suwayomi.Client.MangaChapters instead.
-func (s *Service) InspectChapters(ctx context.Context, _ string, mangaID int) ([]ChapterInspectDTO, error) {
-	chapters, err := s.client.FetchChapters(ctx, mangaID)
+// NOTE: On a cache MISS this fetches via the FetchChapters Suwayomi mutation —
+// which contacts the upstream source and populates Suwayomi's internal chapter
+// cache — giving the user an up-to-date chapter count before adopting. Within the
+// short chapter-cache TTL (Task C2) a repeat call for the same source-manga reuses
+// the memoized list and makes NO upstream request (an anti-ban de-amplification;
+// the count is at most a few minutes stale). For already-cached data use
+// suwayomi.Client.MangaChapters instead.
+func (s *Service) InspectChapters(ctx context.Context, sourceID string, mangaID int) ([]ChapterInspectDTO, error) {
+	chapters, err := s.fetchChapters(ctx, sourceID, mangaID)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +613,7 @@ func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, mangaID 
 		return SourceBreakdownDTO{}, err
 	}
 
-	chapters, err := s.client.FetchChapters(ctx, mangaID)
+	chapters, err := s.fetchChapters(ctx, sourceID, mangaID)
 	if err != nil {
 		return SourceBreakdownDTO{}, err
 	}

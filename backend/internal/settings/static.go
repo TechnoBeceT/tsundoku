@@ -21,6 +21,10 @@ type Static struct {
 	ExtCheck     time.Duration
 	WarmupIv     time.Duration
 	WarmupSlow   int
+	// SearchCacheIv / ChapterCacheIv back the interactive cache TTL accessors;
+	// 0 disables the corresponding cache.
+	SearchCacheIv  time.Duration
+	ChapterCacheIv time.Duration
 	// SourcesFailureThresh / SourcesCooldownIv / SourcesMinDelay back the
 	// source-politeness gate (internal/sourcegate) accessors below.
 	SourcesFailureThresh int
@@ -59,6 +63,12 @@ func (s Static) WarmupInterval(context.Context) time.Duration { return s.WarmupI
 
 // WarmupSlowThresholdMs returns the fixed slow-latency threshold in milliseconds.
 func (s Static) WarmupSlowThresholdMs(context.Context) int { return s.WarmupSlow }
+
+// SearchCacheTTL returns the fixed interactive Search cache lifetime; 0 disables it.
+func (s Static) SearchCacheTTL(context.Context) time.Duration { return s.SearchCacheIv }
+
+// ChapterCacheTTL returns the fixed interactive FetchChapters cache lifetime; 0 disables it.
+func (s Static) ChapterCacheTTL(context.Context) time.Duration { return s.ChapterCacheIv }
 
 // SourcesFailureThreshold returns the fixed circuit-breaker trip threshold.
 func (s Static) SourcesFailureThreshold(context.Context) int { return s.SourcesFailureThresh }
