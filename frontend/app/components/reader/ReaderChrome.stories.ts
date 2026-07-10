@@ -35,3 +35,13 @@ export const Hidden: Story = { args: { visible: false } }
 export const StartOfSeries: Story = {
   args: { visible: true, chapterLabel: 'Chapter 1 · Prologue', pageLabel: '1 / 20', percent: 1 },
 }
+
+/** Fullscreen supported: the bottom bar shows the enter-fullscreen toggle. */
+export const FullscreenAvailable: Story = {
+  args: { visible: true, fullscreenSupported: true, fullscreen: false },
+}
+
+/** Currently fullscreen: the toggle shows the exit-fullscreen (minimise) icon. */
+export const FullscreenActive: Story = {
+  args: { visible: true, fullscreenSupported: true, fullscreen: true },
+}

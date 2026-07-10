@@ -4,6 +4,7 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { useReader } from '~/composables/useReader'
 import { useReadingProgress } from '~/composables/useReadingProgress'
 import { useReaderSettings, readerStyleVars } from '~/composables/useReaderSettings'
+import { useFullscreen } from '~/composables/useFullscreen'
 import { isCenterTap } from '~/components/reader/readerChrome.logic'
 
 /**
@@ -49,6 +50,16 @@ const readerStyle = computed(() => readerStyleVars(settings))
 // ---- chrome + settings state ------------------------------------------------
 const chromeVisible = ref(true)
 const settingsOpen = ref(false)
+
+// Fullscreen: take the reader container edge-to-edge in-browser (a bonus over the
+// installed PWA's `standalone` display). `readerEl` is the element we fullscreen.
+const readerEl = ref<HTMLElement | null>(null)
+const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen()
+
+/** Enter/exit fullscreen on the reader container (from the chrome's button). */
+function onToggleFullscreen(): void {
+  if (readerEl.value) void toggleFullscreen(readerEl.value)
+}
 
 // The last centered position (0-based page within a chapter) — drives the
 // chrome's page/percent readout. Updated on every throttled `centered` emit.
@@ -116,7 +127,7 @@ onBeforeRouteLeave(() => { flush() })
 </script>
 
 <template>
-  <div class="reader" :style="readerStyle" @click="onReaderTap">
+  <div ref="readerEl" class="reader" :style="readerStyle" @click="onReaderTap">
     <div v-if="loading && chapters.length === 0" class="reader__center reader__status">
       Loading chapter…
     </div>
@@ -145,8 +156,11 @@ onBeforeRouteLeave(() => { flush() })
       :chapter-label="chapterLabel"
       :page-label="pageLabel"
       :percent="percent"
+      :fullscreen-supported="fullscreenSupported"
+      :fullscreen="isFullscreen"
       @back="backToSeries"
       @toggle-settings="settingsOpen = !settingsOpen"
+      @toggle-fullscreen="onToggleFullscreen"
     />
     <ReaderSettingsSheet
       v-model:open="settingsOpen"

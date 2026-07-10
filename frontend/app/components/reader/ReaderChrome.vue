@@ -6,7 +6,8 @@ import ProgressBar from '~/components/ui/ProgressBar.vue'
  * ReaderChrome — the reader's hide-on-tap overlay chrome. Two bars pinned over
  * the strip:
  *   - TOP: a back button + the series title / current-chapter label.
- *   - BOTTOM: a reading-progress bar with a "page X / N" readout + a settings
+ *   - BOTTOM: a reading-progress bar with a "page X / N" readout, an optional
+ *     fullscreen toggle (shown only when `fullscreenSupported`), and a settings
  *     button.
  *
  * `visible` slides both bars off-screen (top up, bottom down) and disables their
@@ -18,7 +19,7 @@ import ProgressBar from '~/components/ui/ProgressBar.vue'
  * The root carries `data-reader-chrome` so the route's tap handler can tell a
  * chrome-control click apart from a centre tap and NOT toggle on the former.
  */
-defineProps<{
+withDefaults(defineProps<{
   /** Whether the bars are shown; false slides them out + disables their events. */
   visible: boolean
   /** The series title (top bar heading). */
@@ -29,13 +30,22 @@ defineProps<{
   pageLabel: string
   /** Overall reading progress 0–100 for the bottom progress bar. */
   percent: number
-}>()
+  /** Whether the Fullscreen API is usable; false hides the fullscreen button. */
+  fullscreenSupported?: boolean
+  /** Whether the reader is currently fullscreen — flips the button's icon/label. */
+  fullscreen?: boolean
+}>(), {
+  fullscreenSupported: false,
+  fullscreen: false,
+})
 
 const emit = defineEmits<{
   /** The back button was activated — return to the series. */
   back: []
   /** The settings button was activated — open/close the settings sheet. */
   'toggle-settings': []
+  /** The fullscreen button was activated — enter/exit fullscreen. */
+  'toggle-fullscreen': []
 }>()
 </script>
 
@@ -64,6 +74,21 @@ const emit = defineEmits<{
         <ProgressBar :value="percent" />
         <span class="chrome__pages">{{ pageLabel }}</span>
       </div>
+      <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+      <IconButton v-if="fullscreenSupported" class="chrome__btn" :ariaLabel="fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'" @click="emit('toggle-fullscreen')">
+        <svg v-if="fullscreen" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+          <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+          <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+          <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+        </svg>
+        <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+          <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+          <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+          <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+        </svg>
+      </IconButton>
       <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
       <IconButton class="chrome__btn" :ariaLabel="'Reader settings'" @click="emit('toggle-settings')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
