@@ -3,6 +3,7 @@ import { computed, ref, toRef, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import Chip from '../ui/Chip.vue'
 import SearchInput from '../ui/SearchInput.vue'
+import SourceFilterChips from '../ui/SourceFilterChips.vue'
 import Spinner from '../ui/Spinner.vue'
 import Stepper from '../ui/Stepper.vue'
 import AdoptTray from '../import/AdoptTray.vue'
@@ -177,12 +178,6 @@ const groups = computed(() => props.searchResults)
 const promptSearch = computed(() => !hasSearched.value && !props.searching)
 const noResults = computed(() => hasSearched.value && !props.searching && groups.value.length === 0)
 
-const toggleFilter = (id: string): void => {
-  srcFilter.value = srcFilter.value.includes(id)
-    ? srcFilter.value.filter(x => x !== id)
-    : [...srcFilter.value, id]
-}
-
 const runSearch = (): void => {
   hasSearched.value = true
   emit('search', { q: query.value.trim(), sources: [...srcFilter.value] })
@@ -300,19 +295,7 @@ const submit = (): void => {
           </div>
 
           <!-- Source filter chips -->
-          <div class="imp-filter">
-            <span class="imp-filter__label">Limit to:</span>
-            <button
-              v-for="s in sources"
-              :key="s.id"
-              type="button"
-              class="imp-chip"
-              :class="{ 'imp-chip--on': srcFilter.includes(s.id) }"
-              @click="toggleFilter(s.id)"
-            >
-              {{ s.name }}
-            </button>
-          </div>
+          <SourceFilterChips v-model:selected="srcFilter" :sources="sources" />
 
           <!-- Searching / empty / prompt states (§16) -->
           <div v-if="searching" class="imp-loading">
@@ -498,40 +481,6 @@ const submit = (): void => {
 /* The shared <SearchInput> fills the row beside the Search button. */
 .imp-search__field {
   flex: 1;
-}
-
-.imp-filter {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.imp-filter__label {
-  font-size: var(--text-xs);
-  color: var(--faint);
-  margin-right: 3px;
-  font-weight: var(--weight-semibold);
-}
-
-.imp-chip {
-  padding: 6px 12px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--surface2);
-  color: var(--muted);
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.imp-chip--on {
-  border-color: var(--accent);
-  background: var(--accentSoft);
-  color: var(--accentBright);
 }
 
 /* ---- Groups --------------------------------------------------------------- */

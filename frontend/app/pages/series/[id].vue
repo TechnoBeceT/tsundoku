@@ -104,17 +104,25 @@ const {
 } = useSeriesDetail(id)
 
 const {
+  sources: matchSources,
   groups: matchGroups,
   breakdowns: matchBreakdowns,
   searching: matchSearching,
   saving: matchSaving,
   error: matchError,
+  loadSources: matchLoadSources,
   search: matchSearch,
   loadBreakdowns: matchLoadBreakdowns,
   batchAddProviders,
 } = useMatchSource(id)
 
 const matchOpen = ref(false)
+
+// Lazily load the source-filter list the first time the "Add a source" dialog
+// opens (useMatchSource.loadSources is guarded to fetch at most once).
+watch(matchOpen, (isOpen) => {
+  if (isOpen) void matchLoadSources()
+})
 
 async function onMatchConfirm(providers: ProviderRef[]): Promise<void> {
   const detail = await batchAddProviders(providers)
@@ -203,6 +211,7 @@ function onLoadCoverage(providerId: string): void {
       v-if="series"
       v-model:open="matchOpen"
       :series-title="series.title"
+      :sources="matchSources"
       :groups="matchGroups"
       :breakdowns="matchBreakdowns"
       :searching="matchSearching"

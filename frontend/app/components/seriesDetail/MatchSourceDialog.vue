@@ -8,8 +8,9 @@ import ErrorBanner from '../ui/ErrorBanner.vue'
 import SearchGroupCard from '../import/SearchGroupCard.vue'
 import AdoptTray from '../import/AdoptTray.vue'
 import SourceConfigurePanel from '../import/SourceConfigurePanel.vue'
+import SourceFilterChips from '../ui/SourceFilterChips.vue'
 import { useSourceConfigure, type ProviderRef } from '~/composables/useSourceConfigure'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens/import.types'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '../screens/import.types'
 
 /**
  * MatchSourceDialog — the Series-Detail "Add a source" dialog: the inverse of
@@ -37,6 +38,9 @@ import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens
  *   - `seriesTitle`: the series' own title — prefills the search box, shown
  *     read-only in the Configure stage, and restored every time the dialog
  *     re-opens.
+ *   - `sources`: the sources available to search — drives the filter chip row
+ *     under the search box (empty hides the row); the selection is reset on
+ *     every re-open.
  *   - `groups`: the current cross-source search results.
  *   - `breakdowns`: per-scanlator coverage cache, keyed `source:mangaId`
  *     (mirrors `Import.vue`'s prop of the same name) — drives the
@@ -50,7 +54,8 @@ import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens
  * picked group every time it opens, so a re-open never inherits a stale
  * gather/selection (mirrors `DeleteSeriesDialog`'s reset-on-open).
  *
- * Emits `update:open` (v-model), `search` (the trimmed query string),
+ * Emits `update:open` (v-model), `search` (`{ q, sources }` — the trimmed
+ * query plus the optional source-ID filter from the chip row),
  * `loadBreakdowns` (the picked/tray-configured candidates, for the parent to
  * fetch coverage), and `confirm` (the ordered, best-first `ProviderRef[]` to
  * attach).
@@ -65,6 +70,8 @@ const props = withDefaults(defineProps<{
   open: boolean
   /** The series' own title — prefills the search box, shown read-only in Configure. */
   seriesTitle?: string
+  /** Sources available to search (populates the filter chips); empty hides the row. */
+  sources?: Source[]
   /** The current cross-source search results. */
   groups?: SearchGroup[]
   /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
@@ -77,6 +84,7 @@ const props = withDefaults(defineProps<{
   error?: string | null
 }>(), {
   seriesTitle: '',
+  sources: () => [],
   groups: () => [],
   breakdowns: () => ({}),
   searching: false,
@@ -87,8 +95,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   /** The open state changed (v-model:open). */
   'update:open': [value: boolean]
-  /** Run a search for the trimmed query. */
-  'search': [q: string]
+  /** Run a search for the trimmed query, optionally restricted to the given source IDs. */
+  'search': [payload: { q: string, sources: string[] }]
   /** Fetch the per-scanlator breakdown for every given candidate (Configure-stage entry). */
   'loadBreakdowns': [candidates: SearchCandidate[]]
   /** Attach the gathered, ranked sources — best-first. */
@@ -96,6 +104,7 @@ const emit = defineEmits<{
 }>()
 
 const query = ref(props.seriesTitle)
+const srcFilter = ref<string[]>([])
 const stage = ref<'search' | 'configure'>('search')
 const searched = ref(false)
 
@@ -128,6 +137,7 @@ const {
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     query.value = props.seriesTitle
+    srcFilter.value = []
     stage.value = 'search'
     searched.value = false
     tray.value = []
@@ -139,7 +149,7 @@ const noResults = computed(() => searched.value && !props.searching && props.gro
 
 function runSearch(): void {
   searched.value = true
-  emit('search', query.value.trim())
+  emit('search', { q: query.value.trim(), sources: [...srcFilter.value] })
 }
 
 // Classic single-group pick (tray empty) — advances straight to Configure.
@@ -193,6 +203,9 @@ function confirm(): void {
           Search
         </AppButton>
       </div>
+
+      <!-- Source filter chips (only when the parent supplied a source list) -->
+      <SourceFilterChips v-if="sources.length" v-model:selected="srcFilter" :sources="sources" />
 
       <div v-if="searching" class="match-loading">
         <Spinner :size="16" tone="accent" />

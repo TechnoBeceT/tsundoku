@@ -46,12 +46,49 @@ describe('MatchSourceDialog', () => {
     expect((input.element as HTMLInputElement).value).toBe('Solo Leveling')
   })
 
-  it('emits search with the trimmed query on Search click', async () => {
+  it('emits search with the trimmed query (and empty sources) on Search click', async () => {
     const wrapper = mountDialog()
     await wrapper.find('input[type="search"]').setValue('  naruto  ')
     await wrapper.findAll('button').find(b => b.text() === 'Search')!.trigger('click')
 
-    expect(wrapper.emitted('search')).toEqual([['naruto']])
+    expect(wrapper.emitted('search')).toEqual([[{ q: 'naruto', sources: [] }]])
+  })
+
+  it('renders the source-filter chips when sources are supplied and includes the selected IDs in the search payload', async () => {
+    const sources = [
+      { id: 'src-a', name: 'MangaDex', lang: 'en' },
+      { id: 'src-b', name: 'Asura Scans', lang: 'en' },
+    ]
+    const wrapper = mountDialog({ sources })
+
+    // Chip row rendered from the sources prop.
+    const chips = wrapper.findAll('button.imp-chip')
+    expect(chips.map(c => c.text())).toEqual(['MangaDex', 'Asura Scans'])
+
+    // Select the first source, then search — the payload carries its ID.
+    await chips[0]!.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Search')!.trigger('click')
+
+    expect(wrapper.emitted('search')).toEqual([[{ q: 'Solo Leveling', sources: ['src-a'] }]])
+  })
+
+  it('does not render the chip row when no sources are supplied', () => {
+    const wrapper = mountDialog()
+    expect(wrapper.find('button.imp-chip').exists()).toBe(false)
+  })
+
+  it('resets the source filter selection on re-open', async () => {
+    const sources = [{ id: 'src-a', name: 'MangaDex', lang: 'en' }]
+    const wrapper = mountDialog({ sources })
+
+    await wrapper.find('button.imp-chip').trigger('click')
+    await wrapper.setProps({ open: false })
+    await wrapper.setProps({ open: true })
+    await wrapper.findAll('button').find(b => b.text() === 'Search')!.trigger('click')
+
+    // The last search emit carries an empty sources list — the selection was cleared.
+    const emitted = wrapper.emitted('search')!
+    expect(emitted[emitted.length - 1]).toEqual([{ q: 'Solo Leveling', sources: [] }])
   })
 
   it('advances to the configure stage and lists every candidate, all selected by default, after picking a group', async () => {
