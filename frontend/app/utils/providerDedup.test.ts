@@ -10,6 +10,7 @@ function prov(p: Partial<Provider> & Pick<Provider, 'id'>): Provider {
     linked: p.linked ?? true,
     mangaId: p.mangaId ?? 0,
     chapterCount: p.chapterCount ?? 0,
+    hasFeed: p.hasFeed ?? true,
     scanlator: p.scanlator ?? '',
     language: p.language ?? 'en',
     importance: p.importance ?? 1,
@@ -46,12 +47,20 @@ describe('findDriftedProviderIds', () => {
     expect(ids).toEqual([])
   })
 
-  it('does NOT flag when the linked twin has an empty feed (chapterCount 0) — backend would skip it', () => {
+  it('does NOT flag when the linked twin has an empty feed (hasFeed false) — backend would skip it', () => {
     const ids = findDriftedProviderIds([
       prov({ id: 'disk', linked: false, providerName: 'Hive Scans', scanlator: '', chapterCount: 8 }),
-      prov({ id: 'live', linked: true, providerName: 'Hive Scans', scanlator: '', chapterCount: 0 }),
+      prov({ id: 'live', linked: true, providerName: 'Hive Scans', scanlator: '', chapterCount: 0, hasFeed: false }),
     ])
     expect(ids).toEqual([])
+  })
+
+  it('flags when the linked twin has a non-empty feed even though chapterCount is 0 (legacy-drift substate — the bug this fix closes: disk owns the satisfied chapters, live twin already has a feed)', () => {
+    const ids = findDriftedProviderIds([
+      prov({ id: 'disk', linked: false, providerName: 'Hive Scans', scanlator: '', chapterCount: 8 }),
+      prov({ id: 'live', linked: true, providerName: 'Hive Scans', scanlator: '', chapterCount: 0, hasFeed: true }),
+    ])
+    expect(ids).toEqual(['disk'])
   })
 
   it('returns empty when there are no duplicates', () => {

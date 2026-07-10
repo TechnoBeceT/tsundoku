@@ -14,8 +14,13 @@
  *   - `providerName` matches trimmed + case-insensitively (backend
  *     providerNameMatches = EqualFold+TrimSpace; blank never matches);
  *   - the `scanlator` matches (null/undefined normalised to "");
- *   - the linked twin has `chapterCount > 0` (backend skips an empty-feed twin —
- *     merging it would orphan the disk chapters).
+ *   - the linked twin has `hasFeed === true` (backend skips an empty-feed twin —
+ *     merging it would orphan the disk chapters). This mirrors the backend's
+ *     `providerHasFeed` (≥1 ProviderChapter row) EXACTLY — NOT `chapterCount`
+ *     (chapters currently SATISFIED by this provider), which is a different
+ *     quantity: a disk-origin twin can own all the satisfied chapters
+ *     (`chapterCount=0` on the live source) while the live source still has a
+ *     non-empty feed, a legacy-drift substate `chapterCount > 0` would hide.
  *
  * Returns the ids of the unlinked disk providers that have such a twin (drives
  * the per-row "duplicate" badge and the panel banner count). Pure — no I/O.
@@ -25,7 +30,7 @@ import type { Provider } from '~/components/screens/seriesDetail.types'
 const norm = (s: string): string => s.trim().toLowerCase()
 
 export function findDriftedProviderIds(providers: Provider[]): string[] {
-  const linked = providers.filter((p) => p.linked && p.chapterCount > 0)
+  const linked = providers.filter((p) => p.linked && p.hasFeed)
   const out: string[] = []
   for (const disk of providers) {
     if (disk.linked) continue
