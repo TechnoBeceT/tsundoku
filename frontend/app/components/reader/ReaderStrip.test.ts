@@ -117,6 +117,57 @@ describe('ReaderStrip — pageCount tail-404 tolerance', () => {
   })
 })
 
+describe('ReaderStrip — resume scroll (initialScrollTo)', () => {
+  it('scrolls to the resume page offset once on initial mount', async () => {
+    const wrapper = mount(ReaderStrip, {
+      props: { chapters: [chA, chB, chC], mountedChapters: [chA], pageUrl, initialScrollTo: { chapterId: 'ch-A', page: 2 } },
+    })
+    // Stub geometry AFTER mount: applyInitialScroll awaits nextTick before reading
+    // rects, so the stubs are in place by the time it resolves.
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+    // ch-A page 2 sits 600px down (each rendered page 300px tall).
+    stubRect(wrapper.find('[data-chapter-id="ch-A"][data-page="2"]').element, 600)
+
+    await nextTick()
+    await flushPromises()
+
+    expect(container.scrollTop).toBe(600)
+  })
+
+  it('falls back to the chapter top when the resume page is not mounted', async () => {
+    const wrapper = mount(ReaderStrip, {
+      props: { chapters: [chA, chB, chC], mountedChapters: [chA], pageUrl, initialScrollTo: { chapterId: 'ch-A', page: 99 } },
+    })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+    // Page 99 doesn't exist → the chapter wrapper (content-top 120) is the
+    // fallback anchor, so scrollTop lands on the chapter top.
+    stubRect(wrapper.find('.strip__chapter[data-chapter-id="ch-A"]').element, 120)
+
+    await nextTick()
+    await flushPromises()
+
+    expect(container.scrollTop).toBe(120)
+  })
+
+  it('does not scroll when no initialScrollTo is given', async () => {
+    const wrapper = mount(ReaderStrip, {
+      props: { chapters: [chA, chB, chC], mountedChapters: [chA], pageUrl },
+    })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 250)
+    stubRect(container, 0)
+
+    await nextTick()
+    await flushPromises()
+
+    expect(container.scrollTop).toBe(250) // untouched
+  })
+})
+
 describe('ReaderStrip — append', () => {
   it('emits near-tail when the sentinel intersects and a next chapter exists', () => {
     const wrapper = mount(ReaderStrip, {

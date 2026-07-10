@@ -43,6 +43,9 @@ const props = defineProps<{
   mountedChapters: ReaderChapter[]
   /** Builds the same-origin page-bytes URL for (chapterId, 0-based page). */
   pageUrl: (chapterId: string, n: number) => string
+  /** Resume anchor applied ONCE on initial mount: scroll to this (chapterId,
+   *  0-based page). Omit/null to open at the top. Slice 3 resume. */
+  initialScrollTo?: { chapterId: string, page: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -143,6 +146,32 @@ async function afterReflow(): Promise<void> {
   el.scrollTop = scrollAfterReflow(prevScrollTop, anchorPrevTop, contentTop(anchorEl, el))
 }
 
+// ---- resume scroll: land on the last-read page (once, on initial mount) -----
+let didInitialScroll = false
+
+/**
+ * applyInitialScroll — on FIRST mount, scroll to the resume `initialScrollTo`
+ * (chapterId, page): the target page's content offset within the scroll
+ * container. Reserved page heights (ReaderPage's pending min-height) give a
+ * usable offset before the images load; native scroll-anchoring then holds the
+ * position as they arrive. Falls back to the chapter's top when the specific
+ * page element isn't mounted, and no-ops without a target or after it has fired
+ * (guarded so a later window reflow never re-scrolls).
+ */
+async function applyInitialScroll(): Promise<void> {
+  if (didInitialScroll) return
+  const target = props.initialScrollTo
+  const el = scrollEl.value
+  if (!target?.chapterId || !el) return
+  didInitialScroll = true
+  await nextTick()
+  const pageEl = el.querySelector<HTMLElement>(`[data-chapter-id="${target.chapterId}"][data-page="${target.page}"]`)
+  const chapterEl = el.querySelector<HTMLElement>(`[data-chapter-id="${target.chapterId}"]`)
+  const anchor = pageEl ?? chapterEl
+  if (!anchor) return
+  el.scrollTop = contentTop(anchor, el)
+}
+
 // ---- tail sentinel: append the next chapter ---------------------------------
 let observer: IntersectionObserver | null = null
 
@@ -227,6 +256,7 @@ onMounted(() => {
     observer = new IntersectionObserver(onSentinel, { root: el, rootMargin: '600px 0px' })
     observer.observe(sentinelEl.value)
   }
+  void applyInitialScroll()
 })
 
 onBeforeUnmount(() => {

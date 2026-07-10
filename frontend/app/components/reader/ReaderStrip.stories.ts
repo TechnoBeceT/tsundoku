@@ -38,3 +38,12 @@ export const LastChapter: Story = {
     mountedChapters: readerChapters.slice(3),
   },
 }
+
+/** Resume: opens scrolled to a mid-chapter last-read page (Slice 3 resume anchor). */
+export const ResumeMidChapter: Story = {
+  args: {
+    chapters: readerChapters,
+    mountedChapters: readerChapters.slice(0, 2),
+    initialScrollTo: { chapterId: 'ch-1', page: 2 },
+  },
+}
