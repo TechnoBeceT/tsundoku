@@ -193,6 +193,7 @@ components:
         - linked
         - mangaId
         - chapterCount
+        - hasFeed
         - scanlator
         - language
         - importance
@@ -232,6 +233,9 @@ components:
         chapterCount:
           type: integer
           description: How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by).
+        hasFeed:
+          type: boolean
+          description: True when this provider has a non-empty availability feed (≥1 ProviderChapter). Mirrors the backend drift-merge feed gate.
         scanlator:
           type: string
           description: Scanlation group (may be empty).

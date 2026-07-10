@@ -135,7 +135,7 @@ func (s *Service) findDriftedPair(ctx context.Context, providers []*ent.SeriesPr
 func (s *Service) pickTwin(ctx context.Context, disk *ent.SeriesProvider, providers []*ent.SeriesProvider) (*ent.SeriesProvider, bool, error) {
 	var emptyTwin *ent.SeriesProvider
 	for _, l := range providers {
-		if l.SuwayomiID == 0 || l.Scanlator != disk.Scanlator {
+		if l.SuwayomiID == 0 || !scanlatorMatches(l.Scanlator, disk.Scanlator) {
 			continue
 		}
 		if !providerNameMatches(disk.Provider, l.ProviderName) {
@@ -182,6 +182,15 @@ func providerNameMatches(diskProviderName, liveDisplayName string) bool {
 	return strings.EqualFold(a, b)
 }
 
+// scanlatorMatches reports whether two scanlator labels refer to the same
+// scanlation group. Case-insensitive + whitespace-trimmed so "Reset Scans" and
+// "reset scans" are one group; blank == blank (untagged / all-scanlators) matches.
+// Mirrors the frontend's norm() compare in providerDedup.ts so the UI never
+// offers a merge the backend then declines (drift-detection parity).
+func scanlatorMatches(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
 // matchingUnlinkedDiskProvider returns the unlinked disk-origin provider
 // (suwayomi_id == 0) in providers whose identity name matches liveDisplayName
 // (providerNameMatches) AND whose scanlator equals scanlator, or nil when none
@@ -195,7 +204,7 @@ func matchingUnlinkedDiskProvider(providers []*ent.SeriesProvider, liveDisplayNa
 		if p.SuwayomiID != 0 {
 			continue
 		}
-		if p.Scanlator != scanlator {
+		if !scanlatorMatches(p.Scanlator, scanlator) {
 			continue
 		}
 		if providerNameMatches(p.Provider, liveDisplayName) {

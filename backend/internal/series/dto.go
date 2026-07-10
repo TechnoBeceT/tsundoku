@@ -90,23 +90,27 @@ type ChapterDTO struct {
 // this provider currently satisfies (Chapter.satisfied_by_provider_id == this
 // provider) — the coverage the owner sees before choosing what to match it to.
 type ProviderDTO struct {
-	ID               string     `json:"id"`
-	Provider         string     `json:"provider"`
-	ProviderName     string     `json:"providerName"`
-	Title            string     `json:"title"`
-	CoverURL         string     `json:"coverUrl"`
-	IsMetadataSource bool       `json:"isMetadataSource"`
-	Linked           bool       `json:"linked"`
-	MangaID          int        `json:"mangaId"`
-	ChapterCount     int        `json:"chapterCount"`
-	Scanlator        string     `json:"scanlator"`
-	Language         string     `json:"language"`
-	Importance       int        `json:"importance"`
-	Health           string     `json:"health"`
-	ChaptersBehind   int        `json:"chaptersBehind"`
-	NewestChapterAt  *time.Time `json:"newestChapterAt"`
-	LastSyncedAt     *time.Time `json:"lastSyncedAt"`
-	LastError        string     `json:"lastError"`
+	ID               string `json:"id"`
+	Provider         string `json:"provider"`
+	ProviderName     string `json:"providerName"`
+	Title            string `json:"title"`
+	CoverURL         string `json:"coverUrl"`
+	IsMetadataSource bool   `json:"isMetadataSource"`
+	Linked           bool   `json:"linked"`
+	MangaID          int    `json:"mangaId"`
+	ChapterCount     int    `json:"chapterCount"`
+	// HasFeed is true when this provider has a non-empty availability feed
+	// (≥1 ProviderChapter). Mirrors the backend drift-merge feed gate so the FE
+	// offers exactly the pairs the backend would merge.
+	HasFeed         bool       `json:"hasFeed"`
+	Scanlator       string     `json:"scanlator"`
+	Language        string     `json:"language"`
+	Importance      int        `json:"importance"`
+	Health          string     `json:"health"`
+	ChaptersBehind  int        `json:"chaptersBehind"`
+	NewestChapterAt *time.Time `json:"newestChapterAt"`
+	LastSyncedAt    *time.Time `json:"lastSyncedAt"`
+	LastError       string     `json:"lastError"`
 }
 
 // LibraryHealthDTO is the library-wide source-health scan: only series that
@@ -197,6 +201,7 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 		Linked:           p.SuwayomiID != 0,
 		MangaID:          p.SuwayomiID,
 		ChapterCount:     chapterCount,
+		HasFeed:          len(p.Edges.ProviderChapters) > 0,
 		Scanlator:        p.Scanlator,
 		Language:         p.Language,
 		Importance:       p.Importance,

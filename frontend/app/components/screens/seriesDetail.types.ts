@@ -71,6 +71,8 @@ export interface Provider {
   linked: boolean
   /** How many of the series' chapters this provider currently satisfies. */
   chapterCount: number
+  /** True when this provider has a non-empty availability feed (≥1 ProviderChapter) — the exact backend drift-merge gate. */
+  hasFeed: boolean
   /** Scanlation group name (may be empty → row omits it). */
   scanlator: string
   /** BCP-47 language code (e.g. `en`, `ko`). */

@@ -332,6 +332,51 @@ func TestDedupProviders_MergesDriftedPair(t *testing.T) {
 	assertNoUpgradesFlagged(t, ctx, client)
 }
 
+// TestDedupProviders_ScanlatorCaseInsensitiveMerge proves the FE↔BE parity fix:
+// a disk row scanlator ("reset scans") and its linked twin's scanlator
+// ("Reset Scans") differ only in case — scanlatorMatches must still recognise
+// them as the same group and merge (merged=1, skipped=0), mirroring the
+// frontend's already-case-insensitive norm() compare.
+func TestDedupProviders_ScanlatorCaseInsensitiveMerge(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "reset scans", 2)
+	facts, err := diskScanFirst(t, storage)
+	if err != nil {
+		t.Fatalf("diskScanFirst: %v", err)
+	}
+	importOneFromFacts(t, client, facts)
+	ser := client.Series.Query().OnlyX(ctx)
+
+	live := client.SeriesProvider.Create().
+		SetSeriesID(ser.ID).
+		SetProvider("weeb").
+		SetProviderName("mangadex").
+		SetScanlator("Reset Scans").
+		SetSuwayomiID(99).
+		SetImportance(5).
+		SaveX(ctx)
+	one, two := 1.0, 2.0
+	client.ProviderChapter.Create().SetSeriesProviderID(live.ID).SetChapterKey("1").SetNumber(one).SaveX(ctx)
+	client.ProviderChapter.Create().SetSeriesProviderID(live.ID).SetChapterKey("2").SetNumber(two).SaveX(ctx)
+
+	svc := library.NewService(client, nil, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+
+	merged, skipped, err := svc.DedupProviders(ctx, ser.ID)
+	if err != nil {
+		t.Fatalf("DedupProviders: %v", err)
+	}
+	if merged != 1 || skipped != 0 {
+		t.Fatalf("DedupProviders = (merged=%d, skipped=%d), want (1, 0)", merged, skipped)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 1)
+	for _, key := range []string{"1", "2"} {
+		assertChapterSatisfaction(t, client, ctx, ser.ID, key, &live.ID, 5)
+	}
+}
+
 // TestDedupProviders_SkipsEmptyFeedTwin proves the safety guard: when the
 // drifted linked twin has NO ProviderChapter feed, the pair is SKIPPED (merging
 // would relabel nothing then orphan the disk chapters) — merged=0, skipped=1,

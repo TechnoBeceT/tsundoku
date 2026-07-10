@@ -1501,6 +1501,8 @@ export interface components {
             mangaId: number;
             /** @description How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by). */
             chapterCount: number;
+            /** @description True when this provider has a non-empty availability feed (≥1 ProviderChapter). Mirrors the backend drift-merge feed gate. */
+            hasFeed: boolean;
             /** @description Scanlation group (may be empty). */
             scanlator: string;
             /** @description Language code (e.g. en). */
