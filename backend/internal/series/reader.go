@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -74,4 +75,45 @@ func (s *Service) ChapterPage(ctx context.Context, seriesID, chapterID uuid.UUID
 		}
 	}
 	return data, contentType, nil
+}
+
+// ChapterProgressDTO is the reading-progress subset returned by SetProgress: the
+// chapter's id plus its persisted progress. ReadAt is nil until the chapter is
+// first marked read (and is cleared when it is un-marked).
+type ChapterProgressDTO struct {
+	ID           string     `json:"id"`
+	Read         bool       `json:"read"`
+	LastReadPage int        `json:"lastReadPage"`
+	ReadAt       *time.Time `json:"readAt"`
+}
+
+// SetProgress records the owner's reading progress for one chapter: its last-read
+// page and whether it is fully read. read_at is stamped to now when read is true
+// and cleared when false, so it always means "when this chapter was marked read".
+// Progress is pure owner UI state — no disk/sidecar effect, never
+// download-determining. A missing chapter yields ErrChapterNotFound. Returns the
+// updated subset so the caller confirms the new state without a refetch (§16).
+func (s *Service) SetProgress(ctx context.Context, chapterID uuid.UUID, lastReadPage int, read bool) (ChapterProgressDTO, error) {
+	upd := s.client.Chapter.UpdateOneID(chapterID).
+		SetRead(read).
+		SetLastReadPage(lastReadPage)
+	if read {
+		upd = upd.SetReadAt(time.Now().UTC())
+	} else {
+		upd = upd.ClearReadAt()
+	}
+
+	ch, err := upd.Save(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return ChapterProgressDTO{}, ErrChapterNotFound
+		}
+		return ChapterProgressDTO{}, fmt.Errorf("series.SetProgress: update chapter %s: %w", chapterID, err)
+	}
+	return ChapterProgressDTO{
+		ID:           ch.ID.String(),
+		Read:         ch.Read,
+		LastReadPage: ch.LastReadPage,
+		ReadAt:       ch.ReadAt,
+	}, nil
 }

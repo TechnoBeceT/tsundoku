@@ -156,6 +156,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.GET("/series/:id/providers/:providerId/cover", h.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", h.SetMetadataSource)
 	authed.GET("/series/:id/chapters/:chapterId/pages/:n", h.ChapterPage)
+	authed.PATCH("/chapters/:id/progress", h.SetProgress)
 	authed.GET("/health", h.LibraryHealth)
 
 	token, err := authSvc.Issue(uuid.New())

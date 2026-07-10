@@ -45,6 +45,35 @@ func (h *Handler) ChapterPage(c echo.Context) error {
 	return c.Blob(http.StatusOK, contentType, data)
 }
 
+// SetProgress handles PATCH /api/chapters/:id/progress. It validates the body
+// ({lastReadPage: int>=0, read: bool} — both required; negative page → 400),
+// records the owner's reading progress, and returns 200 with the updated
+// ChapterProgressDTO so the caller sees read_at without a refetch (§16). A
+// missing chapter yields 404. This route lives in handler/series (not
+// handler/downloads) so it sits beside the reader's page-bytes endpoint and the
+// ChapterDTO it feeds — the whole reader surface is in one package.
+func (h *Handler) SetProgress(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "chapter id")
+	if err != nil {
+		return err
+	}
+
+	var req ProgressRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	lastReadPage, read, err := validateProgress(req)
+	if err != nil {
+		return err
+	}
+
+	out, err := h.svc.SetProgress(c.Request().Context(), id, lastReadPage, read)
+	if err != nil {
+		return mapReaderError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // mapReaderError maps the reader service sentinels to HTTP statuses:
 // ErrChapterNotFound / ErrChapterFileMissing / disk.ErrPageOutOfRange → 404
 // (there is nothing to serve); ErrPageRead → 502 (the archive exists but a page

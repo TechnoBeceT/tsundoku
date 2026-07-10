@@ -161,6 +161,8 @@ components:
         - state
         - filename
         - pageCount
+        - read
+        - lastReadPage
       properties:
         chapterKey:
           type: string
@@ -180,6 +182,48 @@ components:
         pageCount:
           type: [integer, "null"]
           description: Page count; null until the chapter is downloaded.
+        read:
+          type: boolean
+          description: In-app reader progress — true when the owner has marked the chapter fully read.
+        lastReadPage:
+          type: integer
+          description: In-app reader progress — 0-based index of the last page the owner viewed.
+
+    ChapterProgress:
+      type: object
+      required:
+        - id
+        - read
+        - lastReadPage
+        - readAt
+      properties:
+        id:
+          type: string
+          description: Chapter UUID.
+        read:
+          type: boolean
+          description: Whether the chapter is marked fully read.
+        lastReadPage:
+          type: integer
+          description: 0-based index of the last page the owner viewed.
+        readAt:
+          type: [string, "null"]
+          format: date-time
+          description: When the chapter was marked read; null when not read.
+
+    ChapterProgressUpdate:
+      type: object
+      required:
+        - lastReadPage
+        - read
+      properties:
+        lastReadPage:
+          type: integer
+          minimum: 0
+          description: 0-based index of the last page the owner viewed.
+        read:
+          type: boolean
+          description: Mark the chapter fully read (true) or unread (false).
 
     Provider:
       type: object
@@ -3364,6 +3408,60 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Chapter is not in a retryable state (only failed/permanently_failed may be retried).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/chapters/{id}/progress:
+    patch:
+      operationId: setChapterProgress
+      summary: Set chapter reading progress
+      description: |
+        Records the in-app reader's progress for one chapter: the last page the
+        owner viewed and whether the chapter is fully read. `readAt` is stamped to
+        the current time when `read` is true and cleared when false. Progress is
+        pure owner UI state — it has no disk/sidecar effect and never influences
+        downloads. Returns the updated progress subset.
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Chapter UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChapterProgressUpdate"
+      responses:
+        "200":
+          description: Updated reading progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterProgress"
+        "400":
+          description: Malformed chapter id or invalid body (negative lastReadPage, missing field).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No chapter with that id.
           content:
             application/json:
               schema:

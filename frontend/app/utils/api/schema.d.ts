@@ -815,6 +815,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chapters/{id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set chapter reading progress
+         * @description Records the in-app reader's progress for one chapter: the last page the
+         *     owner viewed and whether the chapter is fully read. `readAt` is stamped to
+         *     the current time when `read` is true and cleared when false. Progress is
+         *     pure owner UI state — it has no disk/sidecar effect and never influences
+         *     downloads. Returns the updated progress subset.
+         */
+        patch: operations["setChapterProgress"];
+        trace?: never;
+    };
     "/api/series/{id}/chapters/{chapterId}/pages/{n}": {
         parameters: {
             query?: never;
@@ -1504,6 +1528,29 @@ export interface components {
             filename: string;
             /** @description Page count; null until the chapter is downloaded. */
             pageCount: number | null;
+            /** @description In-app reader progress — true when the owner has marked the chapter fully read. */
+            read: boolean;
+            /** @description In-app reader progress — 0-based index of the last page the owner viewed. */
+            lastReadPage: number;
+        };
+        ChapterProgress: {
+            /** @description Chapter UUID. */
+            id: string;
+            /** @description Whether the chapter is marked fully read. */
+            read: boolean;
+            /** @description 0-based index of the last page the owner viewed. */
+            lastReadPage: number;
+            /**
+             * Format: date-time
+             * @description When the chapter was marked read; null when not read.
+             */
+            readAt: string | null;
+        };
+        ChapterProgressUpdate: {
+            /** @description 0-based index of the last page the owner viewed. */
+            lastReadPage: number;
+            /** @description Mark the chapter fully read (true) or unread (false). */
+            read: boolean;
         };
         Provider: {
             /**
@@ -4190,6 +4237,60 @@ export interface operations {
             };
             /** @description Chapter is not in a retryable state (only failed/permanently_failed may be retried). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setChapterProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chapter UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChapterProgressUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated reading progress. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterProgress"];
+                };
+            };
+            /** @description Malformed chapter id or invalid body (negative lastReadPage, missing field). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No chapter with that id. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
