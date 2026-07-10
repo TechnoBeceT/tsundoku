@@ -189,6 +189,48 @@ func (_c *ChapterCreate) SetNillableErrorCategory(v *string) *ChapterCreate {
 	return _c
 }
 
+// SetRead sets the "read" field.
+func (_c *ChapterCreate) SetRead(v bool) *ChapterCreate {
+	_c.mutation.SetRead(v)
+	return _c
+}
+
+// SetNillableRead sets the "read" field if the given value is not nil.
+func (_c *ChapterCreate) SetNillableRead(v *bool) *ChapterCreate {
+	if v != nil {
+		_c.SetRead(*v)
+	}
+	return _c
+}
+
+// SetLastReadPage sets the "last_read_page" field.
+func (_c *ChapterCreate) SetLastReadPage(v int) *ChapterCreate {
+	_c.mutation.SetLastReadPage(v)
+	return _c
+}
+
+// SetNillableLastReadPage sets the "last_read_page" field if the given value is not nil.
+func (_c *ChapterCreate) SetNillableLastReadPage(v *int) *ChapterCreate {
+	if v != nil {
+		_c.SetLastReadPage(*v)
+	}
+	return _c
+}
+
+// SetReadAt sets the "read_at" field.
+func (_c *ChapterCreate) SetReadAt(v time.Time) *ChapterCreate {
+	_c.mutation.SetReadAt(v)
+	return _c
+}
+
+// SetNillableReadAt sets the "read_at" field if the given value is not nil.
+func (_c *ChapterCreate) SetNillableReadAt(v *time.Time) *ChapterCreate {
+	if v != nil {
+		_c.SetReadAt(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *ChapterCreate) SetID(v uuid.UUID) *ChapterCreate {
 	_c.mutation.SetID(v)
@@ -282,6 +324,14 @@ func (_c *ChapterCreate) defaults() {
 		v := chapter.DefaultErrorCategory
 		_c.mutation.SetErrorCategory(v)
 	}
+	if _, ok := _c.mutation.Read(); !ok {
+		v := chapter.DefaultRead
+		_c.mutation.SetRead(v)
+	}
+	if _, ok := _c.mutation.LastReadPage(); !ok {
+		v := chapter.DefaultLastReadPage
+		_c.mutation.SetLastReadPage(v)
+	}
 	if _, ok := _c.mutation.ID(); !ok {
 		v := chapter.DefaultID()
 		_c.mutation.SetID(v)
@@ -315,6 +365,12 @@ func (_c *ChapterCreate) check() error {
 	}
 	if _, ok := _c.mutation.ErrorCategory(); !ok {
 		return &ValidationError{Name: "error_category", err: errors.New(`ent: missing required field "Chapter.error_category"`)}
+	}
+	if _, ok := _c.mutation.Read(); !ok {
+		return &ValidationError{Name: "read", err: errors.New(`ent: missing required field "Chapter.read"`)}
+	}
+	if _, ok := _c.mutation.LastReadPage(); !ok {
+		return &ValidationError{Name: "last_read_page", err: errors.New(`ent: missing required field "Chapter.last_read_page"`)}
 	}
 	if len(_c.mutation.SeriesIDs()) == 0 {
 		return &ValidationError{Name: "series", err: errors.New(`ent: missing required edge "Chapter.series"`)}
@@ -397,6 +453,18 @@ func (_c *ChapterCreate) createSpec() (*Chapter, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ErrorCategory(); ok {
 		_spec.SetField(chapter.FieldErrorCategory, field.TypeString, value)
 		_node.ErrorCategory = value
+	}
+	if value, ok := _c.mutation.Read(); ok {
+		_spec.SetField(chapter.FieldRead, field.TypeBool, value)
+		_node.Read = value
+	}
+	if value, ok := _c.mutation.LastReadPage(); ok {
+		_spec.SetField(chapter.FieldLastReadPage, field.TypeInt, value)
+		_node.LastReadPage = value
+	}
+	if value, ok := _c.mutation.ReadAt(); ok {
+		_spec.SetField(chapter.FieldReadAt, field.TypeTime, value)
+		_node.ReadAt = &value
 	}
 	if nodes := _c.mutation.SeriesIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{

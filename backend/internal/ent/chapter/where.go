@@ -116,6 +116,21 @@ func ErrorCategory(v string) predicate.Chapter {
 	return predicate.Chapter(sql.FieldEQ(FieldErrorCategory, v))
 }
 
+// Read applies equality check predicate on the "read" field. It's identical to ReadEQ.
+func Read(v bool) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldRead, v))
+}
+
+// LastReadPage applies equality check predicate on the "last_read_page" field. It's identical to LastReadPageEQ.
+func LastReadPage(v int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldLastReadPage, v))
+}
+
+// ReadAt applies equality check predicate on the "read_at" field. It's identical to ReadAtEQ.
+func ReadAt(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldReadAt, v))
+}
+
 // SeriesIDEQ applies the EQ predicate on the "series_id" field.
 func SeriesIDEQ(v uuid.UUID) predicate.Chapter {
 	return predicate.Chapter(sql.FieldEQ(FieldSeriesID, v))
@@ -734,6 +749,106 @@ func ErrorCategoryEqualFold(v string) predicate.Chapter {
 // ErrorCategoryContainsFold applies the ContainsFold predicate on the "error_category" field.
 func ErrorCategoryContainsFold(v string) predicate.Chapter {
 	return predicate.Chapter(sql.FieldContainsFold(FieldErrorCategory, v))
+}
+
+// ReadEQ applies the EQ predicate on the "read" field.
+func ReadEQ(v bool) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldRead, v))
+}
+
+// ReadNEQ applies the NEQ predicate on the "read" field.
+func ReadNEQ(v bool) predicate.Chapter {
+	return predicate.Chapter(sql.FieldNEQ(FieldRead, v))
+}
+
+// LastReadPageEQ applies the EQ predicate on the "last_read_page" field.
+func LastReadPageEQ(v int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldLastReadPage, v))
+}
+
+// LastReadPageNEQ applies the NEQ predicate on the "last_read_page" field.
+func LastReadPageNEQ(v int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldNEQ(FieldLastReadPage, v))
+}
+
+// LastReadPageIn applies the In predicate on the "last_read_page" field.
+func LastReadPageIn(vs ...int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldIn(FieldLastReadPage, vs...))
+}
+
+// LastReadPageNotIn applies the NotIn predicate on the "last_read_page" field.
+func LastReadPageNotIn(vs ...int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldNotIn(FieldLastReadPage, vs...))
+}
+
+// LastReadPageGT applies the GT predicate on the "last_read_page" field.
+func LastReadPageGT(v int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldGT(FieldLastReadPage, v))
+}
+
+// LastReadPageGTE applies the GTE predicate on the "last_read_page" field.
+func LastReadPageGTE(v int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldGTE(FieldLastReadPage, v))
+}
+
+// LastReadPageLT applies the LT predicate on the "last_read_page" field.
+func LastReadPageLT(v int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldLT(FieldLastReadPage, v))
+}
+
+// LastReadPageLTE applies the LTE predicate on the "last_read_page" field.
+func LastReadPageLTE(v int) predicate.Chapter {
+	return predicate.Chapter(sql.FieldLTE(FieldLastReadPage, v))
+}
+
+// ReadAtEQ applies the EQ predicate on the "read_at" field.
+func ReadAtEQ(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldReadAt, v))
+}
+
+// ReadAtNEQ applies the NEQ predicate on the "read_at" field.
+func ReadAtNEQ(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldNEQ(FieldReadAt, v))
+}
+
+// ReadAtIn applies the In predicate on the "read_at" field.
+func ReadAtIn(vs ...time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldIn(FieldReadAt, vs...))
+}
+
+// ReadAtNotIn applies the NotIn predicate on the "read_at" field.
+func ReadAtNotIn(vs ...time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldNotIn(FieldReadAt, vs...))
+}
+
+// ReadAtGT applies the GT predicate on the "read_at" field.
+func ReadAtGT(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldGT(FieldReadAt, v))
+}
+
+// ReadAtGTE applies the GTE predicate on the "read_at" field.
+func ReadAtGTE(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldGTE(FieldReadAt, v))
+}
+
+// ReadAtLT applies the LT predicate on the "read_at" field.
+func ReadAtLT(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldLT(FieldReadAt, v))
+}
+
+// ReadAtLTE applies the LTE predicate on the "read_at" field.
+func ReadAtLTE(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldLTE(FieldReadAt, v))
+}
+
+// ReadAtIsNil applies the IsNil predicate on the "read_at" field.
+func ReadAtIsNil() predicate.Chapter {
+	return predicate.Chapter(sql.FieldIsNull(FieldReadAt))
+}
+
+// ReadAtNotNil applies the NotNil predicate on the "read_at" field.
+func ReadAtNotNil() predicate.Chapter {
+	return predicate.Chapter(sql.FieldNotNull(FieldReadAt))
 }
 
 // HasSeries applies the HasEdge predicate on the "series" edge.

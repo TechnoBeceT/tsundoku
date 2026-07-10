@@ -73,6 +73,14 @@ func init() {
 	chapterDescErrorCategory := chapterFields[13].Descriptor()
 	// chapter.DefaultErrorCategory holds the default value on creation for the error_category field.
 	chapter.DefaultErrorCategory = chapterDescErrorCategory.Default.(string)
+	// chapterDescRead is the schema descriptor for read field.
+	chapterDescRead := chapterFields[14].Descriptor()
+	// chapter.DefaultRead holds the default value on creation for the read field.
+	chapter.DefaultRead = chapterDescRead.Default.(bool)
+	// chapterDescLastReadPage is the schema descriptor for last_read_page field.
+	chapterDescLastReadPage := chapterFields[15].Descriptor()
+	// chapter.DefaultLastReadPage holds the default value on creation for the last_read_page field.
+	chapter.DefaultLastReadPage = chapterDescLastReadPage.Default.(int)
 	// chapterDescID is the schema descriptor for id field.
 	chapterDescID := chapterFields[0].Descriptor()
 	// chapter.DefaultID holds the default value on creation for the id field.
