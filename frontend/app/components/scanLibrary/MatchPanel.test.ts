@@ -30,9 +30,16 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import MatchPanel from './MatchPanel.vue'
 import { searchResults } from '../../fixtures/import'
 
+// Every candidate's breakdown resolved (as a failed/unavailable lookup, `null`)
+// by default — so `breakdownsResolving` is false and the Configure-stage
+// Attach button is enabled out of the box, mirroring a settled real fetch.
+const resolvedBreakdowns = Object.fromEntries(
+  [...searchResults[0]!.candidates, ...searchResults[1]!.candidates].map(c => [`${c.source}:${c.mangaId}`, null]),
+)
+
 function mountPanel(props: Record<string, unknown> = {}) {
   return mount(MatchPanel, {
-    props: { title: 'Solo Leveling', groups: searchResults, ...props },
+    props: { title: 'Solo Leveling', groups: searchResults, breakdowns: resolvedBreakdowns, ...props },
   })
 }
 

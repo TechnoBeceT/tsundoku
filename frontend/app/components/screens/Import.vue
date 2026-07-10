@@ -157,6 +157,7 @@ const {
   selectedCount,
   toggleCand,
   moveCand,
+  breakdownsResolving,
 } = useSourceConfigure({
   breakdowns: toRef(props, 'breakdowns'),
   onLoadBreakdowns: c => emit('loadBreakdowns', c),
@@ -245,7 +246,7 @@ const back = (): void => {
 }
 
 const toStage3 = (): void => {
-  if (selectedCount.value > 0) stage.value = 3
+  if (selectedCount.value > 0 && !breakdownsResolving.value) stage.value = 3
 }
 
 const submit = (): void => {
@@ -379,9 +380,16 @@ const submit = (): void => {
 
           <div class="imp-actions imp-actions--between">
             <AppButton variant="ghost" @click="back">Back</AppButton>
-            <AppButton variant="primary" :disabled="selectedCount === 0" @click="toStage3">
-              Review →
-            </AppButton>
+            <div class="imp-actions__end">
+              <span v-if="breakdownsResolving" class="imp-note imp-note--faint">Loading coverage…</span>
+              <AppButton
+                variant="primary"
+                :disabled="selectedCount === 0 || breakdownsResolving"
+                @click="toStage3"
+              >
+                Review →
+              </AppButton>
+            </div>
           </div>
         </section>
 
@@ -472,6 +480,12 @@ const submit = (): void => {
 
 .imp-actions--between {
   justify-content: space-between;
+}
+
+.imp-actions__end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* ---- Stage 1: search ------------------------------------------------------ */

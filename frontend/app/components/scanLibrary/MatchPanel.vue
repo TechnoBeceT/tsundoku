@@ -139,7 +139,7 @@ function handleBack(): void {
 }
 
 function confirm(): void {
-  if (cfg.selectedCount.value === 0 || props.busy) return
+  if (cfg.selectedCount.value === 0 || props.busy || cfg.breakdownsResolving.value) return
   emit('confirm', cfg.orderedProviders.value)
 }
 </script>
@@ -204,14 +204,17 @@ function confirm(): void {
       />
       <div class="mp-actions mp-actions--between">
         <AppButton variant="ghost" :disabled="busy" @click="handleBack">Back</AppButton>
-        <AppButton
-          variant="primary"
-          :loading="busy"
-          :disabled="cfg.selectedCount.value === 0 || busy"
-          @click="confirm"
-        >
-          Attach {{ cfg.selectedCount.value }} source{{ cfg.selectedCount.value === 1 ? '' : 's' }}
-        </AppButton>
+        <div class="mp-actions__end">
+          <span v-if="cfg.breakdownsResolving.value" class="mp-note mp-note--loading">Loading coverage…</span>
+          <AppButton
+            variant="primary"
+            :loading="busy"
+            :disabled="cfg.selectedCount.value === 0 || busy || cfg.breakdownsResolving.value"
+            @click="confirm"
+          >
+            Attach {{ cfg.selectedCount.value }} source{{ cfg.selectedCount.value === 1 ? '' : 's' }}
+          </AppButton>
+        </div>
       </div>
     </template>
   </div>
@@ -293,5 +296,15 @@ function confirm(): void {
 
 .mp-actions--between {
   justify-content: space-between;
+}
+
+.mp-actions__end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mp-note--loading {
+  color: var(--faint);
 }
 </style>

@@ -122,20 +122,34 @@ describe('Import — Stage 2 auto-split', () => {
 
 describe('Import — adopt() with per-scanlator rows', () => {
   it('sends one AdoptProvider per selected row, ranked globally, with the right scanlator (named for a split row, "" for the untagged/unsplit rows)', async () => {
-    const wrapper = mountAtStage2()
+    // Manganato's breakdown resolves failed (null) — a settled lookup, same as
+    // MangaDex/Asura above — so `breakdownsResolving` is false and Review can proceed.
+    const wrapper = mountAtStage2({
+      ...breakdowns,
+      [breakdownKey(manganato.source, manganato.mangaId)]: null,
+    })
     await pickGroup(wrapper)
+
+    // MangaDex splits into 2 scanlator rows, starting DESELECTED (owner-chosen:
+    // a split never inherits the pre-split "select all" default) — the user
+    // must explicitly pick both to reproduce "every row selected".
+    const mangaDexToggles = wrapper.findAll(`[aria-label="Toggle ${mangaDex.sourceName}"]`)
+    expect(mangaDexToggles.length).toBe(2) // ZScans + HiveToons rows share the candidate's sourceName
+    for (const t of mangaDexToggles) await t.trigger('click')
 
     await findButtonByText(wrapper, 'Review').trigger('click')
     await findButtonByText(wrapper, 'Adopt series').trigger('click')
 
     const emitted = wrapper.emitted('adopt')
     expect(emitted).toBeTruthy()
-    const request = emitted![0]![0] as { providers: unknown[] }
+    const request = emitted![0]![0] as { providers: { source: string, mangaId: number, scanlator: string }[] }
+    // Asura + Manganato were already selected from enterConfigure; the two
+    // just-toggled split rows land after them in selection order.
     expect(request.providers).toEqual([
-      { source: mangaDex.source, mangaId: mangaDex.mangaId, importance: 40, scanlator: 'ZScans' },
-      { source: mangaDex.source, mangaId: mangaDex.mangaId, importance: 30, scanlator: 'HiveToons' },
-      { source: asura.source, mangaId: asura.mangaId, importance: 20, scanlator: '' },
-      { source: manganato.source, mangaId: manganato.mangaId, importance: 10, scanlator: '' },
+      { source: asura.source, mangaId: asura.mangaId, importance: 40, scanlator: '' },
+      { source: manganato.source, mangaId: manganato.mangaId, importance: 30, scanlator: '' },
+      { source: mangaDex.source, mangaId: mangaDex.mangaId, importance: 20, scanlator: 'ZScans' },
+      { source: mangaDex.source, mangaId: mangaDex.mangaId, importance: 10, scanlator: 'HiveToons' },
     ])
   })
 
@@ -150,10 +164,17 @@ describe('Import — adopt() with per-scanlator rows', () => {
         { scanlator: mangaDex.sourceName, count: 40, ranges: '1-40' }, // untagged bucket
         { scanlator: 'ZScans', count: 60, ranges: '41-100' }, // genuinely-named group
       ],
-      // Asura + Manganato collapse to a single row each (out of scope here) —
-      // omit their breakdowns so they stay unsplit and don't clutter the assert.
+      // Asura + Manganato resolve failed (null) — settled lookups that keep
+      // them unsplit and unblock `breakdownsResolving` — omit any coverage so
+      // they don't clutter the assert.
+      [breakdownKey(asura.source, asura.mangaId)]: null,
+      [breakdownKey(manganato.source, manganato.mangaId)]: null,
     })
     await pickGroup(wrapper)
+
+    // MangaDex's split rows start DESELECTED (owner-chosen) — select both to
+    // exercise the untagged + named scanlator mapping.
+    for (const t of wrapper.findAll(`[aria-label="Toggle ${mangaDex.sourceName}"]`)) await t.trigger('click')
 
     await findButtonByText(wrapper, 'Review').trigger('click')
     await findButtonByText(wrapper, 'Adopt series').trigger('click')
@@ -180,7 +201,15 @@ describe('Import — blanked-title adopt fallback uses the group title', () => {
 
   it('falls back to the group title (not the first candidate title) when the Series-title input is cleared', async () => {
     const wrapper = mount(Import, {
-      props: { sources, searchResults: [groupWithDistinctTitle], searched: true, categories, breakdowns: {} },
+      props: {
+        sources,
+        searchResults: [groupWithDistinctTitle],
+        searched: true,
+        categories,
+        // Resolved (failed) breakdown — unblocks `breakdownsResolving` so
+        // Review can proceed; this test isn't exercising the split behavior.
+        breakdowns: { [`${groupTitleCand.source}:${groupTitleCand.mangaId}`]: null },
+      },
     })
     await wrapper.find('.group').trigger('click')
 

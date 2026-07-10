@@ -117,6 +117,7 @@ const {
   toggleCand,
   moveCand,
   orderedProviders,
+  breakdownsResolving,
 } = useSourceConfigure({
   breakdowns: toRef(props, 'breakdowns'),
   onLoadBreakdowns: c => emit('loadBreakdowns', c),
@@ -164,7 +165,7 @@ function onBackOrCancel(): void {
 }
 
 function confirm(): void {
-  if (selectedCount.value === 0 || props.saving) return
+  if (selectedCount.value === 0 || props.saving || breakdownsResolving.value) return
   emit('confirm', orderedProviders.value)
 }
 </script>
@@ -234,6 +235,7 @@ function confirm(): void {
         @toggle="toggleCand"
         @move="moveCand($event.key, $event.dir)"
       />
+      <p v-if="breakdownsResolving" class="match-note match-note--loading">Loading coverage…</p>
     </section>
 
     <template #actions>
@@ -244,7 +246,7 @@ function confirm(): void {
         v-if="stage === 'configure'"
         variant="primary"
         :loading="saving"
-        :disabled="selectedCount === 0 || saving"
+        :disabled="selectedCount === 0 || saving || breakdownsResolving"
         @click="confirm"
       >
         Attach sources
@@ -288,6 +290,12 @@ function confirm(): void {
   text-align: center;
   font-size: 13.5px;
   color: var(--muted);
+}
+
+.match-note--loading {
+  padding: 10px 0 0;
+  text-align: left;
+  color: var(--faint);
 }
 
 .match-groups {
