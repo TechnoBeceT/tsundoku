@@ -18,6 +18,10 @@
  *   7. loadBreakdowns(candidates) fetches every candidate's per-scanlator
  *      breakdown in parallel and caches it by `source:mangaId` (Slice P,
  *      copied from `useMatchSource.loadBreakdowns`).
+ *   8. loadSources() GETs /api/sources once and maps via mapSource (drives the
+ *      page-level "Limit matches to:" filter chips).
+ *   9. match(path, sourceIDs) CSV-joins the sources param when set and omits
+ *      it when the list is empty.
  *
  * Uses the same FakeEventSource stub as useProgressStream.extensions.test.ts /
  * useExtensions.refetch.test.ts so the NAMED_EVENTS loop in useProgressStream
@@ -72,6 +76,16 @@ vi.mock('~/utils/api/client', () => ({
     }) => {
       const query = opts?.params?.query
       calls.push({ method: 'GET', path, query })
+      if (path === '/api/sources') {
+        return Promise.resolve({
+          data: [
+            { id: 'src-1', name: 'MangaDex', lang: 'en' },
+            { id: 'src-2', name: 'Asura Scans', lang: 'en' },
+          ],
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })
+      }
       if (path === '/api/library/imports') {
         if (query?.status === 'pending') {
           const limit = typeof query.limit === 'number' ? query.limit : 50
@@ -385,11 +399,46 @@ describe('useScanLibrary', () => {
     })
   })
 
+  it('loadSources() GETs /api/sources and maps it into the sources ref', async () => {
+    const { sources, loadSources } = mountScanLibrary()
+    calls = []
+
+    await loadSources()
+
+    expect(calls.filter(c => c.path === '/api/sources')).toHaveLength(1)
+    expect(sources.value).toEqual([
+      { id: 'src-1', name: 'MangaDex', lang: 'en' },
+      { id: 'src-2', name: 'Asura Scans', lang: 'en' },
+    ])
+  })
+
+  it('match(path, sourceIDs) CSV-joins the sources param when set', async () => {
+    const { match } = mountScanLibrary()
+    calls = []
+
+    await match('/library/Manga/Foo', ['a'])
+
+    const matchCall = calls.find(c => c.path === '/api/library/imports/match')
+    expect(matchCall).toBeDefined()
+    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo', sources: 'a' })
+  })
+
+  it('match(path, []) omits the sources param when the list is empty', async () => {
+    const { match } = mountScanLibrary()
+    calls = []
+
+    await match('/library/Manga/Foo', [])
+
+    const matchCall = calls.find(c => c.path === '/api/library/imports/match')
+    expect(matchCall).toBeDefined()
+    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo' })
+  })
+
   it('match(path) GETs the match endpoint with that path and returns mapped SearchGroups', async () => {
     const { match } = mountScanLibrary()
     calls = []
 
-    const groups = await match('/library/Manga/Foo')
+    const groups = await match('/library/Manga/Foo', [])
 
     const matchCall = calls.find(c => c.path === '/api/library/imports/match')
     expect(matchCall).toBeDefined()
@@ -431,8 +480,8 @@ describe('useScanLibrary', () => {
       .mockImplementationOnce(() => responseA)
       .mockImplementationOnce(() => responseB)
 
-    const matchA = match('/library/Manga/Series-A') // slow, started first
-    const matchB = match('/library/Manga/Series-B') // fast, started second
+    const matchA = match('/library/Manga/Series-A', []) // slow, started first
+    const matchB = match('/library/Manga/Series-B', []) // fast, started second
 
     // B (the LATER request) resolves FIRST.
     resolveB({

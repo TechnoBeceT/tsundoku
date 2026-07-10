@@ -70,10 +70,21 @@ import { mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '~/components/screens/import.types'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '~/components/screens/import.types'
 
 type FoundSeriesDTO = components['schemas']['FoundSeries']
 type BatchImportFailureDTO = components['schemas']['BatchImportFailure']
+type SourceDTO = components['schemas']['Source']
+
+/**
+ * Maps the `GET /api/sources` DTO onto the screen `Source` type. Re-declared
+ * from `useImport`/`useMatchSource` (a trivial 3-line 1:1 mapper) rather than
+ * exported+shared — keeping the tiny mapper local avoids widening another
+ * composable's public surface just to reach it.
+ */
+function mapSource(dto: SourceDTO): Source {
+  return { id: dto.id, name: dto.name, lang: dto.lang }
+}
 
 /** Stable cache/in-flight key for one (source, mangaId) breakdown fetch (mirrors `useMatchSource`). */
 function breakdownKey(source: string, mangaId: number): string {
@@ -201,6 +212,21 @@ export function useScanLibrary() {
     unsubProgress()
     unsubDone()
   })
+
+  // ── Source-filter chip list (page-level "Limit matches to:") ─────────────
+  // Loaded once on mount so the chip row is ready before the owner opens any
+  // entry's Match panel. Reuses the same 1:1 `mapSource` as the other search
+  // surfaces (§2 DRY).
+  const sources = ref<Source[]>([])
+
+  /** Fetches the source list for the filter chips. Failures are swallowed —
+   * the chip row simply stays empty (the Match still works, unfiltered). */
+  async function loadSources(): Promise<void> {
+    const res = await apiClient.GET('/api/sources')
+    if (res.data) {
+      sources.value = res.data.map(mapSource)
+    }
+  }
 
   // ── Staged-entries list (paginated) ─────────────────────────────────────
   const entries = ref<ScanEntry[]>([])
@@ -396,18 +422,25 @@ export function useScanLibrary() {
   let matchGeneration = 0
 
   /**
-   * Searches every Suwayomi source for a staged entry's title. Always
-   * returns this call's own mapped groups (even if stale) so a caller that
-   * wants the raw result directly still can — but the SHARED `matchGroups`/
-   * `matching`/`matchError` refs are only updated when this call is still
-   * the latest one in flight (see the generation-counter guard above).
+   * Searches Suwayomi sources for a staged entry's title, optionally
+   * restricted to `sourceIDs` (the page-level `SourceFilterChips` selection;
+   * empty = all sources, CSV-joined when set — same shape as the other search
+   * surfaces). Always returns this call's own mapped groups (even if stale) so
+   * a caller that wants the raw result directly still can — but the SHARED
+   * `matchGroups`/`matching`/`matchError` refs are only updated when this call
+   * is still the latest one in flight (see the generation-counter guard above).
    */
-  async function match(path: string): Promise<SearchGroup[]> {
+  async function match(path: string, sourceIDs: string[]): Promise<SearchGroup[]> {
     const generation = ++matchGeneration
     matching.value = true
     matchError.value = ''
     try {
-      const res = await apiClient.GET('/api/library/imports/match', { params: { query: { path } } })
+      // Omit sources param when empty (all sources searched); join as CSV when set.
+      const query: { path: string, sources?: string } = { path }
+      if (sourceIDs.length > 0) {
+        query.sources = sourceIDs.join(',')
+      }
+      const res = await apiClient.GET('/api/library/imports/match', { params: { query } })
       if (res.error || !res.data) {
         throw new Error(res.error && 'message' in res.error ? res.error.message : 'Match search failed')
       }
@@ -516,10 +549,13 @@ export function useScanLibrary() {
   }
 
   void load(false)
+  void loadSources()
 
   return {
     scanState,
     startScan,
+    sources,
+    loadSources,
     entries,
     statusFilter,
     setStatusFilter,

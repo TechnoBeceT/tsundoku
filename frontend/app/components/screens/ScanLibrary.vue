@@ -6,9 +6,10 @@ import Stepper from '../ui/Stepper.vue'
 import MatchPanel from '../scanLibrary/MatchPanel.vue'
 import ScanProgress from '../scanLibrary/ScanProgress.vue'
 import StagingTable from '../scanLibrary/StagingTable.vue'
+import SourceFilterChips from '../ui/SourceFilterChips.vue'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { StepItem } from '../ui/nav.types'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from './import.types'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from './import.types'
 import type { BatchImportResult, ScanEntry, ScanState, ScanStatusFilter } from './scanLibrary.types'
 
 /**
@@ -37,6 +38,12 @@ import type { BatchImportResult, ScanEntry, ScanState, ScanStatusFilter } from '
  * selection) for the page to call `importWithMatches` / `loadBreakdowns` and
  * close the panel.
  *
+ * A page-level "Limit matches to:" `<SourceFilterChips>` row sits above the
+ * staging table (only when a `sources` list is supplied): the owner picks a
+ * subset once and every entry's cross-source match respects it. The screen
+ * stays pure-presentational — it holds no source state, just v-models
+ * `sourceFilter` up to the page via `update:sourceFilter`.
+ *
  * §16 no-silent-failure: a `scanState.error` (a failed/timed-out scan) is
  * rendered via `<ErrorBanner>` regardless of stage — `scan.done` is terminal
  * (the composable already latches it and ignores late progress frames), so
@@ -45,6 +52,10 @@ import type { BatchImportResult, ScanEntry, ScanState, ScanStatusFilter } from '
 const props = withDefaults(defineProps<{
   /** The live scan lifecycle (idle / scanning / done), incl. any error. */
   scanState: ScanState
+  /** Sources available to restrict matches to (populates the filter chips); empty hides the row. */
+  sources?: Source[]
+  /** The currently-selected match-filter source IDs (v-model:sourceFilter). */
+  sourceFilter?: string[]
   /** The current page of staged entries. */
   entries: ScanEntry[]
   /** The active staging-status filter. */
@@ -78,6 +89,8 @@ const props = withDefaults(defineProps<{
   /** A match-search failure message, or "" for none. */
   matchError?: string
 }>(), {
+  sources: () => [],
+  sourceFilter: () => [],
   statusFilter: null,
   pending: false,
   entriesError: '',
@@ -96,6 +109,8 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
+  /** The match source-filter selection changed (v-model:sourceFilter). */
+  'update:sourceFilter': [ids: string[]]
   /** Launch (or re-launch) the background disk scan. */
   'start-scan': []
   /** The status filter tab changed. */
@@ -215,6 +230,17 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
                 · {{ batchResult.failed.length }} failed
               </template>.
             </p>
+
+            <!-- Page-level "Limit matches to:" chip row — chosen once, every
+                 entry's cross-source match respects it (only when a source
+                 list was supplied). -->
+            <SourceFilterChips
+              v-if="sources.length"
+              :sources="sources"
+              :selected="sourceFilter"
+              label="Limit matches to:"
+              @update:selected="emit('update:sourceFilter', $event)"
+            />
 
             <StagingTable
               :entries="entries"
