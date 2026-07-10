@@ -6,8 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
@@ -30,6 +33,12 @@ import (
 type fakeClient struct {
 	chaptersByManga map[int][]suwayomi.Chapter
 	failManga       map[int]bool
+
+	// fetchMu guards fetchCalls, which counts FetchChapters invocations per manga
+	// id so a test can prove the per-sweep (source, manga) dedup (Task A). The
+	// sweep fetches groups in parallel, so the counter must be mutex-guarded.
+	fetchMu    sync.Mutex
+	fetchCalls map[int]int
 }
 
 func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
@@ -40,10 +49,23 @@ func (f *fakeClient) Browse(context.Context, string, suwayomi.BrowseType, int) (
 	return suwayomi.BrowseResult{}, nil
 }
 func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+	f.fetchMu.Lock()
+	if f.fetchCalls == nil {
+		f.fetchCalls = make(map[int]int)
+	}
+	f.fetchCalls[mangaID]++
+	f.fetchMu.Unlock()
 	if f.failManga[mangaID] {
 		return nil, errors.New("source offline")
 	}
 	return f.chaptersByManga[mangaID], nil
+}
+
+// fetchCount returns how many times FetchChapters was called for mangaID.
+func (f *fakeClient) fetchCount(mangaID int) int {
+	f.fetchMu.Lock()
+	defer f.fetchMu.Unlock()
+	return f.fetchCalls[mangaID]
 }
 func (f *fakeClient) MangaChapters(context.Context, int) ([]suwayomi.Chapter, error) {
 	return nil, nil
@@ -137,6 +159,60 @@ func TestRefreshAll_DiscoversNewChapters(t *testing.T) {
 	}
 	if n := db.ProviderChapter.Query().Where(entproviderchapter.SeriesProviderID(sp.ID)).CountX(ctx); n != 2 {
 		t.Errorf("provider chapters = %d, want 2", n)
+	}
+}
+
+// TestRefreshAll_BypassesInteractiveChapterCache proves the sweep decoupling: even
+// when refresh's ingest SHARES the interactive chapter cache (as it does in
+// production wiring), the sweep fetches FRESH via FetchChaptersUncached and never
+// reads the cache — so a stale cached list can never stale-out discovery. It
+// pre-populates the cache with a 1-chapter STALE list for the manga, then runs a
+// sweep whose client returns a FRESH 2-chapter list, and asserts both chapters
+// were discovered (would be 1 if the cache were read) and a real client fetch ran.
+func TestRefreshAll_BypassesInteractiveChapterCache(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	const (
+		provider = "mangadex"
+		mangaID  = 77
+	)
+	// Client (upstream truth) currently offers chapters 1 AND 2.
+	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
+		mangaID: {
+			{ID: 1, Index: 0, Number: num(1), URL: "u1"},
+			{ID: 2, Index: 1, Number: num(2), URL: "u2"},
+		},
+	}}
+	seedMonitoredSeries(t, ctx, db, "cached-series", provider, mangaID)
+
+	// Pre-seed the SHARED interactive cache with a STALE 1-chapter list under the
+	// exact key refresh would use if it read the cache (sourceID = provider name).
+	cache := suwayomi.NewChapterCacheConst(time.Hour)
+	if _, err := cache.Get(ctx, provider, mangaID, func() ([]suwayomi.Chapter, error) {
+		return []suwayomi.Chapter{{ID: 1, Index: 0, Number: num(1), URL: "u1"}}, nil
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	// Build the sweep with a cache-bearing ingest (mirrors production wiring).
+	ingest := suwayomi.NewIngestWithGate(fc, db, cache, nil)
+	svc := refresh.NewService(db, ingest, sse.NewHub(), settings.Static{Concurrency: 4}, nil)
+
+	res, err := svc.RefreshAll(ctx)
+	if err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+	// Both fresh chapters discovered ⇒ the cache's stale 1-chapter list was NOT read.
+	if res.NewChapters != 2 {
+		t.Fatalf("NewChapters = %d, want 2 (refresh must fetch fresh, not read the stale cache)", res.NewChapters)
+	}
+	// A real client fetch ran (a cache hit would leave this at 0).
+	if got := fc.fetchCount(mangaID); got != 1 {
+		t.Fatalf("FetchChapters called %d times, want 1 (fresh uncached fetch)", got)
+	}
+	if n := db.Chapter.Query().CountX(ctx); n != 2 {
+		t.Fatalf("chapter count = %d, want 2", n)
 	}
 }
 
@@ -441,5 +517,53 @@ func TestRefreshAll_GateAvailableRunsNormally(t *testing.T) {
 	}
 	if res.ProvidersRefreshed != 1 || res.NewChapters != 1 {
 		t.Errorf("res = %+v, want providers=1 new=1", res)
+	}
+}
+
+// TestRefreshAll_DedupsScanlatorProviders proves Task A: a series followed under
+// THREE scanlator-providers of the SAME (source, manga) triggers exactly ONE
+// upstream FetchChapters in a sweep, and every provider still ingests only its
+// own scanlator's chapters from that single fetch.
+func TestRefreshAll_DedupsScanlatorProviders(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	// One manga (id 77) whose feed carries three scanlators; one FetchChapters
+	// returns ALL of them.
+	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
+		77: {
+			{ID: 1, Index: 0, Number: num(1), URL: "u1", Scanlator: "Alpha"},
+			{ID: 2, Index: 1, Number: num(2), URL: "u2", Scanlator: "Alpha"},
+			{ID: 3, Index: 2, Number: num(3), URL: "u3", Scanlator: "Beta"},
+			{ID: 4, Index: 3, Number: num(4), URL: "u4", Scanlator: "Gamma"},
+		},
+	}}
+
+	s := db.Series.Create().SetTitle("multi").SetSlug(disk.Slugify("multi")).SetMonitored(true).SaveX(ctx)
+	spA := db.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(77).SetScanlator("Alpha").SetImportance(30).SaveX(ctx)
+	spB := db.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(77).SetScanlator("Beta").SetImportance(20).SaveX(ctx)
+	spC := db.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(77).SetScanlator("Gamma").SetImportance(10).SaveX(ctx)
+
+	res, err := newSvc(t, db, fc).RefreshAll(ctx)
+	if err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+	if got := fc.fetchCount(77); got != 1 {
+		t.Fatalf("FetchChapters called %d times for manga 77, want 1 (per-sweep dedup)", got)
+	}
+	if res.ProvidersRefreshed != 3 || res.NewChapters != 4 {
+		t.Errorf("res = %+v, want providers=3 new=4", res)
+	}
+	// Each provider ingested exactly its scanlator's chapters from the shared fetch.
+	assertProviderChapterCount(t, ctx, db, spA.ID, 2)
+	assertProviderChapterCount(t, ctx, db, spB.ID, 1)
+	assertProviderChapterCount(t, ctx, db, spC.ID, 1)
+}
+
+// assertProviderChapterCount fails unless spID has exactly want ProviderChapter rows.
+func assertProviderChapterCount(t *testing.T, ctx context.Context, db *ent.Client, spID uuid.UUID, want int) {
+	t.Helper()
+	got := db.ProviderChapter.Query().Where(entproviderchapter.SeriesProviderID(spID)).CountX(ctx)
+	if got != want {
+		t.Errorf("provider %s has %d ProviderChapters, want %d", spID, got, want)
 	}
 }

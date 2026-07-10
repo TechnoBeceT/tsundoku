@@ -116,6 +116,19 @@ func main() {
 	// are the same settingsSvc overlay, resolved at use-time (hot reload).
 	gateSvc := sourcegate.NewService(entClient, settingsSvc)
 
+	// Shared chapter-fetch cache: memoizes the raw all-scanlators chapter list per
+	// source-manga so the INTERACTIVE coverage→configure→adopt discovery flow stops
+	// re-triggering a live source FetchChapters for the same manga (anti-ban
+	// de-amplification). ONE instance is shared across the registerRoutes
+	// ingest/imports service so those fetches collapse. Its TTL is read PER-Get from
+	// the settings overlay (jobs.chapter_cache_ttl, hot reload); 0 disables it live.
+	// The refresh sweep deliberately does NOT route through this cache (it fetches
+	// fresh via FetchChaptersUncached), so this TTL can be long without staling-out
+	// discovery.
+	chapterCache := suwayomi.NewChapterCache(func(ctx context.Context) time.Duration {
+		return settingsSvc.ChapterCacheTTL(ctx)
+	})
+
 	// Build the Suwayomi HTTP client and real ChapterFetcher now — these are
 	// just typed values and do not require Suwayomi to be running yet. They are
 	// passed to download.New immediately so the dispatcher is fully wired.
@@ -140,7 +153,14 @@ func main() {
 	// alongside the one built in registerRoutes is fine.
 	refreshSvc := refresh.NewService(
 		entClient,
-		suwayomi.NewIngest(suwayomiClient, entClient),
+		// Refresh's ingest shares the gate but NOT the chapter cache in effect:
+		// refresh fetches via FetchChaptersUncached (fresh every sweep, so a long
+		// interactive-cache TTL can never stale-out discovery) + ingests via
+		// AddSeriesWithChapters (never the gated/cached AddSeries). It applies its
+		// OWN gate around the single per-source-manga pre-fetch, so no double-Wait.
+		// The cache is still passed for the constructor's shape; refresh just
+		// doesn't route its pre-fetch through it.
+		suwayomi.NewIngestWithGate(suwayomiClient, entClient, chapterCache, gateSvc),
 		hub,
 		settingsSvc,
 		gateSvc,
@@ -158,7 +178,7 @@ func main() {
 	// called when tsundoku owns the process.
 	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 
@@ -204,6 +224,8 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		ExtensionCheckInterval:  cfg.Jobs.ExtensionCheckInterval,
 		WarmupInterval:          cfg.Jobs.WarmupInterval,
 		WarmupSlowThresholdMs:   cfg.Jobs.WarmupSlowThresholdMs,
+		SearchCacheTTL:          cfg.Jobs.SearchCacheTTL,
+		ChapterCacheTTL:         cfg.Jobs.ChapterCacheTTL,
 		SourcesFailureThreshold: cfg.Sources.FailureThreshold,
 		SourcesCooldown:         cfg.Sources.Cooldown,
 		SourcesMinRequestDelay:  cfg.Sources.MinRequestDelay,
