@@ -31,7 +31,13 @@
  * resolving after a later one and clobbering the panel with the wrong
  * series' candidates).
  *
+ * The page also owns the "Limit matches to:" source-filter selection
+ * (`sourceFilter`, v-model'd on the screen's chip row) plus the `sources` list
+ * (fetched by the composable on mount). Toggling the filter re-runs ONLY the
+ * currently-open match, never every entry's — see the `watch(sourceFilter)`.
+ *
  * Emit wiring:
+ *   @update:source-filter → sourceFilter = $event (page-level "Limit matches to:")
  *   @start-scan          → startScan()
  *   @set-status-filter   → setStatusFilter(status)
  *   @load-more           → loadMore()
@@ -43,12 +49,13 @@
  *   @load-breakdowns      → loadBreakdowns(candidates) — Configure-stage per-scanlator coverage
  *   @match-back           → onMatchBack() — closes the panel, no mutation
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 
 const {
   scanState,
   startScan,
+  sources,
   entries,
   statusFilter,
   setStatusFilter,
@@ -88,16 +95,34 @@ const rowErrors = computed(() => {
 const matchTarget = ref<{ path: string, title: string } | null>(null)
 
 /**
+ * The page-level "Limit matches to:" source-filter selection (v-model'd on the
+ * ScanLibrary screen's chip row). Chosen ONCE for the page; every entry's match
+ * search respects it. Toggling a chip does NOT re-fire every entry's match —
+ * only the currently-open match refreshes (see the watch below). `matchTarget`
+ * doubles as "which match is open" (its `path`), so no separate ref is needed.
+ */
+const sourceFilter = ref<string[]>([])
+
+/**
  * Opens the Match sub-panel for one staged entry and kicks off the
- * cross-source search. `matching`/`matchError`/`matchGroups` (all from the
- * composable, and all covered by its stale-response guard) drive the
- * panel's own loading/error/results state while `match()` resolves.
+ * cross-source search, restricted to the current `sourceFilter`.
+ * `matching`/`matchError`/`matchGroups` (all from the composable, and all
+ * covered by its stale-response guard) drive the panel's own
+ * loading/error/results state while `match()` resolves.
  */
 async function onMatch(path: string): Promise<void> {
   const entry = entries.value.find((e) => e.path === path)
   matchTarget.value = { path, title: entry?.title ?? path }
-  await match(path)
+  await match(path, [...sourceFilter.value])
 }
+
+// Re-run ONLY the currently-open match when the source filter changes, so a
+// toggled chip refreshes the panel the owner is looking at (without re-firing
+// every entry's match). No open panel → nothing to do.
+watch(sourceFilter, () => {
+  const open = matchTarget.value
+  if (open) void match(open.path, [...sourceFilter.value])
+})
 
 /**
  * Confirms the owner's gathered, ranked sources: runs `importWithMatches`,
@@ -120,6 +145,8 @@ function onMatchBack(): void {
   <div class="page-scan-library">
     <ScanLibrary
       :scan-state="scanState"
+      :sources="sources"
+      :source-filter="sourceFilter"
       :entries="entries"
       :status-filter="statusFilter"
       :pending="pending"
@@ -136,6 +163,7 @@ function onMatchBack(): void {
       :match-breakdowns="breakdowns"
       :matching="matching"
       :match-error="matchError"
+      @update:source-filter="sourceFilter = $event"
       @start-scan="startScan"
       @set-status-filter="setStatusFilter"
       @load-more="loadMore"

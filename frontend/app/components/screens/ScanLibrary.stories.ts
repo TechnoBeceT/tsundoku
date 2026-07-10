@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { expect, within } from 'storybook/test'
 import ScanLibrary from './ScanLibrary.vue'
+import { sources } from '../../fixtures/import'
 import {
   doneScanState,
   failedScanState,
@@ -113,5 +114,24 @@ export const WithLoadMore: Story = {
     scanState: doneScanState,
     entries: scanEntries,
     hasMore: true,
+  },
+}
+
+/**
+ * The page-level "Limit matches to:" source-filter chip row (populated) sits
+ * above the staging table — the owner picks a subset once and every entry's
+ * cross-source match respects it.
+ */
+export const WithSourceFilter: Story = {
+  args: {
+    scanState: doneScanState,
+    entries: scanEntries,
+    sources,
+    sourceFilter: [sources[1]!.id],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('Limit matches to:')).toBeInTheDocument()
+    await expect(canvas.getByRole('button', { name: 'MangaDex' })).toBeInTheDocument()
   },
 }

@@ -7,8 +7,9 @@ import Spinner from '../ui/Spinner.vue'
 import ErrorBanner from '../ui/ErrorBanner.vue'
 import SearchGroupCard from '../import/SearchGroupCard.vue'
 import CandidateConfigRow from '../import/CandidateConfigRow.vue'
+import SourceFilterChips from '../ui/SourceFilterChips.vue'
 import { candKey } from '../screens/import.types'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens/import.types'
+import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '../screens/import.types'
 import { collapseUntaggedScanlator } from '~/utils/scanlator'
 
 /**
@@ -46,16 +47,23 @@ import { collapseUntaggedScanlator } from '~/utils/scanlator'
  * `MatchSourceDialog`/`DeleteSeriesDialog`'s reset-on-open) so a re-open never
  * inherits a stale search, pick, or scanlator selection.
  *
- * Emits `update:open` (v-model), `search` (the trimmed query string),
- * `pickCandidate` (the chosen source's `{source, mangaId}`, to trigger the
- * breakdown fetch), and `confirm` (the final `{source, mangaId, scanlator,
- * importance}` to POST).
+ * A `sources` prop (optional) populates a `SourceFilterChips` row under the
+ * search box — the same chip UX the "Add a source" dialog and the Adopt wizard
+ * use; the selection is reset on every re-open and rides along on the `search`
+ * emit so the parent can narrow the cross-source search.
+ *
+ * Emits `update:open` (v-model), `search` (`{ q, sources }` — the trimmed
+ * query plus the optional source-ID filter from the chip row), `pickCandidate`
+ * (the chosen source's `{source, mangaId}`, to trigger the breakdown fetch),
+ * and `confirm` (the final `{source, mangaId, scanlator, importance}` to POST).
  */
 const props = withDefaults(defineProps<{
   /** Whether the dialog is shown (v-model:open). */
   open: boolean
   /** The series' own title — prefills the search box. */
   seriesTitle?: string
+  /** Sources available to search (populates the filter chips); empty hides the row. */
+  sources?: Source[]
   /** Display label for the unlinked disk-origin group being matched (explains WHAT is being linked). */
   providerLabel?: string
   /** How many existing chapters the disk-origin group carries (the "no re-download" copy). */
@@ -76,6 +84,7 @@ const props = withDefaults(defineProps<{
   error?: string | null
 }>(), {
   seriesTitle: '',
+  sources: () => [],
   providerLabel: '',
   chapterCount: 0,
   defaultImportance: 2,
@@ -90,8 +99,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   /** The open state changed (v-model:open). */
   'update:open': [value: boolean]
-  /** Run a search for the trimmed query. */
-  'search': [q: string]
+  /** Run a search for the trimmed query, optionally restricted to the given source IDs. */
+  'search': [payload: { q: string, sources: string[] }]
   /** A candidate source was picked — load its scanlator breakdown. */
   'pickCandidate': [payload: { source: string, mangaId: number }]
   /** Link the chosen source/scanlator at the given priority. */
@@ -99,6 +108,7 @@ const emit = defineEmits<{
 }>()
 
 const query = ref(props.seriesTitle)
+const srcFilter = ref<string[]>([])
 const stage = ref<'search' | 'pick'>('search')
 const searched = ref(false)
 const pickedGroup = ref<SearchGroup | null>(null)
@@ -113,6 +123,7 @@ const importance = ref(props.defaultImportance)
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     query.value = props.seriesTitle
+    srcFilter.value = []
     stage.value = 'search'
     searched.value = false
     pickedGroup.value = null
@@ -127,7 +138,7 @@ const noResults = computed(() => searched.value && !props.searching && props.gro
 
 function runSearch(): void {
   searched.value = true
-  emit('search', query.value.trim())
+  emit('search', { q: query.value.trim(), sources: [...srcFilter.value] })
 }
 
 function pickGroup(group: SearchGroup): void {
@@ -273,6 +284,9 @@ function confirm(): void {
           Search
         </AppButton>
       </div>
+
+      <!-- Source filter chips (only when the parent supplied a source list) -->
+      <SourceFilterChips v-if="sources.length" v-model:selected="srcFilter" :sources="sources" />
 
       <div v-if="searching" class="match-loading">
         <Spinner :size="16" tone="accent" />

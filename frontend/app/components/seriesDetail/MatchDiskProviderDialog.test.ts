@@ -48,12 +48,25 @@ describe('MatchDiskProviderDialog', () => {
     expect(wrapper.text()).toContain('no re-download')
   })
 
-  it('emits search with the trimmed query on Search click', async () => {
+  it('emits search with the trimmed query and (empty) source filter on Search click', async () => {
     const wrapper = mountDialog()
     await wrapper.find('input[type="search"]').setValue('  naruto  ')
     await wrapper.findAll('button').find(b => b.text() === 'Search')!.trigger('click')
 
-    expect(wrapper.emitted('search')).toEqual([['naruto']])
+    expect(wrapper.emitted('search')).toEqual([[{ q: 'naruto', sources: [] }]])
+  })
+
+  it('carries the selected source-filter chips on the search emit', async () => {
+    const wrapper = mountDialog({
+      sources: [
+        { id: 's1', name: 'MangaDex', lang: 'en' },
+        { id: 's2', name: 'Asura Scans', lang: 'en' },
+      ],
+    })
+    await wrapper.findAll('button').find(b => b.text() === 'MangaDex')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === 'Search')!.trigger('click')
+
+    expect(wrapper.emitted('search')).toEqual([[{ q: 'Solo Leveling', sources: ['s1'] }]])
   })
 
   it('advances to the pick stage and lists every candidate after picking a group', async () => {

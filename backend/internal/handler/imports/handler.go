@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
+	"github.com/technobecet/tsundoku/internal/handler/sourcefilter"
 	"github.com/technobecet/tsundoku/internal/imports"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -49,14 +50,14 @@ func (h *Handler) Sources(c echo.Context) error {
 //
 // It requires a non-empty ?q parameter. An optional ?sources CSV param narrows
 // the search to named source IDs; unknown IDs are silently dropped by the
-// service (documented choice: see validate.go parseSourcesFilter).
+// service (documented choice: see sourcefilter.Parse).
 // Returns []SearchGroupDTO grouped by title similarity.
 func (h *Handler) Search(c echo.Context) error {
 	q, err := parseQuery(c.QueryParam("q"))
 	if err != nil {
 		return err
 	}
-	sourceIDs := parseSourcesFilter(c.QueryParam("sources"))
+	sourceIDs := sourcefilter.Parse(c.QueryParam("sources"))
 
 	out, err := h.svc.Search(c.Request().Context(), q, sourceIDs)
 	if err != nil {

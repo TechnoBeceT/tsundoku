@@ -134,17 +134,25 @@ async function onMatchConfirm(providers: ProviderRef[]): Promise<void> {
 
 // ---- Match to source (no-re-download link of an unlinked disk-origin group) ----
 const {
+  sources: linkSources,
   groups: linkGroups,
   searching: linkSearching,
   breakdown: linkBreakdown,
   breakdownLoading: linkBreakdownLoading,
   error: linkSearchError,
+  loadSources: linkLoadSources,
   search: linkSearch,
   loadBreakdown: linkLoadBreakdown,
 } = useMatchDiskProvider()
 
 const matchProviderOpen = ref(false)
 const matchTargetId = ref<string | null>(null)
+
+// Lazily load the source-filter list the first time the "Match to source"
+// dialog opens (useMatchDiskProvider.loadSources is guarded to fetch at most once).
+watch(matchProviderOpen, (isOpen) => {
+  if (isOpen) void linkLoadSources()
+})
 
 const matchTarget = computed(() => series.value?.providers.find((p) => p.id === matchTargetId.value) ?? null)
 // Either the dialog's own search/breakdown error or the matchDiskProvider mutation error — only one is ever set at a time.
@@ -226,6 +234,7 @@ function onLoadCoverage(providerId: string): void {
       v-if="series"
       v-model:open="matchProviderOpen"
       :series-title="series.title"
+      :sources="linkSources"
       :provider-label="matchTarget?.providerName ?? ''"
       :chapter-count="matchTarget?.chapterCount ?? 0"
       :default-importance="matchTarget?.importance ?? 2"
