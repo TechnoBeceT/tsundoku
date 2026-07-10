@@ -9,9 +9,12 @@
  * lives on `useSeriesDetail.matchDiskProvider` since it reseeds `series`
  * directly from the response (§16).
  *
- * search(q) reuses the SAME cross-source `GET /api/search` endpoint (and the
- * shared `mapGroup` mapper) every other search surface uses (§2 DRY: one DTO,
- * one mapper). Its stale-response guard mirrors the identical fix in
+ * search({q, sources}) reuses the SAME cross-source `GET /api/search` endpoint
+ * (and the shared `mapGroup` mapper) every other search surface uses (§2 DRY:
+ * one DTO, one mapper); `sources` is an optional source-ID filter (from the
+ * `SourceFilterChips` row, empty = all sources). loadSources() lazily fetches
+ * the `GET /api/sources` list once (guarded) to populate those chips — same
+ * shape as `useMatchSource`. Its stale-response guard mirrors the identical fix in
  * `useMatchSource.search()` / `useImport.search()`: the owner can edit the
  * query and re-search before a slower, earlier request resolves — without the
  * guard a superseded response could land after a later one and silently
@@ -28,8 +31,21 @@
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
+import type { components } from '~/utils/api/schema.d.ts'
 import { mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
-import type { ScanlatorCoverage, SearchGroup } from '~/components/screens/import.types'
+import type { ScanlatorCoverage, SearchGroup, Source } from '~/components/screens/import.types'
+
+type SourceDTO = components['schemas']['Source']
+
+/**
+ * Maps the `GET /api/sources` DTO onto the screen `Source` type. Re-declared
+ * from `useMatchSource`/`useImport` (a trivial 3-line 1:1 mapper) rather than
+ * exported+shared — keeping the tiny mapper local avoids widening another
+ * composable's public surface just to reach it.
+ */
+function mapSource(dto: SourceDTO): Source {
+  return { id: dto.id, name: dto.name, lang: dto.lang }
+}
 
 export function useMatchDiskProvider() {
   const groups = ref<SearchGroup[]>([])
@@ -40,20 +56,44 @@ export function useMatchDiskProvider() {
   /** Monotonic request-generation counter for `search()`'s stale-response guard (see above). */
   let searchGeneration = 0
 
+  // ---- sources (the source-filter chip list, loaded lazily on first open) ----
+  // Mirrors `useMatchSource`: this dialog only needs the source list once the
+  // owner opens it, so `loadSources` is called on-demand and guarded to fetch
+  // at most once for the composable's lifetime.
+  const sources = ref<Source[]>([])
+  let sourcesLoaded = false
+
+  /** Fetch the source list once — a no-op on every call after the first. */
+  async function loadSources(): Promise<void> {
+    if (sourcesLoaded) return
+    sourcesLoaded = true
+    const res = await apiClient.GET('/api/sources')
+    if (res.data) {
+      sources.value = res.data.map(mapSource)
+    }
+  }
+
   /**
    * Cross-source title search — the same endpoint + grouping as the Import
    * wizard and the add-source dialog. Captures its own generation and clears
    * `groups`/`error` immediately (so a re-search never shows stale results
    * while in flight); the eventual success or failure is only written back if
-   * this call is still the most recently started one.
+   * this call is still the most recently started one. `sources` is an optional
+   * list of source IDs to restrict the search to (from `SourceFilterChips`); an
+   * empty list searches every source (mirrors `useMatchSource.search`).
    */
-  async function search(q: string): Promise<void> {
+  async function search(payload: { q: string, sources: string[] }): Promise<void> {
     const generation = ++searchGeneration
     searching.value = true
     error.value = null
     groups.value = []
     try {
-      const res = await apiClient.GET('/api/search', { params: { query: { q } } })
+      // Omit sources param when empty (all sources searched); join as CSV when set.
+      const query: { q: string, sources?: string } = { q: payload.q }
+      if (payload.sources.length > 0) {
+        query.sources = payload.sources.join(',')
+      }
+      const res = await apiClient.GET('/api/search', { params: { query } })
       if (res.error || !res.data) {
         throw new Error(res.error ? res.error.message : 'Search failed')
       }
@@ -93,5 +133,5 @@ export function useMatchDiskProvider() {
     }
   }
 
-  return { groups, searching, breakdown, breakdownLoading, error, search, loadBreakdown }
+  return { sources, groups, searching, breakdown, breakdownLoading, error, loadSources, search, loadBreakdown }
 }

@@ -3,8 +3,11 @@
  * source" dialog.
  *
  * Pins:
- *   1. search(q) GETs /api/search?q= and maps the response via the shared
- *      importMappers `mapGroup` (same DTO every search surface uses).
+ *   0. loadSources() GETs /api/sources once (guarded), maps via mapSource, and
+ *      never re-fetches on a second call.
+ *   1. search({q, sources}) GETs /api/search?q=&sources= and maps the response
+ *      via the shared importMappers `mapGroup` (same DTO every search surface
+ *      uses); sources is CSV-joined when set and omitted when the list is empty.
  *   2. search()'s stale-response guard: a slower, earlier request must never
  *      overwrite `groups` after a faster, later one already landed.
  *   3. search() failure sets `error` and leaves `groups` empty, never throws.
@@ -32,6 +35,16 @@ vi.mock('~/utils/api/client', () => ({
   apiClient: {
     GET: vi.fn().mockImplementation((path: string, opts?: { params?: { query?: Record<string, unknown>, path?: Record<string, unknown> } }) => {
       calls.push({ method: 'GET', path, query: opts?.params?.query, params: opts?.params?.path })
+      if (path === '/api/sources') {
+        return Promise.resolve({
+          data: [
+            { id: 'src-1', name: 'MangaDex', lang: 'en' },
+            { id: 'src-2', name: 'Asura Scans', lang: 'en' },
+          ],
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })
+      }
       if (path === '/api/search') {
         if (!nextSearchOk) {
           return Promise.resolve({ data: null, error: { message: 'search failed' }, response: new Response(null, { status: 500 }) })
@@ -90,10 +103,41 @@ describe('useMatchDiskProvider', () => {
     nextBreakdownOk = true
   })
 
-  it('search(q) GETs /api/search with q and maps the response into groups', async () => {
+  it('loadSources() GETs /api/sources once, maps it, and never re-fetches on a second call', async () => {
+    const { sources, loadSources } = useMatchDiskProvider()
+
+    await loadSources()
+    expect(sources.value).toEqual([
+      { id: 'src-1', name: 'MangaDex', lang: 'en' },
+      { id: 'src-2', name: 'Asura Scans', lang: 'en' },
+    ])
+    expect(calls.filter(c => c.path === '/api/sources')).toHaveLength(1)
+
+    // A second call must be a no-op — the source list is loaded once per composable.
+    await loadSources()
+    expect(calls.filter(c => c.path === '/api/sources')).toHaveLength(1)
+  })
+
+  it('search({q, sources}) CSV-joins the sources param when set', async () => {
+    const { search } = useMatchDiskProvider()
+
+    await search({ q: 'x', sources: ['a', 'b'] })
+
+    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x', sources: 'a,b' }, params: undefined })
+  })
+
+  it('search({q, sources}) omits the sources param when the list is empty', async () => {
+    const { search } = useMatchDiskProvider()
+
+    await search({ q: 'x', sources: [] })
+
+    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x' }, params: undefined })
+  })
+
+  it('search({q, sources}) GETs /api/search with q and maps the response into groups', async () => {
     const { groups, search } = useMatchDiskProvider()
 
-    await search('Solo Leveling')
+    await search({ q: 'Solo Leveling', sources: [] })
 
     expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'Solo Leveling' }, params: undefined })
     expect(groups.value).toEqual([
@@ -124,8 +168,8 @@ describe('useMatchDiskProvider', () => {
 
     const { groups, error, search } = useMatchDiskProvider()
 
-    const searchNaruto = search('naruto') // slow, started first
-    const searchOnePiece = search('one piece') // fast, started second
+    const searchNaruto = search({ q: 'naruto', sources: [] }) // slow, started first
+    const searchOnePiece = search({ q: 'one piece', sources: [] }) // fast, started second
 
     resolveOnePiece({
       data: [{ title: 'One Piece', candidates: [] }],
@@ -151,7 +195,7 @@ describe('useMatchDiskProvider', () => {
     nextSearchOk = false
     const { groups, error, search } = useMatchDiskProvider()
 
-    await search('Solo Leveling')
+    await search({ q: 'Solo Leveling', sources: [] })
 
     expect(error.value).toBe('search failed')
     expect(groups.value).toEqual([])
