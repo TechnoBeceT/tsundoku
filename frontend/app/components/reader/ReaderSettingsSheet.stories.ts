@@ -13,6 +13,9 @@ const meta = {
   title: 'Reader/ReaderSettingsSheet',
   component: ReaderSettingsSheet,
   parameters: { layout: 'fullscreen' },
+  // Satisfies the required props at the meta level; the interactive stories drive
+  // their own local state via `render`, so these baseline args are unused.
+  args: { open: true, settings: READER_SETTINGS_DEFAULTS },
 } satisfies Meta<typeof ReaderSettingsSheet>
 
 export default meta

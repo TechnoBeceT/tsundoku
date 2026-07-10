@@ -75,6 +75,9 @@ export function useReader(seriesId: string, startChapterId: string) {
   const chapters = ref<ReaderChapter[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  // The series' resolved display title (metadata-source name, else canonical
+  // title) — the reader chrome's top-bar heading. Empty until the load lands.
+  const seriesTitle = ref('')
 
   // The mounted window is the inclusive index range [firstMounted, lastMounted]
   // into `chapters`. Both are -1 until the list loads (empty window).
@@ -122,6 +125,7 @@ export function useReader(seriesId: string, startChapterId: string) {
       const res = await apiClient.GET('/api/series/{id}', { params: { path: { id: seriesId } } })
       if (res.error || !res.data) throw new Error('Failed to load chapters')
       const detail: SeriesDetailDTO = res.data
+      seriesTitle.value = detail.displayName || detail.title || ''
       const list = detail.chapters
         .filter((ch) => ch.state === 'downloaded')
         .map(mapReaderChapter)
@@ -154,6 +158,7 @@ export function useReader(seriesId: string, startChapterId: string) {
     onNearTail,
     loading,
     error,
+    seriesTitle,
     startChapterId,
     refresh,
   }

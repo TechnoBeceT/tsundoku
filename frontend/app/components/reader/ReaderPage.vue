@@ -17,8 +17,9 @@ import { ref, watch } from 'vue'
  * tile); the ReaderStrip uses the emitted `error` to apply the pageCount tail-404
  * tolerance.
  *
- * NOTE (Slice 4): the reserve height + fit/gaps are hardcoded sane defaults
- * (CSS var `--reader-page-reserve`); the reader-settings slice will drive them.
+ * NOTE: the page-gap + column fit are driven at the strip level by the reader
+ * settings (CSS custom properties). The pending/failed reserve height stays a
+ * fixed default (`--reader-page-reserve`, 60vh) — it is not a v1 user setting.
  */
 const props = withDefaults(defineProps<{
   /** Page image URL (same-origin). Empty shows the loading placeholder. */
@@ -92,7 +93,8 @@ function onError(): void {
   background: var(--cover-placeholder);
 }
 
-/* Full-bleed strip: adjacent pages sit flush. Slice 4 will make the gap configurable. */
+/* Full-bleed page image; inter-page spacing (when enabled) is applied by the
+   strip's `.strip__chapter` gap, not here. */
 .page__img {
   display: block;
   width: 100%;

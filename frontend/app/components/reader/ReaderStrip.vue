@@ -33,8 +33,9 @@ import {
  *     its placeholder (`trimTrailingFailures`).
  *
  * The pure decisions live in ReaderStrip.logic.ts (unit-tested); this SFC only
- * wires them to the DOM. Reader chrome + settings (padding/fit/gaps) are Slice 4
- * — sane defaults are hardcoded here (see the `<style>` note).
+ * wires them to the DOM. The column width / side padding / page-gap look is
+ * driven by the reader settings via inherited CSS custom properties (see the
+ * `<style>` note), each defaulting to the flush Slice-2 layout when unset.
  */
 const props = defineProps<{
   /** The full downloaded chapter list (for next-chapter labels + hasNext). */
@@ -293,8 +294,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Slice 4 note: the reader background, column width, and page gap are hardcoded
-   sane defaults here; the reader-settings slice will drive them from CSS vars. */
+/* The column width, side padding, and inter-page gap are driven by the reader
+   settings via CSS custom properties (useReaderSettings.readerStyleVars, set on
+   the route's `.reader` container and inherited here). Each falls back to the
+   Slice-2/3 default when unset, so the strip is unchanged with no settings. */
 .strip {
   height: 100%;
   overflow-y: auto;
@@ -305,12 +308,17 @@ onBeforeUnmount(() => {
 }
 
 .strip__col {
-  max-width: 800px;
+  max-width: var(--reader-col-max, 800px);
   margin: 0 auto;
+  padding-inline: var(--reader-side-pad, 0);
 }
 
+/* Flex column so `--reader-page-gap` spaces stacked pages when gaps are on
+   (0 by default = flush, the Slice-2 look). */
 .strip__chapter {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: var(--reader-page-gap, 0);
 }
 
 .strip__sentinel {

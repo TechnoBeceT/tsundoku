@@ -1,24 +1,32 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from 'vue'
+import { computed, ref, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { useReader } from '~/composables/useReader'
 import { useReadingProgress } from '~/composables/useReadingProgress'
+import { useReaderSettings, readerStyleVars } from '~/composables/useReaderSettings'
+import { isCenterTap } from '~/components/reader/readerChrome.logic'
 
 /**
  * Reader route — /series/:id/read/:chapterId.
  *
  * A fullscreen long-strip reader (bare layout, no app nav chrome). Delegates all
  * data + windowing to useReader(id, chapterId), progress persistence to
- * useReadingProgress, and renders the ReaderStrip fed by both: the strip's
- * `near-tail` drives the window append, `centered` records the live position
- * (debounced), `chapter-finished` marks a chapter read, and the computed
- * `resumeTarget` opens the strip at the last-read page.
+ * useReadingProgress, and global display settings to useReaderSettings. Renders
+ * the ReaderStrip fed by both, plus the Slice-4 chrome overlay + settings sheet:
+ *   - The strip's `near-tail` drives the window append; `centered` records the
+ *     live position (debounced) AND feeds the chrome's page/percent readout;
+ *     `chapter-finished` marks a chapter read; `resumeTarget` opens the strip at
+ *     the last-read page.
+ *   - ReaderChrome is a hide-on-scroll overlay (back / title / progress /
+ *     settings). A tap in the vertical CENTRE of the screen toggles it
+ *     (`isCenterTap`); taps near the top/bottom edges or on a chrome control do
+ *     not. ReaderSettingsSheet edits the global settings, applied to the strip as
+ *     CSS custom properties on `.reader` (readerStyleVars) — padding / fit / gaps.
  *
  * §16: the initial load shows a visible loading state, a hard failure shows the
  * ErrorBanner, and an empty (no downloaded chapters) series shows an EmptyState —
  * never a blank fullscreen. Progress writes are the sanctioned best-effort
- * exception (see useReadingProgress). Reader chrome + settings are Slice 4; a
- * minimal "back to series" affordance keeps the owner from being trapped.
+ * exception (see useReadingProgress).
  */
 definePageMeta({ layout: 'bare' })
 
@@ -26,15 +34,58 @@ const route = useRoute()
 const id = route.params.id as string
 const chapterId = route.params.chapterId as string
 
-const { chapters, mountedChapters, pageUrl, onNearTail, loading, error } = useReader(id, chapterId)
+const { chapters, mountedChapters, pageUrl, onNearTail, loading, error, seriesTitle } = useReader(id, chapterId)
 const { record, markRead, resumeTarget, flush } = useReadingProgress(chapters, chapterId)
+const { settings, update } = useReaderSettings()
 
 // Resume anchor: recomputed from the loaded chapters; ReaderStrip applies it once
 // on mount (it only mounts after chapters load, so the target is ready by then).
 const resume = computed(() => resumeTarget(chapters.value))
 
-/** Persist the live reading position as the owner scrolls (debounced + deduped). */
+// The CSS custom properties the strip reads for padding / fit / gaps. Inherited
+// by the whole `.reader` subtree, so it also covers ReaderPage's reserve var.
+const readerStyle = computed(() => readerStyleVars(settings))
+
+// ---- chrome + settings state ------------------------------------------------
+const chromeVisible = ref(true)
+const settingsOpen = ref(false)
+
+// The last centered position (0-based page within a chapter) — drives the
+// chrome's page/percent readout. Updated on every throttled `centered` emit.
+const lastCentered = ref<{ chapterId: string, page: number } | null>(null)
+
+/** The chapter the reader is currently centred on (null before the first emit). */
+const centeredChapter = computed(() =>
+  chapters.value.find((c) => c.id === lastCentered.value?.chapterId) ?? null)
+
+/** The chrome's chapter label, e.g. "Chapter 12 · Title" (number-less → the name). */
+const chapterLabel = computed(() => {
+  const c = centeredChapter.value
+  if (!c) return ''
+  const numbered = c.number != null ? `Chapter ${c.number}` : ''
+  return [numbered, c.name].filter(Boolean).join(' · ')
+})
+
+/** The chrome's "page X / N" readout for the centred chapter. */
+const pageLabel = computed(() => {
+  const c = centeredChapter.value
+  if (!c || !lastCentered.value) return ''
+  return `${lastCentered.value.page + 1} / ${c.pageCount}`
+})
+
+/** Series-level progress 0–100: whole chapters read + the intra-chapter fraction. */
+const percent = computed(() => {
+  const c = centeredChapter.value
+  const total = chapters.value.length
+  if (!c || !lastCentered.value || total === 0) return 0
+  const idx = chapters.value.findIndex((ch) => ch.id === c.id)
+  const intra = c.pageCount > 0 ? (lastCentered.value.page + 1) / c.pageCount : 0
+  return ((idx + intra) / total) * 100
+})
+
+/** Persist the live reading position AND update the chrome readout. */
 function onCentered(payload: { chapterId: string, page: number }): void {
+  lastCentered.value = payload
   record(payload.chapterId, payload.page)
 }
 
@@ -48,18 +99,24 @@ function backToSeries(): void {
   void navigateTo(`/series/${id}`)
 }
 
+/**
+ * onReaderTap — a click anywhere in the reader toggles the chrome, UNLESS it
+ * landed on a chrome control (guarded by the `data-reader-chrome` ancestor) or
+ * near the top/bottom edge (where the bars live). Keeps the toggle to deliberate
+ * centre taps so reading gestures near the chrome don't flip it.
+ */
+function onReaderTap(event: MouseEvent): void {
+  if ((event.target as HTMLElement).closest('[data-reader-chrome]')) return
+  if (isCenterTap(event.clientY, window.innerHeight)) chromeVisible.value = !chromeVisible.value
+}
+
 // Flush the pending debounced write on leave so the last position is never lost.
 onBeforeUnmount(flush)
 onBeforeRouteLeave(() => { flush() })
 </script>
 
 <template>
-  <div class="reader">
-    <!-- Minimal escape hatch until Slice 4's reader chrome lands. -->
-    <button class="reader__back" type="button" aria-label="Back to series" @click="backToSeries">
-      <Icon name="lucide:arrow-left" size="18" />
-    </button>
-
+  <div class="reader" :style="readerStyle" @click="onReaderTap">
     <div v-if="loading && chapters.length === 0" class="reader__center reader__status">
       Loading chapter…
     </div>
@@ -81,6 +138,21 @@ onBeforeRouteLeave(() => { flush() })
       @centered="onCentered"
       @chapter-finished="onChapterFinished"
     />
+
+    <ReaderChrome
+      :visible="chromeVisible"
+      :title="seriesTitle"
+      :chapter-label="chapterLabel"
+      :page-label="pageLabel"
+      :percent="percent"
+      @back="backToSeries"
+      @toggle-settings="settingsOpen = !settingsOpen"
+    />
+    <ReaderSettingsSheet
+      v-model:open="settingsOpen"
+      :settings="settings"
+      @change="update"
+    />
   </div>
 </template>
 
@@ -89,33 +161,6 @@ onBeforeRouteLeave(() => { flush() })
   position: relative;
   height: 100vh;
   background: var(--bg);
-}
-
-.reader__back {
-  position: fixed;
-  top: 14px;
-  left: 14px;
-  z-index: 10;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border: 1px solid var(--border2);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.reader__back:hover {
-  border-color: var(--accent);
-  color: var(--accentBright);
-}
-
-.reader__back:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus);
 }
 
 .reader__center {
