@@ -17,6 +17,17 @@ import { useReader } from './useReader'
 import { MAX_MOUNTED } from '~/components/reader/ReaderStrip.logic'
 
 let nextOk = true
+let nextEmpty = false
+
+// A series that loads successfully but has NO downloaded chapters (all wanted) —
+// the reader's empty branch: an empty window, no error (the route's EmptyState).
+const emptyDetail = {
+  id: 'series-1',
+  chapters: [
+    { id: 'ch-w1', chapterKey: 'w1', number: 1, name: 'One', state: 'wanted', filename: '', pageCount: null, read: false, lastReadPage: 0 },
+    { id: 'ch-w2', chapterKey: 'w2', number: 2, name: 'Two', state: 'failed', filename: '', pageCount: null, read: false, lastReadPage: 0 },
+  ],
+}
 
 // A series whose chapters exercise the filter (a wanted + a failed chapter that
 // must be excluded), the sort (out-of-order numbers + a null-number chapter that
@@ -39,6 +50,7 @@ vi.mock('~/utils/api/client', () => ({
     GET: vi.fn().mockImplementation((path: string) => {
       if (path === '/api/series/{id}') {
         if (!nextOk) return Promise.resolve({ data: null, error: { message: 'boom' }, response: new Response(null, { status: 500 }) })
+        if (nextEmpty) return Promise.resolve({ data: emptyDetail, error: null, response: new Response() })
         return Promise.resolve({ data: detail, error: null, response: new Response() })
       }
       return Promise.resolve({ data: null, error: null, response: new Response() })
@@ -110,7 +122,7 @@ describe('useReader — mounted window', () => {
 })
 
 describe('useReader — pageUrl + states', () => {
-  beforeEach(() => { nextOk = true })
+  beforeEach(() => { nextOk = true; nextEmpty = false })
 
   it('builds the same-origin page-bytes URL', async () => {
     const { pageUrl, refresh } = useReader('series-1', 'ch-a')
@@ -124,6 +136,16 @@ describe('useReader — pageUrl + states', () => {
     const { chapters, mountedChapters, error, refresh } = useReader('series-1', 'ch-a')
     await refresh()
     expect(error.value).toBeTruthy()
+    expect(chapters.value).toEqual([])
+    expect(mountedChapters.value).toEqual([])
+  })
+
+  it('a successful load with zero downloaded chapters is empty + error-free (the EmptyState branch)', async () => {
+    nextEmpty = true
+    const { chapters, mountedChapters, error, loading, refresh } = useReader('series-1', 'ch-a')
+    await refresh()
+    expect(error.value).toBeNull()
+    expect(loading.value).toBe(false)
     expect(chapters.value).toEqual([])
     expect(mountedChapters.value).toEqual([])
   })

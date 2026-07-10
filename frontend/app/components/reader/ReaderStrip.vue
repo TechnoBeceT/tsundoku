@@ -84,11 +84,16 @@ function visiblePages(chapter: ReaderChapter): number {
   return trimTrailingFailures(chapter.pageCount, pageFailures.value[chapter.id] ?? new Set())
 }
 
-/** Records a page load failure so the tail-404 tolerance can trim it. */
+/** Records a page load failure so the tail-404 tolerance can trim it. A trailing
+ *  failure shrinks the chapter's rendered pages; bracket it in the anchor reflow
+ *  so trimming height ABOVE the viewport does not jump the read position (Fix A).
+ *  A mid-chapter failure does not change `visiblePages`, so the bracket is a no-op. */
 function onPageError(chapterId: string, page: number): void {
+  beforeReflow()
   const set = new Set(pageFailures.value[chapterId] ?? [])
   set.add(page)
   pageFailures.value = { ...pageFailures.value, [chapterId]: set }
+  void afterReflow()
 }
 
 /** True while the last mounted chapter is not the last in the full list. */
@@ -99,28 +104,38 @@ const hasNext = computed(() => {
 })
 
 // ---- window reflow: preserve the read position (anchor on the tail chapter) ---
+// Used for BOTH the append (unmount-above) path AND the pageCount tail-404 trim
+// path: any DOM change that can remove height ABOVE the viewport is bracketed by
+// beforeReflow → afterReflow so the viewed position never jumps. `reflowPending`
+// coalesces overlapping brackets in one tick (e.g. several trailing pages 404 at
+// once) to a single snapshot→restore, so the earliest pre-change snapshot wins.
 let anchorId: string | null = null
 let anchorPrevTop = 0
 let prevScrollTop = 0
+let reflowPending = false
 
 /** Content-relative top of an element inside the scroll container (getBoundingClientRect based, offsetParent-agnostic). */
 function contentTop(el: HTMLElement, container: HTMLElement): number {
   return el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
 }
 
-/** Snapshot the retained tail chapter's position just before a reflow. */
+/** Snapshot the retained tail chapter's position just before a reflow (once per tick). */
 function beforeReflow(): void {
+  if (reflowPending) return
   const el = scrollEl.value
   if (!el) return
   anchorId = props.mountedChapters.at(-1)?.id ?? null
   const anchorEl = anchorId ? el.querySelector<HTMLElement>(`[data-chapter-id="${anchorId}"]`) : null
   anchorPrevTop = anchorEl ? contentTop(anchorEl, el) : 0
   prevScrollTop = el.scrollTop
+  reflowPending = true
 }
 
 /** After the reflow paints, shift scrollTop so the anchor stays put. */
 async function afterReflow(): Promise<void> {
   await nextTick()
+  if (!reflowPending) return
+  reflowPending = false
   const el = scrollEl.value
   if (!el || !anchorId) return
   const anchorEl = el.querySelector<HTMLElement>(`[data-chapter-id="${anchorId}"]`)
@@ -168,8 +183,15 @@ function runScroll(): void {
 
   const dividerTops: { chapterId: string, top: number }[] = []
   el.querySelectorAll<HTMLElement>('[data-divider-id]').forEach((divEl) => {
+    const cid = divEl.dataset.dividerId ?? ''
+    // Fix D: a chapter with zero visible pages (all failed, or an imported
+    // ComicInfo PageCount of 0) has its end-divider at ~top 0, which would
+    // false-fire "finished" on the very first scroll before anything is read.
+    // Skip such chapters — there is nothing to finish.
+    const chapter = props.mountedChapters.find((c) => c.id === cid)
+    if (!chapter || visiblePages(chapter) === 0) return
     dividerTops.push({
-      chapterId: divEl.dataset.dividerId ?? '',
+      chapterId: cid,
       top: divEl.getBoundingClientRect().top - containerTop + el.scrollTop,
     })
   })

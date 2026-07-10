@@ -7,25 +7,27 @@ import { ref, watch } from 'vue'
  * cookie auth rides `<img src>`, so there is NO fetch/objectURL machinery — the
  * browser lazy-loads and evicts page images natively).
  *
- * While the image is in flight the box reserves height via `aspect` so the strip
- * does not jump as pages stream in. On a load error it shows the "page unavailable"
- * placeholder (the same tile treatment as CoverImage's empty state); the ReaderStrip
- * uses the emitted `error` to apply the pageCount tail-404 tolerance.
+ * A LOADED page renders at its NATURAL height — no fixed aspect is imposed, so a
+ * tall manhwa/webtoon strip and a standard manga page both render true-to-size
+ * with no over/under-reserve mismatch shoving the seam. Only the PENDING/FAILED
+ * state reserves a neutral min-height so the strip has some layout before the
+ * bytes arrive; native CSS scroll-anchoring (`overflow-anchor`, on by default)
+ * keeps the read position steady when an above-viewport page finishes loading.
+ * On a load error it shows the "page unavailable" placeholder (CoverImage's empty
+ * tile); the ReaderStrip uses the emitted `error` to apply the pageCount tail-404
+ * tolerance.
  *
- * NOTE (Slice 4): `aspect`/fit/gaps are hardcoded sane defaults here; the reader
- * settings slice will drive them from CSS vars.
+ * NOTE (Slice 4): the reserve height + fit/gaps are hardcoded sane defaults
+ * (CSS var `--reader-page-reserve`); the reader-settings slice will drive them.
  */
 const props = withDefaults(defineProps<{
   /** Page image URL (same-origin). Empty shows the loading placeholder. */
   src?: string
   /** Alt text for the page image. */
   alt?: string
-  /** Reserved CSS `aspect-ratio` for the box before the image loads. */
-  aspect?: string
 }>(), {
   src: '',
   alt: 'Page',
-  aspect: '0.7',
 })
 
 const emit = defineEmits<{
@@ -61,12 +63,10 @@ function onError(): void {
   <div
     class="page"
     :class="{ 'page--reserved': !loaded || failed }"
-    :style="{ aspectRatio: !loaded || failed ? aspect : undefined }"
   >
     <img
       v-if="src && !failed"
       class="page__img"
-      :class="{ 'page__img--loaded': loaded }"
       :src="src"
       :alt="alt"
       loading="lazy"
@@ -99,10 +99,13 @@ function onError(): void {
   height: auto;
 }
 
-/* Reserved (pending/failed) box fills the aspect-boxed height so the strip has
-   layout before the image streams in. */
+/* Pending/failed: reserve a NEUTRAL min-height so the strip has some layout
+   before the bytes arrive — deliberately NOT a fixed aspect (a manhwa strip and a
+   manga page have wildly different heights; forcing one wrong aspect on the
+   loaded image is what shoves the seam). Once loaded the class drops and the
+   natural image height rules. Slice 4 makes --reader-page-reserve configurable. */
 .page--reserved {
-  overflow: hidden;
+  min-height: var(--reader-page-reserve, 60vh);
 }
 
 .page__placeholder {
