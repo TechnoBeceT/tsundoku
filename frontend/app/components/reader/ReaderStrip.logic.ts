@@ -39,14 +39,17 @@ export function chaptersToUnmount(mounted: number[], maxMounted: number): number
 }
 
 /**
- * scrollAfterUnmount — the scrollTop that keeps the reading position visually
- * fixed after content is removed from ABOVE the viewport. Unmounting a far-above
- * chapter shrinks the scroll container, so the current scrollTop would otherwise
- * jump; subtract the removed height (prev − new scrollHeight) to compensate. The
- * seam never visibly jumps.
+ * scrollAfterReflow — the scrollTop that keeps the reading position visually
+ * fixed after the mounted window reflows. Because one `onNearTail` both appends
+ * below AND may unmount a far-above chapter, the total scrollHeight delta is not
+ * the amount the viewport shifted — so this anchors on a RETAINED element: given
+ * the anchor's content-relative top before and after the reflow, shift scrollTop
+ * by the same delta so the anchor stays under the same viewport point. Unmounting
+ * above moves the anchor up (newTop < prevTop) and scrollTop drops to match; the
+ * seam never visibly jumps. Never negative.
  */
-export function scrollAfterUnmount(prevScrollTop: number, prevScrollHeight: number, newScrollHeight: number): number {
-  return Math.max(0, prevScrollTop - (prevScrollHeight - newScrollHeight))
+export function scrollAfterReflow(prevScrollTop: number, prevAnchorTop: number, newAnchorTop: number): number {
+  return Math.max(0, prevScrollTop + (newAnchorTop - prevAnchorTop))
 }
 
 /** A single rendered page's vertical extent within the scroll container, tagged

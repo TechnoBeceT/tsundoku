@@ -11,7 +11,7 @@ import {
   MAX_MOUNTED,
   shouldAppend,
   chaptersToUnmount,
-  scrollAfterUnmount,
+  scrollAfterReflow,
   centeredPage,
   finishedChapterIds,
   trimTrailingFailures,
@@ -38,14 +38,18 @@ describe('chaptersToUnmount', () => {
   })
 })
 
-describe('scrollAfterUnmount', () => {
-  it('subtracts the removed-above height so the position stays fixed', () => {
-    // removed 400px of content above -> scrollTop drops by 400.
-    expect(scrollAfterUnmount(1000, 3000, 2600)).toBe(600)
+describe('scrollAfterReflow', () => {
+  it('shifts scrollTop by the anchor delta so the read position stays fixed', () => {
+    // the retained anchor moved up 400px (unmount above) -> scrollTop drops 400.
+    expect(scrollAfterReflow(1000, 2000, 1600)).toBe(600)
+  })
+
+  it('leaves scrollTop unchanged when the anchor did not move (pure append below)', () => {
+    expect(scrollAfterReflow(1000, 2000, 2000)).toBe(1000)
   })
 
   it('never goes negative', () => {
-    expect(scrollAfterUnmount(100, 3000, 2600)).toBe(0)
+    expect(scrollAfterReflow(100, 2000, 1600)).toBe(0)
   })
 })
 
