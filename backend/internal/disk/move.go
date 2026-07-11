@@ -60,23 +60,15 @@ func MoveSeriesCategory(storage, oldCat, newCat, title string) error {
 		return fmt.Errorf("disk.MoveSeriesCategory: rename %q -> %q: %w", src, dst, err)
 	}
 
-	// Update the sidecar at its new home to reflect the new category. If any
-	// post-rename step fails, the folder is already at dst — roll it back to src
-	// so the no-net-move invariant holds: a non-nil error from this function means
-	// the folder is back where it started and the caller can keep DB == old.
-	sidecar, err := ReadSidecar(dst)
-	if err != nil {
-		return rollbackRename(dst, src, fmt.Errorf("disk.MoveSeriesCategory: read sidecar: %w", err))
-	}
-	if sidecar == nil {
-		// No sidecar yet (e.g. a series dir with no rendered chapters). The folder
-		// move already succeeded; there is nothing to rewrite.
-		return nil
-	}
-
-	sidecar.Category = newCat
-	if err := WriteSidecar(dst, *sidecar); err != nil {
-		return rollbackRename(dst, src, fmt.Errorf("disk.MoveSeriesCategory: write sidecar: %w", err))
+	// Update the sidecar at its new home to reflect the new category — through the
+	// shared per-series lock (updateExistingSidecar), because a concurrent cover
+	// GET can also write that sidecar. A series dir with no sidecar (nothing
+	// rendered yet) is a no-op. If this fails, the folder is already at dst — roll
+	// it back to src so the no-net-move invariant holds: a non-nil error from this
+	// function means the folder is back where it started and the caller can keep
+	// DB == old.
+	if err := updateExistingSidecar(dst, func(s *Sidecar) { s.Category = newCat }); err != nil {
+		return rollbackRename(dst, src, fmt.Errorf("disk.MoveSeriesCategory: update sidecar: %w", err))
 	}
 
 	return nil

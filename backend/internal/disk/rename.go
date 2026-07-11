@@ -84,17 +84,11 @@ func rewriteChildSidecars(categoryDir, newName string) error {
 		if !e.IsDir() {
 			continue
 		}
+		// Through the shared per-series lock: a concurrent cover GET can write the
+		// same sidecar. A series dir with no sidecar is skipped by the helper.
 		seriesDir := filepath.Join(categoryDir, e.Name())
-		sidecar, err := ReadSidecar(seriesDir)
-		if err != nil {
-			return fmt.Errorf("disk.RenameCategory: read sidecar %q: %w", seriesDir, err)
-		}
-		if sidecar == nil {
-			continue
-		}
-		sidecar.Category = newName
-		if err := WriteSidecar(seriesDir, *sidecar); err != nil {
-			return fmt.Errorf("disk.RenameCategory: write sidecar %q: %w", seriesDir, err)
+		if err := updateExistingSidecar(seriesDir, func(s *Sidecar) { s.Category = newName }); err != nil {
+			return fmt.Errorf("disk.RenameCategory: update sidecar %q: %w", seriesDir, err)
 		}
 	}
 	return nil

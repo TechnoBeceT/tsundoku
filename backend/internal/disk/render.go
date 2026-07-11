@@ -92,57 +92,39 @@ func RenderChapter(req RenderRequest) (filename string, err error) {
 // atomically. It is the sole place responsible for sidecar mutation.
 func upsertSidecar(seriesDir string, m RenderMeta, filename string, pageCount int) error {
 	// Serialise the whole read-modify-write for this series so concurrent renders
-	// of sibling chapters never lose an entry or collide on the shared temp file.
+	// of sibling chapters (and a concurrent SaveCover) never lose an entry or
+	// collide on the shared temp file.
 	defer lockSidecar(seriesDir)()
 
-	existing, err := ReadSidecar(seriesDir)
-	if err != nil {
-		return fmt.Errorf("read: %w", err)
-	}
+	def := Sidecar{Title: m.SeriesTitle, Category: m.Category}
 
-	var sidecar Sidecar
-	if existing != nil {
-		sidecar = *existing
-	} else {
-		sidecar = Sidecar{
-			Title:    m.SeriesTitle,
-			Category: m.Category,
+	return mutateSidecar(seriesDir, def, func(sidecar *Sidecar) {
+		prov := ChapterProvenance{
+			ChapterKey: m.ChapterKey,
+			Number:     m.Number,
+			Provider:   m.Provider,
+			Scanlator:  m.Scanlator,
+			Importance: m.Importance,
+			Filename:   filename,
+			PageCount:  pageCount,
+			UploadDate: m.UploadDate,
 		}
-	}
 
-	prov := ChapterProvenance{
-		ChapterKey: m.ChapterKey,
-		Number:     m.Number,
-		Provider:   m.Provider,
-		Scanlator:  m.Scanlator,
-		Importance: m.Importance,
-		Filename:   filename,
-		PageCount:  pageCount,
-		UploadDate: m.UploadDate,
-	}
-
-	// Upsert: replace existing entry with the same ChapterKey, or append.
-	updated := false
-	for i, ch := range sidecar.Chapters {
-		if ch.ChapterKey == m.ChapterKey {
-			sidecar.Chapters[i] = prov
-			updated = true
-			break
+		// Upsert: replace existing entry with the same ChapterKey, or append.
+		updated := false
+		for i, ch := range sidecar.Chapters {
+			if ch.ChapterKey == m.ChapterKey {
+				sidecar.Chapters[i] = prov
+				updated = true
+				break
+			}
 		}
-	}
-	if !updated {
-		sidecar.Chapters = append(sidecar.Chapters, prov)
-	}
+		if !updated {
+			sidecar.Chapters = append(sidecar.Chapters, prov)
+		}
 
-	sidecar.ProviderOrder = buildProviderOrder(sidecar.Chapters)
-
-	if err := WriteSidecar(seriesDir, sidecar); err != nil {
-		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
-		// permission denied) when writing the sidecar JSON.
-		return fmt.Errorf("write: %w", err)
-	}
-
-	return nil
+		sidecar.ProviderOrder = buildProviderOrder(sidecar.Chapters)
+	})
 }
 
 // buildProviderOrder builds a unique, importance-ordered list of provider names
