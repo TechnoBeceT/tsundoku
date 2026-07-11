@@ -21,7 +21,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mountSuspended, mockNuxtImport } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
-import Page from './[id].vue'
+// On this branch the series-detail page lives at `[id]/index.vue`, not `[id].vue`:
+// the reader added `[id]/read/[chapterId].vue`, and a page file sitting beside a
+// same-named directory makes every route under it an unrenderable NESTED child
+// (see app/pages/pagesStructure.test.ts). Keep this import pointing at index.vue.
+import Page from './[id]/index.vue'
 
 let removeOk = true
 // Flipped by a successful DELETE: the refetch then returns the series WITHOUT the
