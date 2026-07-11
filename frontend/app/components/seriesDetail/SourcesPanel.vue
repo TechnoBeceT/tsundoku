@@ -5,24 +5,20 @@ import AppButton from '../ui/AppButton.vue'
 import ProviderRow from './ProviderRow.vue'
 import type { MoveDirection } from '../ui/controls.types'
 import type { Provider } from '../screens/seriesDetail.types'
-import type { ScanlatorCoverage } from '../screens/import.types'
 
 /**
  * SourcesPanel — the Series-Detail "Sources" card: a titled header with the
  * source-count pill and an Add button, then the importance-ranked `ProviderRow`
  * list (preferred first) or an empty note when nothing is tracked.
  * Presentation-only — the (already-sorted) providers arrive via props; the panel
- * re-emits each row's `move`/`remove`/`match`/`loadCoverage` (keyed by source id)
- * plus `addSource`. Wraps the shared PanelCard shell: the count pill rides the
+ * re-emits each row's `move`/`remove`/`match` (keyed by source id) plus
+ * `addSource`. Wraps the shared PanelCard shell: the count pill rides the
  * header-left `lead` slot (grouped with the title), the Add button the
  * header-right `actions` slot, and the provider list the full-bleed body.
  *
- * `providerCoverage` is a passthrough map (SeriesProvider id → that row's
- * cached coverage, or `undefined`/absent when never fetched) — this panel
- * never fetches anything itself; it only threads each row's slice of the map
- * down to `ProviderRow` and bubbles the row's `loadCoverage` click back up to
- * the screen (which owns the actual lazy fetch, `useSeriesDetail.
- * loadProviderCoverage`).
+ * Each row's chapter coverage comes from the provider itself (`feedCount` /
+ * `feedRanges` on the series-detail response) — this panel fetches nothing and
+ * triggers no source call.
  *
  * `driftedIds` (SeriesProvider ids the screen has flagged as drifted
  * duplicates, e.g. via `findDriftedProviderIds`) drives a danger banner +
@@ -36,8 +32,6 @@ const props = withDefaults(defineProps<{
   providers: Provider[]
   /** True while a mutation is in flight — disables reorder + remove. */
   saving?: boolean
-  /** Per-provider cached coverage, keyed by SeriesProvider id (see doc above). */
-  providerCoverage?: Record<string, ScanlatorCoverage[] | null>
   /** SeriesProvider ids flagged as drifted duplicates (drives the banner + per-row badge). */
   driftedIds?: string[]
   /** True while the dedup-providers request is in flight. */
@@ -48,7 +42,6 @@ const props = withDefaults(defineProps<{
   dedupMessage?: string | null
 }>(), {
   saving: false,
-  providerCoverage: () => ({}),
   driftedIds: () => [],
   dedupBusy: false,
   dedupeFilesBusy: false,
@@ -62,8 +55,6 @@ const emit = defineEmits<{
   removeSource: [id: string]
   /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
   matchProvider: [id: string]
-  /** A row's "Show coverage" button was pressed — carries its SeriesProvider id. */
-  loadCoverage: [id: string]
   /** The Add button was pressed (→ opens the Match Source dialog). */
   addSource: []
   /** "Clean up duplicate sources" was pressed. */
@@ -117,11 +108,9 @@ const driftedSet = computed(() => new Set(props.driftedIds))
         :can-down="idx !== providers.length - 1"
         :saving="saving"
         :duplicate="driftedSet.has(p.id)"
-        :coverage="providerCoverage[p.id]"
         @move="emit('move', p.id, $event)"
         @remove="emit('removeSource', p.id)"
         @match="emit('matchProvider', p.id)"
-        @load-coverage="emit('loadCoverage', p.id)"
       />
 
       <div v-if="providers.length === 0" class="panel__empty">

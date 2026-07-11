@@ -4,8 +4,14 @@ import { richSeries, unlinkedProvider } from '../../fixtures/seriesDetail'
 
 /**
  * Stories for one ranked source row — the ReorderControl rank stepper, the
- * health badge, the language chip, and the quiet Remove button. Sources come
- * from the shared fixture. Flip the theme toolbar to confirm both themes.
+ * health badge, the language chip, the source's chapter coverage, and the quiet
+ * Remove button. Sources come from the shared fixture. Flip the theme toolbar to
+ * confirm both themes.
+ *
+ * Coverage is shown with NO click and NO fetch: `feedCount`/`feedRanges` (what
+ * the source OFFERS) come straight from the series-detail response, next to a
+ * quieter "supplies N" (how many downloaded files came from this source). The
+ * `FeedOffering` / `GappedFeed` / `NoFeed` stories pin exactly those three states.
  */
 const meta = {
   title: 'SeriesDetail/ProviderRow',
@@ -84,48 +90,42 @@ export const Duplicate: Story = {
   },
 }
 
-/** mangaId === 0 (unlinked disk provider): no coverage affordance renders at all. */
-export const NoCoverage: Story = {
+/**
+ * The headline coverage line: the source OFFERS 270 chapters (1-269) while only
+ * 8 of the owner's files currently come from it — "270 chapters · 1-269" +
+ * "supplies 8". Rendered with no click and no source fetch.
+ */
+export const FeedOffering: Story = {
+  args: {
+    provider: richSeries.providers[0]!,
+    rank: 1,
+    preferred: true,
+    canUp: false,
+    canDown: true,
+  },
+}
+
+/** A gapped feed: the ranges string collapses the runs ("1-88, 90-92"). */
+export const GappedFeed: Story = {
+  args: {
+    provider: richSeries.providers[1]!,
+    rank: 2,
+    preferred: false,
+    canUp: true,
+    canDown: true,
+  },
+}
+
+/**
+ * A provider with no stored feed (an unlinked disk-origin group): "No chapter
+ * feed" — never a phantom "0 chapters" — beside the files it still supplies.
+ */
+export const NoFeed: Story = {
   args: {
     provider: unlinkedProvider,
     rank: 4,
     preferred: false,
     canUp: true,
     canDown: false,
-  },
-}
-
-/** mangaId > 0, coverage never fetched (`coverage` undefined): the "Show coverage" button. */
-export const CoverageCollapsed: Story = {
-  args: {
-    provider: richSeries.providers[0]!,
-    rank: 1,
-    preferred: true,
-    canUp: false,
-    canDown: true,
-  },
-}
-
-/** Coverage loaded and a scanlator entry matches this row's own scanlator: count + ranges shown. */
-export const CoverageLoaded: Story = {
-  args: {
-    provider: richSeries.providers[0]!,
-    rank: 1,
-    preferred: true,
-    canUp: false,
-    canDown: true,
-    coverage: [{ scanlator: 'Flame Scans', count: 42, ranges: '1-42' }],
-  },
-}
-
-/** Coverage fetch resolved but failed (`null`): "Coverage unavailable". */
-export const CoverageUnavailable: Story = {
-  args: {
-    provider: richSeries.providers[0]!,
-    rank: 1,
-    preferred: true,
-    canUp: false,
-    canDown: true,
-    coverage: null,
   },
 }

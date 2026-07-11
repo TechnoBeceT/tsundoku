@@ -1585,8 +1585,12 @@ export interface components {
             linked: boolean;
             /** @description Source's Suwayomi manga id; 0 = unlinked disk provider. */
             mangaId: number;
-            /** @description How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by). */
+            /** @description How many of the series' chapters this provider currently satisfies (Chapter.satisfied_by) — i.e. how many downloaded files came from this source. NOT how many chapters the source offers (see feedCount). */
             chapterCount: number;
+            /** @description How many chapters this provider OFFERS — the size of its stored ProviderChapter feed. Served from our own DB; reading it makes no call to the source. */
+            feedCount: number;
+            /** @description The stored feed's coverage as a gap-collapsed display string (e.g. "1-90, 92-101"); empty when the feed is empty or carries no chapter numbers. */
+            feedRanges: string;
             /** @description True when this provider has a non-empty availability feed (≥1 ProviderChapter). Mirrors the backend drift-merge feed gate. */
             hasFeed: boolean;
             /** @description Scanlation group (may be empty). */

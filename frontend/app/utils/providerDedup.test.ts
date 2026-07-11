@@ -10,6 +10,8 @@ function prov(p: Partial<Provider> & Pick<Provider, 'id'>): Provider {
     linked: p.linked ?? true,
     mangaId: p.mangaId ?? 0,
     chapterCount: p.chapterCount ?? 0,
+    feedCount: p.feedCount ?? 0,
+    feedRanges: p.feedRanges ?? '',
     hasFeed: p.hasFeed ?? true,
     scanlator: p.scanlator ?? '',
     language: p.language ?? 'en',

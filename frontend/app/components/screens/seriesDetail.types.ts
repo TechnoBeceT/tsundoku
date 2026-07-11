@@ -57,10 +57,8 @@ export interface Provider {
   /** Human-readable source display name (e.g. `WebToon`); falls back to the id upstream. Shown in place of the id. */
   providerName: string
   /**
-   * Source's Suwayomi manga id; `0` = unlinked disk-origin provider (nothing
-   * to fetch). Gates the per-row lazy "Show coverage" affordance — only a
-   * provider with `mangaId > 0` can hit `GET /api/sources/{provider}/manga/
-   * {mangaId}/breakdown`.
+   * Source's Suwayomi manga id; `0` = unlinked disk-origin provider (no real
+   * source attached).
    */
   mangaId: number
   /**
@@ -71,8 +69,22 @@ export interface Provider {
    * source" row action → `MatchDiskProviderDialog`).
    */
   linked: boolean
-  /** How many of the series' chapters this provider currently satisfies. */
+  /**
+   * How many of the series' chapters this provider currently SUPPLIES — i.e.
+   * how many downloaded files came from here. NOT the source's offering: that
+   * is `feedCount`. (Showing this as a bare "N chapters" is the bug this pair
+   * of fields fixes.)
+   */
   chapterCount: number
+  /**
+   * How many chapters this source OFFERS — the size of its stored
+   * ProviderChapter feed, scanlator-filtered, so for a (source, scanlator)
+   * provider it is that pair's true offering. Rides the series-detail response:
+   * no extra request and NO live call to the source.
+   */
+  feedCount: number
+  /** That stored feed's gap-collapsed coverage, e.g. `"1-90, 92-101"`; empty when the feed is empty. */
+  feedRanges: string
   /** True when this provider has a non-empty availability feed (≥1 ProviderChapter) — the exact backend drift-merge gate. */
   hasFeed: boolean
   /** Scanlation group name (may be empty → row omits it). */
