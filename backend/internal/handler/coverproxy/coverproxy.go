@@ -24,12 +24,15 @@ func Stream(c echo.Context, sw suwayomi.Client, coverURL string) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadGateway, "cover fetch failed")
 	}
-	return c.Blob(http.StatusOK, mimeForExt(ext), data)
+	return c.Blob(http.StatusOK, MimeForExt(ext), data)
 }
 
-// mimeForExt maps the bare extension returned by suwayomi.Client.PageBytes to
-// a MIME content type. Unknown extensions fall back to application/octet-stream.
-func mimeForExt(ext string) string {
+// MimeForExt maps the bare image extension reported by Suwayomi (or read back
+// from a locally cached cover) to a MIME content type. Unknown extensions fall
+// back to application/octet-stream. Exported so the cached-cover endpoint —
+// which serves bytes from disk instead of proxying — resolves the content type
+// through the same table (§2 DRY).
+func MimeForExt(ext string) string {
 	switch ext {
 	case "png":
 		return "image/png"

@@ -366,6 +366,8 @@ func mapServiceError(err error) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "provider does not belong to series")
 	case errors.Is(err, seriessvc.ErrNoCover):
 		return echo.NewHTTPError(http.StatusNotFound, "no cover available")
+	case errors.Is(err, seriessvc.ErrCoverFetchFailed):
+		return echo.NewHTTPError(http.StatusBadGateway, "cover fetch failed")
 	default:
 		return err
 	}

@@ -42,8 +42,14 @@ var ErrNoCover = errors.New("no cover available")
 // resolves the M7 source-health staleness grace AT USE-TIME so the value can be
 // runtime-tuned via the settings overlay without a restart.
 type Service struct {
-	client     *ent.Client
-	storage    string
+	client  *ent.Client
+	storage string
+
+	// sw fetches cover images from Suwayomi on a cold/stale local cover (see
+	// cover.go). Optional — attach it with WithCoverFetcher; nil means a cached
+	// cover still serves, but a cold one reports ErrCoverFetchFailed.
+	sw CoverFetcher
+
 	staleGrace func(ctx context.Context) int
 }
 

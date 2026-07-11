@@ -139,7 +139,11 @@ func registerRoutes(
 	// so the recategorize path can move folders on disk in lockstep with the DB.
 	// seriesSvc is shared: reused by both the series handler and the imports
 	// handler (to render SeriesDetailDTO after Adopt).
-	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays)
+	// WithCoverFetcher lets the series cover endpoint fall back to Suwayomi when a
+	// series' cover is not yet cached in its library folder (it caches it there on
+	// that first fetch, and never pings the source for it again).
+	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays).
+		WithCoverFetcher(suwayomiClient)
 	seriesH := seriesh.NewHandler(seriesSvc, trigger, suwayomiClient)
 	authed.GET("/series", seriesH.List)
 	authed.GET("/series/:id", seriesH.Detail)
