@@ -21,6 +21,20 @@ import { ref, watch } from 'vue'
  * settings (CSS custom properties). The pending/failed reserve height stays a
  * fixed default (`--reader-page-reserve`, 60vh) — it is not a v1 user setting.
  */
+
+/** Pages within this many of the centred page load EAGERLY at high priority; the
+ *  rest stay lazy. Distance, not "ahead": with backward scrolling now legal, the
+ *  pages just ABOVE centre are as likely to be needed as the ones below.
+ *
+ *  CONSTRAINT: MAX_MOUNTED = 3 (in ReaderStrip.logic.ts) caps how far ahead pages
+ *  even EXIST in the DOM, so a radius larger than the mounted window's remaining
+ *  pages is a no-op at a chapter boundary.
+ *
+ *  ⚠️ Do NOT raise MAX_MOUNTED to chase a bigger radius: runScroll() re-measures
+ *  EVERY mounted page with getBoundingClientRect() on each 120ms scroll tick, so
+ *  that cost scales directly with it. Keep MAX_MOUNTED at 3. */
+const PRELOAD_RADIUS = 3
+
 const props = withDefaults(defineProps<{
   /** Page image URL (same-origin). Empty shows the loading placeholder. */
   src?: string
@@ -28,9 +42,8 @@ const props = withDefaults(defineProps<{
   alt?: string
   /** Distance (in pages) from the reader's live centred position, supplied by
    *  `ReaderStrip`. Defaults large (effectively "far") so callers that don't
-   *  pass it behave as before. A later slice uses this to bias eager
-   *  preloading toward pages nearest the reader's position — not yet consumed
-   *  here. */
+   *  pass it behave as before. Pages within PRELOAD_RADIUS of centre load
+   *  eagerly at high priority; the rest stay lazy. */
   distanceFromCentre?: number
 }>(), {
   src: '',
@@ -77,7 +90,8 @@ function onError(): void {
       class="page__img"
       :src="src"
       :alt="alt"
-      loading="lazy"
+      :loading="props.distanceFromCentre <= PRELOAD_RADIUS ? 'eager' : 'lazy'"
+      :fetchpriority="props.distanceFromCentre <= PRELOAD_RADIUS ? 'high' : 'auto'"
       @load="onLoad"
       @error="onError"
     >
