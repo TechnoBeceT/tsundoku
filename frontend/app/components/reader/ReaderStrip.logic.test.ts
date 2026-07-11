@@ -11,6 +11,8 @@ import {
   MAX_MOUNTED,
   shouldAppend,
   chaptersToUnmount,
+  chaptersToUnmountDirectional,
+  shouldPrepend,
   scrollAfterReflow,
   centeredPage,
   finishedChapterIds,
@@ -105,5 +107,33 @@ describe('trimTrailingFailures', () => {
   it('stops trimming at the first non-failed page from the end', () => {
     // 48 fine, 49 failed -> only trims 49.
     expect(trimTrailingFailures(50, new Set([49]))).toBe(49)
+  })
+})
+
+describe('chaptersToUnmountDirectional', () => {
+  it('drops from the TOP when moving forward', () => {
+    expect(chaptersToUnmountDirectional([0, 1, 2, 3], 3, 'forward')).toEqual([0])
+  })
+
+  it('drops from the BOTTOM when moving backward', () => {
+    expect(chaptersToUnmountDirectional([0, 1, 2, 3], 3, 'backward')).toEqual([3])
+  })
+
+  it('never unmounts the chapter just prepended', () => {
+    // Moving backward, index 0 was just prepended — it must survive.
+    expect(chaptersToUnmountDirectional([0, 1, 2, 3], 3, 'backward')).not.toContain(0)
+  })
+
+  it('returns [] when already within bounds', () => {
+    expect(chaptersToUnmountDirectional([1, 2], 3, 'forward')).toEqual([])
+    expect(chaptersToUnmountDirectional([1, 2], 3, 'backward')).toEqual([])
+  })
+})
+
+describe('shouldPrepend', () => {
+  it('is true only when the head sentinel is visible AND a previous chapter exists', () => {
+    expect(shouldPrepend(true, true)).toBe(true)
+    expect(shouldPrepend(true, false)).toBe(false)
+    expect(shouldPrepend(false, true)).toBe(false)
   })
 })

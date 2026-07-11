@@ -133,3 +133,38 @@ export function trimTrailingFailures(pageCount: number, failed: Set<number>): nu
   }
   return visible
 }
+
+/** Which end of the mounted window a reflow is growing towards. */
+export type WindowDirection = 'forward' | 'backward'
+
+/**
+ * chaptersToUnmountDirectional — the window-bounding rule, aware of which way the
+ * reader is moving. Keeps at most `maxMounted` chapters mounted and drops from the
+ * end the reader is moving AWAY from: scrolling forward drops the chapters far
+ * ABOVE, scrolling backward drops the chapters far BELOW.
+ *
+ * The direction matters: the original rule always sliced from the top, which — once
+ * a head-prepend exists — would unmount the very chapter just prepended, and the
+ * window would fight the reader instead of sliding with them.
+ *
+ * Returns `[]` when already within bounds.
+ */
+export function chaptersToUnmountDirectional(
+  mounted: number[],
+  maxMounted: number,
+  direction: WindowDirection,
+): number[] {
+  if (mounted.length <= maxMounted) return []
+  const excess = mounted.length - maxMounted
+  return direction === 'forward' ? mounted.slice(0, excess) : mounted.slice(mounted.length - excess)
+}
+
+/**
+ * shouldPrepend — whether the strip should pull the PREVIOUS chapter into the
+ * window: the mirror of `shouldAppend`. True only when the head sentinel is on
+ * screen AND a previous chapter exists (at the head of the list there is nothing
+ * to prepend).
+ */
+export function shouldPrepend(sentinelVisible: boolean, hasPrevChapter: boolean): boolean {
+  return sentinelVisible && hasPrevChapter
+}
