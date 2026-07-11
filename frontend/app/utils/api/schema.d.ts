@@ -422,8 +422,14 @@ export interface paths {
         /**
          * Series cover image
          * @description Streams the cover image for the series' resolved metadata source provider.
-         *     The image is fetched from Suwayomi and returned as a binary blob. Returns 404
-         *     when the series has no cover, 502 when Suwayomi fails to fetch it.
+         *     Served from the on-disk cache whenever it is current; only a cover the library
+         *     does not hold locally is fetched from Suwayomi. Returns 404 when the series has
+         *     no cover, 502 when Suwayomi fails to fetch it.
+         *
+         *     Clients should use the versioned `coverUrl` from the series DTO verbatim: it
+         *     carries a `v` cache-buster derived from the source cover_url, and the response
+         *     is `Cache-Control: private, max-age=31536000, immutable`. The `v` param itself
+         *     is ignored by the server — a request without it serves the same image.
          */
         get: operations["getSeriesCover"];
         put?: never;
@@ -1457,7 +1463,7 @@ export interface components {
             slug: string;
             /** @description Name of the user-defined category the series is filed under. */
             category: string;
-            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
+            /** @description Versioned series cover proxy path ("/api/series/{id}/cover?v=<hash>"); empty when no provider has a cover. The v param is a content version derived from the metadata source's cover_url, so the URL changes exactly when the image does — the endpoint therefore answers "Cache-Control: private, max-age=31536000, immutable" and the browser never re-requests a cover it already holds. Use the value verbatim. */
             coverUrl: string;
             /** @description Whether the series is actively tracked for new chapters. */
             monitored: boolean;
@@ -1543,7 +1549,7 @@ export interface components {
             slug: string;
             /** @description Name of the user-defined category the series is filed under. */
             category: string;
-            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
+            /** @description Versioned series cover proxy path ("/api/series/{id}/cover?v=<hash>"); empty when no provider has a cover. The v param is a content version derived from the metadata source's cover_url, so the URL changes exactly when the image does — the endpoint therefore answers "Cache-Control: private, max-age=31536000, immutable" and the browser never re-requests a cover it already holds. Use the value verbatim. */
             coverUrl: string;
             /** @description Whether the series is actively tracked for new chapters. */
             monitored: boolean;
@@ -1631,7 +1637,7 @@ export interface components {
              * @enum {string}
              */
             seriesCategory: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
-            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
+            /** @description Versioned series cover proxy path ("/api/series/{id}/cover?v=<hash>"); empty when no provider has a cover. The v param is a content version derived from the metadata source's cover_url, so the URL changes exactly when the image does — the endpoint therefore answers "Cache-Control: private, max-age=31536000, immutable" and the browser never re-requests a cover it already holds. Use the value verbatim. */
             seriesCoverUrl: string;
             /** @description Stable per-series chapter identity (never the number). */
             chapterKey: string;

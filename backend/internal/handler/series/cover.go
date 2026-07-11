@@ -1,32 +1,40 @@
 package series
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/handler/coverproxy"
 )
 
-// coverCacheControl keeps the cached cover REVALIDATABLE.
+// coverCacheControl lets the browser keep a cover FOREVER, without ever
+// revalidating it.
 //
-// GOTCHA: a positive max-age would defeat the feature's own acceptance criterion
-// — a "fresh" response means the browser never sends If-None-Match, so after the
-// owner switches metadata source (the URL is stable, there is no cache-buster)
-// the OLD cover would keep rendering until the freshness window expired. With
-// no-cache the browser always revalidates, the ETag turns that into a bodyless
-// 304, and the backend serves it from disk: still ZERO source-ward calls.
-const coverCacheControl = "private, no-cache"
+// This is safe ONLY because the cover URL is content-versioned: the DTO emits
+// "…/cover?v=<hash of the provider's cover_url>" (series.SeriesDisplay), and the
+// bytes can only change when that cover_url changes — which mints a different
+// URL. So a re-render of the library grid costs ZERO requests, and a
+// metadata-source switch shows the new cover INSTANTLY (new URL, cache miss).
+//
+// GOTCHA — the contrast with the reader's page-bytes endpoint, where `immutable`
+// was WRONG: there the URL is stable while the bytes legitimately change (a
+// convergence upgrade re-renders the CBZ), so an immutable response served stale
+// pages. The rule is not "images are immutable", it is "immutable requires the
+// URL to change whenever the content does". Only a versioned URL earns it.
+const coverCacheControl = "private, max-age=31536000, immutable"
 
 // SeriesCover serves the metadata source's cover image for the series.
 //
 // The bytes come from the LOCAL cache (the series folder) whenever it is current
 // — see series.Service.CoverBytes — so a library grid re-render pings no source
-// at all. The response carries an ETag + a revalidatable Cache-Control, so a
-// re-render usually costs a 304 instead of a body: without them we would still
-// pay 52 round-trips per render, just to disk.
+// at all, and with the immutable Cache-Control above it usually pings the BACKEND
+// zero times either.
+//
+// The "v" query param is a pure cache buster and is deliberately IGNORED here:
+// the series id alone identifies the image, so a request without ?v= serves the
+// same cover (only its browser-side cacheability differs).
 //
 // Auth is HttpOnly-cookie-based (see pkg/middleware.RequireOwner), so the SPA can
 // load this endpoint with a plain same-origin <img src>. Returns 404 when the
@@ -41,7 +49,7 @@ func (h *Handler) SeriesCover(c echo.Context) error {
 		// ErrNoCover / ErrSeriesNotFound → 404, ErrCoverFetchFailed → 502.
 		return mapServiceError(err)
 	}
-	return serveCachedImage(c, data, ext)
+	return serveCachedImage(c, data, ext, c.QueryParam("v"))
 }
 
 // ProviderCover streams the cover image for a specific provider. The cover_url
@@ -69,12 +77,17 @@ func (h *Handler) ProviderCover(c echo.Context) error {
 	return coverproxy.Stream(c, h.sw, coverURL)
 }
 
-// serveCachedImage writes image bytes with a content-derived ETag and a
-// revalidatable Cache-Control, honouring If-None-Match with a 304 so a repeat
-// view transfers no body at all.
-func serveCachedImage(c echo.Context, data []byte, ext string) error {
-	sum := sha256.Sum256(data)
-	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+// serveCachedImage writes image bytes with the immutable Cache-Control and a
+// CHEAP ETag, honouring If-None-Match with a bodyless 304.
+//
+// GOTCHA: the ETag is built from the URL's version + the byte length — NEVER by
+// hashing the body. Hashing a ~200 KB image on every request was pure waste: it
+// bought a 304 the versioned URL now makes unnecessary anyway (the browser does
+// not even ask). The ETag is kept only as a correctness belt for clients that
+// ignore Cache-Control (curl, a proxy, a request with no ?v=), and it still
+// changes whenever the version does.
+func serveCachedImage(c echo.Context, data []byte, ext, version string) error {
+	etag := `"` + version + "-" + strconv.Itoa(len(data)) + `"`
 
 	c.Response().Header().Set("ETag", etag)
 	c.Response().Header().Set("Cache-Control", coverCacheControl)

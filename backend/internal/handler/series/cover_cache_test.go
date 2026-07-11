@@ -31,10 +31,34 @@ func (env *testEnv) doWithHeader(target, key, value string) *httptest.ResponseRe
 	return rec
 }
 
-// TestSeriesCover_CacheHeaders proves the 200 carries an ETag and a
-// revalidatable (never "immutable") Cache-Control — the cover legitimately
-// changes when the owner switches metadata source.
+// TestSeriesCover_CacheHeaders proves the 200 is HARD-cacheable. The DTO's cover
+// URL carries a ?v= derived from the source cover_url, so the URL changes exactly
+// when the image does — which is the only thing that makes "immutable" correct
+// here (the reader's page-bytes endpoint keeps a stable URL over changing bytes,
+// so it must NOT be immutable). Result: the browser re-requests a cover zero times.
 func TestSeriesCover_CacheHeaders(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	countingPageBytes(env, []byte("IMG"), "png")
+	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+
+	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover?v=deadbeef", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SeriesCover: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("ETag") == "" {
+		t.Error("SeriesCover: missing ETag")
+	}
+	cc := rec.Header().Get("Cache-Control")
+	if cc != "private, max-age=31536000, immutable" {
+		t.Errorf("SeriesCover: Cache-Control = %q, want private, max-age=31536000, immutable", cc)
+	}
+}
+
+// TestSeriesCover_WithoutVersionParamStillServes proves ?v= is a pure cache
+// buster the server IGNORES: a request without it serves the same image, so an
+// old bookmark / a hand-typed URL never breaks.
+func TestSeriesCover_WithoutVersionParamStillServes(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 	countingPageBytes(env, []byte("IMG"), "png")
@@ -42,17 +66,10 @@ func TestSeriesCover_CacheHeaders(t *testing.T) {
 
 	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", "")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("SeriesCover: want 200, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("SeriesCover (no ?v=): want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("ETag") == "" {
-		t.Error("SeriesCover: missing ETag")
-	}
-	// Must be REVALIDATABLE: a positive max-age would keep the browser showing a
-	// stale cover for the whole freshness window after a metadata-source switch
-	// (the URL is stable), because it would never send If-None-Match.
-	cc := rec.Header().Get("Cache-Control")
-	if cc != "private, no-cache" {
-		t.Errorf("SeriesCover: Cache-Control = %q, want private, no-cache", cc)
+	if rec.Body.String() != "IMG" {
+		t.Errorf("SeriesCover (no ?v=): body = %q, want IMG", rec.Body.String())
 	}
 }
 
