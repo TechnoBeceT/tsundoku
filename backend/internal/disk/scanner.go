@@ -22,6 +22,12 @@ type SeriesFacts struct {
 
 	// Chapters is the ordered list of chapter facts for this series.
 	Chapters []ChapterFact
+
+	// Cover is the sidecar's cached-cover block (nil when the series has no
+	// cached cover). It is what lets Reconcile restore the DB's cover fast-index
+	// (Series.cover_file / cover_source_url) after a DB loss: the sidecar is the
+	// durable seed, the DB columns are only the index.
+	Cover *CoverProvenance
 }
 
 // ChapterFact holds the per-chapter facts reconstructed from disk.
@@ -238,6 +244,7 @@ func orphanChapterFacts(dir string, sidecarCovered map[string]struct{}) ([]Chapt
 func buildSeriesFacts(dir, category string, sidecar *Sidecar, facts []ChapterFact) *SeriesFacts {
 	title := filepath.Base(dir)
 	cat := category
+	var cover *CoverProvenance
 	if sidecar != nil {
 		if sidecar.Title != "" {
 			title = sidecar.Title
@@ -245,8 +252,9 @@ func buildSeriesFacts(dir, category string, sidecar *Sidecar, facts []ChapterFac
 		if sidecar.Category != "" && cat == "" {
 			cat = sidecar.Category
 		}
+		cover = sidecar.Cover
 	}
-	return &SeriesFacts{Title: title, Category: cat, Chapters: facts}
+	return &SeriesFacts{Title: title, Category: cat, Chapters: facts, Cover: cover}
 }
 
 // chapterFactFromOrphanCBZ reads provenance from the ComicInfo.xml inside a

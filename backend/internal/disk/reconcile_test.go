@@ -535,3 +535,63 @@ func renderScanlatorChapter(t *testing.T, storage string, num *float64, key, sca
 	}
 	return fn
 }
+
+// TestReconcile_restores_cover_index proves the sidecar is the durable SEED of
+// the DB cover fast-index: after a total DB loss, Reconcile puts cover_file +
+// cover_source_url back on the Series row, so the rebuilt library serves its
+// already-downloaded covers straight from disk and never re-fetches them from a
+// source. It also asserts idempotency — a second run leaves the same values.
+func TestReconcile_restores_cover_index(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	const title = "Cover Index Series"
+	num, max := 1.0, 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: title,
+			Category:    disk.CategoryManga,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "1",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	if _, err := disk.RenderChapter(req); err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+	if _, err := disk.SaveCover(disk.CoverRequest{
+		Storage:   storage,
+		Category:  disk.CategoryManga,
+		Title:     title,
+		Data:      []byte("IMG"),
+		Ext:       "webp",
+		SourceURL: "/thumb/a",
+		Provider:  "mangadex",
+	}); err != nil {
+		t.Fatalf("SaveCover: %v", err)
+	}
+
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	row := client.Series.Query().OnlyX(ctx)
+	if row.CoverFile != "cover.webp" || row.CoverSourceURL != "/thumb/a" {
+		t.Fatalf("cover index after reconcile: cover_file=%q cover_source_url=%q, want cover.webp//thumb/a",
+			row.CoverFile, row.CoverSourceURL)
+	}
+
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("Reconcile (second run): %v", err)
+	}
+	row = client.Series.Query().OnlyX(ctx)
+	if row.CoverFile != "cover.webp" || row.CoverSourceURL != "/thumb/a" {
+		t.Errorf("cover index after re-run: cover_file=%q cover_source_url=%q, want unchanged",
+			row.CoverFile, row.CoverSourceURL)
+	}
+}

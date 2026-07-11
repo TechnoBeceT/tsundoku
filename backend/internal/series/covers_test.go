@@ -3,6 +3,9 @@ package series_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -76,6 +79,8 @@ func TestMetadataResolution_DefaultHighestImportance(t *testing.T) {
 	if got.DisplayName != "High Source Title" {
 		t.Errorf("DisplayName = %q, want %q", got.DisplayName, "High Source Title")
 	}
+	// No cover is cached for this series, so the URL is UNVERSIONED — the endpoint
+	// then serves it revalidatable, never immutable (see handler/series.coverRevalidate).
 	wantCover := "/api/series/" + seriesID.String() + "/cover"
 	if got.CoverURL != wantCover {
 		t.Errorf("CoverURL = %q, want %q", got.CoverURL, wantCover)
@@ -308,5 +313,51 @@ func TestListSeries_DisplayName(t *testing.T) {
 	wantCover := "/api/series/" + seriesID.String() + "/cover"
 	if rows[0].CoverURL != wantCover {
 		t.Errorf("ListSeries CoverURL = %q, want %q", rows[0].CoverURL, wantCover)
+	}
+}
+
+// TestCoverURL_CarriesTheStoredCoverVersion proves the DTO's cover URL is
+// versioned STRAIGHT FROM the cover_version column — the content hash of the
+// cached bytes — and that building it does ZERO disk I/O (the service is pointed
+// at a storage root that does not exist and must neither fail nor create it).
+//
+// The column is the single source of the ?v=; a URL versioned by anything else
+// (e.g. the provider's id-derived cover_url) would not change when the image did,
+// and the endpoint's immutable response would pin a stale cover — see
+// TestCoverVersion_TracksBytesNotSourceURL for that proof.
+func TestCoverURL_CarriesTheStoredCoverVersion(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	seriesID, _, _ := seedMeta(ctx, t, db)
+
+	storage := filepath.Join(t.TempDir(), "does-not-exist")
+	svc := series.NewService(db, storage, 14)
+
+	db.Series.UpdateOneID(seriesID).SetCoverVersion("aaaa1111bbbb").ExecX(ctx)
+	got, err := svc.GetSeries(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	want := "/api/series/" + seriesID.String() + "/cover?v=aaaa1111bbbb"
+	if got.CoverURL != want {
+		t.Errorf("CoverURL = %q, want %q", got.CoverURL, want)
+	}
+
+	// New bytes on disk ⇒ new version ⇒ a NEW URL, which is the only thing that can
+	// dislodge an immutably-cached cover in the browser.
+	db.Series.UpdateOneID(seriesID).SetCoverVersion("cccc2222dddd").ExecX(ctx)
+	after, err := svc.GetSeries(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("GetSeries (new version): %v", err)
+	}
+	if after.CoverURL == got.CoverURL {
+		t.Errorf("CoverURL unchanged (%q) after the cover version changed", after.CoverURL)
+	}
+	if !strings.HasSuffix(after.CoverURL, "?v=cccc2222dddd") {
+		t.Errorf("CoverURL = %q, want it to carry the stored version", after.CoverURL)
+	}
+
+	if _, err := os.Stat(storage); !os.IsNotExist(err) {
+		t.Errorf("building the DTO touched disk: %q exists (stat err %v)", storage, err)
 	}
 }

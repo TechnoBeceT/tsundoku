@@ -819,6 +819,20 @@ func ProviderLabel(p *ent.SeriesProvider) string {
 // coverURL is the series cover proxy path when metaProv has a non-empty
 // cover_url, else "" (the proxy endpoint would have nothing to serve).
 // Exported so the downloads domain reuses the identical name+cover resolution.
+//
+// The cover path carries the CONTENT version of the cached image
+// ("…/cover?v=<cover_version>"): the version is a hash of the cover BYTES, so the
+// URL changes exactly when the image does. That is what lets the endpoint answer
+// `immutable` — the browser skips the request entirely on a re-render, and any
+// change to the cover (a metadata-source switch, a source republishing its art)
+// mints a NEW URL and shows instantly.
+//
+// A series whose cover is not cached on disk has no version, and its URL is
+// emitted UNVERSIONED — the endpoint then serves a revalidatable no-cache
+// response, never immutable, so an uncached cover can never be pinned.
+//
+// Reading it is FREE: cover_version is a column already loaded with the row, so
+// building a DTO does zero disk I/O.
 func SeriesDisplay(row *ent.Series, metaProv *ent.SeriesProvider) (name, coverURL string) {
 	name = row.Title
 	if metaProv != nil && metaProv.Title != "" {
@@ -826,6 +840,9 @@ func SeriesDisplay(row *ent.Series, metaProv *ent.SeriesProvider) (name, coverUR
 	}
 	if metaProv != nil && metaProv.CoverURL != "" {
 		coverURL = "/api/series/" + row.ID.String() + "/cover"
+		if row.CoverVersion != "" {
+			coverURL += "?v=" + row.CoverVersion
+		}
 	}
 	return name, coverURL
 }

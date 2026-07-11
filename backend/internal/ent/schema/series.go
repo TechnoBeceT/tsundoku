@@ -55,6 +55,37 @@ func (Series) Fields() []ent.Field {
 		// changes the canonical Series.title (slug/folder/Komga); display name +
 		// cover are resolved on read.
 		field.UUID("metadata_provider_id", uuid.UUID{}).Optional().Nillable(),
+		// cover_file + cover_source_url are the FAST INDEX over the on-disk cover
+		// cache: the filename inside the series folder ("cover.webp") and the
+		// provider cover_url those bytes were fetched from (the cache key).
+		//
+		// They exist purely for SPEED. The tsundoku.json sidecar remains the
+		// durable rebuild seed (a DB loss is repaired by disk.Reconcile, which
+		// restores both columns from it) — but reading the sidecar to serve ONE
+		// cover means parsing every chapter's provenance, over NFS, on every
+		// request. With these columns the warm path is one DB row + one os.ReadFile.
+		//
+		// Both are additive + defaulted ⇒ zero-data migration. An EXISTING library
+		// (covers already on disk, columns empty) must NOT be treated as uncached:
+		// series.CoverBytes falls back to the sidecar and BACKFILLS these columns,
+		// so no source is ever re-hit for a cover that is already local.
+		field.String("cover_file").Default(""),
+		field.String("cover_source_url").Default(""),
+		// cover_version is a short hash of the cover BYTES currently cached — the
+		// content version the served URL carries (…/cover?v=<cover_version>).
+		//
+		// It must be derived from the BYTES, never from cover_source_url: that URL
+		// is Suwayomi's id-derived thumbnail path (/api/v1/manga/{id}/thumbnail),
+		// so it is stable even when the source republishes different art. The cover
+		// endpoint answers `immutable` — a one-way door — and the ONLY lever that
+		// can ever show the owner a changed image is a changed URL. A version that
+		// tracks the URL instead of the bytes would pin a stale cover for a year
+		// with no server-side remedy.
+		//
+		// Empty ⇒ nothing is cached for this series (or the index predates the
+		// column): the DTO then emits an unversioned URL and the endpoint serves
+		// revalidatable no-cache, never immutable.
+		field.String("cover_version").Default(""),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

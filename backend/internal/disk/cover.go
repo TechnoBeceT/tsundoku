@@ -121,19 +121,41 @@ func ReadCover(storage, category, title string) (data []byte, ext string, prov *
 		return nil, "", nil, ErrNoLocalCover
 	}
 
-	// filepath.Base pins the file to the series dir — the sidecar is on-disk data,
-	// so a hand-edited "../../etc/passwd" must not escape the library root.
-	name := filepath.Base(sidecar.Cover.File)
-
-	// G304: path is the storage root + sanitised folder names + a basename.
-	//nolint:gosec
-	data, readErr = os.ReadFile(filepath.Join(seriesDir, name))
+	data, ext, readErr = ReadCoverFile(storage, category, title, sidecar.Cover.File)
 	if readErr != nil {
-		return nil, "", nil, ErrNoLocalCover
+		return nil, "", nil, readErr
 	}
 
 	cover := *sidecar.Cover
-	return data, strings.TrimPrefix(filepath.Ext(name), "."), &cover, nil
+	return data, ext, &cover, nil
+}
+
+// ReadCoverFile returns the bytes and bare extension of ONE named cover file in
+// the series folder — the sidecar is never read.
+//
+// This is the hot path: the DB carries the filename (Series.cover_file), so a
+// warm serve costs a single os.ReadFile instead of also reading and JSON-parsing
+// tsundoku.json (which, for a 300-chapter series over NFS, means parsing every
+// chapter's provenance just to learn one filename). ReadCover — the sidecar
+// route — is the rebuild/backfill fallback and reuses this function, so the
+// "which bytes, which extension" rule lives in exactly one place.
+//
+// A vanished or unreadable file yields ErrNoLocalCover (never an I/O error): the
+// cache is advisory, so the caller's only response is to re-fetch it once.
+func ReadCoverFile(storage, category, title, file string) (data []byte, ext string, err error) {
+	// filepath.Base pins the file to the series dir — the name comes from on-disk
+	// (or DB-indexed) data, so a hand-edited "../../etc/passwd" must not escape
+	// the library root.
+	name := filepath.Base(file)
+
+	// G304: path is the storage root + sanitised folder names + a basename.
+	//nolint:gosec
+	data, readErr := os.ReadFile(filepath.Join(SeriesDir(storage, category, title), name))
+	if readErr != nil {
+		return nil, "", ErrNoLocalCover
+	}
+
+	return data, strings.TrimPrefix(filepath.Ext(name), "."), nil
 }
 
 // NormalizeCoverExt reduces the upstream-reported extension to a safe, bare,
