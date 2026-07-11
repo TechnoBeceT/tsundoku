@@ -198,6 +198,15 @@ func SeriesDir(storage, category, title string) string {
 	return filepath.Join(storage, category, title)
 }
 
+// ChapterCBZPath returns the absolute path to a chapter's rendered CBZ file:
+// <storage>/<category>/<title>/<filename>. It composes SeriesDir with the
+// chapter's stored Filename so the disk layout contract lives in one place — the
+// in-app reader and any future disk consumer resolve a chapter's archive
+// identically, never re-deriving the path by hand.
+func ChapterCBZPath(storage, category, title, filename string) string {
+	return filepath.Join(SeriesDir(storage, category, title), filename)
+}
+
 // PageFilename returns the in-archive filename for a single page.
 //
 // It derives the base from GenerateCBZFilename (without the .cbz extension),

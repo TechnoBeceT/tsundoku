@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import StatusBadge from '../ui/StatusBadge.vue'
+import AppButton from '../ui/AppButton.vue'
 import type { Chapter } from '../screens/seriesDetail.types'
 
 /**
  * ChapterRow — one row in the Series-Detail chapter table: the (display) number,
  * the resolved chapter name with its CBZ filename beneath, an optional page-count,
- * and a `StatusBadge` for the download state. Presentation-only: the chapter
- * arrives via the `chapter` prop and the row emits nothing.
+ * a "Read" button for on-disk chapters, and a `StatusBadge` for the download state.
+ * The chapter arrives via the `chapter` prop; the row emits `read` (the chapter
+ * UUID) when the owner opens it in the reader.
  *
  * The state badge reads the unified `--state-*` palette (via `StatusBadge`), so
  * every chapter-state hue across the app comes from one source and both themes work.
@@ -14,6 +16,11 @@ import type { Chapter } from '../screens/seriesDetail.types'
 const props = defineProps<{
   /** The chapter to render (identity is `chapterKey`, not the number). */
   chapter: Chapter
+}>()
+
+const emit = defineEmits<{
+  /** Open this chapter in the reader (carries the chapter UUID). */
+  read: [chapterId: string]
 }>()
 
 // Display name: provider title, else "Chapter N", else an em-dash placeholder.
@@ -33,6 +40,14 @@ const pages = (): string => (props.chapter.pageCount == null ? '' : `${props.cha
       <div v-if="chapter.filename" class="chapter__file">{{ chapter.filename }}</div>
     </div>
     <span v-if="pages()" class="chapter__pages">{{ pages() }}</span>
+    <AppButton
+      v-if="chapter.state === 'downloaded'"
+      variant="mini"
+      size="sm"
+      @click="emit('read', chapter.id)"
+    >
+      Read
+    </AppButton>
     <StatusBadge :state="chapter.state" />
   </div>
 </template>

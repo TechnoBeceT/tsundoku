@@ -806,6 +806,10 @@ type ChapterMutation struct {
 	next_attempt_at         *time.Time
 	last_error              *string
 	error_category          *string
+	read                    *bool
+	last_read_page          *int
+	addlast_read_page       *int
+	read_at                 *time.Time
 	clearedFields           map[string]struct{}
 	series                  *uuid.UUID
 	clearedseries           bool
@@ -1549,6 +1553,147 @@ func (m *ChapterMutation) ResetErrorCategory() {
 	m.error_category = nil
 }
 
+// SetRead sets the "read" field.
+func (m *ChapterMutation) SetRead(b bool) {
+	m.read = &b
+}
+
+// Read returns the value of the "read" field in the mutation.
+func (m *ChapterMutation) Read() (r bool, exists bool) {
+	v := m.read
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRead returns the old "read" field's value of the Chapter entity.
+// If the Chapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChapterMutation) OldRead(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRead is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRead requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRead: %w", err)
+	}
+	return oldValue.Read, nil
+}
+
+// ResetRead resets all changes to the "read" field.
+func (m *ChapterMutation) ResetRead() {
+	m.read = nil
+}
+
+// SetLastReadPage sets the "last_read_page" field.
+func (m *ChapterMutation) SetLastReadPage(i int) {
+	m.last_read_page = &i
+	m.addlast_read_page = nil
+}
+
+// LastReadPage returns the value of the "last_read_page" field in the mutation.
+func (m *ChapterMutation) LastReadPage() (r int, exists bool) {
+	v := m.last_read_page
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastReadPage returns the old "last_read_page" field's value of the Chapter entity.
+// If the Chapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChapterMutation) OldLastReadPage(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastReadPage is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastReadPage requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastReadPage: %w", err)
+	}
+	return oldValue.LastReadPage, nil
+}
+
+// AddLastReadPage adds i to the "last_read_page" field.
+func (m *ChapterMutation) AddLastReadPage(i int) {
+	if m.addlast_read_page != nil {
+		*m.addlast_read_page += i
+	} else {
+		m.addlast_read_page = &i
+	}
+}
+
+// AddedLastReadPage returns the value that was added to the "last_read_page" field in this mutation.
+func (m *ChapterMutation) AddedLastReadPage() (r int, exists bool) {
+	v := m.addlast_read_page
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetLastReadPage resets all changes to the "last_read_page" field.
+func (m *ChapterMutation) ResetLastReadPage() {
+	m.last_read_page = nil
+	m.addlast_read_page = nil
+}
+
+// SetReadAt sets the "read_at" field.
+func (m *ChapterMutation) SetReadAt(t time.Time) {
+	m.read_at = &t
+}
+
+// ReadAt returns the value of the "read_at" field in the mutation.
+func (m *ChapterMutation) ReadAt() (r time.Time, exists bool) {
+	v := m.read_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldReadAt returns the old "read_at" field's value of the Chapter entity.
+// If the Chapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChapterMutation) OldReadAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldReadAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldReadAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldReadAt: %w", err)
+	}
+	return oldValue.ReadAt, nil
+}
+
+// ClearReadAt clears the value of the "read_at" field.
+func (m *ChapterMutation) ClearReadAt() {
+	m.read_at = nil
+	m.clearedFields[chapter.FieldReadAt] = struct{}{}
+}
+
+// ReadAtCleared returns if the "read_at" field was cleared in this mutation.
+func (m *ChapterMutation) ReadAtCleared() bool {
+	_, ok := m.clearedFields[chapter.FieldReadAt]
+	return ok
+}
+
+// ResetReadAt resets all changes to the "read_at" field.
+func (m *ChapterMutation) ResetReadAt() {
+	m.read_at = nil
+	delete(m.clearedFields, chapter.FieldReadAt)
+}
+
 // ClearSeries clears the "series" edge to the Series entity.
 func (m *ChapterMutation) ClearSeries() {
 	m.clearedseries = true
@@ -1650,7 +1795,7 @@ func (m *ChapterMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChapterMutation) Fields() []string {
-	fields := make([]string, 0, 13)
+	fields := make([]string, 0, 16)
 	if m.series != nil {
 		fields = append(fields, chapter.FieldSeriesID)
 	}
@@ -1690,6 +1835,15 @@ func (m *ChapterMutation) Fields() []string {
 	if m.error_category != nil {
 		fields = append(fields, chapter.FieldErrorCategory)
 	}
+	if m.read != nil {
+		fields = append(fields, chapter.FieldRead)
+	}
+	if m.last_read_page != nil {
+		fields = append(fields, chapter.FieldLastReadPage)
+	}
+	if m.read_at != nil {
+		fields = append(fields, chapter.FieldReadAt)
+	}
 	return fields
 }
 
@@ -1724,6 +1878,12 @@ func (m *ChapterMutation) Field(name string) (ent.Value, bool) {
 		return m.LastError()
 	case chapter.FieldErrorCategory:
 		return m.ErrorCategory()
+	case chapter.FieldRead:
+		return m.Read()
+	case chapter.FieldLastReadPage:
+		return m.LastReadPage()
+	case chapter.FieldReadAt:
+		return m.ReadAt()
 	}
 	return nil, false
 }
@@ -1759,6 +1919,12 @@ func (m *ChapterMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldLastError(ctx)
 	case chapter.FieldErrorCategory:
 		return m.OldErrorCategory(ctx)
+	case chapter.FieldRead:
+		return m.OldRead(ctx)
+	case chapter.FieldLastReadPage:
+		return m.OldLastReadPage(ctx)
+	case chapter.FieldReadAt:
+		return m.OldReadAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown Chapter field %s", name)
 }
@@ -1859,6 +2025,27 @@ func (m *ChapterMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetErrorCategory(v)
 		return nil
+	case chapter.FieldRead:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRead(v)
+		return nil
+	case chapter.FieldLastReadPage:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastReadPage(v)
+		return nil
+	case chapter.FieldReadAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetReadAt(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Chapter field %s", name)
 }
@@ -1879,6 +2066,9 @@ func (m *ChapterMutation) AddedFields() []string {
 	if m.addretries != nil {
 		fields = append(fields, chapter.FieldRetries)
 	}
+	if m.addlast_read_page != nil {
+		fields = append(fields, chapter.FieldLastReadPage)
+	}
 	return fields
 }
 
@@ -1895,6 +2085,8 @@ func (m *ChapterMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedPageCount()
 	case chapter.FieldRetries:
 		return m.AddedRetries()
+	case chapter.FieldLastReadPage:
+		return m.AddedLastReadPage()
 	}
 	return nil, false
 }
@@ -1932,6 +2124,13 @@ func (m *ChapterMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddRetries(v)
 		return nil
+	case chapter.FieldLastReadPage:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLastReadPage(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Chapter numeric field %s", name)
 }
@@ -1957,6 +2156,9 @@ func (m *ChapterMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(chapter.FieldNextAttemptAt) {
 		fields = append(fields, chapter.FieldNextAttemptAt)
+	}
+	if m.FieldCleared(chapter.FieldReadAt) {
+		fields = append(fields, chapter.FieldReadAt)
 	}
 	return fields
 }
@@ -1989,6 +2191,9 @@ func (m *ChapterMutation) ClearField(name string) error {
 		return nil
 	case chapter.FieldNextAttemptAt:
 		m.ClearNextAttemptAt()
+		return nil
+	case chapter.FieldReadAt:
+		m.ClearReadAt()
 		return nil
 	}
 	return fmt.Errorf("unknown Chapter nullable field %s", name)
@@ -2036,6 +2241,15 @@ func (m *ChapterMutation) ResetField(name string) error {
 		return nil
 	case chapter.FieldErrorCategory:
 		m.ResetErrorCategory()
+		return nil
+	case chapter.FieldRead:
+		m.ResetRead()
+		return nil
+	case chapter.FieldLastReadPage:
+		m.ResetLastReadPage()
+		return nil
+	case chapter.FieldReadAt:
+		m.ResetReadAt()
 		return nil
 	}
 	return fmt.Errorf("unknown Chapter field %s", name)

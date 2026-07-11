@@ -43,6 +43,17 @@ func (Chapter) Fields() []ent.Field {
 		field.Time("next_attempt_at").Optional().Nillable(),
 		field.String("last_error").Default(""),
 		field.String("error_category").Default(""),
+		// Reading-progress fields (in-app reader). All additive/defaulted so an
+		// existing DB migrates with zero data work: every current chapter reads as
+		// unread, page 0, never-read-at. read/last_read_page are pure owner UI state
+		// (like monitored/completed on Series) — NOT disk/sidecar-represented and
+		// never folder- or download-determining.
+		field.Bool("read").Default(false),
+		field.Int("last_read_page").Default(0),
+		// read_at is nil until the chapter is first marked read; it means "when the
+		// owner marked this chapter read", so SetProgress clears it when read flips
+		// back to false.
+		field.Time("read_at").Optional().Nillable(),
 	}
 }
 

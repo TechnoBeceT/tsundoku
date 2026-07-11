@@ -54,6 +54,7 @@ export interface MatchDiskProviderPayload {
 
 function mapChapter(dto: ChapterDTO): Chapter {
   return {
+    id: dto.id,
     chapterKey: dto.chapterKey,
     number: dto.number,
     name: dto.name,

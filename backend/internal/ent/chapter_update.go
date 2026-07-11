@@ -277,6 +277,61 @@ func (_u *ChapterUpdate) SetNillableErrorCategory(v *string) *ChapterUpdate {
 	return _u
 }
 
+// SetRead sets the "read" field.
+func (_u *ChapterUpdate) SetRead(v bool) *ChapterUpdate {
+	_u.mutation.SetRead(v)
+	return _u
+}
+
+// SetNillableRead sets the "read" field if the given value is not nil.
+func (_u *ChapterUpdate) SetNillableRead(v *bool) *ChapterUpdate {
+	if v != nil {
+		_u.SetRead(*v)
+	}
+	return _u
+}
+
+// SetLastReadPage sets the "last_read_page" field.
+func (_u *ChapterUpdate) SetLastReadPage(v int) *ChapterUpdate {
+	_u.mutation.ResetLastReadPage()
+	_u.mutation.SetLastReadPage(v)
+	return _u
+}
+
+// SetNillableLastReadPage sets the "last_read_page" field if the given value is not nil.
+func (_u *ChapterUpdate) SetNillableLastReadPage(v *int) *ChapterUpdate {
+	if v != nil {
+		_u.SetLastReadPage(*v)
+	}
+	return _u
+}
+
+// AddLastReadPage adds value to the "last_read_page" field.
+func (_u *ChapterUpdate) AddLastReadPage(v int) *ChapterUpdate {
+	_u.mutation.AddLastReadPage(v)
+	return _u
+}
+
+// SetReadAt sets the "read_at" field.
+func (_u *ChapterUpdate) SetReadAt(v time.Time) *ChapterUpdate {
+	_u.mutation.SetReadAt(v)
+	return _u
+}
+
+// SetNillableReadAt sets the "read_at" field if the given value is not nil.
+func (_u *ChapterUpdate) SetNillableReadAt(v *time.Time) *ChapterUpdate {
+	if v != nil {
+		_u.SetReadAt(*v)
+	}
+	return _u
+}
+
+// ClearReadAt clears the value of the "read_at" field.
+func (_u *ChapterUpdate) ClearReadAt() *ChapterUpdate {
+	_u.mutation.ClearReadAt()
+	return _u
+}
+
 // SetSeries sets the "series" edge to the Series entity.
 func (_u *ChapterUpdate) SetSeries(v *Series) *ChapterUpdate {
 	return _u.SetSeriesID(v.ID)
@@ -429,6 +484,21 @@ func (_u *ChapterUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.ErrorCategory(); ok {
 		_spec.SetField(chapter.FieldErrorCategory, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Read(); ok {
+		_spec.SetField(chapter.FieldRead, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.LastReadPage(); ok {
+		_spec.SetField(chapter.FieldLastReadPage, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedLastReadPage(); ok {
+		_spec.AddField(chapter.FieldLastReadPage, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ReadAt(); ok {
+		_spec.SetField(chapter.FieldReadAt, field.TypeTime, value)
+	}
+	if _u.mutation.ReadAtCleared() {
+		_spec.ClearField(chapter.FieldReadAt, field.TypeTime)
 	}
 	if _u.mutation.SeriesCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -754,6 +824,61 @@ func (_u *ChapterUpdateOne) SetNillableErrorCategory(v *string) *ChapterUpdateOn
 	return _u
 }
 
+// SetRead sets the "read" field.
+func (_u *ChapterUpdateOne) SetRead(v bool) *ChapterUpdateOne {
+	_u.mutation.SetRead(v)
+	return _u
+}
+
+// SetNillableRead sets the "read" field if the given value is not nil.
+func (_u *ChapterUpdateOne) SetNillableRead(v *bool) *ChapterUpdateOne {
+	if v != nil {
+		_u.SetRead(*v)
+	}
+	return _u
+}
+
+// SetLastReadPage sets the "last_read_page" field.
+func (_u *ChapterUpdateOne) SetLastReadPage(v int) *ChapterUpdateOne {
+	_u.mutation.ResetLastReadPage()
+	_u.mutation.SetLastReadPage(v)
+	return _u
+}
+
+// SetNillableLastReadPage sets the "last_read_page" field if the given value is not nil.
+func (_u *ChapterUpdateOne) SetNillableLastReadPage(v *int) *ChapterUpdateOne {
+	if v != nil {
+		_u.SetLastReadPage(*v)
+	}
+	return _u
+}
+
+// AddLastReadPage adds value to the "last_read_page" field.
+func (_u *ChapterUpdateOne) AddLastReadPage(v int) *ChapterUpdateOne {
+	_u.mutation.AddLastReadPage(v)
+	return _u
+}
+
+// SetReadAt sets the "read_at" field.
+func (_u *ChapterUpdateOne) SetReadAt(v time.Time) *ChapterUpdateOne {
+	_u.mutation.SetReadAt(v)
+	return _u
+}
+
+// SetNillableReadAt sets the "read_at" field if the given value is not nil.
+func (_u *ChapterUpdateOne) SetNillableReadAt(v *time.Time) *ChapterUpdateOne {
+	if v != nil {
+		_u.SetReadAt(*v)
+	}
+	return _u
+}
+
+// ClearReadAt clears the value of the "read_at" field.
+func (_u *ChapterUpdateOne) ClearReadAt() *ChapterUpdateOne {
+	_u.mutation.ClearReadAt()
+	return _u
+}
+
 // SetSeries sets the "series" edge to the Series entity.
 func (_u *ChapterUpdateOne) SetSeries(v *Series) *ChapterUpdateOne {
 	return _u.SetSeriesID(v.ID)
@@ -936,6 +1061,21 @@ func (_u *ChapterUpdateOne) sqlSave(ctx context.Context) (_node *Chapter, err er
 	}
 	if value, ok := _u.mutation.ErrorCategory(); ok {
 		_spec.SetField(chapter.FieldErrorCategory, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Read(); ok {
+		_spec.SetField(chapter.FieldRead, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.LastReadPage(); ok {
+		_spec.SetField(chapter.FieldLastReadPage, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedLastReadPage(); ok {
+		_spec.AddField(chapter.FieldLastReadPage, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ReadAt(); ok {
+		_spec.SetField(chapter.FieldReadAt, field.TypeTime, value)
+	}
+	if _u.mutation.ReadAtCleared() {
+		_spec.ClearField(chapter.FieldReadAt, field.TypeTime)
 	}
 	if _u.mutation.SeriesCleared() {
 		edge := &sqlgraph.EdgeSpec{

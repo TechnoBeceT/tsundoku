@@ -16,6 +16,7 @@ import type { Chapter, SeriesDetail as SeriesDetailModel } from './seriesDetail.
 import { categoryOptions, richSeries } from '../../fixtures/seriesDetail'
 
 const supersededChapter: Chapter = {
+  id: 'chapter-0003-1',
   chapterKey: 'ch-0003.1',
   number: 3.1,
   name: 'It’s Like a Game (part 2)',

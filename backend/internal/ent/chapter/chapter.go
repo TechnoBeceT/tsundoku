@@ -41,6 +41,12 @@ const (
 	FieldLastError = "last_error"
 	// FieldErrorCategory holds the string denoting the error_category field in the database.
 	FieldErrorCategory = "error_category"
+	// FieldRead holds the string denoting the read field in the database.
+	FieldRead = "read"
+	// FieldLastReadPage holds the string denoting the last_read_page field in the database.
+	FieldLastReadPage = "last_read_page"
+	// FieldReadAt holds the string denoting the read_at field in the database.
+	FieldReadAt = "read_at"
 	// EdgeSeries holds the string denoting the series edge name in mutations.
 	EdgeSeries = "series"
 	// EdgeSatisfiedBy holds the string denoting the satisfied_by edge name in mutations.
@@ -79,6 +85,9 @@ var Columns = []string{
 	FieldNextAttemptAt,
 	FieldLastError,
 	FieldErrorCategory,
+	FieldRead,
+	FieldLastReadPage,
+	FieldReadAt,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -100,6 +109,10 @@ var (
 	DefaultLastError string
 	// DefaultErrorCategory holds the default value on creation for the "error_category" field.
 	DefaultErrorCategory string
+	// DefaultRead holds the default value on creation for the "read" field.
+	DefaultRead bool
+	// DefaultLastReadPage holds the default value on creation for the "last_read_page" field.
+	DefaultLastReadPage int
 	// DefaultID holds the default value on creation for the "id" field.
 	DefaultID func() uuid.UUID
 )
@@ -207,6 +220,21 @@ func ByLastError(opts ...sql.OrderTermOption) OrderOption {
 // ByErrorCategory orders the results by the error_category field.
 func ByErrorCategory(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldErrorCategory, opts...).ToFunc()
+}
+
+// ByRead orders the results by the read field.
+func ByRead(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRead, opts...).ToFunc()
+}
+
+// ByLastReadPage orders the results by the last_read_page field.
+func ByLastReadPage(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLastReadPage, opts...).ToFunc()
+}
+
+// ByReadAt orders the results by the read_at field.
+func ByReadAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldReadAt, opts...).ToFunc()
 }
 
 // BySeriesField orders the results by series field.

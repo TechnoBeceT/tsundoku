@@ -38,6 +38,9 @@ var (
 		{Name: "next_attempt_at", Type: field.TypeTime, Nullable: true},
 		{Name: "last_error", Type: field.TypeString, Default: ""},
 		{Name: "error_category", Type: field.TypeString, Default: ""},
+		{Name: "read", Type: field.TypeBool, Default: false},
+		{Name: "last_read_page", Type: field.TypeInt, Default: 0},
+		{Name: "read_at", Type: field.TypeTime, Nullable: true},
 		{Name: "satisfied_by_provider_id", Type: field.TypeUUID, Nullable: true},
 		{Name: "series_id", Type: field.TypeUUID},
 	}
@@ -49,13 +52,13 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "chapters_series_providers_satisfied_by",
-				Columns:    []*schema.Column{ChaptersColumns[12]},
+				Columns:    []*schema.Column{ChaptersColumns[15]},
 				RefColumns: []*schema.Column{SeriesProvidersColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
 			{
 				Symbol:     "chapters_series_chapters",
-				Columns:    []*schema.Column{ChaptersColumns[13]},
+				Columns:    []*schema.Column{ChaptersColumns[16]},
 				RefColumns: []*schema.Column{SeriesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -64,7 +67,7 @@ var (
 			{
 				Name:    "chapter_series_id_chapter_key",
 				Unique:  true,
-				Columns: []*schema.Column{ChaptersColumns[13], ChaptersColumns[1]},
+				Columns: []*schema.Column{ChaptersColumns[16], ChaptersColumns[1]},
 			},
 		},
 	}

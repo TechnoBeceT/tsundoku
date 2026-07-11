@@ -8,6 +8,7 @@ package series
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -132,6 +133,45 @@ func validateDeleteFiles(raw string) (bool, error) {
 	default:
 		return false, echo.NewHTTPError(http.StatusBadRequest, "deleteFiles must be true or false")
 	}
+}
+
+// validatePageIndex parses the :n page-index path param for the reader page-bytes
+// endpoint. It must be a non-negative integer; a non-integer or negative value
+// yields a 400. An in-range-but-too-large index is NOT a validation error — the
+// service maps it to a 404 via disk.ErrPageOutOfRange, because how many pages a
+// chapter has is data, not request shape.
+func validatePageIndex(raw string) (int, error) {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid page index")
+	}
+	return n, nil
+}
+
+// ProgressRequest is the PATCH /api/chapters/{id}/progress body. LastReadPage is
+// the 0-based index of the last page the owner viewed; Read marks the chapter
+// fully read. Both are pointers so an omitted field is a 400 rather than a silent
+// default — an unset Read must not read as "not read" and an unset page must not
+// silently reset progress to 0.
+type ProgressRequest struct {
+	LastReadPage *int  `json:"lastReadPage"`
+	Read         *bool `json:"read"`
+}
+
+// validateProgress validates the progress PATCH body: both fields must be present
+// and lastReadPage must be >= 0. Returns (lastReadPage, read) ready for the
+// service, or a 400 echo.HTTPError.
+func validateProgress(req ProgressRequest) (lastReadPage int, read bool, err error) {
+	if req.LastReadPage == nil {
+		return 0, false, echo.NewHTTPError(http.StatusBadRequest, "lastReadPage is required")
+	}
+	if req.Read == nil {
+		return 0, false, echo.NewHTTPError(http.StatusBadRequest, "read is required")
+	}
+	if *req.LastReadPage < 0 {
+		return 0, false, echo.NewHTTPError(http.StatusBadRequest, "lastReadPage must be >= 0")
+	}
+	return *req.LastReadPage, *req.Read, nil
 }
 
 // SetMetadataSourceRequest is the PATCH /api/series/{id}/metadata-source request body.

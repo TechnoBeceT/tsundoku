@@ -46,6 +46,12 @@ type Chapter struct {
 	LastError string `json:"last_error,omitempty"`
 	// ErrorCategory holds the value of the "error_category" field.
 	ErrorCategory string `json:"error_category,omitempty"`
+	// Read holds the value of the "read" field.
+	Read bool `json:"read,omitempty"`
+	// LastReadPage holds the value of the "last_read_page" field.
+	LastReadPage int `json:"last_read_page,omitempty"`
+	// ReadAt holds the value of the "read_at" field.
+	ReadAt *time.Time `json:"read_at,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ChapterQuery when eager-loading is set.
 	Edges        ChapterEdges `json:"edges"`
@@ -92,13 +98,15 @@ func (*Chapter) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case chapter.FieldSatisfiedByProviderID:
 			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
+		case chapter.FieldRead:
+			values[i] = new(sql.NullBool)
 		case chapter.FieldNumber:
 			values[i] = new(sql.NullFloat64)
-		case chapter.FieldSatisfiedImportance, chapter.FieldPageCount, chapter.FieldRetries:
+		case chapter.FieldSatisfiedImportance, chapter.FieldPageCount, chapter.FieldRetries, chapter.FieldLastReadPage:
 			values[i] = new(sql.NullInt64)
 		case chapter.FieldChapterKey, chapter.FieldState, chapter.FieldFilename, chapter.FieldLastError, chapter.FieldErrorCategory:
 			values[i] = new(sql.NullString)
-		case chapter.FieldDownloadDate, chapter.FieldNextAttemptAt:
+		case chapter.FieldDownloadDate, chapter.FieldNextAttemptAt, chapter.FieldReadAt:
 			values[i] = new(sql.NullTime)
 		case chapter.FieldID, chapter.FieldSeriesID:
 			values[i] = new(uuid.UUID)
@@ -207,6 +215,25 @@ func (_m *Chapter) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ErrorCategory = value.String
 			}
+		case chapter.FieldRead:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field read", values[i])
+			} else if value.Valid {
+				_m.Read = value.Bool
+			}
+		case chapter.FieldLastReadPage:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field last_read_page", values[i])
+			} else if value.Valid {
+				_m.LastReadPage = int(value.Int64)
+			}
+		case chapter.FieldReadAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field read_at", values[i])
+			} else if value.Valid {
+				_m.ReadAt = new(time.Time)
+				*_m.ReadAt = value.Time
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -303,6 +330,17 @@ func (_m *Chapter) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("error_category=")
 	builder.WriteString(_m.ErrorCategory)
+	builder.WriteString(", ")
+	builder.WriteString("read=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Read))
+	builder.WriteString(", ")
+	builder.WriteString("last_read_page=")
+	builder.WriteString(fmt.Sprintf("%v", _m.LastReadPage))
+	builder.WriteString(", ")
+	if v := _m.ReadAt; v != nil {
+		builder.WriteString("read_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteByte(')')
 	return builder.String()
 }
