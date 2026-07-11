@@ -148,6 +148,12 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 // relabel window opens, DetectUpgrades (strict `>`) could flag them mid-relabel
 // and re-download onto a filename this merge is renaming (CBZ collision). So at
 // entry we DB-park liveSP at importance 0 (<= any watermark) BEFORE relabelling,
+// which the upgrade engine honours: importance 0 is the PARK SENTINEL, and
+// download.effectiveSatisfiedImportance deliberately refuses to heal a chapter's
+// satisfied_importance down to a parked provider's 0 (it falls back to the frozen
+// watermark) — without that carve-out the heal would drop the watermark to 0 and let
+// any inferior sibling source out-rank it and DOWNGRADE the chapter mid-merge. Keep
+// the two sides in step: never hand a real rank the value 0.
 // let commitMatch elevate it to targetImportance atomically with the re-point on
 // success, and RESTORE its original importance on any failure. For the
 // MatchDiskProvider / merge-at-attach callers liveSP is already at 0 (parked by

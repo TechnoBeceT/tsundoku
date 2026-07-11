@@ -164,6 +164,49 @@ func TestDetectUpgrades_RemovedSatisfierKeepsFrozenWatermark(t *testing.T) {
 	}
 }
 
+// TestDetectUpgrades_ParkedSatisfierIsNotHealedDown protects library's
+// importance-PARK invariant. library.mergeDiskIntoLive / attachRealSource DB-park a
+// live provider at importance 0 for the whole (long, NFS-bound) relabel window and
+// rely on "0 <= any watermark ⇒ DetectUpgrades never fires" to keep the chapters put.
+//
+// Healing the watermark to the satisfier's CURRENT importance must therefore NOT
+// apply to a PARKED (importance 0) satisfier: healing it down to 0 would let ANY
+// inferior sibling source (importance >= 1) strictly out-rank the chapter and
+// DOWNGRADE it to the worse source — permanently, if the merge then rolls back with
+// the provider still parked.
+//
+// Fixture: source L (40) satisfies the chapter (watermark 40) and is then parked at
+// 0; inferior sibling M (20) carries the same key. Nothing may be flagged, and the
+// watermark must stay frozen at 40.
+func TestDetectUpgrades_ParkedSatisfierIsNotHealedDown(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	s := client.Series.Create().SetTitle("Parked Series").SetSlug("parked-series").SaveX(ctx)
+	spLive := seedSource(ctx, t, client, s, "prov-live", 40, "ch-park")
+	seedSource(ctx, t, client, s, "prov-inferior", 20, "ch-park")
+	ch := seedDownloadedChapter(ctx, t, client, s, "ch-park", &spLive.ID, 40)
+
+	// The library merge parks the satisfying provider at 0 for the relabel window.
+	client.SeriesProvider.UpdateOneID(spLive.ID).SetImportance(0).ExecX(ctx)
+
+	n, err := download.DetectUpgrades(ctx, client, 3)
+	if err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("DetectUpgrades: want 0 flagged (satisfier is PARKED at 0 — an inferior source must never out-rank it), got %d", n)
+	}
+
+	after := client.Chapter.GetX(ctx, ch.ID)
+	if after.State != entchapter.StateDownloaded {
+		t.Errorf("state: want downloaded (no downgrade to the inferior source), got %s", after.State)
+	}
+	if after.SatisfiedImportance == nil || *after.SatisfiedImportance != 40 {
+		t.Errorf("satisfied_importance: want 40 (frozen — must NOT be healed down to the park sentinel 0), got %s", watermarkOf(after))
+	}
+}
+
 // TestDetectUpgrades_PromotedDifferentSourceStillUpgrades pins the ordinary
 // promotion path (unchanged by the healing fix): the satisfying source sits at its
 // recorded importance and a DIFFERENT source outranks it ⇒ flagged.

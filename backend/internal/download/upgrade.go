@@ -115,11 +115,22 @@ func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Se
 // at, so it goes stale the moment the owner re-ranks the sources. The truth, while
 // the satisfying source is still attached, is that source's CURRENT importance:
 //
-//   - satisfied_by SET (edge loaded): the source's current importance wins. When it
-//     differs from the stored snapshot the column is HEALED to it — that is what
-//     unblocks a chapter whose satisfying source was DEMOTED (the frozen, too-high
-//     snapshot otherwise out-ranks every real candidate and refuses every upgrade,
-//     forever), and it converges the column on the next scan with no backfill.
+//   - satisfied_by SET at a REAL importance (>= 1): the source's current importance
+//     wins. When it differs from the stored snapshot the column is HEALED to it —
+//     that is what unblocks a chapter whose satisfying source was DEMOTED (the
+//     frozen, too-high snapshot otherwise out-ranks every real candidate and refuses
+//     every upgrade, forever), and it converges the column on the next scan with no
+//     backfill.
+//   - satisfied_by SET at importance 0 — THE PARK SENTINEL: 0 is not a rank, it is
+//     the marker library's Match/Dedup merge writes while it DB-parks a live provider
+//     for the whole relabel window (see library.mergeDiskIntoLive / attachRealSource:
+//     the no-redownload invariant is literally "0 <= any watermark, so DetectUpgrades
+//     never fires"). Healing the watermark DOWN to 0 would defeat that park and let
+//     any inferior sibling source (importance >= 1) out-rank the chapter and DOWNGRADE
+//     it mid-merge. So a parked satisfier is treated as "no current importance" and the
+//     FROZEN watermark guards. Safe to reserve: series.normalizeRanks emits multiples of
+//     importanceStep (min 10), handler/library rejects importance < 1, and disk-origin
+//     providers are importance 1 — no ranked provider is legitimately 0.
 //   - satisfied_by NULL: the source was REMOVED by the owner (series.RemoveProvider
 //     deliberately clears satisfied_by and KEEPS the watermark). There is no current
 //     importance to read, so the FROZEN watermark still guards — it is precisely what
@@ -128,29 +139,37 @@ func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Se
 //
 // The caller must have eager-loaded the satisfied_by edge (detectUpgrades does so
 // once for the whole scan — no per-chapter query). ch.SatisfiedImportance must be
-// non-nil. Returns the effective importance, or an error if the heal write fails.
-func effectiveSatisfiedImportance(ctx context.Context, client *ent.Client, ch *ent.Chapter) (int, error) {
+// non-nil. A heal-write failure is LOGGED AND SKIPPED (the frozen watermark is used
+// for this chapter, exactly as before the heal existed) — mirroring the neighbouring
+// candidate-ranking failure, so one bad row-update never aborts the whole scan.
+func effectiveSatisfiedImportance(ctx context.Context, client *ent.Client, ch *ent.Chapter) int {
 	frozen := *ch.SatisfiedImportance
 
-	// Also covers the defensive "id set but edge missing" case (a broken FK): fall
-	// back to the frozen watermark rather than mis-ranking the chapter.
+	// sp == nil also covers the defensive "id set but edge missing" case (a broken
+	// FK): fall back to the frozen watermark rather than mis-ranking the chapter.
 	sp := ch.Edges.SatisfiedBy
-	if sp == nil || sp.Importance == frozen {
-		return frozen, nil
+	if sp == nil || sp.Importance == 0 || sp.Importance == frozen {
+		return frozen
 	}
 
 	if err := client.Chapter.UpdateOneID(ch.ID).
 		SetSatisfiedImportance(sp.Importance).
 		Exec(ctx); err != nil {
-		return 0, fmt.Errorf("download.DetectUpgrades: heal satisfied_importance for chapter %s: %w", ch.ID, err)
+		slog.WarnContext(ctx, "download.DetectUpgrades: could not heal stale satisfied_importance — using the frozen watermark for this chapter",
+			"chapter_id", ch.ID,
+			"frozen_importance", frozen,
+			"current_importance", sp.Importance,
+			"err", err,
+		)
+		return frozen
 	}
-	return sp.Importance, nil
+	return sp.Importance
 }
 
 // detectUpgradeForChapter evaluates a single chapter and transitions it to
 // upgrade_available when a strictly higher-importance provider exists.
 // Returns 1 if flagged, 0 if skipped or unchanged, and a non-nil error only
-// for hard failures (heal / state transition errors) that should abort the scan.
+// for hard failures (state transition errors) that should abort the scan.
 func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
 	// Defensive path: satisfied_importance should always be set for a downloaded
 	// chapter (a successful download always writes it). Skip to avoid a nil-deref.
@@ -163,11 +182,9 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 	}
 
 	// The bar an upgrade must beat — the satisfying source's CURRENT importance
-	// (healing a stale snapshot), or the frozen watermark when it was removed.
-	effective, err := effectiveSatisfiedImportance(ctx, client, ch)
-	if err != nil {
-		return 0, err
-	}
+	// (healing a stale snapshot), or the frozen watermark when that source was
+	// removed or is PARKED at 0 by a library merge.
+	effective := effectiveSatisfiedImportance(ctx, client, ch)
 
 	best, err := bestUpgradeCandidate(ctx, client, gate, ch, maxRetries, now)
 	if err != nil {
