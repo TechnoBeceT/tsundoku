@@ -5,38 +5,32 @@ import HealthBadge from '../ui/HealthBadge.vue'
 import ReorderControl from '../ui/ReorderControl.vue'
 import type { MoveDirection } from '../ui/controls.types'
 import type { Provider } from '../screens/seriesDetail.types'
-import type { ScanlatorCoverage } from '../screens/import.types'
 
 /**
  * ProviderRow — one ranked source in the Series-Detail "Sources" list: a
  * `ReorderControl` rank stepper, the source name (+ a PREFERRED chip for rank 1,
  * or an UNLINKED chip for a disk-origin group), the language/scanlator/
- * importance meta line, a chapter-count note, a `HealthBadge` with the
+ * importance meta line, the source's chapter coverage, a `HealthBadge` with the
  * chapters-behind note, the synced/newest timestamps, an optional last-error,
- * a LAZY per-source coverage affordance, and the row actions (a quiet Remove
- * button, plus — for an unlinked disk-origin group only — a "Match to
- * source" button). Presentation-only — the source + its rank arrive via
- * props; the row emits `move` (re-rank), `remove`, `match` (opens
- * `MatchDiskProviderDialog` for this provider), and `loadCoverage` (the
- * "Show coverage" click).
+ * and the row actions (a quiet Remove button, plus — for an unlinked disk-origin
+ * group only — a "Match to source" button). Presentation-only — the source + its
+ * rank arrive via props; the row emits `move` (re-rank), `remove`, and `match`
+ * (opens `MatchDiskProviderDialog` for this provider).
  *
  * `provider.linked` is false for a disk-origin group created by library
- * import (no real Suwayomi source attached — `suwayomi_id=0` on the backend);
- * `chapterCount` is shown for every row so the owner can see how many
- * chapters an unlinked group carries before matching it.
+ * import (no real Suwayomi source attached — `suwayomi_id=0` on the backend).
  *
- * Coverage affordance (LAZY — never fetched by this component; it only
- * displays whatever `coverage` the parent hands it and emits `loadCoverage`
- * on click): a provider with `mangaId <= 0` (unlinked disk provider — nothing
- * to fetch) renders no affordance at all. Otherwise: `coverage === undefined`
- * (never fetched) shows a "Show coverage" button; once `coverage` is an
- * array or `null` (fetch resolved), the button is replaced by either the
- * matching scanlator's `{count} chapters · {ranges}` or, if there is no
- * match or the fetch failed (`null`), "Coverage unavailable". The match rule
- * mirrors the Adopt wizard's untagged-scanlator convention (`useSourceConfigure`):
- * this row's `scanlator === ''` matches the coverage entry whose `scanlator`
- * equals the row's `providerName` (the backend's untagged/source-name
- * bucket); a non-empty `scanlator` matches by exact name.
+ * COVERAGE — the two numbers say different things, and the row must never blur
+ * them (a bare "56 chapters" once read as the source's offering and misled a
+ * live diagnosis):
+ *   - `feedCount` / `feedRanges` = what this source OFFERS ("270 chapters ·
+ *     1-269"), straight from the stored ProviderChapter feed on the series-detail
+ *     response. NO click, NO fetch — in particular no live ping to the source
+ *     (we already hold the feed; pinging for it is needless ban risk).
+ *   - `chapterCount` = how many of the owner's downloaded files this source
+ *     currently SUPPLIES ("supplies 56").
+ * A provider with an empty feed (`feedCount === 0` — e.g. an unlinked disk-origin
+ * group) shows "No chapter feed" rather than a phantom "0 chapters".
  */
 const props = defineProps<{
   /** The source to render. */
@@ -53,14 +47,6 @@ const props = defineProps<{
   saving?: boolean
   /** True when this row is an unlinked disk provider with a mergeable linked twin (drift). Renders a DUPLICATE chip. */
   duplicate?: boolean
-  /**
-   * This row's per-scanlator coverage breakdown: `undefined` = never fetched
-   * (shows the "Show coverage" button), `null` = fetch attempted and failed
-   * (shows "Coverage unavailable"), an array = the loaded breakdown (shows
-   * the matching scanlator's count/ranges, or "Coverage unavailable" if none
-   * matches). Never fetched by this component — see `loadCoverage`.
-   */
-  coverage?: ScanlatorCoverage[] | null
 }>()
 
 const emit = defineEmits<{
@@ -70,21 +56,19 @@ const emit = defineEmits<{
   remove: []
   /** The "Match to source" button was pressed (unlinked groups only). */
   match: []
-  /** The "Show coverage" button was pressed — the parent should fetch this row's coverage. */
-  loadCoverage: []
 }>()
 
 // Uppercased language code shown in the language Chip (e.g. "EN").
 const language = computed(() => props.provider.language.toUpperCase())
 
-// The coverage entry for THIS row's scanlator, or null when not (yet) resolvable
-// (coverage not loaded, the fetch failed, or no scanlator in the breakdown matches).
-const coverageMatch = computed<ScanlatorCoverage | null>(() => {
-  if (!props.coverage) return null
-  const match = props.coverage.find((sc) =>
-    props.provider.scanlator === '' ? sc.scanlator === props.provider.providerName : sc.scanlator === props.provider.scanlator,
-  )
-  return match ?? null
+// What the SOURCE offers: "270 chapters · 1-269" (ranges omitted when the feed
+// carries no chapter numbers). Empty feed → null, so the row can say so plainly
+// instead of rendering "0 chapters".
+const offering = computed<string | null>(() => {
+  const { feedCount, feedRanges } = props.provider
+  if (feedCount <= 0) return null
+  const label = `${feedCount} chapter${feedCount === 1 ? '' : 's'}`
+  return feedRanges ? `${label} · ${feedRanges}` : label
 })
 
 // Relative-time label for the sync/newest timestamps (null → "never").
@@ -121,7 +105,11 @@ const rel = (iso: string | null): string => {
         <Chip variant="language">{{ language }}</Chip>
         <span v-if="provider.scanlator">{{ provider.scanlator }}</span>
         <span>importance {{ provider.importance }}</span>
-        <span>{{ provider.chapterCount }} chapter{{ provider.chapterCount === 1 ? '' : 's' }}</span>
+      </div>
+      <div class="source__coverage">
+        <span v-if="offering" class="source__offering">{{ offering }}</span>
+        <span v-else class="source__offering source__offering--none">No chapter feed</span>
+        <span class="source__supplies">supplies {{ provider.chapterCount }}</span>
       </div>
       <div v-if="!provider.linked" class="source__unlinked-note">
         Imported from disk — no real source attached. Match it to link these chapters without re-downloading.
@@ -129,21 +117,6 @@ const rel = (iso: string | null): string => {
       <div class="source__healthrow">
         <HealthBadge :health="provider.health" />
         <span v-if="provider.chaptersBehind > 0" class="source__behind">{{ provider.chaptersBehind }} behind</span>
-      </div>
-      <div v-if="provider.mangaId > 0" class="source__coverage">
-        <button
-          v-if="coverage === undefined"
-          type="button"
-          class="btn-coverage"
-          :disabled="saving"
-          @click="emit('loadCoverage')"
-        >
-          Show coverage
-        </button>
-        <span v-else-if="coverageMatch" class="source__coverage-text">
-          {{ coverageMatch.count }} chapter{{ coverageMatch.count === 1 ? '' : 's' }} · {{ coverageMatch.ranges }}
-        </span>
-        <span v-else class="source__coverage-unavailable">Coverage unavailable</span>
       </div>
       <div class="source__times">
         <span>Synced {{ rel(provider.lastSyncedAt) }}</span>
@@ -222,35 +195,28 @@ const rel = (iso: string | null): string => {
 }
 
 .source__coverage {
-  margin-top: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 11.5px;
 }
 
-.btn-coverage {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--accentBright);
-  font-size: 11.5px;
+/* What the SOURCE offers — the headline number, so it can't be misread as the
+   satisfied count sitting next to it. */
+.source__offering {
+  color: var(--text);
   font-weight: var(--weight-bold);
-  cursor: pointer;
 }
 
-.btn-coverage:hover {
-  text-decoration: underline;
+.source__offering--none {
+  color: var(--faint);
+  font-weight: var(--weight-regular);
 }
 
-.btn-coverage:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.source__coverage-text {
-  font-size: 11.5px;
-  color: var(--muted);
-}
-
-.source__coverage-unavailable {
-  font-size: 11.5px;
+/* How many downloaded files come FROM this source — deliberately quieter. */
+.source__supplies {
   color: var(--faint);
 }
 

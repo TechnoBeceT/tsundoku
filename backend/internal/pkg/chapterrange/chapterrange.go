@@ -1,4 +1,11 @@
-package imports
+// Package chapterrange collapses a set of chapter numbers into contiguous runs and renders them as
+// a human-readable coverage string ("1-90, 92-101"). It is the ONE home for that logic: the import
+// wizard uses it for a source's LIVE per-scanlator breakdown, and the series domain uses it for a
+// provider's STORED ProviderChapter feed. It lives in pkg/ (a pure, dependency-free kernel, like
+// pkg/urlx) so neither domain has to import the other — series must never depend on the
+// import-workflow domain, and a shared copy in both would be the DRY violation this package exists
+// to prevent.
+package chapterrange
 
 import (
 	"math"

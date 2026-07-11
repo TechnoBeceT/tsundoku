@@ -1,6 +1,6 @@
 /**
- * useSeriesDetail — matchDiskProvider (the no-re-download Match action) +
- * loadProviderCoverage (the Sources panel's lazy per-source coverage).
+ * useSeriesDetail — matchDiskProvider (the no-re-download Match action) + the
+ * Sources panel's provider feed (coverage straight from the series response).
  *
  * matchDiskProvider pins:
  *   1. matchDiskProvider(providerId, payload) POSTs
@@ -19,18 +19,14 @@
  * `mutate` wrapper and are exercised indirectly by every screen/dialog test
  * that drives them.
  *
- * loadProviderCoverage pins (the LAZY per-source coverage the Sources panel's
- * "Show coverage" row action drives):
- *   1. It is NEVER called by `refresh()` — `providerCoverage` stays `{}` after
- *      the initial series load, proving the fetch is opt-in only.
- *   2. A provider with `mangaId > 0` fetches
- *      GET /api/sources/{sourceId}/manga/{mangaId}/breakdown and caches the
- *      mapped `ScanlatorCoverage[]` under the provider's id.
- *   3. A second call for the SAME already-cached provider does not re-fetch
- *      (cache guard).
- *   4. A failed fetch caches `null` (never throws, `error` untouched).
- *   5. A provider with `mangaId <= 0` (unlinked disk provider) never fetches
- *      at all.
+ * Provider-feed pins (the Sources panel's coverage, which USED to require a
+ * "Show coverage" click that fired a live source fetch):
+ *   1. `feedCount`/`feedRanges` — what a source OFFERS — are mapped straight off
+ *      the series-detail response, alongside `chapterCount` (what it supplies).
+ *   2. Loading the series makes NO call to
+ *      GET /api/sources/{sourceId}/manga/{mangaId}/breakdown — the coverage the
+ *      panel shows comes from our own DB, never a ping to the source. This is the
+ *      regression guard for the removed lazy fetch.
  *
  * vi.mock is hoisted by Vitest's transform so the apiClient mock is in place
  * before useSeriesDetail.ts is evaluated, regardless of import order here.
@@ -41,7 +37,6 @@ import { useSeriesDetail } from './useSeriesDetail'
 interface Call { method: string, path: string, body?: unknown, params?: unknown }
 let calls: Call[] = []
 let nextMatchOk = true
-let nextBreakdownOk = true
 let nextDedupOk = true
 let nextDedupeFilesOk = true
 
@@ -64,6 +59,8 @@ const initialDetail = {
       linked: false,
       mangaId: 0,
       chapterCount: 8,
+      feedCount: 0,
+      feedRanges: '',
       scanlator: '',
       language: 'en',
       importance: 1,
@@ -78,6 +75,8 @@ const initialDetail = {
       linked: true,
       mangaId: 99,
       chapterCount: 2,
+      feedCount: 270,
+      feedRanges: '1-88, 90-269',
       scanlator: '',
       language: 'en',
       importance: 2,
@@ -116,16 +115,6 @@ vi.mock('~/utils/api/client', () => ({
       calls.push({ method: 'GET', path, params: opts?.params?.path })
       if (path === '/api/series/{id}') {
         return Promise.resolve({ data: initialDetail, error: null, response: new Response() })
-      }
-      if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') {
-        if (!nextBreakdownOk) {
-          return Promise.resolve({ data: null, error: { message: 'breakdown failed' }, response: new Response(null, { status: 502 }) })
-        }
-        return Promise.resolve({
-          data: { total: 2, scanlators: [{ scanlator: 'MangaDex', count: 2, ranges: '1-2' }] },
-          error: null,
-          response: new Response(),
-        })
       }
       // /api/categories
       return Promise.resolve({ data: [], error: null, response: new Response() })
@@ -224,69 +213,35 @@ describe('useSeriesDetail — matchDiskProvider', () => {
   })
 })
 
-describe('useSeriesDetail — loadProviderCoverage (lazy per-source coverage)', () => {
+describe('useSeriesDetail — provider feed (coverage without a source ping)', () => {
   beforeEach(() => {
     calls = []
-    nextBreakdownOk = true
   })
 
-  it('never fetches coverage during refresh() — providerCoverage stays empty after the initial load', async () => {
-    const { providerCoverage, refresh } = useSeriesDetail('series-1')
+  it('maps feedCount/feedRanges (offered) alongside chapterCount (supplied)', async () => {
+    const { series, refresh } = useSeriesDetail('series-1')
     await refresh()
 
-    expect(providerCoverage.value).toEqual({})
-    expect(calls.some((c) => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')).toBe(false)
-  })
-
-  it('fetches and caches the breakdown for a linked provider (mangaId > 0), keyed by provider id', async () => {
-    const { series, providerCoverage, refresh, loadProviderCoverage } = useSeriesDetail('series-1')
-    await refresh()
     const provider = series.value!.providers.find((p) => p.id === 'real-provider-2')!
-
-    await loadProviderCoverage(provider)
-
-    const breakdownCall = calls.find((c) => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
-    expect(breakdownCall).toBeDefined()
-    expect(breakdownCall!.params).toEqual({ sourceId: 'src-2', mangaId: 99 })
-    expect(providerCoverage.value['real-provider-2']).toEqual([{ scanlator: 'MangaDex', count: 2, ranges: '1-2' }])
+    expect(provider.feedCount).toBe(270)
+    expect(provider.feedRanges).toBe('1-88, 90-269')
+    expect(provider.chapterCount).toBe(2)
   })
 
-  it('does not re-fetch a provider whose coverage is already cached', async () => {
-    const { series, providerCoverage, refresh, loadProviderCoverage } = useSeriesDetail('series-1')
+  it('maps an empty feed to 0 / "" (an unlinked disk provider offers nothing)', async () => {
+    const { series, refresh } = useSeriesDetail('series-1')
     await refresh()
-    const provider = series.value!.providers.find((p) => p.id === 'real-provider-2')!
 
-    await loadProviderCoverage(provider)
-    const countAfterFirst = calls.filter((c) => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length
-    await loadProviderCoverage(provider)
-    const countAfterSecond = calls.filter((c) => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length
-
-    expect(countAfterFirst).toBe(1)
-    expect(countAfterSecond).toBe(1)
-    expect(providerCoverage.value['real-provider-2']).toEqual([{ scanlator: 'MangaDex', count: 2, ranges: '1-2' }])
-  })
-
-  it('caches null on a failed fetch — never throws, never touches error', async () => {
-    nextBreakdownOk = false
-    const { series, error, providerCoverage, refresh, loadProviderCoverage } = useSeriesDetail('series-1')
-    await refresh()
-    const provider = series.value!.providers.find((p) => p.id === 'real-provider-2')!
-
-    await expect(loadProviderCoverage(provider)).resolves.toBeUndefined()
-
-    expect(providerCoverage.value['real-provider-2']).toBeNull()
-    expect(error.value).toBeNull()
-  })
-
-  it('never fetches for an unlinked disk provider (mangaId <= 0)', async () => {
-    const { series, providerCoverage, refresh, loadProviderCoverage } = useSeriesDetail('series-1')
-    await refresh()
     const provider = series.value!.providers.find((p) => p.id === 'disk-provider-1')!
+    expect(provider.feedCount).toBe(0)
+    expect(provider.feedRanges).toBe('')
+  })
 
-    await loadProviderCoverage(provider)
+  it('never calls the live per-source breakdown endpoint — coverage comes from the series response', async () => {
+    const { refresh } = useSeriesDetail('series-1')
+    await refresh()
 
     expect(calls.some((c) => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')).toBe(false)
-    expect(providerCoverage.value['disk-provider-1']).toBeUndefined()
   })
 })
 
