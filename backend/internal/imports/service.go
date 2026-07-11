@@ -30,6 +30,7 @@ import (
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/metrics"
+	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -599,7 +600,7 @@ func (s *Service) InspectChapters(ctx context.Context, sourceID string, mangaID 
 // convention — an aggregator source may tag some chapters and leave others
 // untagged, and the untagged ones are attributed to the source itself).
 //
-// Ranges reuses the Task 2 coverage helper (FormatChapterRanges) — the
+// Ranges reuses the shared coverage helper (chapterrange.FormatChapterRanges) — the
 // run-collapsing walk is never duplicated. Only chapters with a non-nil
 // Number contribute to a group's Ranges/Count coverage input; Total counts
 // every chapter regardless.
@@ -647,7 +648,7 @@ func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, mangaID 
 		scanlators = append(scanlators, ScanlatorCoverageDTO{
 			Scanlator: key,
 			Count:     g.count,
-			Ranges:    FormatChapterRanges(g.numbers),
+			Ranges:    chapterrange.FormatChapterRanges(g.numbers),
 		})
 	}
 	sort.Slice(scanlators, func(i, j int) bool {

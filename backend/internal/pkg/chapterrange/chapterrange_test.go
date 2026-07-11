@@ -1,9 +1,9 @@
-package imports_test
+package chapterrange_test
 
 import (
 	"testing"
 
-	"github.com/technobecet/tsundoku/internal/imports"
+	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
 
 // TestFormatChapterRanges covers the headline contiguous-run-collapsing case plus the edge cases:
@@ -67,7 +67,7 @@ func TestFormatChapterRanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := imports.FormatChapterRanges(tc.numbers)
+			got := chapterrange.FormatChapterRanges(tc.numbers)
 			if got != tc.want {
 				t.Errorf("FormatChapterRanges(%v) = %q, want %q", tc.numbers, got, tc.want)
 			}
@@ -83,8 +83,8 @@ func TestChapterRanges(t *testing.T) {
 	t.Run("gapped input splits into runs", func(t *testing.T) {
 		t.Parallel()
 
-		got := imports.ChapterRanges([]float64{1, 2, 5})
-		want := []imports.Range{{From: 1, To: 2}, {From: 5, To: 5}}
+		got := chapterrange.ChapterRanges([]float64{1, 2, 5})
+		want := []chapterrange.Range{{From: 1, To: 2}, {From: 5, To: 5}}
 
 		if len(got) != len(want) {
 			t.Fatalf("ChapterRanges(...) = %v, want %v", got, want)
@@ -99,7 +99,7 @@ func TestChapterRanges(t *testing.T) {
 	t.Run("empty input returns nil", func(t *testing.T) {
 		t.Parallel()
 
-		got := imports.ChapterRanges([]float64{})
+		got := chapterrange.ChapterRanges([]float64{})
 		if got != nil {
 			t.Errorf("ChapterRanges([]) = %v, want nil", got)
 		}

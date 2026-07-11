@@ -12,6 +12,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
 
 // ChapterCounts is the per-series rollup of chapter download state used in list
@@ -86,9 +87,20 @@ type ChapterDTO struct {
 // disk-origin provider (suwayomi_id == 0 — an "unlinked/unknown group" created
 // by library import/reconcile, never a real Suwayomi source) so the FE can list
 // it as a Match candidate. MangaID is the source's Suwayomi manga ID; 0 for
-// unlinked disk-origin providers. ChapterCount is how many of the series' chapters
-// this provider currently satisfies (Chapter.satisfied_by_provider_id == this
-// provider) — the coverage the owner sees before choosing what to match it to.
+// unlinked disk-origin providers.
+//
+// The two chapter numbers on this DTO answer DIFFERENT questions and must never
+// be confused in the UI:
+//   - ChapterCount is how many of the series' chapters this provider currently
+//     SATISFIES (Chapter.satisfied_by_provider_id == this provider) — i.e. how
+//     many of the owner's downloaded files came from here.
+//   - FeedCount / FeedRanges are what this provider OFFERS: the size and the
+//     gap-collapsed span ("1-269") of its stored ProviderChapter feed. Because
+//     ingest filters the feed by scanlator, a (source, scanlator) provider's feed
+//     is exactly that pair's true offering. Both are read straight off the
+//     already-eager-loaded feed rows — surfacing them costs ZERO extra DB queries
+//     and, crucially, ZERO calls to the source (the owner used to have to trigger
+//     a live per-source breakdown fetch to see a number we already hold).
 type ProviderDTO struct {
 	ID               string `json:"id"`
 	Provider         string `json:"provider"`
@@ -99,6 +111,12 @@ type ProviderDTO struct {
 	Linked           bool   `json:"linked"`
 	MangaID          int    `json:"mangaId"`
 	ChapterCount     int    `json:"chapterCount"`
+	// FeedCount is how many chapters this provider OFFERS (its stored
+	// ProviderChapter feed size) — 0 for a provider with no feed.
+	FeedCount int `json:"feedCount"`
+	// FeedRanges is that feed's coverage as a gap-collapsed display string
+	// ("1-90, 92-101"); "" when the feed is empty or carries no chapter numbers.
+	FeedRanges string `json:"feedRanges"`
 	// HasFeed is true when this provider has a non-empty availability feed
 	// (≥1 ProviderChapter). Mirrors the backend drift-merge feed gate so the FE
 	// offers exactly the pairs the backend would merge.
@@ -186,6 +204,10 @@ func chapterDisplayName(name string, number *float64) string {
 // cover_url, else "" (mirroring the series-level SeriesDisplay behaviour so the
 // SPA never fires a cover fetch that would 404). Title is the provider's own
 // title for the series (set at ingest, may be "").
+//
+// FeedCount/FeedRanges/HasFeed are all read from p.Edges.ProviderChapters, which
+// every caller already eager-loads (GetSeries / loadSeriesWithHealthData) — no
+// extra query, no source call.
 func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID, isMetadataSource bool, chapterCount int) ProviderDTO {
 	var coverURL string
 	if p.CoverURL != "" {
@@ -201,6 +223,8 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 		Linked:           p.SuwayomiID != 0,
 		MangaID:          p.SuwayomiID,
 		ChapterCount:     chapterCount,
+		FeedCount:        len(p.Edges.ProviderChapters),
+		FeedRanges:       feedRanges(p),
 		HasFeed:          len(p.Edges.ProviderChapters) > 0,
 		Scanlator:        p.Scanlator,
 		Language:         p.Language,
@@ -211,6 +235,21 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 		LastSyncedAt:     h.LastSyncedAt,
 		LastError:        h.LastError,
 	}
+}
+
+// feedRanges renders one provider's STORED feed (p.Edges.ProviderChapters — the
+// caller must have eager-loaded it) as a gap-collapsed coverage string, e.g.
+// "1-90, 92-101". Only feed rows carrying a chapter number contribute; a feed
+// that is empty (or wholly number-less) yields "" — never a bogus "0-0".
+// Purely in-memory: no DB query and, deliberately, no call to the source.
+func feedRanges(p *ent.SeriesProvider) string {
+	numbers := make([]float64, 0, len(p.Edges.ProviderChapters))
+	for _, pc := range p.Edges.ProviderChapters {
+		if pc.Number != nil {
+			numbers = append(numbers, *pc.Number)
+		}
+	}
+	return chapterrange.FormatChapterRanges(numbers)
 }
 
 // providerChapterCounts tallies, for one loaded series, how many chapters each

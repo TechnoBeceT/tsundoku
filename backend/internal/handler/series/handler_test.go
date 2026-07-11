@@ -44,69 +44,94 @@ func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
 type fakeSuwayomiClient struct {
 	// pageBytes, when set, is called by PageBytes instead of the default stub.
 	pageBytes func(ctx context.Context, url string) ([]byte, string, error)
+	// calls counts EVERY Suwayomi call the server makes through this client.
+	// It is the source-call budget the "no source ping" proofs assert against
+	// (see TestDetailMakesNoSourceCalls). Tests drive requests sequentially, so a
+	// plain counter is safe.
+	calls int
 }
 
 func (f *fakeSuwayomiClient) Sources(ctx context.Context) ([]suwayomi.Source, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) Browse(ctx context.Context, sourceID string, t suwayomi.BrowseType, page int) (suwayomi.BrowseResult, error) {
+	f.calls++
 	return suwayomi.BrowseResult{}, nil
 }
 func (f *fakeSuwayomiClient) FetchChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) MangaChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) ChapterPages(ctx context.Context, chapterID int) ([]string, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) MangaMeta(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
+	f.calls++
 	return suwayomi.Manga{}, nil
 }
 func (f *fakeSuwayomiClient) FetchMangaDetails(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
+	f.calls++
 	return suwayomi.Manga{}, nil
 }
 func (f *fakeSuwayomiClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
+	f.calls++
 	if f.pageBytes != nil {
 		return f.pageBytes(ctx, pageURL)
 	}
 	return nil, "", errors.New("PageBytes: not configured")
 }
 func (f *fakeSuwayomiClient) ServerSettings(ctx context.Context) (suwayomi.SuwayomiSettings, error) {
+	f.calls++
 	return suwayomi.SuwayomiSettings{}, nil
 }
 func (f *fakeSuwayomiClient) SetServerSettings(ctx context.Context, patch suwayomi.SuwayomiSettingsPatch) error {
+	f.calls++
 	return nil
 }
 func (f *fakeSuwayomiClient) Extensions(ctx context.Context) ([]suwayomi.Extension, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) SetExtensionState(ctx context.Context, pkgName string, action suwayomi.ExtensionAction) error {
+	f.calls++
 	return nil
 }
 func (f *fakeSuwayomiClient) FetchExtensions(ctx context.Context) ([]suwayomi.Extension, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) ExtensionRepos(ctx context.Context) ([]string, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) SetExtensionRepos(ctx context.Context, repos []string) error {
+	f.calls++
 	return nil
 }
 func (f *fakeSuwayomiClient) SourcePreferences(ctx context.Context, sourceID string) ([]suwayomi.SourcePreference, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) SetSourcePreference(ctx context.Context, sourceID string, position int, value suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) ExtensionSources(ctx context.Context, pkgName string) ([]suwayomi.Source, error) {
+	f.calls++
 	return nil, nil
 }
 func (f *fakeSuwayomiClient) SetSourceEnabled(ctx context.Context, sourceID string, enabled bool) error {
+	f.calls++
 	return nil
 }
 
