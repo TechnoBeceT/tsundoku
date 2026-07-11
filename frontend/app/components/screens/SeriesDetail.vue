@@ -5,6 +5,7 @@ import type { MoveDirection } from '../ui/controls.types'
 import ChaptersPanel from '../seriesDetail/ChaptersPanel.vue'
 import DeleteSeriesDialog from '../seriesDetail/DeleteSeriesDialog.vue'
 import MetadataSourcePicker from '../seriesDetail/MetadataSourcePicker.vue'
+import ResumeFab from '../seriesDetail/ResumeFab.vue'
 import SeriesHeader from '../seriesDetail/SeriesHeader.vue'
 import SourcesPanel from '../seriesDetail/SourcesPanel.vue'
 import type { Chapter, Provider, SeriesDetail } from './seriesDetail.types'
@@ -31,6 +32,13 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  *
  * Each source's chapter coverage rides the `series` prop itself
  * (`Provider.feedCount` / `feedRanges`) — no coverage fetch, no source call.
+ *
+ * The floating `ResumeFab` ("Start"/"Continue" reading) is driven entirely by
+ * `resumeLabel`: null/"" hides it (nothing downloaded to resume), any other
+ * string renders it with that label. The screen does not compute the resume
+ * target or navigate — it just emits `resume` and lets the page (which already
+ * owns the resume-target math via `useReadingProgress.resumeTarget`) route to
+ * the reader.
  */
 const props = withDefaults(defineProps<{
   /** The series to render (summary fields + chapters + providers). */
@@ -49,6 +57,8 @@ const props = withDefaults(defineProps<{
   dedupeFilesBusy?: boolean
   /** Transient dedup/dedupe-files result message. */
   dedupMessage?: string | null
+  /** "Start"/"Continue" — renders the floating resume button; null/"" hides it (nothing downloaded). */
+  resumeLabel?: string | null
 }>(), {
   saving: false,
   deleteBusy: false,
@@ -56,6 +66,7 @@ const props = withDefaults(defineProps<{
   dedupBusy: false,
   dedupeFilesBusy: false,
   dedupMessage: null,
+  resumeLabel: null,
 })
 
 const emit = defineEmits<{
@@ -85,6 +96,8 @@ const emit = defineEmits<{
   dedupeFiles: []
   /** A chapter's "Read" was clicked — carries the chapter UUID (→ opens the reader). */
   read: [chapterId: string]
+  /** The resume FAB was clicked (→ the page resolves the resume target and opens the reader). */
+  resume: []
 }>()
 
 // ---- Derived data ----------------------------------------------------------
@@ -193,6 +206,8 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
       :error="error"
       @confirm="onConfirmDelete"
     />
+
+    <ResumeFab v-if="resumeLabel" :label="resumeLabel" @click="emit('resume')" />
   </div>
 </template>
 

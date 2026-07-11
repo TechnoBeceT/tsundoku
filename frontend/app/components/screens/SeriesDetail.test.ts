@@ -23,6 +23,9 @@ const supersededChapter: Chapter = {
   state: 'superseded',
   filename: '',
   pageCount: null,
+  read: false,
+  lastReadPage: 0,
+  readAt: null,
 }
 
 function seriesWithSuperseded(): SeriesDetailModel {

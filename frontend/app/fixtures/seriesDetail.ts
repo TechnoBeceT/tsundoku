@@ -18,7 +18,10 @@ const daysAgo = (n: number): string => new Date(Date.now() - n * 86_400_000).toI
 export const categoryOptions: string[] = ['Manga', 'Manhwa', 'Manhua', 'Comic', 'Other']
 
 // A chapter run that walks through all seven download states, plus an unknown
-// (null-number) chapter to prove the "—" placeholders.
+// (null-number) chapter to prove the "—" placeholders. Reader progress: chapter
+// 1 is unread (never opened), chapter 2 is partially read (exercises the resume
+// line); every other chapter carries the not-read defaults (progress is only
+// ever meaningful once a chapter is downloaded).
 const chapters: Chapter[] = [
   {
     id: 'chapter-0001',
@@ -28,6 +31,9 @@ const chapters: Chapter[] = [
     state: 'downloaded',
     filename: '[mangadex][en] Solo Leveling 0001.cbz',
     pageCount: 42,
+    read: false,
+    lastReadPage: 0,
+    readAt: null,
   },
   {
     id: 'chapter-0002',
@@ -37,6 +43,9 @@ const chapters: Chapter[] = [
     state: 'downloaded',
     filename: '[mangadex][en] Solo Leveling 0002.cbz',
     pageCount: 38,
+    read: false,
+    lastReadPage: 15,
+    readAt: null,
   },
   {
     id: 'chapter-0003',
@@ -46,6 +55,9 @@ const chapters: Chapter[] = [
     state: 'upgrade_available',
     filename: '[flame][en] Solo Leveling 0003.cbz',
     pageCount: 40,
+    read: false,
+    lastReadPage: 0,
+    readAt: null,
   },
   {
     id: 'chapter-0004',
@@ -55,6 +67,9 @@ const chapters: Chapter[] = [
     state: 'upgrading',
     filename: '[flame][en] Solo Leveling 0004.cbz',
     pageCount: 41,
+    read: false,
+    lastReadPage: 0,
+    readAt: null,
   },
   {
     id: 'chapter-0005',
@@ -64,6 +79,9 @@ const chapters: Chapter[] = [
     state: 'downloading',
     filename: '',
     pageCount: null,
+    read: false,
+    lastReadPage: 0,
+    readAt: null,
   },
   {
     id: 'chapter-0006',
@@ -73,6 +91,9 @@ const chapters: Chapter[] = [
     state: 'wanted',
     filename: '',
     pageCount: null,
+    read: false,
+    lastReadPage: 0,
+    readAt: null,
   },
   {
     id: 'chapter-0007',
@@ -82,6 +103,9 @@ const chapters: Chapter[] = [
     state: 'failed',
     filename: '',
     pageCount: null,
+    read: false,
+    lastReadPage: 0,
+    readAt: null,
   },
   {
     id: 'chapter-0008',
@@ -91,6 +115,9 @@ const chapters: Chapter[] = [
     state: 'permanently_failed',
     filename: '',
     pageCount: null,
+    read: false,
+    lastReadPage: 0,
+    readAt: null,
   },
   {
     id: 'chapter-0009',
@@ -100,6 +127,9 @@ const chapters: Chapter[] = [
     state: 'wanted',
     filename: '',
     pageCount: null,
+    read: false,
+    lastReadPage: 0,
+    readAt: null,
   },
 ]
 

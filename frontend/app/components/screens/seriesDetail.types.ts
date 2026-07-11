@@ -42,6 +42,12 @@ export interface Chapter {
   filename: string
   /** Page count; null until downloaded. */
   pageCount: number | null
+  /** In-app reader progress: true once the owner has marked the chapter fully read. */
+  read: boolean
+  /** In-app reader progress: 0-based index of the last page the owner viewed. */
+  lastReadPage: number
+  /** ISO timestamp the chapter was marked read; null until then (cleared when `read` flips back to false). */
+  readAt: string | null
 }
 
 /**
