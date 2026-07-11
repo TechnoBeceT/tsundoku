@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { useReader } from '~/composables/useReader'
+import { useReader, type ScrollRequest } from '~/composables/useReader'
 import { useReadingProgress } from '~/composables/useReadingProgress'
 import { useReaderSettings, readerStyleVars } from '~/composables/useReaderSettings'
 import { useFullscreen } from '~/composables/useFullscreen'
@@ -35,13 +35,24 @@ const route = useRoute()
 const id = route.params.id as string
 const chapterId = route.params.chapterId as string
 
-const { chapters, mountedChapters, pageUrl, onNearTail, loading, error, seriesTitle } = useReader(id, chapterId)
+const {
+  chapters, mountedChapters, pageUrl, onNearTail, onNearHead, hasPrev, setCurrentChapter, loading, error, seriesTitle,
+} = useReader(id, chapterId)
 const { record, markRead, resumeTarget, flush } = useReadingProgress(chapters, chapterId)
 const { settings, update } = useReaderSettings()
 
-// Resume anchor: recomputed from the loaded chapters; ReaderStrip applies it once
-// on mount (it only mounts after chapters load, so the target is ready by then).
+// Resume anchor: recomputed from the loaded chapters.
 const resume = computed(() => resumeTarget(chapters.value))
+
+// The strip's initial scroll-to-target — the resume anchor, published once as a
+// token-1 request the first time it resolves to a real chapter (ReaderStrip only
+// mounts after chapters load, so this is ready by the time it renders). A future
+// chapter-jump feature will need to merge this with `useReader.scrollRequest`
+// (its own, separately-numbered token space) into one prop value.
+const scrollRequest = computed<ScrollRequest | null>(() => {
+  const r = resume.value
+  return r.chapterId ? { chapterId: r.chapterId, page: r.page, token: 1 } : null
+})
 
 // The CSS custom properties the strip reads for padding / fit / gaps. Inherited
 // by the whole `.reader` subtree, so it also covers ReaderPage's reserve var.
@@ -94,10 +105,13 @@ const percent = computed(() => {
   return ((idx + intra) / total) * 100
 })
 
-/** Persist the live reading position AND update the chrome readout. */
+/** Persist the live reading position, update the chrome readout, AND track the
+ *  centred chapter in `useReader` — this is what `hasPrev`/`hasNext` (and the
+ *  head sentinel's prepend gate) resolve against. */
 function onCentered(payload: { chapterId: string, page: number }): void {
   lastCentered.value = payload
   record(payload.chapterId, payload.page)
+  setCurrentChapter(payload.chapterId)
 }
 
 /** Mark a chapter read once its end-divider scrolls past — at its last page. */
@@ -144,8 +158,10 @@ onBeforeRouteLeave(() => { flush() })
       :chapters="chapters"
       :mounted-chapters="mountedChapters"
       :page-url="pageUrl"
-      :initial-scroll-to="resume"
+      :has-prev="hasPrev"
+      :scroll-request="scrollRequest"
       @near-tail="onNearTail"
+      @near-head="onNearHead"
       @centered="onCentered"
       @chapter-finished="onChapterFinished"
     />

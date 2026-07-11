@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import ReaderPage from './ReaderPage.vue'
 import ChapterDivider from './ChapterDivider.vue'
-import type { ReaderChapter } from '~/composables/useReader'
+import type { ReaderChapter, ScrollRequest } from '~/composables/useReader'
 import {
   shouldAppend,
+  shouldPrepend,
   centeredPage,
   finishedChapterIds,
   trimTrailingFailures,
@@ -15,18 +16,26 @@ import {
 /**
  * ReaderStrip — the vertical long-strip reader core. Renders the mounted window
  * of chapters (from `useReader`) as stacked `ReaderPage`s separated by
- * `ChapterDivider`s, and drives the infinite-scroll behaviour:
+ * `ChapterDivider`s, and drives the infinite-scroll behaviour in BOTH directions:
  *
- *   - A tail-sentinel IntersectionObserver appends the next chapter early
- *     (emits `near-tail`; the page wires it to `useReader.onNearTail`, which
- *     appends below AND unmounts far-above chapters to bound the DOM).
- *   - On each window reflow it PRESERVES the read position by anchoring on the
- *     retained tail chapter (`scrollAfterReflow`), so the seam never jumps when
- *     a far-above chapter unmounts.
+ *   - A TAIL sentinel appends the next chapter early (emits `near-tail`); a HEAD
+ *     sentinel prepends the previous chapter early (emits `near-head`). Both wire
+ *     to `useReader.onNearTail`/`onNearHead`, which grow the window and unmount
+ *     whichever far end the reader is moving away from.
+ *   - Every reflow that can move content ABOVE the viewport — a prepend, an
+ *     append-driven unmount, or a pageCount tail-404 trim — is bracketed by
+ *     `beforeReflow`/`afterReflow`, which anchors on the CENTRED chapter (see its
+ *     doc comment for why the tail is no longer a safe anchor) so the seam never
+ *     visibly jumps.
  *   - A throttled scroll handler emits `centered` (the page under the viewport
- *     midpoint) and `chapter-finished` (when a chapter's end-divider scrolls
- *     above the viewport top). Slice 3 consumes both to persist/resume progress;
- *     this slice only emits them.
+ *     midpoint), `visible-pages` (that chapter's trimmed page count — the
+ *     slider's live denominator) and `chapter-finished` (when a chapter's
+ *     end-divider scrolls above the viewport top).
+ *   - `scrollRequest` (a token-tagged scroll-to-target, e.g. the route's resume
+ *     anchor or a chapter jump) is honoured once per distinct token; `seekToPage`
+ *     is exposed for the page slider to scroll within the centred chapter
+ *     directly, WITHOUT going through the reflow-anchor bracket (a seek sets the
+ *     position, it doesn't need to survive a DOM change around it).
  *   - Applies the pageCount tail-404 tolerance: a page that fails to load and
  *     forms the contiguous end of a chapter is trimmed (declared count may
  *     exceed the real CBZ) so the reader advances; a mid-chapter failure keeps
@@ -44,21 +53,33 @@ const props = defineProps<{
   mountedChapters: ReaderChapter[]
   /** Builds the same-origin page-bytes URL for (chapterId, 0-based page). */
   pageUrl: (chapterId: string, n: number) => string
-  /** Resume anchor applied ONCE on initial mount: scroll to this (chapterId,
-   *  0-based page). Omit/null to open at the top. Slice 3 resume. */
-  initialScrollTo?: { chapterId: string, page: number } | null
+  /** Whether a chapter precedes the centred one (`useReader.hasPrev`) — gates
+   *  the head sentinel's prepend, the mirror of the tail's local `hasNext`. */
+  hasPrev: boolean
+  /** The strip's pending scroll-to-target instruction — the route's resume
+   *  anchor on open, or a later chapter jump (`useReader.scrollRequest`). Acted
+   *  on once per distinct `token` (see the watcher below); null when nothing is
+   *  pending. */
+  scrollRequest: ScrollRequest | null
 }>()
 
 const emit = defineEmits<{
   /** The tail sentinel appeared — append the next chapter. */
   'near-tail': []
+  /** The head sentinel appeared — prepend the previous chapter. */
+  'near-head': []
   /** The page under the viewport midpoint changed (throttled). */
   'centered': [payload: { chapterId: string, page: number }]
   /** A chapter's end-divider scrolled above the viewport top. */
   'chapter-finished': [chapterId: string]
+  /** The centred chapter's TRIMMED page count changed — the slider's live
+   *  denominator. Never the DECLARED `pageCount`, which may exceed the CBZ's
+   *  real image count (the pageCount tail-404 tolerance). */
+  'visible-pages': [payload: { chapterId: string, count: number }]
 }>()
 
 const scrollEl = ref<HTMLElement | null>(null)
+const headSentinelEl = ref<HTMLElement | null>(null)
 const sentinelEl = ref<HTMLElement | null>(null)
 
 // Per-chapter failed page indices (0-based). Reassigned (not mutated) so the
@@ -107,12 +128,29 @@ const hasNext = computed(() => {
   return idx >= 0 && idx < props.chapters.length - 1
 })
 
-// ---- window reflow: preserve the read position (anchor on the tail chapter) ---
-// Used for BOTH the append (unmount-above) path AND the pageCount tail-404 trim
-// path: any DOM change that can remove height ABOVE the viewport is bracketed by
-// beforeReflow → afterReflow so the viewed position never jumps. `reflowPending`
-// coalesces overlapping brackets in one tick (e.g. several trailing pages 404 at
-// once) to a single snapshot→restore, so the earliest pre-change snapshot wins.
+// ---- live reading position: the CENTRED chapter/page ------------------------
+// Tracked from `runScroll`'s `centeredPage` result — used to pick the reflow
+// anchor (see `beforeReflow`), the `seekToPage`/`pageDistance` target, and the
+// `visible-pages` chapter.
+const centeredChapterId = ref<string | null>(null)
+const centeredPageIndex = ref<number | null>(null)
+
+/** Distance (in pages) of (chapterId, page) from the CENTRED page — biases
+ *  eager preloading toward the pages nearest the reader's live position (a
+ *  later slice consumes this on `ReaderPage`). Pages outside the centred
+ *  chapter are simply "far" — there is no cross-chapter page axis to compare. */
+function pageDistance(chapterId: string, page: number): number {
+  if (chapterId !== centeredChapterId.value || centeredPageIndex.value == null) return Infinity
+  return Math.abs(page - centeredPageIndex.value)
+}
+
+// ---- window reflow: preserve the read position (anchor on the centred chapter) ---
+// Used for the append/prepend (unmount-from-either-end) paths AND the pageCount
+// tail-404 trim path: any DOM change that can remove height ABOVE the viewport is
+// bracketed by beforeReflow → afterReflow so the viewed position never jumps.
+// `reflowPending` coalesces overlapping brackets in one tick (e.g. several
+// trailing pages 404 at once) to a single snapshot→restore, so the earliest
+// pre-change snapshot wins.
 let anchorId: string | null = null
 let anchorPrevTop = 0
 let prevScrollTop = 0
@@ -123,12 +161,24 @@ function contentTop(el: HTMLElement, container: HTMLElement): number {
   return el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
 }
 
-/** Snapshot the retained tail chapter's position just before a reflow (once per tick). */
+/**
+ * Snapshot the retained anchor chapter's position just before a reflow (once per
+ * tick). Anchors on the CENTRED chapter, NOT the tail. Before the head sentinel
+ * existed a reflow could only ever unmount from the TOP, so the tail chapter was
+ * always retained and safe to anchor on — that assumption is now FALSE: a
+ * BACKWARD reflow (a head prepend) unmounts from the BOTTOM, so the tail can be
+ * the very element that disappears. When that happens `afterReflow()` finds no
+ * anchor element, returns early, and scrollTop is never corrected — the page
+ * visibly jumps under the reader's thumb. The window always slides AROUND the
+ * chapter being read, so the centred chapter is retained by construction
+ * regardless of which end drops. Falls back to the tail only before anything has
+ * been centred yet (the very first paint, pre-scroll).
+ */
 function beforeReflow(): void {
   if (reflowPending) return
   const el = scrollEl.value
   if (!el) return
-  anchorId = props.mountedChapters.at(-1)?.id ?? null
+  anchorId = centeredChapterId.value ?? props.mountedChapters.at(-1)?.id ?? null
   const anchorEl = anchorId ? el.querySelector<HTMLElement>(`[data-chapter-id="${anchorId}"]`) : null
   anchorPrevTop = anchorEl ? contentTop(anchorEl, el) : 0
   prevScrollTop = el.scrollTop
@@ -147,24 +197,31 @@ async function afterReflow(): Promise<void> {
   el.scrollTop = scrollAfterReflow(prevScrollTop, anchorPrevTop, contentTop(anchorEl, el))
 }
 
-// ---- resume scroll: land on the last-read page (once, on initial mount) -----
-let didInitialScroll = false
+// De-duped `chapter-finished` ids, per strip instance (each mount owns its own
+// Set — it is NOT module-scoped). A chapter can be RE-entered by scrolling back
+// up now that backward scrolling is legal, and re-entering must not re-fire
+// `chapter-finished` — but a jump/resume IS a fresh context, so the watcher
+// below clears this Set whenever a new `scrollRequest` token arrives.
+const emittedFinished = new Set<string>()
+
+// ---- scroll-to-target: honour `scrollRequest` --------------------------------
+// Replaces the old one-shot `didInitialScroll` boolean fuse, which could only
+// ever fire once for the strip's whole lifetime — silently no-op-ing every
+// chapter jump after the first. A monotonic token lets EVERY new request (the
+// route's initial resume anchor, then any later jump) scroll again, while a
+// stale/unchanged token (a re-render carrying the same request) is skipped.
+let lastScrollRequestToken = 0
 
 /**
- * applyInitialScroll — on FIRST mount, scroll to the resume `initialScrollTo`
- * (chapterId, page): the target page's content offset within the scroll
- * container. Reserved page heights (ReaderPage's pending min-height) give a
- * usable offset before the images load; native scroll-anchoring then holds the
- * position as they arrive. Falls back to the chapter's top when the specific
- * page element isn't mounted, and no-ops without a target or after it has fired
- * (guarded so a later window reflow never re-scrolls).
+ * applyScrollRequest — scrolls the container to the requested (chapterId, page),
+ * falling back to the chapter's top when the specific page element isn't mounted
+ * yet. Deliberately NOT reflow-bracketed: a scroll-to-target request is SETTING
+ * the position, not preserving one across an unrelated DOM change — running it
+ * through `beforeReflow`/`afterReflow` would fight the very scroll it performs.
  */
-async function applyInitialScroll(): Promise<void> {
-  if (didInitialScroll) return
-  const target = props.initialScrollTo
+async function applyScrollRequest(target: ScrollRequest): Promise<void> {
   const el = scrollEl.value
-  if (!target?.chapterId || !el) return
-  didInitialScroll = true
+  if (!el) return
   await nextTick()
   const pageEl = el.querySelector<HTMLElement>(`[data-chapter-id="${target.chapterId}"][data-page="${target.page}"]`)
   const chapterEl = el.querySelector<HTMLElement>(`[data-chapter-id="${target.chapterId}"]`)
@@ -173,23 +230,64 @@ async function applyInitialScroll(): Promise<void> {
   el.scrollTop = contentTop(anchor, el)
 }
 
-// ---- tail sentinel: append the next chapter ---------------------------------
-let observer: IntersectionObserver | null = null
+watch(() => props.scrollRequest, (req) => {
+  if (!req || req.token === lastScrollRequestToken) return
+  lastScrollRequestToken = req.token
+  // A jump/resume is a fresh reading context — a chapter finished in a PREVIOUS
+  // pass through this strip must be able to fire `chapter-finished` again if the
+  // reader lands back on it (e.g. jumping to an earlier chapter).
+  emittedFinished.clear()
+  void applyScrollRequest(req)
+})
 
-function onSentinel(entries: IntersectionObserverEntry[]): void {
-  const entry = entries[0]
-  if (!entry?.isIntersecting) return
-  if (!shouldAppend(true, hasNext.value)) return
-  beforeReflow()
-  emit('near-tail')
-  void afterReflow()
+/**
+ * seekToPage — scrolls to the given 0-based page of the CENTRED chapter (the
+ * page slider's target). Deliberately bypasses `beforeReflow`/`afterReflow` —
+ * see `applyScrollRequest`'s doc comment; the same reasoning applies here.
+ */
+function seekToPage(page: number): void {
+  const el = scrollEl.value
+  const chapterId = centeredChapterId.value
+  if (!el || !chapterId) return
+  const pageEl = el.querySelector<HTMLElement>(`[data-chapter-id="${chapterId}"][data-page="${page}"]`)
+  const chapterEl = el.querySelector<HTMLElement>(`[data-chapter-id="${chapterId}"]`)
+  const anchor = pageEl ?? chapterEl
+  if (!anchor) return
+  el.scrollTop = contentTop(anchor, el)
 }
 
-// ---- scroll: emit centered + chapter-finished (throttled) -------------------
+defineExpose({ seekToPage })
+
+// ---- sentinels: append the next chapter / prepend the previous one ----------
+let observer: IntersectionObserver | null = null
+
+/** Routes an IntersectionObserver callback to the head or tail sentinel handler
+ *  by comparing `entry.target` — both sentinels share one observer instance. */
+function onIntersect(entries: IntersectionObserverEntry[]): void {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue
+    if (entry.target === headSentinelEl.value) {
+      if (!shouldPrepend(true, props.hasPrev)) continue
+      // MANDATORY bracket: an un-anchored prepend inserts a whole chapter ABOVE
+      // the scroll position and yanks the page down under the reader's thumb.
+      beforeReflow()
+      emit('near-head')
+      void afterReflow()
+    }
+    else if (entry.target === sentinelEl.value) {
+      if (!shouldAppend(true, hasNext.value)) continue
+      beforeReflow()
+      emit('near-tail')
+      void afterReflow()
+    }
+  }
+}
+
+// ---- scroll: emit centered + visible-pages + chapter-finished (throttled) ---
 const THROTTLE_MS = 120
 let lastRun = 0
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
-const emittedFinished = new Set<string>()
+let lastVisiblePages: { chapterId: string, count: number } | null = null
 
 function runScroll(): void {
   const el = scrollEl.value
@@ -209,7 +307,20 @@ function runScroll(): void {
   })
 
   const centered = centeredPage({ scrollTop: el.scrollTop, viewportHeight: el.clientHeight, pages })
-  if (centered) emit('centered', centered)
+  if (centered) {
+    centeredChapterId.value = centered.chapterId
+    centeredPageIndex.value = centered.page
+    emit('centered', centered)
+
+    const chapter = props.mountedChapters.find((c) => c.id === centered.chapterId)
+    if (chapter) {
+      const count = visiblePages(chapter)
+      if (lastVisiblePages?.chapterId !== centered.chapterId || lastVisiblePages.count !== count) {
+        lastVisiblePages = { chapterId: centered.chapterId, count }
+        emit('visible-pages', { chapterId: centered.chapterId, count })
+      }
+    }
+  }
 
   const dividerTops: { chapterId: string, top: number }[] = []
   el.querySelectorAll<HTMLElement>('[data-divider-id]').forEach((divEl) => {
@@ -252,12 +363,18 @@ function onScroll(): void {
 
 onMounted(() => {
   const el = scrollEl.value
-  if (el && sentinelEl.value) {
-    // rootMargin prefetches the next chapter ~a viewport early so the seam is seamless.
-    observer = new IntersectionObserver(onSentinel, { root: el, rootMargin: '600px 0px' })
-    observer.observe(sentinelEl.value)
+  if (el) {
+    // rootMargin prefetches the next/previous chapter ~a viewport early so
+    // neither seam is noticeable. One observer watches both sentinels.
+    observer = new IntersectionObserver(onIntersect, { root: el, rootMargin: '600px 0px' })
+    if (headSentinelEl.value) observer.observe(headSentinelEl.value)
+    if (sentinelEl.value) observer.observe(sentinelEl.value)
   }
-  void applyInitialScroll()
+  const req = props.scrollRequest
+  if (req && req.token !== lastScrollRequestToken) {
+    lastScrollRequestToken = req.token
+    void applyScrollRequest(req)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -270,6 +387,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="scrollEl" class="strip" @scroll="onScroll">
     <div class="strip__col">
+      <div ref="headSentinelEl" class="strip__sentinel" data-sentinel="head" aria-hidden="true" />
       <template v-for="chapter in mountedChapters" :key="chapter.id">
         <div class="strip__chapter" :data-chapter-id="chapter.id">
           <ReaderPage
@@ -279,6 +397,7 @@ onBeforeUnmount(() => {
             :data-page="n - 1"
             :src="pageUrl(chapter.id, n - 1)"
             :alt="`Page ${n}`"
+            :distance-from-centre="pageDistance(chapter.id, n - 1)"
             @error="onPageError(chapter.id, n - 1)"
           />
         </div>
@@ -288,7 +407,7 @@ onBeforeUnmount(() => {
           :next="nextRef(chapter)"
         />
       </template>
-      <div ref="sentinelEl" class="strip__sentinel" aria-hidden="true" />
+      <div ref="sentinelEl" class="strip__sentinel" data-sentinel="tail" aria-hidden="true" />
     </div>
   </div>
 </template>

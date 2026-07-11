@@ -26,9 +26,16 @@ const props = withDefaults(defineProps<{
   src?: string
   /** Alt text for the page image. */
   alt?: string
+  /** Distance (in pages) from the reader's live centred position, supplied by
+   *  `ReaderStrip`. Defaults large (effectively "far") so callers that don't
+   *  pass it behave as before. A later slice uses this to bias eager
+   *  preloading toward pages nearest the reader's position — not yet consumed
+   *  here. */
+  distanceFromCentre?: number
 }>(), {
   src: '',
   alt: 'Page',
+  distanceFromCentre: Infinity,
 })
 
 const emit = defineEmits<{

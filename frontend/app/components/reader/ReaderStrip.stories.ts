@@ -17,6 +17,8 @@ const meta = {
   decorators: [() => ({ template: '<div style="height:640px;border:1px solid var(--border)"><story /></div>' })],
   args: {
     pageUrl: fakePageUrl,
+    hasPrev: false,
+    scrollRequest: null,
   },
 } satisfies Meta<typeof ReaderStrip>
 
@@ -39,11 +41,22 @@ export const LastChapter: Story = {
   },
 }
 
-/** Resume: opens scrolled to a mid-chapter last-read page (Slice 3 resume anchor). */
+/** A chapter precedes the mounted window — the head sentinel is live (`hasPrev`),
+ *  so scrolling to the very top prepends the previous chapter. */
+export const HasPreviousChapter: Story = {
+  args: {
+    chapters: readerChapters,
+    mountedChapters: readerChapters.slice(1, 3),
+    hasPrev: true,
+  },
+}
+
+/** Resume: opens scrolled to a mid-chapter last-read page (published as the
+ *  strip's `scrollRequest`, token 1 — mirrors the route's resume anchor). */
 export const ResumeMidChapter: Story = {
   args: {
     chapters: readerChapters,
     mountedChapters: readerChapters.slice(0, 2),
-    initialScrollTo: { chapterId: 'ch-1', page: 2 },
+    scrollRequest: { chapterId: 'ch-1', page: 2, token: 1 },
   },
 }
