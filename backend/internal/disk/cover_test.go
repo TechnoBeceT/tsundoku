@@ -26,10 +26,22 @@ func coverReq(storage string, data []byte, ext, sourceURL string) disk.CoverRequ
 	}
 }
 
-// TestSaveCover_WritesFileAndSidecar proves the bytes land in the series dir
-// under the resolved extension and the sidecar records the provenance block
-// (source_url is the cache key).
-func TestSaveCover_WritesFileAndSidecar(t *testing.T) {
+// readSidecar reads the series sidecar or fails the test.
+func readSidecar(t *testing.T, seriesDir string) *disk.Sidecar {
+	t.Helper()
+	sc, err := disk.ReadSidecar(seriesDir)
+	if err != nil {
+		t.Fatalf("ReadSidecar: %v", err)
+	}
+	if sc == nil {
+		t.Fatal("ReadSidecar: no sidecar written")
+	}
+	return sc
+}
+
+// TestSaveCover_WritesFile proves the bytes land in the series dir under the
+// resolved extension, byte-for-byte as the source served them.
+func TestSaveCover_WritesFile(t *testing.T) {
 	storage := t.TempDir()
 	want := []byte{0x89, 0x50, 0x4E, 0x47}
 
@@ -49,22 +61,40 @@ func TestSaveCover_WritesFileAndSidecar(t *testing.T) {
 	if string(got) != string(want) {
 		t.Errorf("cover bytes mismatch")
 	}
+}
 
-	sc, err := disk.ReadSidecar(seriesDir)
-	if err != nil || sc == nil {
-		t.Fatalf("ReadSidecar: %v (sidecar %v)", err, sc)
+// TestSaveCover_WritesSidecarProvenance proves the sidecar records the cover
+// block (source_url is the cache key) and, for a series with no sidecar yet,
+// seeds the series-level title/category too.
+func TestSaveCover_WritesSidecarProvenance(t *testing.T) {
+	storage := t.TempDir()
+	if _, err := disk.SaveCover(coverReq(storage, []byte("x"), "png", "/api/v1/manga/1/thumbnail")); err != nil {
+		t.Fatalf("SaveCover: %v", err)
 	}
+
+	sc := readSidecar(t, disk.SeriesDir(storage, "Manga", "Alpha Saga"))
 	if sc.Cover == nil {
-		t.Fatalf("sidecar Cover block is nil")
+		t.Fatal("sidecar Cover block is nil")
 	}
-	if sc.Cover.File != "cover.png" || sc.Cover.SourceURL != "/api/v1/manga/1/thumbnail" || sc.Cover.Provider != "mangadex" {
-		t.Errorf("sidecar Cover = %+v, want file/source_url/provider populated", *sc.Cover)
+	want := disk.CoverProvenance{File: "cover.png", SourceURL: "/api/v1/manga/1/thumbnail", Provider: "mangadex"}
+	if *sc.Cover != want {
+		t.Errorf("sidecar Cover = %+v, want %+v", *sc.Cover, want)
 	}
 	if sc.Title != "Alpha Saga" || sc.Category != "Manga" {
 		t.Errorf("sidecar series fields = %q/%q, want Alpha Saga/Manga", sc.Title, sc.Category)
 	}
+}
 
-	// The sidecar JSON uses snake_case, like every other sidecar field.
+// TestSaveCover_SidecarJSONIsSnakeCase pins the on-disk key names: the sidecar
+// is a lossless-rebuild artifact, so its wire shape is a contract (every other
+// sidecar field is snake_case too).
+func TestSaveCover_SidecarJSONIsSnakeCase(t *testing.T) {
+	storage := t.TempDir()
+	if _, err := disk.SaveCover(coverReq(storage, []byte("x"), "jpg", "/thumb")); err != nil {
+		t.Fatalf("SaveCover: %v", err)
+	}
+
+	seriesDir := disk.SeriesDir(storage, "Manga", "Alpha Saga")
 	raw, err := os.ReadFile(filepath.Join(seriesDir, "tsundoku.json")) //nolint:gosec // test path
 	if err != nil {
 		t.Fatalf("read sidecar: %v", err)
@@ -75,8 +105,10 @@ func TestSaveCover_WritesFileAndSidecar(t *testing.T) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		t.Fatalf("unmarshal sidecar: %v", err)
 	}
-	if _, ok := probe.Cover["source_url"]; !ok {
-		t.Errorf("sidecar cover block missing source_url key: %v", probe.Cover)
+	for _, key := range []string{"file", "source_url", "provider"} {
+		if _, ok := probe.Cover[key]; !ok {
+			t.Errorf("sidecar cover block missing %q key: %v", key, probe.Cover)
+		}
 	}
 }
 
@@ -234,11 +266,7 @@ func TestSaveCover_ConcurrentWithRenderKeepsSidecarIntact(t *testing.T) {
 	}
 	wg.Wait()
 
-	seriesDir := disk.SeriesDir(storage, "Manga", "Alpha Saga")
-	sc, err := disk.ReadSidecar(seriesDir)
-	if err != nil || sc == nil {
-		t.Fatalf("ReadSidecar: %v (sidecar %v)", err, sc)
-	}
+	sc := readSidecar(t, disk.SeriesDir(storage, "Manga", "Alpha Saga"))
 	if sc.Cover == nil || sc.Cover.File != "cover.jpg" {
 		t.Errorf("cover block lost under concurrency: %+v", sc.Cover)
 	}
