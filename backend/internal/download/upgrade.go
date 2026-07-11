@@ -42,8 +42,10 @@ type upgradeResult struct {
 //
 // "Strictly better" means: the maximum importance among the LIVE sources offering
 // this chapter's key within the same series is STRICTLY GREATER THAN the chapter's
-// satisfied_importance. An equal-importance source does NOT trigger an upgrade
-// (comparison is >, not >=). A LIVE source is one that still has retry budget
+// EFFECTIVE satisfied importance (see effectiveSatisfiedImportance — the CURRENT
+// importance of the satisfying source while it is still attached, NOT the frozen
+// satisfied_importance snapshot). An equal-importance source does NOT trigger an
+// upgrade (comparison is >, not >=). A LIVE source is one that still has retry budget
 // (attempts < maxRetries) AND is past its per-source cooldown — the same predicate
 // the download path uses (chapter.RankedLiveCandidates). So a source that failed
 // out of the download path (exhausted) is never chosen as an upgrade target, and a
@@ -83,6 +85,13 @@ func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Se
 	now := time.Now()
 	chapters, err := client.Chapter.Query().
 		Where(entchapter.StateEQ(entchapter.StateDownloaded)).
+		// Eager-load the satisfying source for the WHOLE scan in one batched query
+		// (Ent resolves the satisfied_by edge with a single IN over the scanned
+		// chapters' satisfied_by_provider_id). effectiveSatisfiedImportance then reads
+		// each source's CURRENT importance straight off the loaded edge — never a
+		// per-chapter lookup, so the watermark rule costs a constant query, not an N+1
+		// on a library-wide scan.
+		WithSatisfiedBy().
 		All(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("download.DetectUpgrades: query downloaded chapters: %w", err)
@@ -97,6 +106,64 @@ func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Se
 		flagged += n
 	}
 	return flagged, nil
+}
+
+// effectiveSatisfiedImportance resolves the importance an upgrade candidate must
+// BEAT for ch, and heals the satisfied_importance column when it has gone stale.
+//
+// satisfied_importance is a SNAPSHOT of the importance the chapter was satisfied
+// at, so it goes stale the moment the owner re-ranks the sources. The truth, while
+// the satisfying source is still attached, is that source's CURRENT importance:
+//
+//   - satisfied_by SET at a REAL importance (>= 1): the source's current importance
+//     wins. When it differs from the stored snapshot the column is HEALED to it —
+//     that is what unblocks a chapter whose satisfying source was DEMOTED (the
+//     frozen, too-high snapshot otherwise out-ranks every real candidate and refuses
+//     every upgrade, forever), and it converges the column on the next scan with no
+//     backfill.
+//   - satisfied_by SET at importance 0 — THE PARK SENTINEL: 0 is not a rank, it is
+//     the marker library's Match/Dedup merge writes while it DB-parks a live provider
+//     for the whole relabel window (see library.mergeDiskIntoLive / attachRealSource:
+//     the no-redownload invariant is literally "0 <= any watermark, so DetectUpgrades
+//     never fires"). Healing the watermark DOWN to 0 would defeat that park and let
+//     any inferior sibling source (importance >= 1) out-rank the chapter and DOWNGRADE
+//     it mid-merge. So a parked satisfier is treated as "no current importance" and the
+//     FROZEN watermark guards. Safe to reserve: series.normalizeRanks emits multiples of
+//     importanceStep (min 10), handler/library rejects importance < 1, and disk-origin
+//     providers are importance 1 — no ranked provider is legitimately 0.
+//   - satisfied_by NULL: the source was REMOVED by the owner (series.RemoveProvider
+//     deliberately clears satisfied_by and KEEPS the watermark). There is no current
+//     importance to read, so the FROZEN watermark still guards — it is precisely what
+//     stops an equal-or-lower source from posing as an upgrade for a chapter already
+//     satisfied at that quality. This fallback must not change.
+//
+// The caller must have eager-loaded the satisfied_by edge (detectUpgrades does so
+// once for the whole scan — no per-chapter query). ch.SatisfiedImportance must be
+// non-nil. A heal-write failure is LOGGED AND SKIPPED (the frozen watermark is used
+// for this chapter, exactly as before the heal existed) — mirroring the neighbouring
+// candidate-ranking failure, so one bad row-update never aborts the whole scan.
+func effectiveSatisfiedImportance(ctx context.Context, client *ent.Client, ch *ent.Chapter) int {
+	frozen := *ch.SatisfiedImportance
+
+	// sp == nil also covers the defensive "id set but edge missing" case (a broken
+	// FK): fall back to the frozen watermark rather than mis-ranking the chapter.
+	sp := ch.Edges.SatisfiedBy
+	if sp == nil || sp.Importance == 0 || sp.Importance == frozen {
+		return frozen
+	}
+
+	if err := client.Chapter.UpdateOneID(ch.ID).
+		SetSatisfiedImportance(sp.Importance).
+		Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "download.DetectUpgrades: could not heal stale satisfied_importance — using the frozen watermark for this chapter",
+			"chapter_id", ch.ID,
+			"frozen_importance", frozen,
+			"current_importance", sp.Importance,
+			"err", err,
+		)
+		return frozen
+	}
+	return sp.Importance
 }
 
 // detectUpgradeForChapter evaluates a single chapter and transitions it to
@@ -114,6 +181,11 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 		return 0, nil
 	}
 
+	// The bar an upgrade must beat — the satisfying source's CURRENT importance
+	// (healing a stale snapshot), or the frozen watermark when that source was
+	// removed or is PARKED at 0 by a library merge.
+	effective := effectiveSatisfiedImportance(ctx, client, ch)
+
 	best, err := bestUpgradeCandidate(ctx, client, gate, ch, maxRetries, now)
 	if err != nil {
 		// Log and continue — one chapter failing to scan should not abort all others.
@@ -129,25 +201,17 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 	}
 
 	// Self-churn guard: if the best live source IS the one that already satisfies
-	// this chapter, an "upgrade" would re-fetch from the SAME source — pure churn
-	// (the root bug: satisfied_importance is a frozen snapshot, so raising a
-	// source's importance would otherwise re-fire an upgrade from that source).
-	// Never flag; instead refresh the stale watermark to the source's current
-	// importance so the chapter is not re-scanned as an upgrade next cycle.
+	// this chapter, an "upgrade" would re-fetch from the SAME source — pure churn.
+	// Never flag, whatever its importance did (raising the CURRENT source's rank must
+	// not re-fire an upgrade from that same source). The watermark is already healed
+	// to its current importance by effectiveSatisfiedImportance above.
 	if ch.SatisfiedByProviderID != nil && best.SeriesProvider.ID == *ch.SatisfiedByProviderID {
-		if best.SeriesProvider.Importance != *ch.SatisfiedImportance {
-			if err := client.Chapter.UpdateOneID(ch.ID).
-				SetSatisfiedImportance(best.SeriesProvider.Importance).
-				Exec(ctx); err != nil {
-				return 0, fmt.Errorf("download.DetectUpgrades: refresh satisfied_importance for chapter %s: %w", ch.ID, err)
-			}
-		}
 		return 0, nil
 	}
 
 	// Strict comparison: only flag when a DIFFERENT source is strictly higher than
-	// the current satisfied_importance watermark.
-	if best.SeriesProvider.Importance <= *ch.SatisfiedImportance {
+	// the effective satisfied importance.
+	if best.SeriesProvider.Importance <= effective {
 		return 0, nil
 	}
 
