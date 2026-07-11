@@ -123,6 +123,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 			res,
 			provID,
 			provName,
+			upgradeTargetLabel(ch, res.upgradeTargets, provByID),
 		)
 	}
 	return DownloadListDTO{Total: total, Items: items}, nil
@@ -182,7 +183,7 @@ func (s *Service) loadProviders(ctx context.Context, seriesIDs []uuid.UUID) (byI
 // page, reusing the exported internal/series resolvers so the importance logic is
 // defined exactly once (§2 DRY). It attaches each series' providers onto the node
 // so MetadataProvider/SeriesDisplay can resolve the display name + cover the same
-// way GetSeries does.
+// way GetSeries does, and indexes their feeds once for the upgrade-target lookup.
 func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.UUID][]*ent.SeriesProvider) map[uuid.UUID]seriesResolution {
 	out := make(map[uuid.UUID]seriesResolution, len(seriesByID))
 	for sid, row := range seriesByID {
@@ -194,6 +195,9 @@ func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.U
 			displayName:  displayName,
 			coverURL:     coverURL,
 			bestProvider: series.HighestImportanceProvider(provs),
+			// Built from the SAME eager-loaded feeds — no extra query (see
+			// newUpgradeTargetIndex).
+			upgradeTargets: newUpgradeTargetIndex(provs),
 		}
 	}
 	return out

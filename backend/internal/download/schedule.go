@@ -3,11 +3,11 @@ package download
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -120,40 +120,82 @@ func roundRobinBySeries(items []resolvedChapter) []resolvedChapter {
 	return out
 }
 
-// runSourceQueue dispatches one source's chapters in ascending number order, up
-// to concurrency at a time, blocking on a buffered "start slot" channel before it
-// begins each chapter. Because a single goroutine hands out the slots in order, a
-// chapter starts only once one of the currently-downloading chapters finishes and
-// only in queue (number) order — so downloads START low-number-first even though
-// their completions may interleave. Each source calls this on its own goroutine,
-// so a saturated source blocks only its own queue, never another source with free
-// slots (no cross-source head-of-line blocking).
+// runPerSourceQueues is THE per-source scheduler shared by the download pass
+// (RunOnceAt) and the convergence-upgrade pass (UpgradeAll) — the one definition
+// of "sources proceed in parallel, each source stays within its own cap" (§2 DRY).
 //
-// The start slot is held for the WHOLE chapter (fetch + render + persist), so at
-// most concurrency of a source's chapters are in the downloading state at once —
-// the rest stay wanted (UI "Queued"). It is released when the chapter reaches a
-// terminal state; because processing always returns, no slot is ever leaked and
-// the send never blocks forever (no deadlock).
+// groups maps a canonicalSourceKey to that source's ORDERED queue of work items.
+// Every source gets its own goroutine, so a saturated source blocks only its own
+// queue and never a source with free slots (no cross-source head-of-line blocking).
+// WITHIN one source, at most concurrency items run at a time and they are STARTED
+// in queue order: an item begins only once one of the in-flight items of the SAME
+// source finishes. Completions may still interleave — starts-in-order is the
+// guarantee. The slot is held for the WHOLE item (fetch + render + persist), so at
+// most concurrency of a source's chapters are in the downloading/upgrading state at
+// once; the rest stay queued.
 //
-// progressed is the RunOnce-wide forward-progress counter (shared across every
-// source's goroutines): it is incremented once per chapter whose wanted/failed→
-// downloading claim SUCCEEDED, so RunOnce can return that count and the drain loop
-// terminates on real progress rather than mere selection (see RunOnce).
-func (d *Dispatcher) runSourceQueue(ctx context.Context, items []resolvedChapter, concurrency, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64) {
-	slots := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for _, it := range items {
-		slots <- struct{}{} // ordered, blocking: waits for a free slot before starting the next-in-number chapter
-		wg.Add(1)
-		go func(it resolvedChapter) {
-			defer wg.Done()
-			defer func() { <-slots }()
+// The per-source cap is what preserves politeness: parallelism is added ACROSS
+// sources only — a single source never runs more than `concurrency` items at once,
+// exactly as before. It composes with (and does not replace) the deeper bounds:
+// the per-provider fetch limiter (providerLimiter) and internal/sourcegate's
+// min-request-delay + circuit-breaker still gate every actual upstream request.
+//
+// Cancellation: the first non-nil error from run cancels the derived context, and
+// no further item is STARTED after that (in-flight ones drain). The guard is
+// applied TWICE — before queueing and again as the first statement of the queued
+// closure — because errgroup.Go BLOCKS on the per-source semaphore, so a closure
+// queued just before the cancel would otherwise still run. A skipped item returns
+// nil, so a cancellation never masquerades as a work error; the first real error is
+// returned by Wait.
+func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concurrency int, run func(context.Context, T) error) error {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sources, sctx := errgroup.WithContext(ctx)
+	for _, items := range groups {
+		if len(items) == 0 {
+			continue
+		}
+		sources.Go(func() error {
+			queue, qctx := errgroup.WithContext(sctx)
+			queue.SetLimit(concurrency) // the per-source cap: ordered, blocking hand-out of start slots
+			for _, it := range items {
+				if qctx.Err() != nil {
+					break
+				}
+				queue.Go(func() error {
+					// The Go call above blocks on the semaphore, so this closure may have
+					// been queued before the cancel landed — re-check before doing work.
+					if qctx.Err() != nil {
+						return nil
+					}
+					return run(qctx, it)
+				})
+			}
+			return queue.Wait()
+		})
+	}
+	return sources.Wait()
+}
+
+// runDownloadQueues dispatches the whole pass's grouped chapters through the
+// shared per-source scheduler, incrementing the RunOnce-wide forward-progress
+// counter for each chapter whose wanted/failed→downloading claim SUCCEEDED — so
+// RunOnce can return that count and the drain loop terminates on real progress
+// rather than mere selection (see RunOnce).
+//
+// A download item never returns an error (per-chapter failures are recorded in the
+// DB and swallowed by downloadResolved), so the scheduler's first-error
+// cancellation is inert on this path: only a cancelled parent context stops it —
+// hence the discarded error.
+func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, concurrency, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64) {
+	_ = runPerSourceQueues(ctx, groups, concurrency,
+		func(ctx context.Context, it resolvedChapter) error {
 			if d.downloadResolved(ctx, it, maxRetries, now, limiter) {
 				progressed.Add(1)
 			}
-		}(it)
-	}
-	wg.Wait()
+			return nil
+		})
 }
 
 // downloadResolved loads the full chapter (with its series + category edges for

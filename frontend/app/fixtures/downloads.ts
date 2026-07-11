@@ -39,6 +39,9 @@ export const downloadItems: DownloadItem[] = [
     state: 'upgrading',
     provider: '2499283573021220255',
     providerName: 'MangaDex',
+    // Mid-convergence: the row reads "MangaDex → Asura Scans" (the source it is
+    // being upgraded TO, not the one being replaced).
+    upgradeTarget: 'Asura Scans',
   },
   {
     chapterId: 'c-0003',

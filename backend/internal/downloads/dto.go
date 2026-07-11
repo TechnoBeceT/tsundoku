@@ -26,6 +26,14 @@ import (
 // (SeriesProvider.provider — the raw numeric id) of the satisfying source, else
 // the series' top source; ProviderName is that same source's human-readable
 // display label (falls back to the id), which the UI shows in place of the id.
+//
+// UpgradeTarget is the display label of the source an UPGRADING chapter is
+// converging TO (the UI renders "<ProviderName> → <UpgradeTarget>"), and is ""
+// for every chapter that is not in upgrade_available / upgrading. Without it the
+// row would show only the source being REPLACED, which is exactly the wrong one
+// during a convergence wave. It is the INTENDED target, not the engine's
+// authoritative pick — see upgradeTargetLabel for the resolution rule and where
+// the two can differ.
 type DownloadChapterDTO struct {
 	ID             uuid.UUID  `json:"id"`
 	SeriesID       uuid.UUID  `json:"seriesId"`
@@ -38,6 +46,7 @@ type DownloadChapterDTO struct {
 	State          string     `json:"state"`
 	Provider       string     `json:"provider"`
 	ProviderName   string     `json:"providerName"`
+	UpgradeTarget  string     `json:"upgradeTarget"`
 	Retries        int        `json:"retries"`
 	NextAttemptAt  *time.Time `json:"nextAttemptAt"`
 	LastError      string     `json:"lastError"`
@@ -63,22 +72,24 @@ type RetryAllResultDTO struct {
 
 // seriesResolution holds the once-per-series derived values reused across all of
 // that series' chapters on a page: the chapter_key→name map, the resolved display
-// name + cover proxy path, and the top source (the fallback for a chapter's
-// provider fields when it has no satisfying source yet). bestProvider is nil for
-// a 0-provider series, in which case a chapter's provider id + name are both "".
+// name + cover proxy path, the top source (the fallback for a chapter's provider
+// fields when it has no satisfying source yet), and the chapter_key→providers index
+// that names an upgrading chapter's target. bestProvider is nil for a 0-provider
+// series, in which case a chapter's provider id + name are both "".
 type seriesResolution struct {
-	names        map[string]string
-	displayName  string
-	coverURL     string
-	bestProvider *ent.SeriesProvider
+	names          map[string]string
+	displayName    string
+	coverURL       string
+	bestProvider   *ent.SeriesProvider
+	upgradeTargets upgradeTargetIndex
 }
 
 // newDownloadChapterDTO maps one Chapter row to its enriched DTO. The series
-// context (display name, category, cover, chapter name, provider id + name) is
-// resolved once per series by the caller and passed in, so this mapper does no
-// lookups — it only projects fields, ensuring every contract field is
+// context (display name, category, cover, chapter name, provider id + name,
+// upgrade target) is resolved once per series by the caller and passed in, so this
+// mapper does no lookups — it only projects fields, ensuring every contract field is
 // populated (§16).
-func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, provider, providerName string) DownloadChapterDTO {
+func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, provider, providerName, upgradeTarget string) DownloadChapterDTO {
 	return DownloadChapterDTO{
 		ID:             ch.ID,
 		SeriesID:       ch.SeriesID,
@@ -91,6 +102,7 @@ func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolutio
 		State:          ch.State.String(),
 		Provider:       provider,
 		ProviderName:   providerName,
+		UpgradeTarget:  upgradeTarget,
 		Retries:        ch.Retries,
 		NextAttemptAt:  ch.NextAttemptAt,
 		LastError:      ch.LastError,
