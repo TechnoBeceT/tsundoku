@@ -49,6 +49,9 @@ const interactive = (initial: SeriesDetailData) => ({
         if (p) p.importance = importance
       }
     }
+    // The screen only REQUESTS a removal (the confirm dialog lives on the page,
+    // which closes it on a successful mutation) — the story stands in for the
+    // page by applying the removal straight away.
     const onRemove = (id: string): void => {
       series.providers = series.providers.filter((p) => p.id !== id)
     }
@@ -63,7 +66,7 @@ const interactive = (initial: SeriesDetailData) => ({
       @toggle-monitored="onMonitored"
       @toggle-completed="onCompleted"
       @reorder-providers="onReorder"
-      @remove-source="onRemove"
+      @request-remove-source="onRemove"
       @choose-metadata-source="onMeta"
     />
   `,

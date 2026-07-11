@@ -5,7 +5,6 @@ import type { MoveDirection } from '../ui/controls.types'
 import ChaptersPanel from '../seriesDetail/ChaptersPanel.vue'
 import DeleteSeriesDialog from '../seriesDetail/DeleteSeriesDialog.vue'
 import MetadataSourcePicker from '../seriesDetail/MetadataSourcePicker.vue'
-import RemoveSourceDialog from '../seriesDetail/RemoveSourceDialog.vue'
 import SeriesHeader from '../seriesDetail/SeriesHeader.vue'
 import SourcesPanel from '../seriesDetail/SourcesPanel.vue'
 import type { Chapter, Provider, SeriesDetail } from './seriesDetail.types'
@@ -16,10 +15,13 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  * composes the header (cover/title/stats/toggles/category/delete), the (planned)
  * metadata-source picker, the chapter table, the ranked source list (reorder /
  * remove / add / match-to-source for unlinked disk-origin groups), plus the
- * required-choice delete dialog and the
- * remove-source confirm dialog. The `matchProvider` emit (bubbled from
+ * required-choice delete dialog. The `matchProvider` emit (bubbled from
  * `SourcesPanel`'s unlinked-row action) opens the page's
- * `MatchDiskProviderDialog` for the no-re-download Match.
+ * `MatchDiskProviderDialog` for the no-re-download Match, and
+ * `requestRemoveSource` (bubbled from the row's Remove action) opens the page's
+ * `RemoveSourceDialog` — the confirm dialogs whose lifetime depends on a
+ * mutation OUTCOME live on the page, which is the only layer that learns whether
+ * the mutation succeeded (an emit is fire-and-forget).
  *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
@@ -39,8 +41,6 @@ const props = withDefaults(defineProps<{
   saving?: boolean
   /** True while the delete request is in flight (dialog confirm spinner). */
   deleteBusy?: boolean
-  /** True while the remove-source request is in flight (dialog confirm spinner). */
-  removeBusy?: boolean
   /** A failed-mutation message to surface, or null/"" when there is none. */
   error?: string | null
   /** True while the dedup-providers request is in flight. */
@@ -52,7 +52,6 @@ const props = withDefaults(defineProps<{
 }>(), {
   saving: false,
   deleteBusy: false,
-  removeBusy: false,
   error: null,
   dedupBusy: false,
   dedupeFilesBusy: false,
@@ -68,8 +67,8 @@ const emit = defineEmits<{
   toggleCompleted: [completed: boolean]
   /** Providers were re-ranked — carries the full updated {id, importance} list. */
   reorderProviders: [providers: { id: string, importance: number }[]]
-  /** A source removal was confirmed — carries the SeriesProvider id. */
-  removeSource: [providerId: string]
+  /** "Remove" was pressed on a source row — carries its SeriesProvider id (→ opens the page's confirm dialog). */
+  requestRemoveSource: [providerId: string]
   /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
   matchProvider: [providerId: string]
   /** A metadata source was picked — carries the SeriesProvider id. */
@@ -132,24 +131,13 @@ const onPickMeta = (id: string): void => {
 }
 
 // ---- Delete dialog ---------------------------------------------------------
+// The delete dialog's lifetime does NOT depend on a mutation outcome the screen
+// can't see: a successful delete navigates away (the page unmounts), a failed
+// one leaves the dialog open with the error shown inside it (§16).
 const deleteOpen = ref(false)
 const onConfirmDelete = (deleteFiles: boolean): void => {
   emit('deleteSeries', deleteFiles)
 }
-
-// ---- Remove-source dialog --------------------------------------------------
-const removeOpen = ref(false)
-const removeTargetId = ref<string | null>(null)
-const openRemove = (id: string): void => {
-  removeTargetId.value = id
-  removeOpen.value = true
-}
-const onConfirmRemove = (): void => {
-  if (removeTargetId.value) emit('removeSource', removeTargetId.value)
-}
-const removeName = computed(
-  () => props.series.providers.find((p) => p.id === removeTargetId.value)?.provider ?? '',
-)
 </script>
 
 <template>
@@ -188,7 +176,7 @@ const removeName = computed(
         :dedupe-files-busy="dedupeFilesBusy"
         :dedup-message="dedupMessage"
         @move="onMove"
-        @remove-source="openRemove"
+        @remove-source="emit('requestRemoveSource', $event)"
         @match-provider="emit('matchProvider', $event)"
         @add-source="emit('addSource')"
         @dedup-providers="emit('dedupProviders')"
@@ -200,14 +188,8 @@ const removeName = computed(
       v-model:open="deleteOpen"
       :busy="deleteBusy"
       :series-title="series.title"
+      :error="error"
       @confirm="onConfirmDelete"
-    />
-
-    <RemoveSourceDialog
-      v-model:open="removeOpen"
-      :busy="removeBusy"
-      :source-name="removeName"
-      @confirm="onConfirmRemove"
     />
   </div>
 </template>
