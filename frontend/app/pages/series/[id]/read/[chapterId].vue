@@ -17,10 +17,12 @@ import type ReaderStripComponent from '~/components/reader/ReaderStrip.vue'
  * the ReaderStrip fed by both, plus the chrome overlay + settings sheet:
  *   - The strip's `near-tail`/`near-head` drive the window append/prepend;
  *     `centered` records the live position (debounced) and (guarded — see
- *     `onSeek`) updates the chrome's page slider; `visible-pages` feeds the
- *     slider's TRIMMED denominator; `chapter-finished` marks a chapter read as
- *     the reader scrolls past its end; `resumeTarget` opens the strip at the
- *     last-read page.
+ *     `onSeek`) updates the chrome's page slider; `visible-pages` feeds a
+ *     PER-CHAPTER map (`visiblePagesByChapter`) — the slider's TRIMMED
+ *     denominator is always the CENTRED chapter's own entry, never a stale
+ *     count left behind by a chapter jump; `chapter-finished` marks a chapter
+ *     read as the reader scrolls past its end; `resumeTarget` opens the strip
+ *     at the last-read page.
  *   - ReaderChrome is a hide-on-scroll overlay (back / title / page slider /
  *     settings). A tap in the vertical CENTRE of the screen toggles it
  *     (`isCenterTap`); taps near the top/bottom edges or on a chrome control do
@@ -89,13 +91,36 @@ function onToggleFullscreen(): void {
 const stripRef = ref<InstanceType<typeof ReaderStripComponent> | null>(null)
 
 // The chrome's page-slider state: `currentPage` (0-based, within the CENTRED
-// chapter) and `visiblePages` (that chapter's TRIMMED page count — the
-// slider's denominator, never the declared `pageCount`; see
-// ReaderPageSlider's doc comment). Both are updated from the strip's
-// `centered`/`visible-pages` emits; `currentPage` is ALSO set optimistically
-// by `onSeek` — see the feedback-loop guard below.
+// chapter) and `visiblePagesByChapter` (a PER-CHAPTER map of the TRIMMED page
+// count — the slider's denominator, never the declared `pageCount`; see
+// ReaderPageSlider's doc comment).
+//
+// KEYED BY CHAPTER ID (not a single shared ref): the strip's `visible-pages`
+// emit only fires after a real scroll settles on the CURRENTLY-mounted
+// chapter — never at mount, never on a `jumpToChapter`. A single shared ref
+// would keep the PREVIOUS chapter's count after a jump, so a slider-next
+// tapped again before the new chapter is ever scrolled would mark the new
+// chapter read with a count that has no relation to its real length (the
+// reproduced bug: read ch-A (9 pages measured) -> next -> land on ch-B ->
+// next again before scrolling B -> markRead('ch-b', 9), a number belonging to
+// ch-A). Keying by chapterId means an unmeasured chapter simply has no entry
+// (see `visiblePagesFor`'s fallback) instead of borrowing someone else's.
+//
+// `currentPage` is ALSO set optimistically by `onSeek` — see the
+// feedback-loop guard below.
 const currentPage = ref(0)
-const visiblePages = ref(0)
+const visiblePagesByChapter = ref<Record<string, number>>({})
+
+/** The TRIMMED visible-page count for one chapter — 0 (safe slider
+ *  denominator; see ReaderPageSlider.logic) when that chapter hasn't been
+ *  scrolled/measured yet. NEVER falls back to another chapter's count. */
+function visiblePagesFor(id: string | null): number {
+  if (!id) return 0
+  return visiblePagesByChapter.value[id] ?? 0
+}
+
+/** The slider's live denominator: the CENTRED chapter's own measured count. */
+const visiblePages = computed(() => visiblePagesFor(currentChapterId.value))
 
 /** The chapter the reader is currently centred on (null before the first `centered` emit). */
 const centeredChapter = computed(() =>
@@ -143,9 +168,11 @@ function onCentered(payload: { chapterId: string, page: number }): void {
   currentPage.value = payload.page
 }
 
-/** Tracks the centred chapter's TRIMMED page count — the slider's live denominator. */
+/** Records a chapter's TRIMMED page count, keyed by the chapter it belongs to
+ *  (never overwrites a different chapter's entry — see the map's doc comment
+ *  above). */
 function onVisiblePages(payload: { chapterId: string, count: number }): void {
-  visiblePages.value = payload.count
+  visiblePagesByChapter.value[payload.chapterId] = payload.count
 }
 
 /** Mark a chapter read once its end-divider scrolls past — at its last page. */
@@ -170,10 +197,21 @@ function onSliderPrev(): void {
 
 /** The slider's next-chapter button — deliberately leaving a chapter forward
  *  always means "finished with it", so mark it read BEFORE navigating away
- *  (never leave it dangling "unread" just because the owner tapped next). */
+ *  (never leave it dangling "unread" just because the owner tapped next).
+ *  Marks with the LEAVING chapter's own measured count — resolved fresh at
+ *  the moment of the tap, never a value that could belong to another
+ *  chapter (a jump followed by an immediate second tap, before the new
+ *  chapter has scrolled/measured, must never mark it with the count left
+ *  behind by the chapter just departed). If the leaving chapter was never
+ *  measured (e.g. it fit on-screen with no scroll), fall back to its
+ *  declared `pageCount` — the best available estimate, same fallback
+ *  `onChapterFinished` already uses. */
 function onSliderNext(): void {
   if (!nextChapter.value || !currentChapterId.value) return
-  markRead(currentChapterId.value, visiblePages.value)
+  const leavingId = currentChapterId.value
+  const leaving = chapters.value.find((c) => c.id === leavingId)
+  const measured = visiblePagesByChapter.value[leavingId]
+  markRead(leavingId, measured ?? leaving?.pageCount ?? 0)
   jumpToChapter(nextChapter.value.id)
 }
 

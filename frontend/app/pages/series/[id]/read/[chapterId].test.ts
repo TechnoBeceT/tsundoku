@@ -232,4 +232,89 @@ describe('slider prev/next chapter navigation', () => {
     expect(markRead).not.toHaveBeenCalled()
     expect(jumpToChapter).toHaveBeenCalledWith('ch-a')
   })
+
+  // Regression: `visiblePages` used to be a single route-level ref updated by
+  // whichever chapter's `visible-pages` last fired — a value that is inherently
+  // PER-CHAPTER stored as if it were global. After a chapter jump it still held
+  // the PREVIOUS chapter's count, so a second `next` tapped before the new
+  // chapter ever scrolled persisted a `lastReadPage` with no relation to that
+  // chapter's real length. Fixed by keying the count by chapter id
+  // (`visiblePagesByChapter`).
+  it('reproduces the reviewer\'s exact sequence: measure A, next (lands on B), next AGAIN before B ever scrolls — B is marked with its OWN count/fallback, never A\'s', async () => {
+    const wrapper = await mountReader()
+    const chrome = wrapper.findComponent(ReaderChrome)
+    const strip = wrapper.findComponent(ReaderStrip)
+    const chapterC = { id: 'ch-c', number: 3, name: 'Three', pageCount: 5, read: false, lastReadPage: 0 }
+
+    // 1. Measure chapter A (reviewer's reproduction: 9 pages).
+    currentChapterId.value = 'ch-a'
+    nextChapter.value = chapters.value[1]! // ch-b
+    strip.vm.$emit('visible-pages', { chapterId: 'ch-a', count: 9 })
+    await wrapper.vm.$nextTick()
+
+    // 2. Tap next: marks A with A's own measured count (9 — correct), lands on B.
+    chrome.vm.$emit('next')
+    expect(markRead).toHaveBeenNthCalledWith(1, 'ch-a', 9)
+
+    // Simulate the landing on B that `jumpToChapter` would have driven — B has
+    // NOT scrolled, so no `visible-pages` has ever fired for it.
+    currentChapterId.value = 'ch-b'
+    nextChapter.value = chapterC
+
+    // 3. Tap next AGAIN before any scroll on B (`visible-pages` for ch-b never
+    //    emitted). The bug: the old single shared `visiblePages` ref still held
+    //    A's 9 here, so `markRead('ch-b', 9)` fired — a number belonging to a
+    //    different chapter. The fix: B has no entry in the per-chapter map, so
+    //    it falls back to B's own declared pageCount (20), never A's 9.
+    chrome.vm.$emit('next')
+
+    expect(markRead).toHaveBeenNthCalledWith(2, 'ch-b', 20)
+    expect(markRead).not.toHaveBeenCalledWith('ch-b', 9)
+    expect(jumpToChapter).toHaveBeenCalledWith('ch-c')
+  })
+
+  it('next on an UNMEASURED chapter (no visible-pages emitted for it yet) falls back to its declared pageCount, never a sibling chapter\'s count', async () => {
+    const wrapper = await mountReader()
+    const chrome = wrapper.findComponent(ReaderChrome)
+    const strip = wrapper.findComponent(ReaderStrip)
+
+    // Chapter A gets measured at 9 (a different chapter's count that must
+    // never leak onto B).
+    currentChapterId.value = 'ch-a'
+    strip.vm.$emit('visible-pages', { chapterId: 'ch-a', count: 9 })
+    await wrapper.vm.$nextTick()
+
+    // Now the reader is centred on B, which has NEVER emitted visible-pages
+    // (e.g. it fit on-screen with no scroll). ch-b's fixture pageCount is 20.
+    currentChapterId.value = 'ch-b'
+    nextChapter.value = { id: 'ch-c', number: 3, name: 'Three', pageCount: 5, read: false, lastReadPage: 0 }
+    await wrapper.vm.$nextTick()
+
+    chrome.vm.$emit('next')
+
+    expect(markRead).toHaveBeenCalledWith('ch-b', 20) // ch-b's declared pageCount, NOT ch-a's 9
+    expect(jumpToChapter).toHaveBeenCalledWith('ch-c')
+  })
+
+  it('the slider denominator resets to the new chapter\'s own count after a jump — not the previous chapter\'s', async () => {
+    const wrapper = await mountReader()
+    const chrome = wrapper.findComponent(ReaderChrome)
+    const strip = wrapper.findComponent(ReaderStrip)
+
+    currentChapterId.value = 'ch-a'
+    strip.vm.$emit('visible-pages', { chapterId: 'ch-a', count: 9 })
+    await wrapper.vm.$nextTick()
+    expect(chrome.props('visiblePages')).toBe(9)
+
+    // Jump to B — B has not been measured yet, so the denominator must be 0
+    // (safe default), NEVER A's leftover 9.
+    currentChapterId.value = 'ch-b'
+    await wrapper.vm.$nextTick()
+    expect(chrome.props('visiblePages')).toBe(0)
+
+    // Once B is actually measured, the denominator reflects B's real count.
+    strip.vm.$emit('visible-pages', { chapterId: 'ch-b', count: 20 })
+    await wrapper.vm.$nextTick()
+    expect(chrome.props('visiblePages')).toBe(20)
+  })
 })
