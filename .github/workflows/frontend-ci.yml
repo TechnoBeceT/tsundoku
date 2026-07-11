@@ -16,6 +16,11 @@ on:
   push:
     branches:
       - main
+      # v2 is the long-lived V2 integration branch — V2 work lands there, never
+      # directly on main. Without this entry the whole V2 line (which is mostly
+      # frontend) would be completely ungated, re-opening the exact hole this
+      # workflow was added to close.
+      - v2
     paths:
       - "frontend/**"
       - "backend/internal/api/openapi.yaml"
