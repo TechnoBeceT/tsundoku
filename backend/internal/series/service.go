@@ -819,13 +819,24 @@ func ProviderLabel(p *ent.SeriesProvider) string {
 // coverURL is the series cover proxy path when metaProv has a non-empty
 // cover_url, else "" (the proxy endpoint would have nothing to serve).
 // Exported so the downloads domain reuses the identical name+cover resolution.
+//
+// The cover path carries a VERSION query param derived from the provider's
+// cover_url ("…/cover?v=1a2b…"): the image only ever changes when that URL
+// changes, so the URL now changes exactly when the bytes do. That is what lets
+// the endpoint answer `immutable` and the browser skip the request entirely on a
+// re-render — while a metadata-source switch still shows the new cover instantly,
+// because it is a different URL. The param is a pure cache buster; the handler
+// ignores it (a request without it serves the same image).
+//
+// Deriving it is FREE: cover_url is already in memory from the DB, so building a
+// DTO does zero disk I/O.
 func SeriesDisplay(row *ent.Series, metaProv *ent.SeriesProvider) (name, coverURL string) {
 	name = row.Title
 	if metaProv != nil && metaProv.Title != "" {
 		name = metaProv.Title
 	}
 	if metaProv != nil && metaProv.CoverURL != "" {
-		coverURL = "/api/series/" + row.ID.String() + "/cover"
+		coverURL = "/api/series/" + row.ID.String() + "/cover?v=" + coverVersion(metaProv.CoverURL)
 	}
 	return name, coverURL
 }

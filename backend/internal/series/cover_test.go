@@ -134,6 +134,125 @@ func TestCoverBytes_WarmMakesZeroSuwayomiCalls(t *testing.T) {
 	}
 }
 
+// TestCoverBytes_WarmServeNeverReadsTheSidecar is the SPEED proof. Once the DB
+// fast-index (cover_file + cover_source_url) is populated, the warm path must
+// read ONLY the image file — no tsundoku.json, no JSON parse. Deleting the
+// sidecar (a file the hot path must not care about) leaves the serve working.
+func TestCoverBytes_WarmServeNeverReadsTheSidecar(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	fetcher := &countingFetcher{data: []byte("IMG"), ext: "jpg"}
+	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
+
+	if _, _, err := svc.CoverBytes(ctx, id); err != nil {
+		t.Fatalf("CoverBytes (warming): %v", err)
+	}
+	fetcher.calls.Store(0)
+
+	// Destroy the sidecar. The index says which file to read, so this must not
+	// matter at all — if it does, the hot path is still parsing tsundoku.json.
+	seriesDir := disk.SeriesDir(storage, "Manga", "Cover Cache")
+	if err := os.Remove(filepath.Join(seriesDir, "tsundoku.json")); err != nil {
+		t.Fatalf("remove sidecar: %v", err)
+	}
+
+	data, ext, err := svc.CoverBytes(ctx, id)
+	if err != nil {
+		t.Fatalf("CoverBytes (warm, no sidecar): %v", err)
+	}
+	if string(data) != "IMG" || ext != "jpg" {
+		t.Fatalf("CoverBytes (warm, no sidecar) = %q/%q, want IMG/jpg", data, ext)
+	}
+	if got := fetcher.calls.Load(); got != 0 {
+		t.Fatalf("warm serve without a sidecar made %d Suwayomi call(s), want 0", got)
+	}
+}
+
+// TestCoverBytes_ExistingCoverWithEmptyIndexBackfills is THE migration proof.
+//
+// The owner's library ALREADY has cover files + sidecar cover blocks on disk,
+// while the new DB index columns are empty. Reading empty columns as "not
+// cached" would re-fetch every one of those covers from the sources — precisely
+// the hammering this cache exists to prevent. So: serve from the sidecar, make
+// ZERO source calls, and backfill the index so the series self-heals onto the
+// fast path.
+func TestCoverBytes_ExistingCoverWithEmptyIndexBackfills(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	fetcher := &countingFetcher{data: []byte("FETCHED"), ext: "jpg"}
+	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
+
+	// Pre-existing on-disk cache, exactly as the pre-index feature left it:
+	// the image + the sidecar cover block, and NOTHING in the DB.
+	if _, err := disk.SaveCover(disk.CoverRequest{
+		Storage:   storage,
+		Category:  "Manga",
+		Title:     "Cover Cache",
+		Data:      []byte("ONDISK"),
+		Ext:       "webp",
+		SourceURL: "/thumb/a",
+		Provider:  "src-a",
+	}); err != nil {
+		t.Fatalf("seed on-disk cover: %v", err)
+	}
+	if row := db.Series.GetX(ctx, id); row.CoverFile != "" || row.CoverSourceURL != "" {
+		t.Fatalf("precondition: DB index must start empty, got %q/%q", row.CoverFile, row.CoverSourceURL)
+	}
+
+	data, ext, err := svc.CoverBytes(ctx, id)
+	if err != nil {
+		t.Fatalf("CoverBytes (existing cover, empty index): %v", err)
+	}
+	if string(data) != "ONDISK" || ext != "webp" {
+		t.Fatalf("CoverBytes = %q/%q, want ONDISK/webp (the file already on disk)", data, ext)
+	}
+	if got := fetcher.calls.Load(); got != 0 {
+		t.Fatalf("MIGRATION PROOF FAILED: an already-cached cover made %d Suwayomi call(s), want 0", got)
+	}
+
+	row := db.Series.GetX(ctx, id)
+	if row.CoverFile != "cover.webp" || row.CoverSourceURL != "/thumb/a" {
+		t.Fatalf("index not backfilled: cover_file=%q cover_source_url=%q, want cover.webp//thumb/a",
+			row.CoverFile, row.CoverSourceURL)
+	}
+}
+
+// TestCoverBytes_IndexedFileVanishedRefetches proves the index is advisory: if
+// the file it names is gone (an owner deleted it, an NFS blip), the cover is
+// re-fetched once rather than 404ing.
+func TestCoverBytes_IndexedFileVanishedRefetches(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	fetcher := &countingFetcher{data: []byte("IMG"), ext: "jpg"}
+	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
+
+	if _, _, err := svc.CoverBytes(ctx, id); err != nil {
+		t.Fatalf("CoverBytes (warming): %v", err)
+	}
+	seriesDir := disk.SeriesDir(storage, "Manga", "Cover Cache")
+	if err := os.Remove(filepath.Join(seriesDir, "cover.jpg")); err != nil {
+		t.Fatalf("remove cover file: %v", err)
+	}
+	fetcher.calls.Store(0)
+
+	data, _, err := svc.CoverBytes(ctx, id)
+	if err != nil {
+		t.Fatalf("CoverBytes (vanished file): %v", err)
+	}
+	if string(data) != "IMG" {
+		t.Errorf("CoverBytes (vanished file) = %q, want IMG", data)
+	}
+	if got := fetcher.calls.Load(); got != 1 {
+		t.Fatalf("vanished cover: Suwayomi calls = %d, want exactly 1", got)
+	}
+}
+
 // TestCoverBytes_SourceURLChangeRefetchesOnce proves the single invalidation
 // rule: a metadata-source switch (a different cover_url) re-fetches EXACTLY
 // once, overwrites the file, and then goes quiet again.

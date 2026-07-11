@@ -5,6 +5,7 @@ package downloads_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -256,9 +257,11 @@ func assertWantedEnrichment(t *testing.T, items []downloads.DownloadChapterDTO, 
 	if a2.SeriesTitle != "Alpha Saga (MangaDex)" {
 		t.Errorf("a-2 seriesTitle: want resolved display 'Alpha Saga (MangaDex)', got %q", a2.SeriesTitle)
 	}
-	wantCover := "/api/series/" + alphaID.String() + "/cover"
-	if a2.SeriesCoverURL != wantCover {
-		t.Errorf("a-2 coverUrl: want %q, got %q", wantCover, a2.SeriesCoverURL)
+	// The cover path is VERSIONED (…/cover?v=<hash of the source cover_url>) so it
+	// can be cached immutably; the downloads DTO reuses the same resolver.
+	wantCover := "/api/series/" + alphaID.String() + "/cover?v="
+	if !strings.HasPrefix(a2.SeriesCoverURL, wantCover) {
+		t.Errorf("a-2 coverUrl: want prefix %q, got %q", wantCover, a2.SeriesCoverURL)
 	}
 	if a2.SeriesCategory != "Manga" {
 		t.Errorf("a-2 category: want Manga, got %q", a2.SeriesCategory)

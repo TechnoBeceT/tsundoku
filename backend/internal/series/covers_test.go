@@ -3,6 +3,9 @@ package series_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -76,9 +79,9 @@ func TestMetadataResolution_DefaultHighestImportance(t *testing.T) {
 	if got.DisplayName != "High Source Title" {
 		t.Errorf("DisplayName = %q, want %q", got.DisplayName, "High Source Title")
 	}
-	wantCover := "/api/series/" + seriesID.String() + "/cover"
-	if got.CoverURL != wantCover {
-		t.Errorf("CoverURL = %q, want %q", got.CoverURL, wantCover)
+	wantCover := "/api/series/" + seriesID.String() + "/cover?v="
+	if !strings.HasPrefix(got.CoverURL, wantCover) {
+		t.Errorf("CoverURL = %q, want prefix %q", got.CoverURL, wantCover)
 	}
 
 	// The highest-importance provider must carry isMetadataSource=true.
@@ -305,8 +308,58 @@ func TestListSeries_DisplayName(t *testing.T) {
 	if rows[0].DisplayName != "High Source Title" {
 		t.Errorf("ListSeries DisplayName = %q, want %q", rows[0].DisplayName, "High Source Title")
 	}
-	wantCover := "/api/series/" + seriesID.String() + "/cover"
-	if rows[0].CoverURL != wantCover {
-		t.Errorf("ListSeries CoverURL = %q, want %q", rows[0].CoverURL, wantCover)
+	wantCover := "/api/series/" + seriesID.String() + "/cover?v="
+	if !strings.HasPrefix(rows[0].CoverURL, wantCover) {
+		t.Errorf("ListSeries CoverURL = %q, want prefix %q", rows[0].CoverURL, wantCover)
+	}
+}
+
+// TestCoverURL_VersionTracksMetadataSource proves the cover URL is CONTENT-VERSIONED:
+// the ?v= param is stable while the metadata source's cover_url is unchanged, and
+// changes the moment the owner pins a different source. That equivalence is what
+// licenses the immutable Cache-Control on the cover endpoint — the URL changes
+// exactly when the image does, so the browser can cache it forever and still see a
+// metadata-source switch instantly.
+//
+// It also proves building the DTO does ZERO disk I/O: the service is pointed at a
+// storage root that does not exist, and must neither fail nor create anything.
+func TestCoverURL_VersionTracksMetadataSource(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	seriesID, _, lowID := seedMeta(ctx, t, db)
+
+	storage := filepath.Join(t.TempDir(), "does-not-exist")
+	svc := series.NewService(db, storage, 14)
+
+	first, err := svc.GetSeries(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	again, err := svc.GetSeries(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("GetSeries (repeat): %v", err)
+	}
+	if first.CoverURL != again.CoverURL {
+		t.Errorf("cover version is not stable: %q then %q", first.CoverURL, again.CoverURL)
+	}
+
+	// Pin the OTHER source (a different cover_url) ⇒ a different image ⇒ a
+	// different URL, or the browser would keep showing the old cover forever.
+	if err := svc.SetMetadataSource(ctx, seriesID, &lowID); err != nil {
+		t.Fatalf("SetMetadataSource: %v", err)
+	}
+	switched, err := svc.GetSeries(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("GetSeries (after switch): %v", err)
+	}
+	if switched.CoverURL == first.CoverURL {
+		t.Errorf("cover version unchanged after a metadata-source switch: %q", switched.CoverURL)
+	}
+	if !strings.HasPrefix(switched.CoverURL, "/api/series/"+seriesID.String()+"/cover?v=") {
+		t.Errorf("cover URL = %q, want the versioned proxy path", switched.CoverURL)
+	}
+
+	if _, err := os.Stat(storage); !os.IsNotExist(err) {
+		t.Errorf("building the DTO touched disk: %q exists (stat err %v)", storage, err)
 	}
 }

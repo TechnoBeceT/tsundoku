@@ -2,6 +2,8 @@ package series
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +15,23 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 )
+
+// coverVersionLen is how much of the source-URL digest goes into the ?v= cache
+// buster. 12 hex chars (48 bits) is far beyond any collision risk across a
+// personal library, and keeps the URL readable.
+const coverVersionLen = 12
+
+// coverVersion derives the cover URL's cache-busting version from the metadata
+// provider's cover_url — the SAME string that keys the on-disk cache, so the
+// version changes exactly when the served image can change (a metadata-source
+// switch, or the source publishing a new thumbnail) and never otherwise.
+//
+// It is a pure string hash: building a series DTO costs NO disk I/O, which is
+// the point — the list endpoint must not stat 52 cover files to render a grid.
+func coverVersion(sourceURL string) string {
+	sum := sha256.Sum256([]byte(sourceURL))
+	return hex.EncodeToString(sum[:])[:coverVersionLen]
+}
 
 // ErrCoverFetchFailed is returned by CoverBytes when the cover is not cached
 // locally AND Suwayomi cannot supply it. The HTTP handler maps it to a 502: the
@@ -41,12 +60,24 @@ func (s *Service) WithCoverFetcher(f CoverFetcher) *Service {
 // LOCAL copy whenever possible.
 //
 // The cache rule, in full: the cover stored in the series folder is authoritative
-// and NO source is pinged while the sidecar's recorded source_url still equals the
-// metadata provider's current cover_url. Only a mismatch — the owner switched
-// metadata source, or the source changed its thumbnail (ingest refreshes
-// cover_url) — triggers exactly one re-fetch, which overwrites the local copy.
-// This is what stops a 52-series library grid from firing 52 source-ward fetches
-// on every single render.
+// and NO source is pinged while the recorded source_url still equals the metadata
+// provider's current cover_url. Only a mismatch — the owner switched metadata
+// source, or the source changed its thumbnail (ingest refreshes cover_url) —
+// triggers exactly one re-fetch, which overwrites the local copy. This is what
+// stops a 52-series library grid from firing 52 source-ward fetches on every
+// single render.
+//
+// The lookup is a THREE-STEP ladder, cheapest first:
+//
+//  1. DB fast-index (Series.cover_file + cover_source_url) — one os.ReadFile and
+//     nothing else. This is the hot path a library grid hits.
+//  2. Sidecar (disk.ReadCover) — the pre-index fallback. An existing library has
+//     covers + sidecar cover blocks on disk but EMPTY columns, and treating that
+//     as "not cached" would re-fetch every cover from the sources: exactly the
+//     hammering this cache exists to prevent. A sidecar hit therefore serves the
+//     bytes AND backfills the two columns, so the series self-heals onto step 1.
+//  3. Suwayomi — the only step that touches a source, reached only when there is
+//     no valid local cover at all.
 //
 // Failure modes: unknown series → ErrSeriesNotFound; no metadata provider or no
 // stored cover_url → ErrNoCover (both 404). A fetch failure on a COLD cover →
@@ -76,13 +107,42 @@ func (s *Service) CoverBytes(ctx context.Context, id uuid.UUID) (data []byte, ex
 
 	categoryName := category.NameOf(row)
 
+	// Step 1 — the fast index. The row is already in memory, so a warm serve is a
+	// single file read: no sidecar, no JSON parse (a 300-chapter sidecar over NFS
+	// is a real cost to pay per cover), no hashing.
+	if row.CoverFile != "" && row.CoverSourceURL == meta.CoverURL {
+		if data, ext, readErr := disk.ReadCoverFile(s.storage, categoryName, row.Title, row.CoverFile); readErr == nil {
+			return data, ext, nil
+		}
+		// The file vanished under us — fall through and re-fetch it once.
+	}
+
+	// Step 2 — the sidecar, the durable seed the index is derived from.
 	if data, ext, prov, readErr := disk.ReadCover(s.storage, categoryName, row.Title); readErr == nil {
 		if prov.SourceURL == meta.CoverURL {
+			s.indexCover(ctx, row.ID, prov.File, prov.SourceURL)
 			return data, ext, nil
 		}
 	}
 
+	// Step 3 — the source.
 	return s.fetchAndCacheCover(ctx, row, meta, categoryName)
+}
+
+// indexCover records which cover file the series currently holds and which
+// source URL it came from, so subsequent serves take the fast path.
+//
+// It is BEST-EFFORT by design: the bytes are already in hand, and the sidecar
+// still holds the same facts, so a failed index write costs a slow serve next
+// time — never a failed page and never a source fetch.
+func (s *Service) indexCover(ctx context.Context, id uuid.UUID, file, sourceURL string) {
+	err := s.client.Series.UpdateOneID(id).
+		SetCoverFile(file).
+		SetCoverSourceURL(sourceURL).
+		Exec(ctx)
+	if err != nil {
+		slog.Warn("cover index write failed", "series_id", id, "error", err)
+	}
 }
 
 // fetchAndCacheCover fetches the metadata provider's cover from Suwayomi once,
@@ -108,7 +168,7 @@ func (s *Service) fetchAndCacheCover(
 	// upstream "JPEG" must not serve as octet-stream cold and image/jpeg warm.
 	ext = disk.NormalizeCoverExt(rawExt)
 
-	if _, saveErr := disk.SaveCover(disk.CoverRequest{
+	filename, saveErr := disk.SaveCover(disk.CoverRequest{
 		Storage:   s.storage,
 		Category:  categoryName,
 		Title:     row.Title,
@@ -116,18 +176,22 @@ func (s *Service) fetchAndCacheCover(
 		Ext:       ext,
 		SourceURL: meta.CoverURL,
 		Provider:  meta.Provider,
-	}); saveErr != nil {
+	})
+	switch {
+	case saveErr == nil:
+		// The file landed: point the fast index at it so every later serve skips
+		// both the sidecar and the source.
+		s.indexCover(ctx, row.ID, filename, meta.CoverURL)
+	case errors.Is(saveErr, disk.ErrNoSeriesDir):
 		// A cache that cannot persist must not break the page: serve the bytes, and
 		// let the next view try to cache again. A series with no folder on disk
 		// (nothing downloaded yet) is the EXPECTED case, not a fault — SaveCover
 		// never creates the folder, so those series simply stay live-proxied.
-		if errors.Is(saveErr, disk.ErrNoSeriesDir) {
-			slog.Debug("cover not cached: series has no folder on disk",
-				"series_id", row.ID, "title", row.Title)
-		} else {
-			slog.Warn("cover cache write failed",
-				"series_id", row.ID, "title", row.Title, "error", saveErr)
-		}
+		slog.Debug("cover not cached: series has no folder on disk",
+			"series_id", row.ID, "title", row.Title)
+	default:
+		slog.Warn("cover cache write failed",
+			"series_id", row.ID, "title", row.Title, "error", saveErr)
 	}
 
 	return data, ext, nil
