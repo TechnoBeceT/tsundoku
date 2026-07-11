@@ -8,12 +8,20 @@ name: Build and publish Docker image
 # Trigger strategy — build only from TRUSTED refs (no pull_request builds, so a
 # fork PR can never push an image or read the registry token):
 #   * push to main         -> refresh the rolling "edge" / "main" dev image
+#   * push to v2           -> build the V2 integration image, tagged "v2"
 #   * push of a v* tag      -> cut a released image (semver + "latest")
 #   * workflow_dispatch     -> lets you re-run the build by hand from the UI
+#
+# NOTE on "v2": it is a long-lived BRANCH (the V2 integration line), not a tag —
+# the `tags: v*` filter below only matches TAGS, so the branch needs its own
+# entry here. Because "edge" and "latest" are gated on the default branch / a
+# v* tag respectively, a v2 build can never clobber the v1 deployment's images:
+# it publishes only under the "v2" tag.
 on:
   push:
     branches:
       - main
+      - v2
     tags:
       - "v*"
   workflow_dispatch:
@@ -60,10 +68,14 @@ jobs:
       # Tag scheme produced here:
       #   main branch push -> "main"  (type=ref,event=branch)
       #                    -> "edge"  (rolling latest-dev pointer)
+      #   v2 branch push   -> "v2"    (type=ref,event=branch — the V2 line)
       #   v1.2.3 tag push  -> "1.2.3" (full semver)
       #                    -> "1.2"   (major.minor, moves with each patch)
       #                    -> "latest" (only ever moved by a tagged release)
-      # So `latest` tracks releases, `edge` tracks main — they never collide.
+      # So `latest` tracks releases, `edge` tracks main, and `v2` tracks the V2
+      # integration branch — they never collide. `edge` is gated on
+      # is_default_branch and `latest` on a v* TAG, so a v2 branch build cannot
+      # move either of them and can never disturb the v1 deployment.
       - name: Extract Docker metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
