@@ -29,6 +29,18 @@ const resumeTarget = vi.fn(() => ({ chapterId: 'ch-a', page: 3 }))
 const onNearHead = vi.fn()
 const setCurrentChapter = vi.fn()
 
+// Fix 4: `scrollRequest`/`requestScroll` mirror the real `useReader` contract —
+// the route publishes its resume-anchor scroll through `requestScroll` (never
+// a hardcoded `{ token: 1 }` literal), which mints tokens itself. This mock
+// reproduces that so `publishes the computed resume target...` below still
+// pins the exact shape the route ends up requesting.
+const scrollRequest = ref<{ chapterId: string, page: number, token: number } | null>(null)
+let mockTokenCounter = 0
+const requestScroll = vi.fn((chapterId: string, page: number) => {
+  mockTokenCounter += 1
+  scrollRequest.value = { chapterId, page, token: mockTokenCounter }
+})
+
 vi.mock('~/composables/useReader', () => ({
   useReader: () => ({
     chapters,
@@ -42,6 +54,8 @@ vi.mock('~/composables/useReader', () => ({
     error: ref(null),
     startChapterId: 'ch-a',
     refresh: vi.fn(),
+    scrollRequest,
+    requestScroll,
   }),
 }))
 
@@ -59,6 +73,8 @@ class IOStub {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  scrollRequest.value = null
+  mockTokenCounter = 0
   vi.stubGlobal('IntersectionObserver', IOStub)
 })
 

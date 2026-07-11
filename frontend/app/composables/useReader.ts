@@ -14,10 +14,12 @@
  * `currentChapterId`/`setCurrentChapter` track the chapter under the viewport
  * midpoint (fed by the strip's `centered` event); `prevChapter`/`nextChapter`/
  * `hasPrev`/`hasNext` are that chapter's number-order neighbours, driving the
- * reader chrome's prev/next controls. `jumpToChapter` reseeds the window to a
- * single target chapter and publishes a fresh-token `scrollRequest` the strip
- * consumes to scroll there — see `ScrollRequest`'s doc comment for why a token,
- * not a boolean fuse, is required.
+ * reader chrome's prev/next controls. `requestScroll(chapterId, page)` is the
+ * ONE place that publishes a `scrollRequest` (the route's resume-anchor scroll
+ * AND `jumpToChapter` both go through it — Fix 4, see `ScrollRequest`'s doc
+ * comment for why a shared token, not a boolean fuse or a caller-owned literal,
+ * is required); `jumpToChapter` reseeds the window to a single target chapter
+ * and calls it directly.
  *
  * The reader addresses pages by the Chapter UUID (`pageUrl`), which the backend's
  * page-bytes and progress endpoints key on — cookie auth rides a plain `<img src>`
@@ -75,24 +77,25 @@ function byNumberAsc(a: ReaderChapter, b: ReaderChapter): number {
 
 /**
  * ScrollRequest — a one-shot ask for the strip to scroll to a specific page.
- * `token` is the dedup key: the strip acts on each new token exactly once, so
- * `jumpToChapter` publishing a fresh token is what lets it re-trigger a scroll
- * after `ReaderStrip.didInitialScroll`'s one-shot mount fuse has already fired.
+ * `token` is the dedup key: the strip acts on each new token exactly once.
+ * Published ONLY via `useReader.requestScroll` (Fix 4: this is the ONE token
+ * space, owned here) — the route's resume-anchor scroll and every
+ * `jumpToChapter` navigation draw from the same counter, so they can never
+ * mint colliding tokens (the bug this fixes: the route used to hardcode
+ * `token: 1` for the resume scroll, which collided with the FIRST
+ * `jumpToChapter` call — itself also starting from 1 — and silently swallowed
+ * whichever fired second).
  */
 export interface ScrollRequest {
   /** Chapter UUID to scroll to. */
   chapterId: string
   /** 0-based page index within that chapter. */
   page: number
-  /** Monotonically increasing per-request id (module-scoped, never reused). */
+  /** Monotonically increasing per-request id, scoped to ONE `useReader()`
+   *  instance (never reused within it; not shared across instances — a
+   *  module-scoped counter would be needless cross-instance coupling). */
   token: number
 }
-
-// Module-scoped so the token stays monotonic even across a composable
-// re-instantiation (e.g. the route's chapterId param changing) — a stale
-// in-flight request from a torn-down instance can never collide with, or
-// out-rank, a newer one.
-let scrollRequestCounter = 0
 
 /**
  * useReader — see the file header. `seriesId` is the series UUID; `startChapterId`
@@ -200,16 +203,31 @@ export function useReader(seriesId: string, startChapterId: string) {
   /** The strip's pending scroll instruction (see `ScrollRequest`); null once nothing is pending. */
   const scrollRequest = ref<ScrollRequest | null>(null)
 
+  // INSTANCE-scoped monotonic counter (Fix 4) — one per `useReader()` call, so
+  // it stays private to this reader's own token space rather than being shared
+  // module-wide across every instance in the process.
+  let scrollRequestCounter = 0
+
+  /**
+   * requestScroll — the ONE place that publishes a scroll-to-target request:
+   * increments the shared token counter and asks the strip to scroll to
+   * (chapterId, page). BOTH the route's resume-anchor scroll on open AND
+   * `jumpToChapter` go through this, so they draw from the same token space
+   * and can never collide (see `ScrollRequest`'s doc comment for the bug this
+   * fixes).
+   */
+  const requestScroll = (chapterId: string, page: number): void => {
+    scrollRequestCounter += 1
+    scrollRequest.value = { chapterId, page, token: scrollRequestCounter }
+  }
+
   /**
    * jumpToChapter — collapses the mounted window down to a single target
    * chapter and asks the strip to scroll to its top (prev/next navigation and
-   * direct jumps; the initial deep link is handled by `refresh` instead). The
-   * strip's own `onNearTail`/`onNearHead` re-grow the window from there as the
-   * reader scrolls. A no-op when `id` isn't in the loaded chapter list.
-   *
-   * Publishes a fresh-token `scrollRequest` — see the type doc for why this
-   * must be a token, not a boolean fuse: a jump must be able to scroll again
-   * even after the strip's one-shot initial-scroll fuse has already fired.
+   * direct jumps; the initial deep link/resume is handled via `requestScroll`
+   * directly by the route instead). The strip's own `onNearTail`/`onNearHead`
+   * re-grow the window from there as the reader scrolls. A no-op when `id`
+   * isn't in the loaded chapter list.
    */
   const jumpToChapter = (id: string): void => {
     const idx = chapters.value.findIndex((ch) => ch.id === id)
@@ -217,8 +235,7 @@ export function useReader(seriesId: string, startChapterId: string) {
     firstMounted.value = idx
     lastMounted.value = idx
     currentChapterId.value = id
-    scrollRequestCounter += 1
-    scrollRequest.value = { chapterId: id, page: 0, token: scrollRequestCounter }
+    requestScroll(id, 0)
   }
 
   /**
@@ -273,6 +290,7 @@ export function useReader(seriesId: string, startChapterId: string) {
     hasPrev,
     hasNext,
     jumpToChapter,
+    requestScroll,
     scrollRequest,
     loading,
     error,

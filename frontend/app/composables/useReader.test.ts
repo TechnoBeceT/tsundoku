@@ -270,3 +270,66 @@ describe('useReader — jumpToChapter', () => {
     expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-a'])
   })
 })
+
+/**
+ * Fix 4: the route used to hardcode `token: 1` for its resume-anchor scroll
+ * request, which collided with `jumpToChapter`'s own counter — both started
+ * counting from 1 — silently swallowing whichever request the strip saw
+ * second. `requestScroll` is now the ONE place a `scrollRequest` is minted;
+ * both the route's resume scroll and `jumpToChapter` must go through it and
+ * therefore share one strictly-increasing token space.
+ */
+describe('useReader — requestScroll: ONE token space shared by the resume scroll and every jump (Fix 4)', () => {
+  beforeEach(() => { nextOk = true; nextEmpty = false })
+
+  it('requestScroll publishes a fresh, monotonically increasing token on each call', async () => {
+    const { refresh, scrollRequest, requestScroll } = useReader('series-1', 'ch-a')
+    await refresh()
+
+    requestScroll('ch-a', 5)
+    expect(scrollRequest.value).toMatchObject({ chapterId: 'ch-a', page: 5 })
+    const first = scrollRequest.value!.token
+
+    requestScroll('ch-b', 0)
+    expect(scrollRequest.value).toMatchObject({ chapterId: 'ch-b', page: 0 })
+    const second = scrollRequest.value!.token
+
+    expect(second).toBeGreaterThan(first)
+  })
+
+  it('a resume scroll (via requestScroll) followed by a jump carries strictly increasing, distinct tokens', async () => {
+    const { refresh, scrollRequest, requestScroll, jumpToChapter, mountedChapters } = useReader('series-1', 'ch-a')
+    await refresh()
+
+    // Simulates the route's resume-anchor scroll — it must go through
+    // `requestScroll`, never construct a `{ token: 1 }` literal itself.
+    requestScroll('ch-a', 9)
+    const resumeToken = scrollRequest.value!.token
+
+    jumpToChapter('ch-c')
+    const jumpToken = scrollRequest.value!.token
+
+    expect(jumpToken).toBeGreaterThan(resumeToken)
+    expect(jumpToken).not.toBe(resumeToken)
+    // The strip acts on both: the resume request is honoured (asserted above
+    // via its own distinct token), and the jump takes effect too — the window
+    // actually moved to the jumped-to chapter.
+    expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-c'])
+  })
+
+  it('two independent useReader instances each start their own token space at 1 (instance-scoped, not module-scoped)', async () => {
+    const readerA = useReader('series-1', 'ch-a')
+    const readerB = useReader('series-1', 'ch-a')
+    await readerA.refresh()
+    await readerB.refresh()
+
+    readerA.requestScroll('ch-a', 0)
+    readerB.requestScroll('ch-a', 0)
+
+    // Both instances mint token 1 for their own first request — proving the
+    // counter is private to each `useReader()` call, not a shared module-level
+    // counter that would keep climbing across instances.
+    expect(readerA.scrollRequest.value!.token).toBe(1)
+    expect(readerB.scrollRequest.value!.token).toBe(1)
+  })
+})

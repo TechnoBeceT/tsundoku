@@ -33,10 +33,15 @@ const base = { pageUrl, hasPrev: false, scrollRequest: null } as const
 // Captured IntersectionObserver callback (fire "sentinel visible") + observed targets.
 let ioCallback: IntersectionObserverCallback | null = null
 let observedEls: Element[] = []
+// APPEND-ONLY log of every `observe()` call (never filtered by unobserve) — lets
+// a test assert a target was observed a SECOND time (the Fix 2+3 re-arm), which
+// `observedEls` (the "currently observed" set) can't distinguish from the first.
+let observeCalls: Element[] = []
 
 class IOStub {
   constructor(cb: IntersectionObserverCallback) { ioCallback = cb }
-  observe(el: Element): void { observedEls.push(el) }
+  observe(el: Element): void { observedEls.push(el); observeCalls.push(el) }
+  unobserve(el: Element): void { observedEls = observedEls.filter((e) => e !== el) }
   disconnect(): void { observedEls = [] }
 }
 
@@ -89,6 +94,7 @@ function seekToPageOf(wrapper: ReturnType<typeof mount>): (page: number) => void
 beforeEach(() => {
   ioCallback = null
   observedEls = []
+  observeCalls = []
   vi.stubGlobal('IntersectionObserver', IOStub)
 })
 
@@ -265,11 +271,21 @@ describe('ReaderStrip — tail sentinel (append)', () => {
   })
 })
 
-describe('ReaderStrip — head sentinel (prepend)', () => {
-  it('emits near-head, bracketed, when the sentinel intersects and hasPrev is true', () => {
+describe('ReaderStrip — head sentinel (prepend), gated on centred-on-first-mounted (Fix 2+3)', () => {
+  it('emits near-head, bracketed, when the sentinel intersects, hasPrev is true, AND the reader is centred on the FIRST mounted chapter', () => {
     const wrapper = mount(ReaderStrip, {
       props: { ...base, chapters: [chA, chB, chC], mountedChapters: [chB, chC], hasPrev: true },
     })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+    stubClientHeight(container, 100)
+    stubPagesSequentially(wrapper, container, 300)
+    // ch-B pages 0,1 → tops 0,300 · ch-C pages 0,1 → tops 600,900 (ch-B is FIRST mounted here).
+    container.scrollTop = 0 // mid = 50 → ch-B page 0
+    container.dispatchEvent(new Event('scroll')) // fresh instance → runs immediately
+    expect(wrapper.emitted('centered')?.at(-1)).toEqual([{ chapterId: 'ch-B', page: 0 }])
+
     const target = wrapper.find('[data-sentinel="head"]').element
     ioCallback?.([{ isIntersecting: true, target } as unknown as IntersectionObserverEntry], {} as IntersectionObserver)
     expect(wrapper.emitted('near-head')).toHaveLength(1)
@@ -283,9 +299,65 @@ describe('ReaderStrip — head sentinel (prepend)', () => {
     ioCallback?.([{ isIntersecting: true, target } as unknown as IntersectionObserverEntry], {} as IntersectionObserver)
     expect(wrapper.emitted('near-head')).toBeUndefined()
   })
+
+  it('does NOT emit near-head at mount, before anything has been centred (Fix 2a: the dead-sentinel bug)', () => {
+    // Previously this fired instantly if the sentinel happened to already be
+    // intersecting at mount — the head sentinel IS intersecting at mount (it's
+    // in the initial viewport), and `hasPrev` alone used to be sufficient.
+    const wrapper = mount(ReaderStrip, {
+      props: { ...base, chapters: [chA, chB, chC], mountedChapters: [chB, chC], hasPrev: true },
+    })
+    const target = wrapper.find('[data-sentinel="head"]').element
+    ioCallback?.([{ isIntersecting: true, target } as unknown as IntersectionObserverEntry], {} as IntersectionObserver)
+    expect(wrapper.emitted('near-head')).toBeUndefined()
+  })
+
+  it('does NOT emit near-head when hasPrev is true but the reader is centred on a LATER mounted chapter (Fix 2b: would unmount the centred chapter)', () => {
+    const wrapper = mount(ReaderStrip, {
+      props: { ...base, chapters: [chA, chB, chC], mountedChapters: [chA, chB, chC], hasPrev: true },
+    })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+    stubClientHeight(container, 100)
+    stubPagesSequentially(wrapper, container, 300)
+    // ch-A 0,1,2 → 0,300,600 · ch-B 0,1 → 900,1200 · ch-C 0,1 → 1500,1800.
+    container.scrollTop = 1000 // mid = 1050 → ch-B page 0 [900,1200) — NOT the first mounted chapter (ch-A is)
+    container.dispatchEvent(new Event('scroll'))
+    expect(wrapper.emitted('centered')?.at(-1)).toEqual([{ chapterId: 'ch-B', page: 0 }])
+
+    const target = wrapper.find('[data-sentinel="head"]').element
+    ioCallback?.([{ isIntersecting: true, target } as unknown as IntersectionObserverEntry], {} as IntersectionObserver)
+    expect(wrapper.emitted('near-head')).toBeUndefined()
+  })
 })
 
-describe('ReaderStrip — reflow anchor: the CENTRED chapter survives what the tail does not', () => {
+describe('ReaderStrip — head sentinel re-arms once the reader centres on the first mounted chapter (Fix 2+3, IntersectionObserver re-notify)', () => {
+  it('unobserves + re-observes the head sentinel the moment isCentredOnFirstMounted first becomes true', async () => {
+    const wrapper = mount(ReaderStrip, {
+      props: { ...base, chapters: [chA, chB, chC], mountedChapters: [chB, chC], hasPrev: true },
+    })
+    const headTarget = wrapper.find('[data-sentinel="head"]').element
+    // The initial mount-time observe() — the sentinel may already be
+    // intersecting here (it's in the initial viewport), so without a re-arm it
+    // would never notify again once the guard opens.
+    expect(observeCalls.filter((e) => e === headTarget)).toHaveLength(1)
+
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+    stubClientHeight(container, 100)
+    stubPagesSequentially(wrapper, container, 300)
+    container.scrollTop = 0 // mid = 50 → ch-B page 0 — the first mounted chapter
+    container.dispatchEvent(new Event('scroll'))
+    await nextTick() // let the isCentredOnFirstMounted watcher flush
+
+    expect(wrapper.emitted('centered')?.at(-1)).toEqual([{ chapterId: 'ch-B', page: 0 }])
+    expect(observeCalls.filter((e) => e === headTarget)).toHaveLength(2)
+  })
+})
+
+describe('ReaderStrip — reflow anchor: the CENTRED first-mounted chapter survives what the tail does not', () => {
   it('does not jump when a head-prepend reflow unmounts the OLD tail chapter', async () => {
     const wrapper = mount(ReaderStrip, {
       props: { ...base, chapters: [chA, chB, chC], mountedChapters: [chA, chB, chC], hasPrev: true },
@@ -297,23 +369,22 @@ describe('ReaderStrip — reflow anchor: the CENTRED chapter survives what the t
     stubPagesSequentially(wrapper, container, 300)
     // ch-A pages 0,1,2 → tops 0,300,600 · ch-B pages 0,1 → tops 900,1200 ·
     // ch-C pages 0,1 → tops 1500,1800 (all 300px tall, in document order).
-    container.scrollTop = 1250 // mid = 1300 → lands in ch-B's second page [1200,1500)
+    container.scrollTop = 100 // mid = 150 → lands in ch-A's FIRST page [0,300)
     container.dispatchEvent(new Event('scroll')) // first scroll on a fresh instance runs immediately
-    expect(wrapper.emitted('centered')?.at(-1)).toEqual([{ chapterId: 'ch-B', page: 1 }])
+    expect(wrapper.emitted('centered')?.at(-1)).toEqual([{ chapterId: 'ch-A', page: 0 }])
 
-    // The reflow-anchor math reads the CH-B *chapter wrapper's* rect (the
-    // element `[data-chapter-id="ch-B"]` resolves to, per document order) —
-    // independent of the individual page rects stubbed above. Stubbed as a LIVE
-    // function of how many pages currently render before it (300px each), so it
-    // stays correct at WHATEVER moment afterReflow's `await nextTick()` actually
-    // resolves relative to the `setProps` below — no assumption about exact
-    // microtask interleaving is needed (mirrors the Fix-A test's approach).
-    const bWrapper = wrapper.find('.strip__chapter[data-chapter-id="ch-B"]').element
-    bWrapper.getBoundingClientRect = () => rect((pageDivs(wrapper, 'ch-0') + pageDivs(wrapper, 'ch-A')) * 300)
-    // Before the prepend: only ch-A's 3 pages precede ch-B → 900.
+    // Fix 2+3: the prepend guard requires the CENTRED chapter to be the FIRST
+    // MOUNTED one — here that's ch-A itself, so the reflow anchor is ch-A's own
+    // chapter wrapper. Stubbed as a LIVE function of how many pages currently
+    // render before it (300px each), so it stays correct at WHATEVER moment
+    // afterReflow's `await nextTick()` actually resolves relative to the
+    // `setProps` below (mirrors the Fix-A test's approach).
+    const aWrapper = wrapper.find('.strip__chapter[data-chapter-id="ch-A"]').element
+    aWrapper.getBoundingClientRect = () => rect(pageDivs(wrapper, 'ch-0') * 300)
+    // Before the prepend: nothing precedes ch-A → 0.
 
-    // Fire the head sentinel — beforeReflow() snapshots ch-B's pre-reflow
-    // position (900) + the current scrollTop (1250) right now.
+    // Fire the head sentinel — beforeReflow() snapshots ch-A's pre-reflow
+    // position (0) + the current scrollTop (100) right now.
     const target = wrapper.find('[data-sentinel="head"]').element
     ioCallback?.([{ isIntersecting: true, target } as unknown as IntersectionObserverEntry], {} as IntersectionObserver)
     expect(wrapper.emitted('near-head')).toHaveLength(1)
@@ -328,12 +399,12 @@ describe('ReaderStrip — reflow anchor: the CENTRED chapter survives what the t
 
     expect(wrapper.find('[data-chapter-id="ch-C"]').exists()).toBe(false) // the old tail is really gone
 
-    // After the prepend: ch-0 (1 page) + ch-A (3 pages) precede ch-B → 1200.
-    // scrollTop shifts by exactly the anchor's delta (1200 - 900 = 300) — the
-    // pre-reflow read position stays visually fixed even though the OLD tail
-    // vanished. Anchoring on the tail instead would have found no ch-C element,
-    // returned early, and left scrollTop stuck at 1250 — a visible jump.
-    expect(container.scrollTop).toBe(1250 + 300)
+    // After the prepend: ch-0's 1 page precedes ch-A → 300. scrollTop shifts by
+    // exactly the anchor's delta (300 - 0 = 300) — the pre-reflow read position
+    // stays visually fixed even though the OLD tail vanished. Anchoring on the
+    // tail instead would have found no ch-C element, returned early, and left
+    // scrollTop stuck at 100 — a visible jump.
+    expect(container.scrollTop).toBe(100 + 300)
   })
 })
 
@@ -406,7 +477,7 @@ describe('ReaderStrip — seekToPage (exposed)', () => {
   })
 })
 
-describe('ReaderStrip — chapter-finished', () => {
+describe('ReaderStrip — chapter-finished (Fix 1: a below->above TRANSITION, not a static position)', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
@@ -415,15 +486,28 @@ describe('ReaderStrip — chapter-finished', () => {
       props: { ...base, chapters: [chA, chB], mountedChapters: [chA] },
     })
     const container = wrapper.find('.strip').element as HTMLElement
-    makeScrollable(container, 5000)
+    makeScrollable(container, 0)
     stubRect(container, 0)
-    // ch-A's divider is scrolled above the viewport top (rect.top negative).
-    stubRect(wrapper.find('[data-divider-id="ch-A"]').element, -100)
+    const dividerEl = wrapper.find('[data-divider-id="ch-A"]').element
 
+    // Pass 1: the divider is still BELOW the viewport top (top > scrollTop) —
+    // seeds `seenBelow` for ch-A. Under the new transition rule a divider that
+    // is at/above scrollTop on its FIRST observation never finishes, so this
+    // step is required before the real crossing below can count.
+    stubRect(dividerEl, 100)
+    container.scrollTop = 5
     container.dispatchEvent(new Event('scroll'))
-    vi.advanceTimersByTime(200) // trailing throttle fires runScroll #1
-    container.dispatchEvent(new Event('scroll'))
-    vi.advanceTimersByTime(200) // runScroll #2 — must NOT re-emit
+    vi.advanceTimersByTime(200)
+    expect(wrapper.emitted('chapter-finished')).toBeUndefined()
+
+    // Pass 2: the reader scrolls down past it — the divider is now above the
+    // viewport top (rect.top negative relative to a large scrollTop).
+    stubRect(dividerEl, -100)
+    container.scrollTop = 5000
+    container.dispatchEvent(new Event('scroll')) // trailing throttle fires runScroll
+    vi.advanceTimersByTime(200)
+    container.dispatchEvent(new Event('scroll')) // repeated — must NOT re-emit
+    vi.advanceTimersByTime(200)
 
     expect(wrapper.emitted('chapter-finished')).toHaveLength(1)
     expect(wrapper.emitted('chapter-finished')![0]).toEqual(['ch-A'])
@@ -449,10 +533,18 @@ describe('ReaderStrip — chapter-finished', () => {
       props: { ...base, chapters: [chA, chB], mountedChapters: [chA] },
     })
     const container = wrapper.find('.strip').element as HTMLElement
-    makeScrollable(container, 5000)
+    makeScrollable(container, 0)
     stubRect(container, 0)
-    stubRect(wrapper.find('[data-divider-id="ch-A"]').element, -100)
+    const dividerEl = wrapper.find('[data-divider-id="ch-A"]').element
 
+    // Seed seenBelow, then transition above for the first finish.
+    stubRect(dividerEl, 100)
+    container.scrollTop = 5
+    container.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(200)
+
+    stubRect(dividerEl, -100)
+    container.scrollTop = 5000
     container.dispatchEvent(new Event('scroll'))
     vi.advanceTimersByTime(200)
     expect(wrapper.emitted('chapter-finished')).toHaveLength(1)
@@ -460,9 +552,53 @@ describe('ReaderStrip — chapter-finished', () => {
     await wrapper.setProps({ scrollRequest: { chapterId: 'ch-A', page: 0, token: 7 } })
     await flushPromises()
 
+    // The divider is still at/above scrollTop, and ch-A stays in the
+    // persistent `seenBelow` set (never cleared by a token change — see
+    // ReaderStrip.vue's `seenBelowDividers` doc comment), so the token reset
+    // alone (clearing `emittedFinished`) is what lets this re-fire.
     container.dispatchEvent(new Event('scroll'))
     vi.advanceTimersByTime(200)
 
     expect(wrapper.emitted('chapter-finished')).toHaveLength(2)
+  })
+})
+
+describe('ReaderStrip — CRITICAL: a head-prepend must not instantly mark the prepended chapter finished (Fix 1)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('does not emit chapter-finished for a chapter prepended above the read position', async () => {
+    // Reproduces the reviewer's exact repro: the reader is reading ch-B/ch-C,
+    // then ch-A is prepended ABOVE them (near-head), landing its end-divider
+    // above `scrollTop` on the very FIRST time it is observed — with no prior
+    // "seen below". Under the OLD static "top <= scrollTop" rule this fired
+    // `chapter-finished` for ch-A instantly, destroying its resume position
+    // before the reader ever read a page of it.
+    const wrapper = mount(ReaderStrip, {
+      props: { ...base, chapters: [chA, chB, chC], mountedChapters: [chB, chC], hasPrev: true },
+    })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 2000)
+    stubRect(container, 0)
+    // ch-B's divider is still BELOW the reader — not yet reached.
+    stubRect(wrapper.find('[data-divider-id="ch-B"]').element, 3000)
+
+    container.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(200)
+    expect(wrapper.emitted('chapter-finished')).toBeUndefined()
+
+    // ch-A prepends above the reader's current position. Its computed
+    // content-relative top (rect.top - containerTop + scrollTop) must land
+    // AT/ABOVE scrollTop(2000) to reproduce the bug — a raw rect.top of -2000
+    // gives 0, well above — on this, its very FIRST observation, with no
+    // prior "seen below".
+    await wrapper.setProps({ mountedChapters: [chA, chB, chC] })
+    await nextTick()
+    stubRect(wrapper.find('[data-divider-id="ch-A"]').element, -2000)
+
+    container.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(200)
+
+    expect(wrapper.emitted('chapter-finished')).toBeUndefined()
   })
 })

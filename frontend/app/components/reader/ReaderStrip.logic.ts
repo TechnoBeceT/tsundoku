@@ -104,14 +104,47 @@ export function centeredPage(state: ScrollState): CenteredPage | null {
 }
 
 /**
- * finishedChapterIds — the chapters whose end-divider has scrolled fully above
- * the viewport top, i.e. the reader has finished reading them. `dividerTops` is
- * each chapter's end-divider top offset from the scroll container; a divider at
- * or above `scrollTop` means that chapter is behind the reader. The strip diffs
- * this against an already-emitted set so `chapterFinished` fires once per chapter.
+ * finishedChapterIds — the chapters the reader has actually SCROLLED DOWN
+ * THROUGH, i.e. "finished" is a TRANSITION, not a static divider position.
+ *
+ * A chapter is finished only when its end-divider was previously observed
+ * BELOW the scroll position (`seenBelow`) and is now at/above it — the reader
+ * moved past it. This matters because a HEAD PREPEND inserts a whole chapter
+ * entirely above the current scroll position: its divider sits at/above
+ * `scrollTop` on the very FIRST observation, with no prior "seen below" —
+ * a naive static check (`top <= scrollTop`) would fire instantly, marking the
+ * chapter the reader is about to read as fully read and destroying its resume
+ * position (the CRITICAL bug this fixes). Requiring the below→above
+ * transition means a never-seen divider that starts at/above `scrollTop`
+ * (exactly the prepend case) never fires — only once the reader scrolls UP
+ * into that chapter (seeing its divider below them) and back DOWN through it
+ * does it correctly finish.
+ *
+ * `dividerTops` is each mounted chapter's end-divider top offset from the
+ * scroll container. `seenBelow` is the running set of chapter ids whose
+ * divider has been observed below the reader; pass the returned `seenBelow`
+ * back in on the next call (the strip owns this as persistent per-instance
+ * state, like its `emittedFinished` de-dupe set — see that field's doc for why
+ * a SEPARATE de-dupe still sits on top of this: this function does not track
+ * "already emitted", only "has crossed the line", so calling it twice with the
+ * same at/above divider legitimately returns the same id both times).
  */
-export function finishedChapterIds(dividerTops: { chapterId: string, top: number }[], scrollTop: number): string[] {
-  return dividerTops.filter((d) => d.top <= scrollTop).map((d) => d.chapterId)
+export function finishedChapterIds(
+  dividerTops: { chapterId: string, top: number }[],
+  scrollTop: number,
+  seenBelow: Set<string>,
+): { finished: string[], seenBelow: Set<string> } {
+  const nextSeenBelow = new Set(seenBelow)
+  const finished: string[] = []
+  for (const d of dividerTops) {
+    if (d.top > scrollTop) {
+      nextSeenBelow.add(d.chapterId)
+    }
+    else if (nextSeenBelow.has(d.chapterId)) {
+      finished.push(d.chapterId)
+    }
+  }
+  return { finished, seenBelow: nextSeenBelow }
 }
 
 /**
@@ -161,10 +194,20 @@ export function chaptersToUnmountDirectional(
 
 /**
  * shouldPrepend — whether the strip should pull the PREVIOUS chapter into the
- * window: the mirror of `shouldAppend`. True only when the head sentinel is on
- * screen AND a previous chapter exists (at the head of the list there is nothing
- * to prepend).
+ * window. True only when the head sentinel is on screen, a previous chapter
+ * exists, AND the reader is currently centred on the FIRST MOUNTED chapter.
+ *
+ * The third condition (added for Fix 2+3) is what makes a prepend safe and
+ * meaningful: a prepend is only useful once the reader has scrolled to the top
+ * of what's mounted and is approaching it, and gating on it structurally
+ * guarantees (a) `centeredChapterId` is non-null whenever a prepend fires, so
+ * the reflow anchor never falls back to the tail chapter — the very element a
+ * BACKWARD reflow can unmount; (b) the backward window-drop (which trims from
+ * the BOTTOM) can never remove the chapter the reader is centred on, since
+ * that chapter is always the first, never the last, of the mounted window;
+ * and (c) no spurious prepend fires at mount, before anything has been
+ * centred yet.
  */
-export function shouldPrepend(sentinelVisible: boolean, hasPrevChapter: boolean): boolean {
-  return sentinelVisible && hasPrevChapter
+export function shouldPrepend(sentinelVisible: boolean, hasPrevChapter: boolean, isCentredOnFirstMounted: boolean): boolean {
+  return sentinelVisible && hasPrevChapter && isCentredOnFirstMounted
 }

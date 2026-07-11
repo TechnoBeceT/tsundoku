@@ -19,9 +19,17 @@ import {
  * `ChapterDivider`s, and drives the infinite-scroll behaviour in BOTH directions:
  *
  *   - A TAIL sentinel appends the next chapter early (emits `near-tail`); a HEAD
- *     sentinel prepends the previous chapter early (emits `near-head`). Both wire
- *     to `useReader.onNearTail`/`onNearHead`, which grow the window and unmount
- *     whichever far end the reader is moving away from.
+ *     sentinel prepends the previous chapter early (emits `near-head`), but ONLY
+ *     while the reader is centred on the FIRST MOUNTED chapter
+ *     (`isCentredOnFirstMounted`, fed into `shouldPrepend` — Fix 2+3): that is the
+ *     only moment a prepend is safe (it guarantees a non-null reflow anchor and
+ *     that the backward window-drop can never remove the chapter being read) and
+ *     meaningful (mid-window, there is nothing to prepend for). Because an
+ *     IntersectionObserver never re-notifies a target that stays continuously
+ *     intersecting, the sentinel is unobserved+reobserved the moment that
+ *     condition FIRST becomes true, forcing a fresh notification. Both sentinels
+ *     wire to `useReader.onNearTail`/`onNearHead`, which grow the window and
+ *     unmount whichever far end the reader is moving away from.
  *   - Every reflow that can move content ABOVE the viewport — a prepend, an
  *     append-driven unmount, or a pageCount tail-404 trim — is bracketed by
  *     `beforeReflow`/`afterReflow`, which anchors on the CENTRED chapter (see its
@@ -29,8 +37,12 @@ import {
  *     visibly jumps.
  *   - A throttled scroll handler emits `centered` (the page under the viewport
  *     midpoint), `visible-pages` (that chapter's trimmed page count — the
- *     slider's live denominator) and `chapter-finished` (when a chapter's
- *     end-divider scrolls above the viewport top).
+ *     slider's live denominator) and `chapter-finished`. `chapter-finished` fires
+ *     only on a genuine below->above TRANSITION of a chapter's end-divider
+ *     (`finishedChapterIds`, Fix 1) — never a static "divider is at/above
+ *     scrollTop" check, which would instantly (and wrongly) finish a chapter the
+ *     moment it's PREPENDED above the reader, since its divider starts above
+ *     `scrollTop` by construction on the very first observation.
  *   - `scrollRequest` (a token-tagged scroll-to-target, e.g. the route's resume
  *     anchor or a chapter jump) is honoured once per distinct token; `seekToPage`
  *     is exposed for the page slider to scroll within the centred chapter
@@ -53,8 +65,9 @@ const props = defineProps<{
   mountedChapters: ReaderChapter[]
   /** Builds the same-origin page-bytes URL for (chapterId, 0-based page). */
   pageUrl: (chapterId: string, n: number) => string
-  /** Whether a chapter precedes the centred one (`useReader.hasPrev`) — gates
-   *  the head sentinel's prepend, the mirror of the tail's local `hasNext`. */
+  /** Whether a chapter precedes the centred one (`useReader.hasPrev`) — one of
+   *  three conditions gating the head sentinel's prepend (see `shouldPrepend`),
+   *  the mirror of the tail's local `hasNext`. */
   hasPrev: boolean
   /** The strip's pending scroll-to-target instruction — the route's resume
    *  anchor on open, or a later chapter jump (`useReader.scrollRequest`). Acted
@@ -204,6 +217,17 @@ async function afterReflow(): Promise<void> {
 // below clears this Set whenever a new `scrollRequest` token arrives.
 const emittedFinished = new Set<string>()
 
+// The running "seen below the reader" set `finishedChapterIds` (Fix 1) reasons
+// over — persisted across scroll ticks (not cleared on a new `scrollRequest`
+// token): once a chapter's divider has genuinely been seen below the reader it
+// stays eligible to finish on every later below->above crossing, which is
+// exactly what lets a jump/resume back onto an already-finished chapter
+// re-fire `chapter-finished` (via `emittedFinished` being cleared) without
+// re-requiring a fresh scroll-through. A chapter that was NEVER seen below —
+// e.g. one just prepended above the reader — stays permanently un-finishable
+// until the reader actually scrolls up into it first.
+let seenBelowDividers = new Set<string>()
+
 // ---- scroll-to-target: honour `scrollRequest` --------------------------------
 // Replaces the old one-shot `didInitialScroll` boolean fuse, which could only
 // ever fire once for the strip's whole lifetime — silently no-op-ing every
@@ -261,13 +285,22 @@ defineExpose({ seekToPage })
 // ---- sentinels: append the next chapter / prepend the previous one ----------
 let observer: IntersectionObserver | null = null
 
+/** True once the reader is centred on the FIRST currently-mounted chapter — the
+ *  ONLY moment a head-prepend is safe/meaningful (Fix 2+3, see `shouldPrepend`'s
+ *  doc comment for the full reasoning: it guarantees a non-null reflow anchor
+ *  and that the backward window-drop can never remove the centred chapter).
+ *  Also what stops a spurious prepend at mount, since `centeredChapterId`
+ *  starts null. */
+const isCentredOnFirstMounted = computed(() =>
+  centeredChapterId.value !== null && centeredChapterId.value === props.mountedChapters[0]?.id)
+
 /** Routes an IntersectionObserver callback to the head or tail sentinel handler
  *  by comparing `entry.target` — both sentinels share one observer instance. */
 function onIntersect(entries: IntersectionObserverEntry[]): void {
   for (const entry of entries) {
     if (!entry.isIntersecting) continue
     if (entry.target === headSentinelEl.value) {
-      if (!shouldPrepend(true, props.hasPrev)) continue
+      if (!shouldPrepend(true, props.hasPrev, isCentredOnFirstMounted.value)) continue
       // MANDATORY bracket: an un-anchored prepend inserts a whole chapter ABOVE
       // the scroll position and yanks the page down under the reader's thumb.
       beforeReflow()
@@ -282,6 +315,20 @@ function onIntersect(entries: IntersectionObserverEntry[]): void {
     }
   }
 }
+
+// The prepend guard (isCentredOnFirstMounted) only opens once the reader
+// scrolls to the top of what's mounted — but the head sentinel may ALREADY be
+// intersecting by then (e.g. it was on screen at mount, or before centring
+// caught up to it). An IntersectionObserver never re-notifies a target that
+// stays continuously intersecting, so without this the sentinel would sit
+// dead forever once the guard opens. Unobserve+reobserve is the simplest way
+// to force one fresh notification the moment that happens.
+watch(isCentredOnFirstMounted, (now, was) => {
+  if (now && !was && observer && headSentinelEl.value) {
+    observer.unobserve(headSentinelEl.value)
+    observer.observe(headSentinelEl.value)
+  }
+})
 
 // ---- scroll: emit centered + visible-pages + chapter-finished (throttled) ---
 const THROTTLE_MS = 120
@@ -336,7 +383,9 @@ function runScroll(): void {
       top: divEl.getBoundingClientRect().top - containerTop + el.scrollTop,
     })
   })
-  for (const id of finishedChapterIds(dividerTops, el.scrollTop)) {
+  const result = finishedChapterIds(dividerTops, el.scrollTop, seenBelowDividers)
+  seenBelowDividers = result.seenBelow
+  for (const id of result.finished) {
     if (!emittedFinished.has(id)) {
       emittedFinished.add(id)
       emit('chapter-finished', id)

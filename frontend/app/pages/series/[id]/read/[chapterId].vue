@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { useReader, type ScrollRequest } from '~/composables/useReader'
+import { useReader } from '~/composables/useReader'
 import { useReadingProgress } from '~/composables/useReadingProgress'
 import { useReaderSettings, readerStyleVars } from '~/composables/useReaderSettings'
 import { useFullscreen } from '~/composables/useFullscreen'
@@ -37,6 +37,7 @@ const chapterId = route.params.chapterId as string
 
 const {
   chapters, mountedChapters, pageUrl, onNearTail, onNearHead, hasPrev, setCurrentChapter, loading, error, seriesTitle,
+  scrollRequest, requestScroll,
 } = useReader(id, chapterId)
 const { record, markRead, resumeTarget, flush } = useReadingProgress(chapters, chapterId)
 const { settings, update } = useReaderSettings()
@@ -44,15 +45,17 @@ const { settings, update } = useReaderSettings()
 // Resume anchor: recomputed from the loaded chapters.
 const resume = computed(() => resumeTarget(chapters.value))
 
-// The strip's initial scroll-to-target — the resume anchor, published once as a
-// token-1 request the first time it resolves to a real chapter (ReaderStrip only
-// mounts after chapters load, so this is ready by the time it renders). A future
-// chapter-jump feature will need to merge this with `useReader.scrollRequest`
-// (its own, separately-numbered token space) into one prop value.
-const scrollRequest = computed<ScrollRequest | null>(() => {
-  const r = resume.value
-  return r.chapterId ? { chapterId: r.chapterId, page: r.page, token: 1 } : null
-})
+// Fire the resume scroll exactly once, the first time the loaded chapters
+// resolve a real target chapter (empty string before `chapters` loads). Fix 4:
+// this goes through `useReader.requestScroll` — the ONE token space — rather
+// than the route constructing its own `scrollRequest` literal, which used to
+// hardcode `token: 1` and collide with the first `jumpToChapter` call.
+let resumedOnce = false
+watch(resume, (r) => {
+  if (resumedOnce || !r.chapterId) return
+  resumedOnce = true
+  requestScroll(r.chapterId, r.page)
+}, { immediate: true })
 
 // The CSS custom properties the strip reads for padding / fit / gaps. Inherited
 // by the whole `.reader` subtree, so it also covers ReaderPage's reserve var.
