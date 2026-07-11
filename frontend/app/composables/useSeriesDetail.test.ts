@@ -39,6 +39,8 @@ let calls: Call[] = []
 let nextMatchOk = true
 let nextDedupOk = true
 let nextDedupeFilesOk = true
+let nextDeleteOk = true
+let nextPatchOk = true
 
 const initialDetail = {
   id: 'series-1',
@@ -145,8 +147,20 @@ vi.mock('~/utils/api/client', () => ({
       }
       return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
     }),
-    PATCH: vi.fn(),
-    DELETE: vi.fn(),
+    PATCH: vi.fn().mockImplementation((path: string, opts?: { params?: { path?: Record<string, unknown> }, body?: unknown }) => {
+      calls.push({ method: 'PATCH', path, params: opts?.params?.path, body: opts?.body })
+      if (!nextPatchOk) {
+        return Promise.resolve({ data: null, error: { message: 'patch failed' }, response: new Response(null, { status: 500 }) })
+      }
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    }),
+    DELETE: vi.fn().mockImplementation((path: string, opts?: { params?: { path?: Record<string, unknown> } }) => {
+      calls.push({ method: 'DELETE', path, params: opts?.params?.path })
+      if (!nextDeleteOk) {
+        return Promise.resolve({ data: null, error: { message: 'delete failed' }, response: new Response(null, { status: 500 }) })
+      }
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 204 }) })
+    }),
     use: vi.fn(),
   },
   setUnauthorizedHandler: vi.fn(),
@@ -210,6 +224,75 @@ describe('useSeriesDetail — matchDiskProvider', () => {
     await promise
 
     expect(matchBusy.value).toBe(false)
+  })
+})
+
+/**
+ * The shared `mutate` wrapper must REPORT its outcome — that is what lets a
+ * caller close its confirm dialog only on success (the remove-source dialog bug:
+ * it emitted into the void and stayed open forever). Pinned through removeSource
+ * (which uses `mutate` unchanged) plus one other mutation, proving the contract
+ * is the wrapper's, not one action's.
+ */
+describe('useSeriesDetail — mutate reports success/failure', () => {
+  beforeEach(() => {
+    calls = []
+    nextDeleteOk = true
+    nextPatchOk = true
+  })
+
+  it('removeSource DELETEs the provider and resolves true on success', async () => {
+    const { refresh, removeSource } = useSeriesDetail('series-1')
+    await refresh()
+
+    const ok = await removeSource('real-provider-2')
+
+    expect(ok).toBe(true)
+    const call = calls.find(c => c.path === '/api/series/{id}/providers/{providerId}')
+    expect(call?.params).toEqual({ id: 'series-1', providerId: 'real-provider-2' })
+  })
+
+  it('removeSource resolves false and surfaces the error on failure', async () => {
+    nextDeleteOk = false
+    const { error, refresh, removeSource } = useSeriesDetail('series-1')
+    await refresh()
+
+    const ok = await removeSource('real-provider-2')
+
+    expect(ok).toBe(false)
+    expect(error.value).toBe('Update failed')
+  })
+
+  it('removeBusy flips true during the call and back to false once it resolves', async () => {
+    const { removeBusy, refresh, removeSource } = useSeriesDetail('series-1')
+    await refresh()
+    expect(removeBusy.value).toBe(false)
+
+    const promise = removeSource('real-provider-2')
+    expect(removeBusy.value).toBe(true)
+    await promise
+
+    expect(removeBusy.value).toBe(false)
+  })
+
+  it('carries the same true/false contract on the other mutations (setMonitored)', async () => {
+    const { refresh, setMonitored } = useSeriesDetail('series-1')
+    await refresh()
+    expect(await setMonitored(false)).toBe(true)
+
+    nextPatchOk = false
+    expect(await setMonitored(true)).toBe(false)
+  })
+
+  it('setCategory resolves false without calling the API when the name is unknown', async () => {
+    const { error, refresh, setCategory } = useSeriesDetail('series-1')
+    await refresh()
+
+    const ok = await setCategory('Nope')
+
+    expect(ok).toBe(false)
+    expect(error.value).toBe('Unknown category: Nope')
+    expect(calls.some(c => c.path === '/api/series/{id}/category')).toBe(false)
   })
 })
 

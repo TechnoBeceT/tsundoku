@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import Dialog from '../ui/Dialog.vue'
+import ErrorBanner from '../ui/ErrorBanner.vue'
 import RadioCard from '../ui/RadioCard.vue'
 import type { DeleteChoice } from '../screens/seriesDetail.types'
 
@@ -13,15 +14,24 @@ import type { DeleteChoice } from '../screens/seriesDetail.types'
  * Controlled via `v-model:open`; resets the choice every time it opens, so a
  * re-open never inherits a stale selection. `busy` spins the confirm button and
  * blocks dismissal (§16). Emits `confirm` with the resolved `deleteFiles` boolean.
+ *
+ * §16: a delete that FAILS leaves the dialog open (a successful one navigates
+ * away) — `error` shows the reason inside the dialog, where the owner is
+ * looking, instead of only on the screen behind the overlay.
  */
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** Whether the dialog is shown (v-model:open). */
   open: boolean
   /** In-flight flag — spins confirm + blocks dismissal. */
   busy?: boolean
   /** The series title, shown in the heading. */
   seriesTitle: string
-}>()
+  /** A failed-delete message to show inside the dialog, or null when there is none. */
+  error?: string | null
+}>(), {
+  busy: false,
+  error: null,
+})
 
 const emit = defineEmits<{
   /** The open state changed (v-model:open). */
@@ -70,6 +80,8 @@ function onConfirm() {
       </RadioCard>
     </div>
 
+    <ErrorBanner v-if="error" class="delete__error" :message="error" :dismissible="false" />
+
     <template #actions>
       <AppButton variant="ghost" size="md" :disabled="busy" @click="emit('update:open', false)">
         Cancel
@@ -99,5 +111,9 @@ function onConfirm() {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.delete__error {
+  margin-top: 14px;
 }
 </style>
