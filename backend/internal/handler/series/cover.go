@@ -1,8 +1,6 @@
 package series
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -10,23 +8,46 @@ import (
 	"github.com/technobecet/tsundoku/internal/handler/coverproxy"
 )
 
-// coverCacheControl keeps the cached cover REVALIDATABLE.
+// coverImmutable lets the browser keep a cover FOREVER, without ever
+// revalidating it.
 //
-// GOTCHA: a positive max-age would defeat the feature's own acceptance criterion
-// — a "fresh" response means the browser never sends If-None-Match, so after the
-// owner switches metadata source (the URL is stable, there is no cache-buster)
-// the OLD cover would keep rendering until the freshness window expired. With
-// no-cache the browser always revalidates, the ETag turns that into a bodyless
-// 304, and the backend serves it from disk: still ZERO source-ward calls.
-const coverCacheControl = "private, no-cache"
+// It is served ONLY to a request whose ?v= matches the cover's CURRENT content
+// version (a hash of the image BYTES — see series.coverVersion). That equivalence
+// is the entire licence: the URL changes whenever the bytes do, so an immutable
+// response can never pin a stale image, and a changed cover shows instantly under
+// its new URL.
+//
+// GOTCHA — the contrast with the reader's page-bytes endpoint, where `immutable`
+// was WRONG: there the URL is stable while the bytes legitimately change (a
+// convergence upgrade re-renders the CBZ), so an immutable response served stale
+// pages. The rule is not "images are immutable", it is "immutable requires the URL
+// to change whenever the CONTENT does". Only a content-versioned URL earns it — a
+// URL versioned by something that merely correlates with the content (the
+// provider's cover_url, which is Suwayomi's id-derived thumbnail path) does NOT:
+// `immutable` is a one-way door, and the only lever that can ever show the owner a
+// new image is a new URL.
+const coverImmutable = "private, max-age=31536000, immutable"
+
+// coverRevalidate is what an UNVERSIONED (or wrongly-versioned) request gets — a
+// bookmark, a curl, an <img> preload, the service worker fetching plain
+// /api/series/{id}/cover, or a series whose cover is not cached at all.
+//
+// Marking those immutable would permanently poison a URL that carries NO cache
+// buster: nothing could ever change it, so nothing could ever fix it. They stay
+// revalidatable; only the DTO's versioned URL is cacheable forever.
+const coverRevalidate = "private, no-cache"
 
 // SeriesCover serves the metadata source's cover image for the series.
 //
 // The bytes come from the LOCAL cache (the series folder) whenever it is current
 // — see series.Service.CoverBytes — so a library grid re-render pings no source
-// at all. The response carries an ETag + a revalidatable Cache-Control, so a
-// re-render usually costs a 304 instead of a body: without them we would still
-// pay 52 round-trips per render, just to disk.
+// at all, and with the immutable Cache-Control above it usually pings the BACKEND
+// zero times either.
+//
+// A conditional request is answered from the DB alone (CoverVersion) BEFORE the
+// image is touched: a 304 that first os.ReadFile'd the whole cover over NFS (or
+// worse, re-fetched it from the source) would pay exactly the cost it exists to
+// avoid.
 //
 // Auth is HttpOnly-cookie-based (see pkg/middleware.RequireOwner), so the SPA can
 // load this endpoint with a plain same-origin <img src>. Returns 404 when the
@@ -36,12 +57,52 @@ func (h *Handler) SeriesCover(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	data, ext, err := h.svc.CoverBytes(c.Request().Context(), id)
+	ctx := c.Request().Context()
+
+	// The client already holds these exact bytes — answer without reading them.
+	version, err := h.svc.CoverVersion(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	if version != "" && c.Request().Header.Get("If-None-Match") == coverETag(version) {
+		writeCoverHeaders(c, version)
+		return c.NoContent(http.StatusNotModified)
+	}
+
+	cover, err := h.svc.CoverBytes(ctx, id)
 	if err != nil {
 		// ErrNoCover / ErrSeriesNotFound → 404, ErrCoverFetchFailed → 502.
 		return mapServiceError(err)
 	}
-	return serveCachedImage(c, data, ext)
+
+	writeCoverHeaders(c, cover.Version)
+	return c.Blob(http.StatusOK, coverproxy.MimeForExt(cover.Ext), cover.Data)
+}
+
+// writeCoverHeaders sets the cover response's validator + freshness headers for
+// the version actually being served.
+//
+// The response is immutable ONLY when the request asked for the version it is
+// getting; anything else (no ?v=, a stale ?v=, or an uncached cover that has no
+// version at all) is revalidatable. The ETag is derived from the SERVER's version
+// — never from the client-supplied ?v= or the body length, which are caller-
+// controlled and collidable and could win a spurious 304.
+func writeCoverHeaders(c echo.Context, version string) {
+	cacheControl := coverRevalidate
+	if version != "" {
+		c.Response().Header().Set("ETag", coverETag(version))
+		if c.QueryParam("v") == version {
+			cacheControl = coverImmutable
+		}
+	}
+	c.Response().Header().Set("Cache-Control", cacheControl)
+}
+
+// coverETag is the entity tag for a cover of the given content version — the one
+// definition both the conditional check and the response header use, so the two
+// can never disagree.
+func coverETag(version string) string {
+	return `"` + version + `"`
 }
 
 // ProviderCover streams the cover image for a specific provider. The cover_url
@@ -67,20 +128,4 @@ func (h *Handler) ProviderCover(c echo.Context) error {
 		return mapServiceError(err)
 	}
 	return coverproxy.Stream(c, h.sw, coverURL)
-}
-
-// serveCachedImage writes image bytes with a content-derived ETag and a
-// revalidatable Cache-Control, honouring If-None-Match with a 304 so a repeat
-// view transfers no body at all.
-func serveCachedImage(c echo.Context, data []byte, ext string) error {
-	sum := sha256.Sum256(data)
-	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
-
-	c.Response().Header().Set("ETag", etag)
-	c.Response().Header().Set("Cache-Control", coverCacheControl)
-
-	if c.Request().Header.Get("If-None-Match") == etag {
-		return c.NoContent(http.StatusNotModified)
-	}
-	return c.Blob(http.StatusOK, coverproxy.MimeForExt(ext), data)
 }

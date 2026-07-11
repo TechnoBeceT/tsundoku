@@ -118,12 +118,51 @@ func reconcileSeries(ctx context.Context, client *ent.Client, sf SeriesFacts, re
 	}
 	result.SeriesUpserted++
 
+	if err := restoreCoverIndex(ctx, client, series, sf.Cover); err != nil {
+		return err
+	}
+
 	providerIDs, err := upsertProviders(ctx, client, series.ID, sf.Chapters, result)
 	if err != nil {
 		return err
 	}
 
 	return reconcileChapters(ctx, client, series.ID, providerIDs, sf.Chapters, result)
+}
+
+// restoreCoverIndex re-points the series' cover fast-index (cover_file /
+// cover_source_url) at the cover the sidecar records.
+//
+// DIRECTION IS ONE-WAY: the sidecar is the durable seed and always WINS; the DB
+// columns are a derived cache of it. The DB can never legitimately be ahead —
+// every writer (series.Service.fetchAndCacheCover) writes the file + sidecar
+// FIRST and only then indexes — so disk→DB is the only direction reconcile may
+// carry, and a DB loss must not cost the owner a re-fetch of an image already
+// sitting in the series folder.
+//
+// It restores the FILE and its SOURCE URL only: cover_version is a hash of the
+// bytes and the sidecar does not carry one, so it is left empty and re-derived by
+// the next serve (series.CoverBytes hashes what it reads and re-indexes). Until
+// then the series' URL is simply unversioned ⇒ served no-cache, never immutable.
+//
+// A series with no cached cover (cover == nil) is left alone, and an
+// already-correct index is not rewritten (reconcile stays idempotent).
+func restoreCoverIndex(ctx context.Context, client *ent.Client, series *ent.Series, cover *CoverProvenance) error {
+	if cover == nil || cover.File == "" {
+		return nil
+	}
+	if series.CoverFile == cover.File && series.CoverSourceURL == cover.SourceURL {
+		return nil
+	}
+	err := client.Series.UpdateOne(series).
+		SetCoverFile(cover.File).
+		SetCoverSourceURL(cover.SourceURL).
+		Exec(ctx)
+	if err != nil {
+		// Defensive path: reachable only on DB connection loss mid-run.
+		return fmt.Errorf("disk.Reconcile: update cover index (series=%s): %w", series.ID, err)
+	}
+	return nil
 }
 
 // upsertSeries finds the Series row by slug or creates it, restoring the library

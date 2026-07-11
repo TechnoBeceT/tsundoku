@@ -33,6 +33,12 @@ const (
 	FieldCompleted = "completed"
 	// FieldMetadataProviderID holds the string denoting the metadata_provider_id field in the database.
 	FieldMetadataProviderID = "metadata_provider_id"
+	// FieldCoverFile holds the string denoting the cover_file field in the database.
+	FieldCoverFile = "cover_file"
+	// FieldCoverSourceURL holds the string denoting the cover_source_url field in the database.
+	FieldCoverSourceURL = "cover_source_url"
+	// FieldCoverVersion holds the string denoting the cover_version field in the database.
+	FieldCoverVersion = "cover_version"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -80,6 +86,9 @@ var Columns = []string{
 	FieldMonitored,
 	FieldCompleted,
 	FieldMetadataProviderID,
+	FieldCoverFile,
+	FieldCoverSourceURL,
+	FieldCoverVersion,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -105,6 +114,12 @@ var (
 	DefaultMonitored bool
 	// DefaultCompleted holds the default value on creation for the "completed" field.
 	DefaultCompleted bool
+	// DefaultCoverFile holds the default value on creation for the "cover_file" field.
+	DefaultCoverFile string
+	// DefaultCoverSourceURL holds the default value on creation for the "cover_source_url" field.
+	DefaultCoverSourceURL string
+	// DefaultCoverVersion holds the default value on creation for the "cover_version" field.
+	DefaultCoverVersion string
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
@@ -166,6 +181,21 @@ func ByCompleted(opts ...sql.OrderTermOption) OrderOption {
 // ByMetadataProviderID orders the results by the metadata_provider_id field.
 func ByMetadataProviderID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMetadataProviderID, opts...).ToFunc()
+}
+
+// ByCoverFile orders the results by the cover_file field.
+func ByCoverFile(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCoverFile, opts...).ToFunc()
+}
+
+// ByCoverSourceURL orders the results by the cover_source_url field.
+func ByCoverSourceURL(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCoverSourceURL, opts...).ToFunc()
+}
+
+// ByCoverVersion orders the results by the cover_version field.
+func ByCoverVersion(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCoverVersion, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

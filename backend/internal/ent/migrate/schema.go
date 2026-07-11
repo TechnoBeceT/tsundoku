@@ -185,6 +185,9 @@ var (
 		{Name: "monitored", Type: field.TypeBool, Default: true},
 		{Name: "completed", Type: field.TypeBool, Default: false},
 		{Name: "metadata_provider_id", Type: field.TypeUUID, Nullable: true},
+		{Name: "cover_file", Type: field.TypeString, Default: ""},
+		{Name: "cover_source_url", Type: field.TypeString, Default: ""},
+		{Name: "cover_version", Type: field.TypeString, Default: ""},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 		{Name: "category_id", Type: field.TypeUUID, Nullable: true},
@@ -197,7 +200,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "series_categories_series",
-				Columns:    []*schema.Column{SeriesColumns[11]},
+				Columns:    []*schema.Column{SeriesColumns[14]},
 				RefColumns: []*schema.Column{CategoriesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},

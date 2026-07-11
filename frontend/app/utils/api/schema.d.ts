@@ -422,8 +422,16 @@ export interface paths {
         /**
          * Series cover image
          * @description Streams the cover image for the series' resolved metadata source provider.
-         *     The image is fetched from Suwayomi and returned as a binary blob. Returns 404
-         *     when the series has no cover, 502 when Suwayomi fails to fetch it.
+         *     Served from the on-disk cache whenever it is current; only a cover the library
+         *     does not hold locally is fetched from Suwayomi. Returns 404 when the series has
+         *     no cover, 502 when Suwayomi fails to fetch it.
+         *
+         *     Clients should use the `coverUrl` from the series DTO VERBATIM: it carries a `v`
+         *     content version (a hash of the cover's bytes). A request whose `v` matches the
+         *     current version is answered `Cache-Control: private, max-age=31536000, immutable`
+         *     — safe precisely because the URL changes whenever the image does. A request with
+         *     no `v`, or a stale one, serves the same image but only as `private, no-cache`, so
+         *     an un-versioned URL can never be permanently cached.
          */
         get: operations["getSeriesCover"];
         put?: never;
@@ -1507,7 +1515,7 @@ export interface components {
             slug: string;
             /** @description Name of the user-defined category the series is filed under. */
             category: string;
-            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
+            /** @description Series cover proxy path ("/api/series/{id}/cover?v=<version>"); empty when no provider has a cover. The v param is the CONTENT version of the cached image (a hash of its bytes), so the URL changes exactly when the cover does; the endpoint answers such a request with "Cache-Control: private, max-age=31536000, immutable" and the browser never re-requests a cover it already holds. Use the value VERBATIM — a request without it (or with a stale one) still serves the image, but only as revalidatable no-cache. A cover that is not cached locally yet has no version and its path carries no v. */
             coverUrl: string;
             /** @description Whether the series is actively tracked for new chapters. */
             monitored: boolean;
@@ -1621,7 +1629,7 @@ export interface components {
             slug: string;
             /** @description Name of the user-defined category the series is filed under. */
             category: string;
-            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
+            /** @description Series cover proxy path ("/api/series/{id}/cover?v=<version>"); empty when no provider has a cover. The v param is the CONTENT version of the cached image (a hash of its bytes), so the URL changes exactly when the cover does; the endpoint answers such a request with "Cache-Control: private, max-age=31536000, immutable" and the browser never re-requests a cover it already holds. Use the value VERBATIM — a request without it (or with a stale one) still serves the image, but only as revalidatable no-cache. A cover that is not cached locally yet has no version and its path carries no v. */
             coverUrl: string;
             /** @description Whether the series is actively tracked for new chapters. */
             monitored: boolean;
@@ -1709,7 +1717,7 @@ export interface components {
              * @enum {string}
              */
             seriesCategory: "Manga" | "Manhwa" | "Manhua" | "Comic" | "Other";
-            /** @description Series cover proxy path ("/api/series/{id}/cover"); empty when no provider has a cover. */
+            /** @description Series cover proxy path ("/api/series/{id}/cover?v=<version>"); empty when no provider has a cover. The v param is the CONTENT version of the cached image (a hash of its bytes), so the URL changes exactly when the cover does; the endpoint answers such a request with "Cache-Control: private, max-age=31536000, immutable" and the browser never re-requests a cover it already holds. Use the value VERBATIM — a request without it (or with a stale one) still serves the image, but only as revalidatable no-cache. A cover that is not cached locally yet has no version and its path carries no v. */
             seriesCoverUrl: string;
             /** @description Stable per-series chapter identity (never the number). */
             chapterKey: string;
