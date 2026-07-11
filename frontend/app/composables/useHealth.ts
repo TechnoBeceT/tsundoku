@@ -33,6 +33,8 @@ function mapProvider(dto: ProviderDTO): Provider {
     mangaId: dto.mangaId,
     linked: dto.linked,
     chapterCount: dto.chapterCount,
+    feedCount: dto.feedCount,
+    feedRanges: dto.feedRanges,
     hasFeed: dto.hasFeed,
     scanlator: dto.scanlator,
     language: dto.language,
