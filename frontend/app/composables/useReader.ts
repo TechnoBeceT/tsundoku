@@ -3,24 +3,31 @@
  *
  * Loads GET /api/series/{id} (mirrors useSeriesDetail's client call), derives the
  * reader's chapter list — downloaded chapters only, number-ascending — and
- * maintains a bounded MOUNTED WINDOW of chapters the ReaderStrip renders. As the
- * reader nears the tail the strip calls `onNearTail()`, which appends the next
- * chapter and unmounts far-above chapters so the live DOM stays bounded
- * (`MAX_MOUNTED`).
+ * maintains a bounded MOUNTED WINDOW of chapters the ReaderStrip renders. The
+ * window grows in BOTH directions: as the reader nears the tail the strip calls
+ * `onNearTail()` (appends the next chapter), and as they scroll back up towards
+ * the head it calls `onNearHead()` (prepends the previous chapter) — both bound
+ * the live DOM to at most `MAX_MOUNTED` chapters, dropping from whichever end the
+ * reader is moving away from (`chaptersToUnmountDirectional`) so a prepend never
+ * unmounts the chapter it just brought in.
+ *
+ * `currentChapterId`/`setCurrentChapter` track the chapter under the viewport
+ * midpoint (fed by the strip's `centered` event); `prevChapter`/`nextChapter`/
+ * `hasPrev`/`hasNext` are that chapter's number-order neighbours, driving the
+ * reader chrome's prev/next controls. `jumpToChapter` reseeds the window to a
+ * single target chapter and publishes a fresh-token `scrollRequest` the strip
+ * consumes to scroll there — see `ScrollRequest`'s doc comment for why a token,
+ * not a boolean fuse, is required.
  *
  * The reader addresses pages by the Chapter UUID (`pageUrl`), which the backend's
  * page-bytes and progress endpoints key on — cookie auth rides a plain `<img src>`
  * same-origin (QCAT-020), so no fetch/objectURL machinery is needed; the browser
  * lazy-loads and evicts page images natively.
- *
- * Slice 3 (progress + resume) will extend this surface: it consumes `startChapterId`
- * + each chapter's `lastReadPage` to resume mid-chapter, and will add the progress
- * write. This slice only reads progress fields; it never writes them.
  */
 import { ref, computed } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import { chaptersToUnmount, MAX_MOUNTED } from '~/components/reader/ReaderStrip.logic'
+import { chaptersToUnmountDirectional, MAX_MOUNTED } from '~/components/reader/ReaderStrip.logic'
 
 type SeriesDetailDTO = components['schemas']['SeriesDetail']
 type ChapterDTO = components['schemas']['Chapter']
@@ -67,6 +74,27 @@ function byNumberAsc(a: ReaderChapter, b: ReaderChapter): number {
 }
 
 /**
+ * ScrollRequest — a one-shot ask for the strip to scroll to a specific page.
+ * `token` is the dedup key: the strip acts on each new token exactly once, so
+ * `jumpToChapter` publishing a fresh token is what lets it re-trigger a scroll
+ * after `ReaderStrip.didInitialScroll`'s one-shot mount fuse has already fired.
+ */
+export interface ScrollRequest {
+  /** Chapter UUID to scroll to. */
+  chapterId: string
+  /** 0-based page index within that chapter. */
+  page: number
+  /** Monotonically increasing per-request id (module-scoped, never reused). */
+  token: number
+}
+
+// Module-scoped so the token stays monotonic even across a composable
+// re-instantiation (e.g. the route's chapterId param changing) — a stale
+// in-flight request from a torn-down instance can never collide with, or
+// out-rank, a newer one.
+let scrollRequestCounter = 0
+
+/**
  * useReader — see the file header. `seriesId` is the series UUID; `startChapterId`
  * is the Chapter UUID to open at (the deep-linked chapter). Returns the reactive
  * reader surface consumed by the reader route + ReaderStrip.
@@ -101,15 +129,96 @@ export function useReader(seriesId: string, startChapterId: string) {
    * onNearTail — the strip calls this as the tail sentinel appears: append the
    * next chapter (if any) into the window, then unmount any far-above chapters
    * beyond `MAX_MOUNTED` so the live DOM stays bounded. Reuses the shared
-   * `chaptersToUnmount` rule (§2 DRY). A no-op once the last chapter is mounted.
+   * `chaptersToUnmountDirectional` rule (§2 DRY) in its 'forward' mode — the
+   * window is growing downward, so the drop stays at the top, same as before
+   * the bidirectional migration. A no-op once the last chapter is mounted.
    */
   const onNearTail = (): void => {
     if (lastMounted.value < 0) return
     if (lastMounted.value < chapters.value.length - 1) lastMounted.value += 1
     const mounted: number[] = []
     for (let i = firstMounted.value; i <= lastMounted.value; i++) mounted.push(i)
-    const drop = chaptersToUnmount(mounted, MAX_MOUNTED)
+    const drop = chaptersToUnmountDirectional(mounted, MAX_MOUNTED, 'forward')
     if (drop.length > 0) firstMounted.value = drop[drop.length - 1]! + 1
+  }
+
+  /**
+   * onNearHead — the strip calls this as the head sentinel appears: prepend the
+   * previous chapter (if any) into the window, then unmount any far-below
+   * chapters beyond `MAX_MOUNTED`. The backward mirror of `onNearTail`: the
+   * window is growing upward, so `chaptersToUnmountDirectional(..., 'backward')`
+   * drops from the BOTTOM — this is what stops the window unmounting the very
+   * chapter it just prepended (the old top-dropping rule would have). A no-op
+   * once the first chapter is mounted.
+   *
+   * The prepend this triggers MUST be anchor-bracketed by the strip (its
+   * `beforeReflow`/`afterReflow` pair) so inserting content above the viewport
+   * doesn't visibly jump the reader's scroll position — that wiring lands in a
+   * later slice; this composable only performs the window mutation.
+   */
+  const onNearHead = (): void => {
+    if (firstMounted.value <= 0) return
+    firstMounted.value -= 1
+    const mounted: number[] = []
+    for (let i = firstMounted.value; i <= lastMounted.value; i++) mounted.push(i)
+    const drop = chaptersToUnmountDirectional(mounted, MAX_MOUNTED, 'backward')
+    if (drop.length > 0) lastMounted.value = drop[0]! - 1
+  }
+
+  // currentChapterId — the chapter under the reader's viewport midpoint, fed by
+  // the strip's `centered` event via `setCurrentChapter`. Null until the strip
+  // reports a position (nothing mounted yet, or not wired up by the caller).
+  const currentChapterId = ref<string | null>(null)
+
+  /** setCurrentChapter — records the chapter currently under the viewport midpoint. */
+  const setCurrentChapter = (id: string): void => {
+    currentChapterId.value = id
+  }
+
+  /** Index of `currentChapterId` within `chapters`, or -1 when unset/unknown. */
+  const currentIndex = computed<number>(() =>
+    currentChapterId.value == null ? -1 : chapters.value.findIndex((ch) => ch.id === currentChapterId.value),
+  )
+
+  /** The chapter immediately before the current one in number order, null at the head or when unset. */
+  const prevChapter = computed<ReaderChapter | null>(() =>
+    currentIndex.value > 0 ? chapters.value[currentIndex.value - 1]! : null,
+  )
+
+  /** The chapter immediately after the current one in number order, null at the tail or when unset. */
+  const nextChapter = computed<ReaderChapter | null>(() =>
+    currentIndex.value >= 0 && currentIndex.value < chapters.value.length - 1
+      ? chapters.value[currentIndex.value + 1]!
+      : null,
+  )
+
+  /** Whether a previous chapter exists to navigate to. */
+  const hasPrev = computed<boolean>(() => prevChapter.value !== null)
+  /** Whether a next chapter exists to navigate to. */
+  const hasNext = computed<boolean>(() => nextChapter.value !== null)
+
+  /** The strip's pending scroll instruction (see `ScrollRequest`); null once nothing is pending. */
+  const scrollRequest = ref<ScrollRequest | null>(null)
+
+  /**
+   * jumpToChapter — collapses the mounted window down to a single target
+   * chapter and asks the strip to scroll to its top (prev/next navigation and
+   * direct jumps; the initial deep link is handled by `refresh` instead). The
+   * strip's own `onNearTail`/`onNearHead` re-grow the window from there as the
+   * reader scrolls. A no-op when `id` isn't in the loaded chapter list.
+   *
+   * Publishes a fresh-token `scrollRequest` — see the type doc for why this
+   * must be a token, not a boolean fuse: a jump must be able to scroll again
+   * even after the strip's one-shot initial-scroll fuse has already fired.
+   */
+  const jumpToChapter = (id: string): void => {
+    const idx = chapters.value.findIndex((ch) => ch.id === id)
+    if (idx < 0) return
+    firstMounted.value = idx
+    lastMounted.value = idx
+    currentChapterId.value = id
+    scrollRequestCounter += 1
+    scrollRequest.value = { chapterId: id, page: 0, token: scrollRequestCounter }
   }
 
   /**
@@ -156,6 +265,15 @@ export function useReader(seriesId: string, startChapterId: string) {
     mountedChapters,
     pageUrl,
     onNearTail,
+    onNearHead,
+    currentChapterId,
+    setCurrentChapter,
+    prevChapter,
+    nextChapter,
+    hasPrev,
+    hasNext,
+    jumpToChapter,
+    scrollRequest,
     loading,
     error,
     seriesTitle,

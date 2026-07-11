@@ -150,3 +150,123 @@ describe('useReader — pageUrl + states', () => {
     expect(mountedChapters.value).toEqual([])
   })
 })
+
+/**
+ * Slice 4: bidirectional window + current chapter + prev/next + jump.
+ *
+ * Reuses the `detail` fixture above (5 downloaded chapters, sorted
+ * ch-a(1) ch-b(2) ch-c(3) ch-d(4) ch-null(last)) — plenty of room for a full
+ * MAX_MOUNTED (3) window plus a prepend/append on either side.
+ */
+describe('useReader — prev/next neighbours', () => {
+  beforeEach(() => { nextOk = true; nextEmpty = false })
+
+  it('exposes prev/next neighbours in number order', async () => {
+    const { refresh, setCurrentChapter, prevChapter, nextChapter } = useReader('series-1', 'ch-a')
+    await refresh()
+
+    setCurrentChapter('ch-b')
+
+    expect(prevChapter.value?.id).toBe('ch-a')
+    expect(nextChapter.value?.id).toBe('ch-c')
+  })
+
+  it('has no prev at the first chapter and no next at the last', async () => {
+    const { refresh, setCurrentChapter, hasPrev, hasNext } = useReader('series-1', 'ch-a')
+    await refresh()
+
+    setCurrentChapter('ch-a')
+    expect(hasPrev.value).toBe(false)
+    expect(hasNext.value).toBe(true)
+
+    setCurrentChapter('ch-null')
+    expect(hasPrev.value).toBe(true)
+    expect(hasNext.value).toBe(false)
+  })
+})
+
+describe('useReader — bidirectional window (onNearHead)', () => {
+  beforeEach(() => { nextOk = true; nextEmpty = false })
+
+  it('onNearHead prepends the previous chapter', async () => {
+    const { refresh, mountedChapters, onNearHead } = useReader('series-1', 'ch-c')
+    await refresh()
+    expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-c'])
+
+    onNearHead()
+
+    expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-b', 'ch-c'])
+  })
+
+  it('onNearHead is a no-op at the head of the list', async () => {
+    const { refresh, mountedChapters, onNearHead } = useReader('series-1', 'ch-a')
+    await refresh()
+
+    onNearHead()
+
+    expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-a'])
+  })
+
+  it('onNearHead never unmounts the chapter it just prepended', async () => {
+    const { refresh, mountedChapters, onNearHead, onNearTail } = useReader('series-1', 'ch-c')
+    await refresh()
+
+    // Grow the window forward to a full MAX_MOUNTED (3) window: c, d, null.
+    onNearTail()
+    onNearTail()
+    expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-c', 'ch-d', 'ch-null'])
+
+    // Prepend b: the window would be 4-wide, so one chapter must drop — the
+    // BOTTOM (ch-null), never the just-prepended ch-b.
+    onNearHead()
+
+    const ids = mountedChapters.value.map((c) => c.id)
+    expect(ids).toEqual(['ch-b', 'ch-c', 'ch-d'])
+    expect(ids).toContain('ch-b')
+    expect(ids).not.toContain('ch-null')
+  })
+
+  it('onNearTail still unmounts from the top (regression guard on the forward path)', async () => {
+    const { refresh, mountedChapters, onNearTail } = useReader('series-1', 'ch-a')
+    await refresh()
+
+    onNearTail() // a,b
+    onNearTail() // a,b,c
+    onNearTail() // append d (4-wide) -> drop the top (a) -> b,c,d
+
+    const ids = mountedChapters.value.map((c) => c.id)
+    expect(ids).toEqual(['ch-b', 'ch-c', 'ch-d'])
+    expect(ids).not.toContain('ch-a')
+  })
+})
+
+describe('useReader — jumpToChapter', () => {
+  beforeEach(() => { nextOk = true; nextEmpty = false })
+
+  it('jumpToChapter reseeds the window and emits a scroll request with a fresh token', async () => {
+    const { refresh, mountedChapters, currentChapterId, scrollRequest, jumpToChapter } = useReader('series-1', 'ch-a')
+    await refresh()
+
+    jumpToChapter('ch-c')
+
+    expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-c'])
+    expect(currentChapterId.value).toBe('ch-c')
+    expect(scrollRequest.value).toMatchObject({ chapterId: 'ch-c', page: 0 })
+    const firstToken = scrollRequest.value!.token
+
+    jumpToChapter('ch-a')
+
+    expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-a'])
+    expect(currentChapterId.value).toBe('ch-a')
+    expect(scrollRequest.value!.token).toBeGreaterThan(firstToken)
+  })
+
+  it('jumpToChapter is a no-op for an unknown chapter id', async () => {
+    const { refresh, mountedChapters, jumpToChapter } = useReader('series-1', 'ch-a')
+    await refresh()
+
+    jumpToChapter('does-not-exist')
+
+    expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-a'])
+  })
+})
