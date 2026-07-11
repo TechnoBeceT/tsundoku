@@ -42,6 +42,23 @@ type ChapterProvenance struct {
 	UploadDate *time.Time `json:"upload_date,omitempty"`
 }
 
+// CoverProvenance records the locally cached series cover image.
+//
+// SourceURL IS the cache key: the stored file is served without ever contacting
+// the source again while it still equals the metadata provider's current
+// cover_url. A mismatch (the owner switched metadata source, or the source
+// changed its thumbnail) is what triggers exactly one re-fetch.
+type CoverProvenance struct {
+	// File is the on-disk cover filename (basename only, e.g. "cover.jpg").
+	File string `json:"file"`
+
+	// SourceURL is the Suwayomi-relative URL the bytes were fetched from.
+	SourceURL string `json:"source_url"`
+
+	// Provider is the metadata source the cover came from (identity, not label).
+	Provider string `json:"provider,omitempty"`
+}
+
 // Sidecar is the per-series tsundoku.json file.
 //
 // It records series-level metadata, the provider importance order, and the
@@ -63,6 +80,39 @@ type Sidecar struct {
 	// Chapters is the ordered list of chapter provenance records.
 	// New entries are appended; existing entries are updated in-place by chapter_key.
 	Chapters []ChapterProvenance `json:"chapters"`
+
+	// Cover is the locally cached cover image's provenance; nil when the series
+	// has no cached cover (every pre-cache series, until its first view).
+	Cover *CoverProvenance `json:"cover,omitempty"`
+}
+
+// mutateSidecar applies fn to the series' sidecar and writes the result back:
+// it reads the existing tsundoku.json (falling back to def when the series has
+// none yet), hands the struct to fn, then writes it atomically.
+//
+// GOTCHA: it does NOT lock. Every caller MUST already hold the per-series-dir
+// sidecar lock (lockSidecar in render.go) — the read-modify-write and the fixed
+// ".tmp" path are not concurrency-safe, and a chapter render and a cover save
+// can hit the same series at the same time.
+func mutateSidecar(seriesDir string, def Sidecar, fn func(*Sidecar)) error {
+	existing, err := ReadSidecar(seriesDir)
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+
+	sidecar := def
+	if existing != nil {
+		sidecar = *existing
+	}
+
+	fn(&sidecar)
+
+	if err := WriteSidecar(seriesDir, sidecar); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
+		// permission denied) when writing the sidecar JSON.
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
 }
 
 // WriteSidecar atomically writes the sidecar to <dir>/tsundoku.json.
@@ -82,42 +132,10 @@ func WriteSidecar(dir string, s Sidecar) error {
 		return fmt.Errorf("disk.WriteSidecar: marshal: %w", err)
 	}
 
-	finalPath := filepath.Join(dir, sidecarFilename)
-	tmpPath := finalPath + ".tmp"
-
-	// G304: tmpPath is constructed from a caller-supplied directory path validated
-	// at the storage-root level — not a path traversal concern.
-	//nolint:gosec
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / permission denied).
-		return fmt.Errorf("disk.WriteSidecar: create temp file: %w", err)
-	}
-
-	if _, err := f.Write(data); err != nil {
-		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted).
-		_ = f.Close()
-		removeTmp(tmpPath)
-		return fmt.Errorf("disk.WriteSidecar: write: %w", err)
-	}
-
-	if err := f.Sync(); err != nil {
-		// Defensive path: reachable only on OS-level I/O failure (disk full / corrupt FS).
-		_ = f.Close()
-		removeTmp(tmpPath)
-		return fmt.Errorf("disk.WriteSidecar: fsync: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / corrupt FS).
-		removeTmp(tmpPath)
-		return fmt.Errorf("disk.WriteSidecar: close file: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		// Defensive path: reachable only on OS-level I/O failure (cross-device rename / permission).
-		removeTmp(tmpPath)
-		return fmt.Errorf("disk.WriteSidecar: rename: %w", err)
+	if err := writeFileAtomic(filepath.Join(dir, sidecarFilename), data); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
+		// permission denied). writeFileAtomic never leaves a partial file behind.
+		return fmt.Errorf("disk.WriteSidecar: %w", err)
 	}
 
 	return nil
