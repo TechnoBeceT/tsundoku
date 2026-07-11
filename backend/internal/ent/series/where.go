@@ -101,6 +101,16 @@ func MetadataProviderID(v uuid.UUID) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldMetadataProviderID, v))
 }
 
+// CoverFile applies equality check predicate on the "cover_file" field. It's identical to CoverFileEQ.
+func CoverFile(v string) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCoverFile, v))
+}
+
+// CoverSourceURL applies equality check predicate on the "cover_source_url" field. It's identical to CoverSourceURLEQ.
+func CoverSourceURL(v string) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCoverSourceURL, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCreatedAt, v))
@@ -534,6 +544,136 @@ func MetadataProviderIDIsNil() predicate.Series {
 // MetadataProviderIDNotNil applies the NotNil predicate on the "metadata_provider_id" field.
 func MetadataProviderIDNotNil() predicate.Series {
 	return predicate.Series(sql.FieldNotNull(FieldMetadataProviderID))
+}
+
+// CoverFileEQ applies the EQ predicate on the "cover_file" field.
+func CoverFileEQ(v string) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCoverFile, v))
+}
+
+// CoverFileNEQ applies the NEQ predicate on the "cover_file" field.
+func CoverFileNEQ(v string) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldCoverFile, v))
+}
+
+// CoverFileIn applies the In predicate on the "cover_file" field.
+func CoverFileIn(vs ...string) predicate.Series {
+	return predicate.Series(sql.FieldIn(FieldCoverFile, vs...))
+}
+
+// CoverFileNotIn applies the NotIn predicate on the "cover_file" field.
+func CoverFileNotIn(vs ...string) predicate.Series {
+	return predicate.Series(sql.FieldNotIn(FieldCoverFile, vs...))
+}
+
+// CoverFileGT applies the GT predicate on the "cover_file" field.
+func CoverFileGT(v string) predicate.Series {
+	return predicate.Series(sql.FieldGT(FieldCoverFile, v))
+}
+
+// CoverFileGTE applies the GTE predicate on the "cover_file" field.
+func CoverFileGTE(v string) predicate.Series {
+	return predicate.Series(sql.FieldGTE(FieldCoverFile, v))
+}
+
+// CoverFileLT applies the LT predicate on the "cover_file" field.
+func CoverFileLT(v string) predicate.Series {
+	return predicate.Series(sql.FieldLT(FieldCoverFile, v))
+}
+
+// CoverFileLTE applies the LTE predicate on the "cover_file" field.
+func CoverFileLTE(v string) predicate.Series {
+	return predicate.Series(sql.FieldLTE(FieldCoverFile, v))
+}
+
+// CoverFileContains applies the Contains predicate on the "cover_file" field.
+func CoverFileContains(v string) predicate.Series {
+	return predicate.Series(sql.FieldContains(FieldCoverFile, v))
+}
+
+// CoverFileHasPrefix applies the HasPrefix predicate on the "cover_file" field.
+func CoverFileHasPrefix(v string) predicate.Series {
+	return predicate.Series(sql.FieldHasPrefix(FieldCoverFile, v))
+}
+
+// CoverFileHasSuffix applies the HasSuffix predicate on the "cover_file" field.
+func CoverFileHasSuffix(v string) predicate.Series {
+	return predicate.Series(sql.FieldHasSuffix(FieldCoverFile, v))
+}
+
+// CoverFileEqualFold applies the EqualFold predicate on the "cover_file" field.
+func CoverFileEqualFold(v string) predicate.Series {
+	return predicate.Series(sql.FieldEqualFold(FieldCoverFile, v))
+}
+
+// CoverFileContainsFold applies the ContainsFold predicate on the "cover_file" field.
+func CoverFileContainsFold(v string) predicate.Series {
+	return predicate.Series(sql.FieldContainsFold(FieldCoverFile, v))
+}
+
+// CoverSourceURLEQ applies the EQ predicate on the "cover_source_url" field.
+func CoverSourceURLEQ(v string) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLNEQ applies the NEQ predicate on the "cover_source_url" field.
+func CoverSourceURLNEQ(v string) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLIn applies the In predicate on the "cover_source_url" field.
+func CoverSourceURLIn(vs ...string) predicate.Series {
+	return predicate.Series(sql.FieldIn(FieldCoverSourceURL, vs...))
+}
+
+// CoverSourceURLNotIn applies the NotIn predicate on the "cover_source_url" field.
+func CoverSourceURLNotIn(vs ...string) predicate.Series {
+	return predicate.Series(sql.FieldNotIn(FieldCoverSourceURL, vs...))
+}
+
+// CoverSourceURLGT applies the GT predicate on the "cover_source_url" field.
+func CoverSourceURLGT(v string) predicate.Series {
+	return predicate.Series(sql.FieldGT(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLGTE applies the GTE predicate on the "cover_source_url" field.
+func CoverSourceURLGTE(v string) predicate.Series {
+	return predicate.Series(sql.FieldGTE(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLLT applies the LT predicate on the "cover_source_url" field.
+func CoverSourceURLLT(v string) predicate.Series {
+	return predicate.Series(sql.FieldLT(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLLTE applies the LTE predicate on the "cover_source_url" field.
+func CoverSourceURLLTE(v string) predicate.Series {
+	return predicate.Series(sql.FieldLTE(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLContains applies the Contains predicate on the "cover_source_url" field.
+func CoverSourceURLContains(v string) predicate.Series {
+	return predicate.Series(sql.FieldContains(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLHasPrefix applies the HasPrefix predicate on the "cover_source_url" field.
+func CoverSourceURLHasPrefix(v string) predicate.Series {
+	return predicate.Series(sql.FieldHasPrefix(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLHasSuffix applies the HasSuffix predicate on the "cover_source_url" field.
+func CoverSourceURLHasSuffix(v string) predicate.Series {
+	return predicate.Series(sql.FieldHasSuffix(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLEqualFold applies the EqualFold predicate on the "cover_source_url" field.
+func CoverSourceURLEqualFold(v string) predicate.Series {
+	return predicate.Series(sql.FieldEqualFold(FieldCoverSourceURL, v))
+}
+
+// CoverSourceURLContainsFold applies the ContainsFold predicate on the "cover_source_url" field.
+func CoverSourceURLContainsFold(v string) predicate.Series {
+	return predicate.Series(sql.FieldContainsFold(FieldCoverSourceURL, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

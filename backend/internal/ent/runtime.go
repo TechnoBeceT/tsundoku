@@ -199,12 +199,20 @@ func init() {
 	seriesDescCompleted := seriesFields[8].Descriptor()
 	// series.DefaultCompleted holds the default value on creation for the completed field.
 	series.DefaultCompleted = seriesDescCompleted.Default.(bool)
+	// seriesDescCoverFile is the schema descriptor for cover_file field.
+	seriesDescCoverFile := seriesFields[10].Descriptor()
+	// series.DefaultCoverFile holds the default value on creation for the cover_file field.
+	series.DefaultCoverFile = seriesDescCoverFile.Default.(string)
+	// seriesDescCoverSourceURL is the schema descriptor for cover_source_url field.
+	seriesDescCoverSourceURL := seriesFields[11].Descriptor()
+	// series.DefaultCoverSourceURL holds the default value on creation for the cover_source_url field.
+	series.DefaultCoverSourceURL = seriesDescCoverSourceURL.Default.(string)
 	// seriesDescCreatedAt is the schema descriptor for created_at field.
-	seriesDescCreatedAt := seriesFields[10].Descriptor()
+	seriesDescCreatedAt := seriesFields[12].Descriptor()
 	// series.DefaultCreatedAt holds the default value on creation for the created_at field.
 	series.DefaultCreatedAt = seriesDescCreatedAt.Default.(func() time.Time)
 	// seriesDescUpdatedAt is the schema descriptor for updated_at field.
-	seriesDescUpdatedAt := seriesFields[11].Descriptor()
+	seriesDescUpdatedAt := seriesFields[13].Descriptor()
 	// series.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	series.DefaultUpdatedAt = seriesDescUpdatedAt.Default.(func() time.Time)
 	// series.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

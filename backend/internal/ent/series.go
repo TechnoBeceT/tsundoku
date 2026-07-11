@@ -37,6 +37,10 @@ type Series struct {
 	Completed bool `json:"completed,omitempty"`
 	// MetadataProviderID holds the value of the "metadata_provider_id" field.
 	MetadataProviderID *uuid.UUID `json:"metadata_provider_id,omitempty"`
+	// CoverFile holds the value of the "cover_file" field.
+	CoverFile string `json:"cover_file,omitempty"`
+	// CoverSourceURL holds the value of the "cover_source_url" field.
+	CoverSourceURL string `json:"cover_source_url,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -98,7 +102,7 @@ func (*Series) scanValues(columns []string) ([]any, error) {
 			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
 		case series.FieldMonitored, series.FieldCompleted:
 			values[i] = new(sql.NullBool)
-		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus:
+		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus, series.FieldCoverFile, series.FieldCoverSourceURL:
 			values[i] = new(sql.NullString)
 		case series.FieldCreatedAt, series.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -179,6 +183,18 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.MetadataProviderID = new(uuid.UUID)
 				*_m.MetadataProviderID = *value.S.(*uuid.UUID)
+			}
+		case series.FieldCoverFile:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field cover_file", values[i])
+			} else if value.Valid {
+				_m.CoverFile = value.String
+			}
+		case series.FieldCoverSourceURL:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field cover_source_url", values[i])
+			} else if value.Valid {
+				_m.CoverSourceURL = value.String
 			}
 		case series.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -271,6 +287,12 @@ func (_m *Series) String() string {
 		builder.WriteString("metadata_provider_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("cover_file=")
+	builder.WriteString(_m.CoverFile)
+	builder.WriteString(", ")
+	builder.WriteString("cover_source_url=")
+	builder.WriteString(_m.CoverSourceURL)
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

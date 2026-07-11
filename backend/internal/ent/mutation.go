@@ -5647,6 +5647,8 @@ type SeriesMutation struct {
 	monitored            *bool
 	completed            *bool
 	metadata_provider_id *uuid.UUID
+	cover_file           *string
+	cover_source_url     *string
 	created_at           *time.Time
 	updated_at           *time.Time
 	clearedFields        map[string]struct{}
@@ -6117,6 +6119,78 @@ func (m *SeriesMutation) ResetMetadataProviderID() {
 	delete(m.clearedFields, series.FieldMetadataProviderID)
 }
 
+// SetCoverFile sets the "cover_file" field.
+func (m *SeriesMutation) SetCoverFile(s string) {
+	m.cover_file = &s
+}
+
+// CoverFile returns the value of the "cover_file" field in the mutation.
+func (m *SeriesMutation) CoverFile() (r string, exists bool) {
+	v := m.cover_file
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCoverFile returns the old "cover_file" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldCoverFile(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCoverFile is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCoverFile requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCoverFile: %w", err)
+	}
+	return oldValue.CoverFile, nil
+}
+
+// ResetCoverFile resets all changes to the "cover_file" field.
+func (m *SeriesMutation) ResetCoverFile() {
+	m.cover_file = nil
+}
+
+// SetCoverSourceURL sets the "cover_source_url" field.
+func (m *SeriesMutation) SetCoverSourceURL(s string) {
+	m.cover_source_url = &s
+}
+
+// CoverSourceURL returns the value of the "cover_source_url" field in the mutation.
+func (m *SeriesMutation) CoverSourceURL() (r string, exists bool) {
+	v := m.cover_source_url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCoverSourceURL returns the old "cover_source_url" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldCoverSourceURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCoverSourceURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCoverSourceURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCoverSourceURL: %w", err)
+	}
+	return oldValue.CoverSourceURL, nil
+}
+
+// ResetCoverSourceURL resets all changes to the "cover_source_url" field.
+func (m *SeriesMutation) ResetCoverSourceURL() {
+	m.cover_source_url = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *SeriesMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -6358,7 +6432,7 @@ func (m *SeriesMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 13)
 	if m.title != nil {
 		fields = append(fields, series.FieldTitle)
 	}
@@ -6385,6 +6459,12 @@ func (m *SeriesMutation) Fields() []string {
 	}
 	if m.metadata_provider_id != nil {
 		fields = append(fields, series.FieldMetadataProviderID)
+	}
+	if m.cover_file != nil {
+		fields = append(fields, series.FieldCoverFile)
+	}
+	if m.cover_source_url != nil {
+		fields = append(fields, series.FieldCoverSourceURL)
 	}
 	if m.created_at != nil {
 		fields = append(fields, series.FieldCreatedAt)
@@ -6418,6 +6498,10 @@ func (m *SeriesMutation) Field(name string) (ent.Value, bool) {
 		return m.Completed()
 	case series.FieldMetadataProviderID:
 		return m.MetadataProviderID()
+	case series.FieldCoverFile:
+		return m.CoverFile()
+	case series.FieldCoverSourceURL:
+		return m.CoverSourceURL()
 	case series.FieldCreatedAt:
 		return m.CreatedAt()
 	case series.FieldUpdatedAt:
@@ -6449,6 +6533,10 @@ func (m *SeriesMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldCompleted(ctx)
 	case series.FieldMetadataProviderID:
 		return m.OldMetadataProviderID(ctx)
+	case series.FieldCoverFile:
+		return m.OldCoverFile(ctx)
+	case series.FieldCoverSourceURL:
+		return m.OldCoverSourceURL(ctx)
 	case series.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case series.FieldUpdatedAt:
@@ -6524,6 +6612,20 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetMetadataProviderID(v)
+		return nil
+	case series.FieldCoverFile:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCoverFile(v)
+		return nil
+	case series.FieldCoverSourceURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCoverSourceURL(v)
 		return nil
 	case series.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -6629,6 +6731,12 @@ func (m *SeriesMutation) ResetField(name string) error {
 		return nil
 	case series.FieldMetadataProviderID:
 		m.ResetMetadataProviderID()
+		return nil
+	case series.FieldCoverFile:
+		m.ResetCoverFile()
+		return nil
+	case series.FieldCoverSourceURL:
+		m.ResetCoverSourceURL()
 		return nil
 	case series.FieldCreatedAt:
 		m.ResetCreatedAt()
