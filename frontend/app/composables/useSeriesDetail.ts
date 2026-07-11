@@ -152,55 +152,69 @@ export function useSeriesDetail(id: string) {
    * then call onSuccess (default: refresh). Any throw sets error.value.
    * busyRef defaults to `saving`; pass deleteBusy/removeBusy for those actions.
    * onSuccess defaults to refresh; pass a nav callback for deleteSeries.
+   *
+   * Resolves TRUE when the mutation succeeded and FALSE when it failed (the
+   * failure is surfaced via `error`, never swallowed). Callers that own a
+   * dialog use that outcome to close ONLY on success — a failed mutation keeps
+   * the dialog open with its error visible (§16). Callers that don't care may
+   * ignore the returned value.
    */
   async function mutate(
     fn: () => Promise<{ error?: unknown }>,
     busyRef: Ref<boolean> = saving,
     onSuccess: () => void | Promise<void> = refresh,
-  ): Promise<void> {
+  ): Promise<boolean> {
     busyRef.value = true
     error.value = null
     try {
       const result = await fn()
       if (result.error) throw new Error('Update failed')
       await onSuccess()
+      return true
     }
     catch (err) {
       error.value = err instanceof Error ? err.message : 'Update failed'
+      return false
     }
     finally {
       busyRef.value = false
     }
   }
 
-  const setMonitored = (monitored: boolean): Promise<void> =>
+  const setMonitored = (monitored: boolean): Promise<boolean> =>
     mutate(() => apiClient.PATCH('/api/series/{id}/monitored', { params: { path: { id } }, body: { monitored } }))
 
-  const setCompleted = (completed: boolean): Promise<void> =>
+  const setCompleted = (completed: boolean): Promise<boolean> =>
     mutate(() => apiClient.PATCH('/api/series/{id}/completed', { params: { path: { id } }, body: { completed } }))
 
-  const setCategory = async (name: string): Promise<void> => {
+  const setCategory = async (name: string): Promise<boolean> => {
     const categoryId = categoryMap.value.get(name)
     if (!categoryId) {
       error.value = `Unknown category: ${name}`
-      return
+      return false
     }
     return mutate(() => apiClient.PATCH('/api/series/{id}/category', { params: { path: { id } }, body: { categoryId } }))
   }
 
-  const reorderProviders = (providers: { id: string, importance: number }[]): Promise<void> =>
+  const reorderProviders = (providers: { id: string, importance: number }[]): Promise<boolean> =>
     mutate(() => apiClient.PATCH('/api/series/{id}/providers', { params: { path: { id } }, body: { providers } }))
 
-  const removeSource = (providerId: string): Promise<void> =>
+  /**
+   * Removes ONE source feed from the series (the downloaded CBZs + chapters are
+   * kept). Resolves true on success / false on failure, so the owner of the
+   * remove-source confirm dialog closes it only when the source really went
+   * away — a failed removal keeps the dialog open with the error shown (§16).
+   */
+  const removeSource = (providerId: string): Promise<boolean> =>
     mutate(
       () => apiClient.DELETE('/api/series/{id}/providers/{providerId}', { params: { path: { id, providerId } } }),
       removeBusy,
     )
 
-  const chooseMetadataSource = (providerId: string): Promise<void> =>
+  const chooseMetadataSource = (providerId: string): Promise<boolean> =>
     mutate(() => apiClient.PATCH('/api/series/{id}/metadata-source', { params: { path: { id } }, body: { providerId } }))
 
-  const deleteSeries = (deleteFiles: boolean): Promise<void> =>
+  const deleteSeries = (deleteFiles: boolean): Promise<boolean> =>
     mutate(
       () => apiClient.DELETE('/api/series/{id}', { params: { path: { id }, query: { deleteFiles } } }),
       deleteBusy,
