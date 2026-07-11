@@ -488,7 +488,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		if ch.State != entchapter.StateSuperseded {
 			counts.Total++
 		}
-		addToCounts(&counts, ch.State)
+		addToCounts(&counts, ch)
 	}
 
 	metaProv := MetadataProvider(row)
@@ -723,15 +723,18 @@ func (s *Service) moveSeriesFolder(oldCat, newCat, title string) (moved bool, er
 }
 
 // chapterRollupRow is the scan target for the grouped chapter-count aggregate.
+// Read is grouped alongside State so the SAME query can also tally Unread
+// (downloaded AND read=false) without a second round-trip or a per-series loop.
 type chapterRollupRow struct {
 	SeriesID uuid.UUID        `json:"series_id"`
 	State    entchapter.State `json:"state"`
+	Read     bool             `json:"read"`
 	Count    int              `json:"count"`
 }
 
-// chapterRollups runs ONE grouped aggregate (GROUP BY series_id, state) over the
-// given series ids and returns a per-series ChapterCounts map. Returns an empty
-// map (not nil) when there are no ids, so callers can index it safely.
+// chapterRollups runs ONE grouped aggregate (GROUP BY series_id, state, read)
+// over the given series ids and returns a per-series ChapterCounts map. Returns
+// an empty map (not nil) when there are no ids, so callers can index it safely.
 func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]ChapterCounts, error) {
 	out := make(map[uuid.UUID]ChapterCounts, len(ids))
 	if len(ids) == 0 {
@@ -741,7 +744,7 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 	var rows []chapterRollupRow
 	err := s.client.Chapter.Query().
 		Where(entchapter.SeriesIDIn(ids...)).
-		GroupBy(entchapter.FieldSeriesID, entchapter.FieldState).
+		GroupBy(entchapter.FieldSeriesID, entchapter.FieldState, entchapter.FieldRead).
 		Aggregate(ent.Count()).
 		Scan(ctx, &rows)
 	if err != nil {
@@ -757,6 +760,9 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 		switch r.State {
 		case entchapter.StateDownloaded:
 			c.Downloaded += r.Count
+			if !r.Read {
+				c.Unread += r.Count
+			}
 		case entchapter.StateWanted:
 			c.Wanted += r.Count
 		case entchapter.StateFailed:
@@ -909,12 +915,16 @@ func ChapterTitles(providers []*ent.SeriesProvider) map[string]string {
 	return titles
 }
 
-// addToCounts increments the rollup for a single chapter's state. Total is
-// tallied by the caller; this only bumps the broken-out per-state counters.
-func addToCounts(c *ChapterCounts, state entchapter.State) {
-	switch state {
+// addToCounts increments the rollup for a single chapter. Total is tallied by
+// the caller; this bumps the broken-out per-state counters plus Unread
+// (downloaded AND read=false — mirrors chapterRollups' grouped tally).
+func addToCounts(c *ChapterCounts, ch *ent.Chapter) {
+	switch ch.State {
 	case entchapter.StateDownloaded:
 		c.Downloaded++
+		if !ch.Read {
+			c.Unread++
+		}
 	case entchapter.StateWanted:
 		c.Wanted++
 	case entchapter.StateFailed:

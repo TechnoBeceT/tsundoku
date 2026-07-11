@@ -24,6 +24,10 @@ type ChapterCounts struct {
 	Downloaded int `json:"downloaded"`
 	Wanted     int `json:"wanted"`
 	Failed     int `json:"failed"`
+	// Unread = downloaded chapters the owner has not read. This is what can be
+	// read RIGHT NOW — deliberately not "every chapter the source knows about",
+	// which would read as noise on a partially-downloaded series.
+	Unread int `json:"unread"`
 }
 
 // SeriesSummaryDTO is the list-row shape for a single series: identity,
@@ -68,7 +72,9 @@ type SeriesDetailDTO struct {
 // sort value (nullable — never identity, that is ChapterKey). PageCount is
 // nullable until the chapter is downloaded (nil = unknown). Read and LastReadPage
 // carry the in-app reader's owner progress (Read defaults false, LastReadPage 0);
-// the reader uses PageCount + LastReadPage to resume mid-chapter.
+// the reader uses PageCount + LastReadPage to resume mid-chapter. ReadAt is the
+// timestamp of the most recent read=true transition (nil until read, cleared on
+// read=false — see newChapterDTO).
 type ChapterDTO struct {
 	ID           string   `json:"id"`
 	ChapterKey   string   `json:"chapterKey"`
@@ -79,6 +85,9 @@ type ChapterDTO struct {
 	PageCount    *int     `json:"pageCount"`
 	Read         bool     `json:"read"`
 	LastReadPage int      `json:"lastReadPage"`
+	// ReadAt is when the owner marked this chapter read; nil until then (and
+	// cleared when read flips back to false).
+	ReadAt *time.Time `json:"readAt"`
 }
 
 // ProviderDTO is one SeriesProvider in a series-detail response. ID is the
@@ -192,6 +201,7 @@ func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
 		PageCount:    c.PageCount,
 		Read:         c.Read,
 		LastReadPage: c.LastReadPage,
+		ReadAt:       c.ReadAt,
 	}
 }
 

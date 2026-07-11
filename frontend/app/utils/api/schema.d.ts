@@ -1500,6 +1500,8 @@ export interface components {
             wanted: number;
             /** @description Chapters currently in the failed state. */
             failed: number;
+            /** @description Downloaded chapters the owner has not read yet — what can be read right now, deliberately not every chapter a source knows about. */
+            unread: number;
         };
         SeriesSummary: {
             /**
@@ -1545,6 +1547,11 @@ export interface components {
             read: boolean;
             /** @description In-app reader progress — 0-based index of the last page the owner viewed. */
             lastReadPage: number;
+            /**
+             * Format: date-time
+             * @description When the chapter was marked read; null until then (cleared when read flips back to false).
+             */
+            readAt: string | null;
         };
         ChapterProgress: {
             /** @description Chapter UUID. */
