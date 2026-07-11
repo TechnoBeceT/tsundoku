@@ -34,8 +34,20 @@ func (f *countingFetcher) PageBytes(context.Context, string) ([]byte, string, er
 	return f.data, f.ext, nil
 }
 
-// seedCoverSeries seeds a categorized series with one provider carrying coverURL.
-func seedCoverSeries(ctx context.Context, t *testing.T, db *ent.Client, coverURL string) uuid.UUID {
+// seedCoverSeries seeds a categorized series with one provider carrying coverURL,
+// AND creates its library folder — the cover is only cached for a series that has
+// a folder on disk (SaveCover never creates one; see disk.ErrNoSeriesDir).
+func seedCoverSeries(ctx context.Context, t *testing.T, db *ent.Client, storage, coverURL string) uuid.UUID {
+	t.Helper()
+	if err := os.MkdirAll(disk.SeriesDir(storage, "Manga", "Cover Cache"), 0o750); err != nil {
+		t.Fatalf("mkdir series dir: %v", err)
+	}
+	return seedCoverSeriesNoDir(ctx, t, db, coverURL)
+}
+
+// seedCoverSeriesNoDir seeds the same series WITHOUT a folder on disk (a series
+// that has downloaded nothing yet).
+func seedCoverSeriesNoDir(ctx context.Context, t *testing.T, db *ent.Client, coverURL string) uuid.UUID {
 	t.Helper()
 	catID, err := category.IDByName(ctx, db, "Manga")
 	if err != nil {
@@ -63,7 +75,7 @@ func TestCoverBytes_ColdFetchesOnceAndCaches(t *testing.T) {
 	storage := t.TempDir()
 	fetcher := &countingFetcher{data: []byte("IMG"), ext: "png"}
 	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
-	id := seedCoverSeries(ctx, t, db, "/thumb/a")
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
 
 	data, ext, err := svc.CoverBytes(ctx, id)
 	if err != nil {
@@ -99,7 +111,7 @@ func TestCoverBytes_WarmMakesZeroSuwayomiCalls(t *testing.T) {
 	storage := t.TempDir()
 	fetcher := &countingFetcher{data: []byte("IMG"), ext: "jpg"}
 	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
-	id := seedCoverSeries(ctx, t, db, "/thumb/a")
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
 
 	// Warm the cache (the one and only permitted fetch).
 	if _, _, err := svc.CoverBytes(ctx, id); err != nil {
@@ -131,7 +143,7 @@ func TestCoverBytes_SourceURLChangeRefetchesOnce(t *testing.T) {
 	storage := t.TempDir()
 	fetcher := &countingFetcher{data: []byte("OLD"), ext: "jpg"}
 	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
-	id := seedCoverSeries(ctx, t, db, "/thumb/a")
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
 
 	if _, _, err := svc.CoverBytes(ctx, id); err != nil {
 		t.Fatalf("CoverBytes (warming): %v", err)
@@ -174,16 +186,20 @@ func TestCoverBytes_SourceURLChangeRefetchesOnce(t *testing.T) {
 func TestCoverBytes_DiskWriteFailureStillServes(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-
-	// A storage root that is a FILE, not a directory ⇒ every disk write fails.
-	storage := filepath.Join(t.TempDir(), "not-a-dir")
-	if err := os.WriteFile(storage, []byte("x"), 0o600); err != nil {
-		t.Fatalf("write blocker file: %v", err)
-	}
+	storage := t.TempDir()
 
 	fetcher := &countingFetcher{data: []byte("IMG"), ext: "jpg"}
 	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
-	id := seedCoverSeries(ctx, t, db, "/thumb/a")
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
+
+	// The series folder exists but is not writable ⇒ the cover write fails.
+	seriesDir := disk.SeriesDir(storage, "Manga", "Cover Cache")
+	// G302: a read-only DIRECTORY (r-x) is exactly what makes the cache write fail;
+	// dir modes legitimately need the exec bit, and this is test-only.
+	if err := os.Chmod(seriesDir, 0o500); err != nil { //nolint:gosec
+		t.Fatalf("chmod series dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(seriesDir, 0o750) }) //nolint:gosec
 
 	data, ext, err := svc.CoverBytes(ctx, id)
 	if err != nil {
@@ -194,6 +210,59 @@ func TestCoverBytes_DiskWriteFailureStillServes(t *testing.T) {
 	}
 }
 
+// TestCoverBytes_NoSeriesDirStillServesAndCreatesNothing proves a series with
+// nothing downloaded (no folder) is served live and NEVER has a folder
+// materialised for it — otherwise rendering the grid would litter the library
+// with cover-only dirs the import wizard then stages as ghosts.
+func TestCoverBytes_NoSeriesDirStillServesAndCreatesNothing(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	fetcher := &countingFetcher{data: []byte("IMG"), ext: "jpg"}
+	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+	id := seedCoverSeriesNoDir(ctx, t, db, "/thumb/a")
+
+	data, _, err := svc.CoverBytes(ctx, id)
+	if err != nil {
+		t.Fatalf("CoverBytes (no series dir): %v", err)
+	}
+	if string(data) != "IMG" {
+		t.Errorf("CoverBytes (no series dir) = %q, want IMG", data)
+	}
+
+	entries, err := os.ReadDir(storage)
+	if err != nil {
+		t.Fatalf("read storage: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("serving the cover created %d entry/entries in the library, want 0", len(entries))
+	}
+}
+
+// TestCoverBytes_ExtNormalisedColdAndWarm proves the cold response and the warm
+// (disk) response agree on the extension when the source reports an uppercase
+// type — a cold "JPEG" must not serve as octet-stream while the warm one is jpeg.
+func TestCoverBytes_ExtNormalisedColdAndWarm(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	fetcher := &countingFetcher{data: []byte("IMG"), ext: "JPEG"}
+	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
+
+	_, coldExt, err := svc.CoverBytes(ctx, id)
+	if err != nil {
+		t.Fatalf("CoverBytes (cold): %v", err)
+	}
+	_, warmExt, err := svc.CoverBytes(ctx, id)
+	if err != nil {
+		t.Fatalf("CoverBytes (warm): %v", err)
+	}
+	if coldExt != "jpeg" || warmExt != "jpeg" {
+		t.Errorf("ext cold/warm = %q/%q, want jpeg/jpeg", coldExt, warmExt)
+	}
+}
+
 // TestCoverBytes_FetchFailure proves a cold-cover Suwayomi failure surfaces as
 // ErrCoverFetchFailed (→ 502), never a false success.
 func TestCoverBytes_FetchFailure(t *testing.T) {
@@ -201,7 +270,7 @@ func TestCoverBytes_FetchFailure(t *testing.T) {
 	db := testdb.New(t)
 	fetcher := &countingFetcher{err: errors.New("suwayomi down")}
 	svc := series.NewService(db, t.TempDir(), 14).WithCoverFetcher(fetcher)
-	id := seedCoverSeries(ctx, t, db, "/thumb/a")
+	id := seedCoverSeriesNoDir(ctx, t, db, "/thumb/a")
 
 	if _, _, err := svc.CoverBytes(ctx, id); !errors.Is(err, series.ErrCoverFetchFailed) {
 		t.Fatalf("CoverBytes: err = %v, want ErrCoverFetchFailed", err)
@@ -214,7 +283,7 @@ func TestCoverBytes_NoCoverAndUnknownSeries(t *testing.T) {
 	db := testdb.New(t)
 	svc := series.NewService(db, t.TempDir(), 14).WithCoverFetcher(&countingFetcher{})
 
-	noCover := seedCoverSeries(ctx, t, db, "")
+	noCover := seedCoverSeriesNoDir(ctx, t, db, "")
 	if _, _, err := svc.CoverBytes(ctx, noCover); !errors.Is(err, series.ErrNoCover) {
 		t.Errorf("CoverBytes (no cover_url): err = %v, want ErrNoCover", err)
 	}
@@ -229,7 +298,7 @@ func TestCoverBytes_NoFetcherConfigured(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	svc := series.NewService(db, t.TempDir(), 14)
-	id := seedCoverSeries(ctx, t, db, "/thumb/a")
+	id := seedCoverSeriesNoDir(ctx, t, db, "/thumb/a")
 
 	if _, _, err := svc.CoverBytes(ctx, id); !errors.Is(err, series.ErrCoverFetchFailed) {
 		t.Fatalf("CoverBytes (no fetcher): err = %v, want ErrCoverFetchFailed", err)

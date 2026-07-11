@@ -25,6 +25,17 @@ const defaultCoverExt = "jpg"
 // to this one sentinel so the caller's only response is "fetch it once".
 var ErrNoLocalCover = errors.New("no local cover")
 
+// ErrNoSeriesDir reports that the series has no directory on disk, so its cover
+// was NOT cached.
+//
+// This is deliberate, not a failure: SaveCover never CREATES the series folder.
+// Merely rendering the library grid must not materialise a folder (+ sidecar) for
+// every series that has downloaded nothing yet — those cover-only dirs would be
+// staged as ghost entries by the Scan-Library wizard, and could resurrect a
+// folder a delete/move just removed. The cover lives WITH the series' files; a
+// series with no files simply serves live (see series.Service.CoverBytes).
+var ErrNoSeriesDir = errors.New("series directory does not exist")
+
 // CoverRequest carries everything SaveCover needs to persist one series cover.
 type CoverRequest struct {
 	// Storage is the root library directory (e.g. "/data/library").
@@ -58,16 +69,20 @@ type CoverRequest struct {
 // replaced — including one stored under a different extension (a metadata-source
 // switch can change the image type), so a stale cover.* can never linger and win.
 //
+// It NEVER creates the series directory: a series with no folder on disk yields
+// ErrNoSeriesDir and is not cached (see that sentinel for why).
+//
 // The whole operation takes the per-series-dir sidecar lock: a chapter render and
 // a cover save both read-modify-write the same tsundoku.json (and its fixed
 // ".tmp" path), and would otherwise drop one of the two blocks.
 func SaveCover(req CoverRequest) (filename string, err error) {
 	seriesDir := SeriesDir(req.Storage, req.Category, req.Title)
-	if mkErr := os.MkdirAll(seriesDir, 0o750); mkErr != nil {
-		return "", fmt.Errorf("disk.SaveCover: create series dir: %w", mkErr)
+	info, statErr := os.Stat(seriesDir)
+	if statErr != nil || !info.IsDir() {
+		return "", fmt.Errorf("disk.SaveCover: %w: %q", ErrNoSeriesDir, seriesDir)
 	}
 
-	filename = coverBasename + "." + normalizeCoverExt(req.Ext)
+	filename = coverBasename + "." + NormalizeCoverExt(req.Ext)
 
 	defer lockSidecar(seriesDir)()
 
@@ -121,11 +136,15 @@ func ReadCover(storage, category, title string) (data []byte, ext string, prov *
 	return data, strings.TrimPrefix(filepath.Ext(name), "."), &cover, nil
 }
 
-// normalizeCoverExt reduces the upstream-reported extension to a safe, bare,
+// NormalizeCoverExt reduces the upstream-reported extension to a safe, bare,
 // lowercase extension. Anything unusable (empty, or carrying separators/dots
 // that could escape the series dir) degrades to defaultCoverExt rather than
 // producing a dotfile, an extensionless cover, or a traversal.
-func normalizeCoverExt(ext string) string {
+//
+// Exported because the SERVING path must normalise the same way the STORING path
+// does: a source reporting "JPEG" would otherwise serve as octet-stream while
+// cold and image/jpeg once cached (the stored file is cover.jpeg).
+func NormalizeCoverExt(ext string) string {
 	clean := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))
 	if clean == "" {
 		return defaultCoverExt
@@ -138,21 +157,28 @@ func normalizeCoverExt(ext string) string {
 	return clean
 }
 
-// removeStaleCovers deletes every cover.* file in the series dir except keep.
+// removeStaleCovers deletes every "cover.*" file in the series dir except keep.
 // Only the cover the sidecar points at may survive — an orphaned cover.png next
 // to a fresh cover.jpg would be picked up by Komga and shown instead. It touches
 // nothing but "cover.*" (never a CBZ), and a failed unlink is ignored: a stale
 // cache file is not worth failing the request over.
+//
+// GOTCHA: this deliberately does NOT use filepath.Glob. Glob treats the WHOLE
+// path as a pattern, so a series TITLE carrying glob metacharacters (real ones:
+// "Solo Leveling [Official]") silently matches nothing — leaving the stale cover
+// in place — or returns ErrBadPattern. Never glob a user-controlled path segment.
 func removeStaleCovers(seriesDir, keep string) {
-	matches, err := filepath.Glob(filepath.Join(seriesDir, coverBasename+".*"))
+	entries, err := os.ReadDir(seriesDir)
 	if err != nil {
-		// Defensive path: Glob only errors on a malformed pattern, and this pattern is a constant.
+		// Defensive path: the dir was just written into; reachable only on an
+		// OS-level I/O failure immediately after.
 		return
 	}
-	for _, m := range matches {
-		if filepath.Base(m) == keep {
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || name == keep || !strings.HasPrefix(name, coverBasename+".") {
 			continue
 		}
-		_ = os.Remove(m)
+		_ = os.Remove(filepath.Join(seriesDir, name))
 	}
 }

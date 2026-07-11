@@ -167,7 +167,11 @@ func scanSeriesDir(dir, category string) (*SeriesFacts, error) {
 	}
 	facts = append(facts, orphanFacts...)
 
-	if len(facts) == 0 && sidecar == nil {
+	// No chapters at all (no sidecar provenance, no orphan CBZ) ⇒ not a library
+	// series, even if a sidecar exists. A COVER-ONLY directory (a sidecar carrying
+	// just the cached cover block) must stay invisible to the scanner, or the
+	// Scan-Library wizard would stage a ghost import entry for it.
+	if len(facts) == 0 {
 		return nil, nil
 	}
 

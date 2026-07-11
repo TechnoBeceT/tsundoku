@@ -26,6 +26,17 @@ func coverReq(storage string, data []byte, ext, sourceURL string) disk.CoverRequ
 	}
 }
 
+// coverStorage returns a storage root whose series dir already exists — SaveCover
+// deliberately never creates it (a series with nothing downloaded gets no folder).
+func coverStorage(t *testing.T, title string) string {
+	t.Helper()
+	storage := t.TempDir()
+	if err := os.MkdirAll(disk.SeriesDir(storage, "Manga", title), 0o750); err != nil {
+		t.Fatalf("mkdir series dir: %v", err)
+	}
+	return storage
+}
+
 // readSidecar reads the series sidecar or fails the test.
 func readSidecar(t *testing.T, seriesDir string) *disk.Sidecar {
 	t.Helper()
@@ -42,7 +53,7 @@ func readSidecar(t *testing.T, seriesDir string) *disk.Sidecar {
 // TestSaveCover_WritesFile proves the bytes land in the series dir under the
 // resolved extension, byte-for-byte as the source served them.
 func TestSaveCover_WritesFile(t *testing.T) {
-	storage := t.TempDir()
+	storage := coverStorage(t, "Alpha Saga")
 	want := []byte{0x89, 0x50, 0x4E, 0x47}
 
 	filename, err := disk.SaveCover(coverReq(storage, want, "png", "/api/v1/manga/1/thumbnail"))
@@ -67,7 +78,7 @@ func TestSaveCover_WritesFile(t *testing.T) {
 // block (source_url is the cache key) and, for a series with no sidecar yet,
 // seeds the series-level title/category too.
 func TestSaveCover_WritesSidecarProvenance(t *testing.T) {
-	storage := t.TempDir()
+	storage := coverStorage(t, "Alpha Saga")
 	if _, err := disk.SaveCover(coverReq(storage, []byte("x"), "png", "/api/v1/manga/1/thumbnail")); err != nil {
 		t.Fatalf("SaveCover: %v", err)
 	}
@@ -89,7 +100,7 @@ func TestSaveCover_WritesSidecarProvenance(t *testing.T) {
 // is a lossless-rebuild artifact, so its wire shape is a contract (every other
 // sidecar field is snake_case too).
 func TestSaveCover_SidecarJSONIsSnakeCase(t *testing.T) {
-	storage := t.TempDir()
+	storage := coverStorage(t, "Alpha Saga")
 	if _, err := disk.SaveCover(coverReq(storage, []byte("x"), "jpg", "/thumb")); err != nil {
 		t.Fatalf("SaveCover: %v", err)
 	}
@@ -116,7 +127,7 @@ func TestSaveCover_SidecarJSONIsSnakeCase(t *testing.T) {
 // the stored cover — including when the new image has a different extension (the
 // stale file must not linger next to the new one).
 func TestSaveCover_ReplacesPreviousCover(t *testing.T) {
-	storage := t.TempDir()
+	storage := coverStorage(t, "Alpha Saga")
 	if _, err := disk.SaveCover(coverReq(storage, []byte("old"), "jpg", "/old")); err != nil {
 		t.Fatalf("SaveCover(old): %v", err)
 	}
@@ -154,7 +165,7 @@ func TestSaveCover_ExtensionResolution(t *testing.T) {
 		{"../evil", "cover.jpg"},
 	}
 	for _, tc := range cases {
-		storage := t.TempDir()
+		storage := coverStorage(t, "Alpha Saga")
 		got, err := disk.SaveCover(coverReq(storage, []byte("x"), tc.in, "/u"))
 		if err != nil {
 			t.Fatalf("SaveCover(%q): %v", tc.in, err)
@@ -210,7 +221,7 @@ func TestReadCover_MissingCoverBlock(t *testing.T) {
 // TestReadCover_MissingFileIsAbsent proves a sidecar that points at a cover file
 // which no longer exists on disk reports no local cover (re-fetch), not an error.
 func TestReadCover_MissingFileIsAbsent(t *testing.T) {
-	storage := t.TempDir()
+	storage := coverStorage(t, "Alpha Saga")
 	if _, err := disk.SaveCover(coverReq(storage, []byte("x"), "jpg", "/u")); err != nil {
 		t.Fatalf("SaveCover: %v", err)
 	}
@@ -231,7 +242,7 @@ func TestReadCover_MissingFileIsAbsent(t *testing.T) {
 // last writer wins and one of the two blocks (chapter provenance or cover) is
 // silently lost — and the fixed ".tmp" path collides.
 func TestSaveCover_ConcurrentWithRenderKeepsSidecarIntact(t *testing.T) {
-	storage := t.TempDir()
+	storage := coverStorage(t, "Alpha Saga")
 	const n = 8
 
 	var wg sync.WaitGroup
@@ -272,5 +283,83 @@ func TestSaveCover_ConcurrentWithRenderKeepsSidecarIntact(t *testing.T) {
 	}
 	if len(sc.Chapters) != n {
 		t.Errorf("chapters = %d, want %d (a provenance entry was lost)", len(sc.Chapters), n)
+	}
+}
+
+// TestSaveCover_NeverCreatesSeriesDir is the library-pollution guard: merely
+// viewing the library grid must NOT materialise a folder for every series that
+// has downloaded nothing. A series with no dir on disk reports ErrNoSeriesDir and
+// leaves the storage root untouched (the caller still serves the fetched bytes).
+func TestSaveCover_NeverCreatesSeriesDir(t *testing.T) {
+	storage := t.TempDir()
+
+	_, err := disk.SaveCover(coverReq(storage, []byte("x"), "jpg", "/u"))
+	if !errors.Is(err, disk.ErrNoSeriesDir) {
+		t.Fatalf("SaveCover(no series dir): err = %v, want ErrNoSeriesDir", err)
+	}
+
+	entries, err := os.ReadDir(storage)
+	if err != nil {
+		t.Fatalf("read storage: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("SaveCover created %d entry/entries under the storage root, want 0", len(entries))
+	}
+}
+
+// TestSaveCover_ReplacesPreviousCover_GlobMetaTitle is the Glob regression: a real
+// series title carrying glob metacharacters ("[Official]") must still have its
+// stale cover removed. filepath.Glob treats the whole path as a pattern and would
+// silently match nothing here, leaving an orphaned cover for Komga to show.
+func TestSaveCover_ReplacesPreviousCover_GlobMetaTitle(t *testing.T) {
+	const title = "Solo Leveling [Official]"
+	storage := coverStorage(t, title)
+
+	req := func(data []byte, ext string) disk.CoverRequest {
+		r := coverReq(storage, data, ext, "/u")
+		r.Title = title
+		return r
+	}
+	if _, err := disk.SaveCover(req([]byte("old"), "jpg")); err != nil {
+		t.Fatalf("SaveCover(old): %v", err)
+	}
+	if _, err := disk.SaveCover(req([]byte("new"), "png")); err != nil {
+		t.Fatalf("SaveCover(new): %v", err)
+	}
+
+	seriesDir := disk.SeriesDir(storage, "Manga", title)
+	if _, err := os.Stat(filepath.Join(seriesDir, "cover.jpg")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stale cover.jpg survived a glob-metacharacter title (err = %v)", err)
+	}
+}
+
+// TestNormalizeCoverExt proves the store and the serve path agree on the
+// extension: an upstream "JPEG" must resolve identically in both.
+func TestNormalizeCoverExt(t *testing.T) {
+	cases := map[string]string{
+		"jpg": "jpg", "JPEG": "jpeg", ".PNG": "png", "": "jpg", "../evil": "jpg",
+	}
+	for in, want := range cases {
+		if got := disk.NormalizeCoverExt(in); got != want {
+			t.Errorf("NormalizeCoverExt(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestScanLibrary_IgnoresCoverOnlyDir is the ghost-import guard: a directory that
+// holds only a cached cover (+ its sidecar cover block) and no chapters is NOT a
+// library series — the Scan-Library wizard must never stage an import entry for it.
+func TestScanLibrary_IgnoresCoverOnlyDir(t *testing.T) {
+	storage := coverStorage(t, "Alpha Saga")
+	if _, err := disk.SaveCover(coverReq(storage, []byte("x"), "jpg", "/u")); err != nil {
+		t.Fatalf("SaveCover: %v", err)
+	}
+
+	facts, err := disk.ScanLibrary(storage)
+	if err != nil {
+		t.Fatalf("ScanLibrary: %v", err)
+	}
+	if len(facts) != 0 {
+		t.Fatalf("ScanLibrary saw %d series for a cover-only dir, want 0 (%+v)", len(facts), facts)
 	}
 }

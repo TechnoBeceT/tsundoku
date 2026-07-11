@@ -98,10 +98,15 @@ func (s *Service) fetchAndCacheCover(
 		return nil, "", fmt.Errorf("%w: no cover fetcher configured", ErrCoverFetchFailed)
 	}
 
-	data, ext, err = s.sw.PageBytes(ctx, meta.CoverURL)
+	data, rawExt, err := s.sw.PageBytes(ctx, meta.CoverURL)
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: series %s: %w", ErrCoverFetchFailed, row.ID, err)
 	}
+
+	// Normalise ONCE, the same way the store does, so the cold response and the
+	// warm (read-back-from-disk) response report the identical extension — an
+	// upstream "JPEG" must not serve as octet-stream cold and image/jpeg warm.
+	ext = disk.NormalizeCoverExt(rawExt)
 
 	if _, saveErr := disk.SaveCover(disk.CoverRequest{
 		Storage:   s.storage,
@@ -113,9 +118,16 @@ func (s *Service) fetchAndCacheCover(
 		Provider:  meta.Provider,
 	}); saveErr != nil {
 		// A cache that cannot persist must not break the page: serve the bytes, and
-		// let the next view try to cache again.
-		slog.Warn("cover cache write failed",
-			"series_id", row.ID, "title", row.Title, "error", saveErr)
+		// let the next view try to cache again. A series with no folder on disk
+		// (nothing downloaded yet) is the EXPECTED case, not a fault — SaveCover
+		// never creates the folder, so those series simply stay live-proxied.
+		if errors.Is(saveErr, disk.ErrNoSeriesDir) {
+			slog.Debug("cover not cached: series has no folder on disk",
+				"series_id", row.ID, "title", row.Title)
+		} else {
+			slog.Warn("cover cache write failed",
+				"series_id", row.ID, "title", row.Title, "error", saveErr)
+		}
 	}
 
 	return data, ext, nil

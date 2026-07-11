@@ -10,11 +10,15 @@ import (
 	"github.com/technobecet/tsundoku/internal/handler/coverproxy"
 )
 
-// coverMaxAge is the browser cache lifetime (seconds) of a series cover.
-// Deliberately NOT "immutable": the cover legitimately changes when the owner
-// switches metadata source, so the response must stay revalidatable — the ETag
-// makes that revalidation a cheap 304.
-const coverMaxAge = "private, max-age=86400"
+// coverCacheControl keeps the cached cover REVALIDATABLE.
+//
+// GOTCHA: a positive max-age would defeat the feature's own acceptance criterion
+// — a "fresh" response means the browser never sends If-None-Match, so after the
+// owner switches metadata source (the URL is stable, there is no cache-buster)
+// the OLD cover would keep rendering until the freshness window expired. With
+// no-cache the browser always revalidates, the ETag turns that into a bodyless
+// 304, and the backend serves it from disk: still ZERO source-ward calls.
+const coverCacheControl = "private, no-cache"
 
 // SeriesCover serves the metadata source's cover image for the series.
 //
@@ -73,7 +77,7 @@ func serveCachedImage(c echo.Context, data []byte, ext string) error {
 	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
 
 	c.Response().Header().Set("ETag", etag)
-	c.Response().Header().Set("Cache-Control", coverMaxAge)
+	c.Response().Header().Set("Cache-Control", coverCacheControl)
 
 	if c.Request().Header.Get("If-None-Match") == etag {
 		return c.NoContent(http.StatusNotModified)

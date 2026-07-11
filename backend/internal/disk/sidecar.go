@@ -115,6 +115,37 @@ func mutateSidecar(seriesDir string, def Sidecar, fn func(*Sidecar)) error {
 	return nil
 }
 
+// updateExistingSidecar applies fn to a series' EXISTING sidecar and writes it
+// back, taking the per-series-dir lock itself. A series with no sidecar is a
+// no-op (there is nothing to rewrite).
+//
+// It exists so the folder-moving paths (MoveSeriesCategory / RenameCategory)
+// rewrite the sidecar through the SAME lock as the render + cover writers: a
+// plain cover GET can now write the sidecar at any moment, so an unlocked
+// read-modify-write here could silently drop the cover block (or collide on the
+// shared ".tmp" path).
+func updateExistingSidecar(seriesDir string, fn func(*Sidecar)) error {
+	defer lockSidecar(seriesDir)()
+
+	existing, err := ReadSidecar(seriesDir)
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+	if existing == nil {
+		return nil
+	}
+
+	sidecar := *existing
+	fn(&sidecar)
+
+	if err := WriteSidecar(seriesDir, sidecar); err != nil {
+		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
+		// permission denied) when writing the sidecar JSON.
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
+}
+
 // WriteSidecar atomically writes the sidecar to <dir>/tsundoku.json.
 //
 // The write is atomic: data is written to a temp file alongside the target,

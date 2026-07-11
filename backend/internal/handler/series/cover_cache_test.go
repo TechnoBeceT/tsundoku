@@ -47,9 +47,12 @@ func TestSeriesCover_CacheHeaders(t *testing.T) {
 	if rec.Header().Get("ETag") == "" {
 		t.Error("SeriesCover: missing ETag")
 	}
+	// Must be REVALIDATABLE: a positive max-age would keep the browser showing a
+	// stale cover for the whole freshness window after a metadata-source switch
+	// (the URL is stable), because it would never send If-None-Match.
 	cc := rec.Header().Get("Cache-Control")
-	if cc != "private, max-age=86400" {
-		t.Errorf("SeriesCover: Cache-Control = %q, want private, max-age=86400", cc)
+	if cc != "private, no-cache" {
+		t.Errorf("SeriesCover: Cache-Control = %q, want private, no-cache", cc)
 	}
 }
 
@@ -116,10 +119,14 @@ func TestSeriesCover_DiskWriteFailureStillServes(t *testing.T) {
 	countingPageBytes(env, []byte("IMG"), "png")
 	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
 
-	// Make the series' category dir un-creatable by taking its name with a file.
-	if err := os.WriteFile(filepath.Join(env.storage, "Manga"), []byte("x"), 0o600); err != nil {
-		t.Fatalf("write blocker file: %v", err)
+	// The series folder exists but is not writable ⇒ the cache write fails.
+	seriesDir := filepath.Join(env.storage, "Manga", "Cover Test")
+	// G302: a read-only DIRECTORY (r-x) is exactly what makes the cache write fail;
+	// dir modes legitimately need the exec bit, and this is test-only.
+	if err := os.Chmod(seriesDir, 0o500); err != nil { //nolint:gosec
+		t.Fatalf("chmod series dir: %v", err)
 	}
+	t.Cleanup(func() { _ = os.Chmod(seriesDir, 0o750) }) //nolint:gosec
 
 	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", "")
 	if rec.Code != http.StatusOK {

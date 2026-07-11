@@ -1108,6 +1108,11 @@ func TestLibraryHealth_EmptyLibrary(t *testing.T) {
 // Returns the series id and the provider id.
 func seedWithCover(ctx context.Context, t *testing.T, env *testEnv, coverURL string) (seriesID, providerID uuid.UUID) {
 	t.Helper()
+	// The series folder must exist for the cover to be cached there — SaveCover
+	// never creates one (see disk.ErrNoSeriesDir).
+	if err := os.MkdirAll(disk.SeriesDir(env.storage, "Manga", "Cover Test"), 0o750); err != nil {
+		t.Fatalf("mkdir series dir: %v", err)
+	}
 	s := env.client.Series.Create().
 		SetTitle("Cover Test").SetSlug("cover-test").SetCategoryID(catID(ctx, env.client, "Manga")).
 		SaveX(ctx)
