@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import IconButton from '~/components/ui/IconButton.vue'
-import ProgressBar from '~/components/ui/ProgressBar.vue'
+import ReaderPageSlider from './ReaderPageSlider.vue'
 
 /**
  * ReaderChrome — the reader's hide-on-tap overlay chrome. Two bars pinned over
  * the strip:
  *   - TOP: a back button + the series title / current-chapter label.
- *   - BOTTOM: a reading-progress bar with a "page X / N" readout, an optional
- *     fullscreen toggle (shown only when `fullscreenSupported`), and a settings
- *     button.
+ *   - BOTTOM: the chapter-local page slider (`ReaderPageSlider`, which also
+ *     carries the prev/next-chapter buttons), an optional fullscreen toggle
+ *     (shown only when `fullscreenSupported`), and a settings button.
  *
  * `visible` slides both bars off-screen (top up, bottom down) and disables their
  * pointer events when false, so the reader route can toggle the chrome on a
  * centre tap without the hidden bars swallowing scrolls/taps. Presentation-only:
- * it renders the passed props and emits `back` / `toggle-settings`; the route
- * owns visibility + the progress figures.
+ * it renders the passed props and forwards `seek`/`prev`/`next` from the slider
+ * plus `back`/`toggle-settings`/`toggle-fullscreen`; the route owns visibility
+ * and all reading-position state.
  *
  * The root carries `data-reader-chrome` so the route's tap handler can tell a
  * chrome-control click apart from a centre tap and NOT toggle on the former.
@@ -26,10 +27,14 @@ withDefaults(defineProps<{
   title: string
   /** The current chapter label, e.g. "Chapter 12 · Title" (top bar subheading). */
   chapterLabel: string
-  /** The page readout, e.g. "8 / 34" (bottom bar). */
-  pageLabel: string
-  /** Overall reading progress 0–100 for the bottom progress bar. */
-  percent: number
+  /** 0-based current page within the chapter — forwarded to the slider. */
+  page: number
+  /** The chapter's TRIMMED visible page count — the slider's denominator. */
+  visiblePages: number
+  /** Whether a previous chapter exists — gates the slider's prev button. */
+  hasPrev: boolean
+  /** Whether a next chapter exists — gates the slider's next button. */
+  hasNext: boolean
   /** Whether the Fullscreen API is usable; false hides the fullscreen button. */
   fullscreenSupported?: boolean
   /** Whether the reader is currently fullscreen — flips the button's icon/label. */
@@ -46,6 +51,12 @@ const emit = defineEmits<{
   'toggle-settings': []
   /** The fullscreen button was activated — enter/exit fullscreen. */
   'toggle-fullscreen': []
+  /** The slider was clicked/dragged to a new 0-based page. */
+  seek: [page: number]
+  /** The slider's prev-chapter button was activated. */
+  prev: []
+  /** The slider's next-chapter button was activated. */
+  next: []
 }>()
 </script>
 
@@ -70,10 +81,16 @@ const emit = defineEmits<{
     </header>
 
     <footer class="chrome__bar chrome__bar--bottom">
-      <div class="chrome__progress">
-        <ProgressBar :value="percent" />
-        <span class="chrome__pages">{{ pageLabel }}</span>
-      </div>
+      <ReaderPageSlider
+        class="chrome__slider"
+        :page="page"
+        :visible-pages="visiblePages"
+        :has-prev="hasPrev"
+        :has-next="hasNext"
+        @seek="emit('seek', $event)"
+        @prev="emit('prev')"
+        @next="emit('next')"
+      />
       <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
       <IconButton v-if="fullscreenSupported" class="chrome__btn" :ariaLabel="fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'" @click="emit('toggle-fullscreen')">
         <svg v-if="fullscreen" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -176,19 +193,8 @@ const emit = defineEmits<{
   text-overflow: ellipsis;
 }
 
-.chrome__progress {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.chrome__slider {
   flex: 1;
   min-width: 0;
-}
-
-.chrome__pages {
-  flex: none;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 </style>
