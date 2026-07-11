@@ -57,6 +57,13 @@ export interface DownloadItem {
   /** Human-readable display name of that source; falls back to the id upstream. Shown in place of the id. */
   providerName: string
   /**
+   * Display name of the source this chapter is upgrading TO (`upgrade_available`
+   * / `upgrading` rows only) — the row then reads "MangaDex → Asura Scans", so a
+   * convergence wave shows where each chapter is HEADED, not just where its
+   * current file came from. Undefined for every other state.
+   */
+  upgradeTarget?: string
+  /**
    * Live download percentage (0–100), driven by the `download.progress` SSE
    * event (round(100 * pagesCurrent / pagesTotal)). Undefined before the first
    * event → the Active bar stays indeterminate until pages start arriving.

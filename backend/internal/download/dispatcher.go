@@ -352,26 +352,17 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time) (dispatched i
 	limiter := newProviderLimiter(concurrency)
 	batch := batchPerSource(concurrency)
 
-	// progressed counts chapters whose wanted/failed→downloading claim SUCCEEDED.
-	// It is shared across every per-source and per-chapter goroutine (each
-	// runSourceQueue increments it on a claim), so it must be atomic; read once
-	// with .Load() after all goroutines have joined.
-	var progressed atomic.Int64
-	var wg sync.WaitGroup
-	for _, items := range groups {
-		n := min(len(items), batch)
-		if n == 0 {
-			continue
-		}
-		batchItems := items[:n]
-
-		wg.Add(1)
-		go func(items []resolvedChapter) {
-			defer wg.Done()
-			d.runSourceQueue(ctx, items, concurrency, maxRetries, now, limiter, &progressed)
-		}(batchItems)
+	batched := make(map[string][]resolvedChapter, len(groups))
+	for key, items := range groups {
+		batched[key] = items[:min(len(items), batch)]
 	}
-	wg.Wait()
+
+	// progressed counts chapters whose wanted/failed→downloading claim SUCCEEDED.
+	// It is shared across every per-source and per-chapter goroutine (the scheduler
+	// increments it on a claim), so it must be atomic; read once with .Load() after
+	// all goroutines have joined.
+	var progressed atomic.Int64
+	d.runDownloadQueues(ctx, batched, concurrency, maxRetries, now, limiter, &progressed)
 	return int(progressed.Load()), nil
 }
 

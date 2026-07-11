@@ -25,3 +25,12 @@ export const Open: Story = {
 export const Busy: Story = {
   args: { open: true, seriesTitle: 'Solo Leveling', busy: true },
 }
+
+/** A FAILED delete: the dialog stays open and shows the reason inside it (§16). */
+export const WithError: Story = {
+  args: {
+    open: true,
+    seriesTitle: 'Solo Leveling',
+    error: 'Update failed',
+  },
+}

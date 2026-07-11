@@ -82,6 +82,9 @@ function mapItem(dto: DownloadChapterDTO): DownloadItem {
     state: dto.state as DownloadItem['state'],
     provider: dto.provider,
     providerName: dto.providerName,
+    // "" means "not upgrading / no nameable target" — map to undefined so the row
+    // simply omits the "→ target" half.
+    upgradeTarget: dto.upgradeTarget || undefined,
     retries: dto.retries,
     nextAttempt: formatNextAttempt(dto.nextAttemptAt),
     // Empty string means "no error" — map to undefined so optional fields stay absent.

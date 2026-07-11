@@ -1738,6 +1738,8 @@ export interface components {
             provider: string;
             /** @description Human-readable source display name of that source; falls back to the id when unresolved. Shown in the UI in place of the id. */
             providerName: string;
+            /** @description Display name of the source this chapter is upgrading TO — the highest-importance source (other than the current one) whose feed carries the chapter and which outranks it. Empty for every chapter not in upgrade_available/upgrading. The UI renders "providerName → upgradeTarget". It is the INTENDED target: the engine additionally excludes retry-exhausted, cooled-down, or circuit-broken sources, which this read model does not know about, so it may name a source the engine defers this cycle. */
+            upgradeTarget: string;
             /** @description Number of download attempts so far (0 when never attempted or after a retry reset). */
             retries: number;
             /**

@@ -9,7 +9,9 @@ import type { DownloadItem } from '../screens/downloads.types'
  * ChapterDownloadRow — THE shared download-activity row, used by all three
  * Downloads tabs (Active · Failed · Queued). It renders the parts every row has
  * in common: the clickable cover thumbnail, the series title + category chip,
- * the chapter meta line, and the chapter-state badge. The variant-specific
+ * the chapter meta line (which names the chapter's source — and, while it is
+ * upgrading, the source it is converging TO: "MangaDex → Asura Scans"), and the
+ * chapter-state badge. The variant-specific
  * trailing content is injected by the parent:
  *   - `#before-badge` — sits between the meta and the badge (the Active progress
  *     bar, the Queued "UPGRADE" tag, a Failed row's retry-count + next-attempt).
@@ -58,7 +60,16 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
         <span class="dl-row__title">{{ item.seriesTitle }}</span>
         <Chip variant="category">{{ item.seriesCategory }}</Chip>
       </div>
-      <div class="dl-row__meta">{{ metaLine }} <span class="dl-row__provider">· {{ item.providerName }}</span></div>
+      <div class="dl-row__meta">
+        {{ metaLine }}
+        <span class="dl-row__provider">
+          · {{ item.providerName }}
+          <template v-if="item.upgradeTarget">
+            <span class="dl-row__arrow" aria-hidden="true">→</span>
+            <span class="dl-row__target">{{ item.upgradeTarget }}</span>
+          </template>
+        </span>
+      </div>
     </button>
 
     <slot name="before-badge" />
@@ -130,5 +141,17 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
 
 .dl-row__provider {
   color: var(--faint);
+}
+
+/* An upgrading row reads "<current> → <target>": the arrow + target stay inline in
+   the dense meta line, with the TARGET emphasised — it is the source the chapter is
+   converging to, which is the thing the owner is watching during a convergence wave. */
+.dl-row__arrow {
+  margin: 0 1px;
+}
+
+.dl-row__target {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
 }
 </style>

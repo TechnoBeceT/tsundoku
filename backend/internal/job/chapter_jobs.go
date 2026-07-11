@@ -27,15 +27,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sync/atomic"
 	"time"
-
-	"golang.org/x/sync/errgroup"
 
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
-	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -225,80 +221,21 @@ func (r *Runner) drainDownloads(ctx context.Context) error {
 	}
 }
 
-// upgradeAll loads all chapters in state=upgrade_available and calls
-// dispatcher.Upgrade for each one, up to r.dispatcher.DownloadConcurrency(ctx)
-// concurrently — the same per-source bound normal downloads use. Returns the
-// count of upgrade calls that returned nil. Individual upgrade failures are
-// handled inside dispatcher.Upgrade (it records last_error and restores
-// state=downloaded); only DB-load / other infrastructure errors are
-// propagated.
+// upgradeAll runs the convergence-upgrade pass over every chapter in
+// state=upgrade_available and returns how many upgrades completed without a hard
+// error. The scheduling lives in the engine (download.Dispatcher.UpgradeAll), which
+// groups the flagged chapters by their UPGRADE TARGET source and runs each source's
+// queue in parallel with a PER-SOURCE concurrency cap — so a wave aimed at several
+// sources is no longer serialised behind whichever source fills a single global
+// pool, while no individual source is hit any harder than before (see UpgradeAll's
+// doc comment for the full anti-ban argument).
 //
-// Safe to parallelize: each Upgrade call establishes its own per-provider
-// limiter, and the real per-source rate bound is internal/sourcegate (circuit
-// breaker + min-delay) at the fetch layer, so running N upgrades concurrently
-// pipelines fetch+render across chapters/sources without increasing the
-// hit-rate against any single source. The Dispatcher is built for concurrent
-// use (per-series sidecar lock on render, per-provider limiter).
-//
-// Cancellation is guarded twice so no Upgrade runs after ctx is cancelled (or a
-// sibling recorded the group's first error): the OUTER check before g.Go avoids
-// even queueing a closure in the common case, while the INNER check as the first
-// statement of the closure covers the window where g.Go itself BLOCKS on the
-// errgroup semaphore (g.SetLimit) — a closure queued just before the cancel
-// would otherwise launch and call Upgrade once more. The inner short-circuit
-// returns nil (not gctx.Err()): if the cancel came from a sibling's hard error
-// that error is already the group's first error, and if it came from parent
-// teardown returning nil lets the cycle wind down with a partial count rather
-// than surfacing a spurious context.Canceled.
+// The runner keeps this thin wrapper because the cycle owns the error/count
+// contract: individual upgrade failures are handled inside the engine (working copy
+// kept, chapter returns to downloaded), so only hard infrastructure errors surface
+// here and abort the cycle.
 func (r *Runner) upgradeAll(ctx context.Context) (int, error) {
-	chapters, err := r.client.Chapter.Query().
-		Where(entchapter.StateEQ(entchapter.StateUpgradeAvailable)).
-		All(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("job.Runner.upgradeAll: query upgrade_available chapters: %w", err)
-	}
-
-	limit := r.dispatcher.DownloadConcurrency(ctx)
-	if limit < 1 {
-		limit = 1
-	}
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(limit)
-
-	var count atomic.Int64
-	for _, ch := range chapters {
-		// Stop launching new work once ctx is cancelled or the group has
-		// already recorded a first error (errgroup.WithContext cancels gctx
-		// on the first non-nil error), matching the serial loop's
-		// early-return-on-error behavior — in-flight work still drains.
-		if gctx.Err() != nil {
-			break
-		}
-		g.Go(func() error {
-			// Inner guard: g.Go blocks on the semaphore, so this closure may
-			// have been queued before ctx was cancelled. Skip Upgrade (and the
-			// count) rather than fetch once more after cancellation. Return nil
-			// — see the doc comment for why not gctx.Err().
-			if gctx.Err() != nil {
-				return nil
-			}
-			if err := r.dispatcher.Upgrade(ctx, ch.ID); err != nil {
-				// Hard error from Upgrade — propagate so the cycle can record
-				// it. Defensive path: Upgrade normally returns nil even on
-				// fetch/render failures (it handles them internally). Only
-				// infrastructure errors like DB-load failures reach here.
-				return fmt.Errorf("job.Runner.upgradeAll: upgrade chapter %s: %w", ch.ID, err)
-			}
-			count.Add(1)
-			return nil
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		return int(count.Load()), err
-	}
-	return int(count.Load()), nil
+	return r.dispatcher.UpgradeAll(ctx)
 }
 
 // Start launches a background goroutine that calls RunDownloadCycle on a dynamic

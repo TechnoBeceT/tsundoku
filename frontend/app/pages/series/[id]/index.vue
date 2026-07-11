@@ -18,12 +18,19 @@ import type { ProviderRef } from '~/composables/useSourceConfigure'
  * SeriesDetail, MatchSourceDialog, and MatchDiskProviderDialog are
  * auto-imported from app/components/. navigateTo is a Nuxt auto-import.
  *
+ * Confirm dialogs whose lifetime depends on a mutation OUTCOME live HERE, not in
+ * the screen: an emit is fire-and-forget, so the screen can never learn whether
+ * the mutation succeeded. The page awaits the composable's true/false result and
+ * closes the dialog ONLY on success — a failure keeps it open with the error
+ * visible inside it (§16, never a silent failure). That covers `RemoveSourceDialog`
+ * (the screen only emits `requestRemoveSource` when the row's Remove is pressed),
+ * `MatchSourceDialog`, and `MatchDiskProviderDialog`.
+ *
  * Prop wiring:
  *   :series            — the mapped SeriesDetail (null while loading)
  *   :category-options  — string[] of category names for the recategorize select
  *   :saving            — true while an inline mutation is in flight
  *   :delete-busy       — true while the delete request is in flight
- *   :remove-busy       — true while a remove-source request is in flight
  *   :error             — latest mutation error message (null when none)
  *   :dedup-busy        — true while a dedup-providers request is in flight
  *   :dedupe-files-busy — true while a dedupe-files request is in flight
@@ -34,7 +41,7 @@ import type { ProviderRef } from '~/composables/useSourceConfigure'
  *   @toggle-monitored       → setMonitored(bool)
  *   @toggle-completed       → setCompleted(bool)
  *   @reorder-providers      → reorderProviders(list)
- *   @remove-source          → removeSource(providerId)
+ *   @request-remove-source  → opens RemoveSourceDialog for that provider
  *   @match-provider         → opens MatchDiskProviderDialog for that provider
  *   @choose-metadata-source → chooseMetadataSource(providerId)
  *   @delete-series          → deleteSeries(deleteFiles)   (navigates to / on success)
@@ -125,6 +132,26 @@ async function onMatchConfirm(providers: ProviderRef[]): Promise<void> {
   }
 }
 
+// ---- Remove source (confirm dialog) ----------------------------------------
+// The page owns this dialog because only the page learns whether the removal
+// actually succeeded: `removeSource` resolves true/false, and the dialog closes
+// ONLY on true. On false it stays open with the error shown inside it (§16) —
+// the screen could never do this itself (an emit is fire-and-forget).
+const removeOpen = ref(false)
+const removeTargetId = ref<string | null>(null)
+const removeTarget = computed(() => series.value?.providers.find((p) => p.id === removeTargetId.value) ?? null)
+
+function openRemove(providerId: string): void {
+  removeTargetId.value = providerId
+  removeOpen.value = true
+}
+
+async function onConfirmRemove(): Promise<void> {
+  if (!removeTargetId.value) return
+  const ok = await removeSource(removeTargetId.value)
+  if (ok) removeOpen.value = false
+}
+
 // ---- Match to source (no-re-download link of an unlinked disk-origin group) ----
 const {
   sources: linkSources,
@@ -184,7 +211,6 @@ function openReader(chapterId: string): void {
       :category-options="categoryOptions"
       :saving="saving"
       :delete-busy="deleteBusy"
-      :remove-busy="removeBusy"
       :error="error"
       :dedup-busy="dedupBusy"
       :dedupe-files-busy="dedupeFilesBusy"
@@ -193,7 +219,7 @@ function openReader(chapterId: string): void {
       @toggle-monitored="setMonitored"
       @toggle-completed="setCompleted"
       @reorder-providers="reorderProviders"
-      @remove-source="removeSource"
+      @request-remove-source="openRemove"
       @match-provider="openMatchProvider"
       @choose-metadata-source="chooseMetadataSource"
       @delete-series="deleteSeries"
@@ -202,6 +228,15 @@ function openReader(chapterId: string): void {
       @dedup-providers="dedupProviders"
       @dedupe-files="dedupeFiles"
       @read="openReader"
+    />
+
+    <RemoveSourceDialog
+      v-if="series"
+      v-model:open="removeOpen"
+      :busy="removeBusy"
+      :source-name="removeTarget?.provider ?? ''"
+      :error="error"
+      @confirm="onConfirmRemove"
     />
 
     <MatchSourceDialog

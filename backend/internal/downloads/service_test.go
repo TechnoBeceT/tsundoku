@@ -50,8 +50,12 @@ type seeded struct {
 func seedLibrary(ctx context.Context, t *testing.T, client *ent.Client) seeded {
 	t.Helper()
 
+	// cover_version is the hash of the CACHED cover's BYTES — set here so alpha has
+	// a cover on disk and its proxy path is emitted VERSIONED ("…/cover?v=<version>").
+	// A series with no cached cover carries no version and no "?v=" (see beta).
 	alpha := client.Series.Create().
 		SetTitle("Alpha Saga").SetSlug("alpha-saga").
+		SetCoverVersion("a1b2c3d4e5f6").
 		SetCategoryID(catID(ctx, client, "Manga")).SaveX(ctx)
 	beta := client.Series.Create().
 		SetTitle("Beta Quest").SetSlug("beta-quest").
@@ -257,8 +261,11 @@ func assertWantedEnrichment(t *testing.T, items []downloads.DownloadChapterDTO, 
 	if a2.SeriesTitle != "Alpha Saga (MangaDex)" {
 		t.Errorf("a-2 seriesTitle: want resolved display 'Alpha Saga (MangaDex)', got %q", a2.SeriesTitle)
 	}
-	// The cover path is VERSIONED (…/cover?v=<hash of the source cover_url>) so it
-	// can be cached immutably; the downloads DTO reuses the same resolver.
+	// The cover path is VERSIONED (…/cover?v=<hash of the cached cover's BYTES>) so
+	// it can be served immutably — the version changes whenever the image changes.
+	// The downloads DTO reuses the SAME resolver as series detail (§2 DRY), so it
+	// must emit the identical versioned path. A series with no cached cover has no
+	// version and therefore no "?v=" at all.
 	wantCover := "/api/series/" + alphaID.String() + "/cover?v="
 	if !strings.HasPrefix(a2.SeriesCoverURL, wantCover) {
 		t.Errorf("a-2 coverUrl: want prefix %q, got %q", wantCover, a2.SeriesCoverURL)

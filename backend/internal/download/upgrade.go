@@ -257,6 +257,18 @@ func bestUpgradeCandidate(ctx context.Context, client *ent.Client, gate *sourceg
 //   - Records last_error; broadcasts upgrade.fail.
 //   - Returns nil — an upgrade failure is a handled outcome, not a hard error.
 func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
+	// Standalone single-chapter entry point: it owns its limiter, so nothing else
+	// contends for it. UpgradeAll drives upgradeWith with ONE limiter shared across
+	// the whole pass instead (see upgradeWith).
+	return d.upgradeWith(ctx, chapterID, newProviderLimiter(d.downloadConcurrency(ctx)))
+}
+
+// upgradeWith is Upgrade's body, parameterised by the per-provider fetch limiter so
+// a batch of concurrent upgrades (UpgradeAll) can SHARE one — that is what caps the
+// number of simultaneous fetches against any single physical source at
+// DownloadConcurrency even if two chapters' upgrade targets resolve to the same
+// source. See Upgrade for the full flow + failure semantics.
+func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter) error {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
@@ -274,11 +286,9 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	})
 
 	// The upgrade fetch honours the SAME per-source concurrency cap as the download
-	// path (read at use-time). Upgrades are driven sequentially by the job runner
-	// today, so this limiter rarely blocks; it is here so an upgrade fetch is capped
-	// per provider exactly like a download fetch, and stays correct if upgrades are
-	// ever parallelised.
-	limiter := newProviderLimiter(d.downloadConcurrency(ctx))
+	// path: the caller's limiter bounds concurrent fetches per physical source at
+	// DownloadConcurrency. UpgradeAll passes ONE limiter for the whole pass, so its
+	// per-source upgrade parallelism can never exceed that cap upstream.
 	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter)
 	if err != nil {
 		if errors.Is(err, errUpgradeNoLongerNeeded) {
