@@ -71,6 +71,21 @@ func (Series) Fields() []ent.Field {
 		// so no source is ever re-hit for a cover that is already local.
 		field.String("cover_file").Default(""),
 		field.String("cover_source_url").Default(""),
+		// cover_version is a short hash of the cover BYTES currently cached — the
+		// content version the served URL carries (…/cover?v=<cover_version>).
+		//
+		// It must be derived from the BYTES, never from cover_source_url: that URL
+		// is Suwayomi's id-derived thumbnail path (/api/v1/manga/{id}/thumbnail),
+		// so it is stable even when the source republishes different art. The cover
+		// endpoint answers `immutable` — a one-way door — and the ONLY lever that
+		// can ever show the owner a changed image is a changed URL. A version that
+		// tracks the URL instead of the bytes would pin a stale cover for a year
+		// with no server-side remedy.
+		//
+		// Empty ⇒ nothing is cached for this series (or the index predates the
+		// column): the DTO then emits an unversioned URL and the endpoint serves
+		// revalidatable no-cache, never immutable.
+		field.String("cover_version").Default(""),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

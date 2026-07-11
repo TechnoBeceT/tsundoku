@@ -2,11 +2,13 @@ package series_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -31,45 +33,117 @@ func (env *testEnv) doWithHeader(target, key, value string) *httptest.ResponseRe
 	return rec
 }
 
-// TestSeriesCover_CacheHeaders proves the 200 is HARD-cacheable. The DTO's cover
-// URL carries a ?v= derived from the source cover_url, so the URL changes exactly
-// when the image does — which is the only thing that makes "immutable" correct
-// here (the reader's page-bytes endpoint keeps a stable URL over changing bytes,
-// so it must NOT be immutable). Result: the browser re-requests a cover zero times.
-func TestSeriesCover_CacheHeaders(t *testing.T) {
+// coverVersionOf reads the version the DTO advertises for the series — the value
+// a real client would put in ?v=.
+func coverVersionOf(t *testing.T, env *testEnv, seriesID string) string {
+	t.Helper()
+	rec := env.do(http.MethodGet, "/api/series/"+seriesID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetSeries: want 200, got %d", rec.Code)
+	}
+	var body struct {
+		CoverURL string `json:"coverUrl"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode series detail: %v", err)
+	}
+	_, version, found := strings.Cut(body.CoverURL, "?v=")
+	if !found {
+		return ""
+	}
+	return version
+}
+
+// TestSeriesCover_MatchingVersionIsImmutable proves a request carrying the
+// CURRENT content version is hard-cacheable. That is safe only because the
+// version hashes the image BYTES: the URL changes whenever the cover does, so an
+// immutable response can never pin a stale image.
+func TestSeriesCover_MatchingVersionIsImmutable(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 	countingPageBytes(env, []byte("IMG"), "png")
 	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
 
-	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover?v=deadbeef", "")
+	// Warm the cache so the series has a cached cover (and therefore a version).
+	if rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", ""); rec.Code != http.StatusOK {
+		t.Fatalf("SeriesCover (warming): want 200, got %d", rec.Code)
+	}
+	version := coverVersionOf(t, env, seriesID.String())
+	if version == "" {
+		t.Fatal("cached cover has no version in its coverUrl")
+	}
+
+	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover?v="+version, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SeriesCover: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("ETag") == "" {
-		t.Error("SeriesCover: missing ETag")
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=31536000, immutable" {
+		t.Errorf("Cache-Control = %q, want private, max-age=31536000, immutable", cc)
 	}
-	cc := rec.Header().Get("Cache-Control")
-	if cc != "private, max-age=31536000, immutable" {
-		t.Errorf("SeriesCover: Cache-Control = %q, want private, max-age=31536000, immutable", cc)
+	if etag := rec.Header().Get("ETag"); etag != `"`+version+`"` {
+		t.Errorf("ETag = %q, want the server's version %q", etag, version)
 	}
 }
 
-// TestSeriesCover_WithoutVersionParamStillServes proves ?v= is a pure cache
-// buster the server IGNORES: a request without it serves the same image, so an
-// old bookmark / a hand-typed URL never breaks.
-func TestSeriesCover_WithoutVersionParamStillServes(t *testing.T) {
+// TestSeriesCover_UnversionedRequestIsNeverImmutable proves an UNVERSIONED (or
+// wrongly-versioned) request — a bookmark, a curl, an <img> preload, the service
+// worker — still 200s but is only ever revalidatable.
+//
+// Marking those immutable would permanently poison a URL that carries NO cache
+// buster: there would be no lever left to ever show a new cover.
+func TestSeriesCover_UnversionedRequestIsNeverImmutable(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 	countingPageBytes(env, []byte("IMG"), "png")
 	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
 
-	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("SeriesCover (no ?v=): want 200, got %d (%s)", rec.Code, rec.Body.String())
+	for _, target := range []string{
+		"/api/series/" + seriesID.String() + "/cover",
+		"/api/series/" + seriesID.String() + "/cover?v=not-the-version",
+	} {
+		rec := env.do(http.MethodGet, target, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("SeriesCover %s: want 200, got %d (%s)", target, rec.Code, rec.Body.String())
+		}
+		if rec.Body.String() != "IMG" {
+			t.Errorf("SeriesCover %s: body = %q, want IMG", target, rec.Body.String())
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "private, no-cache" {
+			t.Errorf("SeriesCover %s: Cache-Control = %q, want private, no-cache", target, cc)
+		}
 	}
-	if rec.Body.String() != "IMG" {
-		t.Errorf("SeriesCover (no ?v=): body = %q, want IMG", rec.Body.String())
+}
+
+// TestSeriesCover_ETagTracksTheCoverVersion proves the validator follows the
+// cover's CONTENT: new bytes under the same (id-derived, unchanging) cover_url
+// must yield a new ETag, or a client holding the old one would win a spurious 304
+// on an image that has actually changed.
+func TestSeriesCover_ETagTracksTheCoverVersion(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	countingPageBytes(env, []byte("OLD-ART"), "jpg")
+	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+
+	target := "/api/series/" + seriesID.String() + "/cover"
+	first := env.do(http.MethodGet, target, "")
+	firstETag := first.Header().Get("ETag")
+	if firstETag == "" {
+		t.Fatal("SeriesCover: missing ETag")
+	}
+
+	// The local file is lost (an NFS blip) and the source now serves new art under
+	// the SAME cover_url.
+	if err := os.Remove(filepath.Join(env.storage, "Manga", "Cover Test", "cover.jpg")); err != nil {
+		t.Fatalf("remove cover file: %v", err)
+	}
+	countingPageBytes(env, []byte("NEW-ART"), "jpg")
+
+	second := env.do(http.MethodGet, target, "")
+	if second.Body.String() != "NEW-ART" {
+		t.Fatalf("SeriesCover: body = %q, want NEW-ART", second.Body.String())
+	}
+	if got := second.Header().Get("ETag"); got == firstETag {
+		t.Fatalf("ETag unchanged (%s) after the cover bytes changed", got)
 	}
 }
 

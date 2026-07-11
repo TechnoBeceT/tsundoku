@@ -41,6 +41,8 @@ type Series struct {
 	CoverFile string `json:"cover_file,omitempty"`
 	// CoverSourceURL holds the value of the "cover_source_url" field.
 	CoverSourceURL string `json:"cover_source_url,omitempty"`
+	// CoverVersion holds the value of the "cover_version" field.
+	CoverVersion string `json:"cover_version,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -102,7 +104,7 @@ func (*Series) scanValues(columns []string) ([]any, error) {
 			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
 		case series.FieldMonitored, series.FieldCompleted:
 			values[i] = new(sql.NullBool)
-		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus, series.FieldCoverFile, series.FieldCoverSourceURL:
+		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus, series.FieldCoverFile, series.FieldCoverSourceURL, series.FieldCoverVersion:
 			values[i] = new(sql.NullString)
 		case series.FieldCreatedAt, series.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -195,6 +197,12 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field cover_source_url", values[i])
 			} else if value.Valid {
 				_m.CoverSourceURL = value.String
+			}
+		case series.FieldCoverVersion:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field cover_version", values[i])
+			} else if value.Valid {
+				_m.CoverVersion = value.String
 			}
 		case series.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -293,6 +301,9 @@ func (_m *Series) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("cover_source_url=")
 	builder.WriteString(_m.CoverSourceURL)
+	builder.WriteString(", ")
+	builder.WriteString("cover_version=")
+	builder.WriteString(_m.CoverVersion)
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

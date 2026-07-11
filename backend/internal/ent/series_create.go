@@ -162,6 +162,20 @@ func (_c *SeriesCreate) SetNillableCoverSourceURL(v *string) *SeriesCreate {
 	return _c
 }
 
+// SetCoverVersion sets the "cover_version" field.
+func (_c *SeriesCreate) SetCoverVersion(v string) *SeriesCreate {
+	_c.mutation.SetCoverVersion(v)
+	return _c
+}
+
+// SetNillableCoverVersion sets the "cover_version" field if the given value is not nil.
+func (_c *SeriesCreate) SetNillableCoverVersion(v *string) *SeriesCreate {
+	if v != nil {
+		_c.SetCoverVersion(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *SeriesCreate) SetCreatedAt(v time.Time) *SeriesCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -302,6 +316,10 @@ func (_c *SeriesCreate) defaults() {
 		v := series.DefaultCoverSourceURL
 		_c.mutation.SetCoverSourceURL(v)
 	}
+	if _, ok := _c.mutation.CoverVersion(); !ok {
+		v := series.DefaultCoverVersion
+		_c.mutation.SetCoverVersion(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := series.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -344,6 +362,9 @@ func (_c *SeriesCreate) check() error {
 	}
 	if _, ok := _c.mutation.CoverSourceURL(); !ok {
 		return &ValidationError{Name: "cover_source_url", err: errors.New(`ent: missing required field "Series.cover_source_url"`)}
+	}
+	if _, ok := _c.mutation.CoverVersion(); !ok {
+		return &ValidationError{Name: "cover_version", err: errors.New(`ent: missing required field "Series.cover_version"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "Series.created_at"`)}
@@ -425,6 +446,10 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CoverSourceURL(); ok {
 		_spec.SetField(series.FieldCoverSourceURL, field.TypeString, value)
 		_node.CoverSourceURL = value
+	}
+	if value, ok := _c.mutation.CoverVersion(); ok {
+		_spec.SetField(series.FieldCoverVersion, field.TypeString, value)
+		_node.CoverVersion = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(series.FieldCreatedAt, field.TypeTime, value)

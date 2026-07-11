@@ -820,23 +820,29 @@ func ProviderLabel(p *ent.SeriesProvider) string {
 // cover_url, else "" (the proxy endpoint would have nothing to serve).
 // Exported so the downloads domain reuses the identical name+cover resolution.
 //
-// The cover path carries a VERSION query param derived from the provider's
-// cover_url ("…/cover?v=1a2b…"): the image only ever changes when that URL
-// changes, so the URL now changes exactly when the bytes do. That is what lets
-// the endpoint answer `immutable` and the browser skip the request entirely on a
-// re-render — while a metadata-source switch still shows the new cover instantly,
-// because it is a different URL. The param is a pure cache buster; the handler
-// ignores it (a request without it serves the same image).
+// The cover path carries the CONTENT version of the cached image
+// ("…/cover?v=<cover_version>"): the version is a hash of the cover BYTES, so the
+// URL changes exactly when the image does. That is what lets the endpoint answer
+// `immutable` — the browser skips the request entirely on a re-render, and any
+// change to the cover (a metadata-source switch, a source republishing its art)
+// mints a NEW URL and shows instantly.
 //
-// Deriving it is FREE: cover_url is already in memory from the DB, so building a
-// DTO does zero disk I/O.
+// A series whose cover is not cached on disk has no version, and its URL is
+// emitted UNVERSIONED — the endpoint then serves a revalidatable no-cache
+// response, never immutable, so an uncached cover can never be pinned.
+//
+// Reading it is FREE: cover_version is a column already loaded with the row, so
+// building a DTO does zero disk I/O.
 func SeriesDisplay(row *ent.Series, metaProv *ent.SeriesProvider) (name, coverURL string) {
 	name = row.Title
 	if metaProv != nil && metaProv.Title != "" {
 		name = metaProv.Title
 	}
 	if metaProv != nil && metaProv.CoverURL != "" {
-		coverURL = "/api/series/" + row.ID.String() + "/cover?v=" + coverVersion(metaProv.CoverURL)
+		coverURL = "/api/series/" + row.ID.String() + "/cover"
+		if row.CoverVersion != "" {
+			coverURL += "?v=" + row.CoverVersion
+		}
 	}
 	return name, coverURL
 }

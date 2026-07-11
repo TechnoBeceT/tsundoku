@@ -111,6 +111,11 @@ func CoverSourceURL(v string) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCoverSourceURL, v))
 }
 
+// CoverVersion applies equality check predicate on the "cover_version" field. It's identical to CoverVersionEQ.
+func CoverVersion(v string) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCoverVersion, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCreatedAt, v))
@@ -674,6 +679,71 @@ func CoverSourceURLEqualFold(v string) predicate.Series {
 // CoverSourceURLContainsFold applies the ContainsFold predicate on the "cover_source_url" field.
 func CoverSourceURLContainsFold(v string) predicate.Series {
 	return predicate.Series(sql.FieldContainsFold(FieldCoverSourceURL, v))
+}
+
+// CoverVersionEQ applies the EQ predicate on the "cover_version" field.
+func CoverVersionEQ(v string) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldCoverVersion, v))
+}
+
+// CoverVersionNEQ applies the NEQ predicate on the "cover_version" field.
+func CoverVersionNEQ(v string) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldCoverVersion, v))
+}
+
+// CoverVersionIn applies the In predicate on the "cover_version" field.
+func CoverVersionIn(vs ...string) predicate.Series {
+	return predicate.Series(sql.FieldIn(FieldCoverVersion, vs...))
+}
+
+// CoverVersionNotIn applies the NotIn predicate on the "cover_version" field.
+func CoverVersionNotIn(vs ...string) predicate.Series {
+	return predicate.Series(sql.FieldNotIn(FieldCoverVersion, vs...))
+}
+
+// CoverVersionGT applies the GT predicate on the "cover_version" field.
+func CoverVersionGT(v string) predicate.Series {
+	return predicate.Series(sql.FieldGT(FieldCoverVersion, v))
+}
+
+// CoverVersionGTE applies the GTE predicate on the "cover_version" field.
+func CoverVersionGTE(v string) predicate.Series {
+	return predicate.Series(sql.FieldGTE(FieldCoverVersion, v))
+}
+
+// CoverVersionLT applies the LT predicate on the "cover_version" field.
+func CoverVersionLT(v string) predicate.Series {
+	return predicate.Series(sql.FieldLT(FieldCoverVersion, v))
+}
+
+// CoverVersionLTE applies the LTE predicate on the "cover_version" field.
+func CoverVersionLTE(v string) predicate.Series {
+	return predicate.Series(sql.FieldLTE(FieldCoverVersion, v))
+}
+
+// CoverVersionContains applies the Contains predicate on the "cover_version" field.
+func CoverVersionContains(v string) predicate.Series {
+	return predicate.Series(sql.FieldContains(FieldCoverVersion, v))
+}
+
+// CoverVersionHasPrefix applies the HasPrefix predicate on the "cover_version" field.
+func CoverVersionHasPrefix(v string) predicate.Series {
+	return predicate.Series(sql.FieldHasPrefix(FieldCoverVersion, v))
+}
+
+// CoverVersionHasSuffix applies the HasSuffix predicate on the "cover_version" field.
+func CoverVersionHasSuffix(v string) predicate.Series {
+	return predicate.Series(sql.FieldHasSuffix(FieldCoverVersion, v))
+}
+
+// CoverVersionEqualFold applies the EqualFold predicate on the "cover_version" field.
+func CoverVersionEqualFold(v string) predicate.Series {
+	return predicate.Series(sql.FieldEqualFold(FieldCoverVersion, v))
+}
+
+// CoverVersionContainsFold applies the ContainsFold predicate on the "cover_version" field.
+func CoverVersionContainsFold(v string) predicate.Series {
+	return predicate.Series(sql.FieldContainsFold(FieldCoverVersion, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

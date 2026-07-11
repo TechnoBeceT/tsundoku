@@ -198,6 +198,20 @@ func (_u *SeriesUpdate) SetNillableCoverSourceURL(v *string) *SeriesUpdate {
 	return _u
 }
 
+// SetCoverVersion sets the "cover_version" field.
+func (_u *SeriesUpdate) SetCoverVersion(v string) *SeriesUpdate {
+	_u.mutation.SetCoverVersion(v)
+	return _u
+}
+
+// SetNillableCoverVersion sets the "cover_version" field if the given value is not nil.
+func (_u *SeriesUpdate) SetNillableCoverVersion(v *string) *SeriesUpdate {
+	if v != nil {
+		_u.SetCoverVersion(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesUpdate) SetUpdatedAt(v time.Time) *SeriesUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -369,6 +383,9 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.CoverSourceURL(); ok {
 		_spec.SetField(series.FieldCoverSourceURL, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CoverVersion(); ok {
+		_spec.SetField(series.FieldCoverVersion, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)
@@ -678,6 +695,20 @@ func (_u *SeriesUpdateOne) SetNillableCoverSourceURL(v *string) *SeriesUpdateOne
 	return _u
 }
 
+// SetCoverVersion sets the "cover_version" field.
+func (_u *SeriesUpdateOne) SetCoverVersion(v string) *SeriesUpdateOne {
+	_u.mutation.SetCoverVersion(v)
+	return _u
+}
+
+// SetNillableCoverVersion sets the "cover_version" field if the given value is not nil.
+func (_u *SeriesUpdateOne) SetNillableCoverVersion(v *string) *SeriesUpdateOne {
+	if v != nil {
+		_u.SetCoverVersion(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SeriesUpdateOne) SetUpdatedAt(v time.Time) *SeriesUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -879,6 +910,9 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	}
 	if value, ok := _u.mutation.CoverSourceURL(); ok {
 		_spec.SetField(series.FieldCoverSourceURL, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CoverVersion(); ok {
+		_spec.SetField(series.FieldCoverVersion, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)
