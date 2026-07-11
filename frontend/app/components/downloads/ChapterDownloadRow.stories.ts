@@ -34,6 +34,16 @@ export const PlaceholderCover: Story = {
   args: { item: noCover },
 }
 
+/**
+ * An UPGRADING row: the meta line names both sides of the convergence —
+ * "MangaDex → Asura Scans" — so during an upgrade wave the owner sees where each
+ * chapter is HEADED, not the source being replaced. A row with no `upgradeTarget`
+ * (every other story) shows just its current source.
+ */
+export const UpgradeTarget: Story = {
+  args: { item: noCover }, // the Berserk fixture is upgrading → Asura Scans
+}
+
 /** With a `before-badge` slot — the Active tab's indeterminate progress bar. */
 export const WithProgressSlot: Story = {
   render: (args) => ({
