@@ -8,6 +8,7 @@ import {
   shouldPrepend,
   centeredPage,
   finishedChapterIds,
+  pruneSeenBelow,
   trimTrailingFailures,
   scrollAfterReflow,
   type PageRect,
@@ -227,6 +228,19 @@ const emittedFinished = new Set<string>()
 // e.g. one just prepended above the reader — stays permanently un-finishable
 // until the reader actually scrolls up into it first.
 let seenBelowDividers = new Set<string>()
+
+// A chapter that scrolls out of the mounted window (forward OR backward) leaves
+// a stale entry in `seenBelowDividers` behind it — unlike `emittedFinished`,
+// which a fresh `scrollRequest` token clears, nothing else touches this Set. If
+// that chapter is later PREPENDED back in (e.g. after a `jumpToChapter` collapses
+// the window elsewhere and the reader scrolls back up), the stale entry would
+// make `finishedChapterIds` see its divider as a below->above transition on the
+// very first observation and wrongly fire `chapter-finished` — see
+// `pruneSeenBelow`'s doc comment for the full scenario. Pruning on every window
+// change (not just on a token change) also covers the scroll-only unmount path.
+watch(() => props.mountedChapters, (chapters) => {
+  seenBelowDividers = pruneSeenBelow(seenBelowDividers, chapters.map((c) => c.id))
+})
 
 // ---- scroll-to-target: honour `scrollRequest` --------------------------------
 // Replaces the old one-shot `didInitialScroll` boolean fuse, which could only

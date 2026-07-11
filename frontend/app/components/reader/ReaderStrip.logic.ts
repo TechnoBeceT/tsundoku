@@ -148,6 +148,34 @@ export function finishedChapterIds(
 }
 
 /**
+ * pruneSeenBelow — drops observations for chapters that are no longer mounted.
+ * `seenBelow` (see `finishedChapterIds`) is an observation about the CURRENT
+ * mounted window: "this chapter's divider has been seen below the reader." Once
+ * a chapter is unmounted (the window slid forward or backward past it), that
+ * observation is stale — and dangerous if left in place: a chapter jump
+ * (`useReader.jumpToChapter`) collapses the window to a different chapter and
+ * mints a fresh `scrollRequest` token, which clears the strip's `emittedFinished`
+ * de-dupe set but NOT `seenBelow`. If the reader then scrolls up and the
+ * abandoned chapter is PREPENDED back into the window, its divider lands
+ * above `scrollTop` on this fresh mount — and a stale `seenBelow` entry would
+ * make `finishedChapterIds` read that as a below->above transition, firing
+ * `chapter-finished` for a chapter the reader never actually read this pass
+ * (the same class of bug `finishedChapterIds` itself was built to prevent for
+ * the plain-prepend case). Pruning by the mounted window on every window change
+ * closes this without touching the token-based `emittedFinished` clear — it
+ * also fixes the scroll-only path (unmount without any jump), where no token
+ * is ever minted.
+ */
+export function pruneSeenBelow(seenBelow: Set<string>, mountedIds: string[]): Set<string> {
+  const mounted = new Set(mountedIds)
+  const pruned = new Set<string>()
+  for (const id of seenBelow) {
+    if (mounted.has(id)) pruned.add(id)
+  }
+  return pruned
+}
+
+/**
  * trimTrailingFailures — the number of pages the strip should actually show for
  * a chapter, given its DECLARED `pageCount` and the set of page indices that
  * failed to load. A chapter's declared count (from ComicInfo / download) may

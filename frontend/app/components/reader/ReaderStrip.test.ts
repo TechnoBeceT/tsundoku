@@ -602,3 +602,57 @@ describe('ReaderStrip — CRITICAL: a head-prepend must not instantly mark the p
     expect(wrapper.emitted('chapter-finished')).toBeUndefined()
   })
 })
+
+describe('ReaderStrip — regression: a stale seenBelow observation must not survive a chapter jump + later re-prepend', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('does not emit chapter-finished for a chapter re-prepended after being unmounted by a chapter jump', async () => {
+    // Reproduces the reviewer's exact "resurrected" repro:
+    //  1. The reader reads ch-A, but its divider is still BELOW them -> seeds
+    //     `seenBelow` for ch-A (not finished yet).
+    //  2. The reader taps "next chapter" (`useReader.jumpToChapter`) -> the
+    //     window collapses to [ch-B] and a NEW scrollRequest token is minted.
+    //     ch-A unmounts. The token clears `emittedFinished` but — before this
+    //     fix — left the stale ch-A entry sitting in `seenBelow` untouched.
+    //  3. The reader scrolls back up -> ch-A is PREPENDED back into the window,
+    //     landing its divider above scrollTop on this fresh mount (the same
+    //     "first observation, at/above" shape the plain-prepend Fix 1 test
+    //     uses — see the CRITICAL describe block above).
+    //  4. Without the prune, the stale seenBelow entry reads this as a
+    //     below->above transition and wrongly fires chapter-finished for ch-A,
+    //     destroying its resume position before the reader ever read it this
+    //     pass. With the prune (this fix), ch-A has no seenBelow observation
+    //     from THIS mount, so it correctly stays un-finished.
+    const wrapper = mount(ReaderStrip, {
+      props: { ...base, chapters: [chA, chB, chC], mountedChapters: [chA, chB] },
+    })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+
+    // Step 1: seed seenBelow for ch-A — its divider is still below scrollTop.
+    stubRect(wrapper.find('[data-divider-id="ch-A"]').element, 3000)
+    container.scrollTop = 0
+    container.dispatchEvent(new Event('scroll')) // fresh instance -> runs immediately
+    expect(wrapper.emitted('chapter-finished')).toBeUndefined()
+
+    // Step 2: the reader jumps forward — window collapses to [ch-B], a NEW
+    // scrollRequest token arrives. ch-A unmounts.
+    await wrapper.setProps({ mountedChapters: [chB], scrollRequest: { chapterId: 'ch-B', page: 0, token: 2 } })
+    await flushPromises()
+    expect(wrapper.find('[data-chapter-id="ch-A"]').exists()).toBe(false)
+
+    // Step 3: the reader scrolls back up — ch-A is prepended back into the
+    // window. Its divider is above the current scrollTop on this fresh mount.
+    await wrapper.setProps({ mountedChapters: [chA, chB] })
+    await nextTick()
+    stubRect(wrapper.find('[data-divider-id="ch-A"]').element, -100)
+    container.scrollTop = 2000
+
+    container.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(200)
+
+    expect(wrapper.emitted('chapter-finished')).toBeUndefined()
+  })
+})

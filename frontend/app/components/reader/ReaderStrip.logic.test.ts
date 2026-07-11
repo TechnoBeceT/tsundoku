@@ -16,6 +16,7 @@ import {
   scrollAfterReflow,
   centeredPage,
   finishedChapterIds,
+  pruneSeenBelow,
   trimTrailingFailures,
   type PageRect,
 } from './ReaderStrip.logic'
@@ -154,6 +155,32 @@ describe('finishedChapterIds', () => {
     // through ch-prev (seenBelow first). Asserting `[]` here is exactly the
     // assertion that fails under the old rule above.
     expect(finishedChapterIds(prepended, scrollTop, new Set()).finished).toEqual([])
+  })
+})
+
+describe('pruneSeenBelow', () => {
+  it('drops ids that are no longer mounted', () => {
+    const seenBelow = new Set(['ch-a', 'ch-b', 'ch-c'])
+    expect(pruneSeenBelow(seenBelow, ['ch-b'])).toEqual(new Set(['ch-b']))
+  })
+
+  it('keeps ids that are still mounted, in any order', () => {
+    const seenBelow = new Set(['ch-a', 'ch-b'])
+    expect(pruneSeenBelow(seenBelow, ['ch-b', 'ch-a', 'ch-c'])).toEqual(new Set(['ch-a', 'ch-b']))
+  })
+
+  it('returns an empty set when nothing is mounted', () => {
+    expect(pruneSeenBelow(new Set(['ch-a']), [])).toEqual(new Set())
+  })
+
+  it('is a no-op on an already-empty seenBelow', () => {
+    expect(pruneSeenBelow(new Set(), ['ch-a', 'ch-b'])).toEqual(new Set())
+  })
+
+  it('does not mutate the input set', () => {
+    const seenBelow = new Set(['ch-a', 'ch-b'])
+    pruneSeenBelow(seenBelow, ['ch-a'])
+    expect(seenBelow).toEqual(new Set(['ch-a', 'ch-b']))
   })
 })
 
