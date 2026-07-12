@@ -22,7 +22,10 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  * `requestRemoveSource` (bubbled from the row's Remove action) opens the page's
  * `RemoveSourceDialog` — the confirm dialogs whose lifetime depends on a
  * mutation OUTCOME live on the page, which is the only layer that learns whether
- * the mutation succeeded (an emit is fire-and-forget).
+ * the mutation succeeded (an emit is fire-and-forget). `requestFractionalCleanup`
+ * (bubbled from the Sources panel's "Remove fractional files" button, which the
+ * panel renders only when `fractionalCleanupCount > 0`) opens the page's
+ * `FractionalCleanupDialog` for the same reason.
  *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
@@ -55,6 +58,8 @@ const props = withDefaults(defineProps<{
   dedupBusy?: boolean
   /** True while the dedupe-files request is in flight. */
   dedupeFilesBusy?: boolean
+  /** How many downloaded fractional chapters are removable; 0 hides the "Remove fractional files" button. */
+  fractionalCleanupCount?: number
   /** Transient dedup/dedupe-files result message. */
   dedupMessage?: string | null
   /** "Start"/"Continue" — renders the floating resume button; null/"" hides it (nothing downloaded). */
@@ -65,6 +70,7 @@ const props = withDefaults(defineProps<{
   error: null,
   dedupBusy: false,
   dedupeFilesBusy: false,
+  fractionalCleanupCount: 0,
   dedupMessage: null,
   resumeLabel: null,
 })
@@ -96,6 +102,8 @@ const emit = defineEmits<{
   dedupProviders: []
   /** "Remove duplicate files" pressed. */
   dedupeFiles: []
+  /** "Remove fractional files" pressed (→ the page opens its FractionalCleanupDialog). */
+  requestFractionalCleanup: []
   /** A chapter's "Read" was clicked — carries the chapter UUID (→ opens the reader). */
   read: [chapterId: string]
   /** The resume FAB was clicked (→ the page resolves the resume target and opens the reader). */
@@ -196,6 +204,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         :drifted-ids="driftedIds"
         :dedup-busy="dedupBusy"
         :dedupe-files-busy="dedupeFilesBusy"
+        :fractional-cleanup-count="fractionalCleanupCount"
         :dedup-message="dedupMessage"
         @move="onMove"
         @remove-source="emit('requestRemoveSource', $event)"
@@ -204,6 +213,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         @add-source="emit('addSource')"
         @dedup-providers="emit('dedupProviders')"
         @dedupe-files="emit('dedupeFiles')"
+        @remove-fractional="emit('requestFractionalCleanup')"
       />
     </div>
 

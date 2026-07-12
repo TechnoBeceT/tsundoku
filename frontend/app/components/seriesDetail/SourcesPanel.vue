@@ -29,6 +29,12 @@ import type { Provider } from '../screens/seriesDetail.types'
  * matching `ProviderRow`(s); `dedupMessage` shows the last action's transient
  * result. The panel itself never computes drift or calls the API — it only
  * re-emits `dedupProviders`/`dedupeFiles` for the screen to handle.
+ *
+ * "Remove fractional files" (→ `removeFractional`, opening the page's
+ * `FractionalCleanupDialog`) sits beside "Remove duplicate files" but is a
+ * DIFFERENT job: dedupe-files sweeps ORPHAN CBZs (files no chapter owns), while
+ * the fractional cleanup removes real downloaded chapter rows + their files. It
+ * renders only when `fractionalCleanupCount > 0`.
  */
 const props = withDefaults(defineProps<{
   /** The sources to list, importance-descending (preferred first). */
@@ -41,6 +47,12 @@ const props = withDefaults(defineProps<{
   dedupBusy?: boolean
   /** True while the dedupe-files request is in flight. */
   dedupeFilesBusy?: boolean
+  /**
+   * How many already-downloaded FRACTIONAL chapters are removable (the
+   * server-computed preview's size). 0 HIDES the "Remove fractional files"
+   * button entirely — nothing to clean must never present a dead control.
+   */
+  fractionalCleanupCount?: number
   /** Transient result message from the last dedup / dedupe-files action (null when none). */
   dedupMessage?: string | null
 }>(), {
@@ -48,6 +60,7 @@ const props = withDefaults(defineProps<{
   driftedIds: () => [],
   dedupBusy: false,
   dedupeFilesBusy: false,
+  fractionalCleanupCount: 0,
   dedupMessage: null,
 })
 
@@ -66,6 +79,8 @@ const emit = defineEmits<{
   dedupProviders: []
   /** "Remove duplicate files" was pressed. */
   dedupeFiles: []
+  /** "Remove fractional files" was pressed (→ opens the page's cleanup dialog). */
+  removeFractional: []
 }>()
 
 const driftedSet = computed(() => new Set(props.driftedIds))
@@ -79,6 +94,15 @@ const driftedSet = computed(() => new Set(props.driftedIds))
     <template #actions>
       <AppButton variant="mini" size="sm" :disabled="dedupeFilesBusy" @click="emit('dedupeFiles')">
         {{ dedupeFilesBusy ? 'Removing…' : 'Remove duplicate files' }}
+      </AppButton>
+      <!-- Absent when nothing is removable — no dead control (see the prop doc). -->
+      <AppButton
+        v-if="fractionalCleanupCount > 0"
+        variant="mini"
+        size="sm"
+        @click="emit('removeFractional')"
+      >
+        Remove fractional files
       </AppButton>
       <AppButton variant="mini" size="sm" @click="emit('addSource')">
         <template #icon>
