@@ -30,9 +30,11 @@ import type ReaderStripComponent from '~/components/reader/ReaderStrip.vue'
  *     CSS custom properties on `.reader` (readerStyleVars) — padding / fit / gaps.
  *   - The chrome's page slider (`@seek`) scrolls WITHIN the current chapter via
  *     the strip's exposed `seekToPage`; its prev/next buttons navigate chapters
- *     via `jumpToChapter` — `@next` marks the chapter read FIRST (deliberately
- *     leaving a chapter forward always means "done with it"), `@prev` marks
- *     nothing (going back is a correction, not a completion).
+ *     via `goToChapter` (wraps `jumpToChapter` + a `router.replace` so the URL
+ *     tracks the flipped-to chapter without growing history — see its own doc
+ *     comment) — `@next` marks the chapter read FIRST (deliberately leaving a
+ *     chapter forward always means "done with it"), `@prev` marks nothing
+ *     (going back is a correction, not a completion).
  *
  * §16: the initial load shows a visible loading state, a hard failure shows the
  * ErrorBanner, and an empty (no downloaded chapters) series shows an EmptyState —
@@ -42,6 +44,7 @@ import type ReaderStripComponent from '~/components/reader/ReaderStrip.vue'
 definePageMeta({ layout: 'bare' })
 
 const route = useRoute()
+const router = useRouter()
 const id = route.params.id as string
 const chapterId = route.params.chapterId as string
 
@@ -175,10 +178,25 @@ function onVisiblePages(payload: { chapterId: string, count: number }): void {
   visiblePagesByChapter.value[payload.chapterId] = payload.count
 }
 
-/** Mark a chapter read once its end-divider scrolls past — at its last page. */
+/** The best available page count to mark a chapter read at: its measured/
+ *  trimmed count (`visiblePagesByChapter`) if the strip has actually scrolled
+ *  through it this session, else its declared `pageCount` (0 if unknown). A
+ *  Kaizoku import can DECLARE more pages than the CBZ really has, so the
+ *  measured count — when we have it — is always the more accurate resume
+ *  anchor; the declared count is only a fallback for a chapter that finished
+ *  without ever emitting `visible-pages` (e.g. it fit on-screen with no
+ *  scroll). Shared by `onChapterFinished` and `onSliderNext` so both mark-read
+ *  paths apply the exact same rule (§2 DRY — they used to disagree). */
+function measuredOrDeclaredPageCount(chapterId: string): number {
+  const measured = visiblePagesByChapter.value[chapterId]
+  if (measured != null) return measured
+  return chapters.value.find((c) => c.id === chapterId)?.pageCount ?? 0
+}
+
+/** Mark a chapter read once its end-divider scrolls past — at its last
+ *  measured (or, if unmeasured, declared) page. */
 function onChapterFinished(finishedId: string): void {
-  const chapter = chapters.value.find((c) => c.id === finishedId)
-  markRead(finishedId, chapter?.pageCount ?? 0)
+  markRead(finishedId, measuredOrDeclaredPageCount(finishedId))
 }
 
 /** The chrome's page slider was clicked/dragged to a new page — scroll to it
@@ -189,30 +207,42 @@ function onSeek(page: number): void {
   stripRef.value?.seekToPage(page)
 }
 
+/**
+ * goToChapter — prev/next chapter navigation: reseeds the reader window
+ * (`jumpToChapter`) AND syncs the URL via `router.replace` (never `push` — a
+ * chapter flip must not grow browser history, so the back button exits the
+ * reader instead of walking back through every chapter flipped past).
+ * `replace` on a param-only change of the SAME matched route record updates
+ * `route.params` in place without remounting this component or re-running
+ * this script — `chapterId`/`id` above are captured once as plain consts, and
+ * nothing here watches `route.params`, so it cannot re-fire the resume/scroll
+ * watch (already spent via `resumedOnce`) or re-construct `useReader`/
+ * `useReadingProgress`.
+ */
+function goToChapter(targetId: string): void {
+  jumpToChapter(targetId)
+  void router.replace(`/series/${id}/read/${targetId}`)
+}
+
 /** The slider's prev-chapter button — going back is a correction, marks nothing. */
 function onSliderPrev(): void {
   if (!prevChapter.value) return
-  jumpToChapter(prevChapter.value.id)
+  goToChapter(prevChapter.value.id)
 }
 
 /** The slider's next-chapter button — deliberately leaving a chapter forward
  *  always means "finished with it", so mark it read BEFORE navigating away
  *  (never leave it dangling "unread" just because the owner tapped next).
- *  Marks with the LEAVING chapter's own measured count — resolved fresh at
- *  the moment of the tap, never a value that could belong to another
+ *  Marks with the LEAVING chapter's own measured-or-declared count — resolved
+ *  fresh at the moment of the tap, never a value that could belong to another
  *  chapter (a jump followed by an immediate second tap, before the new
  *  chapter has scrolled/measured, must never mark it with the count left
- *  behind by the chapter just departed). If the leaving chapter was never
- *  measured (e.g. it fit on-screen with no scroll), fall back to its
- *  declared `pageCount` — the best available estimate, same fallback
- *  `onChapterFinished` already uses. */
+ *  behind by the chapter just departed). */
 function onSliderNext(): void {
   if (!nextChapter.value || !currentChapterId.value) return
   const leavingId = currentChapterId.value
-  const leaving = chapters.value.find((c) => c.id === leavingId)
-  const measured = visiblePagesByChapter.value[leavingId]
-  markRead(leavingId, measured ?? leaving?.pageCount ?? 0)
-  jumpToChapter(nextChapter.value.id)
+  markRead(leavingId, measuredOrDeclaredPageCount(leavingId))
+  goToChapter(nextChapter.value.id)
 }
 
 function backToSeries(): void {

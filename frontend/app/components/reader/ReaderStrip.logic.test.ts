@@ -8,9 +8,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  MAX_MOUNTED,
   shouldAppend,
-  chaptersToUnmount,
   chaptersToUnmountDirectional,
   shouldPrepend,
   scrollAfterReflow,
@@ -26,18 +24,6 @@ describe('shouldAppend', () => {
     expect(shouldAppend(true, true)).toBe(true)
     expect(shouldAppend(true, false)).toBe(false)
     expect(shouldAppend(false, true)).toBe(false)
-  })
-})
-
-describe('chaptersToUnmount', () => {
-  it('returns nothing while within the window cap', () => {
-    expect(chaptersToUnmount([0], MAX_MOUNTED)).toEqual([])
-    expect(chaptersToUnmount([0, 1, 2], MAX_MOUNTED)).toEqual([])
-  })
-
-  it('drops the far-above indices from the top when over the cap', () => {
-    expect(chaptersToUnmount([0, 1, 2, 3], 3)).toEqual([0])
-    expect(chaptersToUnmount([2, 3, 4, 5, 6], 3)).toEqual([2, 3])
   })
 })
 

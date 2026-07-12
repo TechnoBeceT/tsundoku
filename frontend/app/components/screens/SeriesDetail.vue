@@ -229,7 +229,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 .detail {
   padding: 24px 30px 70px;
   background: var(--bg);
-  height: calc(100vh - 64px);
+  height: calc(100dvh - 64px);
   display: flex;
   flex-direction: column;
   overflow: hidden;

@@ -16,7 +16,7 @@
  *
  * The two composables are mocked to spies; useRoute is mocked for the params.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { ref } from 'vue'
 import { mountSuspended, mockNuxtImport } from '@nuxt/test-utils/runtime'
 import ReaderStrip from '~/components/reader/ReaderStrip.vue'
@@ -107,6 +107,22 @@ async function mountReader() {
   return mountSuspended(ReadPage, { global: { stubs: { Icon: true } } })
 }
 
+/**
+ * spyOnRouterReplace — installs a resolved no-op spy on the REAL router's
+ * `replace` method (reachable off any mounted component's `$router` global
+ * property, the same singleton `useRouter()` returns inside the page). FIX 5
+ * (goToChapter's `router.replace`) needs a router instance to call, but
+ * mocking `useRouter()` wholesale breaks Nuxt's OWN internal plugins (they
+ * also call `useRouter()` for their navigation hooks) — spying on just this
+ * one method, on the real instance, keeps everything else working and stops
+ * the spied call from performing a real navigation (which would re-run route
+ * middleware and hit the network in this test environment).
+ */
+function spyOnRouterReplace(wrapper: Awaited<ReturnType<typeof mountReader>>): MockInstance<(path: string) => Promise<unknown>> {
+  const router = (wrapper.vm as unknown as { $router: { replace: (path: string) => Promise<unknown> } }).$router
+  return vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+}
+
 describe('reader route wiring', () => {
   it('publishes the computed resume target as the strip scrollRequest', async () => {
     const wrapper = await mountReader()
@@ -126,10 +142,23 @@ describe('reader route wiring', () => {
     expect(setCurrentChapter).toHaveBeenCalledWith('ch-a')
   })
 
-  it('marks a chapter read with its pageCount when the strip emits chapter-finished', async () => {
+  it('marks a chapter read with its DECLARED pageCount when unmeasured (no visible-pages emitted for it)', async () => {
     const wrapper = await mountReader()
     wrapper.findComponent(ReaderStrip).vm.$emit('chapter-finished', 'ch-a')
     expect(markRead).toHaveBeenCalledWith('ch-a', 12)
+  })
+
+  // FIX 3: a Kaizoku import can DECLARE more pages than the CBZ really has, so
+  // once the strip has actually measured/trimmed a chapter's real page count,
+  // chapter-finished must use THAT — not the (possibly inflated) declared
+  // pageCount — matching the rule onSliderNext already used.
+  it('marks a chapter read with its MEASURED/trimmed count when it has been scrolled through', async () => {
+    const wrapper = await mountReader()
+    const strip = wrapper.findComponent(ReaderStrip)
+    strip.vm.$emit('visible-pages', { chapterId: 'ch-a', count: 9 }) // ch-a declares 12
+    await wrapper.vm.$nextTick()
+    strip.vm.$emit('chapter-finished', 'ch-a')
+    expect(markRead).toHaveBeenCalledWith('ch-a', 9)
   })
 
   it('flushes the pending write when the route unmounts', async () => {
@@ -195,6 +224,7 @@ describe('slider prev/next chapter navigation', () => {
     const wrapper = await mountReader()
     const chrome = wrapper.findComponent(ReaderChrome)
     const strip = wrapper.findComponent(ReaderStrip)
+    const routerReplace = spyOnRouterReplace(wrapper)
 
     currentChapterId.value = 'ch-a'
     nextChapter.value = chapters.value[1]!
@@ -206,11 +236,15 @@ describe('slider prev/next chapter navigation', () => {
     expect(markRead).toHaveBeenCalledWith('ch-a', 9)
     expect(jumpToChapter).toHaveBeenCalledWith('ch-b')
     expect(markRead.mock.invocationCallOrder[0]!).toBeLessThan(jumpToChapter.mock.invocationCallOrder[0]!)
+    // FIX 5: the URL is synced via router.REPLACE (never push — a chapter flip
+    // must not grow browser history).
+    expect(routerReplace).toHaveBeenCalledWith('/series/series-1/read/ch-b')
   })
 
   it('does nothing when there is no next chapter', async () => {
     const wrapper = await mountReader()
     const chrome = wrapper.findComponent(ReaderChrome)
+    const routerReplace = spyOnRouterReplace(wrapper)
     currentChapterId.value = 'ch-b'
     nextChapter.value = null
     await wrapper.vm.$nextTick()
@@ -219,11 +253,18 @@ describe('slider prev/next chapter navigation', () => {
 
     expect(markRead).not.toHaveBeenCalled()
     expect(jumpToChapter).not.toHaveBeenCalled()
+    // Scoped to a chapter-navigation replace specifically: this Nuxt test
+    // harness's own auth middleware independently fires an UNRELATED
+    // `router.replace('/')` during app init (a pre-existing test-environment
+    // quirk — checkSession's fetch always fails under happy-dom), which a
+    // bare `not.toHaveBeenCalled()` would false-positive on.
+    expect(routerReplace).not.toHaveBeenCalledWith(expect.stringContaining('/read/'))
   })
 
-  it('prev marks nothing — going back is a correction, not a completion', async () => {
+  it('prev marks nothing — going back is a correction, not a completion — and still syncs the URL', async () => {
     const wrapper = await mountReader()
     const chrome = wrapper.findComponent(ReaderChrome)
+    const routerReplace = spyOnRouterReplace(wrapper)
     prevChapter.value = chapters.value[0]!
     await wrapper.vm.$nextTick()
 
@@ -231,6 +272,7 @@ describe('slider prev/next chapter navigation', () => {
 
     expect(markRead).not.toHaveBeenCalled()
     expect(jumpToChapter).toHaveBeenCalledWith('ch-a')
+    expect(routerReplace).toHaveBeenCalledWith('/series/series-1/read/ch-a')
   })
 
   // Regression: `visiblePages` used to be a single route-level ref updated by

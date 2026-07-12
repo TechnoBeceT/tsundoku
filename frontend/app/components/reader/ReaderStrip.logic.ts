@@ -7,9 +7,10 @@
  * this file touches the DOM or Vue reactivity — inputs and outputs are plain
  * values.
  *
- * Shared with `useReader` (§2 DRY): `chaptersToUnmount` is the single window-
- * bounding rule used both by the strip's append handler and by the composable's
- * `onNearTail`, so "how big is the mounted window" is defined in exactly one place.
+ * Shared with `useReader` (§2 DRY): `chaptersToUnmountDirectional` is the single
+ * window-bounding rule used both by the strip's append/prepend handlers and by
+ * the composable's `onNearTail`/`onNearHead`, so "how big is the mounted window"
+ * is defined in exactly one place.
  */
 
 /** The number of chapters kept mounted at once — the current chapter plus a
@@ -24,18 +25,6 @@ export const MAX_MOUNTED = 3
  */
 export function shouldAppend(sentinelVisible: boolean, hasNextChapter: boolean): boolean {
   return sentinelVisible && hasNextChapter
-}
-
-/**
- * chaptersToUnmount — given the currently mounted chapter indices (ascending)
- * and the window cap, returns the far-ABOVE indices that must be unmounted to
- * keep the window at most `maxMounted` chapters. Always drops from the TOP of
- * the list (the chapters furthest above the reader's position), never the tail
- * the reader is actively approaching. Returns `[]` when already within bounds.
- */
-export function chaptersToUnmount(mounted: number[], maxMounted: number): number[] {
-  if (mounted.length <= maxMounted) return []
-  return mounted.slice(0, mounted.length - maxMounted)
 }
 
 /**
