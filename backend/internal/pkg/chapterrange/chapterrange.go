@@ -99,3 +99,10 @@ func formatNum(n float64) string {
 	}
 	return strconv.FormatFloat(n, 'f', 1, 64)
 }
+
+// IsFractional reports whether a chapter number carries a non-zero fractional
+// part (5.1, 5.5, 100.3 — as opposed to a whole 5). It is the ONE definition of
+// "fractional" in the codebase: the supersede engine, the per-provider fractional
+// visibility, the ingest gate and the candidacy gate all ask this question, and a
+// second copy of the rule is how they would silently drift apart.
+func IsFractional(n float64) bool { return n != math.Trunc(n) }

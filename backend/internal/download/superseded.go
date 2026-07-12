@@ -13,6 +13,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
 
 // DetectSupersededParts implements fractional-part suppression: when a whole
@@ -118,9 +119,6 @@ func (d *Dispatcher) seriesWithFractionalChapters(ctx context.Context) ([]uuid.U
 	return ids, nil
 }
 
-// isWholeNumber reports whether n has no fractional part (n == trunc(n)).
-func isWholeNumber(n float64) bool { return n == math.Trunc(n) }
-
 // wholeOf returns the integer "whole" a fractional part number belongs under.
 func wholeOf(n float64) float64 { return math.Trunc(n) }
 
@@ -136,7 +134,7 @@ func (d *Dispatcher) supersedeSeriesGroup(ctx context.Context, group []*ent.Chap
 			continue
 		}
 		n := *ch.Number
-		if isWholeNumber(n) {
+		if !chapterrange.IsFractional(n) {
 			if ch.State == entchapter.StateDownloaded {
 				downloadedWholes[n] = true
 			}
