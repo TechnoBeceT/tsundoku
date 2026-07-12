@@ -105,3 +105,25 @@ func TestChapterRanges(t *testing.T) {
 		}
 	})
 }
+
+// TestIsFractional covers the ONE definition of "fractional" shared by the supersede
+// engine, the per-provider fractional visibility, and the ingest/candidacy gates.
+func TestIsFractional(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		n    float64
+		want bool
+	}{
+		{5, false},
+		{0, false},
+		{-3, false},
+		{5.1, true},
+		{5.5, true}, // the classic omake suffix — 825 of these in prod
+		{100.3, true},
+	}
+	for _, c := range cases {
+		if got := chapterrange.IsFractional(c.n); got != c.want {
+			t.Errorf("IsFractional(%v) = %v, want %v", c.n, got, c.want)
+		}
+	}
+}
