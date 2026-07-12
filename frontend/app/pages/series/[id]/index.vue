@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ProviderRef } from '~/composables/useSourceConfigure'
+import type { ReaderChapter } from '~/composables/useReader'
 
 /**
  * Series detail page — route /series/:id.
@@ -35,6 +36,8 @@ import type { ProviderRef } from '~/composables/useSourceConfigure'
  *   :dedup-busy        — true while a dedup-providers request is in flight
  *   :dedupe-files-busy — true while a dedupe-files request is in flight
  *   :dedup-message     — transient dedup/dedupe-files result message
+ *   :resume-label      — "Start"/"Continue" for the floating resume button, or
+ *                         null to hide it (no downloaded chapters to resume)
  *
  * Emit wiring (every emit the screen declares, per the SFC defineEmits contract):
  *   @change-category        → setCategory(name)
@@ -49,6 +52,9 @@ import type { ProviderRef } from '~/composables/useSourceConfigure'
  *   @dismiss-error          → dismissError()
  *   @dedup-providers        → dedupProviders()   (merges drifted disk/live twins)
  *   @dedupe-files           → dedupeFiles()      (sweeps orphan/duplicate CBZs)
+ *   @resume                 → onResume() (resolves the resume target via
+ *                             useReadingProgress.resumeTarget and navigates to
+ *                             the reader — see the "Resume FAB" section below)
  *
  * Add-source wiring (Slice P): MatchSourceDialog's `search`/`loadBreakdowns`/
  * `confirm` emits drive useMatchSource's `search`/`loadBreakdowns`/
@@ -197,6 +203,53 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
 function openReader(chapterId: string): void {
   void navigateTo(`/series/${id}/read/${chapterId}`)
 }
+
+// ---- Resume FAB (Komikku-style "continue reading" button) -----------------
+// Reuses useReadingProgress.resumeTarget — the SAME resume-point logic the
+// reader route itself runs on open — instead of reimplementing it. This page
+// has no "explicitly opened" chapter, so startChapterId is '' (never matches
+// a real chapter id), which makes resumeTarget always fall past its "started"
+// branch to: the FIRST not-read chapter (number-ascending) at its saved
+// lastReadPage, or — once every chapter is read — the LAST chapter at page 0
+// (start over; see resumeTarget's own doc comment) — exactly what a resume
+// button needs. The chapters ref it closes over is unused by resumeTarget
+// itself (only record/markRead read it), so an empty ref is fine.
+const { resumeTarget } = useReadingProgress(ref<ReaderChapter[]>([]), '')
+
+// Downloaded chapters only, ascending by number (mirrors the reader's own
+// ordering) — the FAB's candidate list. Chapter.pageCount is nullable on the
+// screen type; ReaderChapter wants a real number, so an unset count reads 0
+// (matches useReader's own mapReaderChapter fallback).
+const downloadedChapters = computed<ReaderChapter[]>(() =>
+  (series.value?.chapters ?? [])
+    .filter((c) => c.state === 'downloaded')
+    .map((c) => ({ id: c.id, number: c.number, name: c.name, pageCount: c.pageCount ?? 0, read: c.read, lastReadPage: c.lastReadPage }))
+    .sort((a, b) => (a.number ?? Number.POSITIVE_INFINITY) - (b.number ?? Number.POSITIVE_INFINITY)),
+)
+
+// Nothing downloaded → no FAB (nothing to resume). Otherwise "Continue" once
+// any downloaded chapter shows progress, else "Start" (never opened).
+const resumeLabel = computed<string | null>(() => {
+  if (downloadedChapters.value.length === 0) return null
+  const hasProgress = downloadedChapters.value.some((c) => c.read || c.lastReadPage > 0)
+  return hasProgress ? 'Continue' : 'Start'
+})
+
+/** The FAB was clicked — resolve the resume target and open the reader
+ *  there, carrying the DECIDED page via `?page=`. The chapter id alone is
+ *  NOT enough: the reader route re-resolves via `resumeTarget` too, but
+ *  matches `startChapterId` against the loaded list first — its "started"
+ *  branch — which always wins over the "all chapters read" fallback this
+ *  function's own `target.page` may have come from. When every chapter is
+ *  read, `resumeTarget` deliberately opens the LAST chapter at page 0 (start
+ *  it over, don't reopen something finished); re-deriving via the "started"
+ *  branch instead lands on that chapter's saved `lastReadPage`, its FINAL
+ *  page — so the page must be carried explicitly, not recomputed. */
+function onResume(): void {
+  const target = resumeTarget(downloadedChapters.value)
+  if (!target.chapterId) return
+  void navigateTo(`/series/${id}/read/${target.chapterId}?page=${target.page}`)
+}
 </script>
 
 <template>
@@ -215,6 +268,7 @@ function openReader(chapterId: string): void {
       :dedup-busy="dedupBusy"
       :dedupe-files-busy="dedupeFilesBusy"
       :dedup-message="dedupMessage"
+      :resume-label="resumeLabel"
       @change-category="setCategory"
       @toggle-monitored="setMonitored"
       @toggle-completed="setCompleted"
@@ -228,6 +282,7 @@ function openReader(chapterId: string): void {
       @dedup-providers="dedupProviders"
       @dedupe-files="dedupeFiles"
       @read="openReader"
+      @resume="onResume"
     />
 
     <RemoveSourceDialog

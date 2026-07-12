@@ -97,6 +97,7 @@ components:
         - downloaded
         - wanted
         - failed
+        - unread
       properties:
         total:
           type: integer
@@ -110,6 +111,11 @@ components:
         failed:
           type: integer
           description: Chapters currently in the failed state.
+        unread:
+          type: integer
+          description: >-
+            Downloaded chapters the owner has not read yet — what can be read right now,
+            deliberately not every chapter a source knows about.
 
     SeriesSummary:
       type: object
@@ -172,6 +178,7 @@ components:
         - pageCount
         - read
         - lastReadPage
+        - readAt
       properties:
         id:
           type: string
@@ -201,6 +208,10 @@ components:
         lastReadPage:
           type: integer
           description: In-app reader progress — 0-based index of the last page the owner viewed.
+        readAt:
+          type: [string, "null"]
+          format: date-time
+          description: When the chapter was marked read; null until then (cleared when read flips back to false).
 
     ChapterProgress:
       type: object

@@ -17,8 +17,10 @@ const meta = {
   args: {
     title: 'Solo Leveling',
     chapterLabel: 'Chapter 12 · The Real Hunt Begins',
-    pageLabel: '8 / 34',
-    percent: 42,
+    page: 7,
+    visiblePages: 34,
+    hasPrev: true,
+    hasNext: true,
   },
 } satisfies Meta<typeof ReaderChrome>
 
@@ -31,9 +33,9 @@ export const Visible: Story = { args: { visible: true } }
 /** Hidden: the bars have slid off-screen (a centre tap brings them back). */
 export const Hidden: Story = { args: { visible: false } }
 
-/** Start of a series — near-zero progress, first chapter. */
+/** Start of a series — first chapter, first page (prev-chapter disabled). */
 export const StartOfSeries: Story = {
-  args: { visible: true, chapterLabel: 'Chapter 1 · Prologue', pageLabel: '1 / 20', percent: 1 },
+  args: { visible: true, chapterLabel: 'Chapter 1 · Prologue', page: 0, visiblePages: 20, hasPrev: false },
 }
 
 /** Fullscreen supported: the bottom bar shows the enter-fullscreen toggle. */

@@ -16,6 +16,8 @@
  *   coverUrl      ← dto.coverUrl           (already the proxy path; pass-through)
  *   metadataProviderId ← providers.find(isMetadataSource)?.id ?? null
  *   Chapter.state is typed as string in the DTO → cast to ChapterState
+ *   Chapter.read / .lastReadPage / .readAt ← passed straight through (the
+ *     in-app reader's persisted progress; Task 7 surfaces them on the row)
  *   Provider.newestChapterAt / lastSyncedAt are optional in DTO → ?? null
  *   Provider.feedCount / feedRanges ← the source's STORED ProviderChapter feed
  *     (what it offers) — distinct from chapterCount (what it currently supplies).
@@ -59,6 +61,9 @@ function mapChapter(dto: ChapterDTO): Chapter {
     state: dto.state as ChapterState,
     filename: dto.filename,
     pageCount: dto.pageCount,
+    read: dto.read,
+    lastReadPage: dto.lastReadPage,
+    readAt: dto.readAt,
   }
 }
 
@@ -98,6 +103,7 @@ function mapDetail(dto: SeriesDetailDTO): SeriesDetail {
       downloaded: dto.chapterCounts.downloaded,
       wanted: dto.chapterCounts.wanted,
       failed: dto.chapterCounts.failed,
+      unread: dto.chapterCounts.unread,
     },
     chapters: dto.chapters.map(mapChapter),
     providers: dto.providers.map(mapProvider),

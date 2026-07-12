@@ -19,6 +19,9 @@ export interface ChapterCounts {
   wanted: number
   /** Chapters that failed (or permanently failed) to download. */
   failed: number
+  /** Downloaded chapters the owner has not read yet — what can be read right
+   * now, deliberately not every chapter a source knows about. */
+  unread: number
 }
 
 /**

@@ -40,3 +40,25 @@ export const PermanentlyFailed: Story = {
 export const UnknownNumber: Story = {
   args: { chapter: richSeries.chapters[8]! },
 }
+
+/** Unread: never opened — full-strength row + the unread dot. */
+export const Unread: Story = {
+  args: { chapter: richSeries.chapters[0]! },
+}
+
+/** Partially read: shows the "Page N / M" resume line (1-based display of the 0-based `lastReadPage`). */
+export const PartiallyRead: Story = {
+  args: { chapter: richSeries.chapters[1]! },
+}
+
+/** Read: the row dims and the unread dot disappears. */
+export const Read: Story = {
+  args: {
+    chapter: {
+      ...richSeries.chapters[0]!,
+      read: true,
+      lastReadPage: (richSeries.chapters[0]!.pageCount ?? 1) - 1,
+      readAt: new Date().toISOString(),
+    },
+  },
+}

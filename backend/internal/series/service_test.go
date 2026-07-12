@@ -156,14 +156,15 @@ func TestListSeriesReturnsAllWithRollup(t *testing.T) {
 	if alpha.Slug != "alpha-saga" || alpha.CoverURL != "" || alpha.DisplayName != "Alpha Saga" {
 		t.Fatalf("ListSeries: alpha summary mismatch: %+v", alpha)
 	}
-	// Non-vacuous rollup: 1 downloaded + 1 wanted = total 2.
-	wantAlpha := series.ChapterCounts{Total: 2, Downloaded: 1, Wanted: 1, Failed: 0}
+	// Non-vacuous rollup: 1 downloaded + 1 wanted = total 2. The downloaded
+	// chapter defaults to unread (fixtures never set Read), so Unread == Downloaded.
+	wantAlpha := series.ChapterCounts{Total: 2, Downloaded: 1, Wanted: 1, Failed: 0, Unread: 1}
 	if alpha.ChapterCounts != wantAlpha {
 		t.Fatalf("ListSeries: alpha counts: want %+v, got %+v", wantAlpha, alpha.ChapterCounts)
 	}
 
 	beta := got[1]
-	wantBeta := series.ChapterCounts{Total: 3, Downloaded: 1, Wanted: 1, Failed: 1}
+	wantBeta := series.ChapterCounts{Total: 3, Downloaded: 1, Wanted: 1, Failed: 1, Unread: 1}
 	if beta.ChapterCounts != wantBeta {
 		t.Fatalf("ListSeries: beta counts: want %+v, got %+v", wantBeta, beta.ChapterCounts)
 	}
@@ -249,7 +250,7 @@ func TestGetSeriesReturnsDetail(t *testing.T) {
 	if got.Title != "Beta Quest" || got.Category != "Manhwa" {
 		t.Fatalf("GetSeries: summary mismatch: %+v", got)
 	}
-	if got.ChapterCounts != (series.ChapterCounts{Total: 3, Downloaded: 1, Wanted: 1, Failed: 1}) {
+	if got.ChapterCounts != (series.ChapterCounts{Total: 3, Downloaded: 1, Wanted: 1, Failed: 1, Unread: 1}) {
 		t.Fatalf("GetSeries: counts: %+v", got.ChapterCounts)
 	}
 
@@ -332,7 +333,7 @@ func TestChapterCountsExcludeSuperseded(t *testing.T) {
 	if !found {
 		t.Fatalf("ListSeries: Gamma Split not found in %+v", list)
 	}
-	wantCounts := series.ChapterCounts{Total: 2, Downloaded: 1, Wanted: 1, Failed: 0}
+	wantCounts := series.ChapterCounts{Total: 2, Downloaded: 1, Wanted: 1, Failed: 0, Unread: 1}
 	if summary.ChapterCounts != wantCounts {
 		t.Fatalf("ListSeries: Gamma Split counts: want %+v, got %+v (superseded parts must not inflate Total)", wantCounts, summary.ChapterCounts)
 	}
@@ -1137,5 +1138,56 @@ func TestSetCompleted(t *testing.T) {
 
 	if err := svc.SetCompleted(ctx, uuid.New(), true); !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("SetCompleted(unknown id) err = %v, want ErrSeriesNotFound", err)
+	}
+}
+
+// newTestSeries creates a minimal series fixture (no category, no cover) for
+// tests that only care about chapter-state/read rollups.
+func newTestSeries(t *testing.T, ctx context.Context, client *ent.Client, title string) *ent.Series {
+	t.Helper()
+	return client.Series.Create().
+		SetTitle(title).
+		SetSlug(disk.Slugify(title)).
+		SaveX(ctx)
+}
+
+// mkChapter creates a chapter fixture with the given key, state, and read flag —
+// the minimal shape the unread-count rollup tests need.
+func mkChapter(t *testing.T, ctx context.Context, client *ent.Client, s *ent.Series, key string, state entchapter.State, read bool) *ent.Chapter {
+	t.Helper()
+	return client.Chapter.Create().
+		SetSeriesID(s.ID).
+		SetChapterKey(key).
+		SetState(state).
+		SetRead(read).
+		SaveX(ctx)
+}
+
+// TestListSeries_UnreadCount proves ChapterCounts.Unread counts exactly the
+// chapters that are downloaded AND unread — not every chapter a source knows
+// about (a wanted chapter is not readable yet, so it must not count).
+func TestListSeries_UnreadCount(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	s := newTestSeries(t, ctx, client, "Unread Fixture")
+
+	// 2 downloaded+unread, 1 downloaded+read, 1 wanted (not downloadable ⇒ not unread).
+	mkChapter(t, ctx, client, s, "1", entchapter.StateDownloaded, false)
+	mkChapter(t, ctx, client, s, "2", entchapter.StateDownloaded, false)
+	mkChapter(t, ctx, client, s, "3", entchapter.StateDownloaded, true)
+	mkChapter(t, ctx, client, s, "4", entchapter.StateWanted, false)
+
+	page, err := series.NewService(client, t.TempDir(), 14).ListSeries(ctx, series.ListFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("ListSeries: want 1 series, got %d", len(page))
+	}
+	if page[0].ChapterCounts.Unread != 2 {
+		t.Fatalf("ListSeries: Unread = %d, want 2", page[0].ChapterCounts.Unread)
+	}
+	if page[0].ChapterCounts.Total != 4 {
+		t.Fatalf("ListSeries: Total = %d, want 4", page[0].ChapterCounts.Total)
 	}
 }

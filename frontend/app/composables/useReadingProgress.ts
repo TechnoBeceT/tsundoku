@@ -6,13 +6,24 @@
  * composable turns those into progress writes against
  * `PATCH /api/chapters/{id}/progress`:
  *   - `record(chapterId, page)` — a DEBOUNCED (~1s trailing) position write
- *     ({ lastReadPage, read:false }). It DEDUPES identical positions (the
- *     `centered` event re-emits the same payload every throttle tick) and CLAMPS
- *     the page to `[0, pageCount-1]` so a declared-but-missing trailing page can
- *     never be persisted as the last-read page.
+ *     ({ lastReadPage, read }). It DEDUPES identical positions (the `centered`
+ *     event re-emits the same payload every throttle tick) and CLAMPS the page
+ *     to `[0, pageCount-1]` so a declared-but-missing trailing page can never be
+ *     persisted as the last-read page. **`read` is NEVER hardcoded `false`** —
+ *     it reflects whatever this chapter's CURRENT known read state is (see
+ *     `isRead` below). The bidirectional strip (this branch) lets the reader
+ *     scroll BACKWARD into an already-finished chapter to re-read a panel; a
+ *     `centered` position write fired while dwelling there must not silently
+ *     un-read the chapter it just finished — that was the CRITICAL bug this
+ *     guards (before bidirectional scrolling, `record` could only ever touch
+ *     the chapter being actively read, so a bare `false` was harmless; it no
+ *     longer is).
  *   - `markRead(chapterId, pageCount)` — an IMMEDIATE write ({ read:true,
  *     lastReadPage: pageCount-1 }) that also cancels any pending `record` for
- *     that chapter, so a trailing position write can't un-set `read`.
+ *     that chapter, so a trailing position write can't un-set `read`. Also
+ *     records the chapter in the local `readThisSession` set so any LATER
+ *     `record` on it (from re-entering it while scrolling elsewhere) keeps
+ *     sending `read:true`.
  *   - `resumeTarget(chapters)` — the (chapterId, page) the reader should open at.
  *   - `flush()` — sends any pending debounced write immediately (the route calls
  *     it on leave so the last position is never lost).
@@ -60,6 +71,13 @@ export function useReadingProgress(chapters: Ref<ReaderChapter[]>, startChapterI
   // the dedupe key so the re-emitted `centered` payloads don't spam writes.
   const lastRecorded = new Map<string, number>()
 
+  // Chapter ids marked read THIS SESSION via `markRead`. `chapters.value` is a
+  // point-in-time snapshot loaded once by `useReader` — it is never mutated
+  // locally when `markRead` fires, so a chapter finished during this visit
+  // would otherwise look unread to `isRead` until the next full reload. This
+  // set is the local source of truth for "read" on top of that snapshot.
+  const readThisSession = new Set<string>()
+
   // The single in-flight trailing debounce. The reader only scrolls one position
   // at a time, so one pending write across all chapters is sufficient.
   let pendingTimer: ReturnType<typeof setTimeout> | null = null
@@ -69,6 +87,18 @@ export function useReadingProgress(chapters: Ref<ReaderChapter[]>, startChapterI
   /** Looks up a chapter's declared pageCount (0 when unknown/absent). */
   function pageCountOf(chapterId: string): number {
     return chapters.value.find((c) => c.id === chapterId)?.pageCount ?? 0
+  }
+
+  /**
+   * isRead — whether a chapter is currently known to be read: either already
+   * `read:true` in the loaded chapter snapshot, or marked read this session via
+   * `markRead`. `record()` uses this to fill the PATCH's `read` field so a
+   * scroll-driven position write can never downgrade a finished chapter back to
+   * unread (FIX 1 — see the file header).
+   */
+  function isRead(chapterId: string): boolean {
+    if (readThisSession.has(chapterId)) return true
+    return chapters.value.find((c) => c.id === chapterId)?.read === true
   }
 
   /** Clears the pending debounce timer + target (no write). */
@@ -105,7 +135,7 @@ export function useReadingProgress(chapters: Ref<ReaderChapter[]>, startChapterI
     const chapterId = pendingChapterId
     const page = pendingPage
     pendingChapterId = null
-    if (chapterId) void sendProgress(chapterId, page, false)
+    if (chapterId) void sendProgress(chapterId, page, isRead(chapterId))
   }
 
   /**
@@ -126,12 +156,15 @@ export function useReadingProgress(chapters: Ref<ReaderChapter[]>, startChapterI
 
   /**
    * markRead — immediately marks a chapter fully read at its last page. Cancels
-   * any pending debounced `record` for the SAME chapter first, and optimistically
-   * seeds `lastRecorded` so a follow-up identical-position `record` can't fire a
-   * `read:false` write that would un-set it.
+   * any pending debounced `record` for the SAME chapter first, adds the chapter
+   * to `readThisSession` (so a LATER `record` on it — e.g. re-entering it by
+   * scrolling backward — keeps sending `read:true`, not a bare `false`), and
+   * optimistically seeds `lastRecorded` so a follow-up identical-position
+   * `record` doesn't re-send a redundant write.
    */
   function markRead(chapterId: string, pageCount: number): void {
     if (pendingChapterId === chapterId) clearPending()
+    readThisSession.add(chapterId)
     const lastPage = Math.max(0, pageCount - 1)
     lastRecorded.set(chapterId, lastPage)
     void sendProgress(chapterId, lastPage, true)
@@ -140,21 +173,23 @@ export function useReadingProgress(chapters: Ref<ReaderChapter[]>, startChapterI
   /**
    * resumeTarget — the (chapterId, page) the reader should open at. Prefers the
    * explicitly-opened `startChapterId` when it's in the list (resume mid-chapter
-   * at its lastReadPage); otherwise the furthest-along chapter showing any
-   * progress; otherwise the first chapter at page 0. The page is clamped to the
-   * chosen chapter's real length.
+   * at its lastReadPage — a direct chapter-click must always open THAT chapter).
+   * Otherwise: the FIRST chapter (number-ascending, as `list` is always ordered)
+   * that is NOT read, at its saved `lastReadPage` (0 if never opened) — a
+   * partially-read chapter is not read, so it's correctly picked at its saved
+   * page. If EVERY chapter is read, falls back to the LAST chapter at page 0
+   * (nothing left to continue — land at the most recent chapter's start rather
+   * than reopening something already finished). The page is always clamped to
+   * the chosen chapter's real length.
    */
   function resumeTarget(list: ReaderChapter[]): ResumeTarget {
     if (list.length === 0) return { chapterId: '', page: 0 }
     const started = list.find((c) => c.id === startChapterId)
     if (started) return { chapterId: started.id, page: clampPage(started.pageCount, started.lastReadPage) }
-    // No explicit start in the list — the last chapter with any recorded progress.
-    let progressed: ReaderChapter | null = null
-    for (const c of list) {
-      if (c.read || c.lastReadPage > 0) progressed = c
-    }
-    const pick = progressed ?? list[0]!
-    return { chapterId: pick.id, page: clampPage(pick.pageCount, pick.lastReadPage) }
+    const unread = list.find((c) => !c.read)
+    if (unread) return { chapterId: unread.id, page: clampPage(unread.pageCount, unread.lastReadPage) }
+    const last = list[list.length - 1]!
+    return { chapterId: last.id, page: 0 }
   }
 
   /**
@@ -168,7 +203,7 @@ export function useReadingProgress(chapters: Ref<ReaderChapter[]>, startChapterI
     const chapterId = pendingChapterId
     const page = pendingPage
     clearPending()
-    void sendProgress(chapterId, page, false)
+    void sendProgress(chapterId, page, isRead(chapterId))
   }
 
   return { record, markRead, resumeTarget, flush }

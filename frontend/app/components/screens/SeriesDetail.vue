@@ -5,6 +5,7 @@ import type { MoveDirection } from '../ui/controls.types'
 import ChaptersPanel from '../seriesDetail/ChaptersPanel.vue'
 import DeleteSeriesDialog from '../seriesDetail/DeleteSeriesDialog.vue'
 import MetadataSourcePicker from '../seriesDetail/MetadataSourcePicker.vue'
+import ResumeFab from '../seriesDetail/ResumeFab.vue'
 import SeriesHeader from '../seriesDetail/SeriesHeader.vue'
 import SourcesPanel from '../seriesDetail/SourcesPanel.vue'
 import type { Chapter, Provider, SeriesDetail } from './seriesDetail.types'
@@ -31,6 +32,13 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  *
  * Each source's chapter coverage rides the `series` prop itself
  * (`Provider.feedCount` / `feedRanges`) — no coverage fetch, no source call.
+ *
+ * The floating `ResumeFab` ("Start"/"Continue" reading) is driven entirely by
+ * `resumeLabel`: null/"" hides it (nothing downloaded to resume), any other
+ * string renders it with that label. The screen does not compute the resume
+ * target or navigate — it just emits `resume` and lets the page (which already
+ * owns the resume-target math via `useReadingProgress.resumeTarget`) route to
+ * the reader.
  */
 const props = withDefaults(defineProps<{
   /** The series to render (summary fields + chapters + providers). */
@@ -49,6 +57,8 @@ const props = withDefaults(defineProps<{
   dedupeFilesBusy?: boolean
   /** Transient dedup/dedupe-files result message. */
   dedupMessage?: string | null
+  /** "Start"/"Continue" — renders the floating resume button; null/"" hides it (nothing downloaded). */
+  resumeLabel?: string | null
 }>(), {
   saving: false,
   deleteBusy: false,
@@ -56,6 +66,7 @@ const props = withDefaults(defineProps<{
   dedupBusy: false,
   dedupeFilesBusy: false,
   dedupMessage: null,
+  resumeLabel: null,
 })
 
 const emit = defineEmits<{
@@ -85,6 +96,8 @@ const emit = defineEmits<{
   dedupeFiles: []
   /** A chapter's "Read" was clicked — carries the chapter UUID (→ opens the reader). */
   read: [chapterId: string]
+  /** The resume FAB was clicked (→ the page resolves the resume target and opens the reader). */
+  resume: []
 }>()
 
 // ---- Derived data ----------------------------------------------------------
@@ -144,29 +157,34 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 
 <template>
   <div class="detail">
-    <!-- §16 error banner: a failed mutation surfaces here, dismissible -->
-    <div v-if="error" class="detail__error">
-      <ErrorBanner :message="error" @dismiss="emit('dismissError')" />
+    <!-- Everything above the two-panel region keeps its natural height (see
+         .detail__top below) — only .columns is allowed to shrink to fit the
+         viewport. -->
+    <div class="detail__top">
+      <!-- §16 error banner: a failed mutation surfaces here, dismissible -->
+      <div v-if="error" class="detail__error">
+        <ErrorBanner :message="error" @dismiss="emit('dismissError')" />
+      </div>
+
+      <SeriesHeader
+        :series="series"
+        :category-options="categoryOptions"
+        :saving="saving"
+        @change-category="emit('changeCategory', $event)"
+        @toggle-monitored="emit('toggleMonitored', $event)"
+        @toggle-completed="emit('toggleCompleted', $event)"
+        @request-delete="deleteOpen = true"
+      />
+
+      <MetadataSourcePicker
+        :providers="sortedProviders"
+        :title="series.title"
+        :active-id="metaActiveId"
+        :preferred-id="preferredId"
+        :saving="saving"
+        @pick="onPickMeta"
+      />
     </div>
-
-    <SeriesHeader
-      :series="series"
-      :category-options="categoryOptions"
-      :saving="saving"
-      @change-category="emit('changeCategory', $event)"
-      @toggle-monitored="emit('toggleMonitored', $event)"
-      @toggle-completed="emit('toggleCompleted', $event)"
-      @request-delete="deleteOpen = true"
-    />
-
-    <MetadataSourcePicker
-      :providers="sortedProviders"
-      :title="series.title"
-      :active-id="metaActiveId"
-      :preferred-id="preferredId"
-      :saving="saving"
-      @pick="onPickMeta"
-    />
 
     <div class="columns">
       <ChaptersPanel :chapters="sortedChapters" :total="series.chapterCounts.total" @read="emit('read', $event)" />
@@ -193,14 +211,32 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
       :error="error"
       @confirm="onConfirmDelete"
     />
+
+    <ResumeFab v-if="resumeLabel" :label="resumeLabel" @click="emit('resume')" />
   </div>
 </template>
 
 <style scoped>
+/* The screen is bounded to the viewport BELOW the AppShell header (shell/
+ * AppShell.vue's `.head` is a fixed 64px) so the two-panel region never grows
+ * a page-level scrollbar: it scrolls internally instead (each panel owns its
+ * own scroll body — see .columns / PanelCard). `.detail__top` (header +
+ * metadata picker + error banner) keeps its natural height; only `.columns`
+ * is allowed to shrink to whatever is left. AppShell itself is out of scope
+ * for this fix (pure layout, this screen only), hence the coupled magic
+ * number instead of a shared CSS var — if AppShell's header height ever
+ * changes, update it here too. */
 .detail {
   padding: 24px 30px 70px;
   background: var(--bg);
-  min-height: 100%;
+  height: calc(100dvh - 64px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detail__top {
+  flex: none;
 }
 
 /* §16 error banner spacing (the banner chrome itself lives in the ErrorBanner atom). */
@@ -209,16 +245,32 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 }
 
 /* ---- Two-column layout ---------------------------------------------------- */
+/* Chapters gets the WIDER column — it's the panel actually scanned. Sources
+ * is a bounded list (4-7 cards) and gets the narrower one. */
 .columns {
   display: grid;
-  grid-template-columns: 1.55fr 1fr;
+  grid-template-columns: 1.7fr 1fr;
   gap: 18px;
-  align-items: start;
+  flex: 1;
+  /* 🔴 THE OVERFLOW TRAP: a flex/grid child's automatic minimum size is its
+   * CONTENT size, not 0. Without this, `.columns` refuses to shrink below the
+   * combined natural height of both panels (easily 1000px+ with 7 sources),
+   * so the panels' own internal `overflow-y: auto` never engages and the
+   * WHOLE PAGE grows an unbounded scrollbar instead — every other rule here
+   * looks correct while this one is silently defeated. Do not remove this to
+   * "clean up" the CSS; see PanelCard.vue for the matching min-height:0 one
+   * level down (the grid items themselves), and one level down again inside
+   * PanelCard for the scrolling body — the trap applies at every nesting level. */
+  min-height: 0;
 }
 
 @media (max-width: 900px) {
   .columns {
     grid-template-columns: 1fr;
+    /* Narrow layout: stop fighting for two independent internal scrollers —
+     * stack the panels and let this region be the one scroll area instead
+     * (still bounded by .detail's overflow:hidden, so still no page scroll). */
+    overflow-y: auto;
   }
 }
 </style>

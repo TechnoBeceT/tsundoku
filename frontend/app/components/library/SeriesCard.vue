@@ -52,10 +52,18 @@ const progressPct = computed(() => {
     <!-- Scrim keeps overlaid text legible over any cover -->
     <div class="card__scrim" />
 
-    <!-- Top row: category badge + status flags -->
+    <!-- Top row: category badge (left) + unread count / status flags (right corner) -->
     <div class="card__top">
       <Chip variant="frost">{{ series.category }}</Chip>
       <div class="card__flags">
+        <!-- Unread badge: downloaded-but-unread chapters — what can be read
+             RIGHT NOW, deliberately not the source's full known-chapter count.
+             Hidden at zero: the badge's presence IS the signal, a wall of 0s
+             is worse than no badge. Additive to (not a replacement for) the
+             download-progress bar in the card body below. -->
+        <div v-if="series.chapterCounts.unread > 0" class="card__unread">
+          {{ series.chapterCounts.unread }}
+        </div>
         <Tag v-if="!series.monitored" tone="frost">
           <template #icon>
             <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -156,6 +164,21 @@ const progressPct = computed(() => {
   flex-direction: column;
   gap: 5px;
   align-items: flex-end;
+}
+
+.card__unread {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accentBright);
+  color: var(--cover-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  line-height: 1;
 }
 
 .card__body {
