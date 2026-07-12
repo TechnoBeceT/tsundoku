@@ -35,13 +35,13 @@ const emptyDetail = {
 const detail = {
   id: 'series-1',
   chapters: [
-    { id: 'ch-c', chapterKey: 'k3', number: 3, name: 'Three', state: 'downloaded', filename: 'c.cbz', pageCount: 20, read: false, lastReadPage: 0 },
-    { id: 'ch-a', chapterKey: 'k1', number: 1, name: 'One', state: 'downloaded', filename: 'a.cbz', pageCount: 10, read: true, lastReadPage: 9 },
-    { id: 'ch-wanted', chapterKey: 'k5', number: 5, name: 'Five', state: 'wanted', filename: '', pageCount: null, read: false, lastReadPage: 0 },
-    { id: 'ch-b', chapterKey: 'k2', number: 2, name: 'Two', state: 'downloaded', filename: 'b.cbz', pageCount: 15, read: false, lastReadPage: 3 },
-    { id: 'ch-null', chapterKey: 'kx', number: null, name: 'Extra', state: 'downloaded', filename: 'x.cbz', pageCount: 8, read: false, lastReadPage: 0 },
-    { id: 'ch-failed', chapterKey: 'k6', number: 6, name: 'Six', state: 'failed', filename: '', pageCount: null, read: false, lastReadPage: 0 },
-    { id: 'ch-d', chapterKey: 'k4', number: 4, name: 'Four', state: 'downloaded', filename: 'd.cbz', pageCount: 30, read: false, lastReadPage: 0 },
+    { id: 'ch-c', chapterKey: 'k3', number: 3, name: 'Three', state: 'downloaded', filename: 'c.cbz', pageCount: 20, read: false, lastReadPage: 0, pageVersion: 'v3' },
+    { id: 'ch-a', chapterKey: 'k1', number: 1, name: 'One', state: 'downloaded', filename: 'a.cbz', pageCount: 10, read: true, lastReadPage: 9, pageVersion: 'v1' },
+    { id: 'ch-wanted', chapterKey: 'k5', number: 5, name: 'Five', state: 'wanted', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-b', chapterKey: 'k2', number: 2, name: 'Two', state: 'downloaded', filename: 'b.cbz', pageCount: 15, read: false, lastReadPage: 3, pageVersion: '' },
+    { id: 'ch-null', chapterKey: 'kx', number: null, name: 'Extra', state: 'downloaded', filename: 'x.cbz', pageCount: 8, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-failed', chapterKey: 'k6', number: 6, name: 'Six', state: 'failed', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-d', chapterKey: 'k4', number: 4, name: 'Four', state: 'downloaded', filename: 'd.cbz', pageCount: 30, read: false, lastReadPage: 0, pageVersion: '' },
   ],
 }
 
@@ -124,10 +124,12 @@ describe('useReader — mounted window', () => {
 describe('useReader — pageUrl + states', () => {
   beforeEach(() => { nextOk = true; nextEmpty = false })
 
-  it('builds the same-origin page-bytes URL', async () => {
+  it('builds the same-origin page-bytes URL, appending ?v=<pageVersion> when the chapter has one', async () => {
     const { pageUrl, refresh } = useReader('series-1', 'ch-a')
     await refresh()
-    expect(pageUrl('ch-a', 0)).toBe('/api/series/series-1/chapters/ch-a/pages/0')
+    // ch-a carries pageVersion 'v1' in the fixture.
+    expect(pageUrl('ch-a', 0)).toBe('/api/series/series-1/chapters/ch-a/pages/0?v=v1')
+    // ch-b's fixture pageVersion is '' — no cache buster, bare URL.
     expect(pageUrl('ch-b', 7)).toBe('/api/series/series-1/chapters/ch-b/pages/7')
   })
 

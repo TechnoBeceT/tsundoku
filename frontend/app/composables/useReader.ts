@@ -24,7 +24,12 @@
  * The reader addresses pages by the Chapter UUID (`pageUrl`), which the backend's
  * page-bytes and progress endpoints key on — cookie auth rides a plain `<img src>`
  * same-origin (QCAT-020), so no fetch/objectURL machinery is needed; the browser
- * lazy-loads and evicts page images natively.
+ * lazy-loads and evicts page images natively. `pageUrl` appends `?v=<pageVersion>`
+ * (the chapter's content-version cache buster — see `ChapterDTO.pageVersion`)
+ * whenever the target chapter has one, so both the rendered `<img>` AND
+ * `useChapterPrefetch`'s background warming hit the SAME cache entry and earn
+ * the page endpoint's day-long cache instead of `no-cache` (see
+ * `handler/series/reader.go`'s `pageCacheable`/`pageRevalidate`).
  */
 import { ref, computed } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -54,6 +59,13 @@ export interface ReaderChapter {
   read: boolean
   /** Persisted 0-based last-viewed page (Slice 3 resume anchor). */
   lastReadPage: number
+  /** Reader page-bytes cache buster (`ChapterDTO.pageVersion`); "" or absent
+   *  for a chapter with no rendered CBZ. `pageUrl` appends it as `?v=` when
+   *  present. Optional so the many existing test fixtures that predate the
+   *  cache-buster (ReaderStrip/useReadingProgress/etc. — they don't exercise
+   *  `pageUrl`) don't all need updating; `mapReaderChapter` always sets it on
+   *  a real load. */
+  pageVersion?: string
 }
 
 /** Maps a downloaded ChapterDTO to the reader's slimmer ReaderChapter. */
@@ -65,6 +77,7 @@ function mapReaderChapter(dto: ChapterDTO): ReaderChapter {
     pageCount: dto.pageCount ?? 0,
     read: dto.read,
     lastReadPage: dto.lastReadPage,
+    pageVersion: dto.pageVersion ?? '',
   }
 }
 
@@ -123,10 +136,18 @@ export function useReader(seriesId: string, startChapterId: string) {
   /**
    * pageUrl — the same-origin page-bytes URL for one page of a chapter. A plain
    * string an `<img src>` loads directly (cookie auth, no fetch/objectURL). `n`
-   * is the 0-based page index.
+   * is the 0-based page index. Appends `?v=<pageVersion>` when the chapter's
+   * version is known (looked up from the loaded `chapters` list) — this is
+   * what earns the page endpoint's day-long cache (see the file header); an
+   * unknown chapter id (shouldn't happen — callers only ever pass loaded
+   * chapter ids) or a not-yet-versioned chapter falls back to the bare URL,
+   * which the backend answers `no-cache`, never wrong bytes.
    */
-  const pageUrl = (chapterId: string, n: number): string =>
-    `/api/series/${seriesId}/chapters/${chapterId}/pages/${n}`
+  const pageUrl = (chapterId: string, n: number): string => {
+    const base = `/api/series/${seriesId}/chapters/${chapterId}/pages/${n}`
+    const version = chapters.value.find((ch) => ch.id === chapterId)?.pageVersion
+    return version ? `${base}?v=${encodeURIComponent(version)}` : base
+  }
 
   /**
    * onNearTail — the strip calls this as the tail sentinel appears: append the

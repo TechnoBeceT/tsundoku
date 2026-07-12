@@ -2,6 +2,8 @@ package series
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +16,54 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 )
+
+// pageVersionLen mirrors coverVersionLen (cover.go) — 12 hex chars (48 bits) is
+// far beyond any collision risk across a personal library.
+const pageVersionLen = 12
+
+// PageVersion is the reader page-bytes endpoint's cache-buster: a short hash of
+// a chapter's CBZ IDENTITY, derived from fields ALREADY on the Chapter row
+// (filename + download_date) — no new schema column, no disk I/O. Both fields
+// change whenever the CBZ is (re)written: a fresh download sets both
+// (download/dispatcher.go finishDownload), and so does a Library-Convergence
+// upgrade that re-renders the chapter from a better source
+// (download/upgrade.go). So a replaced CBZ always earns a new version, and a
+// page URL built from a superseded version can never be mistaken for current.
+//
+// 🔴 downloadDate == nil does NOT mean "no version" — versioning off filename
+// ALONE when the date is unknown is deliberate, not a shortcut. `disk.Reconcile`
+// (`adoptChapter`/`updateChapter`) — the path EVERY disk-imported / Kaizoku-
+// migrated chapter comes through — sets `filename` but never `download_date`.
+// Returning "" for that (the original, REGRESSED behaviour) meant most of the
+// owner's ~1000-series imported library never earned a version at all: the
+// handler took the `version == ""` branch (no ETag, no 304, unconditional
+// `no-cache`) — strictly worse than the flat `max-age=300` this feature
+// replaced, and the whole-chapter prefetcher warmed nothing durable. Hashing
+// just the filename is SAFE here: every real re-render (download/dispatcher.go
+// finishDownload + download/upgrade.go, the only two `disk.RenderChapter`
+// call sites) sets BOTH filename and download_date together, so a real content
+// change always bumps the version through the filename component regardless of
+// whether a date was ever recorded. Only a genuinely empty filename (no CBZ,
+// nothing to page through) has no version.
+//
+// GOTCHA — unlike series.coverVersion (which hashes the actual cover BYTES),
+// this is a PROXY for the bytes, not a hash of them: it can drift if the owner
+// replaces a CBZ file out of band without going through download/upgrade (or
+// reconcile, which never touches the bytes it adopts). That gap is exactly why
+// the page endpoint must never answer `immutable` off this version — see
+// handler/series/reader.go's Cache-Control doc comment. A bounded max-age
+// self-heals a drifted version; `immutable` would not.
+func PageVersion(filename string, downloadDate *time.Time) string {
+	if filename == "" {
+		return ""
+	}
+	dateComponent := "no-date"
+	if downloadDate != nil {
+		dateComponent = downloadDate.UTC().Format(time.RFC3339Nano)
+	}
+	sum := sha256.Sum256([]byte(filename + "|" + dateComponent))
+	return hex.EncodeToString(sum[:])[:pageVersionLen]
+}
 
 // ErrChapterNotFound is returned by the reader methods when no chapter matches
 // the requested id (or, for ChapterPage, does not belong to the given series).
@@ -32,6 +82,27 @@ var ErrChapterFileMissing = errors.New("chapter file missing")
 // a genuine failure to serve data that should be there, so the HTTP handler maps
 // it to a 502.
 var ErrPageRead = errors.New("chapter page read failed")
+
+// ChapterPageVersion returns the reader page-bytes endpoint's cache-buster for
+// a chapter's CURRENT CBZ (see PageVersion) — a single narrow column read,
+// mirroring series.CoverVersion. It is the CHEAP half of the page-bytes
+// endpoint: a conditional request (If-None-Match) is answered from this alone,
+// so a 304 NEVER opens the archive. The chapter must belong to seriesID (a
+// mismatch is ErrChapterNotFound, matching ChapterPage). Returns "" for a
+// chapter with no rendered CBZ yet (nothing to version).
+func (s *Service) ChapterPageVersion(ctx context.Context, seriesID, chapterID uuid.UUID) (string, error) {
+	ch, err := s.client.Chapter.Query().
+		Where(entchapter.IDEQ(chapterID), entchapter.SeriesID(seriesID)).
+		Select(entchapter.FieldFilename, entchapter.FieldDownloadDate).
+		Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return "", ErrChapterNotFound
+		}
+		return "", fmt.Errorf("series.ChapterPageVersion: load chapter %s: %w", chapterID, err)
+	}
+	return PageVersion(ch.Filename, ch.DownloadDate), nil
+}
 
 // ChapterPage returns the raw bytes and content type of the n-th page (0-based)
 // of a chapter's rendered CBZ. The chapter must belong to seriesID (a mismatch
