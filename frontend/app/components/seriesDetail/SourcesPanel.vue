@@ -15,6 +15,9 @@ import type { Provider } from '../screens/seriesDetail.types'
  * `addSource`. Wraps the shared PanelCard shell: the count pill rides the
  * header-left `lead` slot (grouped with the title), the Add button the
  * header-right `actions` slot, and the provider list the full-bleed body.
+ * PanelCard itself owns the scroll (`.panel__content`) — with 4-7 source
+ * cards this panel used to grow unbounded and drag the whole page down with
+ * it; it now scrolls internally exactly like ChaptersPanel does.
  *
  * Each row's chapter coverage comes from the provider itself (`feedCount` /
  * `feedRanges` on the series-detail response) — this panel fetches nothing and

@@ -9,7 +9,8 @@ import type { Chapter } from '../screens/seriesDetail.types'
  * chapter list and the total arrive via props; the panel forwards each row's
  * `read` (open in the reader) up to the screen. Wraps the shared PanelCard shell
  * (divided header + full-bleed body); the count pill rides the header-right
- * `actions` slot and the scroll list is the full-bleed body.
+ * `actions` slot. PanelCard itself owns the scroll (`.panel__content`) — this
+ * panel does not set its own overflow/max-height.
  */
 defineProps<{
   /** The chapters to list, in the order they should appear (sorted upstream). */
@@ -29,9 +30,7 @@ const emit = defineEmits<{
     <template #actions>
       <span class="count-pill">{{ total }}</span>
     </template>
-    <div class="panel__scroll">
-      <ChapterRow v-for="ch in chapters" :key="ch.chapterKey" :chapter="ch" @read="emit('read', $event)" />
-    </div>
+    <ChapterRow v-for="ch in chapters" :key="ch.chapterKey" :chapter="ch" @read="emit('read', $event)" />
   </PanelCard>
 </template>
 
@@ -43,10 +42,5 @@ const emit = defineEmits<{
   color: var(--muted);
   font-size: var(--text-xs);
   font-weight: var(--weight-extrabold);
-}
-
-.panel__scroll {
-  max-height: 580px;
-  overflow: auto;
 }
 </style>

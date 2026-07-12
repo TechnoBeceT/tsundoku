@@ -17,6 +17,16 @@
  *     it (e.g. a count pill that belongs beside the heading — the Sources card).
  *   - `actions`: header-right content laid out across from the title (a count
  *     pill on its own — the Chapters card — or an add button — the Sources card).
+ *
+ * SCROLL SHAPE (Series-Detail viewport-bounded panels): this shell is a fixed
+ * header over an internally-scrolling body. `.panel` fills whatever height its
+ * parent grid cell allots it and is itself a flex column; `.panel__head` stays
+ * fixed size, and `.panel__content` (wrapping the default slot) takes the rest
+ * of the height and scrolls on its own — the ONE scroll container both
+ * ChaptersPanel and SourcesPanel get "for free" (neither sets its own
+ * overflow/max-height any more). See the min-height:0 comments below — this
+ * is the same flex/grid overflow trap as the Series-Detail `.columns` grid,
+ * one level deeper.
  */
 defineProps<{
   /** Panel heading shown in the divided header (omit for a header-less panel). */
@@ -37,7 +47,9 @@ defineProps<{
         <slot name="actions" />
       </div>
     </div>
-    <slot />
+    <div class="panel__content">
+      <slot />
+    </div>
   </section>
 </template>
 
@@ -48,6 +60,19 @@ defineProps<{
   background: var(--surface);
   overflow: hidden;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* Fills the height the parent grid cell stretches this item to (see
+   * SeriesDetail's `.columns`). 🔴 min-height: 0 is the SAME overflow trap
+   * as `.columns` itself, one level down: a grid ITEM's automatic minimum
+   * height is its content size, so without this override `.panel` (and the
+   * grid row with it) would refuse to shrink below its content — the same
+   * unbounded-scrollbar failure, just at the panel level instead of the page
+   * level. Outside the bounded Series-Detail grid (e.g. a Storybook frame
+   * with no fixed-height ancestor) height:100% simply resolves to auto, so
+   * this never breaks an unbounded story. */
+  height: 100%;
+  min-height: 0;
 }
 
 .panel__head {
@@ -78,5 +103,20 @@ defineProps<{
   align-items: center;
   gap: 9px;
   flex: none;
+}
+
+/* The scrolling body — the same shape the Chapters card already had, now
+ * shared by both panels. flex: 1 takes whatever height `.panel` has left
+ * after the fixed-size header above. 🔴 min-height: 0 here is the SAME
+ * overflow trap yet another level down (a flex ITEM's automatic minimum
+ * height is its content size) — without it this body would grow to fit
+ * every row instead of scrolling, and the page-level scrollbar comes back.
+ * Three nested applications of the identical rule (.columns → .panel →
+ * .panel__content) is not redundancy; each is a distinct flex/grid
+ * container/item pair and each one independently re-triggers the trap. */
+.panel__content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 </style>
