@@ -42,6 +42,7 @@ function mapSeriesItem(dto: SeriesSummaryDTO): SeriesSummary {
       downloaded: dto.chapterCounts.downloaded,
       wanted: dto.chapterCounts.wanted,
       failed: dto.chapterCounts.failed,
+      unread: dto.chapterCounts.unread,
     },
   }
 }

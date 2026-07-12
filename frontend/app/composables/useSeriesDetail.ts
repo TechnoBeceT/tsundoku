@@ -103,6 +103,7 @@ function mapDetail(dto: SeriesDetailDTO): SeriesDetail {
       downloaded: dto.chapterCounts.downloaded,
       wanted: dto.chapterCounts.wanted,
       failed: dto.chapterCounts.failed,
+      unread: dto.chapterCounts.unread,
     },
     chapters: dto.chapters.map(mapChapter),
     providers: dto.providers.map(mapProvider),

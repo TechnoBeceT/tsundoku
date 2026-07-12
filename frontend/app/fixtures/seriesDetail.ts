@@ -224,7 +224,7 @@ export const richSeries: SeriesDetail = {
   coverUrl: 'https://picsum.photos/seed/solo-leveling/300/420',
   monitored: true,
   completed: false,
-  chapterCounts: { total: 9, downloaded: 2, wanted: 2, failed: 2 },
+  chapterCounts: { total: 9, downloaded: 2, wanted: 2, failed: 2, unread: 1 },
   chapters,
   providers,
   metadataProviderId: null,

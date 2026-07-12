@@ -22,7 +22,7 @@ export const seriesPage: SeriesSummary[] = [
     coverUrl: cover('solo-leveling'),
     monitored: true,
     completed: false,
-    chapterCounts: { total: 200, downloaded: 120, wanted: 80, failed: 0 },
+    chapterCounts: { total: 200, downloaded: 120, wanted: 80, failed: 0, unread: 12 },
   },
   {
     id: '0a4d1c8e-2222-4a00-9000-000000000002',
@@ -32,7 +32,7 @@ export const seriesPage: SeriesSummary[] = [
     coverUrl: cover('berserk'),
     monitored: true,
     completed: false,
-    chapterCounts: { total: 376, downloaded: 364, wanted: 10, failed: 2 },
+    chapterCounts: { total: 376, downloaded: 364, wanted: 10, failed: 2, unread: 3 },
   },
   {
     id: '0a4d1c8e-3333-4a00-9000-000000000003',
@@ -42,7 +42,7 @@ export const seriesPage: SeriesSummary[] = [
     coverUrl: cover('one-piece'),
     monitored: true,
     completed: false,
-    chapterCounts: { total: 1120, downloaded: 1100, wanted: 18, failed: 2 },
+    chapterCounts: { total: 1120, downloaded: 1100, wanted: 18, failed: 2, unread: 0 },
   },
   {
     // No cover → branded placeholder; paused (un-monitored) + completed.
@@ -53,7 +53,7 @@ export const seriesPage: SeriesSummary[] = [
     coverUrl: '',
     monitored: false,
     completed: true,
-    chapterCounts: { total: 147, downloaded: 147, wanted: 0, failed: 0 },
+    chapterCounts: { total: 147, downloaded: 147, wanted: 0, failed: 0, unread: 0 },
   },
   {
     id: '0a4d1c8e-5555-4a00-9000-000000000005',
@@ -63,7 +63,7 @@ export const seriesPage: SeriesSummary[] = [
     coverUrl: cover('tbate'),
     monitored: true,
     completed: false,
-    chapterCounts: { total: 195, downloaded: 180, wanted: 14, failed: 1 },
+    chapterCounts: { total: 195, downloaded: 180, wanted: 14, failed: 1, unread: 5 },
   },
   {
     // No cover + freshly adopted: nothing downloaded yet (0% bar, all wanted).
@@ -74,7 +74,7 @@ export const seriesPage: SeriesSummary[] = [
     coverUrl: '',
     monitored: true,
     completed: false,
-    chapterCounts: { total: 210, downloaded: 0, wanted: 210, failed: 0 },
+    chapterCounts: { total: 210, downloaded: 0, wanted: 210, failed: 0, unread: 0 },
   },
   {
     // Paused, partway through, with a long title to exercise the 2-line clamp.
@@ -85,7 +85,7 @@ export const seriesPage: SeriesSummary[] = [
     coverUrl: cover('tdg'),
     monitored: false,
     completed: false,
-    chapterCounts: { total: 345, downloaded: 300, wanted: 45, failed: 0 },
+    chapterCounts: { total: 345, downloaded: 300, wanted: 45, failed: 0, unread: 8 },
   },
   {
     id: '0a4d1c8e-8888-4a00-9000-000000000008',
@@ -95,7 +95,7 @@ export const seriesPage: SeriesSummary[] = [
     coverUrl: '',
     monitored: true,
     completed: true,
-    chapterCounts: { total: 207, downloaded: 207, wanted: 0, failed: 0 },
+    chapterCounts: { total: 207, downloaded: 207, wanted: 0, failed: 0, unread: 0 },
   },
 ]
 
