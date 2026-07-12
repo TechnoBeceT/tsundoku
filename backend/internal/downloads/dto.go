@@ -4,8 +4,7 @@
 // Queued screens) plus the owner retry actions that reset failed chapters back
 // to wanted. The name + display-title + cover resolution reuses the exported
 // resolvers from internal/series (ChapterTitles / MetadataProvider /
-// SeriesDisplay / HighestImportanceProvider) so the importance logic lives in
-// exactly one place (§2 DRY).
+// SeriesDisplay) so the importance logic lives in exactly one place (§2 DRY).
 package downloads
 
 import (
@@ -23,9 +22,12 @@ import (
 // ("/api/series/{id}/cover") or "" when no provider supplies a cover. Name is the
 // best-provider ProviderChapter.name and is "" when no provider titles the
 // chapter (the FE then derives "Chapter {number}"). Provider is the source key
-// (SeriesProvider.provider — the raw numeric id) of the satisfying source, else
-// the series' top source; ProviderName is that same source's human-readable
-// display label (falls back to the id), which the UI shows in place of the id.
+// (SeriesProvider.provider — the raw numeric id) of the source the chapter is
+// ACTUALLY coming from — its satisfier, else the highest-importance source whose
+// feed carries the key, else "" when no source carries it at all (see
+// chapterProvider); ProviderName is that same source's human-readable display
+// label (falls back to the id), which the UI shows in place of the id. Both are
+// "" for a chapter nothing is fetching — the UI renders that as an em-dash.
 //
 // UpgradeTarget is the display label of the source an UPGRADING chapter is
 // converging TO (the UI renders "<ProviderName> → <UpgradeTarget>"), and is ""
@@ -72,15 +74,20 @@ type RetryAllResultDTO struct {
 
 // seriesResolution holds the once-per-series derived values reused across all of
 // that series' chapters on a page: the chapter_key→name map, the resolved display
-// name + cover proxy path, the top source (the fallback for a chapter's provider
-// fields when it has no satisfying source yet), and the chapter_key→providers index
-// that names an upgrading chapter's target. bestProvider is nil for a 0-provider
-// series, in which case a chapter's provider id + name are both "".
+// name + cover proxy path, and the chapter_key→providers (importance-DESC) feed
+// index.
+//
+// upgradeTargets serves BOTH source questions a row asks, from the one index:
+// which source an upgrading chapter is converging TO (upgradeTargetLabel), and —
+// for a chapter nothing has satisfied yet — which source is actually FETCHING it
+// (chapterProvider). Both answers are "the highest-importance provider whose feed
+// carries this key", which is exactly the scheduler's primary-source rule, so they
+// share one definition (§2 DRY) and cost no extra query. A chapter no feed carries
+// resolves to no source at all ("").
 type seriesResolution struct {
 	names          map[string]string
 	displayName    string
 	coverURL       string
-	bestProvider   *ent.SeriesProvider
 	upgradeTargets upgradeTargetIndex
 }
 

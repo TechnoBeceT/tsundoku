@@ -116,7 +116,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 	items := make([]DownloadChapterDTO, len(rows))
 	for i, ch := range rows {
 		res := resolutions[ch.SeriesID]
-		provID, provName := chapterProvider(ch, provByID, res.bestProvider)
+		provID, provName := chapterProvider(ch, provByID, res.upgradeTargets)
 		items[i] = newDownloadChapterDTO(
 			ch,
 			category.NameOf(seriesByID[ch.SeriesID]),
@@ -191,10 +191,9 @@ func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.U
 		row.Edges.Providers = provs // reuse MetadataProvider/SeriesDisplay resolution
 		displayName, coverURL := series.SeriesDisplay(row, series.MetadataProvider(row))
 		out[sid] = seriesResolution{
-			names:        series.ChapterTitles(provs),
-			displayName:  displayName,
-			coverURL:     coverURL,
-			bestProvider: series.HighestImportanceProvider(provs),
+			names:       series.ChapterTitles(provs),
+			displayName: displayName,
+			coverURL:    coverURL,
 			// Built from the SAME eager-loaded feeds — no extra query (see
 			// newUpgradeTargetIndex).
 			upgradeTargets: newUpgradeTargetIndex(provs),
@@ -203,24 +202,39 @@ func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.U
 	return out
 }
 
-// chapterProvider resolves a chapter's source to its (id, displayName): the
-// provider that satisfied it (satisfied_by_provider_id) when set and still
-// present, else the series' top source (best). A wanted/upgrade_available
-// chapter has no satisfying source yet, so it shows the best available one. The
-// id is SeriesProvider.provider (raw numeric key); the name is series.ProviderLabel
-// (display name, falling back to the id). Both are "" for a 0-provider series
-// (best is nil).
-func chapterProvider(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider, best *ent.SeriesProvider) (id, name string) {
-	src := best
+// chapterProvider resolves the source a chapter is ACTUALLY coming from, as
+// (id, displayName). The id is SeriesProvider.provider (the raw source key); the
+// name is series.ProviderLabel (display name, falling back to the id).
+//
+//  1. The provider that SATISFIED it (satisfied_by), when set and still present —
+//     true provenance: this is where the file on disk came from.
+//  2. Otherwise (downloading / wanted / failed — nothing satisfies it yet) the
+//     highest-importance provider whose FEED CARRIES this chapter_key. That is the
+//     scheduler's own primary-source rule (download/schedule.go groupBySource takes
+//     cands[0] of the same importance-DESC, feed-bearing set), so the row names the
+//     source the engine is really fetching from. Falling back to the series' TOP
+//     source instead — as this used to — lies whenever the top source does not carry
+//     the key: in production, chapters were labelled "Asura Scans" while the engine
+//     fetched them from "Comic Asura", because Asura's feed has no such chapter.
+//  3. Otherwise "" — NO source carries this key, so nothing is fetching it. The
+//     engine skips such a chapter every cycle (handleNoCandidates → download.skip,
+//     stays wanted); reporting no source is the truth and surfaces it, where naming
+//     the series' top source would repeat the very lie this fixes.
+//
+// GOTCHA (mirrors upgradeTargetLabel's): case 2 names the source the engine WOULD
+// pick. The engine additionally excludes retry-exhausted / cooling-down /
+// breaker-tripped sources, which this read model cannot see without the N+1 the
+// feed index exists to avoid. It is a UI hint, never engine state.
+func chapterProvider(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider, idx upgradeTargetIndex) (id, name string) {
 	if ch.SatisfiedByProviderID != nil {
 		if p, ok := provByID[*ch.SatisfiedByProviderID]; ok {
-			src = p
+			return p.Provider, series.ProviderLabel(p)
 		}
 	}
-	if src == nil {
-		return "", ""
+	if carriers := idx[ch.ChapterKey]; len(carriers) > 0 {
+		return carriers[0].Provider, series.ProviderLabel(carriers[0])
 	}
-	return src.Provider, series.ProviderLabel(src)
+	return "", ""
 }
 
 // RetryChapter resets one failed/permanently_failed chapter back to wanted so the

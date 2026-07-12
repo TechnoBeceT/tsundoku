@@ -241,8 +241,9 @@ func TestListEnrichmentMultiSeries(t *testing.T) {
 }
 
 // assertWantedEnrichment checks a-2 (wanted, no satisfied source): the name comes
-// from the HIGHEST-importance provider's feed, the provider falls back to the best
-// source, and the display title + cover proxy path resolve from the metadata source.
+// from the HIGHEST-importance provider's feed, the provider is the highest-importance
+// source whose feed CARRIES a-2 (both do here, so mangadex wins), and the display
+// title + cover proxy path resolve from the metadata source.
 func assertWantedEnrichment(t *testing.T, items []downloads.DownloadChapterDTO, alphaID uuid.UUID) {
 	t.Helper()
 	a2, ok := itemByKey(items, "a-2")
@@ -253,7 +254,7 @@ func assertWantedEnrichment(t *testing.T, items []downloads.DownloadChapterDTO, 
 		t.Errorf("a-2 name: want best-provider 'The Beginning', got %q", a2.Name)
 	}
 	if a2.Provider != "mangadex" {
-		t.Errorf("a-2 provider: want best 'mangadex', got %q", a2.Provider)
+		t.Errorf("a-2 provider: want feed-carrying 'mangadex', got %q", a2.Provider)
 	}
 	if a2.ProviderName != "MangaDex" {
 		t.Errorf("a-2 providerName: want display 'MangaDex', got %q", a2.ProviderName)
@@ -299,7 +300,8 @@ func assertSatisfiedByProvider(t *testing.T, items []downloads.DownloadChapterDT
 
 // assertNoCoverAndNullables checks b-1 (permanently_failed): a series with no cover
 // yields an empty coverUrl, nil number/pageCount/downloadDate round-trip as nil, and
-// the provider falls back to the only (never-satisfying) source.
+// — because NO provider feed carries b-1 — the row names NO source at all. Naming
+// the series' only source would claim it is fetching a chapter it does not offer.
 func assertNoCoverAndNullables(t *testing.T, items []downloads.DownloadChapterDTO) {
 	t.Helper()
 	b1, ok := itemByKey(items, "b-1")
@@ -313,8 +315,8 @@ func assertNoCoverAndNullables(t *testing.T, items []downloads.DownloadChapterDT
 		t.Errorf("b-1 nullable fields should be nil, got number=%v pageCount=%v downloadDate=%v",
 			b1.Number, b1.PageCount, b1.DownloadDate)
 	}
-	if b1.Provider != "flame" {
-		t.Errorf("b-1 provider: want best 'flame', got %q", b1.Provider)
+	if b1.Provider != "" {
+		t.Errorf("b-1 provider: want '' (no feed carries b-1), got %q", b1.Provider)
 	}
 }
 
