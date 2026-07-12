@@ -527,6 +527,19 @@ components:
           type: boolean
           description: Whether the series is finished (no more chapters expected).
 
+    SetIgnoreFractionalRequest:
+      type: object
+      required:
+        - ignoreFractional
+      properties:
+        ignoreFractional:
+          type: boolean
+          description: |
+            Whether this source is a fractional re-uploader for this series: when true it
+            contributes no fractional-numbered chapters (they are dropped at ingest and
+            excluded from candidacy); when false the source is restored. Required — an
+            omitted field is a 400, never a silent false.
+
     ProviderRank:
       type: object
       required:
@@ -2593,6 +2606,78 @@ paths:
                 $ref: "#/components/schemas/SeriesDetail"
         "400":
           description: Malformed series or provider UUID, or provider not in series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/providers/{providerId}/ignore-fractional:
+    patch:
+      operationId: setProviderIgnoreFractional
+      summary: Flag a source as a fractional re-uploader for this series
+      description: |
+        Marks one of the series' sources as a fractional re-uploader — a mirror that
+        republishes whole chapter N as a lone "N.1" under its own URL — or clears the
+        flag. A flagged source contributes no fractional-numbered chapters (5.1, 5.5 …)
+        to THIS series: they are dropped at ingest and excluded from download candidacy.
+        Its whole chapters are unaffected.
+
+        The flag is per (series, provider) and is an explicit owner decision, never a
+        heuristic: a ".5" omake source also hosts the whole chapter, so any automatic
+        rule would suppress genuine side-chapters. Decide from the source's
+        `fractionalChapters` evidence list in the series detail.
+
+        Flipping the flag DELETES NOTHING: fractional feed rows already ingested and any
+        CBZ already downloaded are kept, and un-ticking restores the source immediately.
+        Returns the updated series detail (§16).
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: providerId
+          in: path
+          required: true
+          description: SeriesProvider UUID to flag.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetIgnoreFractionalRequest"
+      responses:
+        "200":
+          description: Flag updated. Returns the updated series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: |
+            Malformed series or provider UUID, missing ignoreFractional field, or the
+            provider does not belong to this series.
           content:
             application/json:
               schema:

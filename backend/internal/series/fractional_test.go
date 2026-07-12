@@ -3,6 +3,7 @@ package series_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
+	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
@@ -95,6 +97,113 @@ func TestProviderDTO_IgnoreFractionalRoundTrips(t *testing.T) {
 	// so the owner can always see what he ignored and un-tick it.
 	if got.FractionalCount != 1 {
 		t.Errorf("FractionalCount = %d, want 1 — an ignored source still REPORTS its fractionals", got.FractionalCount)
+	}
+}
+
+// TestSetIgnoreFractional_TogglesAndIsReversible pins the toggle both ways: it is
+// a PREFERENCE, so un-ticking must restore the source's fractionals immediately.
+func TestSetIgnoreFractional_TogglesAndIsReversible(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	s := db.Series.Create().SetTitle("Toggle Me").SetSlug("toggle-me").SaveX(ctx)
+	sp := seedFeed(ctx, t, db, s.ID, "comic-asura", 40, 1, 1.1)
+	svc := series.NewService(db, t.TempDir(), 14)
+
+	if err := svc.SetIgnoreFractional(ctx, s.ID, sp.ID, true); err != nil {
+		t.Fatalf("SetIgnoreFractional(true): %v", err)
+	}
+	if got := db.SeriesProvider.GetX(ctx, sp.ID).IgnoreFractional; !got {
+		t.Fatal("ignore_fractional = false after setting it true")
+	}
+
+	if err := svc.SetIgnoreFractional(ctx, s.ID, sp.ID, false); err != nil {
+		t.Fatalf("SetIgnoreFractional(false): %v", err)
+	}
+	if got := db.SeriesProvider.GetX(ctx, sp.ID).IgnoreFractional; got {
+		t.Error("ignore_fractional = true after un-ticking — the toggle must be reversible")
+	}
+}
+
+// TestSetIgnoreFractional_UnknownSeries: a series id that does not exist is a 404
+// (ErrSeriesNotFound), not a silent no-op.
+func TestSetIgnoreFractional_UnknownSeries(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	svc := series.NewService(db, t.TempDir(), 14)
+
+	err := svc.SetIgnoreFractional(ctx, uuid.New(), uuid.New(), true)
+	if !errors.Is(err, series.ErrSeriesNotFound) {
+		t.Errorf("err = %v, want ErrSeriesNotFound", err)
+	}
+}
+
+// TestSetIgnoreFractional_ProviderOfAnotherSeries is the ownership guard: a real
+// SeriesProvider row that belongs to a DIFFERENT series must be rejected
+// (ErrProviderNotInSeries → 400), never silently toggled. Without the
+// series-scoped check the endpoint would let any series flip any provider's flag.
+func TestSetIgnoreFractional_ProviderOfAnotherSeries(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	mine := db.Series.Create().SetTitle("Mine").SetSlug("mine").SaveX(ctx)
+	theirs := db.Series.Create().SetTitle("Theirs").SetSlug("theirs").SaveX(ctx)
+	foreign := seedFeed(ctx, t, db, theirs.ID, "comic-asura", 40, 1, 1.1)
+
+	svc := series.NewService(db, t.TempDir(), 14)
+	err := svc.SetIgnoreFractional(ctx, mine.ID, foreign.ID, true)
+	if !errors.Is(err, series.ErrProviderNotInSeries) {
+		t.Fatalf("err = %v, want ErrProviderNotInSeries", err)
+	}
+	if db.SeriesProvider.GetX(ctx, foreign.ID).IgnoreFractional {
+		t.Error("the other series' provider was toggled — the ownership check did not hold")
+	}
+}
+
+// TestSetIgnoreFractional_DeletesNothing is the NEVER-AUTO-DELETE guard. Flipping
+// the flag is a preference change: every ProviderChapter row (including the
+// fractional ones it suppresses) and every Chapter row must survive, so un-ticking
+// restores the source instantly and no downloaded chapter is orphaned.
+//
+// Non-vacuous by construction: the counts are taken from a feed that actually
+// CONTAINS fractionals (1.1, 2.1) plus a Chapter row for one of them, and the
+// fractional rows are counted separately — a delete-on-toggle implementation
+// would drop them and fail here.
+func TestSetIgnoreFractional_DeletesNothing(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	s := db.Series.Create().SetTitle("Keep Everything").SetSlug("keep-everything").SaveX(ctx)
+	sp := seedFeed(ctx, t, db, s.ID, "comic-asura", 40, 1, 1.1, 2, 2.1)
+	num := 1.1
+	db.Chapter.Create().
+		SetSeriesID(s.ID).SetChapterKey("1.1").SetNumber(num).
+		SetState("downloaded").SetFilename("[comic-asura] Keep Everything 001.1.cbz").
+		SetSatisfiedByProviderID(sp.ID).SaveX(ctx)
+
+	countRows := func() (pcs, fracPCs, chapters int) {
+		t.Helper()
+		pcs = db.ProviderChapter.Query().CountX(ctx)
+		fracPCs = db.ProviderChapter.Query().
+			Where(entproviderchapter.ChapterKeyIn("1.1", "2.1")).CountX(ctx)
+		chapters = db.Chapter.Query().CountX(ctx)
+		return
+	}
+
+	beforePC, beforeFrac, beforeCh := countRows()
+	if beforeFrac != 2 || beforeCh != 1 {
+		t.Fatalf("seed is vacuous: fractional feed rows = %d (want 2), chapters = %d (want 1)", beforeFrac, beforeCh)
+	}
+
+	svc := series.NewService(db, t.TempDir(), 14)
+	if err := svc.SetIgnoreFractional(ctx, s.ID, sp.ID, true); err != nil {
+		t.Fatalf("SetIgnoreFractional: %v", err)
+	}
+
+	afterPC, afterFrac, afterCh := countRows()
+	if afterPC != beforePC || afterFrac != beforeFrac || afterCh != beforeCh {
+		t.Errorf("never-auto-delete VIOLATED: provider chapters %d→%d (fractional %d→%d), chapters %d→%d",
+			beforePC, afterPC, beforeFrac, afterFrac, beforeCh, afterCh)
 	}
 }
 

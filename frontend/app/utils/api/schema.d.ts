@@ -412,6 +412,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/providers/{providerId}/ignore-fractional": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Flag a source as a fractional re-uploader for this series
+         * @description Marks one of the series' sources as a fractional re-uploader — a mirror that
+         *     republishes whole chapter N as a lone "N.1" under its own URL — or clears the
+         *     flag. A flagged source contributes no fractional-numbered chapters (5.1, 5.5 …)
+         *     to THIS series: they are dropped at ingest and excluded from download candidacy.
+         *     Its whole chapters are unaffected.
+         *
+         *     The flag is per (series, provider) and is an explicit owner decision, never a
+         *     heuristic: a ".5" omake source also hosts the whole chapter, so any automatic
+         *     rule would suppress genuine side-chapters. Decide from the source's
+         *     `fractionalChapters` evidence list in the series detail.
+         *
+         *     Flipping the flag DELETES NOTHING: fractional feed rows already ingested and any
+         *     CBZ already downloaded are kept, and un-ticking restores the source immediately.
+         *     Returns the updated series detail (§16).
+         */
+        patch: operations["setProviderIgnoreFractional"];
+        trace?: never;
+    };
     "/api/series/{id}/cover": {
         parameters: {
             query?: never;
@@ -1720,6 +1753,15 @@ export interface components {
         SetCompletedRequest: {
             /** @description Whether the series is finished (no more chapters expected). */
             completed: boolean;
+        };
+        SetIgnoreFractionalRequest: {
+            /**
+             * @description Whether this source is a fractional re-uploader for this series: when true it
+             *     contributes no fractional-numbered chapters (they are dropped at ingest and
+             *     excluded from candidacy); when false the source is restored. Required — an
+             *     omitted field is a 400, never a silent false.
+             */
+            ignoreFractional: boolean;
         };
         ProviderRank: {
             /**
@@ -3333,6 +3375,65 @@ export interface operations {
                 };
             };
             /** @description Malformed series or provider UUID, or provider not in series. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setProviderIgnoreFractional: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description SeriesProvider UUID to flag. */
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetIgnoreFractionalRequest"];
+            };
+        };
+        responses: {
+            /** @description Flag updated. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /**
+             * @description Malformed series or provider UUID, missing ignoreFractional field, or the
+             *     provider does not belong to this series.
+             */
             400: {
                 headers: {
                     [name: string]: unknown;
