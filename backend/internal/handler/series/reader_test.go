@@ -49,7 +49,11 @@ func TestChapterPage_OK(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Fatalf("ChapterPage content-type: want image/jpeg, got %q", ct)
 	}
-	if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=300" {
+	// No ?v= on this request, so it must REVALIDATE: an unversioned URL carries no
+	// cache buster, and a convergence upgrade can replace a chapter's bytes at the
+	// same id — caching it would be unfixable. The versioned (max-age) case is
+	// covered in page_cache_test.go.
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, no-cache" {
 		t.Fatalf("ChapterPage cache-control: got %q", cc)
 	}
 	if got := rec.Body.Bytes(); len(got) != len(readerPages[1].Data) || got[4] != 0x02 {
