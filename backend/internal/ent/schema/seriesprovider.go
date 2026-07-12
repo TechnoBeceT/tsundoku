@@ -50,6 +50,13 @@ func (SeriesProvider) Fields() []ent.Field {
 		// rule would have deleted all of them. So the owner ticks it per source, after
 		// SEEING that source's fractional list (ProviderDTO.fractionalChapters).
 		//
+		// DELIBERATE FAIL-OPEN: a chapter with NO parsed number cannot be judged
+		// fractional, so it is left alone — a source that publishes a re-upload under a
+		// NULL-numbered chapter therefore evades the toggle. Orphaning every unnumbered
+		// chapter would be the far worse failure, so both the engine
+		// (chapter.dropIgnoredFractionalSources) and the downloads read model
+		// (downloads.newUpgradeTargetIndex) keep such rows.
+		//
 		// Flipping it DELETES NOTHING (never-auto-delete): existing ProviderChapter
 		// rows and downloaded CBZs stay; the source simply stops offering fractionals.
 		// Additive + defaulted ⇒ zero-data migration.

@@ -226,12 +226,19 @@ func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.U
 //  3. Otherwise "" — NO source carries this key, so nothing is fetching it. The
 //     engine skips such a chapter every cycle (handleNoCandidates → download.skip,
 //     stays wanted); reporting no source is the truth and surfaces it, where naming
-//     the series' top source would repeat the very lie this fixes.
+//     the series' top source would repeat the very lie this fixes. A FRACTIONAL
+//     chapter whose only carrier is a source the owner flagged ignore_fractional
+//     lands here too — the index drops that source's fractional feed rows, exactly as
+//     the engine drops it from candidacy — so the row correctly says nothing is
+//     fetching it instead of naming the source it was told to ignore.
 //
 // GOTCHA (mirrors upgradeTargetLabel's): case 2 names the source the engine WOULD
-// pick. The engine additionally excludes retry-exhausted / cooling-down /
-// breaker-tripped sources, which this read model cannot see without the N+1 the
-// feed index exists to avoid. It is a UI hint, never engine state.
+// pick. The engine's STRUCTURAL exclusion — ignore_fractional — is mirrored by the
+// index (see newUpgradeTargetIndex), because a permanently-excluded source must
+// never be named. Its TRANSIENT ones are not: it also skips retry-exhausted /
+// cooling-down / breaker-tripped sources, which this read model cannot see without
+// the N+1 the feed index exists to avoid, and which clear on their own. It is a UI
+// hint, never engine state.
 func chapterProvider(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider, idx upgradeTargetIndex) (id, name string) {
 	if ch.SatisfiedByProviderID != nil {
 		if p, ok := provByID[*ch.SatisfiedByProviderID]; ok {
