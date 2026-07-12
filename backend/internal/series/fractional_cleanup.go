@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/category"
+	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
@@ -22,6 +24,15 @@ import (
 // unknown id). The HTTP handler maps it to a 400 — the client's list is a
 // SELECTION from the preview, never an authorisation to delete.
 var ErrChapterNotRemovable = errors.New("chapter is not removable by fractional cleanup")
+
+// ErrFractionalCleanupFailed is returned by RemoveFractionalChapters when a CBZ
+// deletion fails partway. The transaction is rolled back, so NO chapter row is
+// removed — but the files deleted BEFORE the failure are already gone, and the
+// returned count (0) understates that. The call is retry-safe: every selected
+// chapter still qualifies (its row survived), and re-running the cleanup finishes
+// the job — an already-deleted file is a no-op. The handler maps this to a 500
+// whose message says exactly that.
+var ErrFractionalCleanupFailed = errors.New("fractional cleanup failed while deleting files")
 
 // FractionalCleanupChapterDTO is one removable chapter in the cleanup preview:
 // the EVIDENCE the owner judges from before ticking it. Number is always
@@ -79,7 +90,7 @@ type FractionalCleanupDTO struct {
 // removable set, the provider labels and the median are all resolved in memory.
 // An unknown id yields ErrSeriesNotFound.
 func (s *Service) FractionalCleanupPreview(ctx context.Context, id uuid.UUID) (FractionalCleanupDTO, error) {
-	row, err := s.loadSeriesForCleanup(ctx, id)
+	row, err := loadSeriesForCleanup(ctx, s.client, id)
 	if err != nil {
 		return FractionalCleanupDTO{}, err
 	}
@@ -126,13 +137,46 @@ func (s *Service) FractionalCleanupPreview(ctx context.Context, id uuid.UUID) (F
 // deleting it would make the toggle a one-way door.
 //
 // Order (mirrors DeleteSeries): the rows are deleted inside a transaction, the FILES
-// are deleted BEFORE the commit, and a file failure rolls the transaction back. So a
-// partial failure leaves the DB intact and is retry-safe (the chapter still
-// qualifies, a second run finishes the job), and a committed row deletion never
-// leaves an orphan CBZ behind for disk.Reconcile to re-import as a disk-origin
-// chapter — which would resurrect exactly what was removed.
+// are deleted BEFORE the commit, and a file failure rolls the transaction back — so a
+// committed row deletion never leaves an orphan CBZ behind for disk.Reconcile to
+// re-import as a disk-origin chapter, which would resurrect exactly what was removed.
+//
+// A partial failure leaves the DB — not the disk — intact: the transaction is rolled
+// back so NO chapter row is removed, but the CBZs deleted before the failing one are
+// already gone, and the returned count (0, with ErrFractionalCleanupFailed) understates
+// that. That asymmetry is deliberate and retry-safe: every selected chapter still
+// qualifies (its row survived), so re-running the cleanup finishes the job and an
+// already-deleted file is a no-op.
+//
+// TOCTOU: the removable set is recomputed from a load taken INSIDE the transaction and
+// the DELETE re-asserts the rule's row-level half (this series, still downloaded, still
+// has a filename, still numbered) as SQL predicates, so a concurrent change cannot slip
+// a now-protected chapter past the check. A mismatch between the selected and the
+// deleted count fails the whole call (ErrChapterNotRemovable) — nothing is deleted.
 func (s *Service) RemoveFractionalChapters(ctx context.Context, id uuid.UUID, chapterIDs []uuid.UUID) (int, error) {
-	row, err := s.loadSeriesForCleanup(ctx, id)
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("series.RemoveFractionalChapters: begin tx: %w", err)
+	}
+
+	removed, err := s.removeFractionalInTx(ctx, tx, id, chapterIDs)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("series.RemoveFractionalChapters: commit tx: %w", err)
+	}
+	return removed, nil
+}
+
+// removeFractionalInTx is the body of RemoveFractionalChapters, run inside one
+// transaction: the series (chapters + providers + feeds) is loaded through the TX
+// client, so the removable rule is decided and enforced on ONE snapshot — the owner
+// un-ticking ignore_fractional in another tab mid-request can no longer make the check
+// and the delete disagree. Every error rolls the caller's transaction back.
+func (s *Service) removeFractionalInTx(ctx context.Context, tx *ent.Tx, id uuid.UUID, chapterIDs []uuid.UUID) (int, error) {
+	row, err := loadSeriesForCleanup(ctx, tx.Client(), id)
 	if err != nil {
 		return 0, err
 	}
@@ -150,35 +194,81 @@ func (s *Service) RemoveFractionalChapters(ctx context.Context, id uuid.UUID, ch
 		ids[i] = ch.ID
 	}
 
-	tx, err := s.client.Tx(ctx)
+	// Belt and braces: the in-tx snapshot makes the decision correct, these predicates
+	// make the DELETE itself un-bypassable — it can only ever touch a downloaded,
+	// filed, numbered chapter OF THIS SERIES, whatever the caller sent. (The rule's
+	// remaining halves — fractional-ness and "every carrier ignored" — are not
+	// expressible as Ent predicates; they are enforced by selectRemovable above.)
+	deleted, err := tx.Chapter.Delete().Where(
+		entchapter.IDIn(ids...),
+		entchapter.SeriesID(id),
+		entchapter.StateEQ(entchapter.StateDownloaded),
+		entchapter.FilenameNEQ(""),
+		entchapter.NumberNotNil(),
+	).Exec(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("series.RemoveFractionalChapters: begin tx: %w", err)
-	}
-	if _, err := tx.Chapter.Delete().Where(entchapter.IDIn(ids...)).Exec(ctx); err != nil {
-		_ = tx.Rollback()
 		return 0, fmt.Errorf("series.RemoveFractionalChapters: delete chapters of series %s: %w", id, err)
 	}
-
-	categoryName := category.NameOf(row)
-	for _, ch := range targets {
-		if _, err := disk.RemoveChapterFile(s.storage, categoryName, row.Title, ch.Filename); err != nil {
-			_ = tx.Rollback()
-			return 0, fmt.Errorf("series.RemoveFractionalChapters: chapter %s: %w", ch.ID, err)
-		}
+	if deleted != len(targets) {
+		return 0, fmt.Errorf("series.RemoveFractionalChapters: %d of %d selected chapters no longer matched the removable rule at delete time, nothing removed: %w",
+			len(targets)-deleted, len(targets), ErrChapterNotRemovable)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("series.RemoveFractionalChapters: commit tx: %w", err)
+	if err := s.removeCleanupFiles(row, targets); err != nil {
+		return 0, err
 	}
 	return len(targets), nil
+}
+
+// removeCleanupFiles deletes the selected chapters' CBZs from the series folder. It
+// runs BEFORE the commit: a failure rolls the row deletion back, so no committed
+// deletion can leave an orphan CBZ for disk.Reconcile to re-import.
+//
+// 🔴 A file that is NOT THERE is logged, not failed. disk.RemoveChapterFile reports
+// removed=false when the CBZ (or the whole series folder) is not where the DB says it
+// is — the on-disk title/category can drift from the DB (series.DeleteSeries warns on
+// exactly the same condition). Swallowing that silently would be the resurrection bug
+// through a side door: the row deletion commits, the real CBZ survives under the
+// drifted name, and disk.Reconcile re-imports it as a disk-origin chapter. Hard-failing
+// instead is worse — it would make a retry (whose earlier files ARE already gone)
+// permanently unable to complete. So the honest signal is a WARN naming the series, the
+// chapter number and the filename we expected to find.
+func (s *Service) removeCleanupFiles(row *ent.Series, targets []*ent.Chapter) error {
+	categoryName := category.NameOf(row)
+	for _, ch := range targets {
+		removed, err := disk.RemoveChapterFile(s.storage, categoryName, row.Title, ch.Filename)
+		if err != nil {
+			return fmt.Errorf("%w: series %s chapter %s (%q): %w", ErrFractionalCleanupFailed, row.ID, ch.ID, ch.Filename, err)
+		}
+		if !removed {
+			// ch.Number is dereferenced through FormatChapterNumber (never a raw
+			// pointer in the log line) — every target has a number by the rule.
+			slog.Warn("series.RemoveFractionalChapters: no CBZ found for the chapter — nothing deleted on disk (the on-disk title/category may have drifted from the DB, leaving the real file behind for a reconcile to re-import)",
+				"series_id", row.ID, "title", row.Title, "category", categoryName,
+				"chapter_id", ch.ID, "number", chapterNumberLabel(ch), "filename", ch.Filename)
+		}
+	}
+	return nil
+}
+
+// chapterNumberLabel renders a chapter's (nullable) number for a log line — the same
+// formatting the chapter keys and CBZ filenames use, "?" when it is absent.
+func chapterNumberLabel(ch *ent.Chapter) string {
+	if ch.Number == nil {
+		return "?"
+	}
+	return chapter.FormatChapterNumber(*ch.Number)
 }
 
 // loadSeriesForCleanup loads one series with everything the removable rule needs, in
 // a single bounded query set: its chapters (number-ASC), its providers WITH their
 // availability feeds (the carriers of each chapter_key), and its category (the disk
 // folder). An unknown id yields ErrSeriesNotFound.
-func (s *Service) loadSeriesForCleanup(ctx context.Context, id uuid.UUID) (*ent.Series, error) {
-	row, err := s.client.Series.Query().
+//
+// The client is a parameter (not s.client) precisely so the REMOVAL path can pass the
+// TRANSACTION's client — the check and the delete then share one snapshot.
+func loadSeriesForCleanup(ctx context.Context, client *ent.Client, id uuid.UUID) (*ent.Series, error) {
+	row, err := client.Series.Query().
 		Where(entseries.IDEQ(id)).
 		WithChapters(func(cq *ent.ChapterQuery) {
 			cq.Order(entchapter.ByNumber(), entchapter.ByChapterKey())
@@ -242,6 +332,20 @@ func removableFractionals(row *ent.Series) []*ent.Chapter {
 // whose feed carries its chapter_key. See FractionalCleanupPreview for the why —
 // especially why "every carrier is ignored" (not "its satisfying source is
 // ignored") is what makes resurrection impossible.
+//
+// 🔴 The len(carriers) == 0 guard is LOAD-BEARING, not a formality — do not
+// "simplify" it away (TestFractionalCleanupPreview_ZeroCarriersNeverRemovable pins
+// it): a downloaded fractional that NO source carries is irreplaceable (nothing can
+// re-download it) and no ignored source is even implicated in it, so this endpoint
+// never offers it.
+//
+// The CONSEQUENCE, stated plainly because it is a real trade-off: RemoveProvider
+// deletes the source's whole ProviderChapter feed, so once the owner REMOVES an
+// ignored source, its already-downloaded fractionals lose their last carrier and
+// become permanently un-cleanable HERE. To clean them he must re-add the source and
+// re-tick ignore_fractional (restoring the carrier), or delete the series outright
+// (DeleteSeries). The alternative — offering carrier-less fractionals — would let
+// this endpoint delete files nothing can ever restore, which is a worse trade.
 func isRemovableFractional(ch *ent.Chapter, carriers []*ent.SeriesProvider) bool {
 	if ch.State != entchapter.StateDownloaded || ch.Filename == "" {
 		return false
