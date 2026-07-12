@@ -208,14 +208,21 @@ func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.U
 //
 //  1. The provider that SATISFIED it (satisfied_by), when set and still present —
 //     true provenance: this is where the file on disk came from.
-//  2. Otherwise (downloading / wanted / failed — nothing satisfies it yet) the
-//     highest-importance provider whose FEED CARRIES this chapter_key. That is the
-//     scheduler's own primary-source rule (download/schedule.go groupBySource takes
-//     cands[0] of the same importance-DESC, feed-bearing set), so the row names the
-//     source the engine is really fetching from. Falling back to the series' TOP
-//     source instead — as this used to — lies whenever the top source does not carry
-//     the key: in production, chapters were labelled "Asura Scans" while the engine
-//     fetched them from "Comic Asura", because Asura's feed has no such chapter.
+//  2. Otherwise the highest-importance provider whose FEED CARRIES this chapter_key,
+//     ranked exactly as the engine ranks candidates (importance DESC, then
+//     ProviderChapter.ID ASC — see upgradeTargetIndex). That is the scheduler's own
+//     primary-source rule (download/schedule.go groupBySource takes cands[0] of the
+//     same importance-DESC, feed-bearing set), so the row names the source the engine
+//     is really fetching from. Falling back to the series' TOP source instead — as
+//     this used to — lies whenever the top source does not carry the key: in
+//     production, chapters were labelled "Asura Scans" while the engine fetched them
+//     from "Comic Asura", because Asura's feed has no such chapter. This case covers
+//     every chapter nothing satisfies yet (downloading / wanted / failed) AND a
+//     DOWNLOADED chapter whose satisfier was CLEARED — series.RemoveProvider nulls
+//     satisfied_by by design (keeping the watermark and the CBZ), so such a row names
+//     a remaining feed carrier rather than the source the file really came from. That
+//     provenance is gone from the DB; the row answers "who would supply this chapter
+//     now", which is what every other unsatisfied row answers too.
 //  3. Otherwise "" — NO source carries this key, so nothing is fetching it. The
 //     engine skips such a chapter every cycle (handleNoCandidates → download.skip,
 //     stays wanted); reporting no source is the truth and surfaces it, where naming
@@ -232,7 +239,7 @@ func chapterProvider(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider
 		}
 	}
 	if carriers := idx[ch.ChapterKey]; len(carriers) > 0 {
-		return carriers[0].Provider, series.ProviderLabel(carriers[0])
+		return carriers[0].provider.Provider, series.ProviderLabel(carriers[0].provider)
 	}
 	return "", ""
 }
