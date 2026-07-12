@@ -396,11 +396,16 @@ func (h *Handler) SetMetadataSource(c echo.Context) error {
 // HTTP status, leaving any unexpected error to fall through to the central
 // middleware as a 500. ErrSeriesNotFound → 404; ErrProviderNotInSeries → 400;
 // ErrNoCover → 404; category.ErrCategoryNotFound → 400 (an unknown categoryId in
-// a recategorize body is a bad request, not a missing resource on this route).
+// a recategorize body is a bad request, not a missing resource on this route);
+// ErrChapterNotRemovable → 400 (the fractional-cleanup POST named a chapter that is
+// not in the server-recomputed removable set — a bad selection, not a missing
+// resource; the message names the offending chapter).
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, seriessvc.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "series not found")
+	case errors.Is(err, seriessvc.ErrChapterNotRemovable):
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	case errors.Is(err, category.ErrCategoryNotFound):
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown category")
 	case errors.Is(err, seriessvc.ErrProviderNotInSeries):
