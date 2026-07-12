@@ -44,6 +44,8 @@ type SeriesProvider struct {
 	Flags uint32 `json:"flags,omitempty"`
 	// Importance holds the value of the "importance" field.
 	Importance int `json:"importance,omitempty"`
+	// IgnoreFractional holds the value of the "ignore_fractional" field.
+	IgnoreFractional bool `json:"ignore_fractional,omitempty"`
 	// CoverURL holds the value of the "cover_url" field.
 	CoverURL string `json:"cover_url,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
@@ -116,7 +118,7 @@ func (*SeriesProvider) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case seriesprovider.FieldMetadata:
+		case seriesprovider.FieldMetadata, seriesprovider.FieldIgnoreFractional:
 			values[i] = new(sql.NullBool)
 		case seriesprovider.FieldSuwayomiID, seriesprovider.FieldFlags, seriesprovider.FieldImportance:
 			values[i] = new(sql.NullInt64)
@@ -218,6 +220,12 @@ func (_m *SeriesProvider) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field importance", values[i])
 			} else if value.Valid {
 				_m.Importance = int(value.Int64)
+			}
+		case seriesprovider.FieldIgnoreFractional:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field ignore_fractional", values[i])
+			} else if value.Valid {
+				_m.IgnoreFractional = value.Bool
 			}
 		case seriesprovider.FieldCoverURL:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -328,6 +336,9 @@ func (_m *SeriesProvider) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("importance=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Importance))
+	builder.WriteString(", ")
+	builder.WriteString("ignore_fractional=")
+	builder.WriteString(fmt.Sprintf("%v", _m.IgnoreFractional))
 	builder.WriteString(", ")
 	builder.WriteString("cover_url=")
 	builder.WriteString(_m.CoverURL)

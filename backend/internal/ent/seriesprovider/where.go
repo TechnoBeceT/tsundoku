@@ -116,6 +116,11 @@ func Importance(v int) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldEQ(FieldImportance, v))
 }
 
+// IgnoreFractional applies equality check predicate on the "ignore_fractional" field. It's identical to IgnoreFractionalEQ.
+func IgnoreFractional(v bool) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEQ(FieldIgnoreFractional, v))
+}
+
 // CoverURL applies equality check predicate on the "cover_url" field. It's identical to CoverURLEQ.
 func CoverURL(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldEQ(FieldCoverURL, v))
@@ -754,6 +759,16 @@ func ImportanceLT(v int) predicate.SeriesProvider {
 // ImportanceLTE applies the LTE predicate on the "importance" field.
 func ImportanceLTE(v int) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldLTE(FieldImportance, v))
+}
+
+// IgnoreFractionalEQ applies the EQ predicate on the "ignore_fractional" field.
+func IgnoreFractionalEQ(v bool) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEQ(FieldIgnoreFractional, v))
+}
+
+// IgnoreFractionalNEQ applies the NEQ predicate on the "ignore_fractional" field.
+func IgnoreFractionalNEQ(v bool) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldNEQ(FieldIgnoreFractional, v))
 }
 
 // CoverURLEQ applies the EQ predicate on the "cover_url" field.

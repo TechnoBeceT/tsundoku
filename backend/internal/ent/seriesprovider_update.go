@@ -234,6 +234,20 @@ func (_u *SeriesProviderUpdate) AddImportance(v int) *SeriesProviderUpdate {
 	return _u
 }
 
+// SetIgnoreFractional sets the "ignore_fractional" field.
+func (_u *SeriesProviderUpdate) SetIgnoreFractional(v bool) *SeriesProviderUpdate {
+	_u.mutation.SetIgnoreFractional(v)
+	return _u
+}
+
+// SetNillableIgnoreFractional sets the "ignore_fractional" field if the given value is not nil.
+func (_u *SeriesProviderUpdate) SetNillableIgnoreFractional(v *bool) *SeriesProviderUpdate {
+	if v != nil {
+		_u.SetIgnoreFractional(*v)
+	}
+	return _u
+}
+
 // SetCoverURL sets the "cover_url" field.
 func (_u *SeriesProviderUpdate) SetCoverURL(v string) *SeriesProviderUpdate {
 	_u.mutation.SetCoverURL(v)
@@ -470,6 +484,9 @@ func (_u *SeriesProviderUpdate) sqlSave(ctx context.Context) (_node int, err err
 	}
 	if value, ok := _u.mutation.AddedImportance(); ok {
 		_spec.AddField(seriesprovider.FieldImportance, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.IgnoreFractional(); ok {
+		_spec.SetField(seriesprovider.FieldIgnoreFractional, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CoverURL(); ok {
 		_spec.SetField(seriesprovider.FieldCoverURL, field.TypeString, value)
@@ -846,6 +863,20 @@ func (_u *SeriesProviderUpdateOne) AddImportance(v int) *SeriesProviderUpdateOne
 	return _u
 }
 
+// SetIgnoreFractional sets the "ignore_fractional" field.
+func (_u *SeriesProviderUpdateOne) SetIgnoreFractional(v bool) *SeriesProviderUpdateOne {
+	_u.mutation.SetIgnoreFractional(v)
+	return _u
+}
+
+// SetNillableIgnoreFractional sets the "ignore_fractional" field if the given value is not nil.
+func (_u *SeriesProviderUpdateOne) SetNillableIgnoreFractional(v *bool) *SeriesProviderUpdateOne {
+	if v != nil {
+		_u.SetIgnoreFractional(*v)
+	}
+	return _u
+}
+
 // SetCoverURL sets the "cover_url" field.
 func (_u *SeriesProviderUpdateOne) SetCoverURL(v string) *SeriesProviderUpdateOne {
 	_u.mutation.SetCoverURL(v)
@@ -1112,6 +1143,9 @@ func (_u *SeriesProviderUpdateOne) sqlSave(ctx context.Context) (_node *SeriesPr
 	}
 	if value, ok := _u.mutation.AddedImportance(); ok {
 		_spec.AddField(seriesprovider.FieldImportance, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.IgnoreFractional(); ok {
+		_spec.SetField(seriesprovider.FieldIgnoreFractional, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CoverURL(); ok {
 		_spec.SetField(seriesprovider.FieldCoverURL, field.TypeString, value)
