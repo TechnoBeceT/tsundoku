@@ -26,6 +26,35 @@ func TestPageVersion_StableForUnchangedChapter(t *testing.T) {
 	}
 }
 
+// TestPageVersion_ImportedChapterVersionDiffersOnceDownloaded pins the SAFETY
+// property behind the nil-download_date carve-out.
+//
+// disk.Reconcile (the Kaizoku/disk-import path — most of this library) creates
+// chapters with a filename but NO download_date, so PageVersion hashes a
+// "no-date" sentinel to still produce a real, cacheable version. The danger in
+// that carve-out is subtle: if the sentinel ever collided with a real dated
+// version, an imported chapter that is LATER upgraded (its bytes replaced, and
+// a download_date stamped for the first time) would keep serving the OLD cached
+// pages for a full day.
+//
+// So: the same filename, nil date vs a real date, MUST hash differently. This
+// holds by construction today — but it is the one assertion that would catch a
+// future "simplification" of the sentinel, which is why it is pinned here.
+func TestPageVersion_ImportedChapterVersionDiffersOnceDownloaded(t *testing.T) {
+	const filename = "[Asura Scans] Imported Saga 001.cbz"
+	dl := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+
+	imported := series.PageVersion(filename, nil) // as disk.Reconcile leaves it
+	upgraded := series.PageVersion(filename, &dl) // after a download/upgrade re-render
+
+	if imported == "" {
+		t.Fatal("PageVersion: an imported chapter (filename, no download_date) must still be versioned — an empty version means no ?v=, no cache, and no ETag")
+	}
+	if imported == upgraded {
+		t.Fatalf("PageVersion: nil-date and dated versions collided (%q) — an upgraded import would serve stale cached pages for a day", imported)
+	}
+}
+
 // TestPageVersion_ChangesOnDownloadDate proves a Library-Convergence upgrade
 // (which re-renders the CBZ and re-stamps download_date via
 // download/upgrade.go's SetDownloadDate, keeping the SAME filename in the
