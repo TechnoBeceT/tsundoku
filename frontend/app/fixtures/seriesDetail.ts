@@ -145,6 +145,9 @@ const providers: Provider[] = [
     feedCount: 270,
     feedRanges: '1-269',
     hasFeed: true,
+    fractionalCount: 0,
+    fractionalChapters: [],
+    ignoreFractional: false,
     scanlator: 'Flame Scans',
     language: 'en',
     importance: 30,
@@ -164,6 +167,9 @@ const providers: Provider[] = [
     feedCount: 91,
     feedRanges: '1-88, 90-92',
     hasFeed: true,
+    fractionalCount: 0,
+    fractionalChapters: [],
+    ignoreFractional: false,
     scanlator: '',
     language: 'en',
     importance: 20,
@@ -183,6 +189,9 @@ const providers: Provider[] = [
     feedCount: 12,
     feedRanges: '1-12',
     hasFeed: true,
+    fractionalCount: 0,
+    fractionalChapters: [],
+    ignoreFractional: false,
     scanlator: 'Reaper',
     language: 'ko',
     importance: 10,
@@ -205,6 +214,9 @@ export const unlinkedProvider: Provider = {
   feedCount: 0,
   feedRanges: '',
   hasFeed: false,
+  fractionalCount: 0,
+  fractionalChapters: [],
+  ignoreFractional: false,
   scanlator: '',
   language: 'en',
   importance: 1,
@@ -272,6 +284,9 @@ export const duplicateProvider: Provider = {
   feedCount: 0,
   feedRanges: '',
   hasFeed: false,
+  fractionalCount: 0,
+  fractionalChapters: [],
+  ignoreFractional: false,
   scanlator: 'Flame Scans',
   language: 'en',
   importance: 1,
@@ -287,4 +302,61 @@ export const seriesWithDuplicateProviders: SeriesDetail = {
   ...richSeries,
   id: '0a4d1c8e-3333-4a00-9000-000000000003',
   providers: [...providers, duplicateProvider],
+}
+
+/**
+ * A fractional RE-UPLOADER: a mirror that republishes every whole chapter N as a
+ * lone "N.1" under its own URL. Its evidence is a long SYSTEMATIC run
+ * (1.1, 2.1, 3.1 …) — this is the source the owner ticks "Ignore fractional
+ * chapters" on.
+ */
+export const reuploaderProvider: Provider = {
+  id: 'prov-6666',
+  provider: '12792',
+  providerName: 'Comic Asura',
+  linked: true,
+  mangaId: 777,
+  chapterCount: 50,
+  feedCount: 311,
+  feedRanges: '1-258',
+  hasFeed: true,
+  fractionalCount: 9,
+  fractionalChapters: ['1.1', '2.1', '3.1', '4.1', '5.1', '6.1', '7.1', '8.1', '9.1'],
+  ignoreFractional: false,
+  scanlator: '',
+  language: 'en',
+  importance: 40,
+  health: 'ok',
+  chaptersBehind: 0,
+  newestChapterAt: hoursAgo(3),
+  lastSyncedAt: hoursAgo(1),
+  lastError: '',
+}
+
+/**
+ * A source with ONE genuine side-chapter (a `5.5` omake). `.5` is by far the most
+ * common fractional in a real library — this is the source the owner must NOT
+ * tick, and the reason no automatic rule is allowed to guess.
+ */
+export const omakeProvider: Provider = {
+  id: 'prov-7777',
+  provider: '36',
+  providerName: 'Asura Scans',
+  linked: true,
+  mangaId: 778,
+  chapterCount: 120,
+  feedCount: 121,
+  feedRanges: '1-120',
+  hasFeed: true,
+  fractionalCount: 1,
+  fractionalChapters: ['5.5'],
+  ignoreFractional: false,
+  scanlator: '',
+  language: 'en',
+  importance: 60,
+  health: 'ok',
+  chaptersBehind: 0,
+  newestChapterAt: hoursAgo(6),
+  lastSyncedAt: hoursAgo(2),
+  lastError: '',
 }

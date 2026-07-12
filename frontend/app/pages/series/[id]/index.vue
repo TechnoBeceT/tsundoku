@@ -97,6 +97,7 @@ const {
   setCategory,
   reorderProviders,
   removeSource,
+  setIgnoreFractional,
   chooseMetadataSource,
   deleteSeries,
   matchDiskProvider,
@@ -275,6 +276,7 @@ function onResume(): void {
       @reorder-providers="reorderProviders"
       @request-remove-source="openRemove"
       @match-provider="openMatchProvider"
+      @toggle-ignore-fractional="setIgnoreFractional"
       @choose-metadata-source="chooseMetadataSource"
       @delete-series="deleteSeries"
       @add-source="matchOpen = true"

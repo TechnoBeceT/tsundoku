@@ -93,6 +93,31 @@ export interface Provider {
   feedRanges: string
   /** True when this provider has a non-empty availability feed (≥1 ProviderChapter) — the exact backend drift-merge gate. */
   hasFeed: boolean
+  /**
+   * How many chapters in this source's stored feed carry a FRACTIONAL number
+   * (5.1, 5.5 — i.e. `number != floor(number)`). Rides the series-detail
+   * response like `feedCount`: no extra request, no call to the source.
+   */
+  fractionalCount: number
+  /**
+   * Those fractional chapter numbers, ascending, as display strings
+   * (`["1.1", "2.1"]`); always an array, `[]` when there are none.
+   *
+   * This is the EVIDENCE the owner judges `ignoreFractional` from, and it must
+   * be rendered, never hidden: a mirror that re-uploads whole chapters under an
+   * "N.1" suffix shows a long SYSTEMATIC run (1.1, 2.1, 3.1, …), while a source
+   * carrying a genuine side-chapter (omake) shows a lone 5.5. No heuristic can
+   * tell those apart — the owner decides from the list.
+   */
+  fractionalChapters: string[]
+  /**
+   * The owner's per-(series, source) switch marking this source as a fractional
+   * re-uploader: when set, the source contributes no fractional-numbered
+   * chapters to this series (dropped at ingest, excluded from candidacy).
+   * It DELETES NOTHING — downloaded files and existing chapters are kept, and
+   * un-ticking restores the source immediately.
+   */
+  ignoreFractional: boolean
   /** Scanlation group name (may be empty → row omits it). */
   scanlator: string
   /** BCP-47 language code (e.g. `en`, `ko`). */
