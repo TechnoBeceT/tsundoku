@@ -27,6 +27,9 @@ const base: Provider = {
   feedCount: 270,
   feedRanges: '1-269',
   hasFeed: true,
+  fractionalCount: 0,
+  fractionalChapters: [],
+  ignoreFractional: false,
   scanlator: '',
   language: 'en',
   importance: 30,
@@ -82,5 +85,93 @@ describe('ProviderRow — coverage line', () => {
 
     expect(w.text()).not.toContain('Show coverage')
     expect(w.find('.btn-coverage').exists()).toBe(false)
+  })
+})
+
+/**
+ * The fractional evidence + the ignore switch.
+ *
+ * The owner refused a blind toggle: he must SEE which fractional chapters a
+ * source carries before suppressing them, because nothing else distinguishes a
+ * mirror that re-uploads whole chapters as "N.1" from a source carrying a
+ * genuine `5.5` omake (an automatic rule would have destroyed 825 real `.5`
+ * chapters in his library). So: the LIST is rendered, never hidden — and where
+ * there is no evidence there is no switch.
+ */
+describe('ProviderRow — fractional evidence + ignore toggle', () => {
+  const reuploader = {
+    fractionalCount: 9,
+    fractionalChapters: ['1.1', '2.1', '3.1', '4.1', '5.1', '6.1', '7.1', '8.1', '9.1'],
+  }
+
+  it('lists a re-uploader\'s systematic run beside the count', () => {
+    const w = render(reuploader)
+
+    expect(w.find('.source__fractional-count').text()).toBe('9 fractional')
+    expect(w.find('.source__fractional-list').text()).toBe('1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.1, 9.1')
+  })
+
+  it('lists a lone .5 omake — the chapter the owner must NOT suppress', () => {
+    const w = render({ fractionalCount: 1, fractionalChapters: ['5.5'] })
+
+    expect(w.find('.source__fractional-count').text()).toBe('1 fractional')
+    expect(w.find('.source__fractional-list').text()).toBe('5.5')
+  })
+
+  it('caps the list at 12 with "+N more" while the COUNT still reports the true total', () => {
+    const chapters = Array.from({ length: 30 }, (_, i) => `${i + 1}.1`)
+    const w = render({ fractionalCount: 30, fractionalChapters: chapters })
+
+    const list = w.find('.source__fractional-list').text()
+    expect(list).toContain('12.1 +18 more')
+    expect(list).not.toContain('13.1')
+    expect(w.find('.source__fractional-count').text()).toBe('30 fractional')
+  })
+
+  it('emits toggleIgnoreFractional(true) when the switch is turned on', async () => {
+    const w = render(reuploader)
+
+    await w.find('[role="switch"]').trigger('click')
+
+    expect(w.emitted('toggleIgnoreFractional')).toEqual([[true]])
+  })
+
+  it('emits toggleIgnoreFractional(false) when an ignored source is un-ticked', async () => {
+    const w = render({ ...reuploader, ignoreFractional: true })
+
+    await w.find('[role="switch"]').trigger('click')
+
+    expect(w.emitted('toggleIgnoreFractional')).toEqual([[false]])
+  })
+
+  it('keeps the evidence visible while ignored — the decision stays auditable', () => {
+    const w = render({ ...reuploader, ignoreFractional: true })
+
+    expect(w.find('.source__fractional-list').text()).toContain('1.1')
+    expect(w.find('[role="switch"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('renders NO fractional line and NO toggle when the source has no fractionals', () => {
+    const w = render({ fractionalCount: 0, fractionalChapters: [] })
+
+    expect(w.find('.source__fractional').exists()).toBe(false)
+    expect(w.find('.source__fractional-toggle').exists()).toBe(false)
+    expect(w.find('[role="switch"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('Ignore fractional chapters')
+  })
+
+  it('disables the switch while a mutation is in flight', () => {
+    const w = mount(ProviderRow, {
+      props: {
+        provider: { ...base, ...reuploader },
+        rank: 1,
+        preferred: true,
+        canUp: false,
+        canDown: true,
+        saving: true,
+      },
+    })
+
+    expect(w.find('[role="switch"]').attributes('disabled')).toBeDefined()
   })
 })

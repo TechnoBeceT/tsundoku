@@ -58,6 +58,8 @@ const emit = defineEmits<{
   removeSource: [id: string]
   /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
   matchProvider: [id: string]
+  /** A source's ignore-fractional switch flipped — carries its SeriesProvider id and the NEW value. */
+  toggleIgnoreFractional: [id: string, ignore: boolean]
   /** The Add button was pressed (→ opens the Match Source dialog). */
   addSource: []
   /** "Clean up duplicate sources" was pressed. */
@@ -114,6 +116,7 @@ const driftedSet = computed(() => new Set(props.driftedIds))
         @move="emit('move', p.id, $event)"
         @remove="emit('removeSource', p.id)"
         @match="emit('matchProvider', p.id)"
+        @toggle-ignore-fractional="emit('toggleIgnoreFractional', p.id, $event)"
       />
 
       <div v-if="providers.length === 0" class="panel__empty">

@@ -79,6 +79,9 @@ const initialDetail = {
       chapterCount: 2,
       feedCount: 270,
       feedRanges: '1-88, 90-269',
+      fractionalCount: 2,
+      fractionalChapters: ['1.1', '2.1'],
+      ignoreFractional: false,
       scanlator: '',
       language: 'en',
       importance: 2,
@@ -325,6 +328,45 @@ describe('useSeriesDetail — provider feed (coverage without a source ping)', (
     await refresh()
 
     expect(calls.some((c) => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')).toBe(false)
+  })
+
+  it('maps the fractional evidence (count + list + the owner\'s switch) off the same response', async () => {
+    const { series, refresh } = useSeriesDetail('series-1')
+    await refresh()
+
+    const provider = series.value!.providers.find((p) => p.id === 'real-provider-2')!
+    expect(provider.fractionalCount).toBe(2)
+    expect(provider.fractionalChapters).toEqual(['1.1', '2.1'])
+    expect(provider.ignoreFractional).toBe(false)
+  })
+})
+
+describe('useSeriesDetail — setIgnoreFractional', () => {
+  beforeEach(() => {
+    calls = []
+    nextPatchOk = true
+  })
+
+  it('PATCHes the ignore-fractional endpoint with both path params and the exact body', async () => {
+    const { setIgnoreFractional } = useSeriesDetail('series-1')
+
+    const ok = await setIgnoreFractional('real-provider-2', true)
+
+    expect(ok).toBe(true)
+    const call = calls.find((c) => c.path === '/api/series/{id}/providers/{providerId}/ignore-fractional')!
+    expect(call.method).toBe('PATCH')
+    expect(call.params).toEqual({ id: 'series-1', providerId: 'real-provider-2' })
+    expect(call.body).toEqual({ ignoreFractional: true })
+  })
+
+  it('resolves false and surfaces the error on failure (never swallowed)', async () => {
+    const { setIgnoreFractional, error } = useSeriesDetail('series-1')
+    nextPatchOk = false
+
+    const ok = await setIgnoreFractional('real-provider-2', true)
+
+    expect(ok).toBe(false)
+    expect(error.value).toBe('Update failed')
   })
 })
 

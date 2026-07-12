@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import ProviderRow from './ProviderRow.vue'
-import { richSeries, unlinkedProvider } from '../../fixtures/seriesDetail'
+import { richSeries, unlinkedProvider, reuploaderProvider, omakeProvider } from '../../fixtures/seriesDetail'
 
 /**
  * Stories for one ranked source row — the ReorderControl rank stepper, the
@@ -127,5 +127,83 @@ export const NoFeed: Story = {
     preferred: false,
     canUp: true,
     canDown: false,
+  },
+}
+
+/**
+ * A fractional RE-UPLOADER, toggle OFF: the evidence line shows the long
+ * SYSTEMATIC run (1.1, 2.1, 3.1 … 9.1) that gives the game away — this mirror
+ * republishes every whole chapter under an "N.1" suffix. THIS is the row the
+ * owner ticks the box on.
+ */
+export const FractionalReuploader: Story = {
+  args: {
+    provider: reuploaderProvider,
+    rank: 2,
+    preferred: false,
+    canUp: true,
+    canDown: true,
+  },
+}
+
+/**
+ * The same re-uploader with the switch ON: the list stays VISIBLE so the owner
+ * can audit the decision and un-tick it. The switch suppresses; it deletes
+ * nothing.
+ */
+export const FractionalIgnored: Story = {
+  args: {
+    provider: { ...reuploaderProvider, ignoreFractional: true },
+    rank: 2,
+    preferred: false,
+    canUp: true,
+    canDown: true,
+  },
+}
+
+/**
+ * A lone `5.5` omake: a GENUINE side-chapter, not a re-upload. `.5` is the most
+ * common fractional in a real library — this is the row the owner must NOT tick,
+ * and the evidence line is what tells him so.
+ */
+export const FractionalLoneOmake: Story = {
+  args: {
+    provider: omakeProvider,
+    rank: 1,
+    preferred: true,
+    canUp: false,
+    canDown: true,
+  },
+}
+
+/**
+ * A clean source: no fractional chapters at all → NO evidence line and NO
+ * toggle. A switch with no evidence behind it would be a blind switch.
+ */
+export const NoFractionals: Story = {
+  args: {
+    provider: richSeries.providers[0]!,
+    rank: 1,
+    preferred: true,
+    canUp: false,
+    canDown: true,
+  },
+}
+
+/**
+ * A pathological feed (30 fractionals): the list is capped at 12 and tails off
+ * with "+18 more", while the COUNT still reports the true total.
+ */
+export const FractionalCapped: Story = {
+  args: {
+    provider: {
+      ...reuploaderProvider,
+      fractionalCount: 30,
+      fractionalChapters: Array.from({ length: 30 }, (_, i) => `${i + 1}.1`),
+    },
+    rank: 2,
+    preferred: false,
+    canUp: true,
+    canDown: true,
   },
 }

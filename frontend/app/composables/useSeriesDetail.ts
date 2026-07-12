@@ -78,6 +78,9 @@ function mapProvider(dto: ProviderDTO): Provider {
     feedCount: dto.feedCount,
     feedRanges: dto.feedRanges,
     hasFeed: dto.hasFeed,
+    fractionalCount: dto.fractionalCount,
+    fractionalChapters: dto.fractionalChapters,
+    ignoreFractional: dto.ignoreFractional,
     scanlator: dto.scanlator,
     language: dto.language,
     importance: dto.importance,
@@ -218,6 +221,22 @@ export function useSeriesDetail(id: string) {
       removeBusy,
     )
 
+  /**
+   * Flags ONE source as a fractional re-uploader for this series (or clears the
+   * flag): the source stops contributing fractional-numbered chapters (5.1,
+   * 5.5 …) — they are dropped at ingest and excluded from candidacy.
+   *
+   * It deletes NOTHING: already-downloaded files and existing chapters stay,
+   * and un-ticking restores the source immediately. Resolves true on success
+   * (the row re-renders from the refreshed detail), false on failure (surfaced
+   * via `error`, never swallowed).
+   */
+  const setIgnoreFractional = (providerId: string, ignoreFractional: boolean): Promise<boolean> =>
+    mutate(() => apiClient.PATCH('/api/series/{id}/providers/{providerId}/ignore-fractional', {
+      params: { path: { id, providerId } },
+      body: { ignoreFractional },
+    }))
+
   const chooseMetadataSource = (providerId: string): Promise<boolean> =>
     mutate(() => apiClient.PATCH('/api/series/{id}/metadata-source', { params: { path: { id } }, body: { providerId } }))
 
@@ -346,6 +365,7 @@ export function useSeriesDetail(id: string) {
     setCategory,
     reorderProviders,
     removeSource,
+    setIgnoreFractional,
     chooseMetadataSource,
     deleteSeries,
     matchDiskProvider,
