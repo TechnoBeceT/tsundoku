@@ -63,6 +63,11 @@ func (h *Handler) ChapterPage(c echo.Context) error {
 
 	// The cheap half: a single narrow column read, no disk I/O. If the client
 	// already holds exactly these bytes, answer without ever opening the archive.
+	// NOTE: this is deliberately existence/range-blind — a client still holding
+	// an ETag for a CBZ that has SINCE been deleted off disk gets a 304, not a
+	// 404. Not exploitable (an ETag can only ever have come from a prior 200,
+	// so it names nothing the client didn't already have), and re-checking the
+	// file here would defeat the whole point of answering from the DB alone.
 	version, err := h.svc.ChapterPageVersion(ctx, seriesID, chapterID)
 	if err != nil {
 		return mapReaderError(err)
@@ -83,12 +88,22 @@ func (h *Handler) ChapterPage(c echo.Context) error {
 
 // writePageHeaders sets the page response's validator + freshness headers.
 // version=="" (chapter has no rendered CBZ's identity to key on — should not
-// normally reach here since ChapterPage would already have 404'd) skips both
-// headers rather than emit a bogus ETag. Otherwise: the ETag identifies exactly
-// these bytes (version + page index), and the response is only long-cached when
-// the request's ?v= matches the CURRENT version — a stale or absent v always
-// gets pageRevalidate, never pageCacheable (see pageCacheable's doc for why that
-// asymmetry, not `immutable`, is correct here).
+// normally reach here at a 200/304 since ChapterPage would already have
+// 404'd via ErrChapterFileMissing) skips both headers rather than emit a
+// bogus ETag. This correlation is now GENUINELY true: seriessvc.PageVersion
+// returns "" if and only if the chapter's filename is empty — the exact same
+// condition ChapterPage's own missing-CBZ guard checks. It was NOT true
+// before the FIX 1 backend fix — PageVersion used to ALSO return "" whenever
+// download_date was nil even with a filename present (the disk.Reconcile
+// shape, i.e. most of the owner's imported library), a case ChapterPage's
+// guard does not check, so THIS branch WAS live at real 200s: no ETag, no
+// 304 fast path, unconditional no-cache — exactly what hid that bug. See
+// seriessvc.PageVersion's doc comment for why hashing the filename alone is
+// safe once download_date is unknown. Otherwise: the ETag identifies exactly
+// these bytes (version + page index), and the response is only long-cached
+// when the request's ?v= matches the CURRENT version — a stale or absent v
+// always gets pageRevalidate, never pageCacheable (see pageCacheable's doc
+// for why that asymmetry, not `immutable`, is correct here).
 func writePageHeaders(c echo.Context, version string, n int, requestedV string) {
 	if version == "" {
 		c.Response().Header().Set("Cache-Control", pageRevalidate)

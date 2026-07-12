@@ -148,7 +148,9 @@ const stripRef = ref<InstanceType<typeof ReaderStripComponent> | null>(null)
 // (see `visiblePagesFor`'s fallback) instead of borrowing someone else's.
 //
 // `currentPage` is ALSO set optimistically by `onSeek` — see the
-// feedback-loop guard below.
+// feedback-loop guard below. It is SEEDED from the resume target before the
+// prefetcher ever reads it — see the `resume`-seeding watch below, placed
+// just above the `useChapterPrefetch` call it exists for.
 const currentPage = ref(0)
 const visiblePagesByChapter = ref<Record<string, number>>({})
 
@@ -183,6 +185,29 @@ const prefetchNextChapter = computed(() => {
   const idx = chapters.value.findIndex((c) => c.id === cur.id)
   return idx >= 0 && idx < chapters.value.length - 1 ? (chapters.value[idx + 1] ?? null) : null
 })
+
+// FIX (reviewer, reader-page-prefetch): seed `currentPage` from the RESUME
+// TARGET, not the initial `0` — `currentPage` is otherwise only ever written
+// by `onCentered`, which doesn't fire until the FIRST real scroll settles. On
+// a resume open (e.g. the owner left off at page 80), leaving it at 0 meant
+// the prefetcher's "nearest their eyes first" order centred on page 0 and
+// burned its first 5 concurrent requests warming pages nobody was about to
+// see, while the VISIBLE pages (80-84) competed for the same handful of
+// connections — the exact "makes opening a chapter worse" case this whole
+// feature exists to avoid.
+//
+// `flush: 'sync'` (not the default 'pre') is load-bearing, not decorative: it
+// makes this watcher run the INSTANT `chapters` loads — synchronously, inside
+// `useReader.refresh`'s `chapters.value = list` assignment — which is
+// guaranteed to land before `useChapterPrefetch`'s own `currentChapter`
+// watcher (registered below, default-flushed and therefore batched onto the
+// next microtask) ever gets a chance to read `currentPage`. Without `sync`,
+// correctness would depend on Vue's watcher-registration-order scheduling —
+// true today, but not something a future edit here should have to preserve.
+watch(resume, (r) => {
+  if (r.chapterId) currentPage.value = r.page
+}, { immediate: true, flush: 'sync' })
+
 const { dispose: disposePrefetch } = useChapterPrefetch(prefetchCurrentChapter, prefetchNextChapter, currentPage, pageUrl)
 
 /** The chrome's chapter label, e.g. "Chapter 12 · Title" (number-less → the name). */

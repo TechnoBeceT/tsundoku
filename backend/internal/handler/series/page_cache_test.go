@@ -50,6 +50,43 @@ func TestChapterPage_MatchingVersionIsCacheable(t *testing.T) {
 	}
 }
 
+// TestChapterPage_ImportedChapterWithoutDownloadDateIsCacheable is the FIX 1
+// regression proof, at the HTTP layer: the seeded "alpha-1" chapter carries a
+// filename (env.seed's SetFilename) but deliberately NO download_date — this
+// is exactly the shape `disk.Reconcile` leaves on every disk-imported /
+// Kaizoku-migrated chapter, i.e. most of the owner's real library. It must
+// NOT be routed through the handler's version=="" branch (no ETag,
+// unconditional no-cache — strictly worse than this feature's predecessor):
+// with a matching ?v= it must earn the full-day cache AND an ETag, exactly
+// like a freshly-downloaded chapter. Deliberately does NOT use
+// stampDownloadDate — that helper is what was masking this bug.
+func TestChapterPage_ImportedChapterWithoutDownloadDateIsCacheable(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	chID := writeSeededCBZ(ctx, t, env)
+	ch := env.client.Chapter.Query().Where(entchapter.ChapterKey("alpha-1")).OnlyX(ctx)
+	if ch.DownloadDate != nil {
+		t.Fatal("test setup: expected the seeded chapter to have NO download_date (the disk.Reconcile shape)")
+	}
+	version := seriessvc.PageVersion(ch.Filename, ch.DownloadDate)
+	if version == "" {
+		t.Fatal("PageVersion: want a non-empty version for a filename with no download_date, got empty")
+	}
+
+	target := "/api/series/" + env.mangaID.String() + "/chapters/" + chID.String() + "/pages/0?v=" + version
+	rec := env.do(http.MethodGet, target, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ChapterPage matching ?v= (no download_date): want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=86400" {
+		t.Fatalf("ChapterPage matching ?v= (no download_date) cache-control: got %q, want private, max-age=86400", cc)
+	}
+	if etag := rec.Header().Get("ETag"); etag == "" {
+		t.Error("ChapterPage matching ?v= (no download_date): missing ETag")
+	}
+}
+
 // TestChapterPage_UnversionedOrStaleNeverLongCaches proves the one case that
 // would risk serving stale bytes — no ?v= at all (a bookmark/curl/preload with
 // no cache buster) or a STALE ?v= (held from before a convergence upgrade

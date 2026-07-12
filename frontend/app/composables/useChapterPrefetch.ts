@@ -35,7 +35,15 @@
  * BOUNDED CONCURRENCY: `PREFETCH_CONCURRENCY` caps in-flight page requests —
  * firing all ~165 requests for a chapter at once would saturate the browser's
  * per-origin connection pool and starve the pages the reader is ACTUALLY
- * looking at right now, defeating the whole point.
+ * looking at right now, defeating the whole point. The cap is PER DRAIN, not a
+ * hard ceiling on the whole composable instance: abandonment (see
+ * `generation` below) stops a stale drain's worker loop from ENQUEUING more
+ * pages, but its already-`await`ed `loadImage` calls are left to resolve
+ * rather than aborted, and a fresh drain starts its own batch immediately —
+ * so a rapid chapter flip can transiently run up to ~2x this cap (more across
+ * several flips in quick succession). That overlap is harmless (cache-warming,
+ * never cache-poisoning) and deliberately not worth an AbortController to
+ * close — see `generation`'s doc comment.
  *
  * TAIL-404 TOLERANCE: `pageCount` is a DECLARED count that may exceed the
  * CBZ's real image count (Kaizoku imports — see `ReaderChapter`'s doc
@@ -46,7 +54,10 @@
  */
 import { watch, type Ref } from 'vue'
 
-/** Never more than this many page requests in flight at once (see the file header). */
+/** The bound on in-flight page requests WITHIN one drain (see the file
+ *  header's BOUNDED CONCURRENCY note) — NOT a hard ceiling across the whole
+ *  composable instance; an abandoned drain's already-in-flight requests can
+ *  transiently overlap a freshly-started one. */
 const PREFETCH_CONCURRENCY = 5
 
 /** The slice of a reader chapter the prefetcher needs. `ReaderChapter` (from
