@@ -247,6 +247,47 @@ func (h *Handler) RemoveProvider(c echo.Context) error {
 	return c.JSON(http.StatusOK, updated)
 }
 
+// SetIgnoreFractional handles
+// PATCH /api/series/:id/providers/:providerId/ignore-fractional. It flags one
+// source as a fractional re-uploader for this series (or clears the flag), so the
+// source stops offering fractional-numbered chapters here. It DELETES NOTHING —
+// existing feed rows and downloaded CBZs are kept, and un-ticking restores the
+// source immediately.
+//
+// On success it returns 200 with the full SeriesDetailDTO so the Sources panel
+// re-renders with the new flag AND the unchanged fractional evidence list,
+// without a refetch (§16 round-trip).
+func (h *Handler) SetIgnoreFractional(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+	providerID, err := validateID(c.Param("providerId"), "provider id")
+	if err != nil {
+		return err
+	}
+
+	var req SetIgnoreFractionalRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := validateSetIgnoreFractional(req); err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := h.svc.SetIgnoreFractional(ctx, id, providerID, *req.IgnoreFractional); err != nil {
+		return mapServiceError(err)
+	}
+
+	// Return the updated detail so the caller sees the new flag without a refetch (§16).
+	updated, err := h.svc.GetSeries(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
 // DeleteSeries handles DELETE /api/series/:id?deleteFiles=true|false. It hard-
 // deletes the whole series (all DB rows); when deleteFiles=true it also removes
 // the downloaded CBZs + library folder from disk. Returns 204 No Content.

@@ -889,6 +889,55 @@ func (s *Service) SetMetadataSource(ctx context.Context, id uuid.UUID, providerI
 	return nil
 }
 
+// SetIgnoreFractional flags one of the series' sources as a fractional
+// re-uploader (ignore=true), or clears the flag (ignore=false). A flagged source
+// stops contributing fractional-numbered chapters (5.1, 5.5 …) to THIS series:
+// they are dropped at ingest and excluded from download candidacy. Its WHOLE
+// chapters are unaffected — the toggle suppresses a mirror's re-uploads, it does
+// not disable the source.
+//
+// It is per (series, provider) and an explicit OWNER decision, never a heuristic:
+// the engine cannot tell a re-upload from a genuine side-chapter (a ".5" omake
+// source obviously also hosts the whole chapter), so the owner ticks it after
+// SEEING that source's fractional list (ProviderDTO.fractionalChapters).
+//
+// It DELETES NOTHING (never-auto-delete): the fractional ProviderChapter rows
+// already ingested from that source, every Chapter row, and every CBZ already
+// downloaded from it are all kept. Un-ticking restores the source immediately.
+// Cleaning up already-downloaded duplicates stays a separate, explicit owner
+// action (DedupeFiles).
+//
+// An unknown series returns ErrSeriesNotFound (→404); a providerID that does not
+// belong to this series returns ErrProviderNotInSeries (→400). A one-column
+// update needs no transaction — the two existence checks are the whole contract.
+func (s *Service) SetIgnoreFractional(ctx context.Context, id, providerID uuid.UUID, ignore bool) error {
+	exists, err := s.client.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return fmt.Errorf("series.SetIgnoreFractional: check series %s: %w", id, err)
+	}
+	if !exists {
+		return ErrSeriesNotFound
+	}
+
+	owned, err := s.client.SeriesProvider.Query().
+		Where(entseriesprovider.IDEQ(providerID), entseriesprovider.SeriesID(id)).
+		Exist(ctx)
+	if err != nil {
+		return fmt.Errorf("series.SetIgnoreFractional: check provider %s: %w", providerID, err)
+	}
+	if !owned {
+		return ErrProviderNotInSeries
+	}
+
+	if err := s.client.SeriesProvider.UpdateOneID(providerID).SetIgnoreFractional(ignore).Exec(ctx); err != nil {
+		// Defensive path: the provider row's existence was just confirmed above, so
+		// this is reachable only on a DB-level failure — not forceable in a
+		// black-box test.
+		return fmt.Errorf("series.SetIgnoreFractional: update provider %s: %w", providerID, err)
+	}
+	return nil
+}
+
 // ChapterTitles builds a chapter_key → display title map from the series'
 // eagerly-loaded providers and their ProviderChapter feeds. For each chapter_key
 // it picks the name from the provider with the HIGHEST importance that supplies a

@@ -197,6 +197,27 @@ func validateSetMetadataSource(req SetMetadataSourceRequest) (*uuid.UUID, error)
 	return &id, nil
 }
 
+// SetIgnoreFractionalRequest is the
+// PATCH /api/series/{id}/providers/{providerId}/ignore-fractional request body.
+type SetIgnoreFractionalRequest struct {
+	// IgnoreFractional marks this source as a fractional re-uploader FOR THIS
+	// SERIES: a mirror that republishes whole chapter N as a lone "N.1". When set,
+	// the source contributes no fractional chapters to the series.
+	IgnoreFractional *bool `json:"ignoreFractional"`
+}
+
+// validateSetIgnoreFractional validates the PATCH body: the ignoreFractional
+// field must be explicitly present. It is a bool POINTER so an omitted field is
+// distinguishable from an explicit false — silently defaulting a suppression
+// switch to false would let a mis-shaped client quietly un-tick it. A missing
+// field yields a 400 echo.HTTPError.
+func validateSetIgnoreFractional(req SetIgnoreFractionalRequest) error {
+	if req.IgnoreFractional == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "ignoreFractional is required")
+	}
+	return nil
+}
+
 // validateReorderProviders validates the PATCH body: at least one entry is
 // required and each id must parse as a valid UUID. The importance value is NOT
 // range-checked here — the service normalizes the submitted importances to a
