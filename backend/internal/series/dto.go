@@ -5,6 +5,7 @@
 package series
 
 import (
+	"slices"
 	"strconv"
 	"time"
 
@@ -141,15 +142,34 @@ type ProviderDTO struct {
 	// HasFeed is true when this provider has a non-empty availability feed
 	// (≥1 ProviderChapter). Mirrors the backend drift-merge feed gate so the FE
 	// offers exactly the pairs the backend would merge.
-	HasFeed         bool       `json:"hasFeed"`
-	Scanlator       string     `json:"scanlator"`
-	Language        string     `json:"language"`
-	Importance      int        `json:"importance"`
-	Health          string     `json:"health"`
-	ChaptersBehind  int        `json:"chaptersBehind"`
-	NewestChapterAt *time.Time `json:"newestChapterAt"`
-	LastSyncedAt    *time.Time `json:"lastSyncedAt"`
-	LastError       string     `json:"lastError"`
+	HasFeed bool `json:"hasFeed"`
+	// FractionalCount / FractionalChapters expose the fractional-numbered chapters
+	// (5.1, 5.5 …) in THIS provider's stored feed. They are the EVIDENCE the owner
+	// needs before ticking IgnoreFractional: a mirror that re-uploads whole chapters
+	// under an "N.1" suffix shows a long SYSTEMATIC run (1.1, 2.1, 3.1, …), while a
+	// source carrying a genuine side-chapter shows a lone 5.5. The engine cannot
+	// tell those apart — the owner can, but only if he can SEE them.
+	//
+	// Read from p.Edges.ProviderChapters, which every caller already eager-loads —
+	// no extra query and no source call (identical to FeedCount/FeedRanges).
+	// FractionalChapters is ascending and always non-nil, so the JSON renders [],
+	// never null.
+	FractionalCount    int      `json:"fractionalCount"`
+	FractionalChapters []string `json:"fractionalChapters"`
+	// IgnoreFractional is the owner's per-(series, source) switch marking this
+	// source as a fractional re-uploader: when set it contributes no
+	// fractional-numbered chapters to this series. It is reported here even when
+	// set — an ignored source keeps showing its fractional list, so the owner can
+	// always review what he suppressed and un-tick it.
+	IgnoreFractional bool       `json:"ignoreFractional"`
+	Scanlator        string     `json:"scanlator"`
+	Language         string     `json:"language"`
+	Importance       int        `json:"importance"`
+	Health           string     `json:"health"`
+	ChaptersBehind   int        `json:"chaptersBehind"`
+	NewestChapterAt  *time.Time `json:"newestChapterAt"`
+	LastSyncedAt     *time.Time `json:"lastSyncedAt"`
+	LastError        string     `json:"lastError"`
 }
 
 // LibraryHealthDTO is the library-wide source-health scan: only series that
@@ -231,14 +251,15 @@ func chapterDisplayName(name string, number *float64) string {
 // SPA never fires a cover fetch that would 404). Title is the provider's own
 // title for the series (set at ingest, may be "").
 //
-// FeedCount/FeedRanges/HasFeed are all read from p.Edges.ProviderChapters, which
-// every caller already eager-loads (GetSeries / loadSeriesWithHealthData) — no
-// extra query, no source call.
+// FeedCount/FeedRanges/HasFeed and the FractionalCount/FractionalChapters pair are
+// all read from p.Edges.ProviderChapters, which every caller already eager-loads
+// (GetSeries / loadSeriesWithHealthData) — no extra query, no source call.
 func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID, isMetadataSource bool, chapterCount int) ProviderDTO {
 	var coverURL string
 	if p.CoverURL != "" {
 		coverURL = "/api/series/" + seriesID.String() + "/providers/" + p.ID.String() + "/cover"
 	}
+	fracCount, fracChapters := fractionalFeed(p)
 	return ProviderDTO{
 		ID:               p.ID.String(),
 		Provider:         p.Provider,
@@ -252,14 +273,19 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 		FeedCount:        len(p.Edges.ProviderChapters),
 		FeedRanges:       feedRanges(p),
 		HasFeed:          len(p.Edges.ProviderChapters) > 0,
-		Scanlator:        p.Scanlator,
-		Language:         p.Language,
-		Importance:       p.Importance,
-		Health:           h.Status,
-		ChaptersBehind:   h.ChaptersBehind,
-		NewestChapterAt:  h.NewestChapterAt,
-		LastSyncedAt:     h.LastSyncedAt,
-		LastError:        h.LastError,
+
+		FractionalCount:    fracCount,
+		FractionalChapters: fracChapters,
+		IgnoreFractional:   p.IgnoreFractional,
+
+		Scanlator:       p.Scanlator,
+		Language:        p.Language,
+		Importance:      p.Importance,
+		Health:          h.Status,
+		ChaptersBehind:  h.ChaptersBehind,
+		NewestChapterAt: h.NewestChapterAt,
+		LastSyncedAt:    h.LastSyncedAt,
+		LastError:       h.LastError,
 	}
 }
 
@@ -276,6 +302,33 @@ func feedRanges(p *ent.SeriesProvider) string {
 		}
 	}
 	return chapterrange.FormatChapterRanges(numbers)
+}
+
+// fractionalFeed lists the fractional-numbered chapters in one provider's STORED
+// feed (p.Edges.ProviderChapters — the caller must have eager-loaded it), ascending,
+// as display strings ("1.1", "5.5"), and returns how many there are. "Fractional"
+// is chapterrange.IsFractional — the ONE definition in the codebase, shared with the
+// supersede engine and the ingest/candidacy gates, so this view can never drift from
+// what the engine actually suppresses.
+//
+// Purely in-memory: no DB query and, deliberately, no call to the source — the feed
+// rows are already loaded (this is what makes FeedCount/FeedRanges free too). A feed
+// row with no chapter number contributes nothing. The returned slice is never nil,
+// so the JSON renders [] rather than null.
+func fractionalFeed(p *ent.SeriesProvider) (int, []string) {
+	numbers := make([]float64, 0, len(p.Edges.ProviderChapters))
+	for _, pc := range p.Edges.ProviderChapters {
+		if pc.Number != nil && chapterrange.IsFractional(*pc.Number) {
+			numbers = append(numbers, *pc.Number)
+		}
+	}
+	slices.Sort(numbers)
+
+	out := make([]string, 0, len(numbers))
+	for _, n := range numbers {
+		out = append(out, strconv.FormatFloat(n, 'f', -1, 64))
+	}
+	return len(out), out
 }
 
 // providerChapterCounts tallies, for one loaded series, how many chapters each
