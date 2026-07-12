@@ -6950,6 +6950,7 @@ type SeriesProviderMutation struct {
 	addflags                  *int32
 	importance                *int
 	addimportance             *int
+	ignore_fractional         *bool
 	cover_url                 *string
 	created_at                *time.Time
 	updated_at                *time.Time
@@ -7592,6 +7593,42 @@ func (m *SeriesProviderMutation) ResetImportance() {
 	m.addimportance = nil
 }
 
+// SetIgnoreFractional sets the "ignore_fractional" field.
+func (m *SeriesProviderMutation) SetIgnoreFractional(b bool) {
+	m.ignore_fractional = &b
+}
+
+// IgnoreFractional returns the value of the "ignore_fractional" field in the mutation.
+func (m *SeriesProviderMutation) IgnoreFractional() (r bool, exists bool) {
+	v := m.ignore_fractional
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIgnoreFractional returns the old "ignore_fractional" field's value of the SeriesProvider entity.
+// If the SeriesProvider object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesProviderMutation) OldIgnoreFractional(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIgnoreFractional is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIgnoreFractional requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIgnoreFractional: %w", err)
+	}
+	return oldValue.IgnoreFractional, nil
+}
+
+// ResetIgnoreFractional resets all changes to the "ignore_fractional" field.
+func (m *SeriesProviderMutation) ResetIgnoreFractional() {
+	m.ignore_fractional = nil
+}
+
 // SetCoverURL sets the "cover_url" field.
 func (m *SeriesProviderMutation) SetCoverURL(s string) {
 	m.cover_url = &s
@@ -7908,7 +7945,7 @@ func (m *SeriesProviderMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesProviderMutation) Fields() []string {
-	fields := make([]string, 0, 15)
+	fields := make([]string, 0, 16)
 	if m.series != nil {
 		fields = append(fields, seriesprovider.FieldSeriesID)
 	}
@@ -7944,6 +7981,9 @@ func (m *SeriesProviderMutation) Fields() []string {
 	}
 	if m.importance != nil {
 		fields = append(fields, seriesprovider.FieldImportance)
+	}
+	if m.ignore_fractional != nil {
+		fields = append(fields, seriesprovider.FieldIgnoreFractional)
 	}
 	if m.cover_url != nil {
 		fields = append(fields, seriesprovider.FieldCoverURL)
@@ -7986,6 +8026,8 @@ func (m *SeriesProviderMutation) Field(name string) (ent.Value, bool) {
 		return m.Flags()
 	case seriesprovider.FieldImportance:
 		return m.Importance()
+	case seriesprovider.FieldIgnoreFractional:
+		return m.IgnoreFractional()
 	case seriesprovider.FieldCoverURL:
 		return m.CoverURL()
 	case seriesprovider.FieldCreatedAt:
@@ -8025,6 +8067,8 @@ func (m *SeriesProviderMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldFlags(ctx)
 	case seriesprovider.FieldImportance:
 		return m.OldImportance(ctx)
+	case seriesprovider.FieldIgnoreFractional:
+		return m.OldIgnoreFractional(ctx)
 	case seriesprovider.FieldCoverURL:
 		return m.OldCoverURL(ctx)
 	case seriesprovider.FieldCreatedAt:
@@ -8123,6 +8167,13 @@ func (m *SeriesProviderMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetImportance(v)
+		return nil
+	case seriesprovider.FieldIgnoreFractional:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIgnoreFractional(v)
 		return nil
 	case seriesprovider.FieldCoverURL:
 		v, ok := value.(string)
@@ -8283,6 +8334,9 @@ func (m *SeriesProviderMutation) ResetField(name string) error {
 		return nil
 	case seriesprovider.FieldImportance:
 		m.ResetImportance()
+		return nil
+	case seriesprovider.FieldIgnoreFractional:
+		m.ResetIgnoreFractional()
 		return nil
 	case seriesprovider.FieldCoverURL:
 		m.ResetCoverURL()

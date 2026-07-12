@@ -37,6 +37,23 @@ func (SeriesProvider) Fields() []ent.Field {
 		field.String("status").Default(""),
 		field.Uint32("flags").Default(0),
 		field.Int("importance").Default(0),
+		// ignore_fractional marks this source, FOR THIS SERIES, as a fractional
+		// re-uploader: a mirror that republishes whole chapter N as a lone "N.1"
+		// under its own URL (Comic Asura does exactly this — 179 pages vs Asura's
+		// 26). When set, the source contributes NO fractional-numbered chapters to
+		// this series: they are dropped at ingest and excluded from candidacy.
+		//
+		// It is per (series, provider) and NOT a heuristic, deliberately. The engine
+		// CANNOT tell a re-upload from a genuine side-chapter: a `.5` omake source
+		// obviously also hosts the whole chapter, and `.5` is the MOST COMMON
+		// fractional in a real library (825 chapters across 44 series). Any automatic
+		// rule would have deleted all of them. So the owner ticks it per source, after
+		// SEEING that source's fractional list (ProviderDTO.fractionalChapters).
+		//
+		// Flipping it DELETES NOTHING (never-auto-delete): existing ProviderChapter
+		// rows and downloaded CBZs stay; the source simply stops offering fractionals.
+		// Additive + defaulted ⇒ zero-data migration.
+		field.Bool("ignore_fractional").Default(false),
 		// cover_url is this source's thumbnail path (Suwayomi server-relative),
 		// captured at ingest from the source manga. "" when none. Served via the
 		// cover proxy; never loaded directly by the browser.

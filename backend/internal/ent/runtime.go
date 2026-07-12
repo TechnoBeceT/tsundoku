@@ -263,16 +263,20 @@ func init() {
 	seriesproviderDescImportance := seriesproviderFields[12].Descriptor()
 	// seriesprovider.DefaultImportance holds the default value on creation for the importance field.
 	seriesprovider.DefaultImportance = seriesproviderDescImportance.Default.(int)
+	// seriesproviderDescIgnoreFractional is the schema descriptor for ignore_fractional field.
+	seriesproviderDescIgnoreFractional := seriesproviderFields[13].Descriptor()
+	// seriesprovider.DefaultIgnoreFractional holds the default value on creation for the ignore_fractional field.
+	seriesprovider.DefaultIgnoreFractional = seriesproviderDescIgnoreFractional.Default.(bool)
 	// seriesproviderDescCoverURL is the schema descriptor for cover_url field.
-	seriesproviderDescCoverURL := seriesproviderFields[13].Descriptor()
+	seriesproviderDescCoverURL := seriesproviderFields[14].Descriptor()
 	// seriesprovider.DefaultCoverURL holds the default value on creation for the cover_url field.
 	seriesprovider.DefaultCoverURL = seriesproviderDescCoverURL.Default.(string)
 	// seriesproviderDescCreatedAt is the schema descriptor for created_at field.
-	seriesproviderDescCreatedAt := seriesproviderFields[14].Descriptor()
+	seriesproviderDescCreatedAt := seriesproviderFields[15].Descriptor()
 	// seriesprovider.DefaultCreatedAt holds the default value on creation for the created_at field.
 	seriesprovider.DefaultCreatedAt = seriesproviderDescCreatedAt.Default.(func() time.Time)
 	// seriesproviderDescUpdatedAt is the schema descriptor for updated_at field.
-	seriesproviderDescUpdatedAt := seriesproviderFields[15].Descriptor()
+	seriesproviderDescUpdatedAt := seriesproviderFields[16].Descriptor()
 	// seriesprovider.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	seriesprovider.DefaultUpdatedAt = seriesproviderDescUpdatedAt.Default.(func() time.Time)
 	// seriesprovider.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

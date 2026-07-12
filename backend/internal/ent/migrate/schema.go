@@ -217,6 +217,7 @@ var (
 		{Name: "status", Type: field.TypeString, Default: ""},
 		{Name: "flags", Type: field.TypeUint32, Default: 0},
 		{Name: "importance", Type: field.TypeInt, Default: 0},
+		{Name: "ignore_fractional", Type: field.TypeBool, Default: false},
 		{Name: "cover_url", Type: field.TypeString, Default: ""},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
@@ -230,7 +231,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "series_providers_series_providers",
-				Columns:    []*schema.Column{SeriesProvidersColumns[15]},
+				Columns:    []*schema.Column{SeriesProvidersColumns[16]},
 				RefColumns: []*schema.Column{SeriesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},

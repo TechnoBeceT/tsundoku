@@ -39,6 +39,8 @@ const (
 	FieldFlags = "flags"
 	// FieldImportance holds the string denoting the importance field in the database.
 	FieldImportance = "importance"
+	// FieldIgnoreFractional holds the string denoting the ignore_fractional field in the database.
+	FieldIgnoreFractional = "ignore_fractional"
 	// FieldCoverURL holds the string denoting the cover_url field in the database.
 	FieldCoverURL = "cover_url"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
@@ -100,6 +102,7 @@ var Columns = []string{
 	FieldStatus,
 	FieldFlags,
 	FieldImportance,
+	FieldIgnoreFractional,
 	FieldCoverURL,
 	FieldCreatedAt,
 	FieldUpdatedAt,
@@ -134,6 +137,8 @@ var (
 	DefaultFlags uint32
 	// DefaultImportance holds the default value on creation for the "importance" field.
 	DefaultImportance int
+	// DefaultIgnoreFractional holds the default value on creation for the "ignore_fractional" field.
+	DefaultIgnoreFractional bool
 	// DefaultCoverURL holds the default value on creation for the "cover_url" field.
 	DefaultCoverURL string
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
@@ -212,6 +217,11 @@ func ByFlags(opts ...sql.OrderTermOption) OrderOption {
 // ByImportance orders the results by the importance field.
 func ByImportance(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldImportance, opts...).ToFunc()
+}
+
+// ByIgnoreFractional orders the results by the ignore_fractional field.
+func ByIgnoreFractional(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldIgnoreFractional, opts...).ToFunc()
 }
 
 // ByCoverURL orders the results by the cover_url field.
