@@ -28,6 +28,12 @@ import (
 // chapterProvider); ProviderName is that same source's human-readable display
 // label (falls back to the id), which the UI shows in place of the id. Both are
 // "" for a chapter nothing is fetching — the UI renders that as an em-dash.
+// CAVEAT: this is "who supplies this chapter", not a provenance guarantee — a
+// DOWNLOADED chapter whose satisfier was cleared (series.RemoveProvider, which
+// keeps the CBZ) has no stored provenance left, so it names a remaining feed
+// carrier, or nothing at all. Case 2 is also a UI HINT, not engine state: the
+// engine excludes retry-exhausted / cooling-down / breaker-tripped sources this
+// read model cannot see.
 //
 // UpgradeTarget is the display label of the source an UPGRADING chapter is
 // converging TO (the UI renders "<ProviderName> → <UpgradeTarget>"), and is ""
@@ -74,13 +80,13 @@ type RetryAllResultDTO struct {
 
 // seriesResolution holds the once-per-series derived values reused across all of
 // that series' chapters on a page: the chapter_key→name map, the resolved display
-// name + cover proxy path, and the chapter_key→providers (importance-DESC) feed
-// index.
+// name + cover proxy path, and the chapter_key→carriers feed index (ordered as the
+// engine orders candidates: importance DESC, then ProviderChapter.ID ASC).
 //
 // upgradeTargets serves BOTH source questions a row asks, from the one index:
 // which source an upgrading chapter is converging TO (upgradeTargetLabel), and —
-// for a chapter nothing has satisfied yet — which source is actually FETCHING it
-// (chapterProvider). Both answers are "the highest-importance provider whose feed
+// for a chapter with no satisfier — which source is actually FETCHING it
+// (chapterProvider). Both answers are "the highest-importance source whose feed
 // carries this key", which is exactly the scheduler's primary-source rule, so they
 // share one definition (§2 DRY) and cost no extra query. A chapter no feed carries
 // resolves to no source at all ("").

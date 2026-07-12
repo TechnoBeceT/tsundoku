@@ -11,29 +11,52 @@ import (
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
-// upgradeTargetIndex maps a chapter_key to the series' providers that OFFER that
-// key, ordered by importance DESC (higher importance = higher priority). It is
-// built ONCE per series from the already-batch-loaded provider feeds, so resolving
-// a page's upgrade targets adds ZERO queries (see newUpgradeTargetIndex).
-type upgradeTargetIndex map[string][]*ent.SeriesProvider
+// feedCarrier is one source that OFFERS a given chapter_key, paired with the id of
+// the ProviderChapter feed row through which it offers it. The feed-row id is not
+// cosmetic: it is the SECONDARY sort key the engine ranks candidates by, so
+// carrying it is what lets this read model order ties exactly as the engine does
+// (see newUpgradeTargetIndex). UNIQUE(series_provider_id, chapter_key) means a
+// provider contributes exactly one feed row per key, so pcID is unambiguous.
+type feedCarrier struct {
+	provider *ent.SeriesProvider
+	pcID     uuid.UUID
+}
 
-// newUpgradeTargetIndex builds the per-series key→providers index from the
+// upgradeTargetIndex maps a chapter_key to the series' sources that OFFER that key,
+// ordered exactly as chapter.RankedLiveCandidates orders them: importance DESC,
+// then ProviderChapter.ID (string form) ASC as the tiebreak. It is built ONCE per
+// series from the already-batch-loaded provider feeds, so resolving a page's
+// sources + upgrade targets adds ZERO queries (see newUpgradeTargetIndex).
+type upgradeTargetIndex map[string][]feedCarrier
+
+// newUpgradeTargetIndex builds the per-series key→carriers index from the
 // providers' EAGER-LOADED ProviderChapter feeds (loadProviders already fetches
 // them WithProviderChapters for the display/name resolution). It walks each feed
 // once — O(total feed rows for the page's series) — and never touches the DB, so
 // the downloads list stays at its bounded, page-size-independent query count.
+//
+// The ordering MIRRORS chapter.RankedLiveCandidates byte-for-byte: importance DESC,
+// then ProviderChapter.ID.String() ASC. The secondary key is load-bearing, not
+// decoration — EQUAL importances are routine (disk.Reconcile gives every
+// disk-origin provider importance 1), and without it a tie would fall back to the
+// order Postgres happened to return the providers in (the batch load has no ORDER
+// BY), so the UI could name a different source than the scheduler picks, and even a
+// different one on the next refresh.
 func newUpgradeTargetIndex(provs []*ent.SeriesProvider) upgradeTargetIndex {
 	idx := upgradeTargetIndex{}
 	for _, sp := range provs {
 		for _, pc := range sp.Edges.ProviderChapters {
-			idx[pc.ChapterKey] = append(idx[pc.ChapterKey], sp)
+			idx[pc.ChapterKey] = append(idx[pc.ChapterKey], feedCarrier{provider: sp, pcID: pc.ID})
 		}
 	}
-	for key, provs := range idx {
-		slices.SortStableFunc(provs, func(a, b *ent.SeriesProvider) int {
-			return cmp.Compare(b.Importance, a.Importance) // importance DESC
+	for key, carriers := range idx {
+		slices.SortStableFunc(carriers, func(a, b feedCarrier) int {
+			if c := cmp.Compare(b.provider.Importance, a.provider.Importance); c != 0 {
+				return c // importance DESC
+			}
+			return cmp.Compare(a.pcID.String(), b.pcID.String()) // then feed-row id ASC
 		})
-		idx[key] = provs
+		idx[key] = carriers
 	}
 	return idx
 }
@@ -44,8 +67,9 @@ func newUpgradeTargetIndex(provs []*ent.SeriesProvider) upgradeTargetIndex {
 // only the source being REPLACED (satisfied_by, which is where the file came from).
 //
 // The rule — the INTENDED target, deliberately NOT the engine's authoritative pick:
-// among the providers whose feed carries this chapter's chapter_key, take the
-// highest-importance one that is (a) NOT the chapter's current satisfier and (b)
+// among the sources whose feed carries this chapter's chapter_key (ranked exactly as
+// the engine ranks them — see upgradeTargetIndex), take the highest-importance one
+// that is (a) NOT the chapter's current satisfier and (b)
 // strictly higher than the satisfier's CURRENT importance (its frozen
 // satisfied_importance watermark when the satisfier was removed or is parked at the
 // importance-0 merge sentinel — mirroring download.effectiveSatisfiedImportance).
@@ -62,7 +86,8 @@ func upgradeTargetLabel(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uu
 	if !isUpgrading(ch.State) {
 		return ""
 	}
-	for _, sp := range idx[ch.ChapterKey] {
+	for _, c := range idx[ch.ChapterKey] {
+		sp := c.provider
 		if ch.SatisfiedByProviderID != nil && sp.ID == *ch.SatisfiedByProviderID {
 			continue
 		}
