@@ -156,6 +156,8 @@ func registerRoutes(
 	authed.PATCH("/series/:id/providers/:providerId/ignore-fractional", seriesH.SetIgnoreFractional)
 	authed.DELETE("/series/:id", seriesH.DeleteSeries)
 	authed.POST("/series/:id/dedupe-files", seriesH.DedupeFiles)
+	authed.GET("/series/:id/fractional-cleanup", seriesH.FractionalCleanupPreview)
+	authed.POST("/series/:id/fractional-cleanup", seriesH.RemoveFractionalChapters)
 	authed.GET("/series/:id/cover", seriesH.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", seriesH.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)

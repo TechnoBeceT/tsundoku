@@ -388,6 +388,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/fractional-cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview the series' removable fractional chapters
+         * @description Lists the already-downloaded FRACTIONAL chapters that are safe to remove —
+         *     the files left behind when the owner ticked "ignore fractional chapters" on
+         *     a source (that toggle stops NEW fractional downloads and deletes nothing).
+         *
+         *     A chapter is removable only when its number is fractional, it HAS a file
+         *     (downloaded with a filename), and EVERY source whose feed carries its
+         *     chapter key has ignore_fractional set. That last rule is the resurrection
+         *     guard: a fractional a non-ignored source still carries would simply be
+         *     re-ingested and re-downloaded by the next refresh sweep.
+         *
+         *     Each entry carries the evidence the owner judges from (page count, the
+         *     satisfying source, the filename), alongside typicalPageCount — the MEDIAN
+         *     page count of the series' whole (non-fractional) downloaded chapters — so a
+         *     1-page notice page and a 132-page full chapter numbered ".5" are told apart
+         *     by measurement, not by name. This endpoint deletes nothing.
+         */
+        get: operations["previewFractionalCleanup"];
+        put?: never;
+        /**
+         * Remove the selected fractional chapters (files + rows)
+         * @description Owner-triggered removal of the fractional chapters selected in the cleanup
+         *     dialog: each chapter's CBZ file and its Chapter row are deleted. The source
+         *     feed rows (ProviderChapter) are KEPT — the feed is the source's offering,
+         *     not the owner's library, so un-ticking the ignore-fractional toggle restores
+         *     the chapter on the next ingest.
+         *
+         *     The removable set is RE-COMPUTED server-side: any chapterId outside it (a
+         *     whole chapter, a fractional a live source still carries, a chapter of another
+         *     series) is rejected with 400 and NOTHING is deleted (all-or-nothing). Nothing
+         *     automatic ever calls this endpoint.
+         */
+        post: operations["removeFractionalChapters"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}": {
         parameters: {
             query?: never;
@@ -1846,6 +1893,42 @@ export interface components {
         };
         DedupeFilesResult: {
             /** @description Number of superseded duplicate CBZ files removed from disk by the owner-triggered dedupe-files sweep. Winning files are never removed. */
+            removed: number;
+        };
+        FractionalCleanupChapter: {
+            /**
+             * Format: uuid
+             * @description Chapter UUID — the id the cleanup POST names.
+             */
+            chapterId: string;
+            /**
+             * Format: double
+             * @description The chapter number. Always fractional (5.1, 181.5 …).
+             * @example 181.5
+             */
+            number: number;
+            /** @description How many pages the downloaded file has, or null when never recorded. This is the EVIDENCE: a 1-page "chapter" is a notice page; a 132-page one is a full-size chapter that merely carries a ".5" number. Judge by this, never by the number. */
+            pageCount: number | null;
+            /** @description Display label of the source that satisfies this chapter (where the file came from); "" when that source has since been removed. */
+            provider: string;
+            /** @description The CBZ filename that will be deleted. */
+            filename: string;
+        };
+        FractionalCleanupPreview: {
+            /**
+             * @description MEDIAN page count of the series' WHOLE (non-fractional) downloaded chapters — the yardstick the fractionals are judged against. 0 when no whole downloaded chapter carries a page count.
+             * @example 96
+             */
+            typicalPageCount: number;
+            /** @description The removable fractional chapters; empty when there is nothing to clean. */
+            chapters: components["schemas"]["FractionalCleanupChapter"][];
+        };
+        FractionalCleanupRequest: {
+            /** @description The Chapter UUIDs the owner ticked. A SELECTION from the preview, never an authorisation: the server re-computes the removable set and rejects (400) any id outside it. */
+            chapterIds: string[];
+        };
+        FractionalCleanupResult: {
+            /** @description Number of fractional chapters removed (CBZ file + Chapter row). The source feed rows are kept, so un-ticking the ignore-fractional toggle restores them. */
             removed: number;
         };
         Source: {
@@ -3323,6 +3406,110 @@ export interface operations {
                 };
             };
             /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    previewFractionalCleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The removable set (possibly empty) and the page-count yardstick. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FractionalCleanupPreview"];
+                };
+            };
+            /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    removeFractionalChapters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FractionalCleanupRequest"];
+            };
+        };
+        responses: {
+            /** @description Removal complete. Returns the number of chapters removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FractionalCleanupResult"];
+                };
+            };
+            /** @description Malformed series id or body, an empty chapterIds list, or a chapter that is not in the server-recomputed removable set. */
             400: {
                 headers: {
                     [name: string]: unknown;

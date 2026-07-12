@@ -178,6 +178,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/series/:id/providers/:providerId/ignore-fractional", h.SetIgnoreFractional)
 	authed.DELETE("/series/:id", h.DeleteSeries)
 	authed.POST("/series/:id/dedupe-files", h.DedupeFiles)
+	authed.GET("/series/:id/fractional-cleanup", h.FractionalCleanupPreview)
+	authed.POST("/series/:id/fractional-cleanup", h.RemoveFractionalChapters)
 	authed.GET("/series/:id/cover", h.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", h.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", h.SetMetadataSource)
@@ -494,6 +496,8 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
 		{http.MethodDelete, "/api/series/" + id + "?deleteFiles=true"},
 		{http.MethodPost, "/api/series/" + id + "/dedupe-files"},
+		{http.MethodGet, "/api/series/" + id + "/fractional-cleanup"},
+		{http.MethodPost, "/api/series/" + id + "/fractional-cleanup"},
 		{http.MethodGet, "/api/series/" + id + "/cover"},
 		{http.MethodGet, "/api/series/" + id + "/providers/" + id + "/cover"},
 		{http.MethodPatch, "/api/series/" + id + "/metadata-source"},
