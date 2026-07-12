@@ -74,7 +74,10 @@ type SeriesDetailDTO struct {
 // carry the in-app reader's owner progress (Read defaults false, LastReadPage 0);
 // the reader uses PageCount + LastReadPage to resume mid-chapter. ReadAt is the
 // timestamp of the most recent read=true transition (nil until read, cleared on
-// read=false — see newChapterDTO).
+// read=false — see newChapterDTO). PageVersion is the reader's page-bytes cache
+// buster (see PageVersion in reader.go); "" for a not-yet-downloaded chapter. The
+// client appends it as ?v= on every page request so a Library-Convergence upgrade
+// that replaces the CBZ mid-read is never served from a stale cache entry.
 type ChapterDTO struct {
 	ID           string   `json:"id"`
 	ChapterKey   string   `json:"chapterKey"`
@@ -87,7 +90,8 @@ type ChapterDTO struct {
 	LastReadPage int      `json:"lastReadPage"`
 	// ReadAt is when the owner marked this chapter read; nil until then (and
 	// cleared when read flips back to false).
-	ReadAt *time.Time `json:"readAt"`
+	ReadAt      *time.Time `json:"readAt"`
+	PageVersion string     `json:"pageVersion"`
 }
 
 // ProviderDTO is one SeriesProvider in a series-detail response. ID is the
@@ -202,6 +206,7 @@ func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
 		Read:         c.Read,
 		LastReadPage: c.LastReadPage,
 		ReadAt:       c.ReadAt,
+		PageVersion:  PageVersion(c.Filename, c.DownloadDate),
 	}
 }
 

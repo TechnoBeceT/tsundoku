@@ -858,11 +858,22 @@ export interface paths {
          * Stream one CBZ page image (in-app reader)
          * @description Streams the raw bytes of the n-th page (0-based, natural page order) of a
          *     downloaded chapter's CBZ as an image blob, for the in-app long-strip
-         *     reader. The chapter must belong to the series. Responses carry
-         *     `Cache-Control: public, max-age=31536000, immutable` because a chapter's
-         *     pages never change once rendered. Returns 404 when the chapter, its CBZ,
-         *     or the requested page index does not exist, and 502 when the archive is
-         *     present but cannot be decoded.
+         *     reader. The chapter must belong to the series.
+         *
+         *     `v` is an optional content-version cache buster (the chapter's
+         *     `pageVersion`, see the `Chapter` schema): a request whose `v` matches the
+         *     chapter's CURRENT version gets `Cache-Control: private, max-age=86400`;
+         *     an absent or stale `v` gets `Cache-Control: private, no-cache`. `v` never
+         *     changes which bytes are served — it only selects the caching policy. The
+         *     response also carries an `ETag` (identifying this exact page + version),
+         *     so a repeat `If-None-Match` request answers 304 without the server
+         *     opening the CBZ. Deliberately NOT `immutable`: the version is derived
+         *     from DB fields (filename + download_date), not a hash of the bytes, so a
+         *     bounded cache lets a drifted version self-heal within a day instead of
+         *     pinning stale pages forever.
+         *
+         *     Returns 404 when the chapter, its CBZ, or the requested page index does
+         *     not exist, and 502 when the archive is present but cannot be decoded.
          */
         get: operations["getChapterPage"];
         put?: never;
@@ -1552,6 +1563,13 @@ export interface components {
              * @description When the chapter was marked read; null until then (cleared when read flips back to false).
              */
             readAt: string | null;
+            /**
+             * @description Reader page-bytes cache buster, derived from filename + download_date
+             *     (empty for a not-yet-downloaded chapter). The client appends it as
+             *     ?v= on every page request so a Library-Convergence upgrade that
+             *     replaces the CBZ mid-read is never served from a stale cache entry.
+             */
+            pageVersion: string;
         };
         ChapterProgress: {
             /** @description Chapter UUID. */
@@ -4328,7 +4346,15 @@ export interface operations {
     };
     getChapterPage: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Content-version cache buster (the chapter's `pageVersion`). When it
+                 *     matches the chapter's current version the response is cached for a
+                 *     day; otherwise it is revalidatable only. Never affects which bytes
+                 *     are served.
+                 */
+                v?: string;
+            };
             header?: never;
             path: {
                 /** @description Series UUID. */

@@ -5,6 +5,7 @@ import { useReader } from '~/composables/useReader'
 import { useReadingProgress } from '~/composables/useReadingProgress'
 import { useReaderSettings, readerStyleVars } from '~/composables/useReaderSettings'
 import { useFullscreen } from '~/composables/useFullscreen'
+import { useChapterPrefetch } from '~/composables/useChapterPrefetch'
 import { isCenterTap } from '~/components/reader/readerChrome.logic'
 import type ReaderStripComponent from '~/components/reader/ReaderStrip.vue'
 
@@ -166,6 +167,24 @@ const visiblePages = computed(() => visiblePagesFor(currentChapterId.value))
 const centeredChapter = computed(() =>
   chapters.value.find((c) => c.id === currentChapterId.value) ?? null)
 
+// ---- whole-chapter prefetch (Mihon/Komikku-style, see useChapterPrefetch) ---
+// `prefetchCurrentChapter` falls back to the deep-linked `chapterId` before the
+// strip ever reports a centred position (`currentChapterId` starts null) — the
+// owner's "when I open a chapter" ask means prefetching must start at open,
+// not wait for the first scroll-settle. `prefetchNextChapter` is resolved
+// independently off the SAME loaded `chapters` list (never off `useReader`'s
+// own `nextChapter`, which is itself gated on `currentChapterId` being set and
+// would stay null through that same opening window).
+const prefetchCurrentChapter = computed(() =>
+  chapters.value.find((c) => c.id === (currentChapterId.value ?? chapterId)) ?? null)
+const prefetchNextChapter = computed(() => {
+  const cur = prefetchCurrentChapter.value
+  if (!cur) return null
+  const idx = chapters.value.findIndex((c) => c.id === cur.id)
+  return idx >= 0 && idx < chapters.value.length - 1 ? (chapters.value[idx + 1] ?? null) : null
+})
+const { dispose: disposePrefetch } = useChapterPrefetch(prefetchCurrentChapter, prefetchNextChapter, currentPage, pageUrl)
+
 /** The chrome's chapter label, e.g. "Chapter 12 · Title" (number-less → the name). */
 const chapterLabel = computed(() => {
   const c = centeredChapter.value
@@ -297,8 +316,10 @@ function onReaderTap(event: MouseEvent): void {
   if (isCenterTap(event.clientY, window.innerHeight)) chromeVisible.value = !chromeVisible.value
 }
 
-// Flush the pending debounced write on leave so the last position is never lost.
-onBeforeUnmount(flush)
+// Flush the pending debounced write on leave so the last position is never
+// lost, and stop any in-flight prefetch queue so a closed reader doesn't keep
+// firing background page requests.
+onBeforeUnmount(() => { flush(); disposePrefetch() })
 onBeforeRouteLeave(() => { flush() })
 </script>
 
