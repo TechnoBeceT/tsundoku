@@ -1618,6 +1618,12 @@ export interface components {
             feedRanges: string;
             /** @description True when this provider has a non-empty availability feed (≥1 ProviderChapter). Mirrors the backend drift-merge feed gate. */
             hasFeed: boolean;
+            /** @description How many chapters in this provider's stored feed carry a fractional number (5.1, 5.5 — number != floor(number)). Computed in memory from the feed we already hold: no extra query, no call to the source. */
+            fractionalCount: number;
+            /** @description Those fractional chapter numbers, ascending, as display strings ("1.1", "5.5"). This is the EVIDENCE the owner needs before setting ignoreFractional: a mirror that re-uploads whole chapters under an "N.1" suffix shows a long SYSTEMATIC run (1.1, 2.1, 3.1, …), whereas a source carrying a genuine side-chapter (omake) shows a lone 5.5 — and ".5" is by far the most common fractional in a real library. The backend cannot tell those two apart, so it never guesses; the owner decides from this list. Always present, empty ([]) for a source with no fractional chapters — never null. */
+            fractionalChapters: string[];
+            /** @description The owner's per-(series, source) switch marking this source as a fractional re-uploader: when set, the source contributes no fractional-numbered chapters to this series (they are dropped at ingest and excluded from candidacy). It deletes nothing, and an ignored source still reports its fractionalChapters here, so the decision stays reviewable and reversible. */
+            ignoreFractional: boolean;
             /** @description Scanlation group (may be empty). */
             scanlator: string;
             /** @description Language code (e.g. en). */
