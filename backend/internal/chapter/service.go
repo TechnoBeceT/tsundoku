@@ -15,6 +15,7 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
 
 // WantedChapters returns up to limit Chapter rows the download dispatcher should
@@ -70,10 +71,13 @@ type Candidate struct {
 }
 
 // providerChaptersForKey loads every ProviderChapter (with its SeriesProvider
-// edge) that offers ch's chapter_key within ch's series. It is the single join
-// shared by BestProviderChapter, RankedLiveCandidates, HasAnyProviderChapter, and
-// AllProvidersExhausted so the "which sources offer this chapter" query is written
-// exactly once (§2 DRY).
+// edge) that offers ch's chapter_key within ch's series, MINUS the sources the
+// owner has flagged as fractional re-uploaders for a fractional chapter (see
+// dropIgnoredFractionalSources). It is the single join shared by
+// BestProviderChapter, RankedLiveCandidates, HasAnyProviderChapter, and
+// AllProvidersExhausted so the "which sources offer this chapter" question is
+// answered in exactly one place (§2 DRY) — and so every one of them agrees about
+// a suppressed source rather than half of them seeing it.
 func providerChaptersForKey(ctx context.Context, client *ent.Client, ch *ent.Chapter) ([]*ent.ProviderChapter, error) {
 	pcs, err := client.ProviderChapter.Query().
 		Where(
@@ -87,7 +91,41 @@ func providerChaptersForKey(ctx context.Context, client *ent.Client, ch *ent.Cha
 	if err != nil {
 		return nil, fmt.Errorf("chapter: query provider chapters for chapter %s (key=%q): %w", ch.ID, ch.ChapterKey, err)
 	}
-	return pcs, nil
+	return dropIgnoredFractionalSources(pcs, ch), nil
+}
+
+// dropIgnoredFractionalSources removes the sources the owner has flagged as
+// fractional re-uploaders (SeriesProvider.ignore_fractional) — but ONLY for a
+// FRACTIONAL chapter. A whole chapter is unaffected: the toggle suppresses a
+// source's fractional re-uploads (a mirror republishing whole chapter N as a lone
+// "N.1" under its own URL), it does not disable the source.
+//
+// There is deliberately NO HEURISTIC here. The engine cannot tell a re-upload from
+// a genuine side-chapter: a source hosting a `5.5` omake obviously also hosts
+// chapter 5, and `.5` is the MOST COMMON fractional in a real library (825 chapters
+// across 44 series in the owner's). Any automatic rule would have suppressed — and
+// then deleted — all of them. Suppression is reachable ONLY through the explicitly
+// ticked per-(series, provider) flag.
+//
+// Applied inside providerChaptersForKey (the ONE shared join) so candidacy,
+// exhaustion, and best-source all see the same set. Purely in-memory over the
+// already-loaded SeriesProvider edge — no extra query. It EXCLUDES rows; it NEVER
+// deletes them (never-auto-delete: un-ticking the flag restores the source
+// immediately, from the very same rows).
+func dropIgnoredFractionalSources(pcs []*ent.ProviderChapter, ch *ent.Chapter) []*ent.ProviderChapter {
+	// A chapter with no parsed number cannot be judged fractional — leave it alone
+	// rather than silently orphan it.
+	if ch.Number == nil || !chapterrange.IsFractional(*ch.Number) {
+		return pcs
+	}
+	out := make([]*ent.ProviderChapter, 0, len(pcs))
+	for _, pc := range pcs {
+		if sp := pc.Edges.SeriesProvider; sp != nil && sp.IgnoreFractional {
+			continue
+		}
+		out = append(out, pc)
+	}
+	return out
 }
 
 // isExhausted reports whether a source has spent its whole per-source retry
@@ -166,23 +204,24 @@ func RankedLiveCandidates(ctx context.Context, client *ent.Client, chapterID uui
 // key within its series — i.e. whether any source has ever listed this chapter.
 // The dispatcher uses it to tell "no source has this chapter yet" (leave the
 // chapter wanted) apart from "sources exist but none can be tried right now".
+//
+// It goes through the shared providerChaptersForKey loader rather than a bespoke
+// Count() so the ignore-fractional exclusion applies here TOO. It used to re-write
+// the join's predicate inline, which would have made it the one reader that still
+// saw a suppressed source: a fractional chapter whose only sources are all flagged
+// re-uploaders is genuinely SOURCELESS, and the dispatcher must see it that way
+// (handleNoCandidates → download.skip, stays wanted) rather than mistake it for a
+// source merely on cooldown.
 func HasAnyProviderChapter(ctx context.Context, client *ent.Client, chapterID uuid.UUID) (bool, error) {
 	ch, err := client.Chapter.Get(ctx, chapterID)
 	if err != nil {
 		return false, fmt.Errorf("chapter.HasAnyProviderChapter: load chapter %s: %w", chapterID, err)
 	}
-	n, err := client.ProviderChapter.Query().
-		Where(
-			entproviderchapter.ChapterKeyEQ(ch.ChapterKey),
-			entproviderchapter.HasSeriesProviderWith(
-				entseriesprovider.SeriesIDEQ(ch.SeriesID),
-			),
-		).
-		Count(ctx)
+	pcs, err := providerChaptersForKey(ctx, client, ch)
 	if err != nil {
-		return false, fmt.Errorf("chapter.HasAnyProviderChapter: count provider chapters for chapter %s: %w", chapterID, err)
+		return false, err
 	}
-	return n > 0, nil
+	return len(pcs) > 0, nil
 }
 
 // AllProvidersExhausted reports whether chapterID has at least one source AND

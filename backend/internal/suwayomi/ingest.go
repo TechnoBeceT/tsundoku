@@ -40,6 +40,7 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
 
@@ -218,6 +219,20 @@ func (i *Ingest) addSeriesWithChapters(
 	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceName, mangaID, scanlator, providerName)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("suwayomi.Ingest.AddSeries: upsert series provider %q (scanlator %q) for series %s: %w", sourceName, scanlator, series.ID, err)
+	}
+
+	// 3a. Owner gate: a source flagged as a fractional re-uploader for THIS series
+	//     contributes NO fractional chapters to its feed. Applied to the RAW slice
+	//     so the ingest mapping (step 4) and the suwayomi_chapter_id backfill
+	//     (step 6) stay in lockstep on one set — gating only one of them would
+	//     leave the surviving chapters unfetchable.
+	//
+	//     Upsert-only semantics are untouched: fractional rows ingested BEFORE the
+	//     flag was ticked are NOT deleted (never-auto-delete) — they are simply
+	//     never refreshed here, and never dispatched (see chapter's
+	//     dropIgnoredFractionalSources). Un-ticking restores the source at once.
+	if sp.IgnoreFractional {
+		swChapters = dropFractional(swChapters)
 	}
 
 	// 4. Map Suwayomi chapters to the M1 FetchedChapter type, filtered to this
@@ -559,6 +574,28 @@ func filterByScanlator(chs []Chapter, scanlator string) []Chapter {
 		}
 	}
 	return filtered
+}
+
+// dropFractional removes fractional-numbered chapters (5.1, 5.5 …) from a raw
+// source chapter list. Used ONLY for a provider whose ignore_fractional flag the
+// owner has ticked — a mirror that republishes whole chapter N as a lone "N.1"
+// under its own URL (Comic Asura does exactly this: 179 pages vs the original's
+// 26).
+//
+// A chapter with no parsed number (Number == nil) is KEPT: it cannot be judged
+// fractional, and dropping it would silently lose a chapter whose only fault is an
+// unparseable number. The fractional test itself is the shared
+// chapterrange.IsFractional — this function adapts the nullable Suwayomi field to
+// it, never re-deriving the rule.
+func dropFractional(chs []Chapter) []Chapter {
+	out := make([]Chapter, 0, len(chs))
+	for _, ch := range chs {
+		if ch.Number != nil && chapterrange.IsFractional(*ch.Number) {
+			continue
+		}
+		out = append(out, ch)
+	}
+	return out
 }
 
 // mapToFetchedChapters converts a slice of Suwayomi Chapter DTOs to the M1
