@@ -56,4 +56,16 @@ describe('ChapterDownloadRow', () => {
     expect(meta).not.toContain('→')
     expect(wrapper.find('.dl-row__target').exists()).toBe(false)
   })
+
+  // The backend reports an EMPTY providerName when no source's feed carries the
+  // chapter — nothing is fetching it. The row must say so with an em-dash, not
+  // leave a dangling "· " separator.
+  it('renders an em-dash when no source is fetching the chapter', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: { item: item({ state: 'wanted', provider: '', providerName: '', upgradeTarget: undefined }) },
+      global: { stubs },
+    })
+
+    expect(wrapper.find('.dl-row__provider').text()).toContain('—')
+  })
 })

@@ -44,6 +44,18 @@ export const UpgradeTarget: Story = {
   args: { item: noCover }, // the Berserk fixture is upgrading → Asura Scans
 }
 
+/**
+ * A SOURCELESS row: no provider's feed carries this chapter, so nothing is
+ * fetching it and the backend reports an empty `providerName`. The meta line shows
+ * an em-dash rather than crediting a source that does not offer the chapter — which
+ * is how a stuck, unfetchable chapter becomes visible.
+ */
+export const NoSource: Story = {
+  args: {
+    item: { ...withCover, state: 'wanted', provider: '', providerName: '', upgradeTarget: undefined },
+  },
+}
+
 /** With a `before-badge` slot — the Active tab's indeterminate progress bar. */
 export const WithProgressSlot: Story = {
   render: (args) => ({

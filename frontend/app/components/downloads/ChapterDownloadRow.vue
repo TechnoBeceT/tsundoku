@@ -40,6 +40,12 @@ const numberLabel = computed(() => (props.item.number == null ? '' : `#${props.i
 
 // The meta line under the title: "#147 · Chapter 147" (number dropped when null).
 const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Boolean).join(' · '))
+
+// The source label. An empty providerName means NO source carries this chapter —
+// nothing is fetching it — so we show an em-dash rather than a dangling separator.
+// It reads as "no source", which is exactly the truth and makes a sourceless-stuck
+// chapter visible instead of falsely crediting the series' top source.
+const providerLabel = computed(() => props.item.providerName || '—')
 </script>
 
 <template>
@@ -63,7 +69,7 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
       <div class="dl-row__meta">
         {{ metaLine }}
         <span class="dl-row__provider">
-          · {{ item.providerName }}
+          · {{ providerLabel }}
           <template v-if="item.upgradeTarget">
             <span class="dl-row__arrow" aria-hidden="true">→</span>
             <span class="dl-row__target">{{ item.upgradeTarget }}</span>
