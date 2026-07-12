@@ -399,13 +399,21 @@ func (h *Handler) SetMetadataSource(c echo.Context) error {
 // a recategorize body is a bad request, not a missing resource on this route);
 // ErrChapterNotRemovable → 400 (the fractional-cleanup POST named a chapter that is
 // not in the server-recomputed removable set — a bad selection, not a missing
-// resource; the message names the offending chapter).
+// resource; the message names the offending chapter). ErrFractionalCleanupFailed →
+// 500 with an HONEST message: the chapter rows were rolled back, but the CBZs deleted
+// before the failing one are already gone, so the owner is told to re-run the cleanup
+// (it is retry-safe) rather than being handed a bare "internal server error".
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, seriessvc.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "series not found")
 	case errors.Is(err, seriessvc.ErrChapterNotRemovable):
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	case errors.Is(err, seriessvc.ErrFractionalCleanupFailed):
+		// The rows were rolled back, but the CBZs deleted before the failure are
+		// already gone — say so, and say that a retry finishes the job.
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			"fractional cleanup failed while deleting files: no chapters were removed, but some CBZ files may already be deleted — re-run the cleanup to finish")
 	case errors.Is(err, category.ErrCategoryNotFound):
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown category")
 	case errors.Is(err, seriessvc.ErrProviderNotInSeries):

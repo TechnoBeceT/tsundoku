@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/google/uuid"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
 
 // DedupeFiles is the owner-triggered duplicate-CBZ sweep for a whole series. It
@@ -101,7 +101,7 @@ func dedupeSupersededPartOrphans(storage, categoryName string, ser *ent.Series) 
 			continue
 		}
 		n := *ch.Number
-		if n == math.Trunc(n) {
+		if !chapterrange.IsFractional(n) {
 			// Whole-integer "superseded" chapter: not a split part, skip —
 			// its file (if any) is a legitimate keeper elsewhere.
 			continue

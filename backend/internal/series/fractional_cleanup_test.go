@@ -317,6 +317,64 @@ func TestFractionalCleanupPreview_Excludes(t *testing.T) {
 	}
 }
 
+// TestFractionalCleanupPreview_ZeroCarriersNeverRemovable pins the len(carriers) == 0
+// guard in isRemovableFractional: a downloaded fractional that NO source carries — the
+// owner removed the source, and RemoveProvider deleted its whole ProviderChapter feed —
+// is IRREPLACEABLE (nothing can re-download it) and no ignored source is implicated in
+// it, so it is never offered by the preview and a direct POST naming it is rejected.
+//
+// NON-VACUOUS: the same series also holds a carrier-backed ignored-only fractional
+// (6.1), which IS offered — so the test fails both on a rule that offers nothing and on
+// a rule that drops the zero-carrier guard (which would then offer the orphan 4.5 as
+// "every carrier ignored" is vacuously true for zero carriers).
+func TestFractionalCleanupPreview_ZeroCarriersNeverRemovable(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	s := db.Series.Create().SetTitle("Orphaned Fractional").SetSlug("orphaned-fractional").
+		SetCategoryID(catID(ctx, db, "Manga")).SaveX(ctx)
+	fx := cleanupFixture{storage: t.TempDir(), series: s, providers: map[string]*ent.SeriesProvider{}}
+
+	// The only surviving source is ignored and carries 6.1 — but NOT 4.5, whose
+	// source the owner removed (feed rows went with it).
+	sp := seedFeed(ctx, t, db, s.ID, "kaliscan", 40, 6, 6.1)
+	db.SeriesProvider.UpdateOneID(sp.ID).SetIgnoreFractional(true).ExecX(ctx)
+	fx.providers["kaliscan"] = db.SeriesProvider.GetX(ctx, sp.ID)
+
+	seedDownloadedChapter(ctx, t, db, fx, "6", 6, 90, fx.providers["kaliscan"])
+	removable := seedDownloadedChapter(ctx, t, db, fx, "6.1", 6.1, 3, fx.providers["kaliscan"])
+	// 4.5: downloaded, fractional, has a file — but no feed row carries its key and
+	// its satisfying source is gone (RemoveProvider clears satisfied_by).
+	orphan := seedDownloadedChapter(ctx, t, db, fx, "4.5", 4.5, 30, nil)
+
+	svc := series.NewService(db, fx.storage, 14)
+	preview, err := svc.FractionalCleanupPreview(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("FractionalCleanupPreview: %v", err)
+	}
+	if contains(preview, 4.5) {
+		t.Errorf("4.5 is OFFERED for removal but NO source carries it — the file is irreplaceable and no ignored source is implicated; preview = %v", numbersOf(preview))
+	}
+	if !contains(preview, 6.1) {
+		t.Fatalf("6.1 is NOT offered though its only carrier is ignored — the test would be vacuous; preview = %v", numbersOf(preview))
+	}
+
+	// And a client naming the orphan directly is refused: nothing deleted, file intact.
+	if _, err := svc.RemoveFractionalChapters(ctx, s.ID, []uuid.UUID{orphan.ID}); !errors.Is(err, series.ErrChapterNotRemovable) {
+		t.Errorf("RemoveFractionalChapters(4.5) err = %v, want ErrChapterNotRemovable", err)
+	}
+	if db.Chapter.Query().Where(chapterKey("4.5")).CountX(ctx) != 1 {
+		t.Error("the carrier-less fractional's row was deleted despite the rejection")
+	}
+	if _, err := os.Stat(filepath.Join(fx.storage, "Manga", s.Title, "4.5.cbz")); err != nil {
+		t.Errorf("the carrier-less fractional's CBZ was deleted despite the rejection: %v", err)
+	}
+	// The carrier-backed one really is removable (the guard is the ONLY reason 4.5 is not).
+	if _, err := svc.RemoveFractionalChapters(ctx, s.ID, []uuid.UUID{removable.ID}); err != nil {
+		t.Fatalf("RemoveFractionalChapters(6.1): %v", err)
+	}
+}
+
 // TestFractionalCleanupPreview_UnknownSeries: an unknown id is a 404, never an
 // empty preview.
 func TestFractionalCleanupPreview_UnknownSeries(t *testing.T) {
