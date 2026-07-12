@@ -84,7 +84,7 @@ vi.mock('~/composables/useReadingProgress', () => ({
   useReadingProgress: () => ({ record, markRead, resumeTarget, flush }),
 }))
 
-mockNuxtImport('useRoute', () => () => ({ params: { id: 'series-1', chapterId: 'ch-a' } }))
+mockNuxtImport('useRoute', () => () => ({ params: { id: 'series-1', chapterId: 'ch-a' }, query: {} }))
 
 // happy-dom has no IntersectionObserver — ReaderStrip's onMounted needs it.
 class IOStub {

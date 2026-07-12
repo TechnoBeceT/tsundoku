@@ -208,10 +208,12 @@ function openReader(chapterId: string): void {
 // Reuses useReadingProgress.resumeTarget — the SAME resume-point logic the
 // reader route itself runs on open — instead of reimplementing it. This page
 // has no "explicitly opened" chapter, so startChapterId is '' (never matches
-// a real chapter id), which makes resumeTarget always fall to its
-// "furthest-along chapter with progress, else the first" branch — exactly
-// what a resume button needs. The chapters ref it closes over is unused by
-// resumeTarget itself (only record/markRead read it), so an empty ref is fine.
+// a real chapter id), which makes resumeTarget always fall past its "started"
+// branch to: the FIRST not-read chapter (number-ascending) at its saved
+// lastReadPage, or — once every chapter is read — the LAST chapter at page 0
+// (start over; see resumeTarget's own doc comment) — exactly what a resume
+// button needs. The chapters ref it closes over is unused by resumeTarget
+// itself (only record/markRead read it), so an empty ref is fine.
 const { resumeTarget } = useReadingProgress(ref<ReaderChapter[]>([]), '')
 
 // Downloaded chapters only, ascending by number (mirrors the reader's own
@@ -233,15 +235,20 @@ const resumeLabel = computed<string | null>(() => {
   return hasProgress ? 'Continue' : 'Start'
 })
 
-/** The FAB was clicked — resolve the resume target and open the reader there.
- *  The reader route re-resolves the SAME chapter's own lastReadPage on load
- *  (useReader/useReadingProgress there match startChapterId against the
- *  loaded list), so the target chapter id alone is enough to land on the
- *  right page — no query param needed to "carry" it. */
+/** The FAB was clicked — resolve the resume target and open the reader
+ *  there, carrying the DECIDED page via `?page=`. The chapter id alone is
+ *  NOT enough: the reader route re-resolves via `resumeTarget` too, but
+ *  matches `startChapterId` against the loaded list first — its "started"
+ *  branch — which always wins over the "all chapters read" fallback this
+ *  function's own `target.page` may have come from. When every chapter is
+ *  read, `resumeTarget` deliberately opens the LAST chapter at page 0 (start
+ *  it over, don't reopen something finished); re-deriving via the "started"
+ *  branch instead lands on that chapter's saved `lastReadPage`, its FINAL
+ *  page — so the page must be carried explicitly, not recomputed. */
 function onResume(): void {
   const target = resumeTarget(downloadedChapters.value)
   if (!target.chapterId) return
-  void navigateTo(`/series/${id}/read/${target.chapterId}`)
+  void navigateTo(`/series/${id}/read/${target.chapterId}?page=${target.page}`)
 }
 </script>
 

@@ -22,7 +22,8 @@ import type ReaderStripComponent from '~/components/reader/ReaderStrip.vue'
  *     denominator is always the CENTRED chapter's own entry, never a stale
  *     count left behind by a chapter jump; `chapter-finished` marks a chapter
  *     read as the reader scrolls past its end; `resumeTarget` opens the strip
- *     at the last-read page.
+ *     at the last-read page, unless the URL carries an explicit `?page=`
+ *     (the series page's "Continue" FAB — see `queryPage`'s doc comment).
  *   - ReaderChrome is a hide-on-scroll overlay (back / title / page slider /
  *     settings). A tap in the vertical CENTRE of the screen toggles it
  *     (`isCenterTap`); taps near the top/bottom edges or on a chrome control do
@@ -41,7 +42,23 @@ import type ReaderStripComponent from '~/components/reader/ReaderStrip.vue'
  * never a blank fullscreen. Progress writes are the sanctioned best-effort
  * exception (see useReadingProgress).
  */
-definePageMeta({ layout: 'bare' })
+// key: PINNED to the series id only (never the chapterId). `app.vue` renders a
+// bare `<NuxtPage />` with no `:page-key`, so Nuxt's DEFAULT page key is the
+// param-interpolated PATH (`generateRouteKey`/`interpolatePath` in
+// nuxt/dist/pages/runtime/utils.js) — which includes `chapterId` and therefore
+// CHANGES on every chapter flip, tearing this whole component down and
+// remounting it on every prev/next tap. A remount reconstructs `useReader`
+// (fresh `GET /api/series/{id}`, a `chapters.length === 0` flash of the
+// full-screen loading state) AND `useReadingProgress` — destroying its
+// in-memory `readThisSession` set, which is what stops a backward scroll from
+// un-reading a chapter just finished (see `record`'s doc comment). Pinning the
+// key to `/series/:id/read` makes a same-series chapter flip a genuine
+// param-only route change: Vue reuses this component instance instead of
+// tearing it down, so the doc comment on `goToChapter` below (which already
+// assumed no remount) is now actually true. A DIFFERENT series (a different
+// `id`) still produces a different key, so navigating between series' readers
+// remounts correctly, as it must.
+definePageMeta({ layout: 'bare', key: (route) => `/series/${String(route.params.id)}/read` })
 
 const route = useRoute()
 const router = useRouter()
@@ -56,8 +73,28 @@ const {
 const { record, markRead, resumeTarget, flush } = useReadingProgress(chapters, chapterId)
 const { settings, update } = useReaderSettings()
 
-// Resume anchor: recomputed from the loaded chapters.
-const resume = computed(() => resumeTarget(chapters.value))
+// An explicit `?page=` overrides the recomputed resume page — carried by the
+// series page's "Continue" FAB (see its `onResume` doc comment). It must win
+// over recomputing via `resumeTarget` here: this route's own `startChapterId`
+// is the deep-linked chapter, so `resumeTarget(chapters.value)` always hits
+// its "started" branch (open at THAT chapter's own saved `lastReadPage`) —
+// which, for the FAB's "every chapter read" case, is the chapter's FINAL
+// page, not the page 0 `resumeTarget` actually decided at the FAB. A direct
+// chapter-row click carries no `?page=`, so it still resolves via the
+// "started" branch exactly as before (open at that chapter's own progress).
+const queryPage = computed<number | null>(() => {
+  const raw = route.query?.page
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const n = value == null ? Number.NaN : Number(value)
+  return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null
+})
+
+// Resume anchor: recomputed from the loaded chapters, with the query-param
+// page override (see above) applied on top when present.
+const resume = computed(() => {
+  const target = resumeTarget(chapters.value)
+  return queryPage.value != null ? { chapterId: target.chapterId, page: queryPage.value } : target
+})
 
 // Fire the resume scroll exactly once, the first time the loaded chapters
 // resolve a real target chapter (empty string before `chapters` loads). Fix 4:
