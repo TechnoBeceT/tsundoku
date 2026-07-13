@@ -443,14 +443,14 @@ export const richSeriesLong: SeriesDetail = {
  * the owner disambiguates by cover + provider. Portrait picsum covers (2:3).
  */
 export const metadataCandidates: MetadataCandidate[] = [
-  { id: 'anilist:1', provider: 'AniList', title: 'Dragon Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-anilist/400/600', year: 2023 },
-  { id: 'mangadex:1', provider: 'MangaDex', title: 'Dragon-Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-mangadex/400/600', year: 2023 },
-  { id: 'mangaupdates:1', provider: 'MangaUpdates', title: 'The Dragon Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-mangaupdates/400/600', year: 2022 },
-  { id: 'anilist:2', provider: 'AniList', title: 'Regression of the Strongest Dragon Slayer', coverUrl: 'https://picsum.photos/seed/dsr-regress/400/600', year: 2024 },
-  { id: 'mal:1', provider: 'MAL', title: 'Dragon Slayer’s Regression (Web Novel)', coverUrl: 'https://picsum.photos/seed/dsr-mal/400/600', year: 2021 },
-  { id: 'mangadex:2', provider: 'MangaDex', title: 'Dragon Slayer no Kikan', coverUrl: 'https://picsum.photos/seed/dsr-kikan/400/600', year: 2023 },
-  { id: 'mangaupdates:2', provider: 'MangaUpdates', title: 'Return of the Dragon Slayer', coverUrl: '', year: 2020 },
-  { id: 'anilist:3', provider: 'AniList', title: 'The Weakest Dragon Slayer Levels Up Again After His Regression Through Time', coverUrl: 'https://picsum.photos/seed/dsr-long/400/600', year: 2024 },
+  { id: 'anilist:1', provider: 'AniList', providerKey: 'anilist', remoteId: '1', title: 'Dragon Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-anilist/400/600', year: 2023 },
+  { id: 'mangadex:1', provider: 'MangaDex', providerKey: 'mangadex', remoteId: '1', title: 'Dragon-Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-mangadex/400/600', year: 2023 },
+  { id: 'mangaupdates:1', provider: 'MangaUpdates', providerKey: 'mangaupdates', remoteId: '1', title: 'The Dragon Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-mangaupdates/400/600', year: 2022 },
+  { id: 'anilist:2', provider: 'AniList', providerKey: 'anilist', remoteId: '2', title: 'Regression of the Strongest Dragon Slayer', coverUrl: 'https://picsum.photos/seed/dsr-regress/400/600', year: 2024 },
+  { id: 'mal:1', provider: 'MAL', providerKey: 'mal', remoteId: '1', title: 'Dragon Slayer’s Regression (Web Novel)', coverUrl: 'https://picsum.photos/seed/dsr-mal/400/600', year: 2021 },
+  { id: 'mangadex:2', provider: 'MangaDex', providerKey: 'mangadex', remoteId: '2', title: 'Dragon Slayer no Kikan', coverUrl: 'https://picsum.photos/seed/dsr-kikan/400/600', year: 2023 },
+  { id: 'mangaupdates:2', provider: 'MangaUpdates', providerKey: 'mangaupdates', remoteId: '2', title: 'Return of the Dragon Slayer', coverUrl: '', year: 2020 },
+  { id: 'anilist:3', provider: 'AniList', providerKey: 'anilist', remoteId: '3', title: 'The Weakest Dragon Slayer Levels Up Again After His Regression Through Time', coverUrl: 'https://picsum.photos/seed/dsr-long/400/600', year: 2024 },
 ]
 
 /* ============================================================================
@@ -469,14 +469,14 @@ export const metadataCandidates: MetadataCandidate[] = [
  * cover is chosen INDEPENDENTLY of the metadata match (a per-field cover_source).
  */
 export const coverCandidates: CoverCandidate[] = [
-  { id: 'anilist:cover', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist/400/600' },
-  { id: 'mal:cover', provider: 'MAL', coverUrl: 'https://picsum.photos/seed/cover-mal/400/600' },
-  { id: 'mangadex:cover-1', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-1/400/600' },
-  { id: 'mangadex:cover-2', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-2/400/600' },
-  { id: 'mangaupdates:cover', provider: 'MangaUpdates', coverUrl: 'https://picsum.photos/seed/cover-mangaupdates/400/600' },
-  { id: 'asura:cover', provider: 'Asura Scans', coverUrl: 'https://picsum.photos/seed/cover-asura/400/600' },
-  { id: 'anilist:cover-alt', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist-alt/400/600' },
-  { id: 'source:cover-empty', provider: 'Reaper Scans', coverUrl: '' },
+  { id: 'anilist:cover', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist/400/600', sourceKind: 'metadata', sourceRef: 'anilist' },
+  { id: 'mal:cover', provider: 'MAL', coverUrl: 'https://picsum.photos/seed/cover-mal/400/600', sourceKind: 'metadata', sourceRef: 'mal' },
+  { id: 'mangadex:cover-1', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-1/400/600', sourceKind: 'metadata', sourceRef: 'mangadex' },
+  { id: 'mangadex:cover-2', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-2/400/600', sourceKind: 'metadata', sourceRef: 'mangadex' },
+  { id: 'mangaupdates:cover', provider: 'MangaUpdates', coverUrl: 'https://picsum.photos/seed/cover-mangaupdates/400/600', sourceKind: 'metadata', sourceRef: 'mangaupdates' },
+  { id: 'asura:cover', provider: 'Asura Scans', coverUrl: 'https://picsum.photos/seed/cover-asura/400/600', sourceKind: 'source', sourceRef: 'prov-2222' },
+  { id: 'anilist:cover-alt', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist-alt/400/600', sourceKind: 'metadata', sourceRef: 'anilist' },
+  { id: 'source:cover-empty', provider: 'Reaper Scans', coverUrl: '', sourceKind: 'source', sourceRef: 'prov-3333' },
 ]
 
 /** The cover the series currently uses (the "Current" marker + open preselection). */

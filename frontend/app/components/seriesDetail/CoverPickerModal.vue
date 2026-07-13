@@ -5,6 +5,7 @@ import Chip from '../ui/Chip.vue'
 import CoverImage from '../ui/CoverImage.vue'
 import Dialog from '../ui/Dialog.vue'
 import EmptyState from '../ui/EmptyState.vue'
+import ErrorBanner from '../ui/ErrorBanner.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import type { CoverCandidate } from '../screens/seriesDetail.types'
 
@@ -32,6 +33,10 @@ import type { CoverCandidate } from '../screens/seriesDetail.types'
  * `currentId` + `loading` down; this modal renders them and emits the owner's
  * intent (`confirm` / `cancel`). Opening resets the selection to `currentId`
  * (or none), mirroring the other Series-Detail dialogs' reset-on-open.
+ *
+ * `error` (optional, mirrors RemoveSourceDialog/MatchSourceDialog/…): a failed
+ * gallery load or cover pick surfaces here via `ErrorBanner`, §16 — the owner
+ * never confirms into the void behind the modal's own overlay.
  */
 const props = withDefaults(defineProps<{
   /** Whether the modal is shown (v-model:open). */
@@ -42,9 +47,12 @@ const props = withDefaults(defineProps<{
   currentId?: string
   /** True while covers are being fetched — shows the skeleton grid. */
   loading?: boolean
+  /** A failed load/pick message to show inside the modal, or null when there is none. */
+  error?: string | null
 }>(), {
   currentId: undefined,
   loading: false,
+  error: null,
 })
 
 const emit = defineEmits<{
@@ -88,6 +96,8 @@ function confirmCover() {
       <p class="picker__lead">
         Pick a poster from any provider — a tracker, a metadata provider, or a source. The cover is chosen independently of the metadata match.
       </p>
+
+      <ErrorBanner v-if="error" class="picker__error" :message="error" :dismissible="false" />
 
       <!-- loading: a skeleton grid in the same shape as the results -->
       <div v-if="loading" class="picker__grid" aria-hidden="true">
@@ -168,6 +178,10 @@ function confirmCover() {
   font-size: var(--text-base);
   line-height: 1.5;
   color: var(--muted);
+}
+
+.picker__error {
+  margin-bottom: 16px;
 }
 
 /* ---- Grid ----------------------------------------------------------------- */

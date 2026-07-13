@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { ReaderChapter } from '~/composables/useReader'
-import type { FractionalCleanupPreview } from '~/components/screens/seriesDetail.types'
+import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate } from '~/components/screens/seriesDetail.types'
 
 /**
  * Series detail page — route /series/:id.
@@ -47,7 +47,9 @@ import type { FractionalCleanupPreview } from '~/components/screens/seriesDetail
  *   @reorder-providers      → reorderProviders(list)
  *   @request-remove-source  → opens RemoveSourceDialog for that provider
  *   @match-provider         → opens MatchDiskProviderDialog for that provider
- *   @choose-metadata-source → chooseMetadataSource(providerId)
+ *   @choose-metadata-source → chooseMetadataSource(providerId)   (M10 per-source display pin — distinct from Identify below)
+ *   @request-identify       → opens MetadataIdentifyModal (identifyOpen = true)
+ *   @request-cover-picker   → opens CoverPickerModal (coverPickerOpen = true)
  *   @delete-series          → deleteSeries(deleteFiles)   (navigates to / on success)
  *   @add-source             → opens MatchSourceDialog (matchOpen = true)
  *   @dismiss-error          → dismissError()
@@ -57,6 +59,20 @@ import type { FractionalCleanupPreview } from '~/components/screens/seriesDetail
  *   @resume                 → onResume() (resolves the resume target via
  *                             useReadingProgress.resumeTarget and navigates to
  *                             the reader — see the "Resume FAB" section below)
+ *
+ * Native metadata engine (useMetadata(id), Slice D): two more page-owned
+ * dialogs, same reasoning as the ones above — only the page learns whether the
+ * mutation succeeded, so both close ONLY on a truthy result and reseed `series`
+ * directly from the returned DTO (§16 mutate-reseeds-from-response, same shape
+ * as `matchDiskProvider`/`batchAddProviders`):
+ *   - MetadataIdentifyModal: `search` → `metadata.search(query)`;
+ *     `confirm` → `metadata.identify(candidate.providerKey, candidate.remoteId)`,
+ *     closes + reseeds on success, stays open with the error shown on failure.
+ *   - CoverPickerModal: opening it (`coverPickerOpen` watcher) →
+ *     `metadata.loadCovers()`; `confirm` → `metadata.setCover(candidate.sourceKind,
+ *     candidate.sourceRef, candidate.coverUrl)`, closes + reseeds on success.
+ *   `currentCoverId` marks the series' existing cover pick (from
+ *   `series.coverSource`) so the gallery preselects + labels it "Current".
  *
  * Add-source wiring (Slice P): MatchSourceDialog's `search`/`loadBreakdowns`/
  * `confirm` emits drive useMatchSource's `search`/`loadBreakdowns`/
@@ -114,6 +130,23 @@ const {
   fetchFractionalCleanup,
   removeFractionalChapters,
 } = useSeriesDetail(id)
+
+const {
+  candidates: metadataCandidates,
+  searching: metadataSearching,
+  searchError: metadataSearchError,
+  identifying: metadataIdentifying,
+  identifyError,
+  coverCandidates,
+  coversLoading,
+  coversError,
+  settingCover,
+  setCoverError,
+  search: searchMetadata,
+  identify: identifySeries,
+  loadCovers,
+  setCover,
+} = useMetadata(id)
 
 const {
   sources: matchSources,
@@ -231,6 +264,51 @@ async function onMatchProviderConfirm(payload: { source: string, mangaId: number
   if (ok) matchProviderOpen.value = false
 }
 
+// ---- Identify (native metadata engine "Identify" match) --------------------
+// Only the page learns whether identify() succeeded, so it owns the dialog
+// (same reasoning as RemoveSourceDialog/MatchSourceDialog above) — it closes
+// ONLY on success and reseeds `series` directly from the response (§16).
+const identifyOpen = ref(false)
+// Either the search failure or the confirm (identify) failure — only one is ever set at a time.
+const identifyModalError = computed(() => metadataSearchError.value ?? identifyError.value)
+
+async function onIdentifySearch(query: string): Promise<void> {
+  await searchMetadata(query)
+}
+
+async function onIdentifyConfirm(candidate: MetadataCandidate): Promise<void> {
+  const detail = await identifySeries(candidate.providerKey, candidate.remoteId)
+  if (detail) {
+    identifyOpen.value = false
+    reseed(detail)
+  }
+}
+
+// ---- Choose cover (native metadata engine cover picker) --------------------
+// The gallery loads on OPEN (no owner-visible "load" trigger inside the modal
+// itself), and the series' current cover pick (series.coverSource) preselects
+// + marks the "Current" tile. Same page-owned-dialog reasoning as Identify.
+const coverPickerOpen = ref(false)
+// Either the gallery-load failure or the confirm (setCover) failure.
+const coverPickerError = computed(() => coversError.value ?? setCoverError.value)
+
+watch(coverPickerOpen, (isOpen) => {
+  if (isOpen) void loadCovers()
+})
+
+const currentCoverId = computed(() => {
+  const src = series.value?.coverSource
+  return src ? `${src.kind}:${src.ref}` : undefined
+})
+
+async function onCoverConfirm(candidate: CoverCandidate): Promise<void> {
+  const detail = await setCover(candidate.sourceKind, candidate.sourceRef, candidate.coverUrl)
+  if (detail) {
+    coverPickerOpen.value = false
+    reseed(detail)
+  }
+}
+
 // Open a downloaded chapter in the long-strip reader (a ChapterRow "Read" click).
 function openReader(chapterId: string): void {
   void navigateTo(`/series/${id}/read/${chapterId}`)
@@ -310,6 +388,8 @@ function onResume(): void {
       @match-provider="openMatchProvider"
       @toggle-ignore-fractional="setIgnoreFractional"
       @choose-metadata-source="chooseMetadataSource"
+      @request-identify="identifyOpen = true"
+      @request-cover-picker="coverPickerOpen = true"
       @delete-series="deleteSeries"
       @add-source="matchOpen = true"
       @dismiss-error="dismissError"
@@ -371,6 +451,27 @@ function onResume(): void {
       @search="linkSearch"
       @pick-candidate="onPickCandidate"
       @confirm="onMatchProviderConfirm"
+    />
+
+    <MetadataIdentifyModal
+      v-if="series"
+      v-model:open="identifyOpen"
+      :title="series.title"
+      :candidates="metadataCandidates"
+      :loading="metadataSearching || metadataIdentifying"
+      :error="identifyModalError"
+      @search="onIdentifySearch"
+      @confirm="onIdentifyConfirm"
+    />
+
+    <CoverPickerModal
+      v-if="series"
+      v-model:open="coverPickerOpen"
+      :candidates="coverCandidates"
+      :current-id="currentCoverId"
+      :loading="coversLoading || settingCover"
+      :error="coverPickerError"
+      @confirm="onCoverConfirm"
     />
   </div>
 </template>

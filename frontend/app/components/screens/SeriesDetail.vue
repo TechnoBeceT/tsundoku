@@ -6,17 +6,19 @@ import ChaptersPanel from '../seriesDetail/ChaptersPanel.vue'
 import DeleteSeriesDialog from '../seriesDetail/DeleteSeriesDialog.vue'
 import MetadataSourcePicker from '../seriesDetail/MetadataSourcePicker.vue'
 import ResumeFab from '../seriesDetail/ResumeFab.vue'
-import SeriesHeader from '../seriesDetail/SeriesHeader.vue'
+import RichSeriesCard from '../seriesDetail/RichSeriesCard.vue'
 import SourcesPanel from '../seriesDetail/SourcesPanel.vue'
 import type { Chapter, Provider, SeriesDetail } from './seriesDetail.types'
 import { findDriftedProviderIds } from '~/utils/providerDedup'
 
 /**
  * SeriesDetail — the full single-series management screen: a thin container that
- * composes the header (cover/title/stats/toggles/category/delete), the (planned)
- * metadata-source picker, the chapter table, the ranked source list (reorder /
- * remove / add / match-to-source for unlinked disk-origin groups), plus the
- * required-choice delete dialog. The `matchProvider` emit (bubbled from
+ * composes the rich catalogue card (cover/title/synopsis/credits/genres/tags/
+ * links/stats/toggles/category/delete — `RichSeriesCard`, superseding the
+ * plainer `SeriesHeader`), the (planned, M10) per-source metadata-source
+ * picker, the chapter table, the ranked source list (reorder / remove / add /
+ * match-to-source for unlinked disk-origin groups), plus the required-choice
+ * delete dialog. The `matchProvider` emit (bubbled from
  * `SourcesPanel`'s unlinked-row action) opens the page's
  * `MatchDiskProviderDialog` for the no-re-download Match, and
  * `requestRemoveSource` (bubbled from the row's Remove action) opens the page's
@@ -25,7 +27,12 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  * the mutation succeeded (an emit is fire-and-forget). `requestFractionalCleanup`
  * (bubbled from the Sources panel's "Remove fractional files" button, which the
  * panel renders only when `fractionalCleanupCount > 0`) opens the page's
- * `FractionalCleanupDialog` for the same reason.
+ * `FractionalCleanupDialog` for the same reason. `RichSeriesCard`'s
+ * `openMetadata`/`openCoverPicker` emits bubble here as `requestIdentify`/
+ * `requestCoverPicker` for the SAME reason — the native-metadata-engine
+ * "Identify" and "Choose cover" modals (`MetadataIdentifyModal`/
+ * `CoverPickerModal`) mutate and hand back a fresh `SeriesDetail`, an outcome
+ * only the page can observe.
  *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
@@ -92,6 +99,10 @@ const emit = defineEmits<{
   toggleIgnoreFractional: [providerId: string, ignore: boolean]
   /** A metadata source was picked — carries the SeriesProvider id. */
   chooseMetadataSource: [providerId: string]
+  /** RichSeriesCard's "Metadata" button was pressed (→ the page opens MetadataIdentifyModal). */
+  requestIdentify: []
+  /** RichSeriesCard's "Change cover" affordance was pressed (→ the page opens CoverPickerModal). */
+  requestCoverPicker: []
   /** The series delete was confirmed — carries the required deleteFiles choice. */
   deleteSeries: [deleteFiles: boolean]
   /** The owner asked to add a source (→ opens the Match Source dialog). */
@@ -176,7 +187,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         <ErrorBanner :message="error" @dismiss="emit('dismissError')" />
       </div>
 
-      <SeriesHeader
+      <RichSeriesCard
         :series="series"
         :category-options="categoryOptions"
         :saving="saving"
@@ -184,6 +195,8 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         @toggle-monitored="emit('toggleMonitored', $event)"
         @toggle-completed="emit('toggleCompleted', $event)"
         @request-delete="deleteOpen = true"
+        @open-metadata="emit('requestIdentify')"
+        @open-cover-picker="emit('requestCoverPicker')"
       />
 
       <MetadataSourcePicker

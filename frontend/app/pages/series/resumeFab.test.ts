@@ -60,6 +60,16 @@ function detail() {
     coverUrl: '',
     monitored: true,
     completed: false,
+    // Native-metadata-engine rich fields (Slice D) — required on the real DTO.
+    status: '',
+    genres: [],
+    tags: [],
+    altTitles: [],
+    authors: [],
+    year: 0,
+    links: [],
+    metadataSource: null,
+    coverSource: null,
     chapterCounts: {
       total: chapters.length,
       downloaded: chapters.filter((c) => c.state === 'downloaded').length,

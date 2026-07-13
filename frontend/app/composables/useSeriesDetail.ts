@@ -23,6 +23,17 @@
  *     (what it offers) — distinct from chapterCount (what it currently supplies).
  *     Both ride the series-detail response, so the Sources panel needs NO extra
  *     request and — crucially — no live call to the source to show coverage.
+ *
+ * Native-metadata-engine rich fields (RichSeriesCard, Slice D):
+ *   status/genres/tags/year/links ← pass-through; year 0 (unidentified) → undefined
+ *     so RichSeriesCard's `v-if="series.year !== undefined"` badge hides correctly.
+ *   altTitles ← dto.altTitles.map(name)   (the card renders names only, not type/lang)
+ *   authors   ← dto.authors.map(name)     (the card renders names only, not role)
+ *   metadataSource / coverSource ← pass-through (null until identified/cover-picked)
+ *   description — 🔴 NOT mapped: SeriesDetailDTO carries no `description` field
+ *     today even though `Series.description` exists on the ent schema (a Slice-C
+ *     DTO gap flagged to the overseer, not fixed here — generated API types are
+ *     never hand-edited). RichSeriesCard degrades gracefully with no synopsis.
  */
 import { ref } from 'vue'
 import type { Ref } from 'vue'
@@ -113,6 +124,15 @@ function mapDetail(dto: SeriesDetailDTO): SeriesDetail {
     chapters: dto.chapters.map(mapChapter),
     providers: dto.providers.map(mapProvider),
     metadataProviderId: dto.providers.find((p) => p.isMetadataSource)?.id ?? null,
+    status: dto.status || undefined,
+    genres: dto.genres,
+    tags: dto.tags,
+    altTitles: dto.altTitles.map((a) => a.name),
+    authors: dto.authors.map((a) => a.name),
+    year: dto.year > 0 ? dto.year : undefined,
+    links: dto.links,
+    metadataSource: dto.metadataSource,
+    coverSource: dto.coverSource,
   }
 }
 

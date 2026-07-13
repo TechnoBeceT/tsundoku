@@ -152,9 +152,14 @@ export interface SeriesLink {
 
 /**
  * RichSeriesMeta — the richer, Komga-style catalogue metadata a series can carry
- * for the rich card (synopsis, credits, genres/tags, external links). Every field
- * is OPTIONAL: this data does not yet ride the live API, so a series may have none
- * of it, and the rich card degrades gracefully when a field is missing/empty.
+ * for the rich card (synopsis, credits, genres/tags, external links), merged by
+ * the native metadata engine (`spec/metadata-engine-phase1`). Every field is
+ * OPTIONAL: a series never identified against a metadata provider has none of
+ * it, and the rich card degrades gracefully when a field is missing/empty.
+ * 🔴 `description` is NOT yet mapped from the live API — `SeriesDetailDTO`
+ * carries no `description` field today (a Slice-C DTO gap; `Series.description`
+ * exists on the backend ent schema but was never threaded through the DTO/
+ * OpenAPI spec) — see `useSeriesDetail.mapDetail`'s doc comment.
  */
 export interface RichSeriesMeta {
   /** Long-form synopsis; the rich card clamps it behind a "Read more" toggle. */
@@ -176,10 +181,25 @@ export interface RichSeriesMeta {
 }
 
 /**
+ * SourceRef — provenance descriptor for a merged-metadata or cover pick (the
+ * native metadata engine's `SourceRef`): `kind` is `"metadata"` (v1) |
+ * `"source"` | `"tracker"` (later); `ref` is the metadata provider Key()
+ * (`"anilist"`) or a SeriesProvider UUID, depending on `kind`.
+ */
+export interface SourceRef {
+  kind: string
+  ref: string
+  remoteId: string
+  remoteUrl: string
+}
+
+/**
  * SeriesDetail — the full single-series read model: every `SeriesSummary` field
  * plus the chapter and provider feeds. `metadataProviderId` is the source pinned
  * to supply the displayed title + cover (null = auto = highest importance); it
- * backs the (planned) metadata-source picker's active state.
+ * backs the (planned) metadata-source picker's active state — a DIFFERENT,
+ * older (M10) concept from `metadataSource`/`coverSource` below (which are the
+ * native metadata engine's own provenance for the rich fields / chosen cover).
  *
  * It also carries the OPTIONAL `RichSeriesMeta` catalogue fields consumed by the
  * rich card. They are additive + all optional, so every existing consumer and
@@ -192,25 +212,36 @@ export interface SeriesDetail extends SeriesSummary, RichSeriesMeta {
   providers: Provider[]
   /** Pinned metadata-source id, or null/absent for auto (highest importance). */
   metadataProviderId?: string | null
+  /** Provenance of the merged rich metadata; null/absent until the series is identified. */
+  metadataSource?: SourceRef | null
+  /** Provenance of the chosen cover; null/absent until the owner explicitly picks one. */
+  coverSource?: SourceRef | null
 }
 
 /** The two mutually-exclusive choices in the required-choice delete dialog. */
 export type DeleteChoice = 'keep' | 'wipe'
 
-/** The metadata providers the Identify flow can match a series against. */
-export type MetadataProviderName = 'AniList' | 'MAL' | 'MangaDex' | 'MangaUpdates'
-
 /**
  * MetadataCandidate — one search result in the "Identify" match flow (Komf-style):
- * a series entry from a metadata provider (AniList / MAL / MangaDex / MangaUpdates)
- * the owner can pick to pull rich metadata + a cover. Presentation-only — the
- * modal renders these and emits the owner's pick; the parent owns the fetch.
+ * a series entry from a metadata provider (AniList / MangaDex / MangaUpdates /
+ * MAL / Kitsu) the owner can pick to pull rich metadata + a cover.
+ * Presentation-only — the modal renders these and emits the owner's pick; the
+ * parent owns the fetch.
  */
 export interface MetadataCandidate {
   /** Stable id for single-select (provider-scoped, e.g. `anilist:105398`). */
   id: string
-  /** Which metadata provider this result came from (drives the badge). */
-  provider: MetadataProviderName
+  /**
+   * Pretty display label for the provider badge (e.g. `"AniList"`) — NOT the
+   * raw key; see `providerKey` for that. The composable maps the backend's
+   * provider Key() to this label, falling back to the raw key for a provider
+   * the fleet hasn't labelled yet (the set MAY grow — spec §9).
+   */
+  provider: string
+  /** Raw provider Key() (e.g. `"anilist"`) — the `identify()` payload's `provider`. Never rendered directly (use `provider` for display). */
+  providerKey: string
+  /** The provider's own identifier for this result — the `identify()` payload's `remoteId`. */
+  remoteId: string
   /** Series title as this provider knows it. */
   title: string
   /** Portrait cover URL for the result (empty → the initial placeholder). */
@@ -236,6 +267,10 @@ export interface CoverCandidate {
   provider: string
   /** Portrait cover URL for the candidate (empty → the initial placeholder). */
   coverUrl: string
+  /** "metadata" or "source" — the `setCover()` payload's `sourceKind`. */
+  sourceKind: string
+  /** Metadata provider Key() (sourceKind "metadata") or SeriesProvider UUID (sourceKind "source") — the `setCover()` payload's `sourceRef`. */
+  sourceRef: string
 }
 
 /**

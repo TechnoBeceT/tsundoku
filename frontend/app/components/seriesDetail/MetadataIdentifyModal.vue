@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import Dialog from '../ui/Dialog.vue'
 import EmptyState from '../ui/EmptyState.vue'
+import ErrorBanner from '../ui/ErrorBanner.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import TextField from '../ui/TextField.vue'
 import MetadataCandidateCard from './MetadataCandidateCard.vue'
@@ -28,6 +29,10 @@ import type { MetadataCandidate } from '../screens/seriesDetail.types'
  * `loading` down; this modal renders them and emits the owner's intent
  * (`search` / `confirm` / `cancel`). Opening re-primes the title field and drops
  * any selection (mirrors the other Series-Detail dialogs' reset-on-open).
+ *
+ * `error` (optional, mirrors RemoveSourceDialog/MatchSourceDialog/…): a failed
+ * search or confirm surfaces here via `ErrorBanner`, §16 — the owner never
+ * searches/confirms into the void behind the modal's own overlay.
  */
 const props = withDefaults(defineProps<{
   /** Whether the modal is shown (v-model:open). */
@@ -38,8 +43,11 @@ const props = withDefaults(defineProps<{
   candidates: MetadataCandidate[]
   /** True while a search is in flight — shows the skeleton grid. */
   loading?: boolean
+  /** A failed search/confirm message to show inside the modal, or null when there is none. */
+  error?: string | null
 }>(), {
   loading: false,
+  error: null,
 })
 
 const emit = defineEmits<{
@@ -96,6 +104,8 @@ function confirmMatch() {
       <p class="identify__lead">
         Search a metadata provider and pick the correct match to pull a synopsis, tags, and a fresh cover.
       </p>
+
+      <ErrorBanner v-if="error" class="identify__error" :message="error" :dismissible="false" />
 
       <!-- Header search row: editable Title field + inline Search button. -->
       <div class="identify__searchrow">
@@ -174,6 +184,10 @@ function confirmMatch() {
   font-size: var(--text-base);
   line-height: 1.5;
   color: var(--muted);
+}
+
+.identify__error {
+  margin-bottom: 16px;
 }
 
 /* Search field + inline button; the button sits on the input's baseline (the

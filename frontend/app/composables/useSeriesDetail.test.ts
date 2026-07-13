@@ -63,6 +63,17 @@ const initialDetail = {
   coverUrl: '',
   monitored: true,
   completed: false,
+  // Native-metadata-engine rich fields (Slice D) — required on the real DTO;
+  // an unidentified series' zero-values (empty string/array, year 0, null refs).
+  status: '',
+  genres: [],
+  tags: [],
+  altTitles: [],
+  authors: [],
+  year: 0,
+  links: [],
+  metadataSource: null,
+  coverSource: null,
   chapterCounts: { total: 10, downloaded: 8, wanted: 2, failed: 0 },
   chapters: [],
   providers: [
