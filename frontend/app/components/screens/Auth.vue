@@ -165,9 +165,21 @@ const onSwitch = (): void => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
+  /* dvh (not vh): on mobile, vh is pinned to the layout viewport and ignores
+   * on-screen chrome (address bar / keyboard), so a short visual viewport
+   * (mobile landscape, keyboard up) can leave the card partially offscreen.
+   * dvh tracks the ACTUAL visible viewport (the codebase's existing
+   * convention — see Discover/SeriesDetail/Downloads/LibraryList). */
+  min-height: 100dvh;
   padding: 24px;
-  overflow: hidden;
+  /* Vertical overflow must SCROLL, never clip: a min-height box already
+   * grows to fit taller content, but `overflow: hidden` here would still
+   * clip the card on a viewport shorter than its content (small phone +
+   * on-screen keyboard) — the login must always stay reachable. Horizontal
+   * stays clipped since the backdrop is an inset:0 box that never needs to
+   * overflow sideways. */
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--bg);
 }
 
@@ -249,5 +261,22 @@ const onSwitch = (): void => {
 
 .auth__switch-link:hover {
   text-decoration: underline;
+}
+
+/* ---- Responsive (QCAT-230) -------------------------------------------------
+ * The card is already fluid (width:100%, max-width:404px) and single-column
+ * (brand → title → form → switch link stacked top-to-bottom — there is no
+ * side-by-side split to break apart). At phone width the only real fix is
+ * tightening the outer/card padding so the card isn't squeezed by its own
+ * chrome on a narrow screen (390px - 2*24px outer - 2*34px card padding left
+ * very little room for the inputs). */
+@media (max-width: 900px) {
+  .auth {
+    padding: 16px;
+  }
+
+  .auth__card {
+    padding: 24px 20px;
+  }
 }
 </style>
