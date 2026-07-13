@@ -70,6 +70,12 @@ type Service struct {
 	// searchCache memoizes Search fan-out results (Task C1). Nil ⇒ no search
 	// caching (every Search fans out — the plain NewService case).
 	searchCache *searchCache
+
+	// autoIdentifier fires the Phase-1 native metadata engine's background
+	// auto-identify pass after a successful Adopt (see autoidentify.go). Nil ⇒
+	// no auto-identify (every existing NewService/NewServiceWithCaches call
+	// site is unaffected) — attach it with WithAutoIdentifier.
+	autoIdentifier AutoIdentifier
 }
 
 // NewService constructs a Service backed by the given Suwayomi client.
@@ -704,7 +710,9 @@ func (s *Service) MangaDetails(ctx context.Context, sourceID string, mangaID int
 //  4. For each provider p: find its SeriesProvider by (series_id, provider) and
 //     set its Importance.
 //  5. If req.Category != "" apply it to the Series (validated in step 1).
-//  6. Return the series UUID.
+//  6. Fire a DETACHED, best-effort auto-identify pass (metadata + cover only —
+//     never a source link) so the response never waits on it.
+//  7. Return the series UUID.
 func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error) {
 	// 1. Validate category up front to avoid creating rows for an invalid request.
 	if err := validateCategory(req.Category); err != nil {
@@ -740,6 +748,11 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 			return uuid.UUID{}, fmt.Errorf("imports.Adopt: set category %q for series %s: %w", req.Category, series.ID, err)
 		}
 	}
+
+	// 6. Best-effort background rich-metadata identify (spec/metadata-engine-
+	//    phase1 §4) — fires detached, never delays this response. See
+	//    autoidentify.go.
+	s.fireAutoIdentify(ctx, series.ID)
 
 	return series.ID, nil
 }

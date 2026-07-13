@@ -10,6 +10,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
@@ -40,6 +41,11 @@ import (
 // trigger is the runner's auto-converge hook (bound to runner.Trigger in main.go).
 // It is called by Adopt and ReorderProviders on success to kick an immediate
 // download/upgrade cycle (M5); passing a no-op func() disables the behaviour.
+//
+// metaSvc is the Phase-1 native metadata engine's orchestration service
+// (spec/metadata-engine-phase1) — it both serves the metadata HTTP endpoints
+// directly and is injected as the imports/library AutoIdentifier so a fresh
+// Adopt/Import fires a background rich-metadata pass.
 func New(
 	cfg *config.Config,
 	client *entpkg.Client,
@@ -52,6 +58,7 @@ func New(
 	warmupSvc *warmup.Service,
 	gate *sourcegate.Service,
 	chapterCache *suwayomi.ChapterCache,
+	metaSvc *metadatasvc.Service,
 	trigger func(),
 ) *echo.Echo {
 	e := echo.New()
@@ -75,6 +82,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, trigger)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trigger)
 	return e
 }

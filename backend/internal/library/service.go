@@ -52,6 +52,12 @@ type Service struct {
 	// double-click on "Scan" can't launch two concurrent NFS walks.
 	scanMu   sync.Mutex
 	scanning bool
+
+	// autoIdentifier fires the Phase-1 native metadata engine's background
+	// auto-identify pass after a successful Import (see autoidentify.go). Nil
+	// ⇒ no auto-identify (every existing NewService call site is unaffected)
+	// — attach it with WithAutoIdentifier.
+	autoIdentifier AutoIdentifier
 }
 
 // NewService builds a library Service. ingest/imports/series/trigger are

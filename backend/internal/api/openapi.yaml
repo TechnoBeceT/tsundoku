@@ -414,6 +414,15 @@ components:
         - lastChapterDownloadedAt
         - chapters
         - providers
+        - status
+        - genres
+        - tags
+        - altTitles
+        - authors
+        - year
+        - links
+        - metadataSource
+        - coverSource
       properties:
         id:
           type: string
@@ -474,6 +483,53 @@ components:
           description: The series' providers.
           items:
             $ref: "#/components/schemas/Provider"
+        status:
+          type: string
+          description: >-
+            Phase-1 metadata-engine normalized publication status
+            ("ongoing"|"completed"|"hiatus"|"cancelled"|""). Distinct from
+            `completed` above (the owner's own manual toggle) — status is
+            descriptive (what the metadata provider reports), completed is
+            prescriptive (what the owner decided refresh/health should do).
+            "" on a series never identified against a metadata provider.
+        genres:
+          type: array
+          items:
+            type: string
+          description: Merged metadata-engine genre collection (union across every matched provider). [] when unidentified.
+        tags:
+          type: array
+          items:
+            type: string
+          description: Merged metadata-engine tag collection. [] when unidentified.
+        altTitles:
+          type: array
+          items:
+            $ref: "#/components/schemas/AltTitle"
+          description: Merged alternate titles. [] when unidentified.
+        authors:
+          type: array
+          items:
+            $ref: "#/components/schemas/Author"
+          description: Merged writer/artist credits. [] when unidentified.
+        year:
+          type: integer
+          description: Merged first-publication year; 0 = unknown/unidentified.
+        links:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeriesLink"
+          description: Merged external reference links. [] when unidentified.
+        metadataSource:
+          allOf:
+            - $ref: "#/components/schemas/SourceRef"
+          nullable: true
+          description: Provenance of the merged rich metadata; null until the series is identified.
+        coverSource:
+          allOf:
+            - $ref: "#/components/schemas/SourceRef"
+          nullable: true
+          description: Provenance of the chosen cover; null until the owner explicitly picks one via the metadata engine.
 
     Category:
       type: object
@@ -1050,6 +1106,115 @@ components:
             SeriesProvider UUID to pin as the metadata source, or null/absent to reset
             to automatic resolution (highest-importance provider). A malformed UUID
             yields 400.
+
+    AltTitle:
+      type: object
+      required: [name, type, lang]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: One of ROMAJI, LOCALIZED, NATIVE, SYNONYM (provider-defined).
+        lang:
+          type: string
+
+    Author:
+      type: object
+      required: [name, role]
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+          description: One of WRITER, ARTIST, STORY, ART, ... (provider-defined).
+
+    SeriesLink:
+      type: object
+      required: [label, url]
+      properties:
+        label:
+          type: string
+        url:
+          type: string
+
+    SourceRef:
+      type: object
+      required: [kind, ref, remoteId, remoteUrl]
+      properties:
+        kind:
+          type: string
+          description: '"metadata" (v1) | "source" | "tracker" (later).'
+        ref:
+          type: string
+          description: Metadata provider Key() | SeriesProvider UUID | tracker id.
+        remoteId:
+          type: string
+        remoteUrl:
+          type: string
+
+    MetadataSearchResult:
+      type: object
+      required: [provider, remoteId, title, url, coverUrl, year]
+      properties:
+        provider:
+          type: string
+          description: Owning metadata provider's Key() (e.g. "anilist").
+        remoteId:
+          type: string
+        title:
+          type: string
+        url:
+          type: string
+        coverUrl:
+          type: string
+        year:
+          type: integer
+          description: First-publication year; 0 = unknown.
+
+    CoverCandidate:
+      type: object
+      required: [sourceKind, sourceRef, coverUrl, label]
+      properties:
+        sourceKind:
+          type: string
+          enum: [metadata, source]
+        sourceRef:
+          type: string
+          description: >-
+            Metadata provider Key() when sourceKind is "metadata", or the
+            SeriesProvider UUID string when sourceKind is "source".
+        coverUrl:
+          type: string
+        label:
+          type: string
+
+    MetadataIdentifyRequest:
+      type: object
+      required: [provider, remoteId]
+      properties:
+        provider:
+          type: string
+          description: Metadata provider Key() (e.g. "anilist").
+        remoteId:
+          type: string
+          description: The provider's own identifier for the picked series.
+
+    SetCoverRequest:
+      type: object
+      required: [sourceKind, sourceRef, coverUrl]
+      properties:
+        sourceKind:
+          type: string
+          description: '"metadata" or "source" (see CoverCandidate).'
+        sourceRef:
+          type: string
+          description: >-
+            Metadata provider Key() when sourceKind is "metadata", or the
+            SeriesProvider UUID string when sourceKind is "source".
+        coverUrl:
+          type: string
+          description: Absolute http(s) URL the cover bytes are fetched from.
 
     LibraryHealth:
       type: object
@@ -2980,6 +3145,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: setSeriesCover
+      summary: Set series cover (metadata engine)
+      description: |
+        The owner's explicit cover pick, from either the metadata-provider cover
+        gallery (GET .../metadata/covers) or a library source's own cover. Fetches
+        coverUrl's bytes, caches them via the Local Cover Cache, and records
+        cover_source independently of metadata_source (a cover pick never implies a
+        metadata re-merge). Returns the refreshed series detail (§16).
+      tags:
+        - metadata
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetCoverRequest"
+      responses:
+        "200":
+          description: Cover updated. Returns the updated series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Malformed series id, or a missing/invalid sourceKind, sourceRef, or coverUrl.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/series/{id}/providers/{providerId}/cover:
     get:
@@ -3076,6 +3293,150 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/metadata/search:
+    get:
+      operationId: searchMetadata
+      summary: Cross-provider metadata candidate search
+      description: |
+        Fans a free-text query out across every registered metadata provider (or a
+        named subset via ?providers) and returns the raw candidate gallery. Nothing
+        is persisted — this feeds the owner's Identify picker;
+        POST /api/series/{id}/metadata/identify performs the actual write.
+      tags:
+        - metadata
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query string; must be non-empty.
+          schema:
+            type: string
+        - name: providers
+          in: query
+          required: false
+          description: Comma-separated list of metadata provider keys to restrict the search to.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cross-provider candidate gallery.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MetadataSearchResult"
+        "400":
+          description: Missing or empty q parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/metadata/identify:
+    post:
+      operationId: identifySeriesMetadata
+      summary: Identify a series against a metadata provider
+      description: |
+        The owner's picked (provider, remoteId) candidate becomes the series'
+        primary metadata_source ("anchor-then-aggregate"): the engine auto-matches
+        every other registered provider by the primary's own title and merges the
+        result (union collections + primary-anchored scalar gap-fill). Returns the
+        refreshed series detail (§16).
+      tags:
+        - metadata
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetadataIdentifyRequest"
+      responses:
+        "200":
+          description: Identified. Returns the updated series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Malformed series id, missing provider/remoteId, or an unknown provider key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/metadata/covers:
+    get:
+      operationId: getSeriesMetadataCovers
+      summary: Aggregated metadata cover-candidate gallery
+      description: |
+        Returns every metadata provider's cover for the series' own title — the
+        gallery behind the owner's cover-picker modal. Nothing is persisted; see
+        POST /api/series/{id}/cover for the pick itself.
+      tags:
+        - metadata
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Aggregated cover candidates.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CoverCandidate"
         "401":
           description: Missing or invalid Bearer token.
           content:

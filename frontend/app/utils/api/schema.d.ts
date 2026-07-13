@@ -515,7 +515,15 @@ export interface paths {
          */
         get: operations["getSeriesCover"];
         put?: never;
-        post?: never;
+        /**
+         * Set series cover (metadata engine)
+         * @description The owner's explicit cover pick, from either the metadata-provider cover
+         *     gallery (GET .../metadata/covers) or a library source's own cover. Fetches
+         *     coverUrl's bytes, caches them via the Local Cover Cache, and records
+         *     cover_source independently of metadata_source (a cover pick never implies a
+         *     metadata re-merge). Returns the refreshed series detail (§16).
+         */
+        post: operations["setSeriesCover"];
         delete?: never;
         options?: never;
         head?: never;
@@ -566,6 +574,75 @@ export interface paths {
          *     without a refetch (§16).
          */
         patch: operations["setSeriesMetadataSource"];
+        trace?: never;
+    };
+    "/api/metadata/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cross-provider metadata candidate search
+         * @description Fans a free-text query out across every registered metadata provider (or a
+         *     named subset via ?providers) and returns the raw candidate gallery. Nothing
+         *     is persisted — this feeds the owner's Identify picker;
+         *     POST /api/series/{id}/metadata/identify performs the actual write.
+         */
+        get: operations["searchMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/metadata/identify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Identify a series against a metadata provider
+         * @description The owner's picked (provider, remoteId) candidate becomes the series'
+         *     primary metadata_source ("anchor-then-aggregate"): the engine auto-matches
+         *     every other registered provider by the primary's own title and merges the
+         *     result (union collections + primary-anchored scalar gap-fill). Returns the
+         *     refreshed series detail (§16).
+         */
+        post: operations["identifySeriesMetadata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/metadata/covers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Aggregated metadata cover-candidate gallery
+         * @description Returns every metadata provider's cover for the series' own title — the
+         *     gallery behind the owner's cover-picker modal. Nothing is persisted; see
+         *     POST /api/series/{id}/cover for the pick itself.
+         */
+        get: operations["getSeriesMetadataCovers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/categories": {
@@ -1775,6 +1852,24 @@ export interface components {
             chapters: components["schemas"]["Chapter"][];
             /** @description The series' providers. */
             providers: components["schemas"]["Provider"][];
+            /** @description Phase-1 metadata-engine normalized publication status ("ongoing"|"completed"|"hiatus"|"cancelled"|""). Distinct from `completed` above (the owner's own manual toggle) — status is descriptive (what the metadata provider reports), completed is prescriptive (what the owner decided refresh/health should do). "" on a series never identified against a metadata provider. */
+            status: string;
+            /** @description Merged metadata-engine genre collection (union across every matched provider). [] when unidentified. */
+            genres: string[];
+            /** @description Merged metadata-engine tag collection. [] when unidentified. */
+            tags: string[];
+            /** @description Merged alternate titles. [] when unidentified. */
+            altTitles: components["schemas"]["AltTitle"][];
+            /** @description Merged writer/artist credits. [] when unidentified. */
+            authors: components["schemas"]["Author"][];
+            /** @description Merged first-publication year; 0 = unknown/unidentified. */
+            year: number;
+            /** @description Merged external reference links. [] when unidentified. */
+            links: components["schemas"]["SeriesLink"][];
+            /** @description Provenance of the merged rich metadata; null until the series is identified. */
+            metadataSource: components["schemas"]["SourceRef"] | null;
+            /** @description Provenance of the chosen cover; null until the owner explicitly picks one via the metadata engine. */
+            coverSource: components["schemas"]["SourceRef"] | null;
         };
         Category: {
             /**
@@ -2068,6 +2163,61 @@ export interface components {
              *     yields 400.
              */
             providerId?: string | null;
+        };
+        AltTitle: {
+            name: string;
+            /** @description One of ROMAJI, LOCALIZED, NATIVE, SYNONYM (provider-defined). */
+            type: string;
+            lang: string;
+        };
+        Author: {
+            name: string;
+            /** @description One of WRITER, ARTIST, STORY, ART, ... (provider-defined). */
+            role: string;
+        };
+        SeriesLink: {
+            label: string;
+            url: string;
+        };
+        SourceRef: {
+            /** @description "metadata" (v1) | "source" | "tracker" (later). */
+            kind: string;
+            /** @description Metadata provider Key() | SeriesProvider UUID | tracker id. */
+            ref: string;
+            remoteId: string;
+            remoteUrl: string;
+        };
+        MetadataSearchResult: {
+            /** @description Owning metadata provider's Key() (e.g. "anilist"). */
+            provider: string;
+            remoteId: string;
+            title: string;
+            url: string;
+            coverUrl: string;
+            /** @description First-publication year; 0 = unknown. */
+            year: number;
+        };
+        CoverCandidate: {
+            /** @enum {string} */
+            sourceKind: "metadata" | "source";
+            /** @description Metadata provider Key() when sourceKind is "metadata", or the SeriesProvider UUID string when sourceKind is "source". */
+            sourceRef: string;
+            coverUrl: string;
+            label: string;
+        };
+        MetadataIdentifyRequest: {
+            /** @description Metadata provider Key() (e.g. "anilist"). */
+            provider: string;
+            /** @description The provider's own identifier for the picked series. */
+            remoteId: string;
+        };
+        SetCoverRequest: {
+            /** @description "metadata" or "source" (see CoverCandidate). */
+            sourceKind: string;
+            /** @description Metadata provider Key() when sourceKind is "metadata", or the SeriesProvider UUID string when sourceKind is "source". */
+            sourceRef: string;
+            /** @description Absolute http(s) URL the cover bytes are fetched from. */
+            coverUrl: string;
         };
         LibraryHealth: {
             series: components["schemas"]["SeriesHealth"][];
@@ -3719,6 +3869,60 @@ export interface operations {
             };
         };
     };
+    setSeriesCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetCoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Cover updated. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed series id, or a missing/invalid sourceKind, sourceRef, or coverUrl. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getProviderCover: {
         parameters: {
             query?: never;
@@ -3803,6 +4007,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchMetadata: {
+        parameters: {
+            query: {
+                /** @description Search query string; must be non-empty. */
+                q: string;
+                /** @description Comma-separated list of metadata provider keys to restrict the search to. */
+                providers?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cross-provider candidate gallery. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataSearchResult"][];
+                };
+            };
+            /** @description Missing or empty q parameter. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    identifySeriesMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetadataIdentifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Identified. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed series id, missing provider/remoteId, or an unknown provider key. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSeriesMetadataCovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Aggregated cover candidates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverCandidate"][];
                 };
             };
             /** @description Missing or invalid Bearer token. */

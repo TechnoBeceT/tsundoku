@@ -42,6 +42,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/job"
+	"github.com/technobecet/tsundoku/internal/metadata/providers"
+	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/refresh"
@@ -108,6 +110,17 @@ func main() {
 	// imports search fan-out records per-source timings into it; the warm-up job
 	// reads it to target slow sources.
 	metricsSvc := metrics.NewService(entClient)
+
+	// Phase-1 native metadata engine (spec/metadata-engine-phase1): the
+	// composed registry of the 5 public-read metadata providers (AniList,
+	// MangaDex, MangaUpdates, MAL, Kitsu — internal/metadata/providers is the
+	// ONE place that depends on every concrete provider package) plus the
+	// orchestration service over it (search / identify / cover pick / the
+	// background auto-identify pass). MAL is the only credentialed provider
+	// (cfg.Metadata.MALClientID, optional — see MetadataConfig's doc comment);
+	// the other four carry the engine end-to-end without it.
+	metaRegistry := providers.NewRegistry(providers.Config{MALClientID: cfg.Metadata.MALClientID})
+	metaSvc := metadatasvc.NewService(entClient, metaRegistry, cfg.Storage.Folder)
 
 	// Source-politeness gate: a per-physical-source circuit-breaker (persisted
 	// in SourceCircuitState) + in-memory politeness delay, shared by every
@@ -178,7 +191,7 @@ func main() {
 	// called when tsundoku owns the process.
 	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 

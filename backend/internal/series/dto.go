@@ -13,6 +13,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/metadata"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
 
@@ -64,6 +65,13 @@ type SeriesSummaryDTO struct {
 // chapters (ordered by number then chapter_key), its providers, and the
 // monitoring flag. DisplayName and CoverURL follow the same resolution as
 // SeriesSummaryDTO.
+//
+// The rich-metadata fields (Status/Genres/Tags/AltTitles/Authors/Year/Links/
+// MetadataSource/CoverSource) are populated by the Phase-1 native metadata
+// engine (internal/metadatasvc) — see spec/metadata-engine-phase1 §3/§5. They
+// are DETAIL-ONLY (never surfaced on SeriesSummaryDTO — the library grid does
+// not need a genre list per row) and are the zero value (""/0/nil→[]) on a
+// series that has never been identified against a metadata provider.
 type SeriesDetailDTO struct {
 	ID            string        `json:"id"`
 	Title         string        `json:"title"`
@@ -83,6 +91,116 @@ type SeriesDetailDTO struct {
 	LastChapterDownloadedAt *string       `json:"lastChapterDownloadedAt"`
 	Chapters                []ChapterDTO  `json:"chapters"`
 	Providers               []ProviderDTO `json:"providers"`
+
+	// Status is the metadata-engine normalized publication status
+	// ("ongoing"|"completed"|"hiatus"|"cancelled"|""). Distinct from Completed
+	// above, which is the owner's own manual toggle — Status is descriptive
+	// (what the metadata provider reports), Completed is prescriptive (what the
+	// owner decided the refresh/health sweep should do).
+	Status string `json:"status"`
+	// Genres/Tags are the merged metadata-engine collections (union across every
+	// matched provider — see metadata.Merge). Always non-nil so the JSON is []
+	// rather than null on an unidentified series.
+	Genres []string `json:"genres"`
+	Tags   []string `json:"tags"`
+	// AltTitles/Authors/Links mirror the merged metadata-engine collections.
+	AltTitles []AltTitleDTO `json:"altTitles"`
+	Authors   []AuthorDTO   `json:"authors"`
+	Links     []LinkDTO     `json:"links"`
+	// Year is the first-publication year merged from the metadata engine; 0 =
+	// unknown/unidentified.
+	Year int `json:"year"`
+	// MetadataSource/CoverSource are the provenance descriptors for the merged
+	// rich metadata and the chosen cover, respectively (they are independent —
+	// QCAT-228 — a cover pick never implies a metadata re-merge and vice versa).
+	// Both are nil on a series that has never been identified/never had a cover
+	// explicitly chosen via the metadata engine.
+	MetadataSource *SourceRefDTO `json:"metadataSource"`
+	CoverSource    *SourceRefDTO `json:"coverSource"`
+}
+
+// AltTitleDTO mirrors metadata.AltTitle for the wire (camelCase JSON).
+type AltTitleDTO struct {
+	Name string `json:"name"`
+	// Type is one of ROMAJI, LOCALIZED, NATIVE, SYNONYM.
+	Type string `json:"type"`
+	Lang string `json:"lang"`
+}
+
+// AuthorDTO mirrors metadata.Author for the wire (camelCase JSON).
+type AuthorDTO struct {
+	Name string `json:"name"`
+	// Role is one of WRITER, ARTIST, STORY, ART, ... (provider-defined).
+	Role string `json:"role"`
+}
+
+// LinkDTO mirrors metadata.Link for the wire (camelCase JSON).
+type LinkDTO struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
+}
+
+// SourceRefDTO mirrors metadata.SourceRef for the wire (camelCase JSON) — the
+// provenance descriptor for a series' merged metadata or chosen cover.
+type SourceRefDTO struct {
+	// Kind is "metadata" (v1) | "source" | "tracker" (later).
+	Kind string `json:"kind"`
+	// Ref is the provider Key() | SeriesProvider UUID | tracker id.
+	Ref       string `json:"ref"`
+	RemoteID  string `json:"remoteId"`
+	RemoteURL string `json:"remoteUrl"`
+}
+
+// mapAltTitles maps the Series row's stored AltTitles into their DTO form.
+// Always returns a non-nil slice so the JSON renders [] rather than null on an
+// unidentified series.
+func mapAltTitles(alts []metadata.AltTitle) []AltTitleDTO {
+	out := make([]AltTitleDTO, 0, len(alts))
+	for _, a := range alts {
+		out = append(out, AltTitleDTO{Name: a.Name, Type: a.Type, Lang: a.Lang})
+	}
+	return out
+}
+
+// mapAuthors maps the Series row's stored Authors into their DTO form. Always
+// returns a non-nil slice (see mapAltTitles).
+func mapAuthors(authors []metadata.Author) []AuthorDTO {
+	out := make([]AuthorDTO, 0, len(authors))
+	for _, a := range authors {
+		out = append(out, AuthorDTO{Name: a.Name, Role: a.Role})
+	}
+	return out
+}
+
+// mapLinks maps the Series row's stored Links into their DTO form. Always
+// returns a non-nil slice (see mapAltTitles).
+func mapLinks(links []metadata.Link) []LinkDTO {
+	out := make([]LinkDTO, 0, len(links))
+	for _, l := range links {
+		out = append(out, LinkDTO{Label: l.Label, URL: l.URL})
+	}
+	return out
+}
+
+// mapSourceRef maps a nullable Series.metadata_source/cover_source column into
+// its DTO form. nil stays nil (JSON null) — the field is genuinely absent
+// until the series is identified or a cover is explicitly chosen.
+func mapSourceRef(ref *metadata.SourceRef) *SourceRefDTO {
+	if ref == nil {
+		return nil
+	}
+	return &SourceRefDTO{Kind: ref.Kind, Ref: ref.Ref, RemoteID: ref.RemoteID, RemoteURL: ref.RemoteURL}
+}
+
+// nonNilStrings returns s unchanged when non-nil, else an empty (non-nil)
+// slice — Series.Genres/Tags are Optional jsonb columns and read back nil when
+// never set, but the DTO contract is "always [] never null" (mirrors
+// FractionalChapters/Links/etc above).
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // ChapterDTO is one chapter in a series-detail response. ID is the Chapter UUID —

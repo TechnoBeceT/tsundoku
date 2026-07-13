@@ -15,6 +15,7 @@ import (
 	extensionsh "github.com/technobecet/tsundoku/internal/handler/extensions"
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
 	libraryh "github.com/technobecet/tsundoku/internal/handler/library"
+	metadatah "github.com/technobecet/tsundoku/internal/handler/metadata"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
@@ -23,6 +24,7 @@ import (
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
@@ -64,6 +66,10 @@ import (
 //   - /api/series/:id/cover                        — metadata-source cover proxy (RequireOwner).
 //   - /api/series/:id/providers/:providerId/cover  — per-provider cover proxy (RequireOwner).
 //   - /api/series/:id/metadata-source              — pin metadata source (RequireOwner).
+//   - /api/metadata/search                          — cross-provider metadata candidate search (RequireOwner).
+//   - /api/series/:id/metadata/identify (POST)      — anchor-then-aggregate metadata identify (RequireOwner).
+//   - /api/series/:id/metadata/covers (GET)         — aggregated metadata cover-candidate gallery (RequireOwner).
+//   - /api/series/:id/cover (POST)                  — owner's explicit cover pick (RequireOwner).
 //   - /api/series/:id/chapters/:chapterId/pages/:n — in-app reader CBZ page bytes (RequireOwner).
 //   - /api/chapters/:id/progress (PATCH)           — set chapter reading progress (RequireOwner).
 //   - /api/categories (GET)                        — list categories with counts (RequireOwner).
@@ -119,6 +125,7 @@ func registerRoutes(
 	warmupSvc *warmup.Service,
 	gate *sourcegate.Service,
 	chapterCache *suwayomi.ChapterCache,
+	metaSvc *metadatasvc.Service,
 	trigger func(),
 ) {
 	// Infrastructure routes — no authentication required.
@@ -164,6 +171,17 @@ func registerRoutes(
 	authed.GET("/series/:id/chapters/:chapterId/pages/:n", seriesH.ChapterPage)
 	authed.PATCH("/chapters/:id/progress", seriesH.SetProgress)
 	authed.GET("/health", seriesH.LibraryHealth)
+
+	// Phase-1 native metadata engine (spec/metadata-engine-phase1): cross-
+	// provider search, per-series identify, cover-candidate gallery, and cover
+	// pick. metaSvc is built in main.go (it owns the composed provider
+	// registry) and shares seriesSvc so a mutating call returns the refreshed
+	// SeriesDetailDTO (§16 round-trip).
+	metadataH := metadatah.NewHandler(metaSvc, seriesSvc)
+	authed.GET("/metadata/search", metadataH.Search)
+	authed.POST("/series/:id/metadata/identify", metadataH.Identify)
+	authed.GET("/series/:id/metadata/covers", metadataH.Covers)
+	authed.POST("/series/:id/cover", metadataH.SetCover)
 
 	// Settings (runtime tunables) API. The service is built in main.go (it shares
 	// the Ent client + carries the config-resolved defaults) and threaded in here.
@@ -242,7 +260,7 @@ func registerRoutes(
 		// Search-cache TTL read per Get from the settings overlay (jobs.search_cache_ttl,
 		// hot reload); 0 disables the search cache at runtime.
 		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
-	)
+	).WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, suwayomiClient)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
@@ -257,7 +275,8 @@ func registerRoutes(
 	// SAME ingest/importsSvc/seriesSvc instances constructed above — no double
 	// construction — plus the shared trigger, storage root, and SSE hub (the
 	// async scan streams scan.start/scan.progress/scan.done over it).
-	librarySvc := library.NewService(client, ingest, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub)
+	librarySvc := library.NewService(client, ingest, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub).
+		WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
 	libraryH := libraryh.NewHandler(librarySvc)
 	authed.POST("/library/scan", libraryH.Scan)
 	authed.GET("/library/imports", libraryH.ListImports)

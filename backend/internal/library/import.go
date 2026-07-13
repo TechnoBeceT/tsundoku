@@ -60,6 +60,12 @@ func (s *Service) Import(ctx context.Context, path string, matches []ProviderRef
 		return series.SeriesDetailDTO{}, err
 	}
 
+	// Best-effort background rich-metadata identify (spec/metadata-engine-
+	// phase1 §4) — fires detached, never delays this response, and applies
+	// regardless of which branch below runs (a disk-only import is just as
+	// eligible for rich metadata as a matched one). See autoidentify.go.
+	s.fireAutoIdentify(ctx, ser.ID)
+
 	if len(matches) > 0 {
 		dto, err := s.AddProviders(ctx, ser.ID, matches)
 		if err != nil {

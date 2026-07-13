@@ -10,6 +10,8 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	"github.com/technobecet/tsundoku/internal/metadata"
+	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
@@ -107,7 +109,11 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	settingsSvc := settings.NewService(nil, settings.Defaults{})
 	metricsSvc := metrics.NewService(nil)
 	warmupSvc := warmup.NewService(nullSuwayomiClient{}, metricsSvc, settingsSvc, nil)
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, func() {}), authSvc
+	// No metadata providers wired for these route-level tests — an empty
+	// registry never fires an outbound call, matching the nil-DB/panic-on-use
+	// discipline the other stubs above follow.
+	metaSvc := metadatasvc.NewService(nil, metadata.NewRegistry(), "")
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, func() {}), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path
