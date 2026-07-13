@@ -119,4 +119,26 @@ defineProps<{
   min-height: 0;
   overflow-y: auto;
 }
+
+@media (max-width: 900px) {
+  /* `.panel__headright`'s `flex: none` action buttons (e.g. Sources' "Remove
+   * duplicate files" + "Add") used to squeeze `.panel__headleft` down to
+   * nothing on a phone, truncating even a short title like "Sources" to
+   * "So…". Wrapping the header and forcing the actions group onto its own
+   * full-width row gives the title its natural width on line 1 (never
+   * truncated) and keeps the buttons tappable on line 2 instead of
+   * overflowing/crushing line 1. */
+  .panel__head {
+    flex-wrap: wrap;
+  }
+
+  .panel__headright {
+    flex: 1 0 100%;
+    /* Sources' header-right can carry up to 3 buttons ("Remove duplicate
+     * files" / "Remove fractional files" / "Add") — too wide for one line on
+     * a phone even alone. Let THEM wrap too rather than overflow. */
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
 </style>

@@ -65,16 +65,23 @@ const resumeLine = (): string => {
       <div v-if="chapter.filename" class="chapter__file">{{ chapter.filename }}</div>
       <div v-if="isPartiallyRead()" class="chapter__resume">{{ resumeLine() }}</div>
     </div>
-    <span v-if="pages()" class="chapter__pages">{{ pages() }}</span>
-    <AppButton
-      v-if="chapter.state === 'downloaded'"
-      variant="mini"
-      size="sm"
-      @click="emit('read', chapter.id)"
-    >
-      Read
-    </AppButton>
-    <StatusBadge :state="chapter.state" />
+    <!-- Grouped so the mobile breakpoint can drop the WHOLE cluster to its own
+         line under the name (see .chapter__controls below) regardless of
+         which of the two optional members (page count / Read button)
+         render — a plain flex-wrap on the individual siblings can't guarantee
+         that grouping since which items are even present varies per row. -->
+    <div class="chapter__controls">
+      <span v-if="pages()" class="chapter__pages">{{ pages() }}</span>
+      <AppButton
+        v-if="chapter.state === 'downloaded'"
+        variant="mini"
+        size="sm"
+        @click="emit('read', chapter.id)"
+      >
+        Read
+      </AppButton>
+      <StatusBadge :state="chapter.state" />
+    </div>
   </div>
 </template>
 
@@ -156,5 +163,44 @@ const resumeLine = (): string => {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--faint);
+}
+
+/* The page-count / Read / status-badge cluster — flex:none on desktop, same
+ * as the individual siblings it replaces (12px gap, matching `.chapter`'s
+ * own gap so the desktop row is pixel-identical to before). */
+.chapter__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+@media (max-width: 900px) {
+  /* The row's `flex:none` controls (page-count/Read/badge) used to eat the
+   * fixed width a phone has, crushing `.chapter__main`'s `flex:1` down to
+   * near-nothing so the chapter name had no room to even show its ellipsis.
+   * Wrapping `.chapter` and forcing `.chapter__controls` onto its own
+   * full-width line (flex-basis 100%) gives the number + name the WHOLE row
+   * width on line 1, and drops the controls to line 2 — nothing shrinks or
+   * gets hidden, nothing overflows. */
+  .chapter {
+    flex-wrap: wrap;
+  }
+
+  .chapter__controls {
+    /* basis nets out to exactly (row width - the indent) so the outer box
+     * including `margin-left` never exceeds the row's content width —
+     * `flex: 1 0 100%` + a separate margin would overflow by the margin
+     * amount instead. flex-shrink:1 (the "1" in the shorthand) is a safety
+     * margin for subpixel rounding, not load-bearing on its own. */
+    flex: 1 1 calc(100% - 52px);
+    /* Align under the name, not the number gutter. */
+    margin-left: 52px;
+    justify-content: flex-start;
+    /* Defensive: on the narrowest phones a long badge label ("Failed ·
+     * final") beside a page-count can still be tight — let the cluster
+     * itself wrap rather than overflow horizontally. */
+    flex-wrap: wrap;
+  }
 }
 </style>

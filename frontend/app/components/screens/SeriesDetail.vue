@@ -178,9 +178,6 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 
 <template>
   <div class="detail">
-    <!-- Everything above the two-panel region keeps its natural height (see
-         .detail__top below) — only .columns is allowed to shrink to fit the
-         viewport. -->
     <div class="detail__top">
       <!-- §16 error banner: a failed mutation surfaces here, dismissible -->
       <div v-if="error" class="detail__error">
@@ -243,22 +240,20 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 </template>
 
 <style scoped>
-/* The screen is bounded to the viewport BELOW the AppShell header (shell/
- * AppShell.vue's `.head` is a fixed 64px) so the two-panel region never grows
- * a page-level scrollbar: it scrolls internally instead (each panel owns its
- * own scroll body — see .columns / PanelCard). `.detail__top` (header +
- * metadata picker + error banner) keeps its natural height; only `.columns`
- * is allowed to shrink to whatever is left. AppShell itself is out of scope
- * for this fix (pure layout, this screen only), hence the coupled magic
- * number instead of a shared CSS var — if AppShell's header height ever
- * changes, update it here too. */
+/* The screen FLOWS with the document — the whole page (card + panels) scrolls
+ * together as one, at every width. `min-height` just keeps a short series
+ * from leaving a visibly short page below the AppShell header (shell/
+ * AppShell.vue's `.head` is a fixed 64px; its `.head`/`.rail` are
+ * `position: sticky` so they keep pinning during the page scroll this
+ * establishes — untouched here). This is UNCONDITIONAL (not gated to a media
+ * query): a tall `RichSeriesCard` (description + tag cloud + links + stats)
+ * can exceed any fixed pane height at ANY width, not just mobile, so the old
+ * "fixed header pane + inner-scroll `.columns`" model doesn't hold at any
+ * width and there is no viewport-bounded shape left to fall back to. */
 .detail {
   padding: 24px 30px 70px;
   background: var(--bg);
-  height: calc(100dvh - 64px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  min-height: calc(100dvh - 64px);
 }
 
 /* A flex column so RichSeriesCard and MetadataSourcePicker get a consistent
@@ -267,7 +262,6 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
  * without this the two panels sat flush against each other (a regression
  * from the old SeriesHeader→RichSeriesCard swap). Matches `.columns`' 18px. */
 .detail__top {
-  flex: none;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -275,47 +269,19 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 
 /* ---- Two-column layout ---------------------------------------------------- */
 /* Chapters gets the WIDER column — it's the panel actually scanned. Sources
- * is a bounded list (4-7 cards) and gets the narrower one. */
+ * is a bounded list (4-7 cards) and gets the narrower one. Purely a column
+ * layout now (no scroll/overflow behavior lives here any more — see `.detail`
+ * above): the grid's row height is content-driven and the document scrolls
+ * it, same as everything else on the page. */
 .columns {
   display: grid;
   grid-template-columns: 1.7fr 1fr;
   gap: 18px;
-  flex: 1;
-  /* 🔴 THE OVERFLOW TRAP: a flex/grid child's automatic minimum size is its
-   * CONTENT size, not 0. Without this, `.columns` refuses to shrink below the
-   * combined natural height of both panels (easily 1000px+ with 7 sources),
-   * so the panels' own internal `overflow-y: auto` never engages and the
-   * WHOLE PAGE grows an unbounded scrollbar instead — every other rule here
-   * looks correct while this one is silently defeated. Do not remove this to
-   * "clean up" the CSS; see PanelCard.vue for the matching min-height:0 one
-   * level down (the grid items themselves), and one level down again inside
-   * PanelCard for the scrolling body — the trap applies at every nesting level. */
-  min-height: 0;
 }
 
 @media (max-width: 900px) {
-  /* Mobile has no second inner scroller to coordinate with (AppShell's
-   * `.shell`/`.main`/`.content` chain never clips — see AppShell.vue; body
-   * scroll is available for free once THIS component stops trapping it). The
-   * desktop shape below fixes `.detail` to the viewport height and hides its
-   * overflow so `.columns` can own a single bounded inner scroller; on a
-   * narrow phone the stacked `RichSeriesCard` + metadata picker in
-   * `.detail__top` are routinely TALLER than that fixed box, so they got
-   * clipped by `overflow: hidden` and neither them NOR `.columns` below them
-   * could ever be reached. Drop the fixed height + hidden overflow so the
-   * component grows to its natural (taller) content height and the PAGE
-   * scrolls it — the standard "let the document scroll" mobile shape. */
-  .detail {
-    height: auto;
-    min-height: calc(100dvh - 64px);
-    overflow: visible;
-  }
-
   .columns {
     grid-template-columns: 1fr;
-    /* No longer the scroll owner — flow into the page scroll established
-     * above instead of opening a second, now-unreachable inner scroller. */
-    overflow-y: visible;
   }
 }
 </style>
