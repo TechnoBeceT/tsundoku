@@ -68,6 +68,59 @@ func TestNameSimilarity_LengthBuckets(t *testing.T) {
 	}
 }
 
+// TestNameSimilarity_ThresholdKeyedOnLongerString proves the length bucket
+// is chosen from the LONGER of the two compared strings, not from the query
+// title's length nor the candidate's alone. Both pairs have Levenshtein
+// distance 2 between a len-6 and a len-8 string: the longer (8) gives
+// threshold 2 ⇒ MatchClosest, whereas keying on the len-6 side would give
+// threshold 1 ⇒ MatchNone. Tested symmetrically (title shorter, then title
+// longer) so a mistake keyed on EITHER operand's length is caught.
+func TestNameSimilarity_ThresholdKeyedOnLongerString(t *testing.T) {
+	tests := []struct {
+		name      string
+		title     string
+		candidate string
+	}{
+		{
+			name:      "title shorter than candidate",
+			title:     "ABCDEF",   // len 6 -> thr 1
+			candidate: "ABCDEFGH", // len 8 -> thr 2; distance 2 (two appends)
+		},
+		{
+			name:      "title longer than candidate",
+			title:     "ABCDEFGH", // len 8 -> thr 2; distance 2
+			candidate: "ABCDEF",   // len 6 -> thr 1
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query := metadata.MatchQuery{Title: tt.title}
+
+			got := metadata.NameSimilarity(query, tt.candidate)
+
+			if got != metadata.MatchClosest {
+				t.Fatalf("NameSimilarity(%q vs %q) = %v, want MatchClosest (threshold from longer len 8)",
+					tt.title, tt.candidate, got)
+			}
+		})
+	}
+}
+
+// TestNameSimilarity_SmallestBucketExactOnly proves the len 1-3 bucket
+// tolerates ZERO edits: "CAT" vs "CAR" is distance 1 at length 3, so the
+// threshold is 0 (exact only) ⇒ MatchNone. A bucket that mistakenly allowed
+// distance 1 here would return MatchClosest.
+func TestNameSimilarity_SmallestBucketExactOnly(t *testing.T) {
+	query := metadata.MatchQuery{Title: "CAT"}
+
+	got := metadata.NameSimilarity(query, "CAR")
+
+	if got != metadata.MatchNone {
+		t.Fatalf("NameSimilarity(CAT vs CAR) = %v, want MatchNone (len 1-3 bucket is exact-only)", got)
+	}
+}
+
 // TestNameSimilarity_BeyondThreshold asserts a candidate whose distance
 // exceeds its length bucket's threshold reports MatchNone, not a false
 // positive.
