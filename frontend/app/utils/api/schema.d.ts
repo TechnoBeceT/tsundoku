@@ -1854,6 +1854,8 @@ export interface components {
             providers: components["schemas"]["Provider"][];
             /** @description Phase-1 metadata-engine normalized publication status ("ongoing"|"completed"|"hiatus"|"cancelled"|""). Distinct from `completed` above (the owner's own manual toggle) — status is descriptive (what the metadata provider reports), completed is prescriptive (what the owner decided refresh/health should do). "" on a series never identified against a metadata provider. */
             status: string;
+            /** @description Phase-1 metadata-engine merged synopsis (see internal/metadatasvc's persist step). "" on a series never identified against a metadata provider. */
+            description: string;
             /** @description Merged metadata-engine genre collection (union across every matched provider). [] when unidentified. */
             genres: string[];
             /** @description Merged metadata-engine tag collection. [] when unidentified. */

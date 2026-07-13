@@ -415,6 +415,7 @@ components:
         - chapters
         - providers
         - status
+        - description
         - genres
         - tags
         - altTitles
@@ -492,6 +493,11 @@ components:
             descriptive (what the metadata provider reports), completed is
             prescriptive (what the owner decided refresh/health should do).
             "" on a series never identified against a metadata provider.
+        description:
+          type: string
+          description: >-
+            Phase-1 metadata-engine merged synopsis (see internal/metadatasvc's persist step). ""
+            on a series never identified against a metadata provider.
         genres:
           type: array
           items:

@@ -523,6 +523,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		Providers:               providers,
 
 		Status:         row.Status,
+		Description:    row.Description,
 		Genres:         nonNilStrings(row.Genres),
 		Tags:           nonNilStrings(row.Tags),
 		AltTitles:      mapAltTitles(row.AltTitles),

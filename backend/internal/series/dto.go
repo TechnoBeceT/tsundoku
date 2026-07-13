@@ -98,6 +98,10 @@ type SeriesDetailDTO struct {
 	// (what the metadata provider reports), Completed is prescriptive (what the
 	// owner decided the refresh/health sweep should do).
 	Status string `json:"status"`
+	// Description is the metadata-engine merged synopsis (see
+	// internal/metadatasvc's persist step); "" on a series that has never been
+	// identified against a metadata provider.
+	Description string `json:"description"`
 	// Genres/Tags are the merged metadata-engine collections (union across every
 	// matched provider — see metadata.Merge). Always non-nil so the JSON is []
 	// rather than null on an unidentified series.

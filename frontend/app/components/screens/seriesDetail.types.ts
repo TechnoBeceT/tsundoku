@@ -156,10 +156,6 @@ export interface SeriesLink {
  * the native metadata engine (`spec/metadata-engine-phase1`). Every field is
  * OPTIONAL: a series never identified against a metadata provider has none of
  * it, and the rich card degrades gracefully when a field is missing/empty.
- * 🔴 `description` is NOT yet mapped from the live API — `SeriesDetailDTO`
- * carries no `description` field today (a Slice-C DTO gap; `Series.description`
- * exists on the backend ent schema but was never threaded through the DTO/
- * OpenAPI spec) — see `useSeriesDetail.mapDetail`'s doc comment.
  */
 export interface RichSeriesMeta {
   /** Long-form synopsis; the rich card clamps it behind a "Read more" toggle. */
