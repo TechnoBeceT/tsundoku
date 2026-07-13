@@ -1,0 +1,631 @@
+{
+  "data": {
+    "id": "38",
+    "type": "manga",
+    "links": {
+      "self": "https://kitsu.io/api/edge/manga/38"
+    },
+    "attributes": {
+      "createdAt": "2013-12-18T13:48:27.926Z",
+      "updatedAt": "2026-07-13T12:00:29.018Z",
+      "slug": "one-piece",
+      "synopsis": "Gol D. Roger was known as the Pirate King, the strongest and most infamous being to have sailed the Grand Line. The capture and death of Roger by the World Government brought a change throughout the world. His last words before his death revealed the location of the greatest treasure in the world, One Piece. It was this revelation that brought about the Grand Age of Pirates, men who dreamed of finding One Piece (which promises an unlimited amount of riches and fame), and quite possibly the most coveted of titles for the person who found it, the title of the Pirate King.\n\nEnter Monkey D. Luffy, a 17-year-old boy that defies your standard definition of a pirate. Rather than the popular persona of a wicked, hardened, toothless pirate who ransacks villages for fun, Luffy’s reason for being a pirate is one of pure wonder; the thought of an exciting adventure and meeting new and intriguing people, along with finding One Piece, are his reasons of becoming a pirate. Following in the footsteps of his childhood hero, Luffy and his crew travel across the Grand Line, experiencing crazy adventures, unveiling dark mysteries and battling strong enemies, all in order to reach One Piece.\n\n(Source: MAL Rewrite)",
+      "description": "Gol D. Roger was known as the Pirate King, the strongest and most infamous being to have sailed the Grand Line. The capture and death of Roger by the World Government brought a change throughout the world. His last words before his death revealed the location of the greatest treasure in the world, One Piece. It was this revelation that brought about the Grand Age of Pirates, men who dreamed of finding One Piece (which promises an unlimited amount of riches and fame), and quite possibly the most coveted of titles for the person who found it, the title of the Pirate King.\n\nEnter Monkey D. Luffy, a 17-year-old boy that defies your standard definition of a pirate. Rather than the popular persona of a wicked, hardened, toothless pirate who ransacks villages for fun, Luffy’s reason for being a pirate is one of pure wonder; the thought of an exciting adventure and meeting new and intriguing people, along with finding One Piece, are his reasons of becoming a pirate. Following in the footsteps of his childhood hero, Luffy and his crew travel across the Grand Line, experiencing crazy adventures, unveiling dark mysteries and battling strong enemies, all in order to reach One Piece.\n\n(Source: MAL Rewrite)",
+      "coverImageTopOffset": 50,
+      "titles": {
+        "en": "One Piece",
+        "en_jp": "One Piece",
+        "en_us": "One Piece",
+        "ja_jp": "ONE PIECE"
+      },
+      "canonicalTitle": "One Piece",
+      "abbreviatedTitles": [
+        "Budak Getah",
+        "Đảo Hải Tặc",
+        "Большой куш",
+        "Ван Пис",
+        "Уан Пийс"
+      ],
+      "averageRating": "85.07",
+      "ratingFrequencies": {
+        "2": "5475",
+        "3": "105",
+        "4": "294",
+        "5": "50",
+        "6": "266",
+        "7": "61",
+        "8": "5144",
+        "9": "96",
+        "10": "532",
+        "11": "128",
+        "12": "776",
+        "13": "167",
+        "14": "11722",
+        "15": "265",
+        "16": "2575",
+        "17": "562",
+        "18": "3746",
+        "19": "810",
+        "20": "62373"
+      },
+      "userCount": 162891,
+      "favoritesCount": 3767,
+      "startDate": "1997-07-22",
+      "endDate": null,
+      "nextRelease": null,
+      "popularityRank": 3,
+      "ratingRank": 3,
+      "ageRating": "G",
+      "ageRatingGuide": null,
+      "subtype": "manga",
+      "status": "current",
+      "tba": null,
+      "posterImage": {
+        "tiny": "https://media.kitsu.app/manga/38/poster_image/tiny-9212308f74228cddfeffb43e8b27b7f8.jpeg",
+        "large": "https://media.kitsu.app/manga/38/poster_image/large-676b91b69b775c6c240c41dbf8106d03.jpeg",
+        "small": "https://media.kitsu.app/manga/38/poster_image/small-856c6f25c6a57d4f1d4570bb578af520.jpeg",
+        "medium": "https://media.kitsu.app/manga/38/poster_image/medium-101738b3660e107cc751f00d46126f0b.jpeg",
+        "original": "https://media.kitsu.app/manga/38/poster_image/85c98b3ebfea8a1cfe8c8f837b6b5fc8.jpg",
+        "meta": {
+          "dimensions": {
+            "tiny": {
+              "width": 110,
+              "height": 156
+            },
+            "large": {
+              "width": 550,
+              "height": 780
+            },
+            "small": {
+              "width": 284,
+              "height": 402
+            },
+            "medium": {
+              "width": 390,
+              "height": 554
+            }
+          }
+        }
+      },
+      "coverImage": {
+        "tiny": "https://media.kitsu.app/manga/38/cover_image/tiny-551b3a10a77d7462184ec88c870e909a.jpeg",
+        "large": "https://media.kitsu.app/manga/38/cover_image/large-bd52b8f2fb81d3cf99b4fbe4c072d2b1.jpeg",
+        "small": "https://media.kitsu.app/manga/38/cover_image/small-e0bb784a3578bfd6bcdde1ccc83529b1.jpeg",
+        "original": "https://media.kitsu.app/manga/38/cover_image/020c994fbf81443b79723d8fca369df0.jpg",
+        "meta": {
+          "dimensions": {
+            "tiny": {
+              "width": 840,
+              "height": 200
+            },
+            "large": {
+              "width": 3360,
+              "height": 800
+            },
+            "small": {
+              "width": 1680,
+              "height": 400
+            }
+          }
+        }
+      },
+      "chapterCount": null,
+      "volumeCount": null,
+      "serialization": "Shounen Jump (Weekly)",
+      "mangaType": "manga"
+    },
+    "relationships": {
+      "genres": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/genres",
+          "related": "https://kitsu.io/api/edge/manga/38/genres"
+        }
+      },
+      "categories": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/categories",
+          "related": "https://kitsu.io/api/edge/manga/38/categories"
+        },
+        "data": [
+          {
+            "type": "categories",
+            "id": "160"
+          },
+          {
+            "type": "categories",
+            "id": "47"
+          },
+          {
+            "type": "categories",
+            "id": "156"
+          },
+          {
+            "type": "categories",
+            "id": "150"
+          },
+          {
+            "type": "categories",
+            "id": "167"
+          },
+          {
+            "type": "categories",
+            "id": "157"
+          },
+          {
+            "type": "categories",
+            "id": "243"
+          },
+          {
+            "type": "categories",
+            "id": "11"
+          },
+          {
+            "type": "categories",
+            "id": "184"
+          }
+        ]
+      },
+      "castings": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/castings",
+          "related": "https://kitsu.io/api/edge/manga/38/castings"
+        }
+      },
+      "installments": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/installments",
+          "related": "https://kitsu.io/api/edge/manga/38/installments"
+        }
+      },
+      "mappings": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/mappings",
+          "related": "https://kitsu.io/api/edge/manga/38/mappings"
+        }
+      },
+      "reviews": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/reviews",
+          "related": "https://kitsu.io/api/edge/manga/38/reviews"
+        }
+      },
+      "mediaRelationships": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/media-relationships",
+          "related": "https://kitsu.io/api/edge/manga/38/media-relationships"
+        }
+      },
+      "characters": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/characters",
+          "related": "https://kitsu.io/api/edge/manga/38/characters"
+        }
+      },
+      "staff": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/staff",
+          "related": "https://kitsu.io/api/edge/manga/38/staff"
+        }
+      },
+      "productions": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/productions",
+          "related": "https://kitsu.io/api/edge/manga/38/productions"
+        }
+      },
+      "quotes": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/quotes",
+          "related": "https://kitsu.io/api/edge/manga/38/quotes"
+        }
+      },
+      "chapters": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/chapters",
+          "related": "https://kitsu.io/api/edge/manga/38/chapters"
+        }
+      },
+      "mangaCharacters": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/manga-characters",
+          "related": "https://kitsu.io/api/edge/manga/38/manga-characters"
+        }
+      },
+      "mangaStaff": {
+        "links": {
+          "self": "https://kitsu.io/api/edge/manga/38/relationships/manga-staff",
+          "related": "https://kitsu.io/api/edge/manga/38/manga-staff"
+        }
+      }
+    }
+  },
+  "included": [
+    {
+      "id": "160",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/160"
+      },
+      "attributes": {
+        "createdAt": "2017-05-31T06:39:23.938Z",
+        "updatedAt": "2021-10-02T01:30:59.176Z",
+        "title": "Comedy",
+        "description": "Anime whose central struggle causes hilarious results. These stories are built upon funny characters, situations and events. A comedy anime is laced with humour and sets out to provoke laughter from the audience.\n\nJapanese humour can be a bit strange to westerners, so if you're new to this type of humour, just bear with it; it'll most likely grow on you if you're a fan of other kinds of comedy.",
+        "totalMediaCount": 25794,
+        "slug": "comedy",
+        "nsfw": false,
+        "childCount": 6
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/160/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/160/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/160/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/160/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/160/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/160/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/160/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/160/manga"
+          }
+        }
+      }
+    },
+    {
+      "id": "47",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/47"
+      },
+      "attributes": {
+        "createdAt": "2017-05-31T06:38:46.954Z",
+        "updatedAt": "2021-10-02T01:30:58.410Z",
+        "title": "Super Power",
+        "description": "Be it an ancient Greek Heracles, a cybernetic muscle-man, or a fourteen year-old girl in a mini-skirted sailor suit. As long as they have super powers, they're in the show.",
+        "totalMediaCount": 1956,
+        "slug": "super-power",
+        "nsfw": false,
+        "childCount": 1
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/47/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/47/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/47/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/47/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/47/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/47/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/47/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/47/manga"
+          }
+        }
+      }
+    },
+    {
+      "id": "156",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/156"
+      },
+      "attributes": {
+        "createdAt": "2017-05-31T06:39:22.629Z",
+        "updatedAt": "2021-10-02T01:30:58.996Z",
+        "title": "Fantasy",
+        "description": "Fantasy is a genre of fiction that uses magic and other supernatural phenomena as a primary element of plot, theme, or setting. Many works within the genre take place in fictional worlds where magic is common. Fantasy is generally distinguished from science fiction and horror by the expectation that it steers clear of (pseudo-)scientific and macabre themes, respectively, though there is a great deal of overlap between the three (which are subgenres of speculative fiction).\n\nIn popular culture, the genre of fantasy is dominated by its medievalist form, especially since the worldwide success of The Lord of the Rings books by J. R. R. Tolkien. In its broadest sense however, fantasy comprises works by many writers, artists, filmmakers, and musicians, from ancient myths and legends to many recent works embraced by a wide audience today.\n\nFantasy is a vibrant area of academic study in a number of disciplines (English, cultural studies, comparative literature, history, medieval studies). Work in this area ranges widely, from the structuralist theory of Tzvetan Todorov, which emphasizes the fantastic as a liminal space, to work on the connections (political, historical, literary) between medievalism and popular culture\n\nSource: Wiki",
+        "totalMediaCount": 26294,
+        "slug": "fantasy",
+        "nsfw": false,
+        "childCount": 10
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/156/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/156/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/156/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/156/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/156/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/156/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/156/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/156/manga"
+          }
+        }
+      }
+    },
+    {
+      "id": "150",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/150"
+      },
+      "attributes": {
+        "createdAt": "2017-05-31T06:39:20.357Z",
+        "updatedAt": "2021-10-02T01:30:58.454Z",
+        "title": "Action",
+        "description": "Action anime usually involve a fairly straightforward story of good guys versus bad guys, where most disputes are resolved by using physical force. It often contains a lot of shooting, explosions and fighting.",
+        "totalMediaCount": 18263,
+        "slug": "action",
+        "nsfw": false,
+        "childCount": 5
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/150/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/150/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/150/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/150/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/150/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/150/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/150/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/150/manga"
+          }
+        }
+      }
+    },
+    {
+      "id": "167",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/167"
+      },
+      "attributes": {
+        "createdAt": "2017-05-31T06:39:25.523Z",
+        "updatedAt": "2021-10-02T01:31:01.086Z",
+        "title": "Friendship",
+        "description": "The feeling of trust, kindness, and friendship between a group of high school students for example, is a central theme of this anime.",
+        "totalMediaCount": 809,
+        "slug": "friendship",
+        "nsfw": false,
+        "childCount": 0
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/167/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/167/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/167/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/167/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/167/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/167/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/167/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/167/manga"
+          }
+        }
+      }
+    },
+    {
+      "id": "157",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/157"
+      },
+      "attributes": {
+        "createdAt": "2017-05-31T06:39:23.663Z",
+        "updatedAt": "2021-10-02T01:30:59.126Z",
+        "title": "Adventure",
+        "description": "Adventures are exciting stories, with new experiences or exotic locales. Adventures are designed to provide an action-filled, energetic experience for the viewer. Rather than the predominant emphasis on violence and fighting that is found in pure action anime, however, the viewer of adventures can live vicariously through the travels, conquests, explorations, creation of empires, struggles and situations that confront the main characters, actual historical figures or protagonists. Under the category of adventures, we can include traditional swashbucklers, serialized films, and historical spectacles, searches or expeditions for lost continents, \"jungle\" and \"desert\" epics, treasure hunts and quests, disaster films, and heroic journeys or searches for the unknown. Adventure films are often, but not always, set in an historical period, and may include adapted stories of historical or literary adventure heroes, kings, battles, rebellion, or piracy.",
+        "totalMediaCount": 10807,
+        "slug": "adventure",
+        "nsfw": false,
+        "childCount": 0
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/157/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/157/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/157/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/157/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/157/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/157/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/157/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/157/manga"
+          }
+        }
+      }
+    },
+    {
+      "id": "243",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/243"
+      },
+      "attributes": {
+        "createdAt": "2018-05-16T02:02:14.800Z",
+        "updatedAt": "2021-10-02T01:31:02.373Z",
+        "title": "Shounen",
+        "description": "Media targeting boys roughly 8-18",
+        "totalMediaCount": 3606,
+        "slug": "shounen",
+        "nsfw": false,
+        "childCount": 0
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/243/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/243/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/243/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/243/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/243/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/243/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/243/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/243/manga"
+          }
+        }
+      }
+    },
+    {
+      "id": "11",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/11"
+      },
+      "attributes": {
+        "createdAt": "2017-05-31T06:38:32.006Z",
+        "updatedAt": "2021-10-02T01:31:01.380Z",
+        "title": "Pirate",
+        "description": "Those who take to the high seas (or space) to rob ships or search for treasure.",
+        "totalMediaCount": 104,
+        "slug": "pirate",
+        "nsfw": false,
+        "childCount": 0
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/11/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/11/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/11/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/11/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/11/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/11/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/11/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/11/manga"
+          }
+        }
+      }
+    },
+    {
+      "id": "184",
+      "type": "categories",
+      "links": {
+        "self": "https://kitsu.io/api/edge/categories/184"
+      },
+      "attributes": {
+        "createdAt": "2017-05-31T06:39:28.357Z",
+        "updatedAt": "2021-10-02T01:30:59.565Z",
+        "title": "Drama",
+        "description": "Drama is a form of narrative fiction (or semi-fiction) intended to be more serious than humorous in tone.",
+        "totalMediaCount": 17903,
+        "slug": "drama",
+        "nsfw": false,
+        "childCount": 0
+      },
+      "relationships": {
+        "parent": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/184/relationships/parent",
+            "related": "https://kitsu.io/api/edge/categories/184/parent"
+          }
+        },
+        "anime": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/184/relationships/anime",
+            "related": "https://kitsu.io/api/edge/categories/184/anime"
+          }
+        },
+        "drama": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/184/relationships/drama",
+            "related": "https://kitsu.io/api/edge/categories/184/drama"
+          }
+        },
+        "manga": {
+          "links": {
+            "self": "https://kitsu.io/api/edge/categories/184/relationships/manga",
+            "related": "https://kitsu.io/api/edge/categories/184/manga"
+          }
+        }
+      }
+    }
+  ]
+}
