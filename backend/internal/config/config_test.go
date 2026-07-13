@@ -1157,3 +1157,36 @@ func TestAuthConfig_CookieSecureEnvOverride(t *testing.T) {
 		t.Fatalf("CookieSecure: want false from env, got true")
 	}
 }
+
+// TestMetadataConfig_DefaultsEmpty confirms that Metadata.MALClientID defaults
+// to "" — MAL is optional (AniList + MangaDex carry the engine), so an
+// unconfigured MAL client-id must never fail Load()/validate().
+func TestMetadataConfig_DefaultsEmpty(t *testing.T) {
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Metadata.MALClientID != "" {
+		t.Fatalf("Metadata.MALClientID default = %q, want \"\"", cfg.Metadata.MALClientID)
+	}
+}
+
+// TestMetadataConfig_MALClientIDFromEnv confirms TSUNDOKU_METADATA_MAL_CLIENTID
+// populates Metadata.MALClientID — the koanf tag on that field (see its doc
+// comment) is what makes the underscore-carrying env suffix resolve correctly.
+func TestMetadataConfig_MALClientIDFromEnv(t *testing.T) {
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+	t.Setenv("TSUNDOKU_METADATA_MAL_CLIENTID", "abc123clientid")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Metadata.MALClientID != "abc123clientid" {
+		t.Fatalf("Metadata.MALClientID = %q, want %q", cfg.Metadata.MALClientID, "abc123clientid")
+	}
+}

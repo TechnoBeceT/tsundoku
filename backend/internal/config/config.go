@@ -44,6 +44,8 @@ type Config struct {
 	Health HealthConfig
 	// Sources holds the source-politeness circuit-breaker + delay defaults.
 	Sources SourcesConfig
+	// Metadata holds the Phase-1 native metadata engine's provider credentials.
+	Metadata MetadataConfig
 }
 
 // AuthConfig holds HMAC signing settings for the single-owner auth layer.
@@ -336,6 +338,32 @@ type HealthConfig struct {
 	StaleGraceDays int
 }
 
+// MetadataConfig holds credentials for the Phase-1 native metadata engine's
+// public-read providers (internal/metadata/providers). AniList, MangaDex,
+// MangaUpdates, and Kitsu are all fully public — only MyAnimeList requires a
+// registered app client-id header. MAL is therefore OPTIONAL: an empty
+// MALClientID simply leaves the MAL provider unable to answer (its client
+// returns an error per-call, logged+skipped by the registry's fan-out — see
+// internal/metadata.Registry.Search/Identify), never a startup failure. The
+// other four providers carry the engine end-to-end without it.
+type MetadataConfig struct {
+	// MALClientID is MyAnimeList's required app credential, sent as the
+	// X-MAL-CLIENT-ID header. Default "" (MAL disabled until configured).
+	// Set via TSUNDOKU_METADATA_MAL_CLIENTID.
+	//
+	// GOTCHA — this is the only field in Config with an explicit `koanf` struct
+	// tag. envKeyTransform only turns the FIRST "_" after the TSUNDOKU_ prefix
+	// into a "." (splitting the top-level struct key from the remainder); every
+	// other field's env suffix happens to be underscore-free (e.g.
+	// DOWNLOADURLTEMPLATE), so the untagged default — koanf/mapstructure
+	// case-insensitively matching the map key against the Go field name — just
+	// works. MAL_CLIENTID keeps its inner "_" (the transform only strips the
+	// first one), so it resolves to the nested key "mal_clientid" — which does
+	// NOT case-insensitively equal "MALClientID" without a tag pinning the
+	// match explicitly.
+	MALClientID string `koanf:"mal_clientid"`
+}
+
 // StorageConfig holds library-path settings.
 type StorageConfig struct {
 	// Folder is the absolute path to the manga library on disk where
@@ -397,6 +425,8 @@ func defaults() map[string]any {
 		"sources.failurethreshold": 5,
 		"sources.cooldown":         "30m",
 		"sources.minrequestdelay":  "500ms",
+		// Metadata — Phase-1 native metadata engine provider credentials.
+		"metadata.mal_clientid": "",
 	}
 }
 
@@ -487,6 +517,9 @@ func Load() (*Config, error) {
 //	TSUNDOKU_SOURCES_FAILURETHRESHOLD       → sources.failurethreshold
 //	TSUNDOKU_SOURCES_COOLDOWN               → sources.cooldown
 //	TSUNDOKU_SOURCES_MINREQUESTDELAY        → sources.minrequestdelay
+//	TSUNDOKU_METADATA_MAL_CLIENTID          → metadata.mal_clientid (see the
+//	                                          `koanf:"mal_clientid"` tag on
+//	                                          MetadataConfig.MALClientID)
 //
 // Convention: after stripping the prefix the first "_" separates the
 // top-level struct key from the field name; the remainder is kept as-is
