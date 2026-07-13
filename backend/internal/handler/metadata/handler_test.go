@@ -92,7 +92,12 @@ func newTestEnv(t *testing.T, fp *fakeProvider) *testEnv {
 	authSvc := auth.NewService(testSecret)
 
 	registry := metadata.NewRegistry(fp)
-	metaSvc := metadatasvc.NewService(client, registry, storage)
+	// WithHTTPClient is the test seam (metadatasvc.NewService's doc comment):
+	// the PRODUCTION default client refuses to dial loopback addresses, which
+	// would block TestSetCover_Success's local httptest.Server. Every other
+	// handler test in this file never reaches the network, so the plain
+	// client is harmless for them.
+	metaSvc := metadatasvc.NewService(client, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
 	seriesSvc := seriessvc.NewService(client, storage, 14)
 	h := handler.NewHandler(metaSvc, seriesSvc)
 
@@ -379,6 +384,7 @@ func TestSetCover_InvalidBody(t *testing.T) {
 
 	cases := []string{
 		`{"sourceKind":"","sourceRef":"anilist","coverUrl":"https://img.test/x.jpg"}`,
+		`{"sourceKind":"bogus","sourceRef":"anilist","coverUrl":"https://img.test/x.jpg"}`,
 		`{"sourceKind":"metadata","sourceRef":"","coverUrl":"https://img.test/x.jpg"}`,
 		`{"sourceKind":"metadata","sourceRef":"anilist","coverUrl":"not-a-url"}`,
 		`{"sourceKind":"metadata","sourceRef":"anilist","coverUrl":""}`,

@@ -76,17 +76,40 @@ type Service struct {
 	http     *http.Client
 }
 
+// Option configures a Service at construction time. The only production use
+// today is the test seam below (WithHTTPClient) — production callers pass no
+// options.
+type Option func(*Service)
+
+// WithHTTPClient overrides the Service's HTTP client. This is the TEST SEAM
+// for the SSRF-safe production default (newSSRFSafeHTTPClient, httpclient.go):
+// that client deliberately refuses to dial loopback/private/link-local
+// addresses, which would block every test that reaches a local
+// httptest.Server. Tests pass a plain *http.Client via this option; a
+// production caller (main.go, the metadata HTTP handler wiring) calls
+// NewService with no options and gets the guarded client automatically.
+func WithHTTPClient(c *http.Client) Option {
+	return func(s *Service) { s.http = c }
+}
+
 // NewService builds the metadata-engine orchestration service. http defaults
-// to a client with defaultHTTPTimeout — production callers need not (and
-// should not) construct their own; a test can still reach a local
-// httptest.Server through it unmodified.
-func NewService(client *ent.Client, registry *metadata.Registry, storage string) *Service {
-	return &Service{
+// to newSSRFSafeHTTPClient() — a bounded-timeout client whose dialer refuses
+// non-public destinations (see httpclient.go) — because AutoIdentify follows
+// PROVIDER-supplied cover URLs automatically: that path is reachable from
+// untrusted external data, not just an owner-typed URL, so the default must
+// be safe without any caller opting in. Pass WithHTTPClient to override (see
+// its doc comment for the test seam this exists for).
+func NewService(client *ent.Client, registry *metadata.Registry, storage string, opts ...Option) *Service {
+	s := &Service{
 		client:   client,
 		registry: registry,
 		storage:  storage,
-		http:     &http.Client{Timeout: defaultHTTPTimeout},
+		http:     newSSRFSafeHTTPClient(),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Search delegates to the Registry's fan-out search across providerKeys (all
@@ -379,11 +402,18 @@ func (s *Service) saveCoverFromURL(
 	return nil
 }
 
+// maxCoverBytes bounds a single cover-image fetch. A cover is one image, not
+// a paginated payload, so the prior unbounded io.ReadAll let any provider-
+// or owner-supplied URL stream an unbounded amount of data into memory —
+// this caps it at a generous 20 MiB.
+const maxCoverBytes = 20 << 20
+
 // fetchCoverBytes performs the http GET for a chosen cover URL and returns
 // the raw bytes plus a best-guess bare extension derived from the response's
-// Content-Type (disk.SaveCover/NormalizeCoverExt degrade an unrecognised or
-// empty extension to a safe default, so a miss here is never fatal — only
-// cosmetic).
+// (declared or sniffed) content type (disk.SaveCover/NormalizeCoverExt
+// degrade an unrecognised or empty extension to a safe default, so a miss
+// here is never fatal — only cosmetic). The read is bounded (maxCoverBytes)
+// and the response is rejected outright if it is clearly not an image.
 func (s *Service) fetchCoverBytes(ctx context.Context, coverURL string) (data []byte, ext string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, coverURL, nil)
 	if err != nil {
@@ -399,13 +429,60 @@ func (s *Service) fetchCoverBytes(ctx context.Context, coverURL string) (data []
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("metadatasvc: fetch cover %q: unexpected status %d", coverURL, resp.StatusCode)
 	}
+	if resp.ContentLength > maxCoverBytes {
+		return nil, "", fmt.Errorf("metadatasvc: fetch cover %q: declared size %d exceeds %d byte limit",
+			coverURL, resp.ContentLength, maxCoverBytes)
+	}
 
-	body, err := io.ReadAll(resp.Body)
+	// Read one byte past the limit so an oversized body is DETECTED (len(body)
+	// > maxCoverBytes) rather than silently truncated into a corrupt image.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCoverBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("metadatasvc: read cover body %q: %w", coverURL, err)
 	}
+	if len(body) > maxCoverBytes {
+		return nil, "", fmt.Errorf("metadatasvc: fetch cover %q: body exceeds %d byte limit", coverURL, maxCoverBytes)
+	}
 
-	return body, extFromContentType(resp.Header.Get("Content-Type")), nil
+	mediaType, err := classifyCoverContentType(resp.Header.Get("Content-Type"), body)
+	if err != nil {
+		return nil, "", fmt.Errorf("metadatasvc: fetch cover %q: %w", coverURL, err)
+	}
+
+	return body, extFromContentType(mediaType), nil
+}
+
+// classifyCoverContentType resolves the effective image media type for a
+// fetched cover response: a declared "image/*" Content-Type is trusted
+// outright; otherwise the body is sniffed (http.DetectContentType) so a
+// provider serving a real image behind a generic or absent Content-Type (this
+// varies across providers) is not wrongly rejected. A response that is
+// clearly NOT an image — a declared non-image Content-Type whose body also
+// doesn't sniff as one (an HTML error page, a JSON error body), or no
+// Content-Type at all over non-image bytes — is rejected.
+func classifyCoverContentType(headerContentType string, body []byte) (string, error) {
+	if base := mediaTypeBase(headerContentType); strings.HasPrefix(base, "image/") {
+		return base, nil
+	}
+
+	sniffed := mediaTypeBase(http.DetectContentType(body[:min(len(body), 512)]))
+	if strings.HasPrefix(sniffed, "image/") {
+		return sniffed, nil
+	}
+
+	if headerContentType != "" {
+		return "", fmt.Errorf("response is not an image (content-type %q)", headerContentType)
+	}
+	return "", errors.New("response does not look like an image")
+}
+
+// mediaTypeBase strips any ";charset=..." parameters and lowercases, so
+// "image/png; charset=binary" and "Image/PNG" both compare as "image/png".
+func mediaTypeBase(contentType string) string {
+	if i := strings.IndexByte(contentType, ';'); i >= 0 {
+		contentType = contentType[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(contentType))
 }
 
 // writeSidecarBestEffort mirrors row's current rich-metadata + cover-source

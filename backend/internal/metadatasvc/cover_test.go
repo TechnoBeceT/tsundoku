@@ -44,7 +44,10 @@ func TestSetCover_FetchesCachesAndSetsCoverSource(t *testing.T) {
 	srv := coverServer(t, body)
 
 	registry := metadata.NewRegistry() // SetCover needs no providers
-	svc := metadatasvc.NewService(db, registry, storage)
+	// WithHTTPClient is the test seam (service.go): the PRODUCTION default
+	// client (newSSRFSafeHTTPClient) refuses to dial 127.0.0.1, which is
+	// exactly where coverServer listens — a plain client reaches it.
+	svc := metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
 
 	coverURL := srv.URL + "/cover.png"
 	if err := svc.SetCover(ctx, id, "metadata", "anilist", coverURL); err != nil {
@@ -102,7 +105,7 @@ func TestSetCover_NoSeriesDirPropagatesError(t *testing.T) {
 
 	srv := coverServer(t, []byte("bytes"))
 	registry := metadata.NewRegistry()
-	svc := metadatasvc.NewService(db, registry, storage)
+	svc := metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
 
 	err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png")
 	if err == nil {
@@ -178,5 +181,155 @@ func TestCoverCandidates_UnknownSeriesReturnsErrSeriesNotFound(t *testing.T) {
 	_, err := svc.CoverCandidates(ctx, randomUUID())
 	if !errors.Is(err, metadatasvc.ErrSeriesNotFound) {
 		t.Fatalf("CoverCandidates(unknown series) error = %v, want ErrSeriesNotFound", err)
+	}
+}
+
+// TestSetCover_ProductionClientBlocksLoopback is the SSRF integration proof:
+// a Service built via the PRODUCTION constructor path — metadatasvc.NewService
+// with NO WithHTTPClient option, so it gets the real newSSRFSafeHTTPClient —
+// refuses to fetch a cover from a 127.0.0.1 httptest.Server. This proves the
+// guard is actually wired into the client production callers get, not merely
+// unit-tested against isBlockedIP in isolation. Contrast every other test in
+// this file, which passes WithHTTPClient(&http.Client{}) and DOES reach the
+// same kind of local server.
+func TestSetCover_ProductionClientBlocksLoopback(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	id := seedSeries(ctx, t, db, "SSRF Series", "ssrf-series")
+	withSeriesDir(t, storage, "SSRF Series")
+
+	srv := coverServer(t, []byte("fake-png-bytes"))
+
+	registry := metadata.NewRegistry()
+	svc := metadatasvc.NewService(db, registry, storage) // no WithHTTPClient — the production client.
+
+	err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png")
+	if err == nil {
+		t.Fatal("SetCover via the production client against a 127.0.0.1 server: want an error (SSRF-blocked), got nil")
+	}
+}
+
+// TestSetCover_OversizeBodyRejected confirms fetchCoverBytes' bounded read:
+// a response streaming more than maxCoverBytes (20 MiB) is rejected rather
+// than buffered wholesale into memory.
+func TestSetCover_OversizeBodyRejected(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	id := seedSeries(ctx, t, db, "Oversize Series", "oversize-series")
+	withSeriesDir(t, storage, "Oversize Series")
+
+	const oneMiB = 1 << 20
+	chunk := make([]byte, oneMiB)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		// Stream 21 MiB with no Content-Length header (chunked), so the
+		// oversize is caught by the body-read cap, not the fast Content-Length
+		// pre-check — exercising the other guard.
+		for range 21 {
+			_, _ = w.Write(chunk)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	registry := metadata.NewRegistry()
+	svc := metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
+
+	err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png")
+	if err == nil {
+		t.Fatal("SetCover with a 21 MiB body: want an error (too large), got nil")
+	}
+}
+
+// TestSetCover_OversizeContentLengthRejectedFast confirms the fast
+// pre-check: a DECLARED Content-Length over the cap is rejected before the
+// body is ever read.
+func TestSetCover_OversizeContentLengthRejectedFast(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	id := seedSeries(ctx, t, db, "Declared Oversize Series", "declared-oversize-series")
+	withSeriesDir(t, storage, "Declared Oversize Series")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Length", "31457280") // 30 MiB declared, over the 20 MiB cap.
+		w.WriteHeader(http.StatusOK)
+		// The handler need not actually write 30 MiB: fetchCoverBytes returns
+		// on the Content-Length check before ever reading the body, and the
+		// client aborts the connection on return.
+		_, _ = w.Write([]byte("short"))
+	}))
+	t.Cleanup(srv.Close)
+
+	registry := metadata.NewRegistry()
+	svc := metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
+
+	err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png")
+	if err == nil {
+		t.Fatal("SetCover with a declared 30 MiB Content-Length: want an error, got nil")
+	}
+}
+
+// TestSetCover_NonImageContentTypeRejected confirms a response that is
+// clearly not an image (declared text/html, body is not image bytes) is
+// rejected rather than cached as a bogus "cover".
+func TestSetCover_NonImageContentTypeRejected(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	id := seedSeries(ctx, t, db, "HTML Series", "html-series")
+	withSeriesDir(t, storage, "HTML Series")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html><body>not an image</body></html>"))
+	}))
+	t.Cleanup(srv.Close)
+
+	registry := metadata.NewRegistry()
+	svc := metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
+
+	err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png")
+	if err == nil {
+		t.Fatal("SetCover with a text/html response: want an error (not an image), got nil")
+	}
+}
+
+// TestSetCover_MissingContentTypeStillAcceptedWhenBytesSniffAsImage confirms
+// the sniff fallback: a response with NO Content-Type header at all is still
+// accepted when its bytes are a real image (providers vary in whether they
+// set the header) — a missing header must never be treated the same as a
+// declared non-image type.
+func TestSetCover_MissingContentTypeStillAcceptedWhenBytesSniffAsImage(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	id := seedSeries(ctx, t, db, "Sniffed Series", "sniffed-series")
+	withSeriesDir(t, storage, "Sniffed Series")
+
+	// A minimal valid PNG signature + IHDR-ish bytes is enough for
+	// http.DetectContentType to sniff "image/png".
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Deliberately no Content-Type header set.
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pngBytes)
+	}))
+	t.Cleanup(srv.Close)
+
+	registry := metadata.NewRegistry()
+	svc := metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
+
+	if err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png"); err != nil {
+		t.Fatalf("SetCover with a headerless-but-real-PNG response: want success, got %v", err)
 	}
 }

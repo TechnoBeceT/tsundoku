@@ -6,6 +6,7 @@ package metadatasvc_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -54,7 +55,10 @@ func TestAutoIdentify_MatchPersistsMetadataAndSidecarNeverTouchesProviders(t *te
 		},
 	}
 	registry := metadata.NewRegistry(provider)
-	svc := metadatasvc.NewService(db, registry, storage)
+	// WithHTTPClient is the test seam (service.go): the PRODUCTION default
+	// client (newSSRFSafeHTTPClient) refuses to dial 127.0.0.1, which is
+	// exactly where coverSrv listens — a plain client reaches it.
+	svc := metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
 
 	if err := svc.AutoIdentify(ctx, id); err != nil {
 		t.Fatalf("AutoIdentify: %v", err)

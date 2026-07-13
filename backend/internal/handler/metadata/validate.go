@@ -69,16 +69,27 @@ func validateIdentify(req IdentifyRequest) (provider, remoteID string, err error
 	return provider, remoteID, nil
 }
 
-// validateSetCover requires sourceKind and sourceRef to be non-blank and
-// coverUrl to be a well-formed absolute http(s) URL (the shared
-// urlx.IsAbsoluteHTTP kernel — reused by the FlareSolverr-URL and
-// extension-repo-URL validators so "valid absolute http(s) URL" is defined in
-// exactly one place). Unlike the FlareSolverr validator, an empty coverUrl is
-// NOT allowed here — SetCover has no "clear the cover" meaning, only "set it
-// to this URL".
+// validSourceKinds is the closed allowlist SetCoverRequest.SourceKind must
+// belong to (mirrors metadata.CoverCandidate's two producers: a metadata
+// provider hit, or a library SeriesProvider). SourceKind ultimately flows
+// into SourceRef's disk.SaveCover-and-persisted Provider tag, so an
+// unvalidated free-form string here is an under-validated sink argument, not
+// just a display label.
+var validSourceKinds = map[string]bool{
+	"metadata": true,
+	"source":   true,
+}
+
+// validateSetCover requires sourceKind to be one of validSourceKinds,
+// sourceRef to be non-blank, and coverUrl to be a well-formed absolute
+// http(s) URL (the shared urlx.IsAbsoluteHTTP kernel — reused by the
+// FlareSolverr-URL and extension-repo-URL validators so "valid absolute
+// http(s) URL" is defined in exactly one place). Unlike the FlareSolverr
+// validator, an empty coverUrl is NOT allowed here — SetCover has no "clear
+// the cover" meaning, only "set it to this URL".
 func validateSetCover(req SetCoverRequest) error {
-	if strings.TrimSpace(req.SourceKind) == "" {
-		return httperr.BadRequest("sourceKind is required")
+	if !validSourceKinds[req.SourceKind] {
+		return httperr.BadRequest("invalid sourceKind")
 	}
 	if strings.TrimSpace(req.SourceRef) == "" {
 		return httperr.BadRequest("sourceRef is required")
