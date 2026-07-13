@@ -48,43 +48,72 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
 <template>
   <div class="categories">
-    <!-- Loading skeletons -->
-    <div v-if="loading" class="categories__grid">
-      <div v-for="n in skeletons" :key="n" class="cat-skeleton">
-        <Skeleton variant="row" height="32px" class="cat-skeleton__line" />
-        <Skeleton height="7px" />
+    <!-- Inner-scroll region (QCAT-231): the grid can grow to any number of
+         categories, so it scrolls WITHIN the bounded viewport instead of
+         growing the page — see the `.categories`/`.categories__scroll` note
+         below. -->
+    <div class="categories__scroll">
+      <!-- Loading skeletons -->
+      <div v-if="loading" class="categories__grid">
+        <div v-for="n in skeletons" :key="n" class="cat-skeleton">
+          <Skeleton variant="row" height="32px" class="cat-skeleton__line" />
+          <Skeleton height="7px" />
+        </div>
       </div>
-    </div>
 
-    <!-- Empty state -->
-    <EmptyState
-      v-else-if="categories.length === 0"
-      title="No categories defined yet."
-    >
-      <template #icon>
-        <BrandMark :size="56" tone="gradient" />
-      </template>
-    </EmptyState>
+      <!-- Empty state -->
+      <EmptyState
+        v-else-if="categories.length === 0"
+        title="No categories defined yet."
+      >
+        <template #icon>
+          <BrandMark :size="56" tone="gradient" />
+        </template>
+      </EmptyState>
 
-    <!-- Category cards -->
-    <div v-else class="categories__grid">
-      <CategoryShareCard
-        v-for="c in categories"
-        :key="c.category"
-        :name="c.category"
-        :count="c.count"
-        :share="sharePct(c.count)"
-        @open="emit('open-category', c.category)"
-      />
+      <!-- Category cards -->
+      <div v-else class="categories__grid">
+        <CategoryShareCard
+          v-for="c in categories"
+          :key="c.category"
+          :name="c.category"
+          :count="c.count"
+          :share="sharePct(c.count)"
+          @open="emit('open-category', c.category)"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* QCAT-231 "fit the screen, scroll inside": `.categories` is bounded to the
+ * viewport under AppShell's sticky 64px header (`shell/AppShell.vue`'s
+ * `.head`, untouched here) and laid out as a flex column so a library with
+ * many categories scrolls WITHIN the grid region instead of growing the page
+ * (mirrors LibraryList's `.library`/`.library__scroll` shape — this screen has
+ * no header/toolbar of its own, so the flex column is just the one scroll
+ * region, but the shape stays consistent with the rest of the sweep). Holds at
+ * every width, including mobile (QCAT-230) — no `@media` needed for the
+ * bounding itself, only for the grid's minimum tile width below.
+ */
 .categories {
-  padding: 24px 30px 70px;
+  padding: 24px 30px 0;
   background: var(--bg);
-  min-height: 100%;
+  height: calc(100dvh - 64px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The inner-scroll region. min-height: 0 is the flex-item overflow trap
+ * PanelCard.vue documents: without it this region refuses to shrink below its
+ * content and `.categories` would grow instead of scrolling internally. The
+ * trailing padding is the breathing room after the last row. */
+.categories__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 30px;
 }
 
 /* ---- Grid ----------------------------------------------------------------- */
@@ -106,5 +135,21 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
 .cat-skeleton__line {
   margin-bottom: 15px;
+}
+
+/* Below 900px, a 240px tile floor leaves very little headroom on the
+ * narrowest phones (e.g. a 320px viewport has only ~260px of content width
+ * after the screen padding). Tighten the padding + the tile floor so the grid
+ * never crowds toward the QCAT-230 zero-horizontal-overflow line, mirroring
+ * LibraryList's mobile tile floor. */
+@media (max-width: 900px) {
+  .categories {
+    padding: 16px 16px 0;
+  }
+
+  .categories__grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
 }
 </style>

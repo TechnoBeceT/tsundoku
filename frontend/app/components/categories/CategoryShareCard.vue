@@ -78,7 +78,19 @@ const emit = defineEmits<{
   margin-bottom: 15px;
 }
 
+/* A long category name would otherwise push `.cat-card__count` out of the
+ * card (Chip renders `white-space: nowrap`) — cap the chip to the space the
+ * flex row leaves it and ellipsize instead of overflowing (QCAT-230). The
+ * count column keeps its natural width via `flex: none`. */
+.cat-card__head :deep(.chip) {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .cat-card__count {
+  flex: none;
   font-family: var(--font-display);
   font-weight: var(--weight-black);
   font-size: 32px;
