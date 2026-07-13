@@ -801,6 +801,7 @@ type ChapterMutation struct {
 	addpage_count           *int
 	filename                *string
 	download_date           *time.Time
+	first_downloaded_at     *time.Time
 	retries                 *int
 	addretries              *int
 	next_attempt_at         *time.Time
@@ -1376,6 +1377,55 @@ func (m *ChapterMutation) ResetDownloadDate() {
 	delete(m.clearedFields, chapter.FieldDownloadDate)
 }
 
+// SetFirstDownloadedAt sets the "first_downloaded_at" field.
+func (m *ChapterMutation) SetFirstDownloadedAt(t time.Time) {
+	m.first_downloaded_at = &t
+}
+
+// FirstDownloadedAt returns the value of the "first_downloaded_at" field in the mutation.
+func (m *ChapterMutation) FirstDownloadedAt() (r time.Time, exists bool) {
+	v := m.first_downloaded_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFirstDownloadedAt returns the old "first_downloaded_at" field's value of the Chapter entity.
+// If the Chapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChapterMutation) OldFirstDownloadedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFirstDownloadedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFirstDownloadedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFirstDownloadedAt: %w", err)
+	}
+	return oldValue.FirstDownloadedAt, nil
+}
+
+// ClearFirstDownloadedAt clears the value of the "first_downloaded_at" field.
+func (m *ChapterMutation) ClearFirstDownloadedAt() {
+	m.first_downloaded_at = nil
+	m.clearedFields[chapter.FieldFirstDownloadedAt] = struct{}{}
+}
+
+// FirstDownloadedAtCleared returns if the "first_downloaded_at" field was cleared in this mutation.
+func (m *ChapterMutation) FirstDownloadedAtCleared() bool {
+	_, ok := m.clearedFields[chapter.FieldFirstDownloadedAt]
+	return ok
+}
+
+// ResetFirstDownloadedAt resets all changes to the "first_downloaded_at" field.
+func (m *ChapterMutation) ResetFirstDownloadedAt() {
+	m.first_downloaded_at = nil
+	delete(m.clearedFields, chapter.FieldFirstDownloadedAt)
+}
+
 // SetRetries sets the "retries" field.
 func (m *ChapterMutation) SetRetries(i int) {
 	m.retries = &i
@@ -1795,7 +1845,7 @@ func (m *ChapterMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChapterMutation) Fields() []string {
-	fields := make([]string, 0, 16)
+	fields := make([]string, 0, 17)
 	if m.series != nil {
 		fields = append(fields, chapter.FieldSeriesID)
 	}
@@ -1822,6 +1872,9 @@ func (m *ChapterMutation) Fields() []string {
 	}
 	if m.download_date != nil {
 		fields = append(fields, chapter.FieldDownloadDate)
+	}
+	if m.first_downloaded_at != nil {
+		fields = append(fields, chapter.FieldFirstDownloadedAt)
 	}
 	if m.retries != nil {
 		fields = append(fields, chapter.FieldRetries)
@@ -1870,6 +1923,8 @@ func (m *ChapterMutation) Field(name string) (ent.Value, bool) {
 		return m.Filename()
 	case chapter.FieldDownloadDate:
 		return m.DownloadDate()
+	case chapter.FieldFirstDownloadedAt:
+		return m.FirstDownloadedAt()
 	case chapter.FieldRetries:
 		return m.Retries()
 	case chapter.FieldNextAttemptAt:
@@ -1911,6 +1966,8 @@ func (m *ChapterMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldFilename(ctx)
 	case chapter.FieldDownloadDate:
 		return m.OldDownloadDate(ctx)
+	case chapter.FieldFirstDownloadedAt:
+		return m.OldFirstDownloadedAt(ctx)
 	case chapter.FieldRetries:
 		return m.OldRetries(ctx)
 	case chapter.FieldNextAttemptAt:
@@ -1996,6 +2053,13 @@ func (m *ChapterMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetDownloadDate(v)
+		return nil
+	case chapter.FieldFirstDownloadedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFirstDownloadedAt(v)
 		return nil
 	case chapter.FieldRetries:
 		v, ok := value.(int)
@@ -2154,6 +2218,9 @@ func (m *ChapterMutation) ClearedFields() []string {
 	if m.FieldCleared(chapter.FieldDownloadDate) {
 		fields = append(fields, chapter.FieldDownloadDate)
 	}
+	if m.FieldCleared(chapter.FieldFirstDownloadedAt) {
+		fields = append(fields, chapter.FieldFirstDownloadedAt)
+	}
 	if m.FieldCleared(chapter.FieldNextAttemptAt) {
 		fields = append(fields, chapter.FieldNextAttemptAt)
 	}
@@ -2188,6 +2255,9 @@ func (m *ChapterMutation) ClearField(name string) error {
 		return nil
 	case chapter.FieldDownloadDate:
 		m.ClearDownloadDate()
+		return nil
+	case chapter.FieldFirstDownloadedAt:
+		m.ClearFirstDownloadedAt()
 		return nil
 	case chapter.FieldNextAttemptAt:
 		m.ClearNextAttemptAt()
@@ -2229,6 +2299,9 @@ func (m *ChapterMutation) ResetField(name string) error {
 		return nil
 	case chapter.FieldDownloadDate:
 		m.ResetDownloadDate()
+		return nil
+	case chapter.FieldFirstDownloadedAt:
+		m.ResetFirstDownloadedAt()
 		return nil
 	case chapter.FieldRetries:
 		m.ResetRetries()

@@ -208,6 +208,26 @@ func (_u *ChapterUpdate) ClearDownloadDate() *ChapterUpdate {
 	return _u
 }
 
+// SetFirstDownloadedAt sets the "first_downloaded_at" field.
+func (_u *ChapterUpdate) SetFirstDownloadedAt(v time.Time) *ChapterUpdate {
+	_u.mutation.SetFirstDownloadedAt(v)
+	return _u
+}
+
+// SetNillableFirstDownloadedAt sets the "first_downloaded_at" field if the given value is not nil.
+func (_u *ChapterUpdate) SetNillableFirstDownloadedAt(v *time.Time) *ChapterUpdate {
+	if v != nil {
+		_u.SetFirstDownloadedAt(*v)
+	}
+	return _u
+}
+
+// ClearFirstDownloadedAt clears the value of the "first_downloaded_at" field.
+func (_u *ChapterUpdate) ClearFirstDownloadedAt() *ChapterUpdate {
+	_u.mutation.ClearFirstDownloadedAt()
+	return _u
+}
+
 // SetRetries sets the "retries" field.
 func (_u *ChapterUpdate) SetRetries(v int) *ChapterUpdate {
 	_u.mutation.ResetRetries()
@@ -466,6 +486,12 @@ func (_u *ChapterUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.DownloadDateCleared() {
 		_spec.ClearField(chapter.FieldDownloadDate, field.TypeTime)
+	}
+	if value, ok := _u.mutation.FirstDownloadedAt(); ok {
+		_spec.SetField(chapter.FieldFirstDownloadedAt, field.TypeTime, value)
+	}
+	if _u.mutation.FirstDownloadedAtCleared() {
+		_spec.ClearField(chapter.FieldFirstDownloadedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.Retries(); ok {
 		_spec.SetField(chapter.FieldRetries, field.TypeInt, value)
@@ -752,6 +778,26 @@ func (_u *ChapterUpdateOne) SetNillableDownloadDate(v *time.Time) *ChapterUpdate
 // ClearDownloadDate clears the value of the "download_date" field.
 func (_u *ChapterUpdateOne) ClearDownloadDate() *ChapterUpdateOne {
 	_u.mutation.ClearDownloadDate()
+	return _u
+}
+
+// SetFirstDownloadedAt sets the "first_downloaded_at" field.
+func (_u *ChapterUpdateOne) SetFirstDownloadedAt(v time.Time) *ChapterUpdateOne {
+	_u.mutation.SetFirstDownloadedAt(v)
+	return _u
+}
+
+// SetNillableFirstDownloadedAt sets the "first_downloaded_at" field if the given value is not nil.
+func (_u *ChapterUpdateOne) SetNillableFirstDownloadedAt(v *time.Time) *ChapterUpdateOne {
+	if v != nil {
+		_u.SetFirstDownloadedAt(*v)
+	}
+	return _u
+}
+
+// ClearFirstDownloadedAt clears the value of the "first_downloaded_at" field.
+func (_u *ChapterUpdateOne) ClearFirstDownloadedAt() *ChapterUpdateOne {
+	_u.mutation.ClearFirstDownloadedAt()
 	return _u
 }
 
@@ -1043,6 +1089,12 @@ func (_u *ChapterUpdateOne) sqlSave(ctx context.Context) (_node *Chapter, err er
 	}
 	if _u.mutation.DownloadDateCleared() {
 		_spec.ClearField(chapter.FieldDownloadDate, field.TypeTime)
+	}
+	if value, ok := _u.mutation.FirstDownloadedAt(); ok {
+		_spec.SetField(chapter.FieldFirstDownloadedAt, field.TypeTime, value)
+	}
+	if _u.mutation.FirstDownloadedAtCleared() {
+		_spec.ClearField(chapter.FieldFirstDownloadedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.Retries(); ok {
 		_spec.SetField(chapter.FieldRetries, field.TypeInt, value)

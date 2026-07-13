@@ -133,6 +133,20 @@ func (_c *ChapterCreate) SetNillableDownloadDate(v *time.Time) *ChapterCreate {
 	return _c
 }
 
+// SetFirstDownloadedAt sets the "first_downloaded_at" field.
+func (_c *ChapterCreate) SetFirstDownloadedAt(v time.Time) *ChapterCreate {
+	_c.mutation.SetFirstDownloadedAt(v)
+	return _c
+}
+
+// SetNillableFirstDownloadedAt sets the "first_downloaded_at" field if the given value is not nil.
+func (_c *ChapterCreate) SetNillableFirstDownloadedAt(v *time.Time) *ChapterCreate {
+	if v != nil {
+		_c.SetFirstDownloadedAt(*v)
+	}
+	return _c
+}
+
 // SetRetries sets the "retries" field.
 func (_c *ChapterCreate) SetRetries(v int) *ChapterCreate {
 	_c.mutation.SetRetries(v)
@@ -437,6 +451,10 @@ func (_c *ChapterCreate) createSpec() (*Chapter, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.DownloadDate(); ok {
 		_spec.SetField(chapter.FieldDownloadDate, field.TypeTime, value)
 		_node.DownloadDate = &value
+	}
+	if value, ok := _c.mutation.FirstDownloadedAt(); ok {
+		_spec.SetField(chapter.FieldFirstDownloadedAt, field.TypeTime, value)
+		_node.FirstDownloadedAt = &value
 	}
 	if value, ok := _c.mutation.Retries(); ok {
 		_spec.SetField(chapter.FieldRetries, field.TypeInt, value)
