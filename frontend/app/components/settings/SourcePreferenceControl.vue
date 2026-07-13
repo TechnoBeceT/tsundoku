@@ -215,4 +215,20 @@ function commitText(): void {
 .pref__text {
   margin-top: 10px;
 }
+
+@media (max-width: 900px) {
+  /* A long preference title beside a fixed min-width:120px control (Toggle or
+   * SelectField) has no room to breathe on a phone. Wrap the control onto its
+   * own full-width line under the title instead of crushing it (QCAT-230). */
+  .pref__head {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .pref__control {
+    min-width: 0;
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
 </style>

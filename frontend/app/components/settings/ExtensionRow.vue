@@ -174,4 +174,18 @@ const showIcon = computed(() => !!props.extension.iconUrl && !iconFailed.value)
   color: var(--faint);
   margin-top: 2px;
 }
+
+@media (max-width: 900px) {
+  /* An installed row can carry Configure + Update + Uninstall — three buttons
+   * beside the icon + name/lang/version body has no room on a phone. Wrap the
+   * buttons onto their own line under the body rather than crushing it
+   * (QCAT-230). */
+  .ext-card {
+    flex-wrap: wrap;
+  }
+
+  .ext-card__body {
+    flex-basis: 160px;
+  }
+}
 </style>

@@ -284,6 +284,21 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   min-width: 0;
 }
 
+@media (max-width: 900px) {
+  /* The fixed 236px sidebar + content grid has no room on a phone (SettingsNav's
+   * "Schedules & Behavior" label alone needs more than the ~154px that would be
+   * left). Stack: SettingsNav becomes a wrapping top row of pills (see its own
+   * media query) and the pane takes the full width below it. */
+  .settings {
+    padding: 16px 16px 56px;
+  }
+
+  .settings__layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
 /* The Sources pane stacks two cards (settings + metrics) with the shared
    16px inter-card rhythm — same shape as LibraryPane's own pane-stack. */
 .pane-stack {

@@ -265,10 +265,12 @@ function onMove(id: string, direction: MoveDirection) {
   display: flex;
   gap: 9px;
   margin-top: 13px;
+  flex-wrap: wrap;
 }
 
 .add-row__input {
   flex: 1;
+  min-width: 0;
   padding: 9px 12px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border2);

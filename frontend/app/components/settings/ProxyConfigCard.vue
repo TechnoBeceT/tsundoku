@@ -57,4 +57,18 @@ function patch(part: Partial<SocksProxyConfig>) {
 .field--full {
   grid-column: span 2;
 }
+
+@media (max-width: 900px) {
+  /* Two fixed 1fr columns leave each field too narrow on a phone — stack to one
+   * column (QCAT-230). `.field--full`'s span must drop to 1 too: in a single-
+   * column grid a stale `span 2` spills into an unsized implicit column instead
+   * of clamping to the explicit one. */
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field--full {
+    grid-column: span 1;
+  }
+}
 </style>

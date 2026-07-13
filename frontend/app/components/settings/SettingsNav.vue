@@ -79,4 +79,23 @@ const panes: { key: SettingsPane, label: string }[] = [
   background: var(--accentSoft);
   color: var(--accentBright);
 }
+
+@media (max-width: 900px) {
+  /* A tall sticky vertical list has nowhere to stick usefully once Settings.vue
+   * stacks the sidebar above the pane (it would pin mid-scroll and overlap the
+   * pane content below it). Becomes a wrapping row of pills instead — the
+   * "top row of tabs" shape QCAT-230/231 call for on narrow layouts. */
+  .nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    position: static;
+    top: auto;
+    gap: 6px;
+  }
+
+  .nav__item {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+}
 </style>

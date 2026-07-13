@@ -103,4 +103,12 @@ function patch(part: Partial<FlareSolverrConfig>) {
   font-weight: var(--weight-semibold);
   color: var(--muted);
 }
+
+@media (max-width: 900px) {
+  /* Two fixed 1fr columns leave each DurationInput/TextField too narrow to be
+   * usable on a phone — stack to one column (QCAT-230). */
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

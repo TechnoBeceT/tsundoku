@@ -347,15 +347,26 @@ function closePreferences() {
   gap: 10px;
 }
 
+@media (max-width: 900px) {
+  /* A 420px column minimum is WIDER than a phone viewport (390px) — the grid
+   * would force horizontal overflow on every row (QCAT-230 hard bug, not
+   * cosmetic). One column, full width. */
+  .ext-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- Add row + inline form error ------------------------------------------ */
 .add-row {
   display: flex;
   gap: 9px;
   margin-top: 13px;
+  flex-wrap: wrap;
 }
 
 .add-row__input {
   flex: 1;
+  min-width: 0;
   padding: 9px 12px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border2);

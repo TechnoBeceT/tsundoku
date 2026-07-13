@@ -77,4 +77,22 @@ withDefaults(defineProps<{
   font-size: 11.5px;
   color: var(--faint);
 }
+
+@media (max-width: 900px) {
+  /* The trailing control (DurationInput / TextField / a status line) is
+   * flex:none-shaped — on a phone there isn't room beside a full hint line, and
+   * without wrapping the control crushes the label down to nothing (QCAT-230).
+   * The label takes the full row; the control drops to its own line below it,
+   * still at its natural width (never stretched to fit odd shapes like
+   * EnginePane's status line). */
+  .setting-row {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .setting-row__label {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+}
 </style>

@@ -205,4 +205,17 @@ function toggleEnabled(sourceId: string, enabled: boolean): void {
   font-size: var(--text-sm);
   color: var(--faint);
 }
+
+@media (max-width: 900px) {
+  /* Source name + lang pill + enable toggle on one unwrapping line can crowd out
+   * the toggle inside the dialog's already-narrow phone width. Let it wrap
+   * rather than crush (QCAT-230). */
+  .prefs__grouphead {
+    flex-wrap: wrap;
+  }
+
+  .prefs__sourcename {
+    min-width: 0;
+  }
+}
 </style>

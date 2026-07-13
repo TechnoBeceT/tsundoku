@@ -161,4 +161,20 @@ const emit = defineEmits<{
   font-weight: var(--weight-bold);
   color: var(--muted);
 }
+
+@media (max-width: 900px) {
+  /* Reorder arrows + name chip + count + a DEFAULT pill + up to 3 actions is too
+   * much for one unwrapping row on a phone — it would crush the chip/count down
+   * to nothing. Let the row's content wrap onto extra lines instead of
+   * overflowing (QCAT-230); the actions group drops its `margin-left: auto`
+   * push once it's no longer sharing a line with the name. */
+  .cat-main {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .cat-actions {
+    margin-left: 0;
+  }
+}
 </style>
