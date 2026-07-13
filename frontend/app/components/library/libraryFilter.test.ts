@@ -50,10 +50,16 @@ describe('filterByCategory', () => {
 
 describe('countMatchesElsewhere', () => {
   it('counts matches in OTHER categories, not the active one', () => {
-    // "solo" in categories != Manhwa: c (Solo Bug Player, Manga), e (The Solo Farming, Manhua) = 2.
-    // If computed against the ACTIVE category it could only ever return 0 → silently dead.
-    const n = countMatchesElsewhere(all, 'Manhwa', 'solo')
-    expect(n).toBe(2)
+    // ASYMMETRIC on purpose so the count PROVES the direction of the filter:
+    //   "solo" INSIDE Manga  = c (Solo Bug Player)                        → 1
+    //   "solo" OUTSIDE Manga = a (Solo Leveling), b (Solo Max-Level Newbie),
+    //                          e (The Solo Farming)                       → 3
+    // The correct answer (OUTSIDE) is 3; a mutation to `=== category`
+    // (counting INSIDE) would return 1 → this assertion catches it. A symmetric
+    // fixture (equal in/out) would pass either way and leave the escape hatch
+    // untested — the whole reason the library loads all categories at once.
+    const n = countMatchesElsewhere(all, 'Manga', 'solo')
+    expect(n).toBe(3)
   })
 
   it('is 0 when the query is blank or the category is null', () => {

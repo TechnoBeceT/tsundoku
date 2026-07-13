@@ -47,6 +47,23 @@ describe('sortSeries', () => {
     expect(a).toEqual(b)
   })
 
+  it('breaks a full tie (equal title AND key) by id, ascending, regardless of dir', () => {
+    // The ONLY way to reach `|| a.id.localeCompare(b.id)`: two series with the SAME
+    // title AND the same sort-key value, so both the key compare and the title
+    // compare return 0. Input is fed in REVERSE id order ([z2, z1]) with NO shuffle:
+    // V8's sort is stable, so if the id tiebreak were removed the comparator would
+    // return 0 for the pair and the reversed input order would survive → ['z2','z1'],
+    // failing this assertion. The id tiebreak is NOT multiplied by the direction
+    // sign, so ascending-by-id holds in BOTH directions.
+    const zero = { total: 0, downloaded: 0, wanted: 0, failed: 0, unread: 0 }
+    const tied: SeriesSummary[] = [
+      series({ id: 'z2', title: 'Same Title', chapterCounts: { ...zero } }),
+      series({ id: 'z1', title: 'Same Title', chapterCounts: { ...zero } }),
+    ]
+    expect(sortSeries(tied, 'unread', 'desc').map((s) => s.id)).toEqual(['z1', 'z2'])
+    expect(sortSeries(tied, 'unread', 'asc').map((s) => s.id)).toEqual(['z1', 'z2'])
+  })
+
   it('sorts nulls LAST in BOTH directions', () => {
     // THE TRAP: a nulls-last ASC comparator reverse()d for DESC puts nulls FIRST in
     // DESC. The null check must live OUTSIDE the direction flip.
