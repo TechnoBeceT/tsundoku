@@ -98,8 +98,13 @@ type Provider interface {
 	Key() string
 	// ID is the provider's own numeric identifier, if it has one (0 = none).
 	ID() int
-	// Priority ranks this provider against others absent an explicit Order
-	// (mirrors the SeriesProvider.importance convention — higher wins).
+	// Priority ranks this provider against others absent an explicit Order.
+	// LOWER numbers rank higher: priority 0 is the primary provider — first
+	// in Merge's gap-fill walk and first in the registry's default Order
+	// (see Registry.Identify / NewDefaultRegistry). This is the INVERSE of
+	// SeriesProvider.importance (where higher wins) — every provider's own
+	// priority constant is commented accordingly; do not confuse the two
+	// conventions.
 	Priority() int
 	// Search returns up to limit candidate matches for a free-text query.
 	Search(ctx context.Context, q string, limit int) ([]SearchResult, error)
