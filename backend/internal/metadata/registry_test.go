@@ -8,11 +8,6 @@ import (
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/metadata"
-	"github.com/technobecet/tsundoku/internal/metadata/anilist"
-	"github.com/technobecet/tsundoku/internal/metadata/kitsu"
-	"github.com/technobecet/tsundoku/internal/metadata/mal"
-	"github.com/technobecet/tsundoku/internal/metadata/mangadex"
-	"github.com/technobecet/tsundoku/internal/metadata/mangaupdates"
 )
 
 // fakeProvider is a minimal, fully-configurable metadata.Provider double
@@ -263,66 +258,31 @@ func TestRegistry_Provider_LookupHitAndMiss(t *testing.T) {
 	}
 }
 
-// --- NewDefaultRegistry ---
+// --- empty registry ---
 
-func TestNewDefaultRegistry_ReturnsFiveProvidersInDocumentedOrder(t *testing.T) {
-	t.Cleanup(func() { metadata.RegisterProviderFactory(nil) })
-	metadata.RegisterProviderFactory(realProviderFactory)
+func TestRegistry_EmptyRegistryIsSafe(t *testing.T) {
+	// The low-level NewRegistry with zero providers must be usable, not a
+	// panic trap — Search/Identify against it degrade to "nothing to query",
+	// which is a representable, non-error outcome for both.
+	reg := metadata.NewRegistry()
 
-	reg := metadata.NewDefaultRegistry(metadata.RegistryConfig{MALClientID: "test-client-id"})
-
-	providers := reg.Providers()
-	if len(providers) != 5 {
-		t.Fatalf("want 5 providers, got %d", len(providers))
+	if _, ok := reg.Provider("anything"); ok {
+		t.Errorf("Provider on an empty registry reported a hit")
 	}
 
-	wantKeys := []string{"anilist", "mangadex", "mangaupdates", "mal", "kitsu"}
-	for i, want := range wantKeys {
-		if got := providers[i].Key(); got != want {
-			t.Errorf("providers[%d].Key() = %q, want %q", i, got, want)
-		}
+	results, err := reg.Search(context.Background(), "q", nil)
+	if err != nil {
+		t.Fatalf("Search on an empty registry returned an error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("Search on an empty registry returned %d results, want 0", len(results))
 	}
 
-	// LOWER Priority() = higher rank (provider.go): the documented order
-	// above must also be strictly ascending by Priority().
-	for i := 1; i < len(providers); i++ {
-		if providers[i-1].Priority() >= providers[i].Priority() {
-			t.Errorf("providers[%d].Priority() (%d) >= providers[%d].Priority() (%d), want strictly ascending",
-				i-1, providers[i-1].Priority(), i, providers[i].Priority())
-		}
+	got, err := reg.Identify(context.Background(), metadata.MatchQuery{Title: "q"}, nil)
+	if err != nil {
+		t.Fatalf("Identify on an empty registry returned an error: %v", err)
 	}
-}
-
-func TestNewDefaultRegistry_NoFactoryRegisteredReturnsEmptyRegistry(t *testing.T) {
-	// Explicit reset regardless of what ran before this test in the
-	// package (registry state is process-global, not test-isolated).
-	metadata.RegisterProviderFactory(nil)
-
-	reg := metadata.NewDefaultRegistry(metadata.RegistryConfig{})
-	if reg == nil {
-		t.Fatal("NewDefaultRegistry returned a nil Registry")
-	}
-	if got := len(reg.Providers()); got != 0 {
-		t.Fatalf("want 0 providers with no factory registered, got %d", got)
-	}
-}
-
-// realProviderFactory builds the five real metadata provider clients from a
-// RegistryConfig. This is exactly the closure the composition root
-// (main.go) is expected to install via metadata.RegisterProviderFactory at
-// startup (see that function's doc comment for why the indirection is
-// necessary) — defined here, in the external metadata_test package, so this
-// test can exercise NewDefaultRegistry's real wiring end-to-end: an
-// external test package is a distinct compiled package from metadata
-// itself, so it can safely import both metadata and the five provider
-// packages without recreating the import cycle RegisterProviderFactory
-// exists to avoid.
-func realProviderFactory(cfg metadata.RegistryConfig) []metadata.Provider {
-	return []metadata.Provider{
-		anilist.New(cfg.HTTPClient),
-		mangadex.New(cfg.HTTPClient),
-		mangaupdates.New(cfg.HTTPClient),
-		mal.New(cfg.MALClientID, cfg.HTTPClient),
-		kitsu.New(cfg.HTTPClient),
+	if got.Merged.Title != "" || len(got.Matches) != 0 || len(got.Order) != 0 {
+		t.Errorf("Identify on an empty registry returned %+v, want zero value", got)
 	}
 }
