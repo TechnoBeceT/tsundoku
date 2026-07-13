@@ -29,6 +29,12 @@ type fakeProvider struct {
 	// record for whatever RemoteID a test drives it with.
 	metas   map[string]metadata.SeriesMetadata
 	metaErr error
+
+	// metaCalls counts every GetSeriesMetadata call — the FETCH-count a
+	// discriminating anchor-guard test asserts on (a wasted self-refetch is
+	// invisible in merged output because metadata.Merge dedups, so only the
+	// call count can prove the guard).
+	metaCalls int32 // atomic
 }
 
 var _ metadata.Provider = (*fakeProvider)(nil)
@@ -46,6 +52,7 @@ func (f *fakeProvider) Search(_ context.Context, _ string, _ int) ([]metadata.Se
 }
 
 func (f *fakeProvider) GetSeriesMetadata(_ context.Context, remoteID string) (metadata.SeriesMetadata, error) {
+	atomic.AddInt32(&f.metaCalls, 1)
 	if f.metaErr != nil {
 		return metadata.SeriesMetadata{}, f.metaErr
 	}

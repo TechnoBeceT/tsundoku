@@ -3,6 +3,7 @@ package metadatasvc_test
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -128,12 +129,24 @@ func TestIdentify_UnknownSeriesReturnsErrSeriesNotFound(t *testing.T) {
 	}
 }
 
-// TestIdentify_SingleProviderRegisteredNeverDoubleCountsThePrimary guards
-// the otherProviderKeys empty-slice footgun documented on that helper:
-// with only ONE provider registered (the picked one), Identify must not
-// pass an accidentally-empty keys slice through to Registry.Identify (which
-// treats empty as "every provider" and would re-select the primary itself).
-func TestIdentify_SingleProviderRegisteredNeverDoubleCountsThePrimary(t *testing.T) {
+// TestIdentify_SingleProviderRegisteredFetchesPrimaryExactlyOnce guards the
+// otherProviderKeys empty-slice footgun documented on that helper: with only
+// ONE provider registered (the picked one), Identify must NOT pass an
+// accidentally-empty keys slice through to Registry.Identify, which treats
+// empty as "every provider" and would re-Match + re-fetch the primary a
+// SECOND time (a wasted GetSeriesMetadata self-call).
+//
+// The guard is an anti-redundant-FETCH optimization, not a data-correctness
+// gate — a double-included primary is INVISIBLE in merged output because
+// metadata.Merge dedups collections. So this asserts the FETCH COUNT, not the
+// merged data. The provider's matchResult points at ITSELF, so WITHOUT the
+// guard (service.go `if len(otherKeys) > 0` → `if true`) the "all providers"
+// path WOULD match and re-fetch remote id "1" a second time.
+//
+// BIDIRECTIONAL CHECK PERFORMED: temporarily flipping the guard to `if true`
+// makes this FAIL (metaCalls == 2); the real guard makes it PASS
+// (metaCalls == 1). Verified 2026-07-13.
+func TestIdentify_SingleProviderRegisteredFetchesPrimaryExactlyOnce(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	storage := t.TempDir()
@@ -142,6 +155,9 @@ func TestIdentify_SingleProviderRegisteredNeverDoubleCountsThePrimary(t *testing
 
 	provider := &fakeProvider{
 		key: "anilist",
+		// matchResult points at the provider's OWN record: without the guard,
+		// the empty-keys "all providers" path re-matches + re-fetches "1".
+		matchResult: &metadata.SearchResult{Provider: "anilist", RemoteID: "1"},
 		metas: map[string]metadata.SeriesMetadata{
 			"1": {Title: "Solo Provider Series", Genres: []string{"Action"}},
 		},
@@ -153,8 +169,16 @@ func TestIdentify_SingleProviderRegisteredNeverDoubleCountsThePrimary(t *testing
 		t.Fatalf("Identify: %v", err)
 	}
 
+	// The anchor fetch is the ONLY fetch: the guard skips the redundant
+	// re-fetch that the "all providers" path would otherwise trigger.
+	if got := atomic.LoadInt32(&provider.metaCalls); got != 1 {
+		t.Fatalf("provider GetSeriesMetadata calls = %d, want exactly 1 (guard must skip the redundant self-refetch)", got)
+	}
+
+	// Data correctness is a bonus assertion, NOT the discriminator (Merge
+	// dedups, so it would pass even with a double-include).
 	row := db.Series.GetX(ctx, id)
 	if len(row.Genres) != 1 || row.Genres[0] != "Action" {
-		t.Fatalf("Genres = %v, want exactly [Action] (no duplicate self-merge)", row.Genres)
+		t.Fatalf("Genres = %v, want exactly [Action]", row.Genres)
 	}
 }
