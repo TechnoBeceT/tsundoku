@@ -23,6 +23,8 @@ export const seriesPage: SeriesSummary[] = [
     monitored: true,
     completed: false,
     chapterCounts: { total: 200, downloaded: 120, wanted: 80, failed: 0, unread: 12 },
+    createdAt: '2024-01-15T10:00:00Z',
+    lastChapterDownloadedAt: '2024-11-20T08:30:00Z',
   },
   {
     id: '0a4d1c8e-2222-4a00-9000-000000000002',
@@ -33,6 +35,8 @@ export const seriesPage: SeriesSummary[] = [
     monitored: true,
     completed: false,
     chapterCounts: { total: 376, downloaded: 364, wanted: 10, failed: 2, unread: 3 },
+    createdAt: '2023-06-02T12:00:00Z',
+    lastChapterDownloadedAt: '2024-09-01T00:00:00Z',
   },
   {
     id: '0a4d1c8e-3333-4a00-9000-000000000003',
@@ -43,6 +47,8 @@ export const seriesPage: SeriesSummary[] = [
     monitored: true,
     completed: false,
     chapterCounts: { total: 1120, downloaded: 1100, wanted: 18, failed: 2, unread: 0 },
+    createdAt: '2022-03-10T09:00:00Z',
+    lastChapterDownloadedAt: '2024-12-15T06:00:00Z',
   },
   {
     // No cover → branded placeholder; paused (un-monitored) + completed.
@@ -54,6 +60,8 @@ export const seriesPage: SeriesSummary[] = [
     monitored: false,
     completed: true,
     chapterCounts: { total: 147, downloaded: 147, wanted: 0, failed: 0, unread: 0 },
+    createdAt: '2023-11-01T00:00:00Z',
+    lastChapterDownloadedAt: '2023-12-20T00:00:00Z',
   },
   {
     id: '0a4d1c8e-5555-4a00-9000-000000000005',
@@ -64,6 +72,8 @@ export const seriesPage: SeriesSummary[] = [
     monitored: true,
     completed: false,
     chapterCounts: { total: 195, downloaded: 180, wanted: 14, failed: 1, unread: 5 },
+    createdAt: '2024-05-20T14:00:00Z',
+    lastChapterDownloadedAt: '2024-10-30T14:00:00Z',
   },
   {
     // No cover + freshly adopted: nothing downloaded yet (0% bar, all wanted).
@@ -75,6 +85,8 @@ export const seriesPage: SeriesSummary[] = [
     monitored: true,
     completed: false,
     chapterCounts: { total: 210, downloaded: 0, wanted: 210, failed: 0, unread: 0 },
+    createdAt: '2024-12-01T00:00:00Z',
+    lastChapterDownloadedAt: null,
   },
   {
     // Paused, partway through, with a long title to exercise the 2-line clamp.
@@ -86,6 +98,8 @@ export const seriesPage: SeriesSummary[] = [
     monitored: false,
     completed: false,
     chapterCounts: { total: 345, downloaded: 300, wanted: 45, failed: 0, unread: 8 },
+    createdAt: '2021-08-14T00:00:00Z',
+    lastChapterDownloadedAt: '2024-02-11T00:00:00Z',
   },
   {
     id: '0a4d1c8e-8888-4a00-9000-000000000008',
@@ -96,6 +110,8 @@ export const seriesPage: SeriesSummary[] = [
     monitored: true,
     completed: true,
     chapterCounts: { total: 207, downloaded: 207, wanted: 0, failed: 0, unread: 0 },
+    createdAt: '2023-02-28T00:00:00Z',
+    lastChapterDownloadedAt: null,
   },
 ]
 

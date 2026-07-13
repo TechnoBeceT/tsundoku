@@ -21,6 +21,8 @@ const base: SeriesSummary = {
   monitored: true,
   completed: false,
   chapterCounts: { total: 20, downloaded: 20, wanted: 0, failed: 0, unread: 0 },
+  createdAt: '2024-01-01T00:00:00Z',
+  lastChapterDownloadedAt: null,
 }
 
 function render(unread: number) {

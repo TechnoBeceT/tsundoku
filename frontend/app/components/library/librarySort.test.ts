@@ -1,0 +1,88 @@
+import { describe, expect, it } from 'vitest'
+import type { SeriesSummary } from '../screens/types'
+import { sortSeries } from './librarySort'
+
+/** Minimal SeriesSummary factory — only the fields the sort kernel reads matter. */
+function series(over: Partial<SeriesSummary> & { id: string }): SeriesSummary {
+  return {
+    id: over.id,
+    title: over.title ?? over.id,
+    slug: over.slug ?? over.id,
+    category: over.category ?? 'Manga',
+    coverUrl: over.coverUrl ?? '',
+    monitored: over.monitored ?? true,
+    completed: over.completed ?? false,
+    chapterCounts: over.chapterCounts ?? {
+      total: 0, downloaded: 0, wanted: 0, failed: 0, unread: 0,
+    },
+    createdAt: over.createdAt ?? '2020-01-01T00:00:00Z',
+    lastChapterDownloadedAt: over.lastChapterDownloadedAt ?? null,
+  }
+}
+
+/** Deterministic-seed-free shuffle — good enough to jostle input order between runs. */
+function shuffle<T>(arr: T[]): T[] {
+  const out = [...arr]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[out[i], out[j]] = [out[j]!, out[i]!]
+  }
+  return out
+}
+
+const items: SeriesSummary[] = [
+  series({ id: 'a', title: 'Alpha', createdAt: '2021-01-01T00:00:00Z', lastChapterDownloadedAt: '2023-05-01T00:00:00Z', chapterCounts: { total: 10, downloaded: 5, wanted: 5, failed: 0, unread: 3 } }),
+  series({ id: 'b', title: 'Bravo', createdAt: '2022-06-01T00:00:00Z', lastChapterDownloadedAt: null, chapterCounts: { total: 8, downloaded: 8, wanted: 0, failed: 0, unread: 0 } }),
+  series({ id: 'c', title: 'Charlie', createdAt: '2020-03-01T00:00:00Z', lastChapterDownloadedAt: '2024-11-01T00:00:00Z', chapterCounts: { total: 20, downloaded: 20, wanted: 0, failed: 0, unread: 0 } }),
+  series({ id: 'd', title: 'Delta', createdAt: '2023-09-01T00:00:00Z', lastChapterDownloadedAt: '2022-01-01T00:00:00Z', chapterCounts: { total: 12, downloaded: 6, wanted: 6, failed: 0, unread: 7 } }),
+  series({ id: 'e', title: 'Echo', createdAt: '2021-12-01T00:00:00Z', lastChapterDownloadedAt: null, chapterCounts: { total: 4, downloaded: 4, wanted: 0, failed: 0, unread: 0 } }),
+]
+
+describe('sortSeries', () => {
+  it('is deterministic when values tie — equal unread counts never swap', () => {
+    // unread is 0 for dozens of real series, so ties are ROUTINE, not hypothetical.
+    // Without a stable tiebreak, equal-ranked series swap position on every re-render.
+    const a = sortSeries(shuffle(items), 'unread', 'desc').map((s) => s.id)
+    const b = sortSeries(shuffle(items), 'unread', 'desc').map((s) => s.id)
+    expect(a).toEqual(b)
+  })
+
+  it('sorts nulls LAST in BOTH directions', () => {
+    // THE TRAP: a nulls-last ASC comparator reverse()d for DESC puts nulls FIRST in
+    // DESC. The null check must live OUTSIDE the direction flip.
+    const asc = sortSeries(items, 'updated', 'asc')
+    const desc = sortSeries(items, 'updated', 'desc')
+    expect(asc.at(-1)!.lastChapterDownloadedAt).toBeNull()
+    expect(desc.at(-1)!.lastChapterDownloadedAt).toBeNull()
+  })
+
+  it('does not mutate the input array', () => {
+    const before = items.map((s) => s.id)
+    sortSeries(items, 'title', 'desc')
+    expect(items.map((s) => s.id)).toEqual(before)
+  })
+
+  it('title orders correctly in both directions', () => {
+    expect(sortSeries(items, 'title', 'asc').map((s) => s.id)).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(sortSeries(items, 'title', 'desc').map((s) => s.id)).toEqual(['e', 'd', 'c', 'b', 'a'])
+  })
+
+  it('added (createdAt) orders correctly in both directions', () => {
+    // createdAt order: c(2020) < a(2021) < e(2021-12) < b(2022) < d(2023)
+    expect(sortSeries(items, 'added', 'asc').map((s) => s.id)).toEqual(['c', 'a', 'e', 'b', 'd'])
+    expect(sortSeries(items, 'added', 'desc').map((s) => s.id)).toEqual(['d', 'b', 'e', 'a', 'c'])
+  })
+
+  it('updated (lastChapterDownloadedAt) orders correctly, nulls last both ways', () => {
+    // non-null updated order: d(2022) < a(2023) < c(2024); b,e are null → last.
+    // Null tie broken by title: Bravo < Echo.
+    expect(sortSeries(items, 'updated', 'asc').map((s) => s.id)).toEqual(['d', 'a', 'c', 'b', 'e'])
+    expect(sortSeries(items, 'updated', 'desc').map((s) => s.id)).toEqual(['c', 'a', 'd', 'b', 'e'])
+  })
+
+  it('unread orders correctly in both directions', () => {
+    // unread: d=7, a=3, b=c=e=0. Zero-tie broken by title: Bravo < Charlie < Echo.
+    expect(sortSeries(items, 'unread', 'desc').map((s) => s.id)).toEqual(['d', 'a', 'b', 'c', 'e'])
+    expect(sortSeries(items, 'unread', 'asc').map((s) => s.id)).toEqual(['b', 'c', 'e', 'a', 'd'])
+  })
+})
