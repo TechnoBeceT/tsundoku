@@ -15,6 +15,18 @@
  * local `ChipSource` shape ({ id, name }) instead of importing the domain
  * `Source` type, so any caller with an id+name list can drive it. It references
  * only design tokens, so it reads correctly in both themes.
+ *
+ * BOUNDED + INNER-SCROLLING (QCAT-230/231): with 40+ real sources an unbounded
+ * `flex-wrap` cloud runs to ~20 rows — taller than a phone viewport. That
+ * doesn't just look bad: in `screens/ScanLibrary.vue`'s fit-screen layout this
+ * row sits `flex: none` above the `flex:1; min-height:0` staging list, so an
+ * unbounded cloud claims all the available height and squeezes the list to
+ * ZERO — the found-series rows render (data is fine) but have no room to show.
+ * `.imp-filter` therefore caps its own height (`max-height` + `overflow-y:
+ * auto`) so a long source list becomes a compact, internally-scrolling box
+ * instead of dominating whichever screen/dialog hosts it — the fix lives here
+ * once (§2 DRY) rather than in each of the 4 consumers (Import, ScanLibrary,
+ * MatchSourceDialog, MatchDiskProviderDialog).
  */
 interface ChipSource {
   /** Suwayomi source ID (string — a 64-bit int on the wire). */
@@ -61,12 +73,20 @@ const toggle = (id: string): void => {
 </template>
 
 <style scoped>
+/* Bounded + internally-scrolling (see the component doc comment above): caps
+ * the chip cloud to roughly 3-4 rows at any width instead of an unbounded
+ * flex-wrap cloud, with the native scrollbar as the scroll affordance. */
 .imp-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
   align-items: center;
+  align-content: flex-start;
   margin-bottom: 20px;
+  max-height: clamp(88px, 22vh, 200px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
 }
 
 .imp-filter__label {
