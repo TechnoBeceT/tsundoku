@@ -123,6 +123,10 @@ func reconcileSeries(ctx context.Context, client *ent.Client, sf SeriesFacts, re
 		return err
 	}
 
+	if err := restoreMetadataIndex(ctx, client, series, sf.Metadata); err != nil {
+		return err
+	}
+
 	providerIDs, err := upsertProviders(ctx, client, series.ID, sf.Chapters, result)
 	if err != nil {
 		return err
@@ -162,6 +166,56 @@ func restoreCoverIndex(ctx context.Context, client *ent.Client, series *ent.Seri
 	if err != nil {
 		// Defensive path: reachable only on DB connection loss mid-run.
 		return fmt.Errorf("disk.Reconcile: update cover index (series=%s): %w", series.ID, err)
+	}
+	return nil
+}
+
+// restoreMetadataIndex writes the Phase-1 metadata engine's rich-card block
+// (see disk.SeriesMetadataSidecar) back onto the Series row's jsonb columns.
+//
+// DIRECTION IS ONE-WAY, mirroring restoreCoverIndex: the sidecar is the
+// durable seed and always WINS — every writer (the metadata engine's
+// identify/AutoIdentify path) writes the sidecar block FIRST and only then
+// updates these columns, so disk→DB is the only direction Reconcile may
+// carry. This is the load-bearing durability proof: after a total DB loss,
+// Reconcile rebuilds the WHOLE rich card (genres/tags/alt_titles/authors/
+// links/year/description/status/metadata_source/cover_source) from disk with
+// ZERO calls to any metadata provider — Reconcile takes no provider argument
+// at all, so a provider call during reconcile is structurally impossible.
+//
+// A series with no metadata block on disk (metadata == nil, the common case
+// for the vast majority of series that predate this feature or were never
+// identified) is left entirely alone — every new field keeps its zero value,
+// exactly as an additive/defaulted column requires for a zero-data migration.
+func restoreMetadataIndex(ctx context.Context, client *ent.Client, series *ent.Series, meta *SeriesMetadataSidecar) error {
+	if meta == nil {
+		return nil
+	}
+	update := client.Series.UpdateOne(series).
+		SetDescription(meta.Description).
+		SetStatus(meta.Status).
+		SetGenres(meta.Genres).
+		SetTags(meta.Tags).
+		SetAltTitles(meta.AltTitles).
+		SetAuthors(meta.Authors).
+		SetLinks(meta.Links).
+		SetYear(meta.Year)
+	// The two descriptors are pointer-typed and genuinely nil-able (not yet
+	// identified against a provider) — Clear* stores a real SQL NULL, so a
+	// nil pointer round-trips as nil rather than a stored JSON "null" literal.
+	if meta.MetadataSource != nil {
+		update = update.SetMetadataSource(meta.MetadataSource)
+	} else {
+		update = update.ClearMetadataSource()
+	}
+	if meta.CoverSource != nil {
+		update = update.SetCoverSource(meta.CoverSource)
+	} else {
+		update = update.ClearCoverSource()
+	}
+	if err := update.Exec(ctx); err != nil {
+		// Defensive path: reachable only on DB connection loss mid-run.
+		return fmt.Errorf("disk.Reconcile: update metadata index (series=%s): %w", series.ID, err)
 	}
 	return nil
 }

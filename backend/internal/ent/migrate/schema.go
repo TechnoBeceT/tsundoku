@@ -3,6 +3,7 @@
 package migrate
 
 import (
+	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/dialect/sql/schema"
 	"entgo.io/ent/schema/field"
 )
@@ -183,12 +184,20 @@ var (
 		{Name: "cover_url", Type: field.TypeString, Default: ""},
 		{Name: "description", Type: field.TypeString, Default: ""},
 		{Name: "status", Type: field.TypeString, Default: ""},
+		{Name: "genres", Type: field.TypeJSON, Nullable: true},
+		{Name: "tags", Type: field.TypeJSON, Nullable: true},
+		{Name: "alt_titles", Type: field.TypeJSON, Nullable: true},
+		{Name: "authors", Type: field.TypeJSON, Nullable: true},
+		{Name: "links", Type: field.TypeJSON, Nullable: true},
+		{Name: "year", Type: field.TypeInt, Default: 0},
 		{Name: "monitored", Type: field.TypeBool, Default: true},
 		{Name: "completed", Type: field.TypeBool, Default: false},
 		{Name: "metadata_provider_id", Type: field.TypeUUID, Nullable: true},
+		{Name: "metadata_source", Type: field.TypeJSON, Nullable: true},
 		{Name: "cover_file", Type: field.TypeString, Default: ""},
 		{Name: "cover_source_url", Type: field.TypeString, Default: ""},
 		{Name: "cover_version", Type: field.TypeString, Default: ""},
+		{Name: "cover_source", Type: field.TypeJSON, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 		{Name: "category_id", Type: field.TypeUUID, Nullable: true},
@@ -201,9 +210,27 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "series_categories_series",
-				Columns:    []*schema.Column{SeriesColumns[14]},
+				Columns:    []*schema.Column{SeriesColumns[22]},
 				RefColumns: []*schema.Column{CategoriesColumns[0]},
 				OnDelete:   schema.SetNull,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "series_genres",
+				Unique:  false,
+				Columns: []*schema.Column{SeriesColumns[6]},
+				Annotation: &entsql.IndexAnnotation{
+					Type: "GIN",
+				},
+			},
+			{
+				Name:    "series_tags",
+				Unique:  false,
+				Columns: []*schema.Column{SeriesColumns[7]},
+				Annotation: &entsql.IndexAnnotation{
+					Type: "GIN",
+				},
 			},
 		},
 	}

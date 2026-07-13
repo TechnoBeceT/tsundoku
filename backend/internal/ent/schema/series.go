@@ -8,7 +8,10 @@ import (
 	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
+	"entgo.io/ent/schema/index"
 	"github.com/google/uuid"
+
+	"github.com/technobecet/tsundoku/internal/metadata"
 )
 
 // Series holds the schema definition for the Series entity.
@@ -25,6 +28,27 @@ func (Series) Fields() []ent.Field {
 		field.String("cover_url").Default(""),
 		field.String("description").Default(""),
 		field.String("status").Default(""),
+		// genres + tags are the Phase-1 metadata engine's classification tags —
+		// UNION-merged across every provider a series was identified against
+		// (internal/metadata.Merge; QCAT-228 never single-provider-wins on a
+		// collection). GIN-indexed jsonb (see Indexes below) so a future
+		// "filter by genre" query can use Postgres' jsonb containment operators
+		// directly, with no join table. Optional/nillable ⇒ zero-data migration:
+		// an existing row gets a NULL column, which decodes to a nil (empty)
+		// slice — indistinguishable in Go from "no genres yet".
+		field.JSON("genres", []string{}).Optional(),
+		field.JSON("tags", []string{}).Optional(),
+		// alt_titles / authors / links reuse the metadata engine's normalized
+		// structs verbatim (internal/metadata.AltTitle / Author / Link) — the
+		// schema never re-declares its own mirror of the pure engine's shapes,
+		// so a mapper change and its DB column stay ONE definition (§2 DRY).
+		field.JSON("alt_titles", []metadata.AltTitle{}).Optional(),
+		field.JSON("authors", []metadata.Author{}).Optional(),
+		field.JSON("links", []metadata.Link{}).Optional(),
+		// year is the first-publication year the metadata engine resolved; 0 =
+		// unknown, mirroring metadata.SeriesMetadata.Year's zero-is-unset
+		// convention. Defaulted ⇒ zero-data migration.
+		field.Int("year").Default(0),
 		// category_id is the FK to the series' Category (the inverse side of the
 		// category edge below). It drives the on-disk library layout (one
 		// top-level folder per category, e.g. Manhwa/<Title>/) and Komga
@@ -56,6 +80,15 @@ func (Series) Fields() []ent.Field {
 		// changes the canonical Series.title (slug/folder/Komga); display name +
 		// cover are resolved on read.
 		field.UUID("metadata_provider_id", uuid.UUID{}).Optional().Nillable(),
+		// metadata_source records WHICH metadata provider (AniList, MangaDex, …)
+		// the rich fields above (genres/tags/alt_titles/authors/description/
+		// status/year/links) were anchored on — the "anchor-then-aggregate"
+		// primary from the Phase-1 metadata engine (spec/metadata-engine-phase1
+		// §5). It SUPERSEDES metadata_provider_id's ROLE for rich-card display,
+		// but that column is DELIBERATELY KEPT (not dropped) here: its M10
+		// display-name/cover resolution stays untouched until a later,
+		// owner-approved migration (spec §3). nil = not yet identified.
+		field.JSON("metadata_source", &metadata.SourceRef{}).Optional(),
 		// cover_file + cover_source_url are the FAST INDEX over the on-disk cover
 		// cache: the filename inside the series folder ("cover.webp") and the
 		// provider cover_url those bytes were fetched from (the cache key).
@@ -87,6 +120,13 @@ func (Series) Fields() []ent.Field {
 		// column): the DTO then emits an unversioned URL and the endpoint serves
 		// revalidatable no-cache, never immutable.
 		field.String("cover_version").Default(""),
+		// cover_source records which provider the CURRENTLY CACHED cover's bytes
+		// came from — a metadata provider or a library SeriesProvider
+		// (SourceRef.Kind distinguishes them). Independent of metadata_source
+		// (QCAT-228: the cover is chosen separately from the rich-metadata
+		// merge). nil = the cache predates this feature (M10 cover proxy) or the
+		// series has no cached cover yet.
+		field.JSON("cover_source", &metadata.SourceRef{}).Optional(),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}
@@ -113,5 +153,16 @@ func (Series) Edges() []ent.Edge {
 		// bindings never linger as orphans.
 		edge.To("track_bindings", TrackBinding.Type).
 			Annotations(entsql.Annotation{OnDelete: entsql.Cascade}),
+	}
+}
+
+// Indexes of the Series.
+func (Series) Indexes() []ent.Index {
+	return []ent.Index{
+		// GIN indexes on the jsonb genres/tags columns so a future "filter by
+		// genre/tag" query can use Postgres' jsonb containment operators
+		// (@>, ?, ?&, ?|) directly, without a join table.
+		index.Fields("genres").Annotations(entsql.IndexType("GIN")),
+		index.Fields("tags").Annotations(entsql.IndexType("GIN")),
 	}
 }

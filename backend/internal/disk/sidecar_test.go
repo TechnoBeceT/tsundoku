@@ -1,6 +1,7 @@
 package disk_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,6 +82,62 @@ func TestReadSidecarMissing(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("ReadSidecar on missing file: want nil, got %+v", got)
+	}
+}
+
+// TestWriteMetadataRoundTrips verifies that WriteMetadata persists a
+// SeriesMetadataSidecar block into the series' tsundoku.json under the
+// per-series-dir lock, and that ReadSidecar reads it straight back.
+func TestWriteMetadataRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// WriteMetadata never creates the series directory (mirrors SaveCover) —
+	// the caller must already have one (a chapter render, in production).
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("setup MkdirAll: %v", err)
+	}
+
+	real := disk.SeriesMetadataSidecar{
+		Description: "A brief synopsis.",
+		Status:      "ongoing",
+		Genres:      []string{"Action"},
+		Tags:        []string{"Isekai"},
+		Year:        2020,
+	}
+
+	if err := disk.WriteMetadata(dir, real); err != nil {
+		t.Fatalf("WriteMetadata: %v", err)
+	}
+
+	got, err := disk.ReadSidecar(dir)
+	if err != nil {
+		t.Fatalf("ReadSidecar: %v", err)
+	}
+	if got == nil || got.Metadata == nil {
+		t.Fatal("ReadSidecar: Metadata block missing after WriteMetadata")
+	}
+	assertEqual(t, "Description", real.Description, got.Metadata.Description)
+	assertEqual(t, "Status", real.Status, got.Metadata.Status)
+	assertEqual(t, "Year", real.Year, got.Metadata.Year)
+	if len(got.Metadata.Genres) != 1 || got.Metadata.Genres[0] != "Action" {
+		t.Errorf("Genres = %v, want [Action]", got.Metadata.Genres)
+	}
+}
+
+// TestWriteMetadataNoSeriesDir verifies that WriteMetadata refuses to create
+// the series directory: a series with nothing downloaded yet must not get a
+// metadata-only folder, mirroring SaveCover's ErrNoSeriesDir contract (a
+// ghost folder would be staged as a fake entry by the Scan-Library wizard).
+func TestWriteMetadataNoSeriesDir(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	missing := filepath.Join(base, "Manga", "Never Downloaded")
+
+	err := disk.WriteMetadata(missing, disk.SeriesMetadataSidecar{Year: 2020})
+	if !errors.Is(err, disk.ErrNoSeriesDir) {
+		t.Fatalf("WriteMetadata on missing dir: err = %v, want ErrNoSeriesDir", err)
 	}
 }
 

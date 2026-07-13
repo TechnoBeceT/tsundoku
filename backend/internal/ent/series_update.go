@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/ent/category"
@@ -18,6 +19,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
+	"github.com/technobecet/tsundoku/internal/metadata"
 )
 
 // SeriesUpdate is the builder for updating Series entities.
@@ -103,6 +105,117 @@ func (_u *SeriesUpdate) SetNillableStatus(v *string) *SeriesUpdate {
 	return _u
 }
 
+// SetGenres sets the "genres" field.
+func (_u *SeriesUpdate) SetGenres(v []string) *SeriesUpdate {
+	_u.mutation.SetGenres(v)
+	return _u
+}
+
+// AppendGenres appends value to the "genres" field.
+func (_u *SeriesUpdate) AppendGenres(v []string) *SeriesUpdate {
+	_u.mutation.AppendGenres(v)
+	return _u
+}
+
+// ClearGenres clears the value of the "genres" field.
+func (_u *SeriesUpdate) ClearGenres() *SeriesUpdate {
+	_u.mutation.ClearGenres()
+	return _u
+}
+
+// SetTags sets the "tags" field.
+func (_u *SeriesUpdate) SetTags(v []string) *SeriesUpdate {
+	_u.mutation.SetTags(v)
+	return _u
+}
+
+// AppendTags appends value to the "tags" field.
+func (_u *SeriesUpdate) AppendTags(v []string) *SeriesUpdate {
+	_u.mutation.AppendTags(v)
+	return _u
+}
+
+// ClearTags clears the value of the "tags" field.
+func (_u *SeriesUpdate) ClearTags() *SeriesUpdate {
+	_u.mutation.ClearTags()
+	return _u
+}
+
+// SetAltTitles sets the "alt_titles" field.
+func (_u *SeriesUpdate) SetAltTitles(v []metadata.AltTitle) *SeriesUpdate {
+	_u.mutation.SetAltTitles(v)
+	return _u
+}
+
+// AppendAltTitles appends value to the "alt_titles" field.
+func (_u *SeriesUpdate) AppendAltTitles(v []metadata.AltTitle) *SeriesUpdate {
+	_u.mutation.AppendAltTitles(v)
+	return _u
+}
+
+// ClearAltTitles clears the value of the "alt_titles" field.
+func (_u *SeriesUpdate) ClearAltTitles() *SeriesUpdate {
+	_u.mutation.ClearAltTitles()
+	return _u
+}
+
+// SetAuthors sets the "authors" field.
+func (_u *SeriesUpdate) SetAuthors(v []metadata.Author) *SeriesUpdate {
+	_u.mutation.SetAuthors(v)
+	return _u
+}
+
+// AppendAuthors appends value to the "authors" field.
+func (_u *SeriesUpdate) AppendAuthors(v []metadata.Author) *SeriesUpdate {
+	_u.mutation.AppendAuthors(v)
+	return _u
+}
+
+// ClearAuthors clears the value of the "authors" field.
+func (_u *SeriesUpdate) ClearAuthors() *SeriesUpdate {
+	_u.mutation.ClearAuthors()
+	return _u
+}
+
+// SetLinks sets the "links" field.
+func (_u *SeriesUpdate) SetLinks(v []metadata.Link) *SeriesUpdate {
+	_u.mutation.SetLinks(v)
+	return _u
+}
+
+// AppendLinks appends value to the "links" field.
+func (_u *SeriesUpdate) AppendLinks(v []metadata.Link) *SeriesUpdate {
+	_u.mutation.AppendLinks(v)
+	return _u
+}
+
+// ClearLinks clears the value of the "links" field.
+func (_u *SeriesUpdate) ClearLinks() *SeriesUpdate {
+	_u.mutation.ClearLinks()
+	return _u
+}
+
+// SetYear sets the "year" field.
+func (_u *SeriesUpdate) SetYear(v int) *SeriesUpdate {
+	_u.mutation.ResetYear()
+	_u.mutation.SetYear(v)
+	return _u
+}
+
+// SetNillableYear sets the "year" field if the given value is not nil.
+func (_u *SeriesUpdate) SetNillableYear(v *int) *SeriesUpdate {
+	if v != nil {
+		_u.SetYear(*v)
+	}
+	return _u
+}
+
+// AddYear adds value to the "year" field.
+func (_u *SeriesUpdate) AddYear(v int) *SeriesUpdate {
+	_u.mutation.AddYear(v)
+	return _u
+}
+
 // SetCategoryID sets the "category_id" field.
 func (_u *SeriesUpdate) SetCategoryID(v uuid.UUID) *SeriesUpdate {
 	_u.mutation.SetCategoryID(v)
@@ -171,6 +284,18 @@ func (_u *SeriesUpdate) ClearMetadataProviderID() *SeriesUpdate {
 	return _u
 }
 
+// SetMetadataSource sets the "metadata_source" field.
+func (_u *SeriesUpdate) SetMetadataSource(v *metadata.SourceRef) *SeriesUpdate {
+	_u.mutation.SetMetadataSource(v)
+	return _u
+}
+
+// ClearMetadataSource clears the value of the "metadata_source" field.
+func (_u *SeriesUpdate) ClearMetadataSource() *SeriesUpdate {
+	_u.mutation.ClearMetadataSource()
+	return _u
+}
+
 // SetCoverFile sets the "cover_file" field.
 func (_u *SeriesUpdate) SetCoverFile(v string) *SeriesUpdate {
 	_u.mutation.SetCoverFile(v)
@@ -210,6 +335,18 @@ func (_u *SeriesUpdate) SetNillableCoverVersion(v *string) *SeriesUpdate {
 	if v != nil {
 		_u.SetCoverVersion(*v)
 	}
+	return _u
+}
+
+// SetCoverSource sets the "cover_source" field.
+func (_u *SeriesUpdate) SetCoverSource(v *metadata.SourceRef) *SeriesUpdate {
+	_u.mutation.SetCoverSource(v)
+	return _u
+}
+
+// ClearCoverSource clears the value of the "cover_source" field.
+func (_u *SeriesUpdate) ClearCoverSource() *SeriesUpdate {
+	_u.mutation.ClearCoverSource()
 	return _u
 }
 
@@ -403,6 +540,67 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.Genres(); ok {
+		_spec.SetField(series.FieldGenres, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedGenres(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldGenres, value)
+		})
+	}
+	if _u.mutation.GenresCleared() {
+		_spec.ClearField(series.FieldGenres, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.Tags(); ok {
+		_spec.SetField(series.FieldTags, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedTags(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldTags, value)
+		})
+	}
+	if _u.mutation.TagsCleared() {
+		_spec.ClearField(series.FieldTags, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AltTitles(); ok {
+		_spec.SetField(series.FieldAltTitles, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAltTitles(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldAltTitles, value)
+		})
+	}
+	if _u.mutation.AltTitlesCleared() {
+		_spec.ClearField(series.FieldAltTitles, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.Authors(); ok {
+		_spec.SetField(series.FieldAuthors, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAuthors(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldAuthors, value)
+		})
+	}
+	if _u.mutation.AuthorsCleared() {
+		_spec.ClearField(series.FieldAuthors, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.Links(); ok {
+		_spec.SetField(series.FieldLinks, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedLinks(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldLinks, value)
+		})
+	}
+	if _u.mutation.LinksCleared() {
+		_spec.ClearField(series.FieldLinks, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.Year(); ok {
+		_spec.SetField(series.FieldYear, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedYear(); ok {
+		_spec.AddField(series.FieldYear, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.Monitored(); ok {
 		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
 	}
@@ -415,6 +613,12 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.MetadataProviderIDCleared() {
 		_spec.ClearField(series.FieldMetadataProviderID, field.TypeUUID)
 	}
+	if value, ok := _u.mutation.MetadataSource(); ok {
+		_spec.SetField(series.FieldMetadataSource, field.TypeJSON, value)
+	}
+	if _u.mutation.MetadataSourceCleared() {
+		_spec.ClearField(series.FieldMetadataSource, field.TypeJSON)
+	}
 	if value, ok := _u.mutation.CoverFile(); ok {
 		_spec.SetField(series.FieldCoverFile, field.TypeString, value)
 	}
@@ -423,6 +627,12 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.CoverVersion(); ok {
 		_spec.SetField(series.FieldCoverVersion, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CoverSource(); ok {
+		_spec.SetField(series.FieldCoverSource, field.TypeJSON, value)
+	}
+	if _u.mutation.CoverSourceCleared() {
+		_spec.ClearField(series.FieldCoverSource, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)
@@ -681,6 +891,117 @@ func (_u *SeriesUpdateOne) SetNillableStatus(v *string) *SeriesUpdateOne {
 	return _u
 }
 
+// SetGenres sets the "genres" field.
+func (_u *SeriesUpdateOne) SetGenres(v []string) *SeriesUpdateOne {
+	_u.mutation.SetGenres(v)
+	return _u
+}
+
+// AppendGenres appends value to the "genres" field.
+func (_u *SeriesUpdateOne) AppendGenres(v []string) *SeriesUpdateOne {
+	_u.mutation.AppendGenres(v)
+	return _u
+}
+
+// ClearGenres clears the value of the "genres" field.
+func (_u *SeriesUpdateOne) ClearGenres() *SeriesUpdateOne {
+	_u.mutation.ClearGenres()
+	return _u
+}
+
+// SetTags sets the "tags" field.
+func (_u *SeriesUpdateOne) SetTags(v []string) *SeriesUpdateOne {
+	_u.mutation.SetTags(v)
+	return _u
+}
+
+// AppendTags appends value to the "tags" field.
+func (_u *SeriesUpdateOne) AppendTags(v []string) *SeriesUpdateOne {
+	_u.mutation.AppendTags(v)
+	return _u
+}
+
+// ClearTags clears the value of the "tags" field.
+func (_u *SeriesUpdateOne) ClearTags() *SeriesUpdateOne {
+	_u.mutation.ClearTags()
+	return _u
+}
+
+// SetAltTitles sets the "alt_titles" field.
+func (_u *SeriesUpdateOne) SetAltTitles(v []metadata.AltTitle) *SeriesUpdateOne {
+	_u.mutation.SetAltTitles(v)
+	return _u
+}
+
+// AppendAltTitles appends value to the "alt_titles" field.
+func (_u *SeriesUpdateOne) AppendAltTitles(v []metadata.AltTitle) *SeriesUpdateOne {
+	_u.mutation.AppendAltTitles(v)
+	return _u
+}
+
+// ClearAltTitles clears the value of the "alt_titles" field.
+func (_u *SeriesUpdateOne) ClearAltTitles() *SeriesUpdateOne {
+	_u.mutation.ClearAltTitles()
+	return _u
+}
+
+// SetAuthors sets the "authors" field.
+func (_u *SeriesUpdateOne) SetAuthors(v []metadata.Author) *SeriesUpdateOne {
+	_u.mutation.SetAuthors(v)
+	return _u
+}
+
+// AppendAuthors appends value to the "authors" field.
+func (_u *SeriesUpdateOne) AppendAuthors(v []metadata.Author) *SeriesUpdateOne {
+	_u.mutation.AppendAuthors(v)
+	return _u
+}
+
+// ClearAuthors clears the value of the "authors" field.
+func (_u *SeriesUpdateOne) ClearAuthors() *SeriesUpdateOne {
+	_u.mutation.ClearAuthors()
+	return _u
+}
+
+// SetLinks sets the "links" field.
+func (_u *SeriesUpdateOne) SetLinks(v []metadata.Link) *SeriesUpdateOne {
+	_u.mutation.SetLinks(v)
+	return _u
+}
+
+// AppendLinks appends value to the "links" field.
+func (_u *SeriesUpdateOne) AppendLinks(v []metadata.Link) *SeriesUpdateOne {
+	_u.mutation.AppendLinks(v)
+	return _u
+}
+
+// ClearLinks clears the value of the "links" field.
+func (_u *SeriesUpdateOne) ClearLinks() *SeriesUpdateOne {
+	_u.mutation.ClearLinks()
+	return _u
+}
+
+// SetYear sets the "year" field.
+func (_u *SeriesUpdateOne) SetYear(v int) *SeriesUpdateOne {
+	_u.mutation.ResetYear()
+	_u.mutation.SetYear(v)
+	return _u
+}
+
+// SetNillableYear sets the "year" field if the given value is not nil.
+func (_u *SeriesUpdateOne) SetNillableYear(v *int) *SeriesUpdateOne {
+	if v != nil {
+		_u.SetYear(*v)
+	}
+	return _u
+}
+
+// AddYear adds value to the "year" field.
+func (_u *SeriesUpdateOne) AddYear(v int) *SeriesUpdateOne {
+	_u.mutation.AddYear(v)
+	return _u
+}
+
 // SetCategoryID sets the "category_id" field.
 func (_u *SeriesUpdateOne) SetCategoryID(v uuid.UUID) *SeriesUpdateOne {
 	_u.mutation.SetCategoryID(v)
@@ -749,6 +1070,18 @@ func (_u *SeriesUpdateOne) ClearMetadataProviderID() *SeriesUpdateOne {
 	return _u
 }
 
+// SetMetadataSource sets the "metadata_source" field.
+func (_u *SeriesUpdateOne) SetMetadataSource(v *metadata.SourceRef) *SeriesUpdateOne {
+	_u.mutation.SetMetadataSource(v)
+	return _u
+}
+
+// ClearMetadataSource clears the value of the "metadata_source" field.
+func (_u *SeriesUpdateOne) ClearMetadataSource() *SeriesUpdateOne {
+	_u.mutation.ClearMetadataSource()
+	return _u
+}
+
 // SetCoverFile sets the "cover_file" field.
 func (_u *SeriesUpdateOne) SetCoverFile(v string) *SeriesUpdateOne {
 	_u.mutation.SetCoverFile(v)
@@ -788,6 +1121,18 @@ func (_u *SeriesUpdateOne) SetNillableCoverVersion(v *string) *SeriesUpdateOne {
 	if v != nil {
 		_u.SetCoverVersion(*v)
 	}
+	return _u
+}
+
+// SetCoverSource sets the "cover_source" field.
+func (_u *SeriesUpdateOne) SetCoverSource(v *metadata.SourceRef) *SeriesUpdateOne {
+	_u.mutation.SetCoverSource(v)
+	return _u
+}
+
+// ClearCoverSource clears the value of the "cover_source" field.
+func (_u *SeriesUpdateOne) ClearCoverSource() *SeriesUpdateOne {
+	_u.mutation.ClearCoverSource()
 	return _u
 }
 
@@ -1011,6 +1356,67 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.Genres(); ok {
+		_spec.SetField(series.FieldGenres, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedGenres(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldGenres, value)
+		})
+	}
+	if _u.mutation.GenresCleared() {
+		_spec.ClearField(series.FieldGenres, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.Tags(); ok {
+		_spec.SetField(series.FieldTags, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedTags(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldTags, value)
+		})
+	}
+	if _u.mutation.TagsCleared() {
+		_spec.ClearField(series.FieldTags, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AltTitles(); ok {
+		_spec.SetField(series.FieldAltTitles, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAltTitles(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldAltTitles, value)
+		})
+	}
+	if _u.mutation.AltTitlesCleared() {
+		_spec.ClearField(series.FieldAltTitles, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.Authors(); ok {
+		_spec.SetField(series.FieldAuthors, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAuthors(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldAuthors, value)
+		})
+	}
+	if _u.mutation.AuthorsCleared() {
+		_spec.ClearField(series.FieldAuthors, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.Links(); ok {
+		_spec.SetField(series.FieldLinks, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedLinks(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, series.FieldLinks, value)
+		})
+	}
+	if _u.mutation.LinksCleared() {
+		_spec.ClearField(series.FieldLinks, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.Year(); ok {
+		_spec.SetField(series.FieldYear, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedYear(); ok {
+		_spec.AddField(series.FieldYear, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.Monitored(); ok {
 		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
 	}
@@ -1023,6 +1429,12 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	if _u.mutation.MetadataProviderIDCleared() {
 		_spec.ClearField(series.FieldMetadataProviderID, field.TypeUUID)
 	}
+	if value, ok := _u.mutation.MetadataSource(); ok {
+		_spec.SetField(series.FieldMetadataSource, field.TypeJSON, value)
+	}
+	if _u.mutation.MetadataSourceCleared() {
+		_spec.ClearField(series.FieldMetadataSource, field.TypeJSON)
+	}
 	if value, ok := _u.mutation.CoverFile(); ok {
 		_spec.SetField(series.FieldCoverFile, field.TypeString, value)
 	}
@@ -1031,6 +1443,12 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	}
 	if value, ok := _u.mutation.CoverVersion(); ok {
 		_spec.SetField(series.FieldCoverVersion, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CoverSource(); ok {
+		_spec.SetField(series.FieldCoverSource, field.TypeJSON, value)
+	}
+	if _u.mutation.CoverSourceCleared() {
+		_spec.ClearField(series.FieldCoverSource, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(series.FieldUpdatedAt, field.TypeTime, value)

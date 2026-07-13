@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/series"
+	"github.com/technobecet/tsundoku/internal/metadata"
 )
 
 // Series is the model entity for the Series schema.
@@ -29,6 +31,18 @@ type Series struct {
 	Description string `json:"description,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
+	// Genres holds the value of the "genres" field.
+	Genres []string `json:"genres,omitempty"`
+	// Tags holds the value of the "tags" field.
+	Tags []string `json:"tags,omitempty"`
+	// AltTitles holds the value of the "alt_titles" field.
+	AltTitles []metadata.AltTitle `json:"alt_titles,omitempty"`
+	// Authors holds the value of the "authors" field.
+	Authors []metadata.Author `json:"authors,omitempty"`
+	// Links holds the value of the "links" field.
+	Links []metadata.Link `json:"links,omitempty"`
+	// Year holds the value of the "year" field.
+	Year int `json:"year,omitempty"`
 	// CategoryID holds the value of the "category_id" field.
 	CategoryID uuid.UUID `json:"category_id,omitempty"`
 	// Monitored holds the value of the "monitored" field.
@@ -37,12 +51,16 @@ type Series struct {
 	Completed bool `json:"completed,omitempty"`
 	// MetadataProviderID holds the value of the "metadata_provider_id" field.
 	MetadataProviderID *uuid.UUID `json:"metadata_provider_id,omitempty"`
+	// MetadataSource holds the value of the "metadata_source" field.
+	MetadataSource *metadata.SourceRef `json:"metadata_source,omitempty"`
 	// CoverFile holds the value of the "cover_file" field.
 	CoverFile string `json:"cover_file,omitempty"`
 	// CoverSourceURL holds the value of the "cover_source_url" field.
 	CoverSourceURL string `json:"cover_source_url,omitempty"`
 	// CoverVersion holds the value of the "cover_version" field.
 	CoverVersion string `json:"cover_version,omitempty"`
+	// CoverSource holds the value of the "cover_source" field.
+	CoverSource *metadata.SourceRef `json:"cover_source,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -113,8 +131,12 @@ func (*Series) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case series.FieldMetadataProviderID:
 			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
+		case series.FieldGenres, series.FieldTags, series.FieldAltTitles, series.FieldAuthors, series.FieldLinks, series.FieldMetadataSource, series.FieldCoverSource:
+			values[i] = new([]byte)
 		case series.FieldMonitored, series.FieldCompleted:
 			values[i] = new(sql.NullBool)
+		case series.FieldYear:
+			values[i] = new(sql.NullInt64)
 		case series.FieldTitle, series.FieldSlug, series.FieldCoverURL, series.FieldDescription, series.FieldStatus, series.FieldCoverFile, series.FieldCoverSourceURL, series.FieldCoverVersion:
 			values[i] = new(sql.NullString)
 		case series.FieldCreatedAt, series.FieldUpdatedAt:
@@ -172,6 +194,52 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Status = value.String
 			}
+		case series.FieldGenres:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field genres", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.Genres); err != nil {
+					return fmt.Errorf("unmarshal field genres: %w", err)
+				}
+			}
+		case series.FieldTags:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field tags", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.Tags); err != nil {
+					return fmt.Errorf("unmarshal field tags: %w", err)
+				}
+			}
+		case series.FieldAltTitles:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field alt_titles", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.AltTitles); err != nil {
+					return fmt.Errorf("unmarshal field alt_titles: %w", err)
+				}
+			}
+		case series.FieldAuthors:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field authors", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.Authors); err != nil {
+					return fmt.Errorf("unmarshal field authors: %w", err)
+				}
+			}
+		case series.FieldLinks:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field links", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.Links); err != nil {
+					return fmt.Errorf("unmarshal field links: %w", err)
+				}
+			}
+		case series.FieldYear:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field year", values[i])
+			} else if value.Valid {
+				_m.Year = int(value.Int64)
+			}
 		case series.FieldCategoryID:
 			if value, ok := values[i].(*uuid.UUID); !ok {
 				return fmt.Errorf("unexpected type %T for field category_id", values[i])
@@ -197,6 +265,14 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 				_m.MetadataProviderID = new(uuid.UUID)
 				*_m.MetadataProviderID = *value.S.(*uuid.UUID)
 			}
+		case series.FieldMetadataSource:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field metadata_source", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.MetadataSource); err != nil {
+					return fmt.Errorf("unmarshal field metadata_source: %w", err)
+				}
+			}
 		case series.FieldCoverFile:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field cover_file", values[i])
@@ -214,6 +290,14 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field cover_version", values[i])
 			} else if value.Valid {
 				_m.CoverVersion = value.String
+			}
+		case series.FieldCoverSource:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field cover_source", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CoverSource); err != nil {
+					return fmt.Errorf("unmarshal field cover_source: %w", err)
+				}
 			}
 		case series.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -298,6 +382,24 @@ func (_m *Series) String() string {
 	builder.WriteString("status=")
 	builder.WriteString(_m.Status)
 	builder.WriteString(", ")
+	builder.WriteString("genres=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Genres))
+	builder.WriteString(", ")
+	builder.WriteString("tags=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Tags))
+	builder.WriteString(", ")
+	builder.WriteString("alt_titles=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AltTitles))
+	builder.WriteString(", ")
+	builder.WriteString("authors=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Authors))
+	builder.WriteString(", ")
+	builder.WriteString("links=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Links))
+	builder.WriteString(", ")
+	builder.WriteString("year=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Year))
+	builder.WriteString(", ")
 	builder.WriteString("category_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CategoryID))
 	builder.WriteString(", ")
@@ -312,6 +414,9 @@ func (_m *Series) String() string {
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
+	builder.WriteString("metadata_source=")
+	builder.WriteString(fmt.Sprintf("%v", _m.MetadataSource))
+	builder.WriteString(", ")
 	builder.WriteString("cover_file=")
 	builder.WriteString(_m.CoverFile)
 	builder.WriteString(", ")
@@ -320,6 +425,9 @@ func (_m *Series) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("cover_version=")
 	builder.WriteString(_m.CoverVersion)
+	builder.WriteString(", ")
+	builder.WriteString("cover_source=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CoverSource))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

@@ -16,6 +16,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
+	"github.com/technobecet/tsundoku/internal/metadata"
 )
 
 // SeriesCreate is the builder for creating a Series entity.
@@ -79,6 +80,50 @@ func (_c *SeriesCreate) SetNillableStatus(v *string) *SeriesCreate {
 	return _c
 }
 
+// SetGenres sets the "genres" field.
+func (_c *SeriesCreate) SetGenres(v []string) *SeriesCreate {
+	_c.mutation.SetGenres(v)
+	return _c
+}
+
+// SetTags sets the "tags" field.
+func (_c *SeriesCreate) SetTags(v []string) *SeriesCreate {
+	_c.mutation.SetTags(v)
+	return _c
+}
+
+// SetAltTitles sets the "alt_titles" field.
+func (_c *SeriesCreate) SetAltTitles(v []metadata.AltTitle) *SeriesCreate {
+	_c.mutation.SetAltTitles(v)
+	return _c
+}
+
+// SetAuthors sets the "authors" field.
+func (_c *SeriesCreate) SetAuthors(v []metadata.Author) *SeriesCreate {
+	_c.mutation.SetAuthors(v)
+	return _c
+}
+
+// SetLinks sets the "links" field.
+func (_c *SeriesCreate) SetLinks(v []metadata.Link) *SeriesCreate {
+	_c.mutation.SetLinks(v)
+	return _c
+}
+
+// SetYear sets the "year" field.
+func (_c *SeriesCreate) SetYear(v int) *SeriesCreate {
+	_c.mutation.SetYear(v)
+	return _c
+}
+
+// SetNillableYear sets the "year" field if the given value is not nil.
+func (_c *SeriesCreate) SetNillableYear(v *int) *SeriesCreate {
+	if v != nil {
+		_c.SetYear(*v)
+	}
+	return _c
+}
+
 // SetCategoryID sets the "category_id" field.
 func (_c *SeriesCreate) SetCategoryID(v uuid.UUID) *SeriesCreate {
 	_c.mutation.SetCategoryID(v)
@@ -135,6 +180,12 @@ func (_c *SeriesCreate) SetNillableMetadataProviderID(v *uuid.UUID) *SeriesCreat
 	return _c
 }
 
+// SetMetadataSource sets the "metadata_source" field.
+func (_c *SeriesCreate) SetMetadataSource(v *metadata.SourceRef) *SeriesCreate {
+	_c.mutation.SetMetadataSource(v)
+	return _c
+}
+
 // SetCoverFile sets the "cover_file" field.
 func (_c *SeriesCreate) SetCoverFile(v string) *SeriesCreate {
 	_c.mutation.SetCoverFile(v)
@@ -174,6 +225,12 @@ func (_c *SeriesCreate) SetNillableCoverVersion(v *string) *SeriesCreate {
 	if v != nil {
 		_c.SetCoverVersion(*v)
 	}
+	return _c
+}
+
+// SetCoverSource sets the "cover_source" field.
+func (_c *SeriesCreate) SetCoverSource(v *metadata.SourceRef) *SeriesCreate {
+	_c.mutation.SetCoverSource(v)
 	return _c
 }
 
@@ -316,6 +373,10 @@ func (_c *SeriesCreate) defaults() {
 		v := series.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	if _, ok := _c.mutation.Year(); !ok {
+		v := series.DefaultYear
+		_c.mutation.SetYear(v)
+	}
 	if _, ok := _c.mutation.Monitored(); !ok {
 		v := series.DefaultMonitored
 		_c.mutation.SetMonitored(v)
@@ -366,6 +427,9 @@ func (_c *SeriesCreate) check() error {
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Series.status"`)}
+	}
+	if _, ok := _c.mutation.Year(); !ok {
+		return &ValidationError{Name: "year", err: errors.New(`ent: missing required field "Series.year"`)}
 	}
 	if _, ok := _c.mutation.Monitored(); !ok {
 		return &ValidationError{Name: "monitored", err: errors.New(`ent: missing required field "Series.monitored"`)}
@@ -443,6 +507,30 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 		_spec.SetField(series.FieldStatus, field.TypeString, value)
 		_node.Status = value
 	}
+	if value, ok := _c.mutation.Genres(); ok {
+		_spec.SetField(series.FieldGenres, field.TypeJSON, value)
+		_node.Genres = value
+	}
+	if value, ok := _c.mutation.Tags(); ok {
+		_spec.SetField(series.FieldTags, field.TypeJSON, value)
+		_node.Tags = value
+	}
+	if value, ok := _c.mutation.AltTitles(); ok {
+		_spec.SetField(series.FieldAltTitles, field.TypeJSON, value)
+		_node.AltTitles = value
+	}
+	if value, ok := _c.mutation.Authors(); ok {
+		_spec.SetField(series.FieldAuthors, field.TypeJSON, value)
+		_node.Authors = value
+	}
+	if value, ok := _c.mutation.Links(); ok {
+		_spec.SetField(series.FieldLinks, field.TypeJSON, value)
+		_node.Links = value
+	}
+	if value, ok := _c.mutation.Year(); ok {
+		_spec.SetField(series.FieldYear, field.TypeInt, value)
+		_node.Year = value
+	}
 	if value, ok := _c.mutation.Monitored(); ok {
 		_spec.SetField(series.FieldMonitored, field.TypeBool, value)
 		_node.Monitored = value
@@ -455,6 +543,10 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 		_spec.SetField(series.FieldMetadataProviderID, field.TypeUUID, value)
 		_node.MetadataProviderID = &value
 	}
+	if value, ok := _c.mutation.MetadataSource(); ok {
+		_spec.SetField(series.FieldMetadataSource, field.TypeJSON, value)
+		_node.MetadataSource = value
+	}
 	if value, ok := _c.mutation.CoverFile(); ok {
 		_spec.SetField(series.FieldCoverFile, field.TypeString, value)
 		_node.CoverFile = value
@@ -466,6 +558,10 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CoverVersion(); ok {
 		_spec.SetField(series.FieldCoverVersion, field.TypeString, value)
 		_node.CoverVersion = value
+	}
+	if value, ok := _c.mutation.CoverSource(); ok {
+		_spec.SetField(series.FieldCoverSource, field.TypeJSON, value)
+		_node.CoverSource = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(series.FieldCreatedAt, field.TypeTime, value)

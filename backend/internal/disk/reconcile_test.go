@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/fetcher"
+	"github.com/technobecet/tsundoku/internal/metadata"
 )
 
 // chSnapshot records the fields used to verify lossless rebuild for one chapter.
@@ -726,5 +728,208 @@ func TestReconcileDoesNotOverwriteExistingFirstDownloadedAt(t *testing.T) {
 	if !second.FirstDownloadedAt.Truncate(time.Second).Equal(original.Truncate(time.Second)) {
 		t.Errorf("FirstDownloadedAt after second Reconcile = %v, want unchanged original %v (mtime must never overwrite an existing value)",
 			second.FirstDownloadedAt, original)
+	}
+}
+
+// fullMetadataSidecarBlock builds a SeriesMetadataSidecar exercising every
+// rich field, for the reconcile round-trip proofs below.
+func fullMetadataSidecarBlock() disk.SeriesMetadataSidecar {
+	return disk.SeriesMetadataSidecar{
+		Description: "A hunter who was once the weakest.",
+		Status:      "ongoing",
+		Genres:      []string{"Action", "Fantasy"},
+		Tags:        []string{"Reincarnation", "Overpowered MC"},
+		AltTitles: []metadata.AltTitle{
+			{Name: "나 혼자만 레벨업", Type: "NATIVE", Lang: "ko"},
+			{Name: "Only I Level Up", Type: "SYNONYM", Lang: "en"},
+		},
+		Authors: []metadata.Author{
+			{Name: "Chugong", Role: "STORY"},
+			{Name: "Dubu", Role: "ART"},
+		},
+		Links: []metadata.Link{
+			{Label: "AniList", URL: "https://anilist.co/manga/105398"},
+		},
+		Year: 2016,
+		MetadataSource: &metadata.SourceRef{
+			Kind:      "metadata",
+			Ref:       "anilist",
+			RemoteID:  "105398",
+			RemoteURL: "https://anilist.co/manga/105398",
+		},
+		CoverSource: &metadata.SourceRef{
+			Kind:      "metadata",
+			Ref:       "mangadex",
+			RemoteID:  "abc-123",
+			RemoteURL: "https://mangadex.org/title/abc-123",
+		},
+	}
+}
+
+// assertSeriesMetadataMatches asserts every rich-metadata column on got
+// matches want, field by field.
+func assertSeriesMetadataMatches(t *testing.T, got *ent.Series, want disk.SeriesMetadataSidecar) {
+	t.Helper()
+	assertEqual(t, "Description", want.Description, got.Description)
+	assertEqual(t, "Status", want.Status, got.Status)
+	if !reflect.DeepEqual(got.Genres, want.Genres) {
+		t.Errorf("Genres = %#v, want %#v", got.Genres, want.Genres)
+	}
+	if !reflect.DeepEqual(got.Tags, want.Tags) {
+		t.Errorf("Tags = %#v, want %#v", got.Tags, want.Tags)
+	}
+	if !reflect.DeepEqual(got.AltTitles, want.AltTitles) {
+		t.Errorf("AltTitles = %#v, want %#v", got.AltTitles, want.AltTitles)
+	}
+	if !reflect.DeepEqual(got.Authors, want.Authors) {
+		t.Errorf("Authors = %#v, want %#v", got.Authors, want.Authors)
+	}
+	if !reflect.DeepEqual(got.Links, want.Links) {
+		t.Errorf("Links = %#v, want %#v", got.Links, want.Links)
+	}
+	assertEqual(t, "Year", want.Year, got.Year)
+	if got.MetadataSource == nil || !reflect.DeepEqual(*got.MetadataSource, *want.MetadataSource) {
+		t.Errorf("MetadataSource = %#v, want %#v", got.MetadataSource, want.MetadataSource)
+	}
+	if got.CoverSource == nil || !reflect.DeepEqual(*got.CoverSource, *want.CoverSource) {
+		t.Errorf("CoverSource = %#v, want %#v", got.CoverSource, want.CoverSource)
+	}
+}
+
+// TestReconcile_restores_metadata_index is the load-bearing durability proof
+// for the Phase-1 metadata engine (spec/metadata-engine-phase1 §3): a sidecar
+// carrying a FULL rich-metadata block, reconciled into a totally fresh
+// database (simulating a complete DB loss), restores every Series rich-card
+// column identically from disk.
+//
+// Reconcile takes NO metadata-provider argument at all — its signature is
+// (ctx, client, storage), full stop — so a provider call during this
+// operation is not just avoided but STRUCTURALLY IMPOSSIBLE: there is no
+// provider reference in scope for it to call. This is what makes "disk is
+// truth" a real guarantee rather than an aspiration for the rich card.
+func TestReconcile_restores_metadata_index(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	const title = "Metadata Index Series"
+	num, max := 1.0, 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: title,
+			Category:    disk.CategoryManga,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "1",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	if _, err := disk.RenderChapter(req); err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	block := fullMetadataSidecarBlock()
+	seriesDir := disk.SeriesDir(storage, disk.CategoryManga, title)
+	if err := disk.WriteMetadata(seriesDir, block); err != nil {
+		t.Fatalf("WriteMetadata: %v", err)
+	}
+
+	// First Reconcile seeds the DB from disk (including the metadata index).
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	row := client.Series.Query().OnlyX(ctx)
+	assertSeriesMetadataMatches(t, row, block)
+
+	// Simulate a TOTAL DB loss: drop every row, then reconcile again against
+	// the SAME on-disk library. The sidecar — not the DB — is the seed.
+	dropAllRows(ctx, client)
+	if n := client.Series.Query().CountX(ctx); n != 0 {
+		t.Fatalf("Series rows after drop = %d, want 0", n)
+	}
+
+	result, err := disk.Reconcile(ctx, client, storage)
+	if err != nil {
+		t.Fatalf("Reconcile after DB loss: %v", err)
+	}
+	if result.SeriesUpserted == 0 {
+		t.Fatal("SeriesUpserted = 0, want > 0")
+	}
+
+	rebuilt := client.Series.Query().OnlyX(ctx)
+	assertSeriesMetadataMatches(t, rebuilt, block)
+
+	// Idempotency: a second reconcile over the same unchanged library leaves
+	// the restored columns unchanged.
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	again := client.Series.Query().OnlyX(ctx)
+	assertSeriesMetadataMatches(t, again, block)
+}
+
+// TestReconcile_no_metadata_block_leaves_columns_untouched verifies that a
+// series whose sidecar carries no Metadata block (the common case — every
+// series that predates this feature, or was never identified) is left
+// entirely alone: the rich-metadata columns keep their zero values, proving
+// the additive migration never disturbs a series Reconcile did not touch.
+func TestReconcile_no_metadata_block_leaves_columns_untouched(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	num, max := 1.0, 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: "No Metadata Series",
+			Category:    disk.CategoryManga,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "1",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	if _, err := disk.RenderChapter(req); err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	row := client.Series.Query().OnlyX(ctx)
+	assertRichMetadataColumnsZero(t, row)
+	if row.Year != 0 {
+		t.Errorf("Year = %d, want 0", row.Year)
+	}
+}
+
+// assertRichMetadataColumnsZero fails the test if any rich-metadata
+// collection/descriptor column on row is non-nil. Extracted to a
+// reflect-driven loop (rather than one long OR-chain) so the caller's
+// cyclomatic complexity does not grow every time a rich field is added.
+func assertRichMetadataColumnsZero(t *testing.T, row *ent.Series) {
+	t.Helper()
+	fields := map[string]any{
+		"Genres":         row.Genres,
+		"Tags":           row.Tags,
+		"AltTitles":      row.AltTitles,
+		"Authors":        row.Authors,
+		"Links":          row.Links,
+		"MetadataSource": row.MetadataSource,
+		"CoverSource":    row.CoverSource,
+	}
+	for name, v := range fields {
+		if !reflect.ValueOf(v).IsNil() {
+			t.Errorf("%s not nil for a series with no sidecar Metadata block: %#v", name, v)
+		}
 	}
 }

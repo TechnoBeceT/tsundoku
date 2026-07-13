@@ -29,6 +29,13 @@ type SeriesFacts struct {
 	// (Series.cover_file / cover_source_url) after a DB loss: the sidecar is the
 	// durable seed, the DB columns are only the index.
 	Cover *CoverProvenance
+
+	// Metadata is the sidecar's Phase-1 rich-metadata block (nil when the
+	// series has never been identified against a metadata provider). It is
+	// what lets Reconcile restore the whole rich card (genres/tags/alt_titles/
+	// authors/links/year/description/status + metadata_source/cover_source)
+	// after a DB loss, with zero calls to any metadata provider.
+	Metadata *SeriesMetadataSidecar
 }
 
 // ChapterFact holds the per-chapter facts reconstructed from disk.
@@ -269,6 +276,7 @@ func buildSeriesFacts(dir, category string, sidecar *Sidecar, facts []ChapterFac
 	title := filepath.Base(dir)
 	cat := category
 	var cover *CoverProvenance
+	var meta *SeriesMetadataSidecar
 	if sidecar != nil {
 		if sidecar.Title != "" {
 			title = sidecar.Title
@@ -277,8 +285,9 @@ func buildSeriesFacts(dir, category string, sidecar *Sidecar, facts []ChapterFac
 			cat = sidecar.Category
 		}
 		cover = sidecar.Cover
+		meta = sidecar.Metadata
 	}
-	return &SeriesFacts{Title: title, Category: cat, Chapters: facts, Cover: cover}
+	return &SeriesFacts{Title: title, Category: cat, Chapters: facts, Cover: cover, Metadata: meta}
 }
 
 // chapterFactFromOrphanCBZ reads provenance from the ComicInfo.xml inside a

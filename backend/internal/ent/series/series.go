@@ -25,6 +25,18 @@ const (
 	FieldDescription = "description"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
+	// FieldGenres holds the string denoting the genres field in the database.
+	FieldGenres = "genres"
+	// FieldTags holds the string denoting the tags field in the database.
+	FieldTags = "tags"
+	// FieldAltTitles holds the string denoting the alt_titles field in the database.
+	FieldAltTitles = "alt_titles"
+	// FieldAuthors holds the string denoting the authors field in the database.
+	FieldAuthors = "authors"
+	// FieldLinks holds the string denoting the links field in the database.
+	FieldLinks = "links"
+	// FieldYear holds the string denoting the year field in the database.
+	FieldYear = "year"
 	// FieldCategoryID holds the string denoting the category_id field in the database.
 	FieldCategoryID = "category_id"
 	// FieldMonitored holds the string denoting the monitored field in the database.
@@ -33,12 +45,16 @@ const (
 	FieldCompleted = "completed"
 	// FieldMetadataProviderID holds the string denoting the metadata_provider_id field in the database.
 	FieldMetadataProviderID = "metadata_provider_id"
+	// FieldMetadataSource holds the string denoting the metadata_source field in the database.
+	FieldMetadataSource = "metadata_source"
 	// FieldCoverFile holds the string denoting the cover_file field in the database.
 	FieldCoverFile = "cover_file"
 	// FieldCoverSourceURL holds the string denoting the cover_source_url field in the database.
 	FieldCoverSourceURL = "cover_source_url"
 	// FieldCoverVersion holds the string denoting the cover_version field in the database.
 	FieldCoverVersion = "cover_version"
+	// FieldCoverSource holds the string denoting the cover_source field in the database.
+	FieldCoverSource = "cover_source"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -91,13 +107,21 @@ var Columns = []string{
 	FieldCoverURL,
 	FieldDescription,
 	FieldStatus,
+	FieldGenres,
+	FieldTags,
+	FieldAltTitles,
+	FieldAuthors,
+	FieldLinks,
+	FieldYear,
 	FieldCategoryID,
 	FieldMonitored,
 	FieldCompleted,
 	FieldMetadataProviderID,
+	FieldMetadataSource,
 	FieldCoverFile,
 	FieldCoverSourceURL,
 	FieldCoverVersion,
+	FieldCoverSource,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -119,6 +143,8 @@ var (
 	DefaultDescription string
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
+	// DefaultYear holds the default value on creation for the "year" field.
+	DefaultYear int
 	// DefaultMonitored holds the default value on creation for the "monitored" field.
 	DefaultMonitored bool
 	// DefaultCompleted holds the default value on creation for the "completed" field.
@@ -170,6 +196,11 @@ func ByDescription(opts ...sql.OrderTermOption) OrderOption {
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
+// ByYear orders the results by the year field.
+func ByYear(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldYear, opts...).ToFunc()
 }
 
 // ByCategoryID orders the results by the category_id field.

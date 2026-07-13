@@ -81,6 +81,11 @@ func Status(v string) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldStatus, v))
 }
 
+// Year applies equality check predicate on the "year" field. It's identical to YearEQ.
+func Year(v int) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldYear, v))
+}
+
 // CategoryID applies equality check predicate on the "category_id" field. It's identical to CategoryIDEQ.
 func CategoryID(v uuid.UUID) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCategoryID, v))
@@ -451,6 +456,96 @@ func StatusContainsFold(v string) predicate.Series {
 	return predicate.Series(sql.FieldContainsFold(FieldStatus, v))
 }
 
+// GenresIsNil applies the IsNil predicate on the "genres" field.
+func GenresIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldGenres))
+}
+
+// GenresNotNil applies the NotNil predicate on the "genres" field.
+func GenresNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldGenres))
+}
+
+// TagsIsNil applies the IsNil predicate on the "tags" field.
+func TagsIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldTags))
+}
+
+// TagsNotNil applies the NotNil predicate on the "tags" field.
+func TagsNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldTags))
+}
+
+// AltTitlesIsNil applies the IsNil predicate on the "alt_titles" field.
+func AltTitlesIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldAltTitles))
+}
+
+// AltTitlesNotNil applies the NotNil predicate on the "alt_titles" field.
+func AltTitlesNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldAltTitles))
+}
+
+// AuthorsIsNil applies the IsNil predicate on the "authors" field.
+func AuthorsIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldAuthors))
+}
+
+// AuthorsNotNil applies the NotNil predicate on the "authors" field.
+func AuthorsNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldAuthors))
+}
+
+// LinksIsNil applies the IsNil predicate on the "links" field.
+func LinksIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldLinks))
+}
+
+// LinksNotNil applies the NotNil predicate on the "links" field.
+func LinksNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldLinks))
+}
+
+// YearEQ applies the EQ predicate on the "year" field.
+func YearEQ(v int) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldYear, v))
+}
+
+// YearNEQ applies the NEQ predicate on the "year" field.
+func YearNEQ(v int) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldYear, v))
+}
+
+// YearIn applies the In predicate on the "year" field.
+func YearIn(vs ...int) predicate.Series {
+	return predicate.Series(sql.FieldIn(FieldYear, vs...))
+}
+
+// YearNotIn applies the NotIn predicate on the "year" field.
+func YearNotIn(vs ...int) predicate.Series {
+	return predicate.Series(sql.FieldNotIn(FieldYear, vs...))
+}
+
+// YearGT applies the GT predicate on the "year" field.
+func YearGT(v int) predicate.Series {
+	return predicate.Series(sql.FieldGT(FieldYear, v))
+}
+
+// YearGTE applies the GTE predicate on the "year" field.
+func YearGTE(v int) predicate.Series {
+	return predicate.Series(sql.FieldGTE(FieldYear, v))
+}
+
+// YearLT applies the LT predicate on the "year" field.
+func YearLT(v int) predicate.Series {
+	return predicate.Series(sql.FieldLT(FieldYear, v))
+}
+
+// YearLTE applies the LTE predicate on the "year" field.
+func YearLTE(v int) predicate.Series {
+	return predicate.Series(sql.FieldLTE(FieldYear, v))
+}
+
 // CategoryIDEQ applies the EQ predicate on the "category_id" field.
 func CategoryIDEQ(v uuid.UUID) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCategoryID, v))
@@ -549,6 +644,16 @@ func MetadataProviderIDIsNil() predicate.Series {
 // MetadataProviderIDNotNil applies the NotNil predicate on the "metadata_provider_id" field.
 func MetadataProviderIDNotNil() predicate.Series {
 	return predicate.Series(sql.FieldNotNull(FieldMetadataProviderID))
+}
+
+// MetadataSourceIsNil applies the IsNil predicate on the "metadata_source" field.
+func MetadataSourceIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldMetadataSource))
+}
+
+// MetadataSourceNotNil applies the NotNil predicate on the "metadata_source" field.
+func MetadataSourceNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldMetadataSource))
 }
 
 // CoverFileEQ applies the EQ predicate on the "cover_file" field.
@@ -744,6 +849,16 @@ func CoverVersionEqualFold(v string) predicate.Series {
 // CoverVersionContainsFold applies the ContainsFold predicate on the "cover_version" field.
 func CoverVersionContainsFold(v string) predicate.Series {
 	return predicate.Series(sql.FieldContainsFold(FieldCoverVersion, v))
+}
+
+// CoverSourceIsNil applies the IsNil predicate on the "cover_source" field.
+func CoverSourceIsNil() predicate.Series {
+	return predicate.Series(sql.FieldIsNull(FieldCoverSource))
+}
+
+// CoverSourceNotNil applies the NotNil predicate on the "cover_source" field.
+func CoverSourceNotNil() predicate.Series {
+	return predicate.Series(sql.FieldNotNull(FieldCoverSource))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

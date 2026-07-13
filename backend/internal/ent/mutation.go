@@ -29,6 +29,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
+	"github.com/technobecet/tsundoku/internal/metadata"
 )
 
 const (
@@ -5935,12 +5936,26 @@ type SeriesMutation struct {
 	cover_url             *string
 	description           *string
 	status                *string
+	genres                *[]string
+	appendgenres          []string
+	tags                  *[]string
+	appendtags            []string
+	alt_titles            *[]metadata.AltTitle
+	appendalt_titles      []metadata.AltTitle
+	authors               *[]metadata.Author
+	appendauthors         []metadata.Author
+	links                 *[]metadata.Link
+	appendlinks           []metadata.Link
+	year                  *int
+	addyear               *int
 	monitored             *bool
 	completed             *bool
 	metadata_provider_id  *uuid.UUID
+	metadata_source       **metadata.SourceRef
 	cover_file            *string
 	cover_source_url      *string
 	cover_version         *string
+	cover_source          **metadata.SourceRef
 	created_at            *time.Time
 	updated_at            *time.Time
 	clearedFields         map[string]struct{}
@@ -6244,6 +6259,387 @@ func (m *SeriesMutation) ResetStatus() {
 	m.status = nil
 }
 
+// SetGenres sets the "genres" field.
+func (m *SeriesMutation) SetGenres(s []string) {
+	m.genres = &s
+	m.appendgenres = nil
+}
+
+// Genres returns the value of the "genres" field in the mutation.
+func (m *SeriesMutation) Genres() (r []string, exists bool) {
+	v := m.genres
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGenres returns the old "genres" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldGenres(ctx context.Context) (v []string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGenres is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGenres requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGenres: %w", err)
+	}
+	return oldValue.Genres, nil
+}
+
+// AppendGenres adds s to the "genres" field.
+func (m *SeriesMutation) AppendGenres(s []string) {
+	m.appendgenres = append(m.appendgenres, s...)
+}
+
+// AppendedGenres returns the list of values that were appended to the "genres" field in this mutation.
+func (m *SeriesMutation) AppendedGenres() ([]string, bool) {
+	if len(m.appendgenres) == 0 {
+		return nil, false
+	}
+	return m.appendgenres, true
+}
+
+// ClearGenres clears the value of the "genres" field.
+func (m *SeriesMutation) ClearGenres() {
+	m.genres = nil
+	m.appendgenres = nil
+	m.clearedFields[series.FieldGenres] = struct{}{}
+}
+
+// GenresCleared returns if the "genres" field was cleared in this mutation.
+func (m *SeriesMutation) GenresCleared() bool {
+	_, ok := m.clearedFields[series.FieldGenres]
+	return ok
+}
+
+// ResetGenres resets all changes to the "genres" field.
+func (m *SeriesMutation) ResetGenres() {
+	m.genres = nil
+	m.appendgenres = nil
+	delete(m.clearedFields, series.FieldGenres)
+}
+
+// SetTags sets the "tags" field.
+func (m *SeriesMutation) SetTags(s []string) {
+	m.tags = &s
+	m.appendtags = nil
+}
+
+// Tags returns the value of the "tags" field in the mutation.
+func (m *SeriesMutation) Tags() (r []string, exists bool) {
+	v := m.tags
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTags returns the old "tags" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldTags(ctx context.Context) (v []string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTags is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTags requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTags: %w", err)
+	}
+	return oldValue.Tags, nil
+}
+
+// AppendTags adds s to the "tags" field.
+func (m *SeriesMutation) AppendTags(s []string) {
+	m.appendtags = append(m.appendtags, s...)
+}
+
+// AppendedTags returns the list of values that were appended to the "tags" field in this mutation.
+func (m *SeriesMutation) AppendedTags() ([]string, bool) {
+	if len(m.appendtags) == 0 {
+		return nil, false
+	}
+	return m.appendtags, true
+}
+
+// ClearTags clears the value of the "tags" field.
+func (m *SeriesMutation) ClearTags() {
+	m.tags = nil
+	m.appendtags = nil
+	m.clearedFields[series.FieldTags] = struct{}{}
+}
+
+// TagsCleared returns if the "tags" field was cleared in this mutation.
+func (m *SeriesMutation) TagsCleared() bool {
+	_, ok := m.clearedFields[series.FieldTags]
+	return ok
+}
+
+// ResetTags resets all changes to the "tags" field.
+func (m *SeriesMutation) ResetTags() {
+	m.tags = nil
+	m.appendtags = nil
+	delete(m.clearedFields, series.FieldTags)
+}
+
+// SetAltTitles sets the "alt_titles" field.
+func (m *SeriesMutation) SetAltTitles(mt []metadata.AltTitle) {
+	m.alt_titles = &mt
+	m.appendalt_titles = nil
+}
+
+// AltTitles returns the value of the "alt_titles" field in the mutation.
+func (m *SeriesMutation) AltTitles() (r []metadata.AltTitle, exists bool) {
+	v := m.alt_titles
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAltTitles returns the old "alt_titles" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldAltTitles(ctx context.Context) (v []metadata.AltTitle, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAltTitles is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAltTitles requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAltTitles: %w", err)
+	}
+	return oldValue.AltTitles, nil
+}
+
+// AppendAltTitles adds mt to the "alt_titles" field.
+func (m *SeriesMutation) AppendAltTitles(mt []metadata.AltTitle) {
+	m.appendalt_titles = append(m.appendalt_titles, mt...)
+}
+
+// AppendedAltTitles returns the list of values that were appended to the "alt_titles" field in this mutation.
+func (m *SeriesMutation) AppendedAltTitles() ([]metadata.AltTitle, bool) {
+	if len(m.appendalt_titles) == 0 {
+		return nil, false
+	}
+	return m.appendalt_titles, true
+}
+
+// ClearAltTitles clears the value of the "alt_titles" field.
+func (m *SeriesMutation) ClearAltTitles() {
+	m.alt_titles = nil
+	m.appendalt_titles = nil
+	m.clearedFields[series.FieldAltTitles] = struct{}{}
+}
+
+// AltTitlesCleared returns if the "alt_titles" field was cleared in this mutation.
+func (m *SeriesMutation) AltTitlesCleared() bool {
+	_, ok := m.clearedFields[series.FieldAltTitles]
+	return ok
+}
+
+// ResetAltTitles resets all changes to the "alt_titles" field.
+func (m *SeriesMutation) ResetAltTitles() {
+	m.alt_titles = nil
+	m.appendalt_titles = nil
+	delete(m.clearedFields, series.FieldAltTitles)
+}
+
+// SetAuthors sets the "authors" field.
+func (m *SeriesMutation) SetAuthors(value []metadata.Author) {
+	m.authors = &value
+	m.appendauthors = nil
+}
+
+// Authors returns the value of the "authors" field in the mutation.
+func (m *SeriesMutation) Authors() (r []metadata.Author, exists bool) {
+	v := m.authors
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAuthors returns the old "authors" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldAuthors(ctx context.Context) (v []metadata.Author, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAuthors is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAuthors requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAuthors: %w", err)
+	}
+	return oldValue.Authors, nil
+}
+
+// AppendAuthors adds value to the "authors" field.
+func (m *SeriesMutation) AppendAuthors(value []metadata.Author) {
+	m.appendauthors = append(m.appendauthors, value...)
+}
+
+// AppendedAuthors returns the list of values that were appended to the "authors" field in this mutation.
+func (m *SeriesMutation) AppendedAuthors() ([]metadata.Author, bool) {
+	if len(m.appendauthors) == 0 {
+		return nil, false
+	}
+	return m.appendauthors, true
+}
+
+// ClearAuthors clears the value of the "authors" field.
+func (m *SeriesMutation) ClearAuthors() {
+	m.authors = nil
+	m.appendauthors = nil
+	m.clearedFields[series.FieldAuthors] = struct{}{}
+}
+
+// AuthorsCleared returns if the "authors" field was cleared in this mutation.
+func (m *SeriesMutation) AuthorsCleared() bool {
+	_, ok := m.clearedFields[series.FieldAuthors]
+	return ok
+}
+
+// ResetAuthors resets all changes to the "authors" field.
+func (m *SeriesMutation) ResetAuthors() {
+	m.authors = nil
+	m.appendauthors = nil
+	delete(m.clearedFields, series.FieldAuthors)
+}
+
+// SetLinks sets the "links" field.
+func (m *SeriesMutation) SetLinks(value []metadata.Link) {
+	m.links = &value
+	m.appendlinks = nil
+}
+
+// Links returns the value of the "links" field in the mutation.
+func (m *SeriesMutation) Links() (r []metadata.Link, exists bool) {
+	v := m.links
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLinks returns the old "links" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldLinks(ctx context.Context) (v []metadata.Link, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLinks is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLinks requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLinks: %w", err)
+	}
+	return oldValue.Links, nil
+}
+
+// AppendLinks adds value to the "links" field.
+func (m *SeriesMutation) AppendLinks(value []metadata.Link) {
+	m.appendlinks = append(m.appendlinks, value...)
+}
+
+// AppendedLinks returns the list of values that were appended to the "links" field in this mutation.
+func (m *SeriesMutation) AppendedLinks() ([]metadata.Link, bool) {
+	if len(m.appendlinks) == 0 {
+		return nil, false
+	}
+	return m.appendlinks, true
+}
+
+// ClearLinks clears the value of the "links" field.
+func (m *SeriesMutation) ClearLinks() {
+	m.links = nil
+	m.appendlinks = nil
+	m.clearedFields[series.FieldLinks] = struct{}{}
+}
+
+// LinksCleared returns if the "links" field was cleared in this mutation.
+func (m *SeriesMutation) LinksCleared() bool {
+	_, ok := m.clearedFields[series.FieldLinks]
+	return ok
+}
+
+// ResetLinks resets all changes to the "links" field.
+func (m *SeriesMutation) ResetLinks() {
+	m.links = nil
+	m.appendlinks = nil
+	delete(m.clearedFields, series.FieldLinks)
+}
+
+// SetYear sets the "year" field.
+func (m *SeriesMutation) SetYear(i int) {
+	m.year = &i
+	m.addyear = nil
+}
+
+// Year returns the value of the "year" field in the mutation.
+func (m *SeriesMutation) Year() (r int, exists bool) {
+	v := m.year
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldYear returns the old "year" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldYear(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldYear is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldYear requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldYear: %w", err)
+	}
+	return oldValue.Year, nil
+}
+
+// AddYear adds i to the "year" field.
+func (m *SeriesMutation) AddYear(i int) {
+	if m.addyear != nil {
+		*m.addyear += i
+	} else {
+		m.addyear = &i
+	}
+}
+
+// AddedYear returns the value that was added to the "year" field in this mutation.
+func (m *SeriesMutation) AddedYear() (r int, exists bool) {
+	v := m.addyear
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetYear resets all changes to the "year" field.
+func (m *SeriesMutation) ResetYear() {
+	m.year = nil
+	m.addyear = nil
+}
+
 // SetCategoryID sets the "category_id" field.
 func (m *SeriesMutation) SetCategoryID(u uuid.UUID) {
 	m.category = &u
@@ -6414,6 +6810,55 @@ func (m *SeriesMutation) ResetMetadataProviderID() {
 	delete(m.clearedFields, series.FieldMetadataProviderID)
 }
 
+// SetMetadataSource sets the "metadata_source" field.
+func (m *SeriesMutation) SetMetadataSource(mr *metadata.SourceRef) {
+	m.metadata_source = &mr
+}
+
+// MetadataSource returns the value of the "metadata_source" field in the mutation.
+func (m *SeriesMutation) MetadataSource() (r *metadata.SourceRef, exists bool) {
+	v := m.metadata_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMetadataSource returns the old "metadata_source" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldMetadataSource(ctx context.Context) (v *metadata.SourceRef, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMetadataSource is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMetadataSource requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMetadataSource: %w", err)
+	}
+	return oldValue.MetadataSource, nil
+}
+
+// ClearMetadataSource clears the value of the "metadata_source" field.
+func (m *SeriesMutation) ClearMetadataSource() {
+	m.metadata_source = nil
+	m.clearedFields[series.FieldMetadataSource] = struct{}{}
+}
+
+// MetadataSourceCleared returns if the "metadata_source" field was cleared in this mutation.
+func (m *SeriesMutation) MetadataSourceCleared() bool {
+	_, ok := m.clearedFields[series.FieldMetadataSource]
+	return ok
+}
+
+// ResetMetadataSource resets all changes to the "metadata_source" field.
+func (m *SeriesMutation) ResetMetadataSource() {
+	m.metadata_source = nil
+	delete(m.clearedFields, series.FieldMetadataSource)
+}
+
 // SetCoverFile sets the "cover_file" field.
 func (m *SeriesMutation) SetCoverFile(s string) {
 	m.cover_file = &s
@@ -6520,6 +6965,55 @@ func (m *SeriesMutation) OldCoverVersion(ctx context.Context) (v string, err err
 // ResetCoverVersion resets all changes to the "cover_version" field.
 func (m *SeriesMutation) ResetCoverVersion() {
 	m.cover_version = nil
+}
+
+// SetCoverSource sets the "cover_source" field.
+func (m *SeriesMutation) SetCoverSource(mr *metadata.SourceRef) {
+	m.cover_source = &mr
+}
+
+// CoverSource returns the value of the "cover_source" field in the mutation.
+func (m *SeriesMutation) CoverSource() (r *metadata.SourceRef, exists bool) {
+	v := m.cover_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCoverSource returns the old "cover_source" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldCoverSource(ctx context.Context) (v *metadata.SourceRef, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCoverSource is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCoverSource requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCoverSource: %w", err)
+	}
+	return oldValue.CoverSource, nil
+}
+
+// ClearCoverSource clears the value of the "cover_source" field.
+func (m *SeriesMutation) ClearCoverSource() {
+	m.cover_source = nil
+	m.clearedFields[series.FieldCoverSource] = struct{}{}
+}
+
+// CoverSourceCleared returns if the "cover_source" field was cleared in this mutation.
+func (m *SeriesMutation) CoverSourceCleared() bool {
+	_, ok := m.clearedFields[series.FieldCoverSource]
+	return ok
+}
+
+// ResetCoverSource resets all changes to the "cover_source" field.
+func (m *SeriesMutation) ResetCoverSource() {
+	m.cover_source = nil
+	delete(m.clearedFields, series.FieldCoverSource)
 }
 
 // SetCreatedAt sets the "created_at" field.
@@ -6817,7 +7311,7 @@ func (m *SeriesMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 22)
 	if m.title != nil {
 		fields = append(fields, series.FieldTitle)
 	}
@@ -6833,6 +7327,24 @@ func (m *SeriesMutation) Fields() []string {
 	if m.status != nil {
 		fields = append(fields, series.FieldStatus)
 	}
+	if m.genres != nil {
+		fields = append(fields, series.FieldGenres)
+	}
+	if m.tags != nil {
+		fields = append(fields, series.FieldTags)
+	}
+	if m.alt_titles != nil {
+		fields = append(fields, series.FieldAltTitles)
+	}
+	if m.authors != nil {
+		fields = append(fields, series.FieldAuthors)
+	}
+	if m.links != nil {
+		fields = append(fields, series.FieldLinks)
+	}
+	if m.year != nil {
+		fields = append(fields, series.FieldYear)
+	}
 	if m.category != nil {
 		fields = append(fields, series.FieldCategoryID)
 	}
@@ -6845,6 +7357,9 @@ func (m *SeriesMutation) Fields() []string {
 	if m.metadata_provider_id != nil {
 		fields = append(fields, series.FieldMetadataProviderID)
 	}
+	if m.metadata_source != nil {
+		fields = append(fields, series.FieldMetadataSource)
+	}
 	if m.cover_file != nil {
 		fields = append(fields, series.FieldCoverFile)
 	}
@@ -6853,6 +7368,9 @@ func (m *SeriesMutation) Fields() []string {
 	}
 	if m.cover_version != nil {
 		fields = append(fields, series.FieldCoverVersion)
+	}
+	if m.cover_source != nil {
+		fields = append(fields, series.FieldCoverSource)
 	}
 	if m.created_at != nil {
 		fields = append(fields, series.FieldCreatedAt)
@@ -6878,6 +7396,18 @@ func (m *SeriesMutation) Field(name string) (ent.Value, bool) {
 		return m.Description()
 	case series.FieldStatus:
 		return m.Status()
+	case series.FieldGenres:
+		return m.Genres()
+	case series.FieldTags:
+		return m.Tags()
+	case series.FieldAltTitles:
+		return m.AltTitles()
+	case series.FieldAuthors:
+		return m.Authors()
+	case series.FieldLinks:
+		return m.Links()
+	case series.FieldYear:
+		return m.Year()
 	case series.FieldCategoryID:
 		return m.CategoryID()
 	case series.FieldMonitored:
@@ -6886,12 +7416,16 @@ func (m *SeriesMutation) Field(name string) (ent.Value, bool) {
 		return m.Completed()
 	case series.FieldMetadataProviderID:
 		return m.MetadataProviderID()
+	case series.FieldMetadataSource:
+		return m.MetadataSource()
 	case series.FieldCoverFile:
 		return m.CoverFile()
 	case series.FieldCoverSourceURL:
 		return m.CoverSourceURL()
 	case series.FieldCoverVersion:
 		return m.CoverVersion()
+	case series.FieldCoverSource:
+		return m.CoverSource()
 	case series.FieldCreatedAt:
 		return m.CreatedAt()
 	case series.FieldUpdatedAt:
@@ -6915,6 +7449,18 @@ func (m *SeriesMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldDescription(ctx)
 	case series.FieldStatus:
 		return m.OldStatus(ctx)
+	case series.FieldGenres:
+		return m.OldGenres(ctx)
+	case series.FieldTags:
+		return m.OldTags(ctx)
+	case series.FieldAltTitles:
+		return m.OldAltTitles(ctx)
+	case series.FieldAuthors:
+		return m.OldAuthors(ctx)
+	case series.FieldLinks:
+		return m.OldLinks(ctx)
+	case series.FieldYear:
+		return m.OldYear(ctx)
 	case series.FieldCategoryID:
 		return m.OldCategoryID(ctx)
 	case series.FieldMonitored:
@@ -6923,12 +7469,16 @@ func (m *SeriesMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldCompleted(ctx)
 	case series.FieldMetadataProviderID:
 		return m.OldMetadataProviderID(ctx)
+	case series.FieldMetadataSource:
+		return m.OldMetadataSource(ctx)
 	case series.FieldCoverFile:
 		return m.OldCoverFile(ctx)
 	case series.FieldCoverSourceURL:
 		return m.OldCoverSourceURL(ctx)
 	case series.FieldCoverVersion:
 		return m.OldCoverVersion(ctx)
+	case series.FieldCoverSource:
+		return m.OldCoverSource(ctx)
 	case series.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case series.FieldUpdatedAt:
@@ -6977,6 +7527,48 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetStatus(v)
 		return nil
+	case series.FieldGenres:
+		v, ok := value.([]string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGenres(v)
+		return nil
+	case series.FieldTags:
+		v, ok := value.([]string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTags(v)
+		return nil
+	case series.FieldAltTitles:
+		v, ok := value.([]metadata.AltTitle)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAltTitles(v)
+		return nil
+	case series.FieldAuthors:
+		v, ok := value.([]metadata.Author)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAuthors(v)
+		return nil
+	case series.FieldLinks:
+		v, ok := value.([]metadata.Link)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLinks(v)
+		return nil
+	case series.FieldYear:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetYear(v)
+		return nil
 	case series.FieldCategoryID:
 		v, ok := value.(uuid.UUID)
 		if !ok {
@@ -7005,6 +7597,13 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetMetadataProviderID(v)
 		return nil
+	case series.FieldMetadataSource:
+		v, ok := value.(*metadata.SourceRef)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMetadataSource(v)
+		return nil
 	case series.FieldCoverFile:
 		v, ok := value.(string)
 		if !ok {
@@ -7025,6 +7624,13 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCoverVersion(v)
+		return nil
+	case series.FieldCoverSource:
+		v, ok := value.(*metadata.SourceRef)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCoverSource(v)
 		return nil
 	case series.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -7047,13 +7653,21 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *SeriesMutation) AddedFields() []string {
-	return nil
+	var fields []string
+	if m.addyear != nil {
+		fields = append(fields, series.FieldYear)
+	}
+	return fields
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *SeriesMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case series.FieldYear:
+		return m.AddedYear()
+	}
 	return nil, false
 }
 
@@ -7062,6 +7676,13 @@ func (m *SeriesMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *SeriesMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case series.FieldYear:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddYear(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Series numeric field %s", name)
 }
@@ -7070,11 +7691,32 @@ func (m *SeriesMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *SeriesMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(series.FieldGenres) {
+		fields = append(fields, series.FieldGenres)
+	}
+	if m.FieldCleared(series.FieldTags) {
+		fields = append(fields, series.FieldTags)
+	}
+	if m.FieldCleared(series.FieldAltTitles) {
+		fields = append(fields, series.FieldAltTitles)
+	}
+	if m.FieldCleared(series.FieldAuthors) {
+		fields = append(fields, series.FieldAuthors)
+	}
+	if m.FieldCleared(series.FieldLinks) {
+		fields = append(fields, series.FieldLinks)
+	}
 	if m.FieldCleared(series.FieldCategoryID) {
 		fields = append(fields, series.FieldCategoryID)
 	}
 	if m.FieldCleared(series.FieldMetadataProviderID) {
 		fields = append(fields, series.FieldMetadataProviderID)
+	}
+	if m.FieldCleared(series.FieldMetadataSource) {
+		fields = append(fields, series.FieldMetadataSource)
+	}
+	if m.FieldCleared(series.FieldCoverSource) {
+		fields = append(fields, series.FieldCoverSource)
 	}
 	return fields
 }
@@ -7090,11 +7732,32 @@ func (m *SeriesMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *SeriesMutation) ClearField(name string) error {
 	switch name {
+	case series.FieldGenres:
+		m.ClearGenres()
+		return nil
+	case series.FieldTags:
+		m.ClearTags()
+		return nil
+	case series.FieldAltTitles:
+		m.ClearAltTitles()
+		return nil
+	case series.FieldAuthors:
+		m.ClearAuthors()
+		return nil
+	case series.FieldLinks:
+		m.ClearLinks()
+		return nil
 	case series.FieldCategoryID:
 		m.ClearCategoryID()
 		return nil
 	case series.FieldMetadataProviderID:
 		m.ClearMetadataProviderID()
+		return nil
+	case series.FieldMetadataSource:
+		m.ClearMetadataSource()
+		return nil
+	case series.FieldCoverSource:
+		m.ClearCoverSource()
 		return nil
 	}
 	return fmt.Errorf("unknown Series nullable field %s", name)
@@ -7119,6 +7782,24 @@ func (m *SeriesMutation) ResetField(name string) error {
 	case series.FieldStatus:
 		m.ResetStatus()
 		return nil
+	case series.FieldGenres:
+		m.ResetGenres()
+		return nil
+	case series.FieldTags:
+		m.ResetTags()
+		return nil
+	case series.FieldAltTitles:
+		m.ResetAltTitles()
+		return nil
+	case series.FieldAuthors:
+		m.ResetAuthors()
+		return nil
+	case series.FieldLinks:
+		m.ResetLinks()
+		return nil
+	case series.FieldYear:
+		m.ResetYear()
+		return nil
 	case series.FieldCategoryID:
 		m.ResetCategoryID()
 		return nil
@@ -7131,6 +7812,9 @@ func (m *SeriesMutation) ResetField(name string) error {
 	case series.FieldMetadataProviderID:
 		m.ResetMetadataProviderID()
 		return nil
+	case series.FieldMetadataSource:
+		m.ResetMetadataSource()
+		return nil
 	case series.FieldCoverFile:
 		m.ResetCoverFile()
 		return nil
@@ -7139,6 +7823,9 @@ func (m *SeriesMutation) ResetField(name string) error {
 		return nil
 	case series.FieldCoverVersion:
 		m.ResetCoverVersion()
+		return nil
+	case series.FieldCoverSource:
+		m.ResetCoverSource()
 		return nil
 	case series.FieldCreatedAt:
 		m.ResetCreatedAt()

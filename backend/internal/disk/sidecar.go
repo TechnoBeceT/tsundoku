@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/technobecet/tsundoku/internal/metadata"
 )
 
 const sidecarFilename = "tsundoku.json"
@@ -52,11 +54,57 @@ type CoverProvenance struct {
 	// File is the on-disk cover filename (basename only, e.g. "cover.jpg").
 	File string `json:"file"`
 
-	// SourceURL is the Suwayomi-relative URL the bytes were fetched from.
+	// SourceURL is the absolute (or source-relative) URL the bytes were fetched
+	// from — the origin's cover URL, whether that origin is Suwayomi's
+	// id-derived thumbnail path or a Phase-1 metadata provider's own cover URL
+	// (AniList/MangaDex/…, which flow through this same cache; see
+	// SeriesMetadataSidecar.CoverSource for which provider it came from).
 	SourceURL string `json:"source_url"`
 
 	// Provider is the metadata source the cover came from (identity, not label).
 	Provider string `json:"provider,omitempty"`
+}
+
+// SeriesMetadataSidecar is the durable seed for the Phase-1 metadata engine's
+// rich series fields — the disk counterpart of the additive jsonb columns on
+// Series (internal/ent/schema/series.go: genres/tags/alt_titles/authors/links/
+// year/description/status + the metadata_source/cover_source descriptors).
+//
+// disk.Reconcile reads this block back into those columns (see reconcile.go
+// restoreMetadataIndex), so a total DB loss rebuilds the whole rich card from
+// disk with ZERO calls to any metadata provider — the same durability
+// guarantee CoverProvenance gives the cached cover. Types are reused verbatim
+// from internal/metadata (AltTitle/Author/Link/SourceRef) so the sidecar never
+// re-declares its own mirror of the pure engine's shapes.
+type SeriesMetadataSidecar struct {
+	// Description is the merged synopsis (Merge's primary-anchored gap-fill).
+	Description string `json:"description,omitempty"`
+
+	// Status is normalized: "ongoing"|"completed"|"hiatus"|"cancelled"|"".
+	Status string `json:"status,omitempty"`
+
+	// Genres + Tags are the UNION-merged classification tags across every
+	// provider a series was identified against (QCAT-228).
+	Genres []string `json:"genres,omitempty"`
+	Tags   []string `json:"tags,omitempty"`
+
+	// AltTitles / Authors / Links are the merged collections.
+	AltTitles []metadata.AltTitle `json:"alt_titles,omitempty"`
+	Authors   []metadata.Author   `json:"authors,omitempty"`
+	Links     []metadata.Link     `json:"links,omitempty"`
+
+	// Year is the first-publication year; 0 = unknown.
+	Year int `json:"year,omitempty"`
+
+	// MetadataSource is the "anchor-then-aggregate" primary provider the rich
+	// fields above were resolved against; nil = not yet identified.
+	MetadataSource *metadata.SourceRef `json:"metadata_source,omitempty"`
+
+	// CoverSource is the provider the CURRENTLY CACHED cover's bytes came from
+	// — independent of MetadataSource (the cover is chosen separately from the
+	// rich-metadata merge, QCAT-228). nil = no cover chosen via this engine yet
+	// (the M10 Suwayomi cover proxy predates it, or none cached).
+	CoverSource *metadata.SourceRef `json:"cover_source,omitempty"`
 }
 
 // Sidecar is the per-series tsundoku.json file.
@@ -84,6 +132,10 @@ type Sidecar struct {
 	// Cover is the locally cached cover image's provenance; nil when the series
 	// has no cached cover (every pre-cache series, until its first view).
 	Cover *CoverProvenance `json:"cover,omitempty"`
+
+	// Metadata is the Phase-1 metadata engine's rich-card durable seed; nil
+	// when the series has never been auto-identified or manually identified.
+	Metadata *SeriesMetadataSidecar `json:"metadata,omitempty"`
 }
 
 // mutateSidecar applies fn to the series' sidecar and writes the result back:
@@ -111,6 +163,42 @@ func mutateSidecar(seriesDir string, def Sidecar, fn func(*Sidecar)) error {
 		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
 		// permission denied) when writing the sidecar JSON.
 		return fmt.Errorf("write: %w", err)
+	}
+	return nil
+}
+
+// WriteMetadata persists the Phase-1 metadata engine's rich-card block into the
+// series' tsundoku.json sidecar — the durable seed a total DB loss rebuilds
+// from (see disk.Reconcile's restoreMetadataIndex). It reuses mutateSidecar
+// under the SAME per-series-dir lock a chapter render or cover save takes
+// (lockSidecar in render.go): all three read-modify-write the same file and
+// its fixed ".tmp" path, and would otherwise race.
+//
+// Mirrors SaveCover: it NEVER creates the series directory. A series with
+// nothing downloaded yet has no folder, and materialising one just to hold an
+// identify result would stage a ghost entry in the Scan-Library wizard (see
+// ErrNoSeriesDir) — that series' rich metadata still lives in the DB columns
+// (the fast index); only the disk SEED lags until the first chapter lands.
+func WriteMetadata(seriesDir string, block SeriesMetadataSidecar) error {
+	info, statErr := os.Stat(seriesDir)
+	if statErr != nil || !info.IsDir() {
+		return fmt.Errorf("disk.WriteMetadata: %w: %q", ErrNoSeriesDir, seriesDir)
+	}
+
+	defer lockSidecar(seriesDir)()
+
+	// def is only used when no sidecar exists yet (a series whose folder holds
+	// files but never had a render pass through this exact path — defensive;
+	// in practice a chapter render or SaveCover always creates the sidecar
+	// first). Title/Category are derived from the directory layout itself
+	// (<storage>/<Category>/<Title>/) as the best available fallback identity.
+	def := Sidecar{Title: filepath.Base(seriesDir), Category: filepath.Base(filepath.Dir(seriesDir))}
+	err := mutateSidecar(seriesDir, def, func(s *Sidecar) {
+		b := block
+		s.Metadata = &b
+	})
+	if err != nil {
+		return fmt.Errorf("disk.WriteMetadata: update sidecar: %w", err)
 	}
 	return nil
 }
