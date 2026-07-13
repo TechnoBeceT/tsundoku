@@ -2,6 +2,8 @@ package series_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -564,5 +566,149 @@ func TestCoverVersion_EmptyWhenNothingCached(t *testing.T) {
 
 	if _, err := svc.CoverVersion(ctx, uuid.New()); !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Errorf("CoverVersion (unknown id): err = %v, want ErrSeriesNotFound", err)
+	}
+}
+
+// seedMetadataCoverSeries seeds a series whose cover was set by the metadata
+// engine (SetCover / AutoIdentify) rather than by a Suwayomi provider: its
+// library folder holds the cover file and its DB fast-index columns (cover_file
+// / cover_source_url / cover_version) are populated, but NO SeriesProvider
+// carries a cover_url. withDiskProvider adds a disk-origin provider (SuwayomiID
+// 0, empty cover_url) — the Kaizoku-migration shape — so both the meta==nil
+// (providerless) and the meta!=nil-but-blank-cover_url branches are exercised.
+// Returns the series id and the stored cover_version.
+func seedMetadataCoverSeries(ctx context.Context, t *testing.T, db *ent.Client, storage string, withDiskProvider bool) (uuid.UUID, string) {
+	t.Helper()
+	const (
+		title    = "Metadata Cover"
+		catName  = "Manga"
+		coverSrc = "https://anilist.co/covers/metadata-cover.png"
+	)
+	if err := os.MkdirAll(disk.SeriesDir(storage, catName, title), 0o750); err != nil {
+		t.Fatalf("mkdir series dir: %v", err)
+	}
+	catID, err := category.IDByName(ctx, db, catName)
+	if err != nil {
+		t.Fatalf("IDByName: %v", err)
+	}
+	s := db.Series.Create().SetTitle(title).SetSlug("metadata-cover").SetCategoryID(catID).SaveX(ctx)
+	if withDiskProvider {
+		// A disk-origin provider: no cover_url (reconcile never sets one) — it must
+		// NOT gate the metadata-engine cover.
+		db.SeriesProvider.Create().SetSeriesID(s.ID).SetProvider("Some Scanlation Group").SetImportance(1).SaveX(ctx)
+	}
+
+	// Simulate metadatasvc.SetCover/persist: write the bytes through the SAME
+	// Local Cover Cache SetCover uses, then populate the fast-index columns.
+	data := []byte("ANILIST-COVER-BYTES")
+	filename, err := disk.SaveCover(disk.CoverRequest{
+		Storage: storage, Category: catName, Title: title,
+		Data: data, Ext: "png", SourceURL: coverSrc, Provider: "anilist",
+	})
+	if err != nil {
+		t.Fatalf("SaveCover: %v", err)
+	}
+	version := coverVersionForTest(data)
+	db.Series.UpdateOneID(s.ID).
+		SetCoverFile(filename).
+		SetCoverSourceURL(coverSrc).
+		SetCoverVersion(version).
+		ExecX(ctx)
+	return s.ID, version
+}
+
+// coverVersionForTest mirrors internal/series.coverVersion (sha256 hex, first 12
+// chars) so the test's stored version matches what a real SetCover would write —
+// keeping indexedCover from re-deriving a different value on the warm serve.
+func coverVersionForTest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// TestCoverBytes_MetadataCoverServesWithoutProvider is the C3 fix proof: a
+// providerless (or disk-origin-only) series whose cover was set by the metadata
+// engine both SURFACES a versioned coverUrl on its detail DTO and SERVES the
+// cached bytes — with ZERO Suwayomi/provider calls. Before the fix, cover
+// resolution short-circuited on the absent provider cover_url and the cover was
+// invisible AND unservable (the exact Kaizoku-migration series AutoIdentify
+// targets).
+func TestCoverBytes_MetadataCoverServesWithoutProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		withDiskProvider bool
+	}{
+		{"providerless (meta==nil)", false},
+		{"disk-origin provider, blank cover_url (meta!=nil)", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			db := testdb.New(t)
+			storage := t.TempDir()
+			fetcher := &countingFetcher{data: []byte("SHOULD-NEVER-BE-CALLED"), ext: "png"}
+			svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+			id, version := seedMetadataCoverSeries(ctx, t, db, storage, tc.withDiskProvider)
+
+			// (a) SURFACE: the detail DTO must carry a versioned proxy coverUrl.
+			detail, err := svc.GetSeries(ctx, id)
+			if err != nil {
+				t.Fatalf("GetSeries: %v", err)
+			}
+			wantURL := "/api/series/" + id.String() + "/cover?v=" + version
+			if detail.CoverURL != wantURL {
+				t.Errorf("coverUrl = %q, want %q", detail.CoverURL, wantURL)
+			}
+
+			// (b) SERVE: the cached bytes, with ZERO source calls.
+			cover, err := svc.CoverBytes(ctx, id)
+			if err != nil {
+				t.Fatalf("CoverBytes: %v", err)
+			}
+			if string(cover.Data) != "ANILIST-COVER-BYTES" || cover.Ext != "png" {
+				t.Errorf("CoverBytes = %q/%q, want ANILIST-COVER-BYTES/png", cover.Data, cover.Ext)
+			}
+			if cover.Version != version {
+				t.Errorf("cover.Version = %q, want %q", cover.Version, version)
+			}
+			if got := fetcher.calls.Load(); got != 0 {
+				t.Fatalf("metadata cover serve made %d Suwayomi call(s), want 0", got)
+			}
+		})
+	}
+}
+
+// TestCoverBytes_ProviderCoverStillResolvesUnchanged is the regression guard: the
+// C3 fallback is ADDITIVE — a series that DOES have a provider cover_url still
+// takes the M10 provider path (cold-fetch then warm-serve), unchanged.
+func TestCoverBytes_ProviderCoverStillResolvesUnchanged(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	fetcher := &countingFetcher{data: []byte("PROVIDER-IMG"), ext: "jpg"}
+	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+	id := seedCoverSeries(ctx, t, db, storage, "/thumb/a")
+
+	// Cold: exactly one fetch from the provider.
+	cover, err := svc.CoverBytes(ctx, id)
+	if err != nil {
+		t.Fatalf("CoverBytes (cold): %v", err)
+	}
+	if string(cover.Data) != "PROVIDER-IMG" || fetcher.calls.Load() != 1 {
+		t.Fatalf("cold provider cover = %q, calls = %d; want PROVIDER-IMG / 1", cover.Data, fetcher.calls.Load())
+	}
+
+	// Warm: zero further calls, and the detail DTO carries the versioned URL.
+	fetcher.calls.Store(0)
+	if _, err := svc.CoverBytes(ctx, id); err != nil {
+		t.Fatalf("CoverBytes (warm): %v", err)
+	}
+	if got := fetcher.calls.Load(); got != 0 {
+		t.Fatalf("warm provider serve made %d Suwayomi call(s), want 0", got)
+	}
+	detail, err := svc.GetSeries(ctx, id)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if !strings.Contains(detail.CoverURL, "/api/series/"+id.String()+"/cover?v=") {
+		t.Errorf("provider coverUrl = %q, want a versioned proxy path", detail.CoverURL)
 	}
 }

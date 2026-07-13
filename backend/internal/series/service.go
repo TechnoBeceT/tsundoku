@@ -873,35 +873,50 @@ func ProviderLabel(p *ent.SeriesProvider) string {
 
 // SeriesDisplay derives the display name and cover proxy URL for a series.
 // name is metaProv.Title when non-empty, else row.Title (canonical fallback).
-// coverURL is the series cover proxy path when metaProv has a non-empty
-// cover_url, else "" (the proxy endpoint would have nothing to serve).
+// coverURL is the series cover proxy path — see seriesCoverURL for the exact
+// resolution rule (a locally-cached cover surfaces even without a provider).
 // Exported so the downloads domain reuses the identical name+cover resolution.
 //
-// The cover path carries the CONTENT version of the cached image
-// ("…/cover?v=<cover_version>"): the version is a hash of the cover BYTES, so the
-// URL changes exactly when the image does. That is what lets the endpoint answer
-// `immutable` — the browser skips the request entirely on a re-render, and any
-// change to the cover (a metadata-source switch, a source republishing its art)
-// mints a NEW URL and shows instantly.
-//
-// A series whose cover is not cached on disk has no version, and its URL is
-// emitted UNVERSIONED — the endpoint then serves a revalidatable no-cache
-// response, never immutable, so an uncached cover can never be pinned.
-//
-// Reading it is FREE: cover_version is a column already loaded with the row, so
-// building a DTO does zero disk I/O.
+// Reading it is FREE: cover_version + cover_url are columns already loaded with
+// the row (metaProv is one of row.Edges.Providers), so building a DTO does zero
+// disk I/O.
 func SeriesDisplay(row *ent.Series, metaProv *ent.SeriesProvider) (name, coverURL string) {
 	name = row.Title
 	if metaProv != nil && metaProv.Title != "" {
 		name = metaProv.Title
 	}
-	if metaProv != nil && metaProv.CoverURL != "" {
-		coverURL = "/api/series/" + row.ID.String() + "/cover"
-		if row.CoverVersion != "" {
-			coverURL += "?v=" + row.CoverVersion
-		}
+	return name, seriesCoverURL(row, metaProv)
+}
+
+// seriesCoverURL resolves the series cover proxy path, cached-cover-first:
+//
+//  1. A LOCALLY-CACHED cover (row.CoverVersion != "" ⇒ cover_file is populated)
+//     is servable regardless of whether a Suwayomi provider still supplies a
+//     cover_url. This is the metadata-engine cover path: SetCover / AutoIdentify
+//     persist cover_file + cover_version onto a providerless (or disk-only)
+//     series — a Kaizoku-migration series with no online source — and its cover
+//     must both SURFACE on the card and SERVE. The URL carries the CONTENT
+//     version ("…/cover?v=<cover_version>", a hash of the BYTES), so it changes
+//     exactly when the image does and the endpoint can answer `immutable`.
+//  2. No local cover, but a provider supplies a cover_url ⇒ the M10 provider
+//     path: emit the UNVERSIONED proxy path. The endpoint cold-fetches from the
+//     source on first request and serves revalidatable no-cache, so an uncached
+//     cover can never be pinned.
+//  3. Neither ⇒ "" (the endpoint would have nothing to serve).
+//
+// Step 1 sitting ABOVE step 2 is deliberate and behaviour-preserving: a
+// provider-cover series that HAS warmed its cache already had cover_version set,
+// so it kept emitting the versioned URL before this change too — the only new
+// behaviour is that a cached cover WITHOUT a provider cover_url now surfaces
+// instead of resolving to "".
+func seriesCoverURL(row *ent.Series, metaProv *ent.SeriesProvider) string {
+	if row.CoverVersion != "" {
+		return "/api/series/" + row.ID.String() + "/cover?v=" + row.CoverVersion
 	}
-	return name, coverURL
+	if metaProv != nil && metaProv.CoverURL != "" {
+		return "/api/series/" + row.ID.String() + "/cover"
+	}
+	return ""
 }
 
 // SetMetadataSource pins the series' metadata source to the given provider

@@ -128,18 +128,58 @@ func (s *Service) CoverBytes(ctx context.Context, id uuid.UUID) (Cover, error) {
 	// but from THIS row, because the cache path also needs the category + title to
 	// find the series folder. One query, not two.
 	meta := MetadataProvider(row)
-	if meta == nil || meta.CoverURL == "" {
-		return Cover{}, ErrNoCover
-	}
-
 	categoryName := category.NameOf(row)
 
-	if cover, ok := s.localCover(ctx, row, meta, categoryName); ok {
-		return cover, nil
+	// M10 provider path: a Suwayomi provider still supplies a cover_url. The local
+	// cache is VALIDATED against it (localCover re-fetches on a cover_url mismatch —
+	// a metadata-source switch or the source republishing its thumbnail), and a
+	// cold/stale cover is fetched from the source. UNCHANGED behaviour.
+	if meta != nil && meta.CoverURL != "" {
+		if cover, ok := s.localCover(ctx, row, meta, categoryName); ok {
+			return cover, nil
+		}
+		return s.fetchAndCacheCover(ctx, row, meta, categoryName)
 	}
 
-	// Step 3 — the source: no usable local copy at all.
-	return s.fetchAndCacheCover(ctx, row, meta, categoryName)
+	// No provider cover_url — a providerless (or disk-origin-only) series whose
+	// cover was set by the metadata engine (SetCover / AutoIdentify persist
+	// cover_file + cover_version onto exactly this Kaizoku-migration shape). There
+	// is no source to validate against or fetch from, so serve the locally-cached
+	// bytes DIRECTLY (zero Suwayomi calls); a missing local cover is ErrNoCover,
+	// never a cold fetch.
+	if cover, ok := s.localCacheOnly(ctx, row, categoryName); ok {
+		return cover, nil
+	}
+	return Cover{}, ErrNoCover
+}
+
+// localCacheOnly serves a cover purely from the local cache — the DB fast-index
+// (cover_file) first, then the sidecar — WITHOUT localCover's provider-cover_url
+// invalidation check. It is the read path for a metadata-engine cover on a series
+// that has no Suwayomi provider cover to validate against or re-fetch from: the
+// cached bytes ARE the authority (the owner replaces them by picking a new cover
+// via SetCover, never via a background source refresh). It NEVER touches a source.
+//
+// A false return (cover_file empty, or the file vanished with no sidecar copy)
+// leaves CoverBytes to report ErrNoCover — there is deliberately no cold fetch,
+// because there is no source URL to fetch from.
+func (s *Service) localCacheOnly(ctx context.Context, row *ent.Series, categoryName string) (Cover, bool) {
+	// Step 1 — the DB fast index. cover_source_url is passed through unchanged (a
+	// metadata-engine cover recorded it as the chosen cover's own URL).
+	if row.CoverFile != "" {
+		if data, ext, err := disk.ReadCoverFile(s.storage, categoryName, row.Title, row.CoverFile); err == nil {
+			return s.indexedCover(ctx, row.ID, row.CoverFile, row.CoverSourceURL, row.CoverVersion, data, ext), true
+		}
+		// The indexed file vanished under us — fall through to the sidecar.
+	}
+
+	// Step 2 — the sidecar, the durable seed. An existing library (cover on disk,
+	// empty columns after a DB rebuild) lands here and self-heals onto step 1.
+	if data, ext, prov, err := disk.ReadCover(s.storage, categoryName, row.Title); err == nil {
+		return s.indexedCover(ctx, row.ID, prov.File, prov.SourceURL, row.CoverVersion, data, ext), true
+	}
+
+	return Cover{}, false
 }
 
 // localCover resolves steps 1 and 2 of the ladder — the DB fast-index, then the
