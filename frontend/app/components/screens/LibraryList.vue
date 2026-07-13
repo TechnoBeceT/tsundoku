@@ -115,80 +115,122 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
       @update:sort="emit('update:sort', $event)"
     />
 
-    <!-- Loading skeletons -->
-    <div v-if="loading" class="library__grid">
-      <Skeleton v-for="n in skeletons" :key="n" variant="cover" />
-    </div>
+    <!-- QCAT-231 "fit the screen, scroll inside": everything below the filters +
+         toolbar (loading / empty states / the grid itself) lives in ONE bounded,
+         internally-scrolling region so a 1000-series library scrolls WITHIN the
+         grid, never as an infinite page. -->
+    <div class="library__scroll">
+      <!-- Loading skeletons -->
+      <div v-if="loading" class="library__grid">
+        <Skeleton v-for="n in skeletons" :key="n" variant="cover" />
+      </div>
 
-    <!-- Empty: search matched nothing HERE, but N series elsewhere → widen -->
-    <EmptyState
-      v-else-if="series.length === 0 && searching && matchesElsewhere > 0"
-      :title="`No matches in ${activeName}`"
-      :sub="`${matchesElsewhere} ${matchesElsewhere === 1 ? 'match' : 'matches'} in other categories`"
-    >
-      <template #icon>
-        <BrandMark :size="56" tone="gradient" />
-      </template>
-      <AppButton
-        data-test="widen-search"
-        variant="ghost"
-        @click="emit('searchEverywhere')"
+      <!-- Empty: search matched nothing HERE, but N series elsewhere → widen -->
+      <EmptyState
+        v-else-if="series.length === 0 && searching && matchesElsewhere > 0"
+        :title="`No matches in ${activeName}`"
+        :sub="`${matchesElsewhere} ${matchesElsewhere === 1 ? 'match' : 'matches'} in other categories`"
       >
-        Search all categories
-      </AppButton>
-    </EmptyState>
+        <template #icon>
+          <BrandMark :size="56" tone="gradient" />
+        </template>
+        <AppButton
+          data-test="widen-search"
+          variant="ghost"
+          @click="emit('searchEverywhere')"
+        >
+          Search all categories
+        </AppButton>
+      </EmptyState>
 
-    <!-- Empty: search matched nothing anywhere -->
-    <EmptyState
-      v-else-if="series.length === 0 && searching"
-      :title="`No series match '${search}'.`"
-    >
-      <template #icon>
-        <BrandMark :size="56" tone="gradient" />
-      </template>
-    </EmptyState>
+      <!-- Empty: search matched nothing anywhere -->
+      <EmptyState
+        v-else-if="series.length === 0 && searching"
+        :title="`No series match '${search}'.`"
+      >
+        <template #icon>
+          <BrandMark :size="56" tone="gradient" />
+        </template>
+      </EmptyState>
 
-    <!-- Empty: the category genuinely has no series -->
-    <EmptyState
-      v-else-if="series.length === 0"
-      title="No series in this category yet."
-    >
-      <template #icon>
-        <BrandMark :size="56" tone="gradient" />
-      </template>
-    </EmptyState>
+      <!-- Empty: the category genuinely has no series -->
+      <EmptyState
+        v-else-if="series.length === 0"
+        title="No series in this category yet."
+      >
+        <template #icon>
+          <BrandMark :size="56" tone="gradient" />
+        </template>
+      </EmptyState>
 
-    <!-- Series grid -->
-    <div v-else class="library__grid">
-      <SeriesCard
-        v-for="s in series"
-        :key="s.id"
-        :series="s"
-        @select="emit('select', $event)"
-      />
+      <!-- Series grid -->
+      <div v-else class="library__grid">
+        <SeriesCard
+          v-for="s in series"
+          :key="s.id"
+          :series="s"
+          @select="emit('select', $event)"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* QCAT-231 "fit the screen, scroll inside": `.library` is bounded to the
+ * viewport under AppShell's sticky 64px header (`shell/AppShell.vue`'s `.head`
+ * — untouched here) and laid out as a flex column. The filter tabs + toolbar
+ * are flex:none (their natural, content-driven height, including whatever
+ * extra height they take when they wrap on a narrow screen); `.library__scroll`
+ * takes whatever height is left and is the ONE scroll container — so a
+ * 1000-series library scrolls WITHIN the grid region, never as an infinite
+ * page (mirrors SeriesDetail's `.columns` → PanelCard's `.panel__content`
+ * shape). Holds at every width (QCAT-231 "this holds ... including mobile") —
+ * unlike SeriesDetail's two-column grid, a single flex column needs no
+ * `@media` override to re-bound itself when the toolbar wraps taller: flex:1
+ * on the scroll region just absorbs whatever height the toolbar leaves it.
+ */
 .library {
-  padding: 24px 30px 70px;
+  padding: 24px 30px 0;
   background: var(--bg);
-  min-height: 100%;
+  height: calc(100dvh - 64px);
+  display: flex;
+  flex-direction: column;
 }
 
 /* The SegmentedTabs atom supplies the flex/gap; the screen only spaces it from
    the toolbar below. */
 .library__filters {
+  flex: none;
   margin-bottom: 16px;
 }
 
 /* Search + sort bar spacing from the grid. */
 .library__toolbar {
+  flex: none;
   margin-bottom: 22px;
 }
 
-/* ---- Grid ----------------------------------------------------------------- */
+/* The inner-scroll region. 🔴 min-height: 0 is the same flex-item overflow
+ * trap PanelCard.vue documents: without it this region refuses to shrink
+ * below its content (every series card) and the bounded `.library` above
+ * would grow instead of scrolling internally — the page-level scrollbar (and
+ * the "320-series page scroll" QCAT-231 exists to kill) would come back. The
+ * trailing padding is the breathing room after the last row, now living here
+ * (the scrollable content) instead of on the bounded `.library` shell. */
+.library__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 30px;
+}
+
+/* ---- Grid ------------------------------------------------------------------
+ * `auto-fill` + a `minmax` floor is inherently responsive at every width — no
+ * `@media` needed: columns reflow from many down to a single column on a
+ * phone (e.g. at 390px viewport width, 330px of content only fits one
+ * 186px-minimum tile) with zero horizontal overflow, and the same rule scales
+ * back up on a tablet/desktop. */
 .library__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));

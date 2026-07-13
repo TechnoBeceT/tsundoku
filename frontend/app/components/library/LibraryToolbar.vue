@@ -93,4 +93,23 @@ function onSort(value: string): void {
 .toolbar__sort {
   flex: 0 0 auto;
 }
+
+@media (max-width: 900px) {
+  /* At app-breakpoint width the SelectField's intrinsic content width (e.g.
+   * "Recently updated") squeezes the search box down to nearly nothing
+   * beside it. Stack instead: search takes the full row, sort drops to its
+   * own full-width row below it — both stay comfortably tappable and neither
+   * is ever cramped enough to overflow. */
+  .toolbar {
+    flex-wrap: wrap;
+  }
+
+  .toolbar__search {
+    flex: 1 1 100%;
+  }
+
+  .toolbar__sort {
+    flex: 1 1 100%;
+  }
+}
 </style>
