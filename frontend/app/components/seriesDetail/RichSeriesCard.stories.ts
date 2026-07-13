@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
+import { INITIAL_VIEWPORTS } from 'storybook/viewport'
 import RichSeriesCard from './RichSeriesCard.vue'
 import {
   categoryOptions,
@@ -50,6 +51,24 @@ export const SingleColumn: Story = {
     setup: () => ({ args }),
     template: '<div style="max-width:460px"><RichSeriesCard v-bind="args" /></div>',
   }),
+}
+
+/**
+ * Real mobile viewport — `layout="coverLeft"` (what `SeriesDetail.vue` always
+ * passes; the app never switches the prop) rendered at an actual phone-width
+ * VIEWPORT rather than a narrowed container. Proves the card's own
+ * `@media (max-width: 900px)` rule fires on its own and renders IDENTICALLY
+ * to the `SingleColumn` story above — same custom-property switches, see
+ * `RichSeriesCard.vue`'s `<style>` — with no horizontal overflow at any width.
+ */
+export const MobileViewport: Story = {
+  args: { layout: 'coverLeft' },
+  parameters: {
+    viewport: { options: INITIAL_VIEWPORTS },
+  },
+  globals: {
+    viewport: { value: 'iphone12', isRotated: false },
+  },
 }
 
 /** Data-poor series — synopsis/genres/tags/links/authors all absent, card stays tidy. */

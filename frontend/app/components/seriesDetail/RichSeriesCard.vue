@@ -276,26 +276,42 @@ const hasBadges = computed(
 </template>
 
 <style scoped>
+/* The row⇄column shape, cover width/alignment, stats column count, and the
+ * category control's margin are all switched via custom properties (each
+ * consuming declaration lives ONCE, on the base selector below) so the
+ * `layout="singleColumn"` prop AND the <900px responsive breakpoint can flip
+ * the exact same switches without duplicating any rule body — see the
+ * `@media (max-width: 900px)` block at the end of this file, which forces
+ * this SAME single-column shape (the one the `SingleColumn` story renders)
+ * regardless of the `layout` prop. */
 .rich {
   display: flex;
   gap: 24px;
+  max-width: 100%;
+  flex-direction: var(--rich-direction, row);
+  align-items: var(--rich-align, stretch);
 }
 
 .rich--singleColumn {
-  flex-direction: column;
-  align-items: stretch;
+  --rich-direction: column;
+  --rich-align: stretch;
+  --rich-cover-width: 190px;
+  --rich-cover-align: center;
+  --rich-stats-cols: repeat(2, minmax(0, 1fr));
+  --rich-cat-margin: 0;
 }
 
 /* ---- Cover ---------------------------------------------------------------- */
 .rich__cover {
   position: relative;
   flex: none;
-  width: 208px;
+  width: var(--rich-cover-width, 208px);
+  max-width: 100%;
   /* align-self:flex-start stops the cover column stretching to the (taller) text
      column's height — otherwise this bordered box grows past the CoverImage's
      0.72-aspect picture, leaving an empty box below it (and a seam on the
      placeholder). With flex-start the box hugs the image's natural height. */
-  align-self: flex-start;
+  align-self: var(--rich-cover-align, flex-start);
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border);
@@ -336,11 +352,6 @@ const hasBadges = computed(
   box-shadow: var(--ring-focus);
 }
 
-.rich--singleColumn .rich__cover {
-  width: 190px;
-  align-self: center;
-}
-
 /* ---- Body ----------------------------------------------------------------- */
 .rich__body {
   flex: 1;
@@ -350,10 +361,15 @@ const hasBadges = computed(
   gap: 16px;
 }
 
-/* Title block (left) + management toolbar (top-right). */
+/* Title block (left) + management toolbar (top-right). flex-wrap lets the
+ * toolbar drop to its own line rather than overflow when the title block has
+ * been squeezed to a narrow body (singleColumn / <900px) and the two toolbar
+ * buttons no longer fit beside it — a no-op at the wide desktop shape, where
+ * there's always room for both on one line. */
 .rich__head {
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -389,6 +405,10 @@ const hasBadges = computed(
   font-weight: var(--weight-medium);
   color: var(--faint);
   line-height: 1.4;
+  /* A long alt-title list can be one unbroken string with no space to wrap
+   * at (CJK titles, long romanizations) — let it break mid-word rather than
+   * overflow the (now possibly narrow) title block. */
+  overflow-wrap: anywhere;
 }
 
 /* ---- Badges --------------------------------------------------------------- */
@@ -466,11 +486,12 @@ const hasBadges = computed(
   border-top: 1px solid var(--border);
 }
 
-/* Five tiles across in the wide right column; they wrap gracefully if the
- * column is squeezed. singleColumn + a narrow viewport fold to 2-up (below). */
+/* Five tiles across in the wide right column; singleColumn / <900px fold to
+ * 2-up via the shared --rich-stats-cols switch (set on `.rich`, inherited
+ * down — see `.rich--singleColumn` above and the `@media` block below). */
 .rich__stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: var(--rich-stats-cols, repeat(5, minmax(0, 1fr)));
   gap: 10px;
 }
 
@@ -496,7 +517,7 @@ const hasBadges = computed(
 }
 
 .rich__control--category {
-  margin-left: auto;
+  margin-left: var(--rich-cat-margin, auto);
   gap: 9px;
   cursor: pointer;
 }
@@ -518,19 +539,26 @@ const hasBadges = computed(
   color: var(--faint);
 }
 
-/* The stacked / narrow shape folds the stats to a tidy 2-up grid. */
-.rich--singleColumn .rich__stats {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.rich--singleColumn .rich__control--category {
-  margin-left: 0;
-}
-
-/* Narrow viewport: stats fold to two columns regardless of layout. */
-@media (max-width: 560px) {
-  .rich__stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+/* ---- Responsive ------------------------------------------------------------
+ * Below 900px the fixed-width cover can no longer sit beside the text column
+ * without forcing the card (and everything above it, up through AppShell)
+ * wider than the viewport — that horizontal overflow is what was breaking
+ * vertical scroll on mobile. Force the SAME single-column shape the
+ * `layout="singleColumn"` prop renders (the `SingleColumn`/`LongSingleColumn`
+ * stories) regardless of which `layout` the caller passed, by flipping the
+ * exact same custom-property switches `.rich--singleColumn` sets above — each
+ * one is read by exactly one declaration (`.rich`/`.rich__cover`/
+ * `.rich__stats`/`.rich__control--category`), so nothing here duplicates a
+ * rule body. Setting them on `.rich` is enough: custom properties inherit
+ * down to every descendant that reads them. */
+@media (max-width: 900px) {
+  .rich {
+    --rich-direction: column;
+    --rich-align: stretch;
+    --rich-cover-width: 190px;
+    --rich-cover-align: center;
+    --rich-stats-cols: repeat(2, minmax(0, 1fr));
+    --rich-cat-margin: 0;
   }
 }
 </style>

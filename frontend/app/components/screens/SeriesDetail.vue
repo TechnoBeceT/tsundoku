@@ -261,13 +261,16 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
   overflow: hidden;
 }
 
+/* A flex column so RichSeriesCard and MetadataSourcePicker get a consistent
+ * gap regardless of which optional siblings (the error banner) are present —
+ * neither SurfaceCard-based child carries its own top/bottom margin, so
+ * without this the two panels sat flush against each other (a regression
+ * from the old SeriesHeader→RichSeriesCard swap). Matches `.columns`' 18px. */
 .detail__top {
   flex: none;
-}
-
-/* §16 error banner spacing (the banner chrome itself lives in the ErrorBanner atom). */
-.detail__error {
-  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 /* ---- Two-column layout ---------------------------------------------------- */
