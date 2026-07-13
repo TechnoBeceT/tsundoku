@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -593,5 +594,121 @@ func TestReconcile_restores_cover_index(t *testing.T) {
 	if row.CoverFile != "cover.webp" || row.CoverSourceURL != "/thumb/a" {
 		t.Errorf("cover index after re-run: cover_file=%q cover_source_url=%q, want unchanged",
 			row.CoverFile, row.CoverSourceURL)
+	}
+}
+
+// TestReconcileSeedsFirstDownloadedAtFromCBZMtime verifies that a
+// disk-imported chapter (which has no download_date and never will) has its
+// first_downloaded_at seeded from the CBZ file's mtime — the only real
+// evidence of when it became readable.
+func TestReconcileSeedsFirstDownloadedAtFromCBZMtime(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	const title = "Mtime Seed Series"
+	num, max := 1.0, 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: title,
+			Category:    disk.CategoryManga,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "1",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	filename, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	want := time.Date(2026, 1, 14, 10, 0, 0, 0, time.UTC)
+	cbzPath := disk.ChapterCBZPath(storage, disk.CategoryManga, title, filename)
+	if err := os.Chtimes(cbzPath, want, want); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	ch := client.Chapter.Query().OnlyX(ctx)
+	if ch.FirstDownloadedAt == nil {
+		t.Fatal("FirstDownloadedAt = nil, want set from CBZ mtime")
+	}
+	// Truncate to the second — not every filesystem keeps nanoseconds, and
+	// Postgres/Go round-trips can shave precision.
+	if !ch.FirstDownloadedAt.Truncate(time.Second).Equal(want.Truncate(time.Second)) {
+		t.Errorf("FirstDownloadedAt = %v, want %v", ch.FirstDownloadedAt, want)
+	}
+}
+
+// TestReconcileDoesNotOverwriteExistingFirstDownloadedAt is the important
+// half of the proof: reconcile must never clobber a first_downloaded_at value
+// already set. A convergence upgrade REWRITES the CBZ (and therefore its
+// mtime) when it re-fetches an old chapter from a better source — trusting
+// mtime over an existing value here would re-introduce the exact bug
+// first_downloaded_at exists to kill.
+func TestReconcileDoesNotOverwriteExistingFirstDownloadedAt(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	const title = "Write Once Series"
+	num, max := 1.0, 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "en",
+			SeriesTitle: title,
+			Category:    disk.CategoryManga,
+			Number:      &num,
+			MaxChapter:  &max,
+			ChapterKey:  "1",
+			Importance:  1,
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+	filename, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	// First reconcile seeds first_downloaded_at from an old mtime.
+	original := time.Date(2026, 1, 14, 10, 0, 0, 0, time.UTC)
+	cbzPath := disk.ChapterCBZPath(storage, disk.CategoryManga, title, filename)
+	if err := os.Chtimes(cbzPath, original, original); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	first := client.Chapter.Query().OnlyX(ctx)
+	if first.FirstDownloadedAt == nil {
+		t.Fatal("FirstDownloadedAt = nil after first Reconcile, want set")
+	}
+
+	// Simulate a convergence upgrade rewriting the CBZ: a DIFFERENT, later mtime.
+	rewritten := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(cbzPath, rewritten, rewritten); err != nil {
+		t.Fatalf("Chtimes (rewrite): %v", err)
+	}
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+
+	second := client.Chapter.Query().OnlyX(ctx)
+	if second.FirstDownloadedAt == nil {
+		t.Fatal("FirstDownloadedAt = nil after second Reconcile, want still set")
+	}
+	if !second.FirstDownloadedAt.Truncate(time.Second).Equal(original.Truncate(time.Second)) {
+		t.Errorf("FirstDownloadedAt after second Reconcile = %v, want unchanged original %v (mtime must never overwrite an existing value)",
+			second.FirstDownloadedAt, original)
 	}
 }

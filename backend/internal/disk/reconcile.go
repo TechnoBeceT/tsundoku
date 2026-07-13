@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -481,13 +482,44 @@ func adoptChapter(
 	if hasProvider {
 		create = create.SetSatisfiedByProviderID(spID)
 	}
-	if _, err := create.Save(ctx); err != nil {
+	created, err := create.Save(ctx)
+	if err != nil {
 		// Defensive path: reachable only on DB connection loss or a concurrent
 		// INSERT that races with the query above.
 		return fmt.Errorf("disk.Reconcile: create Chapter (series=%s key=%q): %w", seriesID, cf.Key, err)
 	}
+	if err := seedFirstDownloadedAtFromMtime(ctx, client, created.ID, cf.ModTime); err != nil {
+		return err
+	}
 	result.ChaptersAdopted++
 	result.ChaptersUpserted++
+	return nil
+}
+
+// seedFirstDownloadedAtFromMtime backfills a disk-imported chapter's arrival
+// time from its CBZ's mtime — the only real evidence of when it became
+// readable (a Kaizoku import has no download_date and never will).
+//
+// WRITE-ONCE via the SAME predicate-guarded pattern the download dispatcher
+// uses (dispatcher.go finishDownload): the FirstDownloadedAtIsNil() predicate,
+// not Go control flow, is what enforces it — no read-modify-write, no race.
+// This is deliberate: a chapter Tsundoku itself downloaded already carries the
+// authoritative value, and a convergence upgrade REWRITES the CBZ (and
+// therefore its mtime) when it re-fetches an old chapter from a better source.
+// Trusting mtime over an existing value here would re-introduce the exact bug
+// first_downloaded_at exists to kill. A zero ModTime (unknown — a stat failed
+// mid-scan) is skipped entirely, never written as a bogus value.
+func seedFirstDownloadedAtFromMtime(ctx context.Context, client *ent.Client, chapterID uuid.UUID, modTime time.Time) error {
+	if modTime.IsZero() {
+		return nil
+	}
+	if _, err := client.Chapter.Update().
+		Where(entchapter.ID(chapterID), entchapter.FirstDownloadedAtIsNil()).
+		SetFirstDownloadedAt(modTime).
+		Save(ctx); err != nil {
+		// Defensive path: reachable only on DB connection loss mid-run.
+		return fmt.Errorf("disk.Reconcile: seed first_downloaded_at for chapter %s: %w", chapterID, err)
+	}
 	return nil
 }
 
@@ -513,6 +545,9 @@ func updateChapter(
 	if _, err := update.Save(ctx); err != nil {
 		// Defensive path: reachable only on DB connection loss mid-run.
 		return fmt.Errorf("disk.Reconcile: update Chapter (series=%s key=%q): %w", existing.SeriesID, cf.Key, err)
+	}
+	if err := seedFirstDownloadedAtFromMtime(ctx, client, existing.ID, cf.ModTime); err != nil {
+		return err
 	}
 	result.ChaptersUpserted++
 	return nil

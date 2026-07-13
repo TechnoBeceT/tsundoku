@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 )
@@ -57,6 +58,12 @@ type ChapterFact struct {
 	// FileExists reports whether the CBZ file is present on disk.
 	// A sidecar entry whose CBZ has been deleted gets FileExists=false.
 	FileExists bool
+
+	// ModTime is the CBZ file's modification time — the ONLY evidence of when a
+	// disk-imported chapter became readable (a Kaizoku import has no download_date
+	// and never will). It is FREE here: the directory walk already fetched it.
+	// Zero value = unknown.
+	ModTime time.Time
 }
 
 // seriesCandidate pairs a category name with the absolute path of a series directory.
@@ -194,7 +201,12 @@ func factsFromSidecar(dir string, sidecar *Sidecar) ([]ChapterFact, map[string]s
 
 	facts := make([]ChapterFact, 0, len(sidecar.Chapters))
 	for _, cp := range sidecar.Chapters {
-		_, statErr := os.Stat(filepath.Join(dir, cp.Filename))
+		// One os.Stat serves both FileExists and ModTime — no second syscall.
+		info, statErr := os.Stat(filepath.Join(dir, cp.Filename))
+		var modTime time.Time
+		if statErr == nil {
+			modTime = info.ModTime()
+		}
 		facts = append(facts, ChapterFact{
 			Key:        cp.ChapterKey,
 			Number:     cp.Number,
@@ -204,6 +216,7 @@ func factsFromSidecar(dir string, sidecar *Sidecar) ([]ChapterFact, map[string]s
 			Filename:   cp.Filename,
 			PageCount:  cp.PageCount,
 			FileExists: statErr == nil,
+			ModTime:    modTime,
 		})
 		covered[cp.Filename] = struct{}{}
 	}
@@ -228,11 +241,17 @@ func orphanChapterFacts(dir string, sidecarCovered map[string]struct{}) ([]Chapt
 		if _, covered := sidecarCovered[e.Name()]; covered {
 			continue
 		}
+		// e.Info() reuses the os.ReadDir walk's own stat data — no second syscall.
+		var modTime time.Time
+		if info, infoErr := e.Info(); infoErr == nil {
+			modTime = info.ModTime()
+		}
 		cf, err := chapterFactFromOrphanCBZ(filepath.Join(dir, e.Name()), e.Name())
 		if err != nil {
 			return nil, err
 		}
 		if cf != nil {
+			cf.ModTime = modTime
 			facts = append(facts, *cf)
 		}
 	}
