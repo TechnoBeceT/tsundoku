@@ -18,7 +18,7 @@ import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { SeriesSummary, CategorySummary } from '~/components/screens/types'
 import { sortSeries, type SortKey, type SortDir } from '~/components/library/librarySort'
-import { searchSeries, filterByCategory, countMatchesElsewhere } from '~/components/library/libraryFilter'
+import { searchSeries, filterByCategory, filterNeedsSource, countMatchesElsewhere } from '~/components/library/libraryFilter'
 
 type SeriesSummaryDTO = components['schemas']['SeriesSummary']
 type CategoryDTO = components['schemas']['Category']
@@ -44,6 +44,7 @@ function mapSeriesItem(dto: SeriesSummaryDTO): SeriesSummary {
     coverUrl: dto.coverUrl,
     monitored: dto.monitored,
     completed: dto.completed,
+    needsSource: dto.needsSource,
     chapterCounts: {
       total: dto.chapterCounts.total,
       downloaded: dto.chapterCounts.downloaded,
@@ -80,6 +81,10 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
   const searchQuery = ref('')
   const sortKey = ref<SortKey>('title')
   const sortDir = ref<SortDir>('asc')
+  // "Needs source" filter (handover 2026-07-13#15): narrows the in-memory grid
+  // to series with no live download source, independent of category/search/sort
+  // and of cover state. Off by default so the library still shows everything.
+  const needsSourceOnly = ref(false)
 
   // Fetch one page of /api/series at the given offset (no category filter — the
   // whole library is loaded, then filtered in memory).
@@ -145,11 +150,15 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
     }
   }
 
-  // What the grid renders: the active category, narrowed by the search query,
-  // then sorted — all in memory, recomputed on any input ref change, ZERO refetch.
+  // What the grid renders: the active category, narrowed by the search query and
+  // the "Needs source" toggle, then sorted — all in memory, recomputed on any
+  // input ref change, ZERO refetch.
   const series = computed(() =>
     sortSeries(
-      searchSeries(filterByCategory(allSeries.value, activeCategory.value), searchQuery.value),
+      filterNeedsSource(
+        searchSeries(filterByCategory(allSeries.value, activeCategory.value), searchQuery.value),
+        needsSourceOnly.value,
+      ),
       sortKey.value,
       sortDir.value,
     ),
@@ -174,6 +183,10 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
     sortDir.value = dir
   }
 
+  function setNeedsSourceOnly(active: boolean): void {
+    needsSourceOnly.value = active
+  }
+
   // Widen to every category so an in-category search can escape to a library-wide one.
   function searchEverywhere(): void {
     activeCategory.value = null
@@ -190,10 +203,12 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
     searchQuery,
     sortKey,
     sortDir,
+    needsSourceOnly,
     matchesElsewhere,
     setCategory,
     setSearch,
     setSort,
+    setNeedsSourceOnly,
     searchEverywhere,
     reload: loadAll,
   }

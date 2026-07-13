@@ -38,14 +38,21 @@ type ChapterCounts struct {
 // (falls back to the canonical Series.title). CoverURL is the series cover proxy
 // path ("/api/series/{id}/cover"), empty when no provider has a cover_url.
 type SeriesSummaryDTO struct {
-	ID            string        `json:"id"`
-	Title         string        `json:"title"`
-	DisplayName   string        `json:"displayName"`
-	Slug          string        `json:"slug"`
-	Category      string        `json:"category"`
-	CoverURL      string        `json:"coverUrl"`
-	Monitored     bool          `json:"monitored"`
-	Completed     bool          `json:"completed"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	DisplayName string `json:"displayName"`
+	Slug        string `json:"slug"`
+	Category    string `json:"category"`
+	CoverURL    string `json:"coverUrl"`
+	Monitored   bool   `json:"monitored"`
+	Completed   bool   `json:"completed"`
+	// NeedsSource is true when the series has NO live download source — zero
+	// SeriesProvider rows with SuwayomiID != 0 (see needsSource). It is
+	// COVER-INDEPENDENT: a Kaizoku-migration series can carry a metadata cover
+	// (via AutoIdentify/SetCover) while still lacking a real engine to fetch
+	// new chapters from, and the owner needs that fact visible regardless of
+	// whether a cover renders (handover 2026-07-13#15).
+	NeedsSource   bool          `json:"needsSource"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
 	// CreatedAt is when the series entered the library (RFC3339). Powers the
 	// "recently added" sort. Always present.
@@ -73,14 +80,16 @@ type SeriesSummaryDTO struct {
 // not need a genre list per row) and are the zero value (""/0/nil→[]) on a
 // series that has never been identified against a metadata provider.
 type SeriesDetailDTO struct {
-	ID            string        `json:"id"`
-	Title         string        `json:"title"`
-	DisplayName   string        `json:"displayName"`
-	Slug          string        `json:"slug"`
-	Category      string        `json:"category"`
-	CoverURL      string        `json:"coverUrl"`
-	Monitored     bool          `json:"monitored"`
-	Completed     bool          `json:"completed"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	DisplayName string `json:"displayName"`
+	Slug        string `json:"slug"`
+	Category    string `json:"category"`
+	CoverURL    string `json:"coverUrl"`
+	Monitored   bool   `json:"monitored"`
+	Completed   bool   `json:"completed"`
+	// NeedsSource mirrors SeriesSummaryDTO.NeedsSource — see its doc comment.
+	NeedsSource   bool          `json:"needsSource"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
 	// CreatedAt / LastChapterDownloadedAt are the library-grid sort keys, carried
 	// here too so detailToSummary (the detail→summary projection every mutating
@@ -345,10 +354,27 @@ func newSummaryDTO(s *ent.Series, rollup seriesRollup) SeriesSummaryDTO {
 		CoverURL:                coverURL,
 		Monitored:               s.Monitored,
 		Completed:               s.Completed,
+		NeedsSource:             needsSource(s.Edges.Providers),
 		ChapterCounts:           rollup.Counts,
 		CreatedAt:               formatRFC3339(s.CreatedAt),
 		LastChapterDownloadedAt: formatRFC3339Ptr(rollup.LastChapterDownloadedAt),
 	}
+}
+
+// needsSource is true when NONE of the given providers is a live download
+// source — i.e. every provider is disk-origin (SuwayomiID == 0, created by
+// library import/reconcile/Kaizoku migration, never a real Suwayomi source).
+// Cover state is deliberately irrelevant here (handover 2026-07-13#15): a
+// series can have a metadata cover via AutoIdentify/SetCover while still
+// having zero live engine to fetch new chapters from — "needs source" tracks
+// that gap independently. A series with no providers at all also needs one.
+func needsSource(providers []*ent.SeriesProvider) bool {
+	for _, p := range providers {
+		if p.SuwayomiID != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // formatRFC3339 renders a timestamp as a UTC RFC3339 string — the wire form for

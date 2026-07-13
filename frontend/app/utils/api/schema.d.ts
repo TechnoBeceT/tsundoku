@@ -1691,6 +1691,8 @@ export interface components {
             monitored: boolean;
             /** @description Whether the owner has marked the series finished (excluded from refresh + health). */
             completed: boolean;
+            /** @description True when the series has NO live download source (zero providers with a real Suwayomi id — every provider is disk-origin). COVER-INDEPENDENT: a series can carry a metadata cover while still needing a real source matched (the Kaizoku-migration case). */
+            needsSource: boolean;
             chapterCounts: components["schemas"]["ChapterCounts"];
             /**
              * Format: date-time
@@ -1837,6 +1839,8 @@ export interface components {
             monitored: boolean;
             /** @description Whether the owner has marked the series finished (excluded from refresh + health). */
             completed: boolean;
+            /** @description True when the series has NO live download source (zero providers with a real Suwayomi id — every provider is disk-origin). COVER-INDEPENDENT: a series can carry a metadata cover while still needing a real source matched (the Kaizoku-migration case). */
+            needsSource: boolean;
             chapterCounts: components["schemas"]["ChapterCounts"];
             /**
              * Format: date-time

@@ -29,6 +29,7 @@ interface Row {
   coverUrl: string
   monitored: boolean
   completed: boolean
+  needsSource: boolean
   chapterCounts: { total: number, downloaded: number, wanted: number, failed: number, unread: number }
   createdAt: string
   lastChapterDownloadedAt: string | null
@@ -45,6 +46,7 @@ const makeRow = (n: number, over: Partial<Row> = {}): Row => ({
   coverUrl: '',
   monitored: true,
   completed: false,
+  needsSource: false,
   chapterCounts: { total: 0, downloaded: 0, wanted: 0, failed: 0, unread: 0 },
   createdAt: '2024-01-01T00:00:00Z',
   lastChapterDownloadedAt: null,
@@ -125,7 +127,7 @@ describe('useLibrary — landing category', () => {
 })
 
 describe('useLibrary — no refetch on interaction', () => {
-  it('does NOT refetch when category, search, or sort changes', async () => {
+  it('does NOT refetch when category, search, sort, or needsSourceOnly changes', async () => {
     categoriesData = [makeCat('Manga', false)]
     const lib = await mountSettled()
     const calls = seriesGetSpy.mock.calls.length
@@ -133,6 +135,7 @@ describe('useLibrary — no refetch on interaction', () => {
     lib.setCategory('Manga')
     lib.setSearch('solo')
     lib.setSort('unread', 'desc')
+    lib.setNeedsSourceOnly(true)
     await Promise.resolve()
 
     expect(seriesGetSpy.mock.calls.length).toBe(calls)
@@ -197,5 +200,38 @@ describe('useLibrary — in-memory filter/search/sort + escape hatch', () => {
     expect(lib.activeCategory.value).toBe('Manhwa')
     lib.searchEverywhere()
     expect(lib.activeCategory.value).toBeNull()
+  })
+})
+
+describe('useLibrary — needsSourceOnly filter', () => {
+  beforeEach(() => {
+    categoriesData = [] // All (null) so both rows below are in view
+    allRows = [
+      makeRow(1, { title: 'Needs A Source', displayName: 'Needs A Source', needsSource: true }),
+      makeRow(2, { title: 'Has A Source', displayName: 'Has A Source', needsSource: false }),
+    ]
+    seriesTotalHeader = '2'
+  })
+
+  it('maps dto.needsSource onto the screen type (off by default)', async () => {
+    const lib = await mountSettled()
+    expect(lib.needsSourceOnly.value).toBe(false)
+    expect(lib.series.value.map(s => [s.title, s.needsSource])).toEqual([
+      ['Has A Source', false],
+      ['Needs A Source', true],
+    ])
+  })
+
+  it('setNeedsSourceOnly(true) narrows the in-memory grid to needsSource series', async () => {
+    const lib = await mountSettled()
+    lib.setNeedsSourceOnly(true)
+    expect(lib.series.value.map(s => s.title)).toEqual(['Needs A Source'])
+  })
+
+  it('setNeedsSourceOnly(false) restores the full grid', async () => {
+    const lib = await mountSettled()
+    lib.setNeedsSourceOnly(true)
+    lib.setNeedsSourceOnly(false)
+    expect(lib.series.value.map(s => s.title)).toEqual(['Has A Source', 'Needs A Source'])
   })
 })

@@ -13,6 +13,16 @@ export function filterByCategory(items: SeriesSummary[], category: string | null
 }
 
 /**
+ * Filter to series that need a live download source (`needsSource === true`);
+ * `active === false` returns the whole list unchanged. Cover-independent by
+ * construction — it reads only `needsSource`, never `coverUrl` (handover
+ * 2026-07-13#15: a cover must never be used as a stand-in for "has a source").
+ */
+export function filterNeedsSource(items: SeriesSummary[], active: boolean): SeriesSummary[] {
+  return active ? items.filter((s) => s.needsSource) : items
+}
+
+/**
  * How many series match the query OUTSIDE the active category — the escape
  * hatch's number ("3 matches in other categories").
  *

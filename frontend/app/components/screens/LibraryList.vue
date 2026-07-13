@@ -43,6 +43,8 @@ const props = withDefaults(defineProps<{
   sortKey: SortKey
   /** The active sort direction. */
   sortDir: SortDir
+  /** Whether the "Needs source" filter is active (v-model:needsSourceOnly). */
+  needsSourceOnly: boolean
   /** How many series match the query OUTSIDE the active category (escape hatch). */
   matchesElsewhere: number
   /** When true, render skeleton cards instead of content. */
@@ -61,6 +63,8 @@ const emit = defineEmits<{
   'update:search': [value: string]
   /** The sort selection changed — carries the resolved key + direction. */
   'update:sort': [payload: { key: SortKey; dir: SortDir }]
+  /** The "Needs source" toggle flipped — carries the NEW value. */
+  'update:needsSourceOnly': [value: boolean]
   /** The owner widened an in-category search to the whole library. */
   searchEverywhere: []
 }>()
@@ -111,8 +115,10 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
       :search="search"
       :sort-key="sortKey"
       :sort-dir="sortDir"
+      :needs-source-only="needsSourceOnly"
       @update:search="emit('update:search', $event)"
       @update:sort="emit('update:sort', $event)"
+      @update:needs-source-only="emit('update:needsSourceOnly', $event)"
     />
 
     <!-- QCAT-231 "fit the screen, scroll inside": everything below the filters +
@@ -147,6 +153,18 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
       <EmptyState
         v-else-if="series.length === 0 && searching"
         :title="`No series match '${search}'.`"
+      >
+        <template #icon>
+          <BrandMark :size="56" tone="gradient" />
+        </template>
+      </EmptyState>
+
+      <!-- Empty: the "Needs source" filter matched nothing (no search active,
+           else the search-empty branches above already explain the gap). -->
+      <EmptyState
+        v-else-if="series.length === 0 && needsSourceOnly"
+        title="Every series here has a source."
+        sub="Nothing in this view is missing a live download source."
       >
         <template #icon>
           <BrandMark :size="56" tone="gradient" />

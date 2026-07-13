@@ -13,9 +13,10 @@ import { seriesPage } from '../../fixtures/series'
 const monitored = seriesPage[0]
 const noUnread = seriesPage[2]
 const pausedCompleted = seriesPage[3]
+const needsSource = seriesPage[4]
 const freshlyAdopted = seriesPage[5]
-if (!monitored || !noUnread || !pausedCompleted || !freshlyAdopted) {
-  throw new Error('seriesPage fixture must have entries at indices 0, 2, 3, and 5')
+if (!monitored || !noUnread || !pausedCompleted || !needsSource || !freshlyAdopted) {
+  throw new Error('seriesPage fixture must have entries at indices 0, 2, 3, 4, and 5')
 }
 
 const meta = {
@@ -58,6 +59,16 @@ export const NoUnreadBadge: Story = {
 /** Freshly adopted: nothing downloaded yet (0% bar, all chapters wanted). */
 export const FreshlyAdopted: Story = {
   args: { series: freshlyAdopted },
+}
+
+/**
+ * `needsSource: true` — the amber "NEEDS SOURCE" badge renders in the top-right
+ * flags column. Deliberately uses a fixture entry that ALSO has a real cover
+ * (`needsSource` fixture entry), proving the badge is cover-independent
+ * (handover 2026-07-13#15) — it must show up even when a cover renders.
+ */
+export const NeedsSource: Story = {
+  args: { series: needsSource },
 }
 
 /** Every card in the fixture page, laid out in the library grid. */

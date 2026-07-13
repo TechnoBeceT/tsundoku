@@ -28,6 +28,7 @@ function mountList(props: {
   search?: string
   matchesElsewhere?: number
   activeCategory?: string | null
+  needsSourceOnly?: boolean
 }) {
   return mount(LibraryList, {
     props: {
@@ -37,6 +38,7 @@ function mountList(props: {
       search: props.search ?? '',
       sortKey: 'title' as const,
       sortDir: 'asc' as const,
+      needsSourceOnly: props.needsSourceOnly ?? false,
       matchesElsewhere: props.matchesElsewhere ?? 0,
     },
   })
@@ -67,5 +69,11 @@ describe('LibraryList empty states', () => {
     const widen = wrapper.get('[data-test="widen-search"]')
     await widen.trigger('click')
     expect(wrapper.emitted('searchEverywhere')).toHaveLength(1)
+  })
+
+  it('shows the needs-source-empty message when the filter is active and no search is running', () => {
+    const wrapper = mountList({ series: [], search: '', needsSourceOnly: true })
+    expect(wrapper.text()).toContain('Every series here has a source.')
+    expect(wrapper.text()).not.toContain('No series in this category yet.')
   })
 })

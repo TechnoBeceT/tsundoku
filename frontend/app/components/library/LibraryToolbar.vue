@@ -8,11 +8,16 @@ import type { SortKey, SortDir } from './librarySort'
 /**
  * LibraryToolbar — the library grid's search + sort bar. A `SearchInput` (title
  * search) beside a `SelectField` whose five options each map to a `{key, dir}`
- * sort pair (title A–Z / Z–A, recently added / updated, most unread).
+ * sort pair (title A–Z / Z–A, recently added / updated, most unread), and a
+ * "Needs source" toggle that narrows the grid to series with no live download
+ * source (see `libraryFilter.filterNeedsSource` — cover-independent, handover
+ * 2026-07-13#15).
  *
  * Presentation only: props down, events up — no fetch, no store, no useLibrary.
  * It composes the shared `SearchInput`/`SelectField` atoms and references only
- * design tokens, so it renders correctly in both themes.
+ * design tokens, so it renders correctly in both themes. The toggle itself is a
+ * small local pill button (not a new shared `ui/` atom) styled off the same
+ * tokens as the app's other filter chips.
  */
 const props = defineProps<{
   /** The current search string (v-model:search). */
@@ -21,6 +26,8 @@ const props = defineProps<{
   sortKey: SortKey
   /** The active sort direction. */
   sortDir: SortDir
+  /** Whether the "Needs source" filter is active (v-model:needsSourceOnly). */
+  needsSourceOnly: boolean
 }>()
 
 const emit = defineEmits<{
@@ -28,6 +35,8 @@ const emit = defineEmits<{
   'update:search': [value: string]
   /** The sort selection changed — carries the resolved key + direction. */
   'update:sort': [payload: { key: SortKey; dir: SortDir }]
+  /** The "Needs source" toggle flipped — carries the NEW value. */
+  'update:needsSourceOnly': [value: boolean]
 }>()
 
 /**
@@ -74,6 +83,16 @@ function onSort(value: string): void {
       aria-label="Sort series"
       @update:model-value="onSort"
     />
+    <button
+      type="button"
+      class="toolbar__needs-source"
+      :class="{ 'toolbar__needs-source--on': needsSourceOnly }"
+      :aria-pressed="needsSourceOnly"
+      @click="emit('update:needsSourceOnly', !needsSourceOnly)"
+    >
+      <Icon name="lucide:triangle-alert" />
+      Needs source
+    </button>
   </div>
 </template>
 
@@ -94,6 +113,35 @@ function onSort(value: string): void {
   flex: 0 0 auto;
 }
 
+/* "Needs source" toggle — a small pill button, off by default (neutral
+ * surface) and amber-tinted when active, mirroring the app's other filter-chip
+ * treatments (e.g. SourceFilterChips' imp-chip--on) but kept local here since
+ * this is a single boolean toggle, not a multi-select list. */
+.toolbar__needs-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  height: 38px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.toolbar__needs-source--on {
+  border-color: var(--warn);
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--warn);
+}
+
 @media (max-width: 900px) {
   /* At app-breakpoint width the SelectField's intrinsic content width (e.g.
    * "Recently updated") squeezes the search box down to nearly nothing
@@ -110,6 +158,11 @@ function onSort(value: string): void {
 
   .toolbar__sort {
     flex: 1 1 100%;
+  }
+
+  .toolbar__needs-source {
+    flex: 1 1 100%;
+    justify-content: center;
   }
 }
 </style>

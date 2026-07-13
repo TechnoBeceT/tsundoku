@@ -9,8 +9,10 @@ import type { SeriesSummary } from '../screens/types'
 /**
  * SeriesCard — one cover-forward card in the library grid: a portrait cover (or a
  * branded placeholder when there's no `coverUrl`), an on-cover category badge and
- * status flags (PAUSED when un-monitored, DONE when completed), and a bottom
- * overlay with the title, a download-progress bar, and the chapter-count meta.
+ * status flags (PAUSED when un-monitored, DONE when completed, NEEDS SOURCE when
+ * the series has no live download source — cover-independent, see
+ * `series.needsSource`), and a bottom overlay with the title, a
+ * download-progress bar, and the chapter-count meta.
  *
  * Presentation only: all data arrives via the `series` prop and the click is
  * emitted as `select` — no fetching, routing, or stores. It composes the shared
@@ -80,6 +82,17 @@ const progressPct = computed(() => {
             </svg>
           </template>
           DONE
+        </Tag>
+        <!-- Needs source: a live-source-independent signal (handover 2026-07-13#15)
+             — deliberately part of the on-cover overlay, not gated on coverUrl, so
+             it renders EVEN WHEN the series has a metadata cover. -->
+        <Tag v-if="series.needsSource" tone="warn">
+          <template #icon>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 9v4M12 17h.01M10.29 3.86l-8.18 14.18A2 2 0 0 0 3.82 21h16.36a2 2 0 0 0 1.71-2.96L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            </svg>
+          </template>
+          NEEDS SOURCE
         </Tag>
       </div>
     </div>

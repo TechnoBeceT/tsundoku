@@ -111,6 +111,7 @@ function mapDetail(dto: SeriesDetailDTO): SeriesDetail {
     coverUrl: dto.coverUrl,
     monitored: dto.monitored,
     completed: dto.completed,
+    needsSource: dto.needsSource,
     chapterCounts: {
       total: dto.chapterCounts.total,
       downloaded: dto.chapterCounts.downloaded,

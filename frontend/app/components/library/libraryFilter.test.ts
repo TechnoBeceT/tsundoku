@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SeriesSummary } from '../screens/types'
-import { countMatchesElsewhere, filterByCategory, searchSeries } from './libraryFilter'
+import { countMatchesElsewhere, filterByCategory, filterNeedsSource, searchSeries } from './libraryFilter'
 
 function series(over: Partial<SeriesSummary> & { id: string }): SeriesSummary {
   return {
@@ -11,6 +11,7 @@ function series(over: Partial<SeriesSummary> & { id: string }): SeriesSummary {
     coverUrl: over.coverUrl ?? '',
     monitored: over.monitored ?? true,
     completed: over.completed ?? false,
+    needsSource: over.needsSource ?? false,
     chapterCounts: over.chapterCounts ?? {
       total: 0, downloaded: 0, wanted: 0, failed: 0, unread: 0,
     },
@@ -45,6 +46,27 @@ describe('filterByCategory', () => {
     expect(filterByCategory(all, 'Manhwa').map((s) => s.id)).toEqual(['a', 'b'])
     expect(filterByCategory(all, 'Manga').map((s) => s.id)).toEqual(['c', 'd'])
     expect(filterByCategory(all, 'Nonexistent')).toEqual([])
+  })
+})
+
+describe('filterNeedsSource', () => {
+  const mixed: SeriesSummary[] = [
+    series({ id: 'a', needsSource: true }),
+    series({ id: 'b', needsSource: false }),
+    series({ id: 'c', needsSource: true }),
+  ]
+
+  it('active=false returns the whole list unchanged (same reference)', () => {
+    expect(filterNeedsSource(mixed, false)).toBe(mixed)
+  })
+
+  it('active=true keeps only needsSource series', () => {
+    expect(filterNeedsSource(mixed, true).map((s) => s.id)).toEqual(['a', 'c'])
+  })
+
+  it('active=true is cover-independent: a needsSource series WITH a cover is still kept', () => {
+    const withCover = series({ id: 'z', needsSource: true, coverUrl: '/api/series/z/cover?v=abc' })
+    expect(filterNeedsSource([withCover], true)).toEqual([withCover])
   })
 })
 

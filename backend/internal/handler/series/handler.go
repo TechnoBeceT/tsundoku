@@ -355,6 +355,7 @@ func detailToSummary(d seriessvc.SeriesDetailDTO) seriessvc.SeriesSummaryDTO {
 		CoverURL:                d.CoverURL,
 		Monitored:               d.Monitored,
 		Completed:               d.Completed,
+		NeedsSource:             d.NeedsSource,
 		ChapterCounts:           d.ChapterCounts,
 		CreatedAt:               d.CreatedAt,
 		LastChapterDownloadedAt: d.LastChapterDownloadedAt,

@@ -12,6 +12,7 @@ function series(over: Partial<SeriesSummary> & { id: string }): SeriesSummary {
     coverUrl: over.coverUrl ?? '',
     monitored: over.monitored ?? true,
     completed: over.completed ?? false,
+    needsSource: over.needsSource ?? false,
     chapterCounts: over.chapterCounts ?? {
       total: 0, downloaded: 0, wanted: 0, failed: 0, unread: 0,
     },

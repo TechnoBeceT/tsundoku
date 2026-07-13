@@ -43,6 +43,13 @@ export interface SeriesSummary {
   monitored: boolean
   /** Whether the owner marked this series finished. */
   completed: boolean
+  /**
+   * True when the series has NO live download source — every provider is
+   * disk-origin (no real Suwayomi source attached). COVER-INDEPENDENT: a
+   * Kaizoku-migration series can carry a metadata cover while still needing a
+   * real source matched, so this must never be inferred from `coverUrl`.
+   */
+  needsSource: boolean
   /** Chapter tallies for the progress bar + meta line. */
   chapterCounts: ChapterCounts
   /** When the series entered the library (ISO date-time). Powers the "recently added" sort. */

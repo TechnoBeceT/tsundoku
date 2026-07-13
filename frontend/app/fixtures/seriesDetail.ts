@@ -236,6 +236,7 @@ export const richSeries: SeriesDetail = {
   coverUrl: 'https://picsum.photos/seed/solo-leveling/300/420',
   monitored: true,
   completed: false,
+  needsSource: false,
   chapterCounts: { total: 9, downloaded: 2, wanted: 2, failed: 2, unread: 1 },
   createdAt: '2024-01-15T10:00:00Z',
   lastChapterDownloadedAt: '2024-11-20T08:30:00Z',
@@ -380,6 +381,20 @@ export const richSeriesNoCover: SeriesDetail = {
   ...richSeriesFull,
   id: '0a4d1c8e-5555-4a00-9000-000000000005',
   coverUrl: '',
+}
+
+/**
+ * Cover-independence proof (handover 2026-07-13#15): a Kaizoku-migration series
+ * that has been auto-identified (a full metadata cover + synopsis + genres) but
+ * still carries only its disk-origin provider — `needsSource: true` alongside a
+ * real cover. Feeds `RichSeriesCard`'s `NeedsSource` story: the badge must show
+ * up in the header badge row EVEN THOUGH the cover renders normally.
+ */
+export const richSeriesNeedsSource: SeriesDetail = {
+  ...richSeriesFull,
+  id: '0a4d1c8e-aaaa-4a00-9000-00000000000a',
+  needsSource: true,
+  providers: [unlinkedProvider],
 }
 
 /**

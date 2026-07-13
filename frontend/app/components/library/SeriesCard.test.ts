@@ -20,6 +20,7 @@ const base: SeriesSummary = {
   coverUrl: '',
   monitored: true,
   completed: false,
+  needsSource: false,
   chapterCounts: { total: 20, downloaded: 20, wanted: 0, failed: 0, unread: 0 },
   createdAt: '2024-01-01T00:00:00Z',
   lastChapterDownloadedAt: null,
@@ -45,5 +46,29 @@ describe('SeriesCard — unread badge', () => {
     const w = render(0)
 
     expect(w.find('.card__unread').exists()).toBe(false)
+  })
+})
+
+describe('SeriesCard — needs-source badge', () => {
+  it('renders the "NEEDS SOURCE" badge when needsSource is true', () => {
+    const w = mount(SeriesCard, { props: { series: { ...base, needsSource: true } } })
+
+    expect(w.text()).toContain('NEEDS SOURCE')
+  })
+
+  it('is hidden when needsSource is false', () => {
+    const w = mount(SeriesCard, { props: { series: { ...base, needsSource: false } } })
+
+    expect(w.text()).not.toContain('NEEDS SOURCE')
+  })
+
+  it('renders EVEN WHEN the series has a cover (cover-independent, handover 2026-07-13#15)', () => {
+    const w = mount(SeriesCard, {
+      props: {
+        series: { ...base, needsSource: true, coverUrl: 'https://picsum.photos/seed/x/300/420' },
+      },
+    })
+
+    expect(w.text()).toContain('NEEDS SOURCE')
   })
 })

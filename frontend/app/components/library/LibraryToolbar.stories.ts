@@ -12,15 +12,17 @@ import type { SortKey, SortDir } from './librarySort'
 const meta = {
   title: 'Library/LibraryToolbar',
   component: LibraryToolbar,
-  // search/sortKey/sortDir are required props; the interactive Default overrides
-  // them with local refs, so these defaults only satisfy the CSF3 story typing.
-  args: { search: '', sortKey: 'title', sortDir: 'asc' },
+  // search/sortKey/sortDir/needsSourceOnly are required props; the interactive
+  // Default overrides them with local refs, so these defaults only satisfy the
+  // CSF3 story typing.
+  args: { search: '', sortKey: 'title', sortDir: 'asc', needsSourceOnly: false },
 } satisfies Meta<typeof LibraryToolbar>
 
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Interactive — typing filters and the dropdown re-sorts local state. */
+/** Interactive — typing filters, the dropdown re-sorts, and the "Needs source"
+ * pill toggles, all against local state. */
 export const Default: Story = {
   render: () => ({
     components: { LibraryToolbar },
@@ -28,16 +30,18 @@ export const Default: Story = {
       const search = ref('')
       const sortKey = ref<SortKey>('title')
       const sortDir = ref<SortDir>('asc')
+      const needsSourceOnly = ref(false)
       const onSort = (p: { key: SortKey; dir: SortDir }): void => {
         sortKey.value = p.key
         sortDir.value = p.dir
       }
-      return { search, sortKey, sortDir, onSort }
+      return { search, sortKey, sortDir, needsSourceOnly, onSort }
     },
     template: `
       <div style="max-width:720px">
         <LibraryToolbar
           v-model:search="search"
+          v-model:needs-source-only="needsSourceOnly"
           :sort-key="sortKey"
           :sort-dir="sortDir"
           @update:sort="onSort"
@@ -70,4 +74,9 @@ export const RecentlyUpdated: Story = {
 /** Most unread selected. */
 export const MostUnread: Story = {
   args: { search: '', sortKey: 'unread', sortDir: 'desc' },
+}
+
+/** The "Needs source" filter active — the pill reads amber/pressed. */
+export const NeedsSourceActive: Story = {
+  args: { search: '', sortKey: 'title', sortDir: 'asc', needsSourceOnly: true },
 }

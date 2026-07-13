@@ -128,6 +128,7 @@ components:
         - coverUrl
         - monitored
         - completed
+        - needsSource
         - chapterCounts
         - createdAt
         - lastChapterDownloadedAt
@@ -165,6 +166,12 @@ components:
         completed:
           type: boolean
           description: Whether the owner has marked the series finished (excluded from refresh + health).
+        needsSource:
+          type: boolean
+          description: >-
+            True when the series has NO live download source (zero providers with a real Suwayomi
+            id — every provider is disk-origin). COVER-INDEPENDENT: a series can carry a metadata
+            cover while still needing a real source matched (the Kaizoku-migration case).
         chapterCounts:
           $ref: "#/components/schemas/ChapterCounts"
         createdAt:
@@ -409,6 +416,7 @@ components:
         - coverUrl
         - monitored
         - completed
+        - needsSource
         - chapterCounts
         - createdAt
         - lastChapterDownloadedAt
@@ -458,6 +466,12 @@ components:
         completed:
           type: boolean
           description: Whether the owner has marked the series finished (excluded from refresh + health).
+        needsSource:
+          type: boolean
+          description: >-
+            True when the series has NO live download source (zero providers with a real Suwayomi
+            id — every provider is disk-origin). COVER-INDEPENDENT: a series can carry a metadata
+            cover while still needing a real source matched (the Kaizoku-migration case).
         chapterCounts:
           $ref: "#/components/schemas/ChapterCounts"
         createdAt:

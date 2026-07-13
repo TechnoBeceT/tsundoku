@@ -16,8 +16,8 @@ import type { Provider, SeriesDetail } from '../screens/seriesDetail.types'
 
 /**
  * RichSeriesCard — the Komga-style rich catalogue card for one series, and a
- * SUPERSET of SeriesHeader: cover, title + alt-titles, year/status/language
- * badges, a clamped synopsis, the source + author credits, genre and tag chip
+ * SUPERSET of SeriesHeader: cover, title + alt-titles, year/status/language/
+ * needs-source badges, a clamped synopsis, the source + author credits, genre and tag chip
  * rows, the external LINKS row (the card's signature element), Tsundoku's own
  * chapter stats (Total / On disk / Wanted / Failed / Unread), AND the series
  * management controls (Monitored / Completed toggles, the Category select, and a
@@ -117,7 +117,7 @@ const statusTone = computed<'neutral' | 'accent' | 'success' | 'warn' | 'danger'
 })
 
 const hasBadges = computed(
-  () => props.series.year !== undefined || !!props.series.status || !!primaryLanguage.value,
+  () => props.series.year !== undefined || !!props.series.status || !!primaryLanguage.value || props.series.needsSource,
 )
 </script>
 
@@ -165,7 +165,10 @@ const hasBadges = computed(
           </div>
         </div>
 
-        <!-- Year / status / language badges -->
+        <!-- Year / status / language / needs-source badges. NeedsSource is
+             deliberately part of this always-rendered badge row rather than
+             gated on the cover, so it stays visible EVEN WHEN the series has
+             a metadata cover (handover 2026-07-13#15 — cover ⊥ source). -->
         <div v-if="hasBadges" class="rich__badges">
           <Tag v-if="series.year !== undefined" tone="neutral">
             <template #icon><Icon name="lucide:calendar" /></template>
@@ -173,6 +176,10 @@ const hasBadges = computed(
           </Tag>
           <Tag v-if="series.status" :tone="statusTone">{{ series.status }}</Tag>
           <Chip v-if="primaryLanguage" variant="language">{{ primaryLanguage }}</Chip>
+          <Tag v-if="series.needsSource" tone="warn">
+            <template #icon><Icon name="lucide:triangle-alert" /></template>
+            Needs source
+          </Tag>
         </div>
 
         <!-- Synopsis -->

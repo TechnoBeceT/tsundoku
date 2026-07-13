@@ -6,6 +6,7 @@ import {
   richSeriesFull,
   richSeriesLong,
   richSeriesMinimal,
+  richSeriesNeedsSource,
   richSeriesNoCover,
 } from '../../fixtures/seriesDetail'
 
@@ -79,6 +80,17 @@ export const MinimalData: Story = {
 /** No cover URL — the branded placeholder fills the cover box. */
 export const NoCover: Story = {
   args: { series: richSeriesNoCover },
+}
+
+/**
+ * `needsSource: true` WITH a real cover — the cover-independence proof
+ * (handover 2026-07-13#15). The amber "Needs source" badge renders in the
+ * header badge row alongside year/status/language even though the cover
+ * itself renders normally; this is the Kaizoku-migration case (auto-identify
+ * gave the series a cover, but no live download source is attached yet).
+ */
+export const NeedsSource: Story = {
+  args: { series: richSeriesNeedsSource },
 }
 
 /** Overflow stress — long title/alts/synopsis and large chip + link sets. */
