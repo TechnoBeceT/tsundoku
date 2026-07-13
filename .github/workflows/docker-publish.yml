@@ -22,11 +22,6 @@ on:
     branches:
       - main
       - v2
-      # Feature branch under active owner testing. It publishes its own
-      # branch-named tag AND takes over "edge" (see the tag rules below) so the
-      # image can be pulled without typing the full branch name. TEMPORARY —
-      # remove this entry (and the edge override) when the branch merges into v2.
-      - source-truth-fractional-control
     tags:
       - "v*"
   workflow_dispatch:
@@ -71,19 +66,24 @@ jobs:
       # verbatim — no manual lowercasing needed.
       #
       # Tag scheme produced here:
-      #   main branch push    -> "main"   (type=ref,event=branch) + "edge"
-      #   v2 branch push      -> "v2"     (type=ref,event=branch — the V2 line)
-      #   feature-branch push -> "<branch-name>" + "edge" (while listed in the
-      #                          push trigger above — see the note there)
-      #   v1.2.3 tag push     -> "1.2.3"  (full semver)
-      #                       -> "1.2"    (major.minor, moves with each patch)
-      #                       -> "latest" (only ever moved by a tagged release)
+      #   main branch push -> "main"   (type=ref,event=branch) + "edge"
+      #   v2 branch push   -> "v2"     (type=ref,event=branch — the V2 line)
+      #   v1.2.3 tag push  -> "1.2.3"  (full semver)
+      #                    -> "1.2"    (major.minor, moves with each patch)
+      #                    -> "latest" (only ever moved by a tagged release)
       #
-      # ROLES: `latest` tracks RELEASES. `v2` tracks the V2 integration line (the
-      # deployed image). `edge` is the rolling TESTING pointer — it deliberately
-      # follows whatever is currently under test, so a feature branch may take it
-      # over. It is NOT a deployment tag, which is why moving it is safe.
-      # `latest` is gated on a v* TAG, so no branch build can ever move it.
+      # ROLES: `latest` tracks RELEASES (gated on a v* TAG, so no branch build can
+      # ever move it). `v2` tracks the V2 integration line — the image the owner
+      # actually deploys. `edge` is the rolling TESTING pointer and follows the
+      # default branch; it is NOT a deployment tag.
+      #
+      # TO TEST A FEATURE BRANCH: add it to the `branches:` trigger above (it then
+      # publishes under its own branch name via type=ref) and, if you want a short
+      # tag to pull, temporarily point `edge` at it:
+      #   type=raw,value=edge,enable=${{ github.ref == 'refs/heads/<branch>' }}
+      # REVERT BOTH when the branch merges — otherwise the merge carries dead config
+      # referencing a branch that no longer exists, and `edge` silently stops
+      # tracking anything.
       - name: Extract Docker metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -91,7 +91,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=ref,event=branch
-            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/source-truth-fractional-control' }}
+            type=raw,value=edge,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
