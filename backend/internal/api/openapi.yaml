@@ -129,6 +129,8 @@ components:
         - monitored
         - completed
         - chapterCounts
+        - createdAt
+        - lastChapterDownloadedAt
       properties:
         id:
           type: string
@@ -165,6 +167,20 @@ components:
           description: Whether the owner has marked the series finished (excluded from refresh + health).
         chapterCounts:
           $ref: "#/components/schemas/ChapterCounts"
+        createdAt:
+          type: string
+          format: date-time
+          description: When the series entered the library. Powers the "recently added" sort.
+        lastChapterDownloadedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this series' newest chapter became readable — MAX(first_downloaded_at) across
+            its chapters. Powers the "recently updated" sort. Null when no chapter ever carried a
+            first-downloaded time. NOT MAX(download_date): a download_date is a fetch timestamp a
+            convergence upgrade rewrites on an old chapter, which would float a series to the top
+            with nothing new to read. Always present as a key; its value may be null.
 
     Chapter:
       type: object
@@ -394,6 +410,8 @@ components:
         - monitored
         - completed
         - chapterCounts
+        - createdAt
+        - lastChapterDownloadedAt
         - chapters
         - providers
       properties:
@@ -432,6 +450,20 @@ components:
           description: Whether the owner has marked the series finished (excluded from refresh + health).
         chapterCounts:
           $ref: "#/components/schemas/ChapterCounts"
+        createdAt:
+          type: string
+          format: date-time
+          description: When the series entered the library. Powers the "recently added" sort.
+        lastChapterDownloadedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this series' newest chapter became readable — MAX(first_downloaded_at) across
+            its chapters. Powers the "recently updated" sort. Null when no chapter ever carried a
+            first-downloaded time. NOT MAX(download_date): a download_date is a fetch timestamp a
+            convergence upgrade rewrites on an old chapter, which would float a series to the top
+            with nothing new to read. Always present as a key; its value may be null.
         chapters:
           type: array
           description: The series' chapters, ordered by number then chapter key.

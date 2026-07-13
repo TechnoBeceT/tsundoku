@@ -483,12 +483,15 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 
 	chapters := make([]ChapterDTO, len(row.Edges.Chapters))
 	counts := ChapterCounts{}
+	var lastDownloaded *time.Time // MAX(first_downloaded_at) over non-superseded chapters
 	for i, ch := range row.Edges.Chapters {
 		chapters[i] = newChapterDTO(ch, titles[ch.ChapterKey])
-		if ch.State != entchapter.StateSuperseded {
-			counts.Total++
+		if ch.State == entchapter.StateSuperseded {
+			continue // superseded parts are merged into their whole — not counted (mirrors chapterRollups)
 		}
+		counts.Total++
 		addToCounts(&counts, ch)
+		lastDownloaded = laterTime(lastDownloaded, ch.FirstDownloadedAt)
 	}
 
 	metaProv := MetadataProvider(row)
@@ -505,17 +508,19 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 	}
 
 	return SeriesDetailDTO{
-		ID:            row.ID.String(),
-		Title:         row.Title,
-		DisplayName:   dispName,
-		Slug:          row.Slug,
-		Category:      category.NameOf(row),
-		CoverURL:      coverURL,
-		Monitored:     row.Monitored,
-		Completed:     row.Completed,
-		ChapterCounts: counts,
-		Chapters:      chapters,
-		Providers:     providers,
+		ID:                      row.ID.String(),
+		Title:                   row.Title,
+		DisplayName:             dispName,
+		Slug:                    row.Slug,
+		Category:                category.NameOf(row),
+		CoverURL:                coverURL,
+		Monitored:               row.Monitored,
+		Completed:               row.Completed,
+		ChapterCounts:           counts,
+		CreatedAt:               formatRFC3339(row.CreatedAt),
+		LastChapterDownloadedAt: formatRFC3339Ptr(lastDownloaded),
+		Chapters:                chapters,
+		Providers:               providers,
 	}, nil
 }
 
@@ -730,13 +735,31 @@ type chapterRollupRow struct {
 	State    entchapter.State `json:"state"`
 	Read     bool             `json:"read"`
 	Count    int              `json:"count"`
+	// MaxFirstDownloadedAt is the newest first_downloaded_at within this
+	// (state, read) group. NULLABLE (*time.Time): a group may hold only chapters
+	// that never carried one (e.g. wanted chapters), in which case MAX is SQL NULL
+	// → nil. The caller folds the per-group maxima into ONE per-series maximum,
+	// ignoring nils.
+	MaxFirstDownloadedAt *time.Time `json:"max"`
+}
+
+// seriesRollup is the per-series result of chapterRollups: the chapter-state
+// counts plus the newest first_downloaded_at across all the series' chapters
+// (nil when no chapter ever carried one). LastChapterDownloadedAt is deliberately
+// MAX(first_downloaded_at), NOT MAX(download_date) — see the DTO doc.
+type seriesRollup struct {
+	Counts                  ChapterCounts
+	LastChapterDownloadedAt *time.Time
 }
 
 // chapterRollups runs ONE grouped aggregate (GROUP BY series_id, state, read)
-// over the given series ids and returns a per-series ChapterCounts map. Returns
-// an empty map (not nil) when there are no ids, so callers can index it safely.
-func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]ChapterCounts, error) {
-	out := make(map[uuid.UUID]ChapterCounts, len(ids))
+// over the given series ids and returns a per-series seriesRollup map — the
+// chapter-state counts AND MAX(first_downloaded_at), both from the SAME query
+// (no N+1, no second round-trip: the nullable MAX folds into the existing
+// GroupBy aggregate). Returns an empty map (not nil) when there are no ids, so
+// callers can index it safely.
+func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]seriesRollup, error) {
+	out := make(map[uuid.UUID]seriesRollup, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
@@ -745,7 +768,7 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 	err := s.client.Chapter.Query().
 		Where(entchapter.SeriesIDIn(ids...)).
 		GroupBy(entchapter.FieldSeriesID, entchapter.FieldState, entchapter.FieldRead).
-		Aggregate(ent.Count()).
+		Aggregate(ent.Count(), ent.As(ent.Max(entchapter.FieldFirstDownloadedAt), "max")).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("series.chapterRollups: aggregate chapter states: %w", err)
@@ -755,22 +778,40 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 		if r.State == entchapter.StateSuperseded {
 			continue // superseded parts are merged into their whole — not counted
 		}
-		c := out[r.SeriesID]
-		c.Total += r.Count
+		agg := out[r.SeriesID]
+		agg.Counts.Total += r.Count
 		switch r.State {
 		case entchapter.StateDownloaded:
-			c.Downloaded += r.Count
+			agg.Counts.Downloaded += r.Count
 			if !r.Read {
-				c.Unread += r.Count
+				agg.Counts.Unread += r.Count
 			}
 		case entchapter.StateWanted:
-			c.Wanted += r.Count
+			agg.Counts.Wanted += r.Count
 		case entchapter.StateFailed:
-			c.Failed += r.Count
+			agg.Counts.Failed += r.Count
 		}
-		out[r.SeriesID] = c
+		agg.LastChapterDownloadedAt = laterTime(agg.LastChapterDownloadedAt, r.MaxFirstDownloadedAt)
+		out[r.SeriesID] = agg
 	}
 	return out, nil
+}
+
+// laterTime returns the newer of two nullable timestamps (nil = absent). It is
+// how chapterRollups folds each group's MAX(first_downloaded_at) into one
+// per-series maximum without a superseded group ever contributing (those rows
+// are skipped before this is called).
+func laterTime(a, b *time.Time) *time.Time {
+	switch {
+	case b == nil:
+		return a
+	case a == nil:
+		return b
+	case b.After(*a):
+		return b
+	default:
+		return a
+	}
 }
 
 // MetadataProvider returns the SeriesProvider that supplies the display metadata

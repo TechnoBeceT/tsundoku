@@ -46,6 +46,18 @@ type SeriesSummaryDTO struct {
 	Monitored     bool          `json:"monitored"`
 	Completed     bool          `json:"completed"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
+	// CreatedAt is when the series entered the library (RFC3339). Powers the
+	// "recently added" sort. Always present.
+	CreatedAt string `json:"createdAt"`
+	// LastChapterDownloadedAt is when this series' NEWEST chapter became READABLE
+	// — MAX(first_downloaded_at) (RFC3339; null when no chapter ever carried one).
+	// Powers "recently updated".
+	//
+	// NOT MAX(download_date): that is a FETCH timestamp, and a convergence upgrade
+	// rewrites it on an OLD chapter — which would float a series to the top with
+	// nothing new to read. A nil value serializes as JSON null, never the zero
+	// time and never "".
+	LastChapterDownloadedAt *string `json:"lastChapterDownloadedAt"`
 }
 
 // SeriesDetailDTO is the full series view: the summary fields plus the series'
@@ -62,8 +74,15 @@ type SeriesDetailDTO struct {
 	Monitored     bool          `json:"monitored"`
 	Completed     bool          `json:"completed"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
-	Chapters      []ChapterDTO  `json:"chapters"`
-	Providers     []ProviderDTO `json:"providers"`
+	// CreatedAt / LastChapterDownloadedAt are the library-grid sort keys, carried
+	// here too so detailToSummary (the detail→summary projection every mutating
+	// handler uses) never drops them (§16). See the SeriesSummaryDTO fields for
+	// the semantics — LastChapterDownloadedAt is MAX(first_downloaded_at), NOT
+	// MAX(download_date).
+	CreatedAt               string        `json:"createdAt"`
+	LastChapterDownloadedAt *string       `json:"lastChapterDownloadedAt"`
+	Chapters                []ChapterDTO  `json:"chapters"`
+	Providers               []ProviderDTO `json:"providers"`
 }
 
 // ChapterDTO is one chapter in a series-detail response. ID is the Chapter UUID —
@@ -190,21 +209,41 @@ type SeriesHealthDTO struct {
 // newSummaryDTO maps an ent.Series plus its computed rollup into a summary DTO.
 // s.Edges.Providers AND s.Edges.Category must be eagerly loaded; MetadataProvider
 // + SeriesDisplay resolve DisplayName and CoverURL from the provider set, and
-// category.NameOf resolves the category name from the edge.
-func newSummaryDTO(s *ent.Series, counts ChapterCounts) SeriesSummaryDTO {
+// category.NameOf resolves the category name from the edge. rollup carries the
+// chapter-state counts and the newest first_downloaded_at (nil when unknown).
+func newSummaryDTO(s *ent.Series, rollup seriesRollup) SeriesSummaryDTO {
 	meta := MetadataProvider(s)
 	dispName, coverURL := SeriesDisplay(s, meta)
 	return SeriesSummaryDTO{
-		ID:            s.ID.String(),
-		Title:         s.Title,
-		DisplayName:   dispName,
-		Slug:          s.Slug,
-		Category:      category.NameOf(s),
-		CoverURL:      coverURL,
-		Monitored:     s.Monitored,
-		Completed:     s.Completed,
-		ChapterCounts: counts,
+		ID:                      s.ID.String(),
+		Title:                   s.Title,
+		DisplayName:             dispName,
+		Slug:                    s.Slug,
+		Category:                category.NameOf(s),
+		CoverURL:                coverURL,
+		Monitored:               s.Monitored,
+		Completed:               s.Completed,
+		ChapterCounts:           rollup.Counts,
+		CreatedAt:               formatRFC3339(s.CreatedAt),
+		LastChapterDownloadedAt: formatRFC3339Ptr(rollup.LastChapterDownloadedAt),
 	}
+}
+
+// formatRFC3339 renders a timestamp as a UTC RFC3339 string — the wire form for
+// the summary/detail sort-key fields.
+func formatRFC3339(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
+}
+
+// formatRFC3339Ptr renders a nullable timestamp: nil stays nil (JSON null),
+// never the zero time and never "", so a series with no readable chapter can
+// never sort as "the beginning of time".
+func formatRFC3339Ptr(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := formatRFC3339(*t)
+	return &s
 }
 
 // newChapterDTO maps an ent.Chapter into its detail DTO. The chapter's display
