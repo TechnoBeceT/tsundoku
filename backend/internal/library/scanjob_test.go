@@ -210,7 +210,25 @@ func TestStartScan_WatchdogTimeoutReleasesLatch(t *testing.T) {
 	restoreBlock()
 	restoreTimeout()
 
-	if again := svc.StartScan(context.Background()); !again {
+	// StartScan releases the latch in a DEFER on the scan goroutine, which runs
+	// strictly AFTER that goroutine broadcasts scan.done (see scanjob.go). So
+	// observing scan.done above establishes only that the release is imminent —
+	// not that it has already happened. Asserting StartScan()==true on the very
+	// next statement therefore races the deferred release, and loses whenever the
+	// machine is loaded enough to deschedule the scan goroutine between its
+	// broadcast and its defer (a sub-second, load-dependent flake).
+	//
+	// Poll instead of sleeping a magic constant. The assertion is UNCHANGED in
+	// strength — the latch must be released, and if it never is, this still fails
+	// — it simply grants the already-committed release a bounded moment to land.
+	deadline := time.Now().Add(2 * time.Second)
+	var again bool
+	for !again && time.Now().Before(deadline) {
+		if again = svc.StartScan(context.Background()); !again {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if !again {
 		t.Fatal("StartScan after a watchdog timeout returned false, want true (latch must be released)")
 	}
 	// Drain the second scan too so its goroutine doesn't outlive the test.
