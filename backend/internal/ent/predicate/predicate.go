@@ -47,3 +47,9 @@ type SourceMetric func(*sql.Selector)
 
 // SuwayomiSyncState is the predicate function for suwayomisyncstate builders.
 type SuwayomiSyncState func(*sql.Selector)
+
+// TrackBinding is the predicate function for trackbinding builders.
+type TrackBinding func(*sql.Selector)
+
+// TrackerConnection is the predicate function for trackerconnection builders.
+type TrackerConnection func(*sql.Selector)

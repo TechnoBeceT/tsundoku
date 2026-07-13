@@ -895,6 +895,29 @@ func HasCategoryWith(preds ...predicate.Category) predicate.Series {
 	})
 }
 
+// HasTrackBindings applies the HasEdge predicate on the "track_bindings" edge.
+func HasTrackBindings() predicate.Series {
+	return predicate.Series(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, TrackBindingsTable, TrackBindingsColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasTrackBindingsWith applies the HasEdge predicate on the "track_bindings" edge with a given conditions (other predicates).
+func HasTrackBindingsWith(preds ...predicate.TrackBinding) predicate.Series {
+	return predicate.Series(func(s *sql.Selector) {
+		step := newTrackBindingsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
 // And groups predicates with the AND operator between them.
 func And(predicates ...predicate.Series) predicate.Series {
 	return predicate.Series(sql.AndPredicates(predicates...))

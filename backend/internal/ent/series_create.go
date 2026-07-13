@@ -15,6 +15,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 )
 
 // SeriesCreate is the builder for creating a Series entity.
@@ -251,6 +252,21 @@ func (_c *SeriesCreate) AddChapters(v ...*Chapter) *SeriesCreate {
 // SetCategory sets the "category" edge to the Category entity.
 func (_c *SeriesCreate) SetCategory(v *Category) *SeriesCreate {
 	return _c.SetCategoryID(v.ID)
+}
+
+// AddTrackBindingIDs adds the "track_bindings" edge to the TrackBinding entity by IDs.
+func (_c *SeriesCreate) AddTrackBindingIDs(ids ...uuid.UUID) *SeriesCreate {
+	_c.mutation.AddTrackBindingIDs(ids...)
+	return _c
+}
+
+// AddTrackBindings adds the "track_bindings" edges to the TrackBinding entity.
+func (_c *SeriesCreate) AddTrackBindings(v ...*TrackBinding) *SeriesCreate {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddTrackBindingIDs(ids...)
 }
 
 // Mutation returns the SeriesMutation object of the builder.
@@ -506,6 +522,22 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		_node.CategoryID = nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.TrackBindingsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   series.TrackBindingsTable,
+			Columns: []string{series.TrackBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(trackbinding.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	return _node, _spec

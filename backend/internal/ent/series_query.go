@@ -18,18 +18,20 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 )
 
 // SeriesQuery is the builder for querying Series entities.
 type SeriesQuery struct {
 	config
-	ctx           *QueryContext
-	order         []series.OrderOption
-	inters        []Interceptor
-	predicates    []predicate.Series
-	withProviders *SeriesProviderQuery
-	withChapters  *ChapterQuery
-	withCategory  *CategoryQuery
+	ctx               *QueryContext
+	order             []series.OrderOption
+	inters            []Interceptor
+	predicates        []predicate.Series
+	withProviders     *SeriesProviderQuery
+	withChapters      *ChapterQuery
+	withCategory      *CategoryQuery
+	withTrackBindings *TrackBindingQuery
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -125,6 +127,28 @@ func (_q *SeriesQuery) QueryCategory() *CategoryQuery {
 			sqlgraph.From(series.Table, series.FieldID, selector),
 			sqlgraph.To(category.Table, category.FieldID),
 			sqlgraph.Edge(sqlgraph.M2O, true, series.CategoryTable, series.CategoryColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryTrackBindings chains the current query on the "track_bindings" edge.
+func (_q *SeriesQuery) QueryTrackBindings() *TrackBindingQuery {
+	query := (&TrackBindingClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(series.Table, series.FieldID, selector),
+			sqlgraph.To(trackbinding.Table, trackbinding.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, series.TrackBindingsTable, series.TrackBindingsColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -319,14 +343,15 @@ func (_q *SeriesQuery) Clone() *SeriesQuery {
 		return nil
 	}
 	return &SeriesQuery{
-		config:        _q.config,
-		ctx:           _q.ctx.Clone(),
-		order:         append([]series.OrderOption{}, _q.order...),
-		inters:        append([]Interceptor{}, _q.inters...),
-		predicates:    append([]predicate.Series{}, _q.predicates...),
-		withProviders: _q.withProviders.Clone(),
-		withChapters:  _q.withChapters.Clone(),
-		withCategory:  _q.withCategory.Clone(),
+		config:            _q.config,
+		ctx:               _q.ctx.Clone(),
+		order:             append([]series.OrderOption{}, _q.order...),
+		inters:            append([]Interceptor{}, _q.inters...),
+		predicates:        append([]predicate.Series{}, _q.predicates...),
+		withProviders:     _q.withProviders.Clone(),
+		withChapters:      _q.withChapters.Clone(),
+		withCategory:      _q.withCategory.Clone(),
+		withTrackBindings: _q.withTrackBindings.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
@@ -363,6 +388,17 @@ func (_q *SeriesQuery) WithCategory(opts ...func(*CategoryQuery)) *SeriesQuery {
 		opt(query)
 	}
 	_q.withCategory = query
+	return _q
+}
+
+// WithTrackBindings tells the query-builder to eager-load the nodes that are connected to
+// the "track_bindings" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *SeriesQuery) WithTrackBindings(opts ...func(*TrackBindingQuery)) *SeriesQuery {
+	query := (&TrackBindingClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withTrackBindings = query
 	return _q
 }
 
@@ -444,10 +480,11 @@ func (_q *SeriesQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Serie
 	var (
 		nodes       = []*Series{}
 		_spec       = _q.querySpec()
-		loadedTypes = [3]bool{
+		loadedTypes = [4]bool{
 			_q.withProviders != nil,
 			_q.withChapters != nil,
 			_q.withCategory != nil,
+			_q.withTrackBindings != nil,
 		}
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
@@ -485,6 +522,13 @@ func (_q *SeriesQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Serie
 	if query := _q.withCategory; query != nil {
 		if err := _q.loadCategory(ctx, query, nodes, nil,
 			func(n *Series, e *Category) { n.Edges.Category = e }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withTrackBindings; query != nil {
+		if err := _q.loadTrackBindings(ctx, query, nodes,
+			func(n *Series) { n.Edges.TrackBindings = []*TrackBinding{} },
+			func(n *Series, e *TrackBinding) { n.Edges.TrackBindings = append(n.Edges.TrackBindings, e) }); err != nil {
 			return nil, err
 		}
 	}
@@ -577,6 +621,36 @@ func (_q *SeriesQuery) loadCategory(ctx context.Context, query *CategoryQuery, n
 		for i := range nodes {
 			assign(nodes[i], n)
 		}
+	}
+	return nil
+}
+func (_q *SeriesQuery) loadTrackBindings(ctx context.Context, query *TrackBindingQuery, nodes []*Series, init func(*Series), assign func(*Series, *TrackBinding)) error {
+	fks := make([]driver.Value, 0, len(nodes))
+	nodeids := make(map[uuid.UUID]*Series)
+	for i := range nodes {
+		fks = append(fks, nodes[i].ID)
+		nodeids[nodes[i].ID] = nodes[i]
+		if init != nil {
+			init(nodes[i])
+		}
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(trackbinding.FieldSeriesID)
+	}
+	query.Where(predicate.TrackBinding(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(series.TrackBindingsColumn), fks...))
+	}))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		fk := n.SeriesID
+		node, ok := nodeids[fk]
+		if !ok {
+			return fmt.Errorf(`unexpected referenced foreign-key "series_id" returned %v for node %v`, fk, n.ID)
+		}
+		assign(node, n)
 	}
 	return nil
 }

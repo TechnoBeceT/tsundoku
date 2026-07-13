@@ -177,6 +177,30 @@ func (f SuwayomiSyncStateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SuwayomiSyncStateMutation", m)
 }
 
+// The TrackBindingFunc type is an adapter to allow the use of ordinary
+// function as TrackBinding mutator.
+type TrackBindingFunc func(context.Context, *ent.TrackBindingMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f TrackBindingFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.TrackBindingMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.TrackBindingMutation", m)
+}
+
+// The TrackerConnectionFunc type is an adapter to allow the use of ordinary
+// function as TrackerConnection mutator.
+type TrackerConnectionFunc func(context.Context, *ent.TrackerConnectionMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f TrackerConnectionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.TrackerConnectionMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.TrackerConnectionMutation", m)
+}
+
 // Condition is a hook condition function.
 type Condition func(context.Context, ent.Mutation) bool
 

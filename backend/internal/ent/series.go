@@ -61,9 +61,11 @@ type SeriesEdges struct {
 	Chapters []*Chapter `json:"chapters,omitempty"`
 	// Category holds the value of the category edge.
 	Category *Category `json:"category,omitempty"`
+	// TrackBindings holds the value of the track_bindings edge.
+	TrackBindings []*TrackBinding `json:"track_bindings,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [3]bool
+	loadedTypes [4]bool
 }
 
 // ProvidersOrErr returns the Providers value or an error if the edge
@@ -93,6 +95,15 @@ func (e SeriesEdges) CategoryOrErr() (*Category, error) {
 		return nil, &NotFoundError{label: category.Label}
 	}
 	return nil, &NotLoadedError{edge: "category"}
+}
+
+// TrackBindingsOrErr returns the TrackBindings value or an error if the edge
+// was not loaded in eager-loading.
+func (e SeriesEdges) TrackBindingsOrErr() ([]*TrackBinding, error) {
+	if e.loadedTypes[3] {
+		return e.TrackBindings, nil
+	}
+	return nil, &NotLoadedError{edge: "track_bindings"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -242,6 +253,11 @@ func (_m *Series) QueryChapters() *ChapterQuery {
 // QueryCategory queries the "category" edge of the Series entity.
 func (_m *Series) QueryCategory() *CategoryQuery {
 	return NewSeriesClient(_m.config).QueryCategory(_m)
+}
+
+// QueryTrackBindings queries the "track_bindings" edge of the Series entity.
+func (_m *Series) QueryTrackBindings() *TrackBindingQuery {
+	return NewSeriesClient(_m.config).QueryTrackBindings(_m)
 }
 
 // Update returns a builder for updating this Series.

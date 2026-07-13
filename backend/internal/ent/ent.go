@@ -26,6 +26,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
+	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
+	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
 )
 
 // ent aliases to avoid import conflicts in user's code.
@@ -100,6 +102,8 @@ func checkColumn(t, c string) error {
 			sourceevent.Table:        sourceevent.ValidColumn,
 			sourcemetric.Table:       sourcemetric.ValidColumn,
 			suwayomisyncstate.Table:  suwayomisyncstate.ValidColumn,
+			trackbinding.Table:       trackbinding.ValidColumn,
+			trackerconnection.Table:  trackerconnection.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

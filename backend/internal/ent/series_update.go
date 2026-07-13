@@ -17,6 +17,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 )
 
 // SeriesUpdate is the builder for updating Series entities.
@@ -253,6 +254,21 @@ func (_u *SeriesUpdate) SetCategory(v *Category) *SeriesUpdate {
 	return _u.SetCategoryID(v.ID)
 }
 
+// AddTrackBindingIDs adds the "track_bindings" edge to the TrackBinding entity by IDs.
+func (_u *SeriesUpdate) AddTrackBindingIDs(ids ...uuid.UUID) *SeriesUpdate {
+	_u.mutation.AddTrackBindingIDs(ids...)
+	return _u
+}
+
+// AddTrackBindings adds the "track_bindings" edges to the TrackBinding entity.
+func (_u *SeriesUpdate) AddTrackBindings(v ...*TrackBinding) *SeriesUpdate {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddTrackBindingIDs(ids...)
+}
+
 // Mutation returns the SeriesMutation object of the builder.
 func (_u *SeriesUpdate) Mutation() *SeriesMutation {
 	return _u.mutation
@@ -304,6 +320,27 @@ func (_u *SeriesUpdate) RemoveChapters(v ...*Chapter) *SeriesUpdate {
 func (_u *SeriesUpdate) ClearCategory() *SeriesUpdate {
 	_u.mutation.ClearCategory()
 	return _u
+}
+
+// ClearTrackBindings clears all "track_bindings" edges to the TrackBinding entity.
+func (_u *SeriesUpdate) ClearTrackBindings() *SeriesUpdate {
+	_u.mutation.ClearTrackBindings()
+	return _u
+}
+
+// RemoveTrackBindingIDs removes the "track_bindings" edge to TrackBinding entities by IDs.
+func (_u *SeriesUpdate) RemoveTrackBindingIDs(ids ...uuid.UUID) *SeriesUpdate {
+	_u.mutation.RemoveTrackBindingIDs(ids...)
+	return _u
+}
+
+// RemoveTrackBindings removes "track_bindings" edges to TrackBinding entities.
+func (_u *SeriesUpdate) RemoveTrackBindings(v ...*TrackBinding) *SeriesUpdate {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveTrackBindingIDs(ids...)
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
@@ -502,6 +539,51 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(category.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.TrackBindingsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   series.TrackBindingsTable,
+			Columns: []string{series.TrackBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(trackbinding.FieldID, field.TypeUUID),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedTrackBindingsIDs(); len(nodes) > 0 && !_u.mutation.TrackBindingsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   series.TrackBindingsTable,
+			Columns: []string{series.TrackBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(trackbinding.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.TrackBindingsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   series.TrackBindingsTable,
+			Columns: []string{series.TrackBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(trackbinding.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {
@@ -750,6 +832,21 @@ func (_u *SeriesUpdateOne) SetCategory(v *Category) *SeriesUpdateOne {
 	return _u.SetCategoryID(v.ID)
 }
 
+// AddTrackBindingIDs adds the "track_bindings" edge to the TrackBinding entity by IDs.
+func (_u *SeriesUpdateOne) AddTrackBindingIDs(ids ...uuid.UUID) *SeriesUpdateOne {
+	_u.mutation.AddTrackBindingIDs(ids...)
+	return _u
+}
+
+// AddTrackBindings adds the "track_bindings" edges to the TrackBinding entity.
+func (_u *SeriesUpdateOne) AddTrackBindings(v ...*TrackBinding) *SeriesUpdateOne {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddTrackBindingIDs(ids...)
+}
+
 // Mutation returns the SeriesMutation object of the builder.
 func (_u *SeriesUpdateOne) Mutation() *SeriesMutation {
 	return _u.mutation
@@ -801,6 +898,27 @@ func (_u *SeriesUpdateOne) RemoveChapters(v ...*Chapter) *SeriesUpdateOne {
 func (_u *SeriesUpdateOne) ClearCategory() *SeriesUpdateOne {
 	_u.mutation.ClearCategory()
 	return _u
+}
+
+// ClearTrackBindings clears all "track_bindings" edges to the TrackBinding entity.
+func (_u *SeriesUpdateOne) ClearTrackBindings() *SeriesUpdateOne {
+	_u.mutation.ClearTrackBindings()
+	return _u
+}
+
+// RemoveTrackBindingIDs removes the "track_bindings" edge to TrackBinding entities by IDs.
+func (_u *SeriesUpdateOne) RemoveTrackBindingIDs(ids ...uuid.UUID) *SeriesUpdateOne {
+	_u.mutation.RemoveTrackBindingIDs(ids...)
+	return _u
+}
+
+// RemoveTrackBindings removes "track_bindings" edges to TrackBinding entities.
+func (_u *SeriesUpdateOne) RemoveTrackBindings(v ...*TrackBinding) *SeriesUpdateOne {
+	ids := make([]uuid.UUID, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveTrackBindingIDs(ids...)
 }
 
 // Where appends a list predicates to the SeriesUpdate builder.
@@ -1029,6 +1147,51 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(category.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.TrackBindingsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   series.TrackBindingsTable,
+			Columns: []string{series.TrackBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(trackbinding.FieldID, field.TypeUUID),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedTrackBindingsIDs(); len(nodes) > 0 && !_u.mutation.TrackBindingsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   series.TrackBindingsTable,
+			Columns: []string{series.TrackBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(trackbinding.FieldID, field.TypeUUID),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.TrackBindingsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   series.TrackBindingsTable,
+			Columns: []string{series.TrackBindingsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(trackbinding.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {

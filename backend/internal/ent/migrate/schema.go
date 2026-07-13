@@ -334,6 +334,66 @@ var (
 			},
 		},
 	}
+	// TrackBindingsColumns holds the columns for the "track_bindings" table.
+	TrackBindingsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "tracker_id", Type: field.TypeInt},
+		{Name: "remote_id", Type: field.TypeString},
+		{Name: "remote_url", Type: field.TypeString, Default: ""},
+		{Name: "library_id", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "title", Type: field.TypeString, Default: ""},
+		{Name: "status", Type: field.TypeString, Default: ""},
+		{Name: "last_chapter_read", Type: field.TypeFloat64, Default: 0},
+		{Name: "total_chapters", Type: field.TypeInt, Default: 0},
+		{Name: "score", Type: field.TypeFloat64, Default: 0},
+		{Name: "start_date", Type: field.TypeTime, Nullable: true},
+		{Name: "finish_date", Type: field.TypeTime, Nullable: true},
+		{Name: "private", Type: field.TypeBool, Default: false},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "series_id", Type: field.TypeUUID},
+	}
+	// TrackBindingsTable holds the schema information for the "track_bindings" table.
+	TrackBindingsTable = &schema.Table{
+		Name:       "track_bindings",
+		Columns:    TrackBindingsColumns,
+		PrimaryKey: []*schema.Column{TrackBindingsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "track_bindings_series_track_bindings",
+				Columns:    []*schema.Column{TrackBindingsColumns[15]},
+				RefColumns: []*schema.Column{SeriesColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "trackbinding_series_id_tracker_id",
+				Unique:  true,
+				Columns: []*schema.Column{TrackBindingsColumns[15], TrackBindingsColumns[1]},
+			},
+		},
+	}
+	// TrackerConnectionsColumns holds the columns for the "tracker_connections" table.
+	TrackerConnectionsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "tracker_id", Type: field.TypeInt, Unique: true},
+		{Name: "access_token", Type: field.TypeString, Default: ""},
+		{Name: "refresh_token", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "token_type", Type: field.TypeString, Default: "Bearer"},
+		{Name: "expires_at", Type: field.TypeTime, Nullable: true},
+		{Name: "username", Type: field.TypeString, Default: ""},
+		{Name: "score_format", Type: field.TypeString, Nullable: true, Default: ""},
+		{Name: "token_expired", Type: field.TypeBool, Default: false},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// TrackerConnectionsTable holds the schema information for the "tracker_connections" table.
+	TrackerConnectionsTable = &schema.Table{
+		Name:       "tracker_connections",
+		Columns:    TrackerConnectionsColumns,
+		PrimaryKey: []*schema.Column{TrackerConnectionsColumns[0]},
+	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		CategoriesTable,
@@ -350,6 +410,8 @@ var (
 		SourceEventsTable,
 		SourceMetricsTable,
 		SuwayomiSyncStatesTable,
+		TrackBindingsTable,
+		TrackerConnectionsTable,
 	}
 )
 
@@ -360,4 +422,5 @@ func init() {
 	SeriesTable.ForeignKeys[0].RefTable = CategoriesTable
 	SeriesProvidersTable.ForeignKeys[0].RefTable = SeriesTable
 	SuwayomiSyncStatesTable.ForeignKeys[0].RefTable = SeriesProvidersTable
+	TrackBindingsTable.ForeignKeys[0].RefTable = SeriesTable
 }

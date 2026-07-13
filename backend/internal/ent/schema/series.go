@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"entgo.io/ent"
+	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -105,5 +106,12 @@ func (Series) Edges() []ent.Edge {
 			Ref("series").
 			Field("category_id").
 			Unique(),
+		// track_bindings is the inverse of TrackBinding.series — a series may be
+		// bound to several native trackers (at most one per tracker). The DB-level
+		// ON DELETE CASCADE is belt-and-braces alongside the M9 DeleteSeries
+		// manual-tx cascade: if a series row is ever deleted outside that path, its
+		// bindings never linger as orphans.
+		edge.To("track_bindings", TrackBinding.Type).
+			Annotations(entsql.Annotation{OnDelete: entsql.Cascade}),
 	}
 }

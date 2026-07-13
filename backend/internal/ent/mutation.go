@@ -27,6 +27,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
+	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
+	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
 )
 
 const (
@@ -52,6 +54,8 @@ const (
 	TypeSourceEvent        = "SourceEvent"
 	TypeSourceMetric       = "SourceMetric"
 	TypeSuwayomiSyncState  = "SuwayomiSyncState"
+	TypeTrackBinding       = "TrackBinding"
+	TypeTrackerConnection  = "TrackerConnection"
 )
 
 // CategoryMutation represents an operation that mutates the Category nodes in the graph.
@@ -5923,34 +5927,37 @@ func (m *ProviderChapterMutation) ResetEdge(name string) error {
 // SeriesMutation represents an operation that mutates the Series nodes in the graph.
 type SeriesMutation struct {
 	config
-	op                   Op
-	typ                  string
-	id                   *uuid.UUID
-	title                *string
-	slug                 *string
-	cover_url            *string
-	description          *string
-	status               *string
-	monitored            *bool
-	completed            *bool
-	metadata_provider_id *uuid.UUID
-	cover_file           *string
-	cover_source_url     *string
-	cover_version        *string
-	created_at           *time.Time
-	updated_at           *time.Time
-	clearedFields        map[string]struct{}
-	providers            map[uuid.UUID]struct{}
-	removedproviders     map[uuid.UUID]struct{}
-	clearedproviders     bool
-	chapters             map[uuid.UUID]struct{}
-	removedchapters      map[uuid.UUID]struct{}
-	clearedchapters      bool
-	category             *uuid.UUID
-	clearedcategory      bool
-	done                 bool
-	oldValue             func(context.Context) (*Series, error)
-	predicates           []predicate.Series
+	op                    Op
+	typ                   string
+	id                    *uuid.UUID
+	title                 *string
+	slug                  *string
+	cover_url             *string
+	description           *string
+	status                *string
+	monitored             *bool
+	completed             *bool
+	metadata_provider_id  *uuid.UUID
+	cover_file            *string
+	cover_source_url      *string
+	cover_version         *string
+	created_at            *time.Time
+	updated_at            *time.Time
+	clearedFields         map[string]struct{}
+	providers             map[uuid.UUID]struct{}
+	removedproviders      map[uuid.UUID]struct{}
+	clearedproviders      bool
+	chapters              map[uuid.UUID]struct{}
+	removedchapters       map[uuid.UUID]struct{}
+	clearedchapters       bool
+	category              *uuid.UUID
+	clearedcategory       bool
+	track_bindings        map[uuid.UUID]struct{}
+	removedtrack_bindings map[uuid.UUID]struct{}
+	clearedtrack_bindings bool
+	done                  bool
+	oldValue              func(context.Context) (*Series, error)
+	predicates            []predicate.Series
 }
 
 var _ ent.Mutation = (*SeriesMutation)(nil)
@@ -6722,6 +6729,60 @@ func (m *SeriesMutation) ResetCategory() {
 	m.clearedcategory = false
 }
 
+// AddTrackBindingIDs adds the "track_bindings" edge to the TrackBinding entity by ids.
+func (m *SeriesMutation) AddTrackBindingIDs(ids ...uuid.UUID) {
+	if m.track_bindings == nil {
+		m.track_bindings = make(map[uuid.UUID]struct{})
+	}
+	for i := range ids {
+		m.track_bindings[ids[i]] = struct{}{}
+	}
+}
+
+// ClearTrackBindings clears the "track_bindings" edge to the TrackBinding entity.
+func (m *SeriesMutation) ClearTrackBindings() {
+	m.clearedtrack_bindings = true
+}
+
+// TrackBindingsCleared reports if the "track_bindings" edge to the TrackBinding entity was cleared.
+func (m *SeriesMutation) TrackBindingsCleared() bool {
+	return m.clearedtrack_bindings
+}
+
+// RemoveTrackBindingIDs removes the "track_bindings" edge to the TrackBinding entity by IDs.
+func (m *SeriesMutation) RemoveTrackBindingIDs(ids ...uuid.UUID) {
+	if m.removedtrack_bindings == nil {
+		m.removedtrack_bindings = make(map[uuid.UUID]struct{})
+	}
+	for i := range ids {
+		delete(m.track_bindings, ids[i])
+		m.removedtrack_bindings[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedTrackBindings returns the removed IDs of the "track_bindings" edge to the TrackBinding entity.
+func (m *SeriesMutation) RemovedTrackBindingsIDs() (ids []uuid.UUID) {
+	for id := range m.removedtrack_bindings {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// TrackBindingsIDs returns the "track_bindings" edge IDs in the mutation.
+func (m *SeriesMutation) TrackBindingsIDs() (ids []uuid.UUID) {
+	for id := range m.track_bindings {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetTrackBindings resets all changes to the "track_bindings" edge.
+func (m *SeriesMutation) ResetTrackBindings() {
+	m.track_bindings = nil
+	m.clearedtrack_bindings = false
+	m.removedtrack_bindings = nil
+}
+
 // Where appends a list predicates to the SeriesMutation builder.
 func (m *SeriesMutation) Where(ps ...predicate.Series) {
 	m.predicates = append(m.predicates, ps...)
@@ -7091,7 +7152,7 @@ func (m *SeriesMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *SeriesMutation) AddedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.providers != nil {
 		edges = append(edges, series.EdgeProviders)
 	}
@@ -7100,6 +7161,9 @@ func (m *SeriesMutation) AddedEdges() []string {
 	}
 	if m.category != nil {
 		edges = append(edges, series.EdgeCategory)
+	}
+	if m.track_bindings != nil {
+		edges = append(edges, series.EdgeTrackBindings)
 	}
 	return edges
 }
@@ -7124,18 +7188,27 @@ func (m *SeriesMutation) AddedIDs(name string) []ent.Value {
 		if id := m.category; id != nil {
 			return []ent.Value{*id}
 		}
+	case series.EdgeTrackBindings:
+		ids := make([]ent.Value, 0, len(m.track_bindings))
+		for id := range m.track_bindings {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *SeriesMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.removedproviders != nil {
 		edges = append(edges, series.EdgeProviders)
 	}
 	if m.removedchapters != nil {
 		edges = append(edges, series.EdgeChapters)
+	}
+	if m.removedtrack_bindings != nil {
+		edges = append(edges, series.EdgeTrackBindings)
 	}
 	return edges
 }
@@ -7156,13 +7229,19 @@ func (m *SeriesMutation) RemovedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case series.EdgeTrackBindings:
+		ids := make([]ent.Value, 0, len(m.removedtrack_bindings))
+		for id := range m.removedtrack_bindings {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *SeriesMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.clearedproviders {
 		edges = append(edges, series.EdgeProviders)
 	}
@@ -7171,6 +7250,9 @@ func (m *SeriesMutation) ClearedEdges() []string {
 	}
 	if m.clearedcategory {
 		edges = append(edges, series.EdgeCategory)
+	}
+	if m.clearedtrack_bindings {
+		edges = append(edges, series.EdgeTrackBindings)
 	}
 	return edges
 }
@@ -7185,6 +7267,8 @@ func (m *SeriesMutation) EdgeCleared(name string) bool {
 		return m.clearedchapters
 	case series.EdgeCategory:
 		return m.clearedcategory
+	case series.EdgeTrackBindings:
+		return m.clearedtrack_bindings
 	}
 	return false
 }
@@ -7212,6 +7296,9 @@ func (m *SeriesMutation) ResetEdge(name string) error {
 		return nil
 	case series.EdgeCategory:
 		m.ResetCategory()
+		return nil
+	case series.EdgeTrackBindings:
+		m.ResetTrackBindings()
 		return nil
 	}
 	return fmt.Errorf("unknown Series edge %s", name)
@@ -12046,4 +12133,2255 @@ func (m *SuwayomiSyncStateMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown SuwayomiSyncState edge %s", name)
+}
+
+// TrackBindingMutation represents an operation that mutates the TrackBinding nodes in the graph.
+type TrackBindingMutation struct {
+	config
+	op                   Op
+	typ                  string
+	id                   *uuid.UUID
+	tracker_id           *int
+	addtracker_id        *int
+	remote_id            *string
+	remote_url           *string
+	library_id           *string
+	title                *string
+	status               *string
+	last_chapter_read    *float64
+	addlast_chapter_read *float64
+	total_chapters       *int
+	addtotal_chapters    *int
+	score                *float64
+	addscore             *float64
+	start_date           *time.Time
+	finish_date          *time.Time
+	private              *bool
+	created_at           *time.Time
+	updated_at           *time.Time
+	clearedFields        map[string]struct{}
+	series               *uuid.UUID
+	clearedseries        bool
+	done                 bool
+	oldValue             func(context.Context) (*TrackBinding, error)
+	predicates           []predicate.TrackBinding
+}
+
+var _ ent.Mutation = (*TrackBindingMutation)(nil)
+
+// trackbindingOption allows management of the mutation configuration using functional options.
+type trackbindingOption func(*TrackBindingMutation)
+
+// newTrackBindingMutation creates new mutation for the TrackBinding entity.
+func newTrackBindingMutation(c config, op Op, opts ...trackbindingOption) *TrackBindingMutation {
+	m := &TrackBindingMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeTrackBinding,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withTrackBindingID sets the ID field of the mutation.
+func withTrackBindingID(id uuid.UUID) trackbindingOption {
+	return func(m *TrackBindingMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *TrackBinding
+		)
+		m.oldValue = func(ctx context.Context) (*TrackBinding, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().TrackBinding.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withTrackBinding sets the old TrackBinding of the mutation.
+func withTrackBinding(node *TrackBinding) trackbindingOption {
+	return func(m *TrackBindingMutation) {
+		m.oldValue = func(context.Context) (*TrackBinding, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m TrackBindingMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m TrackBindingMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of TrackBinding entities.
+func (m *TrackBindingMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *TrackBindingMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *TrackBindingMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().TrackBinding.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSeriesID sets the "series_id" field.
+func (m *TrackBindingMutation) SetSeriesID(u uuid.UUID) {
+	m.series = &u
+}
+
+// SeriesID returns the value of the "series_id" field in the mutation.
+func (m *TrackBindingMutation) SeriesID() (r uuid.UUID, exists bool) {
+	v := m.series
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSeriesID returns the old "series_id" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldSeriesID(ctx context.Context) (v uuid.UUID, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSeriesID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSeriesID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSeriesID: %w", err)
+	}
+	return oldValue.SeriesID, nil
+}
+
+// ResetSeriesID resets all changes to the "series_id" field.
+func (m *TrackBindingMutation) ResetSeriesID() {
+	m.series = nil
+}
+
+// SetTrackerID sets the "tracker_id" field.
+func (m *TrackBindingMutation) SetTrackerID(i int) {
+	m.tracker_id = &i
+	m.addtracker_id = nil
+}
+
+// TrackerID returns the value of the "tracker_id" field in the mutation.
+func (m *TrackBindingMutation) TrackerID() (r int, exists bool) {
+	v := m.tracker_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTrackerID returns the old "tracker_id" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldTrackerID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTrackerID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTrackerID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTrackerID: %w", err)
+	}
+	return oldValue.TrackerID, nil
+}
+
+// AddTrackerID adds i to the "tracker_id" field.
+func (m *TrackBindingMutation) AddTrackerID(i int) {
+	if m.addtracker_id != nil {
+		*m.addtracker_id += i
+	} else {
+		m.addtracker_id = &i
+	}
+}
+
+// AddedTrackerID returns the value that was added to the "tracker_id" field in this mutation.
+func (m *TrackBindingMutation) AddedTrackerID() (r int, exists bool) {
+	v := m.addtracker_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTrackerID resets all changes to the "tracker_id" field.
+func (m *TrackBindingMutation) ResetTrackerID() {
+	m.tracker_id = nil
+	m.addtracker_id = nil
+}
+
+// SetRemoteID sets the "remote_id" field.
+func (m *TrackBindingMutation) SetRemoteID(s string) {
+	m.remote_id = &s
+}
+
+// RemoteID returns the value of the "remote_id" field in the mutation.
+func (m *TrackBindingMutation) RemoteID() (r string, exists bool) {
+	v := m.remote_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRemoteID returns the old "remote_id" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldRemoteID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRemoteID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRemoteID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRemoteID: %w", err)
+	}
+	return oldValue.RemoteID, nil
+}
+
+// ResetRemoteID resets all changes to the "remote_id" field.
+func (m *TrackBindingMutation) ResetRemoteID() {
+	m.remote_id = nil
+}
+
+// SetRemoteURL sets the "remote_url" field.
+func (m *TrackBindingMutation) SetRemoteURL(s string) {
+	m.remote_url = &s
+}
+
+// RemoteURL returns the value of the "remote_url" field in the mutation.
+func (m *TrackBindingMutation) RemoteURL() (r string, exists bool) {
+	v := m.remote_url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRemoteURL returns the old "remote_url" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldRemoteURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRemoteURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRemoteURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRemoteURL: %w", err)
+	}
+	return oldValue.RemoteURL, nil
+}
+
+// ResetRemoteURL resets all changes to the "remote_url" field.
+func (m *TrackBindingMutation) ResetRemoteURL() {
+	m.remote_url = nil
+}
+
+// SetLibraryID sets the "library_id" field.
+func (m *TrackBindingMutation) SetLibraryID(s string) {
+	m.library_id = &s
+}
+
+// LibraryID returns the value of the "library_id" field in the mutation.
+func (m *TrackBindingMutation) LibraryID() (r string, exists bool) {
+	v := m.library_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLibraryID returns the old "library_id" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldLibraryID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLibraryID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLibraryID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLibraryID: %w", err)
+	}
+	return oldValue.LibraryID, nil
+}
+
+// ClearLibraryID clears the value of the "library_id" field.
+func (m *TrackBindingMutation) ClearLibraryID() {
+	m.library_id = nil
+	m.clearedFields[trackbinding.FieldLibraryID] = struct{}{}
+}
+
+// LibraryIDCleared returns if the "library_id" field was cleared in this mutation.
+func (m *TrackBindingMutation) LibraryIDCleared() bool {
+	_, ok := m.clearedFields[trackbinding.FieldLibraryID]
+	return ok
+}
+
+// ResetLibraryID resets all changes to the "library_id" field.
+func (m *TrackBindingMutation) ResetLibraryID() {
+	m.library_id = nil
+	delete(m.clearedFields, trackbinding.FieldLibraryID)
+}
+
+// SetTitle sets the "title" field.
+func (m *TrackBindingMutation) SetTitle(s string) {
+	m.title = &s
+}
+
+// Title returns the value of the "title" field in the mutation.
+func (m *TrackBindingMutation) Title() (r string, exists bool) {
+	v := m.title
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTitle returns the old "title" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldTitle(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTitle is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTitle requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTitle: %w", err)
+	}
+	return oldValue.Title, nil
+}
+
+// ResetTitle resets all changes to the "title" field.
+func (m *TrackBindingMutation) ResetTitle() {
+	m.title = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *TrackBindingMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *TrackBindingMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *TrackBindingMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetLastChapterRead sets the "last_chapter_read" field.
+func (m *TrackBindingMutation) SetLastChapterRead(f float64) {
+	m.last_chapter_read = &f
+	m.addlast_chapter_read = nil
+}
+
+// LastChapterRead returns the value of the "last_chapter_read" field in the mutation.
+func (m *TrackBindingMutation) LastChapterRead() (r float64, exists bool) {
+	v := m.last_chapter_read
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastChapterRead returns the old "last_chapter_read" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldLastChapterRead(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastChapterRead is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastChapterRead requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastChapterRead: %w", err)
+	}
+	return oldValue.LastChapterRead, nil
+}
+
+// AddLastChapterRead adds f to the "last_chapter_read" field.
+func (m *TrackBindingMutation) AddLastChapterRead(f float64) {
+	if m.addlast_chapter_read != nil {
+		*m.addlast_chapter_read += f
+	} else {
+		m.addlast_chapter_read = &f
+	}
+}
+
+// AddedLastChapterRead returns the value that was added to the "last_chapter_read" field in this mutation.
+func (m *TrackBindingMutation) AddedLastChapterRead() (r float64, exists bool) {
+	v := m.addlast_chapter_read
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetLastChapterRead resets all changes to the "last_chapter_read" field.
+func (m *TrackBindingMutation) ResetLastChapterRead() {
+	m.last_chapter_read = nil
+	m.addlast_chapter_read = nil
+}
+
+// SetTotalChapters sets the "total_chapters" field.
+func (m *TrackBindingMutation) SetTotalChapters(i int) {
+	m.total_chapters = &i
+	m.addtotal_chapters = nil
+}
+
+// TotalChapters returns the value of the "total_chapters" field in the mutation.
+func (m *TrackBindingMutation) TotalChapters() (r int, exists bool) {
+	v := m.total_chapters
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTotalChapters returns the old "total_chapters" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldTotalChapters(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTotalChapters is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTotalChapters requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTotalChapters: %w", err)
+	}
+	return oldValue.TotalChapters, nil
+}
+
+// AddTotalChapters adds i to the "total_chapters" field.
+func (m *TrackBindingMutation) AddTotalChapters(i int) {
+	if m.addtotal_chapters != nil {
+		*m.addtotal_chapters += i
+	} else {
+		m.addtotal_chapters = &i
+	}
+}
+
+// AddedTotalChapters returns the value that was added to the "total_chapters" field in this mutation.
+func (m *TrackBindingMutation) AddedTotalChapters() (r int, exists bool) {
+	v := m.addtotal_chapters
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTotalChapters resets all changes to the "total_chapters" field.
+func (m *TrackBindingMutation) ResetTotalChapters() {
+	m.total_chapters = nil
+	m.addtotal_chapters = nil
+}
+
+// SetScore sets the "score" field.
+func (m *TrackBindingMutation) SetScore(f float64) {
+	m.score = &f
+	m.addscore = nil
+}
+
+// Score returns the value of the "score" field in the mutation.
+func (m *TrackBindingMutation) Score() (r float64, exists bool) {
+	v := m.score
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldScore returns the old "score" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldScore(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldScore is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldScore requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldScore: %w", err)
+	}
+	return oldValue.Score, nil
+}
+
+// AddScore adds f to the "score" field.
+func (m *TrackBindingMutation) AddScore(f float64) {
+	if m.addscore != nil {
+		*m.addscore += f
+	} else {
+		m.addscore = &f
+	}
+}
+
+// AddedScore returns the value that was added to the "score" field in this mutation.
+func (m *TrackBindingMutation) AddedScore() (r float64, exists bool) {
+	v := m.addscore
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetScore resets all changes to the "score" field.
+func (m *TrackBindingMutation) ResetScore() {
+	m.score = nil
+	m.addscore = nil
+}
+
+// SetStartDate sets the "start_date" field.
+func (m *TrackBindingMutation) SetStartDate(t time.Time) {
+	m.start_date = &t
+}
+
+// StartDate returns the value of the "start_date" field in the mutation.
+func (m *TrackBindingMutation) StartDate() (r time.Time, exists bool) {
+	v := m.start_date
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStartDate returns the old "start_date" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldStartDate(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStartDate is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStartDate requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStartDate: %w", err)
+	}
+	return oldValue.StartDate, nil
+}
+
+// ClearStartDate clears the value of the "start_date" field.
+func (m *TrackBindingMutation) ClearStartDate() {
+	m.start_date = nil
+	m.clearedFields[trackbinding.FieldStartDate] = struct{}{}
+}
+
+// StartDateCleared returns if the "start_date" field was cleared in this mutation.
+func (m *TrackBindingMutation) StartDateCleared() bool {
+	_, ok := m.clearedFields[trackbinding.FieldStartDate]
+	return ok
+}
+
+// ResetStartDate resets all changes to the "start_date" field.
+func (m *TrackBindingMutation) ResetStartDate() {
+	m.start_date = nil
+	delete(m.clearedFields, trackbinding.FieldStartDate)
+}
+
+// SetFinishDate sets the "finish_date" field.
+func (m *TrackBindingMutation) SetFinishDate(t time.Time) {
+	m.finish_date = &t
+}
+
+// FinishDate returns the value of the "finish_date" field in the mutation.
+func (m *TrackBindingMutation) FinishDate() (r time.Time, exists bool) {
+	v := m.finish_date
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFinishDate returns the old "finish_date" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldFinishDate(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFinishDate is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFinishDate requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFinishDate: %w", err)
+	}
+	return oldValue.FinishDate, nil
+}
+
+// ClearFinishDate clears the value of the "finish_date" field.
+func (m *TrackBindingMutation) ClearFinishDate() {
+	m.finish_date = nil
+	m.clearedFields[trackbinding.FieldFinishDate] = struct{}{}
+}
+
+// FinishDateCleared returns if the "finish_date" field was cleared in this mutation.
+func (m *TrackBindingMutation) FinishDateCleared() bool {
+	_, ok := m.clearedFields[trackbinding.FieldFinishDate]
+	return ok
+}
+
+// ResetFinishDate resets all changes to the "finish_date" field.
+func (m *TrackBindingMutation) ResetFinishDate() {
+	m.finish_date = nil
+	delete(m.clearedFields, trackbinding.FieldFinishDate)
+}
+
+// SetPrivate sets the "private" field.
+func (m *TrackBindingMutation) SetPrivate(b bool) {
+	m.private = &b
+}
+
+// Private returns the value of the "private" field in the mutation.
+func (m *TrackBindingMutation) Private() (r bool, exists bool) {
+	v := m.private
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPrivate returns the old "private" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldPrivate(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPrivate is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPrivate requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPrivate: %w", err)
+	}
+	return oldValue.Private, nil
+}
+
+// ResetPrivate resets all changes to the "private" field.
+func (m *TrackBindingMutation) ResetPrivate() {
+	m.private = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *TrackBindingMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *TrackBindingMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *TrackBindingMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *TrackBindingMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *TrackBindingMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the TrackBinding entity.
+// If the TrackBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackBindingMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *TrackBindingMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// ClearSeries clears the "series" edge to the Series entity.
+func (m *TrackBindingMutation) ClearSeries() {
+	m.clearedseries = true
+	m.clearedFields[trackbinding.FieldSeriesID] = struct{}{}
+}
+
+// SeriesCleared reports if the "series" edge to the Series entity was cleared.
+func (m *TrackBindingMutation) SeriesCleared() bool {
+	return m.clearedseries
+}
+
+// SeriesIDs returns the "series" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// SeriesID instead. It exists only for internal usage by the builders.
+func (m *TrackBindingMutation) SeriesIDs() (ids []uuid.UUID) {
+	if id := m.series; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetSeries resets all changes to the "series" edge.
+func (m *TrackBindingMutation) ResetSeries() {
+	m.series = nil
+	m.clearedseries = false
+}
+
+// Where appends a list predicates to the TrackBindingMutation builder.
+func (m *TrackBindingMutation) Where(ps ...predicate.TrackBinding) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the TrackBindingMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *TrackBindingMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.TrackBinding, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *TrackBindingMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *TrackBindingMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (TrackBinding).
+func (m *TrackBindingMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *TrackBindingMutation) Fields() []string {
+	fields := make([]string, 0, 15)
+	if m.series != nil {
+		fields = append(fields, trackbinding.FieldSeriesID)
+	}
+	if m.tracker_id != nil {
+		fields = append(fields, trackbinding.FieldTrackerID)
+	}
+	if m.remote_id != nil {
+		fields = append(fields, trackbinding.FieldRemoteID)
+	}
+	if m.remote_url != nil {
+		fields = append(fields, trackbinding.FieldRemoteURL)
+	}
+	if m.library_id != nil {
+		fields = append(fields, trackbinding.FieldLibraryID)
+	}
+	if m.title != nil {
+		fields = append(fields, trackbinding.FieldTitle)
+	}
+	if m.status != nil {
+		fields = append(fields, trackbinding.FieldStatus)
+	}
+	if m.last_chapter_read != nil {
+		fields = append(fields, trackbinding.FieldLastChapterRead)
+	}
+	if m.total_chapters != nil {
+		fields = append(fields, trackbinding.FieldTotalChapters)
+	}
+	if m.score != nil {
+		fields = append(fields, trackbinding.FieldScore)
+	}
+	if m.start_date != nil {
+		fields = append(fields, trackbinding.FieldStartDate)
+	}
+	if m.finish_date != nil {
+		fields = append(fields, trackbinding.FieldFinishDate)
+	}
+	if m.private != nil {
+		fields = append(fields, trackbinding.FieldPrivate)
+	}
+	if m.created_at != nil {
+		fields = append(fields, trackbinding.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, trackbinding.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *TrackBindingMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case trackbinding.FieldSeriesID:
+		return m.SeriesID()
+	case trackbinding.FieldTrackerID:
+		return m.TrackerID()
+	case trackbinding.FieldRemoteID:
+		return m.RemoteID()
+	case trackbinding.FieldRemoteURL:
+		return m.RemoteURL()
+	case trackbinding.FieldLibraryID:
+		return m.LibraryID()
+	case trackbinding.FieldTitle:
+		return m.Title()
+	case trackbinding.FieldStatus:
+		return m.Status()
+	case trackbinding.FieldLastChapterRead:
+		return m.LastChapterRead()
+	case trackbinding.FieldTotalChapters:
+		return m.TotalChapters()
+	case trackbinding.FieldScore:
+		return m.Score()
+	case trackbinding.FieldStartDate:
+		return m.StartDate()
+	case trackbinding.FieldFinishDate:
+		return m.FinishDate()
+	case trackbinding.FieldPrivate:
+		return m.Private()
+	case trackbinding.FieldCreatedAt:
+		return m.CreatedAt()
+	case trackbinding.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *TrackBindingMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case trackbinding.FieldSeriesID:
+		return m.OldSeriesID(ctx)
+	case trackbinding.FieldTrackerID:
+		return m.OldTrackerID(ctx)
+	case trackbinding.FieldRemoteID:
+		return m.OldRemoteID(ctx)
+	case trackbinding.FieldRemoteURL:
+		return m.OldRemoteURL(ctx)
+	case trackbinding.FieldLibraryID:
+		return m.OldLibraryID(ctx)
+	case trackbinding.FieldTitle:
+		return m.OldTitle(ctx)
+	case trackbinding.FieldStatus:
+		return m.OldStatus(ctx)
+	case trackbinding.FieldLastChapterRead:
+		return m.OldLastChapterRead(ctx)
+	case trackbinding.FieldTotalChapters:
+		return m.OldTotalChapters(ctx)
+	case trackbinding.FieldScore:
+		return m.OldScore(ctx)
+	case trackbinding.FieldStartDate:
+		return m.OldStartDate(ctx)
+	case trackbinding.FieldFinishDate:
+		return m.OldFinishDate(ctx)
+	case trackbinding.FieldPrivate:
+		return m.OldPrivate(ctx)
+	case trackbinding.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case trackbinding.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown TrackBinding field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *TrackBindingMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case trackbinding.FieldSeriesID:
+		v, ok := value.(uuid.UUID)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSeriesID(v)
+		return nil
+	case trackbinding.FieldTrackerID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTrackerID(v)
+		return nil
+	case trackbinding.FieldRemoteID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRemoteID(v)
+		return nil
+	case trackbinding.FieldRemoteURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRemoteURL(v)
+		return nil
+	case trackbinding.FieldLibraryID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLibraryID(v)
+		return nil
+	case trackbinding.FieldTitle:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTitle(v)
+		return nil
+	case trackbinding.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case trackbinding.FieldLastChapterRead:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastChapterRead(v)
+		return nil
+	case trackbinding.FieldTotalChapters:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTotalChapters(v)
+		return nil
+	case trackbinding.FieldScore:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetScore(v)
+		return nil
+	case trackbinding.FieldStartDate:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStartDate(v)
+		return nil
+	case trackbinding.FieldFinishDate:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFinishDate(v)
+		return nil
+	case trackbinding.FieldPrivate:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPrivate(v)
+		return nil
+	case trackbinding.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case trackbinding.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown TrackBinding field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *TrackBindingMutation) AddedFields() []string {
+	var fields []string
+	if m.addtracker_id != nil {
+		fields = append(fields, trackbinding.FieldTrackerID)
+	}
+	if m.addlast_chapter_read != nil {
+		fields = append(fields, trackbinding.FieldLastChapterRead)
+	}
+	if m.addtotal_chapters != nil {
+		fields = append(fields, trackbinding.FieldTotalChapters)
+	}
+	if m.addscore != nil {
+		fields = append(fields, trackbinding.FieldScore)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *TrackBindingMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case trackbinding.FieldTrackerID:
+		return m.AddedTrackerID()
+	case trackbinding.FieldLastChapterRead:
+		return m.AddedLastChapterRead()
+	case trackbinding.FieldTotalChapters:
+		return m.AddedTotalChapters()
+	case trackbinding.FieldScore:
+		return m.AddedScore()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *TrackBindingMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case trackbinding.FieldTrackerID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTrackerID(v)
+		return nil
+	case trackbinding.FieldLastChapterRead:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLastChapterRead(v)
+		return nil
+	case trackbinding.FieldTotalChapters:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTotalChapters(v)
+		return nil
+	case trackbinding.FieldScore:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddScore(v)
+		return nil
+	}
+	return fmt.Errorf("unknown TrackBinding numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *TrackBindingMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(trackbinding.FieldLibraryID) {
+		fields = append(fields, trackbinding.FieldLibraryID)
+	}
+	if m.FieldCleared(trackbinding.FieldStartDate) {
+		fields = append(fields, trackbinding.FieldStartDate)
+	}
+	if m.FieldCleared(trackbinding.FieldFinishDate) {
+		fields = append(fields, trackbinding.FieldFinishDate)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *TrackBindingMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *TrackBindingMutation) ClearField(name string) error {
+	switch name {
+	case trackbinding.FieldLibraryID:
+		m.ClearLibraryID()
+		return nil
+	case trackbinding.FieldStartDate:
+		m.ClearStartDate()
+		return nil
+	case trackbinding.FieldFinishDate:
+		m.ClearFinishDate()
+		return nil
+	}
+	return fmt.Errorf("unknown TrackBinding nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *TrackBindingMutation) ResetField(name string) error {
+	switch name {
+	case trackbinding.FieldSeriesID:
+		m.ResetSeriesID()
+		return nil
+	case trackbinding.FieldTrackerID:
+		m.ResetTrackerID()
+		return nil
+	case trackbinding.FieldRemoteID:
+		m.ResetRemoteID()
+		return nil
+	case trackbinding.FieldRemoteURL:
+		m.ResetRemoteURL()
+		return nil
+	case trackbinding.FieldLibraryID:
+		m.ResetLibraryID()
+		return nil
+	case trackbinding.FieldTitle:
+		m.ResetTitle()
+		return nil
+	case trackbinding.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case trackbinding.FieldLastChapterRead:
+		m.ResetLastChapterRead()
+		return nil
+	case trackbinding.FieldTotalChapters:
+		m.ResetTotalChapters()
+		return nil
+	case trackbinding.FieldScore:
+		m.ResetScore()
+		return nil
+	case trackbinding.FieldStartDate:
+		m.ResetStartDate()
+		return nil
+	case trackbinding.FieldFinishDate:
+		m.ResetFinishDate()
+		return nil
+	case trackbinding.FieldPrivate:
+		m.ResetPrivate()
+		return nil
+	case trackbinding.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case trackbinding.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown TrackBinding field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *TrackBindingMutation) AddedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.series != nil {
+		edges = append(edges, trackbinding.EdgeSeries)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *TrackBindingMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case trackbinding.EdgeSeries:
+		if id := m.series; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *TrackBindingMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 1)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *TrackBindingMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *TrackBindingMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.clearedseries {
+		edges = append(edges, trackbinding.EdgeSeries)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *TrackBindingMutation) EdgeCleared(name string) bool {
+	switch name {
+	case trackbinding.EdgeSeries:
+		return m.clearedseries
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *TrackBindingMutation) ClearEdge(name string) error {
+	switch name {
+	case trackbinding.EdgeSeries:
+		m.ClearSeries()
+		return nil
+	}
+	return fmt.Errorf("unknown TrackBinding unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *TrackBindingMutation) ResetEdge(name string) error {
+	switch name {
+	case trackbinding.EdgeSeries:
+		m.ResetSeries()
+		return nil
+	}
+	return fmt.Errorf("unknown TrackBinding edge %s", name)
+}
+
+// TrackerConnectionMutation represents an operation that mutates the TrackerConnection nodes in the graph.
+type TrackerConnectionMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *uuid.UUID
+	tracker_id    *int
+	addtracker_id *int
+	access_token  *string
+	refresh_token *string
+	token_type    *string
+	expires_at    *time.Time
+	username      *string
+	score_format  *string
+	token_expired *bool
+	created_at    *time.Time
+	updated_at    *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*TrackerConnection, error)
+	predicates    []predicate.TrackerConnection
+}
+
+var _ ent.Mutation = (*TrackerConnectionMutation)(nil)
+
+// trackerconnectionOption allows management of the mutation configuration using functional options.
+type trackerconnectionOption func(*TrackerConnectionMutation)
+
+// newTrackerConnectionMutation creates new mutation for the TrackerConnection entity.
+func newTrackerConnectionMutation(c config, op Op, opts ...trackerconnectionOption) *TrackerConnectionMutation {
+	m := &TrackerConnectionMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeTrackerConnection,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withTrackerConnectionID sets the ID field of the mutation.
+func withTrackerConnectionID(id uuid.UUID) trackerconnectionOption {
+	return func(m *TrackerConnectionMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *TrackerConnection
+		)
+		m.oldValue = func(ctx context.Context) (*TrackerConnection, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().TrackerConnection.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withTrackerConnection sets the old TrackerConnection of the mutation.
+func withTrackerConnection(node *TrackerConnection) trackerconnectionOption {
+	return func(m *TrackerConnectionMutation) {
+		m.oldValue = func(context.Context) (*TrackerConnection, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m TrackerConnectionMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m TrackerConnectionMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of TrackerConnection entities.
+func (m *TrackerConnectionMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *TrackerConnectionMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *TrackerConnectionMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().TrackerConnection.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetTrackerID sets the "tracker_id" field.
+func (m *TrackerConnectionMutation) SetTrackerID(i int) {
+	m.tracker_id = &i
+	m.addtracker_id = nil
+}
+
+// TrackerID returns the value of the "tracker_id" field in the mutation.
+func (m *TrackerConnectionMutation) TrackerID() (r int, exists bool) {
+	v := m.tracker_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTrackerID returns the old "tracker_id" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldTrackerID(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTrackerID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTrackerID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTrackerID: %w", err)
+	}
+	return oldValue.TrackerID, nil
+}
+
+// AddTrackerID adds i to the "tracker_id" field.
+func (m *TrackerConnectionMutation) AddTrackerID(i int) {
+	if m.addtracker_id != nil {
+		*m.addtracker_id += i
+	} else {
+		m.addtracker_id = &i
+	}
+}
+
+// AddedTrackerID returns the value that was added to the "tracker_id" field in this mutation.
+func (m *TrackerConnectionMutation) AddedTrackerID() (r int, exists bool) {
+	v := m.addtracker_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTrackerID resets all changes to the "tracker_id" field.
+func (m *TrackerConnectionMutation) ResetTrackerID() {
+	m.tracker_id = nil
+	m.addtracker_id = nil
+}
+
+// SetAccessToken sets the "access_token" field.
+func (m *TrackerConnectionMutation) SetAccessToken(s string) {
+	m.access_token = &s
+}
+
+// AccessToken returns the value of the "access_token" field in the mutation.
+func (m *TrackerConnectionMutation) AccessToken() (r string, exists bool) {
+	v := m.access_token
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccessToken returns the old "access_token" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldAccessToken(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccessToken is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccessToken requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccessToken: %w", err)
+	}
+	return oldValue.AccessToken, nil
+}
+
+// ResetAccessToken resets all changes to the "access_token" field.
+func (m *TrackerConnectionMutation) ResetAccessToken() {
+	m.access_token = nil
+}
+
+// SetRefreshToken sets the "refresh_token" field.
+func (m *TrackerConnectionMutation) SetRefreshToken(s string) {
+	m.refresh_token = &s
+}
+
+// RefreshToken returns the value of the "refresh_token" field in the mutation.
+func (m *TrackerConnectionMutation) RefreshToken() (r string, exists bool) {
+	v := m.refresh_token
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRefreshToken returns the old "refresh_token" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldRefreshToken(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRefreshToken is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRefreshToken requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRefreshToken: %w", err)
+	}
+	return oldValue.RefreshToken, nil
+}
+
+// ClearRefreshToken clears the value of the "refresh_token" field.
+func (m *TrackerConnectionMutation) ClearRefreshToken() {
+	m.refresh_token = nil
+	m.clearedFields[trackerconnection.FieldRefreshToken] = struct{}{}
+}
+
+// RefreshTokenCleared returns if the "refresh_token" field was cleared in this mutation.
+func (m *TrackerConnectionMutation) RefreshTokenCleared() bool {
+	_, ok := m.clearedFields[trackerconnection.FieldRefreshToken]
+	return ok
+}
+
+// ResetRefreshToken resets all changes to the "refresh_token" field.
+func (m *TrackerConnectionMutation) ResetRefreshToken() {
+	m.refresh_token = nil
+	delete(m.clearedFields, trackerconnection.FieldRefreshToken)
+}
+
+// SetTokenType sets the "token_type" field.
+func (m *TrackerConnectionMutation) SetTokenType(s string) {
+	m.token_type = &s
+}
+
+// TokenType returns the value of the "token_type" field in the mutation.
+func (m *TrackerConnectionMutation) TokenType() (r string, exists bool) {
+	v := m.token_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTokenType returns the old "token_type" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldTokenType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTokenType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTokenType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTokenType: %w", err)
+	}
+	return oldValue.TokenType, nil
+}
+
+// ResetTokenType resets all changes to the "token_type" field.
+func (m *TrackerConnectionMutation) ResetTokenType() {
+	m.token_type = nil
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (m *TrackerConnectionMutation) SetExpiresAt(t time.Time) {
+	m.expires_at = &t
+}
+
+// ExpiresAt returns the value of the "expires_at" field in the mutation.
+func (m *TrackerConnectionMutation) ExpiresAt() (r time.Time, exists bool) {
+	v := m.expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExpiresAt returns the old "expires_at" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldExpiresAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExpiresAt: %w", err)
+	}
+	return oldValue.ExpiresAt, nil
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (m *TrackerConnectionMutation) ClearExpiresAt() {
+	m.expires_at = nil
+	m.clearedFields[trackerconnection.FieldExpiresAt] = struct{}{}
+}
+
+// ExpiresAtCleared returns if the "expires_at" field was cleared in this mutation.
+func (m *TrackerConnectionMutation) ExpiresAtCleared() bool {
+	_, ok := m.clearedFields[trackerconnection.FieldExpiresAt]
+	return ok
+}
+
+// ResetExpiresAt resets all changes to the "expires_at" field.
+func (m *TrackerConnectionMutation) ResetExpiresAt() {
+	m.expires_at = nil
+	delete(m.clearedFields, trackerconnection.FieldExpiresAt)
+}
+
+// SetUsername sets the "username" field.
+func (m *TrackerConnectionMutation) SetUsername(s string) {
+	m.username = &s
+}
+
+// Username returns the value of the "username" field in the mutation.
+func (m *TrackerConnectionMutation) Username() (r string, exists bool) {
+	v := m.username
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUsername returns the old "username" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldUsername(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUsername is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUsername requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUsername: %w", err)
+	}
+	return oldValue.Username, nil
+}
+
+// ResetUsername resets all changes to the "username" field.
+func (m *TrackerConnectionMutation) ResetUsername() {
+	m.username = nil
+}
+
+// SetScoreFormat sets the "score_format" field.
+func (m *TrackerConnectionMutation) SetScoreFormat(s string) {
+	m.score_format = &s
+}
+
+// ScoreFormat returns the value of the "score_format" field in the mutation.
+func (m *TrackerConnectionMutation) ScoreFormat() (r string, exists bool) {
+	v := m.score_format
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldScoreFormat returns the old "score_format" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldScoreFormat(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldScoreFormat is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldScoreFormat requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldScoreFormat: %w", err)
+	}
+	return oldValue.ScoreFormat, nil
+}
+
+// ClearScoreFormat clears the value of the "score_format" field.
+func (m *TrackerConnectionMutation) ClearScoreFormat() {
+	m.score_format = nil
+	m.clearedFields[trackerconnection.FieldScoreFormat] = struct{}{}
+}
+
+// ScoreFormatCleared returns if the "score_format" field was cleared in this mutation.
+func (m *TrackerConnectionMutation) ScoreFormatCleared() bool {
+	_, ok := m.clearedFields[trackerconnection.FieldScoreFormat]
+	return ok
+}
+
+// ResetScoreFormat resets all changes to the "score_format" field.
+func (m *TrackerConnectionMutation) ResetScoreFormat() {
+	m.score_format = nil
+	delete(m.clearedFields, trackerconnection.FieldScoreFormat)
+}
+
+// SetTokenExpired sets the "token_expired" field.
+func (m *TrackerConnectionMutation) SetTokenExpired(b bool) {
+	m.token_expired = &b
+}
+
+// TokenExpired returns the value of the "token_expired" field in the mutation.
+func (m *TrackerConnectionMutation) TokenExpired() (r bool, exists bool) {
+	v := m.token_expired
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTokenExpired returns the old "token_expired" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldTokenExpired(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTokenExpired is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTokenExpired requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTokenExpired: %w", err)
+	}
+	return oldValue.TokenExpired, nil
+}
+
+// ResetTokenExpired resets all changes to the "token_expired" field.
+func (m *TrackerConnectionMutation) ResetTokenExpired() {
+	m.token_expired = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *TrackerConnectionMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *TrackerConnectionMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *TrackerConnectionMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *TrackerConnectionMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *TrackerConnectionMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *TrackerConnectionMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the TrackerConnectionMutation builder.
+func (m *TrackerConnectionMutation) Where(ps ...predicate.TrackerConnection) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the TrackerConnectionMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *TrackerConnectionMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.TrackerConnection, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *TrackerConnectionMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *TrackerConnectionMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (TrackerConnection).
+func (m *TrackerConnectionMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *TrackerConnectionMutation) Fields() []string {
+	fields := make([]string, 0, 10)
+	if m.tracker_id != nil {
+		fields = append(fields, trackerconnection.FieldTrackerID)
+	}
+	if m.access_token != nil {
+		fields = append(fields, trackerconnection.FieldAccessToken)
+	}
+	if m.refresh_token != nil {
+		fields = append(fields, trackerconnection.FieldRefreshToken)
+	}
+	if m.token_type != nil {
+		fields = append(fields, trackerconnection.FieldTokenType)
+	}
+	if m.expires_at != nil {
+		fields = append(fields, trackerconnection.FieldExpiresAt)
+	}
+	if m.username != nil {
+		fields = append(fields, trackerconnection.FieldUsername)
+	}
+	if m.score_format != nil {
+		fields = append(fields, trackerconnection.FieldScoreFormat)
+	}
+	if m.token_expired != nil {
+		fields = append(fields, trackerconnection.FieldTokenExpired)
+	}
+	if m.created_at != nil {
+		fields = append(fields, trackerconnection.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, trackerconnection.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *TrackerConnectionMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case trackerconnection.FieldTrackerID:
+		return m.TrackerID()
+	case trackerconnection.FieldAccessToken:
+		return m.AccessToken()
+	case trackerconnection.FieldRefreshToken:
+		return m.RefreshToken()
+	case trackerconnection.FieldTokenType:
+		return m.TokenType()
+	case trackerconnection.FieldExpiresAt:
+		return m.ExpiresAt()
+	case trackerconnection.FieldUsername:
+		return m.Username()
+	case trackerconnection.FieldScoreFormat:
+		return m.ScoreFormat()
+	case trackerconnection.FieldTokenExpired:
+		return m.TokenExpired()
+	case trackerconnection.FieldCreatedAt:
+		return m.CreatedAt()
+	case trackerconnection.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *TrackerConnectionMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case trackerconnection.FieldTrackerID:
+		return m.OldTrackerID(ctx)
+	case trackerconnection.FieldAccessToken:
+		return m.OldAccessToken(ctx)
+	case trackerconnection.FieldRefreshToken:
+		return m.OldRefreshToken(ctx)
+	case trackerconnection.FieldTokenType:
+		return m.OldTokenType(ctx)
+	case trackerconnection.FieldExpiresAt:
+		return m.OldExpiresAt(ctx)
+	case trackerconnection.FieldUsername:
+		return m.OldUsername(ctx)
+	case trackerconnection.FieldScoreFormat:
+		return m.OldScoreFormat(ctx)
+	case trackerconnection.FieldTokenExpired:
+		return m.OldTokenExpired(ctx)
+	case trackerconnection.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case trackerconnection.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown TrackerConnection field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *TrackerConnectionMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case trackerconnection.FieldTrackerID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTrackerID(v)
+		return nil
+	case trackerconnection.FieldAccessToken:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccessToken(v)
+		return nil
+	case trackerconnection.FieldRefreshToken:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRefreshToken(v)
+		return nil
+	case trackerconnection.FieldTokenType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTokenType(v)
+		return nil
+	case trackerconnection.FieldExpiresAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExpiresAt(v)
+		return nil
+	case trackerconnection.FieldUsername:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUsername(v)
+		return nil
+	case trackerconnection.FieldScoreFormat:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetScoreFormat(v)
+		return nil
+	case trackerconnection.FieldTokenExpired:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTokenExpired(v)
+		return nil
+	case trackerconnection.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case trackerconnection.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown TrackerConnection field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *TrackerConnectionMutation) AddedFields() []string {
+	var fields []string
+	if m.addtracker_id != nil {
+		fields = append(fields, trackerconnection.FieldTrackerID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *TrackerConnectionMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case trackerconnection.FieldTrackerID:
+		return m.AddedTrackerID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *TrackerConnectionMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case trackerconnection.FieldTrackerID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTrackerID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown TrackerConnection numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *TrackerConnectionMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(trackerconnection.FieldRefreshToken) {
+		fields = append(fields, trackerconnection.FieldRefreshToken)
+	}
+	if m.FieldCleared(trackerconnection.FieldExpiresAt) {
+		fields = append(fields, trackerconnection.FieldExpiresAt)
+	}
+	if m.FieldCleared(trackerconnection.FieldScoreFormat) {
+		fields = append(fields, trackerconnection.FieldScoreFormat)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *TrackerConnectionMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *TrackerConnectionMutation) ClearField(name string) error {
+	switch name {
+	case trackerconnection.FieldRefreshToken:
+		m.ClearRefreshToken()
+		return nil
+	case trackerconnection.FieldExpiresAt:
+		m.ClearExpiresAt()
+		return nil
+	case trackerconnection.FieldScoreFormat:
+		m.ClearScoreFormat()
+		return nil
+	}
+	return fmt.Errorf("unknown TrackerConnection nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *TrackerConnectionMutation) ResetField(name string) error {
+	switch name {
+	case trackerconnection.FieldTrackerID:
+		m.ResetTrackerID()
+		return nil
+	case trackerconnection.FieldAccessToken:
+		m.ResetAccessToken()
+		return nil
+	case trackerconnection.FieldRefreshToken:
+		m.ResetRefreshToken()
+		return nil
+	case trackerconnection.FieldTokenType:
+		m.ResetTokenType()
+		return nil
+	case trackerconnection.FieldExpiresAt:
+		m.ResetExpiresAt()
+		return nil
+	case trackerconnection.FieldUsername:
+		m.ResetUsername()
+		return nil
+	case trackerconnection.FieldScoreFormat:
+		m.ResetScoreFormat()
+		return nil
+	case trackerconnection.FieldTokenExpired:
+		m.ResetTokenExpired()
+		return nil
+	case trackerconnection.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case trackerconnection.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown TrackerConnection field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *TrackerConnectionMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *TrackerConnectionMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *TrackerConnectionMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *TrackerConnectionMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *TrackerConnectionMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *TrackerConnectionMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *TrackerConnectionMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown TrackerConnection unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *TrackerConnectionMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown TrackerConnection edge %s", name)
 }

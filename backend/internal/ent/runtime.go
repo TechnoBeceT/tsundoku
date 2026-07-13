@@ -21,6 +21,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
+	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
+	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
 )
 
 // The init function reads all schema descriptors with runtime code
@@ -397,4 +399,92 @@ func init() {
 	suwayomisyncstateDescID := suwayomisyncstateFields[0].Descriptor()
 	// suwayomisyncstate.DefaultID holds the default value on creation for the id field.
 	suwayomisyncstate.DefaultID = suwayomisyncstateDescID.Default.(func() uuid.UUID)
+	trackbindingFields := schema.TrackBinding{}.Fields()
+	_ = trackbindingFields
+	// trackbindingDescRemoteURL is the schema descriptor for remote_url field.
+	trackbindingDescRemoteURL := trackbindingFields[4].Descriptor()
+	// trackbinding.DefaultRemoteURL holds the default value on creation for the remote_url field.
+	trackbinding.DefaultRemoteURL = trackbindingDescRemoteURL.Default.(string)
+	// trackbindingDescLibraryID is the schema descriptor for library_id field.
+	trackbindingDescLibraryID := trackbindingFields[5].Descriptor()
+	// trackbinding.DefaultLibraryID holds the default value on creation for the library_id field.
+	trackbinding.DefaultLibraryID = trackbindingDescLibraryID.Default.(string)
+	// trackbindingDescTitle is the schema descriptor for title field.
+	trackbindingDescTitle := trackbindingFields[6].Descriptor()
+	// trackbinding.DefaultTitle holds the default value on creation for the title field.
+	trackbinding.DefaultTitle = trackbindingDescTitle.Default.(string)
+	// trackbindingDescStatus is the schema descriptor for status field.
+	trackbindingDescStatus := trackbindingFields[7].Descriptor()
+	// trackbinding.DefaultStatus holds the default value on creation for the status field.
+	trackbinding.DefaultStatus = trackbindingDescStatus.Default.(string)
+	// trackbindingDescLastChapterRead is the schema descriptor for last_chapter_read field.
+	trackbindingDescLastChapterRead := trackbindingFields[8].Descriptor()
+	// trackbinding.DefaultLastChapterRead holds the default value on creation for the last_chapter_read field.
+	trackbinding.DefaultLastChapterRead = trackbindingDescLastChapterRead.Default.(float64)
+	// trackbindingDescTotalChapters is the schema descriptor for total_chapters field.
+	trackbindingDescTotalChapters := trackbindingFields[9].Descriptor()
+	// trackbinding.DefaultTotalChapters holds the default value on creation for the total_chapters field.
+	trackbinding.DefaultTotalChapters = trackbindingDescTotalChapters.Default.(int)
+	// trackbindingDescScore is the schema descriptor for score field.
+	trackbindingDescScore := trackbindingFields[10].Descriptor()
+	// trackbinding.DefaultScore holds the default value on creation for the score field.
+	trackbinding.DefaultScore = trackbindingDescScore.Default.(float64)
+	// trackbindingDescPrivate is the schema descriptor for private field.
+	trackbindingDescPrivate := trackbindingFields[13].Descriptor()
+	// trackbinding.DefaultPrivate holds the default value on creation for the private field.
+	trackbinding.DefaultPrivate = trackbindingDescPrivate.Default.(bool)
+	// trackbindingDescCreatedAt is the schema descriptor for created_at field.
+	trackbindingDescCreatedAt := trackbindingFields[14].Descriptor()
+	// trackbinding.DefaultCreatedAt holds the default value on creation for the created_at field.
+	trackbinding.DefaultCreatedAt = trackbindingDescCreatedAt.Default.(func() time.Time)
+	// trackbindingDescUpdatedAt is the schema descriptor for updated_at field.
+	trackbindingDescUpdatedAt := trackbindingFields[15].Descriptor()
+	// trackbinding.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	trackbinding.DefaultUpdatedAt = trackbindingDescUpdatedAt.Default.(func() time.Time)
+	// trackbinding.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	trackbinding.UpdateDefaultUpdatedAt = trackbindingDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// trackbindingDescID is the schema descriptor for id field.
+	trackbindingDescID := trackbindingFields[0].Descriptor()
+	// trackbinding.DefaultID holds the default value on creation for the id field.
+	trackbinding.DefaultID = trackbindingDescID.Default.(func() uuid.UUID)
+	trackerconnectionFields := schema.TrackerConnection{}.Fields()
+	_ = trackerconnectionFields
+	// trackerconnectionDescAccessToken is the schema descriptor for access_token field.
+	trackerconnectionDescAccessToken := trackerconnectionFields[2].Descriptor()
+	// trackerconnection.DefaultAccessToken holds the default value on creation for the access_token field.
+	trackerconnection.DefaultAccessToken = trackerconnectionDescAccessToken.Default.(string)
+	// trackerconnectionDescRefreshToken is the schema descriptor for refresh_token field.
+	trackerconnectionDescRefreshToken := trackerconnectionFields[3].Descriptor()
+	// trackerconnection.DefaultRefreshToken holds the default value on creation for the refresh_token field.
+	trackerconnection.DefaultRefreshToken = trackerconnectionDescRefreshToken.Default.(string)
+	// trackerconnectionDescTokenType is the schema descriptor for token_type field.
+	trackerconnectionDescTokenType := trackerconnectionFields[4].Descriptor()
+	// trackerconnection.DefaultTokenType holds the default value on creation for the token_type field.
+	trackerconnection.DefaultTokenType = trackerconnectionDescTokenType.Default.(string)
+	// trackerconnectionDescUsername is the schema descriptor for username field.
+	trackerconnectionDescUsername := trackerconnectionFields[6].Descriptor()
+	// trackerconnection.DefaultUsername holds the default value on creation for the username field.
+	trackerconnection.DefaultUsername = trackerconnectionDescUsername.Default.(string)
+	// trackerconnectionDescScoreFormat is the schema descriptor for score_format field.
+	trackerconnectionDescScoreFormat := trackerconnectionFields[7].Descriptor()
+	// trackerconnection.DefaultScoreFormat holds the default value on creation for the score_format field.
+	trackerconnection.DefaultScoreFormat = trackerconnectionDescScoreFormat.Default.(string)
+	// trackerconnectionDescTokenExpired is the schema descriptor for token_expired field.
+	trackerconnectionDescTokenExpired := trackerconnectionFields[8].Descriptor()
+	// trackerconnection.DefaultTokenExpired holds the default value on creation for the token_expired field.
+	trackerconnection.DefaultTokenExpired = trackerconnectionDescTokenExpired.Default.(bool)
+	// trackerconnectionDescCreatedAt is the schema descriptor for created_at field.
+	trackerconnectionDescCreatedAt := trackerconnectionFields[9].Descriptor()
+	// trackerconnection.DefaultCreatedAt holds the default value on creation for the created_at field.
+	trackerconnection.DefaultCreatedAt = trackerconnectionDescCreatedAt.Default.(func() time.Time)
+	// trackerconnectionDescUpdatedAt is the schema descriptor for updated_at field.
+	trackerconnectionDescUpdatedAt := trackerconnectionFields[10].Descriptor()
+	// trackerconnection.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	trackerconnection.DefaultUpdatedAt = trackerconnectionDescUpdatedAt.Default.(func() time.Time)
+	// trackerconnection.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	trackerconnection.UpdateDefaultUpdatedAt = trackerconnectionDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// trackerconnectionDescID is the schema descriptor for id field.
+	trackerconnectionDescID := trackerconnectionFields[0].Descriptor()
+	// trackerconnection.DefaultID holds the default value on creation for the id field.
+	trackerconnection.DefaultID = trackerconnectionDescID.Default.(func() uuid.UUID)
 }

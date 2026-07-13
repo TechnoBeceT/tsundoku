@@ -49,6 +49,8 @@ const (
 	EdgeChapters = "chapters"
 	// EdgeCategory holds the string denoting the category edge name in mutations.
 	EdgeCategory = "category"
+	// EdgeTrackBindings holds the string denoting the track_bindings edge name in mutations.
+	EdgeTrackBindings = "track_bindings"
 	// Table holds the table name of the series in the database.
 	Table = "series"
 	// ProvidersTable is the table that holds the providers relation/edge.
@@ -72,6 +74,13 @@ const (
 	CategoryInverseTable = "categories"
 	// CategoryColumn is the table column denoting the category relation/edge.
 	CategoryColumn = "category_id"
+	// TrackBindingsTable is the table that holds the track_bindings relation/edge.
+	TrackBindingsTable = "track_bindings"
+	// TrackBindingsInverseTable is the table name for the TrackBinding entity.
+	// It exists in this package in order to avoid circular dependency with the "trackbinding" package.
+	TrackBindingsInverseTable = "track_bindings"
+	// TrackBindingsColumn is the table column denoting the track_bindings relation/edge.
+	TrackBindingsColumn = "series_id"
 )
 
 // Columns holds all SQL columns for series fields.
@@ -242,6 +251,20 @@ func ByCategoryField(field string, opts ...sql.OrderTermOption) OrderOption {
 		sqlgraph.OrderByNeighborTerms(s, newCategoryStep(), sql.OrderByField(field, opts...))
 	}
 }
+
+// ByTrackBindingsCount orders the results by track_bindings count.
+func ByTrackBindingsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newTrackBindingsStep(), opts...)
+	}
+}
+
+// ByTrackBindings orders the results by track_bindings terms.
+func ByTrackBindings(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newTrackBindingsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
 func newProvidersStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -261,5 +284,12 @@ func newCategoryStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(CategoryInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2O, true, CategoryTable, CategoryColumn),
+	)
+}
+func newTrackBindingsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(TrackBindingsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, TrackBindingsTable, TrackBindingsColumn),
 	)
 }

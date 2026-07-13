@@ -30,6 +30,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
+	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
+	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
 )
 
 // Client is the client that holds all ent builders.
@@ -65,6 +67,10 @@ type Client struct {
 	SourceMetric *SourceMetricClient
 	// SuwayomiSyncState is the client for interacting with the SuwayomiSyncState builders.
 	SuwayomiSyncState *SuwayomiSyncStateClient
+	// TrackBinding is the client for interacting with the TrackBinding builders.
+	TrackBinding *TrackBindingClient
+	// TrackerConnection is the client for interacting with the TrackerConnection builders.
+	TrackerConnection *TrackerConnectionClient
 }
 
 // NewClient creates a new client configured with the given options.
@@ -90,6 +96,8 @@ func (c *Client) init() {
 	c.SourceEvent = NewSourceEventClient(c.config)
 	c.SourceMetric = NewSourceMetricClient(c.config)
 	c.SuwayomiSyncState = NewSuwayomiSyncStateClient(c.config)
+	c.TrackBinding = NewTrackBindingClient(c.config)
+	c.TrackerConnection = NewTrackerConnectionClient(c.config)
 }
 
 type (
@@ -196,6 +204,8 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		SourceEvent:        NewSourceEventClient(cfg),
 		SourceMetric:       NewSourceMetricClient(cfg),
 		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
+		TrackBinding:       NewTrackBindingClient(cfg),
+		TrackerConnection:  NewTrackerConnectionClient(cfg),
 	}, nil
 }
 
@@ -229,6 +239,8 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		SourceEvent:        NewSourceEventClient(cfg),
 		SourceMetric:       NewSourceMetricClient(cfg),
 		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
+		TrackBinding:       NewTrackBindingClient(cfg),
+		TrackerConnection:  NewTrackerConnectionClient(cfg),
 	}, nil
 }
 
@@ -261,6 +273,7 @@ func (c *Client) Use(hooks ...Hook) {
 		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
 		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SuwayomiSyncState,
+		c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Use(hooks...)
 	}
@@ -273,6 +286,7 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
 		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SuwayomiSyncState,
+		c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -309,6 +323,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SourceMetric.mutate(ctx, m)
 	case *SuwayomiSyncStateMutation:
 		return c.SuwayomiSyncState.mutate(ctx, m)
+	case *TrackBindingMutation:
+		return c.TrackBinding.mutate(ctx, m)
+	case *TrackerConnectionMutation:
+		return c.TrackerConnection.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
 	}
@@ -1465,6 +1483,22 @@ func (c *SeriesClient) QueryCategory(_m *Series) *CategoryQuery {
 	return query
 }
 
+// QueryTrackBindings queries the track_bindings edge of a Series.
+func (c *SeriesClient) QueryTrackBindings(_m *Series) *TrackBindingQuery {
+	query := (&TrackBindingClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(series.Table, series.FieldID, id),
+			sqlgraph.To(trackbinding.Table, trackbinding.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, series.TrackBindingsTable, series.TrackBindingsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // Hooks returns the client hooks.
 func (c *SeriesClient) Hooks() []Hook {
 	return c.hooks.Series
@@ -2368,16 +2402,299 @@ func (c *SuwayomiSyncStateClient) mutate(ctx context.Context, m *SuwayomiSyncSta
 	}
 }
 
+// TrackBindingClient is a client for the TrackBinding schema.
+type TrackBindingClient struct {
+	config
+}
+
+// NewTrackBindingClient returns a client for the TrackBinding from the given config.
+func NewTrackBindingClient(c config) *TrackBindingClient {
+	return &TrackBindingClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `trackbinding.Hooks(f(g(h())))`.
+func (c *TrackBindingClient) Use(hooks ...Hook) {
+	c.hooks.TrackBinding = append(c.hooks.TrackBinding, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `trackbinding.Intercept(f(g(h())))`.
+func (c *TrackBindingClient) Intercept(interceptors ...Interceptor) {
+	c.inters.TrackBinding = append(c.inters.TrackBinding, interceptors...)
+}
+
+// Create returns a builder for creating a TrackBinding entity.
+func (c *TrackBindingClient) Create() *TrackBindingCreate {
+	mutation := newTrackBindingMutation(c.config, OpCreate)
+	return &TrackBindingCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of TrackBinding entities.
+func (c *TrackBindingClient) CreateBulk(builders ...*TrackBindingCreate) *TrackBindingCreateBulk {
+	return &TrackBindingCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *TrackBindingClient) MapCreateBulk(slice any, setFunc func(*TrackBindingCreate, int)) *TrackBindingCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &TrackBindingCreateBulk{err: fmt.Errorf("calling to TrackBindingClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*TrackBindingCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &TrackBindingCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for TrackBinding.
+func (c *TrackBindingClient) Update() *TrackBindingUpdate {
+	mutation := newTrackBindingMutation(c.config, OpUpdate)
+	return &TrackBindingUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *TrackBindingClient) UpdateOne(_m *TrackBinding) *TrackBindingUpdateOne {
+	mutation := newTrackBindingMutation(c.config, OpUpdateOne, withTrackBinding(_m))
+	return &TrackBindingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *TrackBindingClient) UpdateOneID(id uuid.UUID) *TrackBindingUpdateOne {
+	mutation := newTrackBindingMutation(c.config, OpUpdateOne, withTrackBindingID(id))
+	return &TrackBindingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for TrackBinding.
+func (c *TrackBindingClient) Delete() *TrackBindingDelete {
+	mutation := newTrackBindingMutation(c.config, OpDelete)
+	return &TrackBindingDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *TrackBindingClient) DeleteOne(_m *TrackBinding) *TrackBindingDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *TrackBindingClient) DeleteOneID(id uuid.UUID) *TrackBindingDeleteOne {
+	builder := c.Delete().Where(trackbinding.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &TrackBindingDeleteOne{builder}
+}
+
+// Query returns a query builder for TrackBinding.
+func (c *TrackBindingClient) Query() *TrackBindingQuery {
+	return &TrackBindingQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeTrackBinding},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a TrackBinding entity by its id.
+func (c *TrackBindingClient) Get(ctx context.Context, id uuid.UUID) (*TrackBinding, error) {
+	return c.Query().Where(trackbinding.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *TrackBindingClient) GetX(ctx context.Context, id uuid.UUID) *TrackBinding {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QuerySeries queries the series edge of a TrackBinding.
+func (c *TrackBindingClient) QuerySeries(_m *TrackBinding) *SeriesQuery {
+	query := (&SeriesClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(trackbinding.Table, trackbinding.FieldID, id),
+			sqlgraph.To(series.Table, series.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, trackbinding.SeriesTable, trackbinding.SeriesColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *TrackBindingClient) Hooks() []Hook {
+	return c.hooks.TrackBinding
+}
+
+// Interceptors returns the client interceptors.
+func (c *TrackBindingClient) Interceptors() []Interceptor {
+	return c.inters.TrackBinding
+}
+
+func (c *TrackBindingClient) mutate(ctx context.Context, m *TrackBindingMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&TrackBindingCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&TrackBindingUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&TrackBindingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&TrackBindingDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown TrackBinding mutation op: %q", m.Op())
+	}
+}
+
+// TrackerConnectionClient is a client for the TrackerConnection schema.
+type TrackerConnectionClient struct {
+	config
+}
+
+// NewTrackerConnectionClient returns a client for the TrackerConnection from the given config.
+func NewTrackerConnectionClient(c config) *TrackerConnectionClient {
+	return &TrackerConnectionClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `trackerconnection.Hooks(f(g(h())))`.
+func (c *TrackerConnectionClient) Use(hooks ...Hook) {
+	c.hooks.TrackerConnection = append(c.hooks.TrackerConnection, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `trackerconnection.Intercept(f(g(h())))`.
+func (c *TrackerConnectionClient) Intercept(interceptors ...Interceptor) {
+	c.inters.TrackerConnection = append(c.inters.TrackerConnection, interceptors...)
+}
+
+// Create returns a builder for creating a TrackerConnection entity.
+func (c *TrackerConnectionClient) Create() *TrackerConnectionCreate {
+	mutation := newTrackerConnectionMutation(c.config, OpCreate)
+	return &TrackerConnectionCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of TrackerConnection entities.
+func (c *TrackerConnectionClient) CreateBulk(builders ...*TrackerConnectionCreate) *TrackerConnectionCreateBulk {
+	return &TrackerConnectionCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *TrackerConnectionClient) MapCreateBulk(slice any, setFunc func(*TrackerConnectionCreate, int)) *TrackerConnectionCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &TrackerConnectionCreateBulk{err: fmt.Errorf("calling to TrackerConnectionClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*TrackerConnectionCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &TrackerConnectionCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for TrackerConnection.
+func (c *TrackerConnectionClient) Update() *TrackerConnectionUpdate {
+	mutation := newTrackerConnectionMutation(c.config, OpUpdate)
+	return &TrackerConnectionUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *TrackerConnectionClient) UpdateOne(_m *TrackerConnection) *TrackerConnectionUpdateOne {
+	mutation := newTrackerConnectionMutation(c.config, OpUpdateOne, withTrackerConnection(_m))
+	return &TrackerConnectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *TrackerConnectionClient) UpdateOneID(id uuid.UUID) *TrackerConnectionUpdateOne {
+	mutation := newTrackerConnectionMutation(c.config, OpUpdateOne, withTrackerConnectionID(id))
+	return &TrackerConnectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for TrackerConnection.
+func (c *TrackerConnectionClient) Delete() *TrackerConnectionDelete {
+	mutation := newTrackerConnectionMutation(c.config, OpDelete)
+	return &TrackerConnectionDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *TrackerConnectionClient) DeleteOne(_m *TrackerConnection) *TrackerConnectionDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *TrackerConnectionClient) DeleteOneID(id uuid.UUID) *TrackerConnectionDeleteOne {
+	builder := c.Delete().Where(trackerconnection.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &TrackerConnectionDeleteOne{builder}
+}
+
+// Query returns a query builder for TrackerConnection.
+func (c *TrackerConnectionClient) Query() *TrackerConnectionQuery {
+	return &TrackerConnectionQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeTrackerConnection},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a TrackerConnection entity by its id.
+func (c *TrackerConnectionClient) Get(ctx context.Context, id uuid.UUID) (*TrackerConnection, error) {
+	return c.Query().Where(trackerconnection.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *TrackerConnectionClient) GetX(ctx context.Context, id uuid.UUID) *TrackerConnection {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *TrackerConnectionClient) Hooks() []Hook {
+	return c.hooks.TrackerConnection
+}
+
+// Interceptors returns the client interceptors.
+func (c *TrackerConnectionClient) Interceptors() []Interceptor {
+	return c.inters.TrackerConnection
+}
+
+func (c *TrackerConnectionClient) mutate(ctx context.Context, m *TrackerConnectionMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&TrackerConnectionCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&TrackerConnectionUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&TrackerConnectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&TrackerConnectionDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown TrackerConnection mutation op: %q", m.Op())
+	}
+}
+
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
 		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner, ProviderChapter,
 		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
-		SourceMetric, SuwayomiSyncState []ent.Hook
+		SourceMetric, SuwayomiSyncState, TrackBinding, TrackerConnection []ent.Hook
 	}
 	inters struct {
 		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner, ProviderChapter,
 		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
-		SourceMetric, SuwayomiSyncState []ent.Interceptor
+		SourceMetric, SuwayomiSyncState, TrackBinding,
+		TrackerConnection []ent.Interceptor
 	}
 )

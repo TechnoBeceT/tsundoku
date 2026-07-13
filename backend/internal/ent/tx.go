@@ -40,6 +40,10 @@ type Tx struct {
 	SourceMetric *SourceMetricClient
 	// SuwayomiSyncState is the client for interacting with the SuwayomiSyncState builders.
 	SuwayomiSyncState *SuwayomiSyncStateClient
+	// TrackBinding is the client for interacting with the TrackBinding builders.
+	TrackBinding *TrackBindingClient
+	// TrackerConnection is the client for interacting with the TrackerConnection builders.
+	TrackerConnection *TrackerConnectionClient
 
 	// lazily loaded.
 	client     *Client
@@ -185,6 +189,8 @@ func (tx *Tx) init() {
 	tx.SourceEvent = NewSourceEventClient(tx.config)
 	tx.SourceMetric = NewSourceMetricClient(tx.config)
 	tx.SuwayomiSyncState = NewSuwayomiSyncStateClient(tx.config)
+	tx.TrackBinding = NewTrackBindingClient(tx.config)
+	tx.TrackerConnection = NewTrackerConnectionClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.
