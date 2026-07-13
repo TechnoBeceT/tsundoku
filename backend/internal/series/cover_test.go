@@ -17,6 +17,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/metadata"
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
@@ -300,6 +301,79 @@ func TestCoverBytes_SourceURLChangeRefetchesOnce(t *testing.T) {
 	}
 	if got := fetcher.calls.Load(); got != 0 {
 		t.Fatalf("re-warmed: Suwayomi calls = %d, want 0", got)
+	}
+}
+
+// TestCoverBytes_PinnedCoverOutranksLiveProvider is the QCAT-228 fix proof: a
+// series with BOTH a live Suwayomi provider (its own cover_url) AND an
+// owner-pinned metadata cover (cover_source set, cover_file/cover_source_url/
+// cover_version pointing at DIFFERENT bytes from a DIFFERENT source) must serve
+// the PINNED cover, with ZERO Suwayomi calls — and must NEVER clobber it on a
+// later serve. Before the fix, the M10 provider path ran first, saw
+// cover_source_url != meta.CoverURL, called that a "mismatch", and re-fetched
+// the provider's cover over the owner's pin.
+func TestCoverBytes_PinnedCoverOutranksLiveProvider(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	fetcher := &countingFetcher{data: []byte("SHOULD-NEVER-BE-FETCHED"), ext: "jpg"}
+	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+
+	// A live provider whose cover_url is URL-A — if the pin did not win, this is
+	// exactly what CoverBytes would (wrongly) re-fetch.
+	id := seedCoverSeries(ctx, t, db, storage, "https://source.example/covers/url-a.jpg")
+
+	// The owner pins a DIFFERENT cover (URL-B) via the metadata engine: bytes
+	// already cached on disk, DB fast-index pointed at them, cover_source recorded.
+	pinnedData := []byte("PINNED-COVER-BYTES")
+	filename, err := disk.SaveCover(disk.CoverRequest{
+		Storage: storage, Category: "Manga", Title: "Cover Cache",
+		Data: pinnedData, Ext: "png",
+		SourceURL: "https://anilist.co/covers/url-b.png", Provider: "anilist",
+	})
+	if err != nil {
+		t.Fatalf("SaveCover (pin): %v", err)
+	}
+	pinnedVersion := coverVersionForTest(pinnedData)
+	db.Series.UpdateOneID(id).
+		SetCoverFile(filename).
+		SetCoverSourceURL("https://anilist.co/covers/url-b.png").
+		SetCoverVersion(pinnedVersion).
+		SetCoverSource(&metadata.SourceRef{Kind: "metadata", Ref: "anilist", RemoteID: "123"}).
+		ExecX(ctx)
+
+	// assertPinServed checks one serve: the pinned bytes came back, versioned
+	// correctly, with no provider call — extracted so two serves (first + a
+	// repeat, proving no clobber) share one assertion body.
+	assertPinServed := func(phase string) {
+		t.Helper()
+		cover, err := svc.CoverBytes(ctx, id)
+		if err != nil {
+			t.Fatalf("CoverBytes (%s): %v", phase, err)
+		}
+		if string(cover.Data) != "PINNED-COVER-BYTES" || cover.Ext != "png" || cover.Version != pinnedVersion {
+			t.Fatalf("CoverBytes (%s) = %q/%q/%q, want PINNED-COVER-BYTES/png/%s — the pin was clobbered",
+				phase, cover.Data, cover.Ext, cover.Version, pinnedVersion)
+		}
+		if got := fetcher.calls.Load(); got != 0 {
+			t.Fatalf("PIN PROOF FAILED (%s): serving the pinned cover made %d Suwayomi call(s), want 0", phase, got)
+		}
+	}
+
+	// First serve: the pin wins over the live provider. Second serve: still the
+	// pin, still zero calls — the provider's cover_url must never be treated as
+	// invalidating the owner's choice.
+	assertPinServed("first serve")
+	assertPinServed("second serve")
+
+	// The detail DTO must also reflect the pinned cover_version.
+	detail, err := svc.GetSeries(ctx, id)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	wantURL := "/api/series/" + id.String() + "/cover?v=" + pinnedVersion
+	if detail.CoverURL != wantURL {
+		t.Errorf("coverUrl = %q, want %q", detail.CoverURL, wantURL)
 	}
 }
 

@@ -90,17 +90,31 @@ func (s *Service) WithCoverFetcher(f CoverFetcher) *Service {
 // stops a 52-series library grid from firing 52 source-ward fetches on every
 // single render.
 //
-// The lookup is a THREE-STEP ladder, cheapest first:
+// PRECEDENCE (QCAT-228 pointer-override — checked in this order, each an "else"
+// of the one before):
 //
-//  1. DB fast-index (Series.cover_file + cover_source_url) — one os.ReadFile and
-//     nothing else. This is the hot path a library grid hits.
-//  2. Sidecar (disk.ReadCover) — the pre-index fallback. An existing library has
-//     covers + sidecar cover blocks on disk but EMPTY columns, and treating that
-//     as "not cached" would re-fetch every cover from the sources: exactly the
-//     hammering this cache exists to prevent. A sidecar hit therefore serves the
-//     bytes AND backfills the index, so the series self-heals onto step 1.
-//  3. Suwayomi — the only step that touches a source, reached only when there is
-//     no valid local cover at all.
+//  1. Owner pin (cover_source set via metadatasvc.SetCover/AutoIdentify) with a
+//     local cover cached: serve it DIRECTLY, never validated against a live
+//     provider's cover_url. A pin is the owner's explicit choice; it must never
+//     be silently overwritten just because a Suwayomi provider also happens to
+//     carry a (different) cover_url — that was the exact bug this precedence
+//     fixes: the provider path used to run unconditionally first and treat the
+//     pinned cover's differing source_url as a "mismatch" to invalidate.
+//  2. M10 provider path: a Suwayomi provider supplies a cover_url. The local
+//     cache is VALIDATED against it (localCover re-fetches on a cover_url
+//     mismatch — a metadata-source switch or the source republishing its
+//     thumbnail) and a cold/stale cover is fetched from the source.
+//  3. C3 providerless fallback: no provider cover_url, so any locally-cached
+//     metadata-engine cover is served directly with no source to validate
+//     against.
+//  4. ErrNoCover.
+//
+// Each step's lookup is itself a two-rung ladder, cheapest first: the DB
+// fast-index (Series.cover_file + cover_source_url — one os.ReadFile, nothing
+// else; the hot path a library grid hits) and, failing that, the sidecar
+// (disk.ReadCover — the pre-index fallback, which also backfills the index so
+// the series self-heals onto the fast rung). Suwayomi is only ever reached from
+// step 2, and only when neither local rung has a valid cover.
 //
 // Every step that has the bytes in hand re-derives their content version and
 // re-indexes when it has drifted, so cover_version can never lie about what is on
@@ -130,10 +144,21 @@ func (s *Service) CoverBytes(ctx context.Context, id uuid.UUID) (Cover, error) {
 	meta := MetadataProvider(row)
 	categoryName := category.NameOf(row)
 
-	// M10 provider path: a Suwayomi provider still supplies a cover_url. The local
-	// cache is VALIDATED against it (localCover re-fetches on a cover_url mismatch —
-	// a metadata-source switch or the source republishing its thumbnail), and a
-	// cold/stale cover is fetched from the source. UNCHANGED behaviour.
+	// Step 1 — the owner's pin wins outright (QCAT-228): a cover_source pointer
+	// means the owner (or AutoIdentify) deliberately chose this cover, so it must
+	// survive regardless of what a live provider's cover_url says. Only falls
+	// through when the pin is recorded but no local copy actually exists.
+	if row.CoverSource != nil {
+		if cover, ok := s.localCacheOnly(ctx, row, categoryName); ok {
+			return cover, nil
+		}
+	}
+
+	// Step 2 — M10 provider path: a Suwayomi provider still supplies a cover_url.
+	// The local cache is VALIDATED against it (localCover re-fetches on a
+	// cover_url mismatch — a metadata-source switch or the source republishing
+	// its thumbnail), and a cold/stale cover is fetched from the source.
+	// UNCHANGED behaviour for a series with no cover_source pin.
 	if meta != nil && meta.CoverURL != "" {
 		if cover, ok := s.localCover(ctx, row, meta, categoryName); ok {
 			return cover, nil
@@ -141,8 +166,8 @@ func (s *Service) CoverBytes(ctx context.Context, id uuid.UUID) (Cover, error) {
 		return s.fetchAndCacheCover(ctx, row, meta, categoryName)
 	}
 
-	// No provider cover_url — a providerless (or disk-origin-only) series whose
-	// cover was set by the metadata engine (SetCover / AutoIdentify persist
+	// Step 3 — no provider cover_url — a providerless (or disk-origin-only) series
+	// whose cover was set by the metadata engine (SetCover / AutoIdentify persist
 	// cover_file + cover_version onto exactly this Kaizoku-migration shape). There
 	// is no source to validate against or fetch from, so serve the locally-cached
 	// bytes DIRECTLY (zero Suwayomi calls); a missing local cover is ErrNoCover,
