@@ -560,5 +560,19 @@ const hasBadges = computed(
     --rich-stats-cols: repeat(2, minmax(0, 1fr));
     --rich-cat-margin: 0;
   }
+
+  /* `.rich__head`'s flex-wrap (see the rule above) is a no-op on desktop —
+   * there's always room for the titleblock + toolbar on one line. On the
+   * narrow single-column body it DOES wrap, but `.rich__titleblock` is still
+   * a `flex: 1` row item measured against the (now absent) toolbar sibling,
+   * so a wrapped flex item shrinks to its own min-content width instead of
+   * the full row — collapsing the title to a narrow column (3-line-wrapped
+   * "A Man's Man", one-word-per-line alt titles) even though the whole card
+   * width is available below it. Forcing the titleblock onto its own
+   * full-width row fixes that; the toolbar (Metadata/Delete) simply wraps
+   * beneath it, unaffected. */
+  .rich__titleblock {
+    flex-basis: 100%;
+  }
 }
 </style>

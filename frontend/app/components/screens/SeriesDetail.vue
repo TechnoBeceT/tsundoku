@@ -294,12 +294,28 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 }
 
 @media (max-width: 900px) {
+  /* Mobile has no second inner scroller to coordinate with (AppShell's
+   * `.shell`/`.main`/`.content` chain never clips — see AppShell.vue; body
+   * scroll is available for free once THIS component stops trapping it). The
+   * desktop shape below fixes `.detail` to the viewport height and hides its
+   * overflow so `.columns` can own a single bounded inner scroller; on a
+   * narrow phone the stacked `RichSeriesCard` + metadata picker in
+   * `.detail__top` are routinely TALLER than that fixed box, so they got
+   * clipped by `overflow: hidden` and neither them NOR `.columns` below them
+   * could ever be reached. Drop the fixed height + hidden overflow so the
+   * component grows to its natural (taller) content height and the PAGE
+   * scrolls it — the standard "let the document scroll" mobile shape. */
+  .detail {
+    height: auto;
+    min-height: calc(100dvh - 64px);
+    overflow: visible;
+  }
+
   .columns {
     grid-template-columns: 1fr;
-    /* Narrow layout: stop fighting for two independent internal scrollers —
-     * stack the panels and let this region be the one scroll area instead
-     * (still bounded by .detail's overflow:hidden, so still no page scroll). */
-    overflow-y: auto;
+    /* No longer the scroll owner — flow into the page scroll established
+     * above instead of opening a second, now-unreachable inner scroller. */
+    overflow-y: visible;
   }
 }
 </style>
