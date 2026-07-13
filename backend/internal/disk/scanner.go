@@ -241,7 +241,12 @@ func orphanChapterFacts(dir string, sidecarCovered map[string]struct{}) ([]Chapt
 		if _, covered := sidecarCovered[e.Name()]; covered {
 			continue
 		}
-		// e.Info() reuses the os.ReadDir walk's own stat data — no second syscall.
+		// e.Info() costs one lstat per orphan CBZ on Linux (getdents64 returns
+		// d_type, so os.DirEntry does not pre-populate FileInfo — unlike the
+		// sidecar path above, this is NOT free). Acceptable: it is paid
+		// immediately before a zip open of the SAME file (chapterFactFromOrphanCBZ
+		// below), so it is dwarfed by the archive read and normally served from
+		// the NFS attribute cache.
 		var modTime time.Time
 		if info, infoErr := e.Info(); infoErr == nil {
 			modTime = info.ModTime()

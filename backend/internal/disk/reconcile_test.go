@@ -396,6 +396,13 @@ func TestReconcile_adopt_orphan(t *testing.T) {
 		t.Fatalf("CreateCBZ: %v", err)
 	}
 
+	// Stamp a KNOWN past mtime on the orphan CBZ so we can assert the seeded
+	// first_downloaded_at came from it, not from CreateCBZ's write-time default.
+	want := time.Date(2026, 1, 14, 10, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(cbzPath, want, want); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
 	result, err := disk.Reconcile(ctx, client, storage)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -410,6 +417,15 @@ func TestReconcile_adopt_orphan(t *testing.T) {
 	}
 	if ch.State != entchapter.StateDownloaded {
 		t.Errorf("adopted chapter state = %s, want downloaded", ch.State)
+	}
+	// The load-bearing assertion this test previously lacked: an orphan CBZ
+	// (no sidecar entry — exactly the owner's real Kaizoku library shape) must
+	// seed FirstDownloadedAt from the ORPHAN path's ModTime, not the sidecar path's.
+	if ch.FirstDownloadedAt == nil {
+		t.Fatal("FirstDownloadedAt = nil for orphan-adopted chapter, want set from CBZ mtime")
+	}
+	if !ch.FirstDownloadedAt.Truncate(time.Second).Equal(want.Truncate(time.Second)) {
+		t.Errorf("FirstDownloadedAt = %v, want %v", ch.FirstDownloadedAt, want)
 	}
 }
 
