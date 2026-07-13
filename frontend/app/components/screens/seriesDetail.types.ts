@@ -220,6 +220,25 @@ export interface MetadataCandidate {
 }
 
 /**
+ * CoverCandidate — one selectable cover in the "Choose cover" picker. In Tsundoku
+ * the COVER is chosen INDEPENDENTLY of the metadata match: the owner may take the
+ * poster from ANY provider — a tracker (AniList / MAL), a metadata provider
+ * (MangaDex / MangaUpdates), or a scraped source ("Asura Scans") — so `provider`
+ * is a free display name, not the closed `MetadataProviderName` set. This is a
+ * per-field `cover_source` choice, distinct from the Identify flow's whole-series
+ * match. Presentation-only: the modal renders these and emits the owner's pick;
+ * the parent owns the fetch.
+ */
+export interface CoverCandidate {
+  /** Stable id for single-select (provider-scoped, e.g. `mangadex:cover-2`). */
+  id: string
+  /** The tracker / metadata-provider / source this cover came from (drives the label). */
+  provider: string
+  /** Portrait cover URL for the candidate (empty → the initial placeholder). */
+  coverUrl: string
+}
+
+/**
  * FractionalCleanupChapter — one already-downloaded FRACTIONAL chapter the owner
  * may remove (`GET /api/series/:id/fractional-cleanup`): a file left behind after
  * "ignore fractional chapters" was ticked on the source(s) carrying it (that

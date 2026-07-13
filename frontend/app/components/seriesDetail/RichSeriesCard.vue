@@ -62,6 +62,8 @@ const emit = defineEmits<{
   toggleCompleted: [completed: boolean]
   /** The Metadata button was pressed (→ the parent opens the Identify modal). */
   openMetadata: []
+  /** The cover's "Change cover" affordance was pressed (→ the parent opens the CoverPickerModal). */
+  openCoverPicker: []
   /** The Delete button was pressed (→ the parent opens the delete dialog). */
   requestDelete: []
 }>()
@@ -125,6 +127,18 @@ const hasBadges = computed(
       <!-- Cover -->
       <div class="rich__cover">
         <CoverImage :src="series.coverUrl" :alt="`${series.title} cover`" placeholder="brand" />
+        <!-- "Change cover" affordance: a subtle overlay button revealed on hover
+             OR keyboard focus (focus-within), sitting over the whole cover. Opens
+             the CoverPickerModal via the parent. It overlays the CoverImage, so
+             it works over a real cover AND the branded placeholder alike. -->
+        <button
+          type="button"
+          class="rich__cover-change"
+          @click="emit('openCoverPicker')"
+        >
+          <Icon name="lucide:image" />
+          <span>Change cover</span>
+        </button>
       </div>
 
       <!-- Body -->
@@ -274,6 +288,7 @@ const hasBadges = computed(
 
 /* ---- Cover ---------------------------------------------------------------- */
 .rich__cover {
+  position: relative;
   flex: none;
   width: 208px;
   /* align-self:flex-start stops the cover column stretching to the (taller) text
@@ -284,6 +299,41 @@ const hasBadges = computed(
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border);
+}
+
+/* The "Change cover" affordance — a frosted button on a bottom scrim, hidden at
+   rest and revealed on hover of the cover OR keyboard focus of the button, so it
+   never competes with the poster until the owner reaches for it. */
+.rich__cover-change {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 11px 12px;
+  border: none;
+  background: var(--cover-frost);
+  backdrop-filter: blur(4px);
+  color: var(--cover-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(100%);
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.rich__cover:hover .rich__cover-change,
+.rich__cover-change:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.rich__cover-change:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
 }
 
 .rich--singleColumn .rich__cover {

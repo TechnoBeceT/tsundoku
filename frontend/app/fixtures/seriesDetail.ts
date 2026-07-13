@@ -7,7 +7,7 @@
  * provider-health values (incl. an erroring source with an inline error and a
  * stale source that is behind), so the badge palette renders in full.
  */
-import type { Chapter, MetadataCandidate, Provider, SeriesDetail } from '../components/screens/seriesDetail.types'
+import type { Chapter, CoverCandidate, MetadataCandidate, Provider, SeriesDetail } from '../components/screens/seriesDetail.types'
 
 /** Helper: an ISO timestamp `n` hours in the past (drives the relative labels). */
 const hoursAgo = (n: number): string => new Date(Date.now() - n * 3_600_000).toISOString()
@@ -452,6 +452,35 @@ export const metadataCandidates: MetadataCandidate[] = [
   { id: 'mangaupdates:2', provider: 'MangaUpdates', title: 'Return of the Dragon Slayer', coverUrl: '', year: 2020 },
   { id: 'anilist:3', provider: 'AniList', title: 'The Weakest Dragon Slayer Levels Up Again After His Regression Through Time', coverUrl: 'https://picsum.photos/seed/dsr-long/400/600', year: 2024 },
 ]
+
+/* ============================================================================
+ * Cover-picker fixtures — candidate posters for the "Choose cover" modal.
+ * Story-only: they feed CoverPickerModal so the design renders against a real
+ * spread of DIFFERENT covers for ONE series, pulled from across every provider
+ * kind — trackers (AniList / MAL), metadata providers (MangaDex ×2, so one
+ * source contributes multiple posters), MangaUpdates, and a scraped source
+ * ("Asura Scans"). Portrait picsum posters (2:3) with distinct seeds, plus one
+ * empty-URL candidate to exercise the initial-letter placeholder tile.
+ * ========================================================================== */
+
+/**
+ * Several DIFFERENT covers for a single series across providers — the exact
+ * spread the owner disambiguates by eye when choosing which poster to keep. The
+ * cover is chosen INDEPENDENTLY of the metadata match (a per-field cover_source).
+ */
+export const coverCandidates: CoverCandidate[] = [
+  { id: 'anilist:cover', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist/400/600' },
+  { id: 'mal:cover', provider: 'MAL', coverUrl: 'https://picsum.photos/seed/cover-mal/400/600' },
+  { id: 'mangadex:cover-1', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-1/400/600' },
+  { id: 'mangadex:cover-2', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-2/400/600' },
+  { id: 'mangaupdates:cover', provider: 'MangaUpdates', coverUrl: 'https://picsum.photos/seed/cover-mangaupdates/400/600' },
+  { id: 'asura:cover', provider: 'Asura Scans', coverUrl: 'https://picsum.photos/seed/cover-asura/400/600' },
+  { id: 'anilist:cover-alt', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist-alt/400/600' },
+  { id: 'source:cover-empty', provider: 'Reaper Scans', coverUrl: '' },
+]
+
+/** The cover the series currently uses (the "Current" marker + open preselection). */
+export const currentCoverId = 'mangadex:cover-1'
 
 /**
  * A source with ONE genuine side-chapter (a `5.5` omake). `.5` is by far the most
