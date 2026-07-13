@@ -240,16 +240,15 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 </template>
 
 <style scoped>
-/* The screen FLOWS with the document — the whole page (card + panels) scrolls
- * together as one, at every width. `min-height` just keeps a short series
- * from leaving a visibly short page below the AppShell header (shell/
- * AppShell.vue's `.head` is a fixed 64px; its `.head`/`.rail` are
- * `position: sticky` so they keep pinning during the page scroll this
- * establishes — untouched here). This is UNCONDITIONAL (not gated to a media
- * query): a tall `RichSeriesCard` (description + tag cloud + links + stats)
- * can exceed any fixed pane height at ANY width, not just mobile, so the old
- * "fixed header pane + inner-scroll `.columns`" model doesn't hold at any
- * width and there is no viewport-bounded shape left to fall back to. */
+/* QCAT-231 "fit the screen, scroll inside": `.detail` itself stays a FLOWING
+ * document container (NOT fixed-height/overflow:hidden) — RichSeriesCard's
+ * height is content-driven (description + tag cloud + links + stats) and can
+ * exceed a single viewport, so trapping it in a bounded pane clips it (the
+ * original QCAT-230 regression). `min-height` only keeps a short series from
+ * leaving a visibly short page below the AppShell header (shell/AppShell.vue's
+ * `.head` is a fixed 64px; its `.head`/`.rail` stay `position: sticky` through
+ * this document scroll — untouched here). The card flows; only `.columns`
+ * below is bounded. */
 .detail {
   padding: 24px 30px 70px;
   background: var(--bg);
@@ -267,21 +266,40 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
   gap: 18px;
 }
 
-/* ---- Two-column layout ---------------------------------------------------- */
+/* ---- Two-column layout: fit-screen bounded inner-scroll (QCAT-231) -------- */
 /* Chapters gets the WIDER column — it's the panel actually scanned. Sources
- * is a bounded list (4-7 cards) and gets the narrower one. Purely a column
- * layout now (no scroll/overflow behavior lives here any more — see `.detail`
- * above): the grid's row height is content-driven and the document scrolls
- * it, same as everything else on the page. */
+ * is a bounded list (4-7 cards) and gets the narrower one. Unlike `.detail`
+ * above, `.columns` IS bounded to one viewport: `height` fits it under the
+ * sticky 64px AppShell header (whatever scroll position the card left it at),
+ * and `min-height: 0` lets the grid ITEMS shrink below their content size (a
+ * grid item's automatic min-height is its content size — without this
+ * override the row, and the page with it, would refuse to shrink and the
+ * page-level scrollbar would come back). Bounding the grid is all that's
+ * needed to engage each panel's OWN inner-scroll: PanelCard.vue's `.panel` is
+ * already `flex:1 / min-height:0 / overflow-y:auto` in its body — it just
+ * needs a bounded cell to fill (see its "SCROLL SHAPE" doc comment). The
+ * result: Chapters and Sources each scroll independently, so the short
+ * Sources column is reachable without traversing the long Chapters list, and
+ * it never sits beside a tall blank gap while Chapters keeps growing. */
 .columns {
   display: grid;
   grid-template-columns: 1.7fr 1fr;
   gap: 18px;
+  height: calc(100dvh - 64px);
+  min-height: 0;
 }
 
 @media (max-width: 900px) {
+  /* Stacked single column. Each panel still gets its OWN bounded, inner-
+   * scrolling viewport (`grid-auto-rows`, ~one screen each) rather than
+   * growing to content — so Sources sits right after ONE bounded Chapters
+   * panel, not 320 chapter rows down (the "torture" the owner rejected the
+   * full-page-scroll model over). The page itself scrolls BETWEEN the
+   * stacked panels; each panel scrolls its OWN list. */
   .columns {
     grid-template-columns: 1fr;
+    height: auto;
+    grid-auto-rows: calc(100dvh - 64px);
   }
 }
 </style>
