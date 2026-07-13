@@ -28,7 +28,7 @@ import { ref } from 'vue'
 import type { Ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { SeriesDetail, Chapter, ChapterState, Provider } from '~/components/screens/seriesDetail.types'
+import type { SeriesDetail, Chapter, ChapterState, Provider, FractionalCleanupPreview } from '~/components/screens/seriesDetail.types'
 
 type SeriesDetailDTO = components['schemas']['SeriesDetail']
 type ChapterDTO = components['schemas']['Chapter']
@@ -78,6 +78,9 @@ function mapProvider(dto: ProviderDTO): Provider {
     feedCount: dto.feedCount,
     feedRanges: dto.feedRanges,
     hasFeed: dto.hasFeed,
+    fractionalCount: dto.fractionalCount,
+    fractionalChapters: dto.fractionalChapters,
+    ignoreFractional: dto.ignoreFractional,
     scanlator: dto.scanlator,
     language: dto.language,
     importance: dto.importance,
@@ -123,6 +126,7 @@ export function useSeriesDetail(id: string) {
   const matchBusy = ref(false)
   const dedupBusy = ref(false)
   const dedupeFilesBusy = ref(false)
+  const fractionalBusy = ref(false)
   const dedupMessage = ref<string | null>(null)
 
   async function refresh(): Promise<void> {
@@ -218,6 +222,22 @@ export function useSeriesDetail(id: string) {
       removeBusy,
     )
 
+  /**
+   * Flags ONE source as a fractional re-uploader for this series (or clears the
+   * flag): the source stops contributing fractional-numbered chapters (5.1,
+   * 5.5 …) — they are dropped at ingest and excluded from candidacy.
+   *
+   * It deletes NOTHING: already-downloaded files and existing chapters stay,
+   * and un-ticking restores the source immediately. Resolves true on success
+   * (the row re-renders from the refreshed detail), false on failure (surfaced
+   * via `error`, never swallowed).
+   */
+  const setIgnoreFractional = (providerId: string, ignoreFractional: boolean): Promise<boolean> =>
+    mutate(() => apiClient.PATCH('/api/series/{id}/providers/{providerId}/ignore-fractional', {
+      params: { path: { id, providerId } },
+      body: { ignoreFractional },
+    }))
+
   const chooseMetadataSource = (providerId: string): Promise<boolean> =>
     mutate(() => apiClient.PATCH('/api/series/{id}/metadata-source', { params: { path: { id } }, body: { providerId } }))
 
@@ -312,6 +332,59 @@ export function useSeriesDetail(id: string) {
     }
   }
 
+  /**
+   * Loads the series' removable FRACTIONAL chapters (GET /api/series/{id}/
+   * fractional-cleanup) — the already-downloaded files the "Ignore fractional
+   * chapters" switch leaves behind (it stops NEW fractional downloads and
+   * deletes nothing). A plain read: it drives BOTH whether the Sources panel
+   * offers the "Remove fractional files" button at all (empty set → no button,
+   * no dead control) and the cleanup dialog's contents.
+   *
+   * Resolves null on failure — the button simply stays hidden. This is a
+   * BACKGROUND read the owner never asked for, so a failure must not shout at
+   * him with a page-level error banner; the removal POST itself is the
+   * owner-driven action, and THAT surfaces its errors (§16).
+   */
+  const fetchFractionalCleanup = async (): Promise<FractionalCleanupPreview | null> => {
+    const res = await apiClient.GET('/api/series/{id}/fractional-cleanup', { params: { path: { id } } })
+    // Guard the response SHAPE, not just the status: a body without a `chapters`
+    // array (a partial/garbled payload) reads as "nothing to clean" — it must
+    // never throw from a background read the owner never triggered.
+    if (res.error || !res.data || !Array.isArray(res.data.chapters)) return null
+    return {
+      typicalPageCount: res.data.typicalPageCount ?? 0,
+      chapters: res.data.chapters.map((c) => ({
+        chapterId: c.chapterId,
+        number: c.number,
+        pageCount: c.pageCount,
+        provider: c.provider,
+        filename: c.filename,
+      })),
+    }
+  }
+
+  /**
+   * Removes the fractional chapters the owner TICKED in the cleanup dialog
+   * (POST /api/series/{id}/fractional-cleanup): each one's CBZ file and its
+   * Chapter row go; the source's ProviderChapter feed is KEPT, so un-ticking
+   * "Ignore fractional chapters" later restores them.
+   *
+   * `chapterIds` is a SELECTION, never an authorisation — the backend
+   * re-computes the removable set and rejects (400, nothing deleted) any id
+   * outside it. Runs through the shared `mutate` wrapper, so it refreshes the
+   * series on success (the chapter list loses the removed rows) and resolves
+   * true/false: the dialog closes ONLY on true, a failure keeps it open with
+   * the error shown inside it (§16).
+   */
+  const removeFractionalChapters = (chapterIds: string[]): Promise<boolean> =>
+    mutate(
+      () => apiClient.POST('/api/series/{id}/fractional-cleanup', {
+        params: { path: { id } },
+        body: { chapterIds },
+      }),
+      fractionalBusy,
+    )
+
   const dismissError = (): void => { error.value = null }
 
   /**
@@ -340,17 +413,21 @@ export function useSeriesDetail(id: string) {
     matchBusy,
     dedupBusy,
     dedupeFilesBusy,
+    fractionalBusy,
     dedupMessage,
     setMonitored,
     setCompleted,
     setCategory,
     reorderProviders,
     removeSource,
+    setIgnoreFractional,
     chooseMetadataSource,
     deleteSeries,
     matchDiskProvider,
     dedupProviders,
     dedupeFiles,
+    fetchFractionalCleanup,
+    removeFractionalChapters,
     dismissError,
     refresh,
     reseed,

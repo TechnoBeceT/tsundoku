@@ -175,8 +175,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/series/:id/completed", h.SetCompleted)
 	authed.PATCH("/series/:id/providers", h.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", h.RemoveProvider)
+	authed.PATCH("/series/:id/providers/:providerId/ignore-fractional", h.SetIgnoreFractional)
 	authed.DELETE("/series/:id", h.DeleteSeries)
 	authed.POST("/series/:id/dedupe-files", h.DedupeFiles)
+	authed.GET("/series/:id/fractional-cleanup", h.FractionalCleanupPreview)
+	authed.POST("/series/:id/fractional-cleanup", h.RemoveFractionalChapters)
 	authed.GET("/series/:id/cover", h.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", h.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", h.SetMetadataSource)
@@ -493,6 +496,8 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
 		{http.MethodDelete, "/api/series/" + id + "?deleteFiles=true"},
 		{http.MethodPost, "/api/series/" + id + "/dedupe-files"},
+		{http.MethodGet, "/api/series/" + id + "/fractional-cleanup"},
+		{http.MethodPost, "/api/series/" + id + "/fractional-cleanup"},
 		{http.MethodGet, "/api/series/" + id + "/cover"},
 		{http.MethodGet, "/api/series/" + id + "/providers/" + id + "/cover"},
 		{http.MethodPatch, "/api/series/" + id + "/metadata-source"},
@@ -1313,5 +1318,147 @@ func TestSetMetadataSource_NotFound(t *testing.T) {
 	rec := env.do(http.MethodPatch, "/api/series/"+uuid.New().String()+"/metadata-source", `{"providerId":null}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("SetMetadataSource NotFound: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// ignoreFractionalPath builds the toggle route for a (series, provider) pair.
+func ignoreFractionalPath(seriesID, providerID string) string {
+	return "/api/series/" + seriesID + "/providers/" + providerID + "/ignore-fractional"
+}
+
+// toggleIgnoreFractional PATCHes the flag and returns the provider as it appears
+// in the FULL detail the endpoint answers with — the §16 round-trip in one place,
+// so every toggle assertion reads the flag from the response the FE would render.
+func toggleIgnoreFractional(t *testing.T, env *testEnv, seriesID, provID string, ignore bool) seriessvc.ProviderDTO {
+	t.Helper()
+	body := `{"ignoreFractional":false}`
+	if ignore {
+		body = `{"ignoreFractional":true}`
+	}
+	rec := env.do(http.MethodPatch, ignoreFractionalPath(seriesID, provID), body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var detail seriessvc.SeriesDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, p := range detail.Providers {
+		if p.ID == provID {
+			return p
+		}
+	}
+	t.Fatalf("provider %s missing from the returned detail", provID)
+	return seriessvc.ProviderDTO{}
+}
+
+// TestSetIgnoreFractional_OK asserts the §16 round-trip: the PATCH returns the
+// FULL refreshed detail with the new flag on the toggled provider, so the Sources
+// panel re-renders without a second fetch.
+func TestSetIgnoreFractional_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	got := toggleIgnoreFractional(t, env, env.mangaID.String(), provID, true)
+	if !got.IgnoreFractional {
+		t.Error("ignoreFractional = false in the returned detail, want true (§16 round-trip)")
+	}
+}
+
+// TestSetIgnoreFractional_Reversible asserts un-ticking restores the source: the
+// toggle is a preference, not a one-way door.
+func TestSetIgnoreFractional_Reversible(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	toggleIgnoreFractional(t, env, env.mangaID.String(), provID, true)
+	got := toggleIgnoreFractional(t, env, env.mangaID.String(), provID, false)
+	if got.IgnoreFractional {
+		t.Error("ignoreFractional = true after un-ticking, want false")
+	}
+}
+
+// TestSetIgnoreFractional_MissingField asserts an omitted ignoreFractional field
+// is a 400 — the pointer guard. Silently defaulting a suppression switch to false
+// would let a mis-shaped client quietly un-tick it.
+func TestSetIgnoreFractional_MissingField(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	rec := env.do(http.MethodPatch, ignoreFractionalPath(env.mangaID.String(), provID), `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ignoreFractional is required") {
+		t.Errorf("body = %s, want the missing-field message", rec.Body.String())
+	}
+}
+
+// TestSetIgnoreFractional_BadIDs asserts each malformed path param yields a 400
+// naming the OFFENDING param (a bad providerId must not be blamed on the series).
+func TestSetIgnoreFractional_BadIDs(t *testing.T) {
+	env := newTestEnv(t)
+	good := uuid.NewString()
+	cases := []struct {
+		name    string
+		target  string
+		wantMsg string
+	}{
+		{"bad series id", ignoreFractionalPath("not-a-uuid", good), "invalid series id"},
+		{"bad provider id", ignoreFractionalPath(good, "not-a-uuid"), "invalid provider id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := env.do(http.MethodPatch, tc.target, `{"ignoreFractional":true}`)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantMsg) {
+				t.Errorf("body = %s, want message %q", rec.Body.String(), tc.wantMsg)
+			}
+		})
+	}
+}
+
+// TestSetIgnoreFractional_UnknownSeries asserts a valid-but-missing series is 404.
+func TestSetIgnoreFractional_UnknownSeries(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodPatch, ignoreFractionalPath(uuid.NewString(), uuid.NewString()), `{"ignoreFractional":true}`)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSetIgnoreFractional_ProviderNotInSeries asserts a provider that is not this
+// series' yields a 400 (ErrProviderNotInSeries), never a silent toggle.
+func TestSetIgnoreFractional_ProviderNotInSeries(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	// The manga series' provider, addressed through the manhwa series.
+	rec := env.do(http.MethodPatch, ignoreFractionalPath(env.manhwaID.String(), provID), `{"ignoreFractional":true}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSetIgnoreFractional_RequiresOwner asserts the route is behind RequireOwner.
+func TestSetIgnoreFractional_RequiresOwner(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	provID := firstProviderID(t, env, env.mangaID.String())
+
+	rec := env.doUnauth(http.MethodPatch, ignoreFractionalPath(env.mangaID.String(), provID))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
 	}
 }

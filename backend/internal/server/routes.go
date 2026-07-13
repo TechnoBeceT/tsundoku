@@ -60,6 +60,7 @@ import (
 //   - /api/series/:id/completed                    — toggle completed (finished) flag (RequireOwner).
 //   - /api/series/:id/providers                    — re-rank provider importances (RequireOwner).
 //   - /api/series/:id/providers/:providerId        — remove a source (RequireOwner).
+//   - /api/series/:id/providers/:providerId/ignore-fractional — flag a source as a fractional re-uploader (RequireOwner).
 //   - /api/series/:id/cover                        — metadata-source cover proxy (RequireOwner).
 //   - /api/series/:id/providers/:providerId/cover  — per-provider cover proxy (RequireOwner).
 //   - /api/series/:id/metadata-source              — pin metadata source (RequireOwner).
@@ -152,8 +153,11 @@ func registerRoutes(
 	authed.PATCH("/series/:id/completed", seriesH.SetCompleted)
 	authed.PATCH("/series/:id/providers", seriesH.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", seriesH.RemoveProvider)
+	authed.PATCH("/series/:id/providers/:providerId/ignore-fractional", seriesH.SetIgnoreFractional)
 	authed.DELETE("/series/:id", seriesH.DeleteSeries)
 	authed.POST("/series/:id/dedupe-files", seriesH.DedupeFiles)
+	authed.GET("/series/:id/fractional-cleanup", seriesH.FractionalCleanupPreview)
+	authed.POST("/series/:id/fractional-cleanup", seriesH.RemoveFractionalChapters)
 	authed.GET("/series/:id/cover", seriesH.SeriesCover)
 	authed.GET("/series/:id/providers/:providerId/cover", seriesH.ProviderCover)
 	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)

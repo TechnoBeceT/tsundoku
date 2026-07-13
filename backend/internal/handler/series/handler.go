@@ -247,6 +247,47 @@ func (h *Handler) RemoveProvider(c echo.Context) error {
 	return c.JSON(http.StatusOK, updated)
 }
 
+// SetIgnoreFractional handles
+// PATCH /api/series/:id/providers/:providerId/ignore-fractional. It flags one
+// source as a fractional re-uploader for this series (or clears the flag), so the
+// source stops offering fractional-numbered chapters here. It DELETES NOTHING —
+// existing feed rows and downloaded CBZs are kept, and un-ticking restores the
+// source immediately.
+//
+// On success it returns 200 with the full SeriesDetailDTO so the Sources panel
+// re-renders with the new flag AND the unchanged fractional evidence list,
+// without a refetch (§16 round-trip).
+func (h *Handler) SetIgnoreFractional(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+	providerID, err := validateID(c.Param("providerId"), "provider id")
+	if err != nil {
+		return err
+	}
+
+	var req SetIgnoreFractionalRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := validateSetIgnoreFractional(req); err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	if err := h.svc.SetIgnoreFractional(ctx, id, providerID, *req.IgnoreFractional); err != nil {
+		return mapServiceError(err)
+	}
+
+	// Return the updated detail so the caller sees the new flag without a refetch (§16).
+	updated, err := h.svc.GetSeries(ctx, id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
 // DeleteSeries handles DELETE /api/series/:id?deleteFiles=true|false. It hard-
 // deletes the whole series (all DB rows); when deleteFiles=true it also removes
 // the downloaded CBZs + library folder from disk. Returns 204 No Content.
@@ -355,11 +396,24 @@ func (h *Handler) SetMetadataSource(c echo.Context) error {
 // HTTP status, leaving any unexpected error to fall through to the central
 // middleware as a 500. ErrSeriesNotFound → 404; ErrProviderNotInSeries → 400;
 // ErrNoCover → 404; category.ErrCategoryNotFound → 400 (an unknown categoryId in
-// a recategorize body is a bad request, not a missing resource on this route).
+// a recategorize body is a bad request, not a missing resource on this route);
+// ErrChapterNotRemovable → 400 (the fractional-cleanup POST named a chapter that is
+// not in the server-recomputed removable set — a bad selection, not a missing
+// resource; the message names the offending chapter). ErrFractionalCleanupFailed →
+// 500 with an HONEST message: the chapter rows were rolled back, but the CBZs deleted
+// before the failing one are already gone, so the owner is told to re-run the cleanup
+// (it is retry-safe) rather than being handed a bare "internal server error".
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, seriessvc.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "series not found")
+	case errors.Is(err, seriessvc.ErrChapterNotRemovable):
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	case errors.Is(err, seriessvc.ErrFractionalCleanupFailed):
+		// The rows were rolled back, but the CBZs deleted before the failure are
+		// already gone — say so, and say that a retry finishes the job.
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			"fractional cleanup failed while deleting files: no chapters were removed, but some CBZ files may already be deleted — re-run the cleanup to finish")
 	case errors.Is(err, category.ErrCategoryNotFound):
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown category")
 	case errors.Is(err, seriessvc.ErrProviderNotInSeries):

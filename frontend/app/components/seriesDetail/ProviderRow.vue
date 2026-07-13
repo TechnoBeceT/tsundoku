@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import Chip from '../ui/Chip.vue'
 import HealthBadge from '../ui/HealthBadge.vue'
 import ReorderControl from '../ui/ReorderControl.vue'
+import Toggle from '../ui/Toggle.vue'
 import type { MoveDirection } from '../ui/controls.types'
 import type { Provider } from '../screens/seriesDetail.types'
 
@@ -31,6 +32,16 @@ import type { Provider } from '../screens/seriesDetail.types'
  *     currently SUPPLIES ("supplies 56").
  * A provider with an empty feed (`feedCount === 0` — e.g. an unlinked disk-origin
  * group) shows "No chapter feed" rather than a phantom "0 chapters".
+ *
+ * FRACTIONAL EVIDENCE — shown ONLY when the source actually has fractionals
+ * (`fractionalCount > 0`), and shown IN FULL (capped for sanity, never hidden
+ * behind a disclosure): some mirrors re-upload a whole chapter N as a lone
+ * "N.1" under their own URL, and nothing but the list can tell that apart from a
+ * genuine `5.5` side-chapter. A re-uploader shows a long SYSTEMATIC run (1.1,
+ * 2.1, 3.1, …); an omake source shows a lone 5.5. The `ignoreFractional` toggle
+ * rides directly under that evidence — a switch with no evidence behind it is a
+ * blind switch, and the owner rejected exactly that. It is a SUPPRESSION switch,
+ * not a delete: downloaded files and existing chapters are kept.
  */
 const props = defineProps<{
   /** The source to render. */
@@ -56,7 +67,14 @@ const emit = defineEmits<{
   remove: []
   /** The "Match to source" button was pressed (unlinked groups only). */
   match: []
+  /** The ignore-fractional switch flipped — carries the NEW value. */
+  toggleIgnoreFractional: [ignore: boolean]
 }>()
+
+// How many fractional numbers the evidence line renders before collapsing the
+// rest into "+N more". The COUNT beside it always tells the whole truth, so a
+// pathological 300-fractional feed can never blow up the row.
+const FRACTIONAL_PREVIEW = 12
 
 // Uppercased language code shown in the language Chip (e.g. "EN").
 const language = computed(() => props.provider.language.toUpperCase())
@@ -69,6 +87,18 @@ const offering = computed<string | null>(() => {
   if (feedCount <= 0) return null
   const label = `${feedCount} chapter${feedCount === 1 ? '' : 's'}`
   return feedRanges ? `${label} · ${feedRanges}` : label
+})
+
+// The fractional evidence: the source's fractional chapter numbers, in order —
+// "1.1, 2.1, 3.1 …" for a re-uploader, a lone "5.5" for a genuine omake. Capped
+// at FRACTIONAL_PREVIEW with a "+N more" tail. Null when the source has none, so
+// the row renders neither the line nor the toggle.
+const fractionalSummary = computed<string | null>(() => {
+  const list = props.provider.fractionalChapters
+  if (!list?.length) return null
+  const shown = list.slice(0, FRACTIONAL_PREVIEW).join(', ')
+  const rest = list.length - FRACTIONAL_PREVIEW
+  return rest > 0 ? `${shown} +${rest} more` : shown
 })
 
 // Relative-time label for the sync/newest timestamps (null → "never").
@@ -111,6 +141,33 @@ const rel = (iso: string | null): string => {
         <span v-else class="source__offering source__offering--none">No chapter feed</span>
         <span class="source__supplies">supplies {{ provider.chapterCount }}</span>
       </div>
+      <!-- Fractional evidence + the suppression switch — only for a source that
+           HAS fractionals (no evidence ⇒ no switch, by design). -->
+      <template v-if="provider.fractionalCount > 0">
+        <div class="source__fractional">
+          <span class="source__fractional-count">
+            {{ provider.fractionalCount }} fractional
+          </span>
+          <span class="source__fractional-list">{{ fractionalSummary }}</span>
+        </div>
+        <label class="source__fractional-toggle">
+          <!-- eslint-disable vue/attribute-hyphenation -->
+          <!-- camelCase :ariaLabel binds Toggle's REQUIRED prop; kebab :aria-label
+               would land as a plain HTML attribute and leave the prop unset
+               (vue-tsc catches it — same convention as SeriesHeader's toggles). -->
+          <Toggle
+            :model-value="provider.ignoreFractional"
+            :disabled="saving"
+            :ariaLabel="'Ignore fractional chapters from this source'"
+            @update:model-value="emit('toggleIgnoreFractional', $event)"
+          />
+          <span class="source__fractional-label">Ignore fractional chapters from this source</span>
+        </label>
+        <div class="source__fractional-note">
+          Stops NEW fractional downloads from this source. Downloaded files and existing chapters are kept — un-tick to restore it.
+        </div>
+      </template>
+
       <div v-if="!provider.linked" class="source__unlinked-note">
         Imported from disk — no real source attached. Match it to link these chapters without re-downloading.
       </div>
@@ -217,6 +274,53 @@ const rel = (iso: string | null): string => {
 
 /* How many downloaded files come FROM this source — deliberately quieter. */
 .source__supplies {
+  color: var(--faint);
+}
+
+/* The fractional evidence line — deliberately LOUD (a warning tint): it is the
+   only thing that lets the owner tell a re-uploader from a real side-chapter. */
+.source__fractional {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface3);
+  font-size: 11.5px;
+}
+
+.source__fractional-count {
+  color: var(--text);
+  font-weight: var(--weight-bold);
+  white-space: nowrap;
+}
+
+.source__fractional-list {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+.source__fractional-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.source__fractional-label {
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.source__fractional-note {
+  margin-top: 4px;
+  margin-bottom: 8px;
+  font-size: 10.5px;
+  line-height: 1.4;
   color: var(--faint);
 }
 

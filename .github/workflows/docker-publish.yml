@@ -66,16 +66,24 @@ jobs:
       # verbatim — no manual lowercasing needed.
       #
       # Tag scheme produced here:
-      #   main branch push -> "main"  (type=ref,event=branch)
-      #                    -> "edge"  (rolling latest-dev pointer)
-      #   v2 branch push   -> "v2"    (type=ref,event=branch — the V2 line)
-      #   v1.2.3 tag push  -> "1.2.3" (full semver)
-      #                    -> "1.2"   (major.minor, moves with each patch)
+      #   main branch push -> "main"   (type=ref,event=branch) + "edge"
+      #   v2 branch push   -> "v2"     (type=ref,event=branch — the V2 line)
+      #   v1.2.3 tag push  -> "1.2.3"  (full semver)
+      #                    -> "1.2"    (major.minor, moves with each patch)
       #                    -> "latest" (only ever moved by a tagged release)
-      # So `latest` tracks releases, `edge` tracks main, and `v2` tracks the V2
-      # integration branch — they never collide. `edge` is gated on
-      # is_default_branch and `latest` on a v* TAG, so a v2 branch build cannot
-      # move either of them and can never disturb the v1 deployment.
+      #
+      # ROLES: `latest` tracks RELEASES (gated on a v* TAG, so no branch build can
+      # ever move it). `v2` tracks the V2 integration line — the image the owner
+      # actually deploys. `edge` is the rolling TESTING pointer and follows the
+      # default branch; it is NOT a deployment tag.
+      #
+      # TO TEST A FEATURE BRANCH: add it to the `branches:` trigger above (it then
+      # publishes under its own branch name via type=ref) and, if you want a short
+      # tag to pull, temporarily point `edge` at it:
+      #   type=raw,value=edge,enable=${{ github.ref == 'refs/heads/<branch>' }}
+      # REVERT BOTH when the branch merges — otherwise the merge carries dead config
+      # referencing a branch that no longer exists, and `edge` silently stops
+      # tracking anything.
       - name: Extract Docker metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5

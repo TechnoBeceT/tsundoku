@@ -41,6 +41,18 @@ let nextDedupOk = true
 let nextDedupeFilesOk = true
 let nextDeleteOk = true
 let nextPatchOk = true
+let nextFractionalPreviewOk = true
+let nextFractionalPreviewMalformed = false
+let nextFractionalRemoveOk = true
+
+/** The owner's live removable set (see FractionalCleanupDialog.test.ts). */
+const fractionalPreview = {
+  typicalPageCount: 96,
+  chapters: [
+    { chapterId: 'c-1815', number: 181.5, pageCount: 1, provider: 'KaliScan', filename: 'a.cbz' },
+    { chapterId: 'c-2215', number: 221.5, pageCount: 132, provider: 'KaliScan', filename: 'e.cbz' },
+  ],
+}
 
 const initialDetail = {
   id: 'series-1',
@@ -79,6 +91,9 @@ const initialDetail = {
       chapterCount: 2,
       feedCount: 270,
       feedRanges: '1-88, 90-269',
+      fractionalCount: 2,
+      fractionalChapters: ['1.1', '2.1'],
+      ignoreFractional: false,
       scanlator: '',
       language: 'en',
       importance: 2,
@@ -118,6 +133,16 @@ vi.mock('~/utils/api/client', () => ({
       if (path === '/api/series/{id}') {
         return Promise.resolve({ data: initialDetail, error: null, response: new Response() })
       }
+      if (path === '/api/series/{id}/fractional-cleanup') {
+        if (!nextFractionalPreviewOk) {
+          return Promise.resolve({ data: null, error: { message: 'preview failed' }, response: new Response(null, { status: 500 }) })
+        }
+        if (nextFractionalPreviewMalformed) {
+          // A 200 whose body carries no `chapters` array (a partial/garbled payload).
+          return Promise.resolve({ data: { typicalPageCount: 96 }, error: null, response: new Response() })
+        }
+        return Promise.resolve({ data: fractionalPreview, error: null, response: new Response() })
+      }
       // /api/categories
       return Promise.resolve({ data: [], error: null, response: new Response() })
     }),
@@ -138,6 +163,12 @@ vi.mock('~/utils/api/client', () => ({
           error: null,
           response: new Response(null, { status: 200 }),
         })
+      }
+      if (path === '/api/series/{id}/fractional-cleanup') {
+        if (!nextFractionalRemoveOk) {
+          return Promise.resolve({ data: null, error: { message: 'not removable' }, response: new Response(null, { status: 400 }) })
+        }
+        return Promise.resolve({ data: { removed: 1 }, error: null, response: new Response(null, { status: 200 }) })
       }
       if (path === '/api/series/{id}/dedupe-files') {
         if (!nextDedupeFilesOk) {
@@ -325,6 +356,123 @@ describe('useSeriesDetail — provider feed (coverage without a source ping)', (
     await refresh()
 
     expect(calls.some((c) => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')).toBe(false)
+  })
+
+  it('maps the fractional evidence (count + list + the owner\'s switch) off the same response', async () => {
+    const { series, refresh } = useSeriesDetail('series-1')
+    await refresh()
+
+    const provider = series.value!.providers.find((p) => p.id === 'real-provider-2')!
+    expect(provider.fractionalCount).toBe(2)
+    expect(provider.fractionalChapters).toEqual(['1.1', '2.1'])
+    expect(provider.ignoreFractional).toBe(false)
+  })
+})
+
+describe('useSeriesDetail — setIgnoreFractional', () => {
+  beforeEach(() => {
+    calls = []
+    nextPatchOk = true
+  })
+
+  it('PATCHes the ignore-fractional endpoint with both path params and the exact body', async () => {
+    const { setIgnoreFractional } = useSeriesDetail('series-1')
+
+    const ok = await setIgnoreFractional('real-provider-2', true)
+
+    expect(ok).toBe(true)
+    const call = calls.find((c) => c.path === '/api/series/{id}/providers/{providerId}/ignore-fractional')!
+    expect(call.method).toBe('PATCH')
+    expect(call.params).toEqual({ id: 'series-1', providerId: 'real-provider-2' })
+    expect(call.body).toEqual({ ignoreFractional: true })
+  })
+
+  it('resolves false and surfaces the error on failure (never swallowed)', async () => {
+    const { setIgnoreFractional, error } = useSeriesDetail('series-1')
+    nextPatchOk = false
+
+    const ok = await setIgnoreFractional('real-provider-2', true)
+
+    expect(ok).toBe(false)
+    expect(error.value).toBe('Update failed')
+  })
+})
+
+/**
+ * The owner-triggered fractional cleanup: a plain preview GET (it decides whether
+ * the button is offered at all) + the removal POST, which carries ONLY the ticked
+ * ids and reports its outcome so the dialog closes only on success (§16).
+ */
+describe('useSeriesDetail — fractional cleanup', () => {
+  beforeEach(() => {
+    calls = []
+    nextFractionalPreviewOk = true
+    nextFractionalPreviewMalformed = false
+    nextFractionalRemoveOk = true
+  })
+
+  it('fetchFractionalCleanup GETs the preview and maps the evidence (pages + yardstick)', async () => {
+    const { fetchFractionalCleanup } = useSeriesDetail('series-1')
+
+    const preview = await fetchFractionalCleanup()
+
+    const call = calls.find((c) => c.method === 'GET' && c.path === '/api/series/{id}/fractional-cleanup')!
+    expect(call.params).toEqual({ id: 'series-1' })
+    expect(preview!.typicalPageCount).toBe(96)
+    expect(preview!.chapters.map((c) => c.pageCount)).toEqual([1, 132])
+  })
+
+  it('fetchFractionalCleanup resolves null on failure (the button just stays hidden)', async () => {
+    nextFractionalPreviewOk = false
+    const { fetchFractionalCleanup, error } = useSeriesDetail('series-1')
+
+    expect(await fetchFractionalCleanup()).toBeNull()
+    // A background read the owner never asked for must not raise a page error.
+    expect(error.value).toBeNull()
+  })
+
+  it('resolves null (never throws) on a 200 whose body carries no chapters array', async () => {
+    nextFractionalPreviewMalformed = true
+    const { fetchFractionalCleanup } = useSeriesDetail('series-1')
+
+    await expect(fetchFractionalCleanup()).resolves.toBeNull()
+  })
+
+  it('removeFractionalChapters POSTs exactly the TICKED ids and refreshes the series', async () => {
+    const { refresh, removeFractionalChapters } = useSeriesDetail('series-1')
+    await refresh()
+    const getBefore = calls.filter((c) => c.method === 'GET' && c.path === '/api/series/{id}').length
+
+    const ok = await removeFractionalChapters(['c-1815', 'c-31'])
+
+    expect(ok).toBe(true)
+    const post = calls.find((c) => c.method === 'POST' && c.path === '/api/series/{id}/fractional-cleanup')!
+    expect(post.params).toEqual({ id: 'series-1' })
+    expect(post.body).toEqual({ chapterIds: ['c-1815', 'c-31'] })
+    // Removal changes the chapter list → the series is refetched (mutate's default onSuccess).
+    const getAfter = calls.filter((c) => c.method === 'GET' && c.path === '/api/series/{id}').length
+    expect(getAfter).toBe(getBefore + 1)
+  })
+
+  it('removeFractionalChapters resolves false and surfaces the error (the dialog stays open)', async () => {
+    nextFractionalRemoveOk = false
+    const { error, removeFractionalChapters } = useSeriesDetail('series-1')
+
+    const ok = await removeFractionalChapters(['c-2215'])
+
+    expect(ok).toBe(false)
+    expect(error.value).toBe('Update failed')
+  })
+
+  it('fractionalBusy flips true during the removal and back to false once it resolves', async () => {
+    const { fractionalBusy, removeFractionalChapters } = useSeriesDetail('series-1')
+    expect(fractionalBusy.value).toBe(false)
+
+    const promise = removeFractionalChapters(['c-1815'])
+    expect(fractionalBusy.value).toBe(true)
+    await promise
+
+    expect(fractionalBusy.value).toBe(false)
   })
 })
 

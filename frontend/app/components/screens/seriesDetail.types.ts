@@ -93,6 +93,31 @@ export interface Provider {
   feedRanges: string
   /** True when this provider has a non-empty availability feed (≥1 ProviderChapter) — the exact backend drift-merge gate. */
   hasFeed: boolean
+  /**
+   * How many chapters in this source's stored feed carry a FRACTIONAL number
+   * (5.1, 5.5 — i.e. `number != floor(number)`). Rides the series-detail
+   * response like `feedCount`: no extra request, no call to the source.
+   */
+  fractionalCount: number
+  /**
+   * Those fractional chapter numbers, ascending, as display strings
+   * (`["1.1", "2.1"]`); always an array, `[]` when there are none.
+   *
+   * This is the EVIDENCE the owner judges `ignoreFractional` from, and it must
+   * be rendered, never hidden: a mirror that re-uploads whole chapters under an
+   * "N.1" suffix shows a long SYSTEMATIC run (1.1, 2.1, 3.1, …), while a source
+   * carrying a genuine side-chapter (omake) shows a lone 5.5. No heuristic can
+   * tell those apart — the owner decides from the list.
+   */
+  fractionalChapters: string[]
+  /**
+   * The owner's per-(series, source) switch marking this source as a fractional
+   * re-uploader: when set, the source contributes no fractional-numbered
+   * chapters to this series (dropped at ingest, excluded from candidacy).
+   * It DELETES NOTHING — downloaded files and existing chapters are kept, and
+   * un-ticking restores the source immediately.
+   */
+  ignoreFractional: boolean
   /** Scanlation group name (may be empty → row omits it). */
   scanlator: string
   /** BCP-47 language code (e.g. `en`, `ko`). */
@@ -128,3 +153,41 @@ export interface SeriesDetail extends SeriesSummary {
 
 /** The two mutually-exclusive choices in the required-choice delete dialog. */
 export type DeleteChoice = 'keep' | 'wipe'
+
+/**
+ * FractionalCleanupChapter — one already-downloaded FRACTIONAL chapter the owner
+ * may remove (`GET /api/series/:id/fractional-cleanup`): a file left behind after
+ * "ignore fractional chapters" was ticked on the source(s) carrying it (that
+ * toggle stops NEW fractional downloads and deletes nothing).
+ *
+ * 🔴 `pageCount` IS THE EVIDENCE — `number` and `provider` are only labels. On the
+ * owner's real library a "181.5" was a 1-page notice, while "221.5"/"223.5" were
+ * 132/135-page FULL chapters that merely carry a ".5" number. Judge by the
+ * measurement, never by the name; that is why this is a dialog and not a button.
+ */
+export interface FractionalCleanupChapter {
+  /** Chapter UUID — the id the cleanup POST names. */
+  chapterId: string
+  /** The chapter number; always fractional (3.1, 181.5 …). */
+  number: number
+  /** Pages in the downloaded file; null when never recorded (no evidence to judge from). */
+  pageCount: number | null
+  /** Display label of the source the file came from; "" when that source is gone. */
+  provider: string
+  /** The CBZ filename that will be deleted. */
+  filename: string
+}
+
+/**
+ * FractionalCleanupPreview — the removable set plus the yardstick that makes it
+ * legible. Empty `chapters` = nothing to clean (the panel hides the button).
+ */
+export interface FractionalCleanupPreview {
+  /**
+   * MEDIAN page count of the series' WHOLE (non-fractional) downloaded chapters —
+   * without it "132p" means nothing. 0 when no whole chapter carries a page count.
+   */
+  typicalPageCount: number
+  /** The removable fractional chapters. */
+  chapters: FractionalCleanupChapter[]
+}

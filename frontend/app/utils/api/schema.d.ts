@@ -388,6 +388,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/fractional-cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview the series' removable fractional chapters
+         * @description Lists the already-downloaded FRACTIONAL chapters that are safe to remove —
+         *     the files left behind when the owner ticked "ignore fractional chapters" on
+         *     a source (that toggle stops NEW fractional downloads and deletes nothing).
+         *
+         *     A chapter is removable only when its number is fractional, it HAS a file
+         *     (downloaded with a filename), and EVERY source whose feed carries its
+         *     chapter key has ignore_fractional set. That last rule is the resurrection
+         *     guard: a fractional a non-ignored source still carries would simply be
+         *     re-ingested and re-downloaded by the next refresh sweep.
+         *
+         *     Each entry carries the evidence the owner judges from (page count, the
+         *     satisfying source, the filename), alongside typicalPageCount — the MEDIAN
+         *     page count of the series' whole (non-fractional) downloaded chapters — so a
+         *     1-page notice page and a 132-page full chapter numbered ".5" are told apart
+         *     by measurement, not by name. This endpoint deletes nothing.
+         */
+        get: operations["previewFractionalCleanup"];
+        put?: never;
+        /**
+         * Remove the selected fractional chapters (files + rows)
+         * @description Owner-triggered removal of the fractional chapters selected in the cleanup
+         *     dialog: each chapter's CBZ file and its Chapter row are deleted. The source
+         *     feed rows (ProviderChapter) are KEPT — the feed is the source's offering,
+         *     not the owner's library, so un-ticking the ignore-fractional toggle restores
+         *     the chapter on the next ingest.
+         *
+         *     The removable set is RE-COMPUTED server-side: any chapterId outside it (a
+         *     whole chapter, a fractional a live source still carries, a chapter of another
+         *     series) is rejected with 400 and NOTHING is deleted (all-or-nothing). Nothing
+         *     automatic ever calls this endpoint.
+         */
+        post: operations["removeFractionalChapters"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}": {
         parameters: {
             query?: never;
@@ -410,6 +457,39 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/providers/{providerId}/ignore-fractional": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Flag a source as a fractional re-uploader for this series
+         * @description Marks one of the series' sources as a fractional re-uploader — a mirror that
+         *     republishes whole chapter N as a lone "N.1" under its own URL — or clears the
+         *     flag. A flagged source contributes no fractional-numbered chapters (5.1, 5.5 …)
+         *     to THIS series: they are dropped at ingest and excluded from download candidacy.
+         *     Its whole chapters are unaffected.
+         *
+         *     The flag is per (series, provider) and is an explicit owner decision, never a
+         *     heuristic: a ".5" omake source also hosts the whole chapter, so any automatic
+         *     rule would suppress genuine side-chapters. Decide from the source's
+         *     `fractionalChapters` evidence list in the series detail.
+         *
+         *     Flipping the flag DELETES NOTHING: fractional feed rows already ingested and any
+         *     CBZ already downloaded are kept, and un-ticking restores the source immediately.
+         *     Returns the updated series detail (§16).
+         */
+        patch: operations["setProviderIgnoreFractional"];
         trace?: never;
     };
     "/api/series/{id}/cover": {
@@ -1618,6 +1698,12 @@ export interface components {
             feedRanges: string;
             /** @description True when this provider has a non-empty availability feed (≥1 ProviderChapter). Mirrors the backend drift-merge feed gate. */
             hasFeed: boolean;
+            /** @description How many chapters in this provider's stored feed carry a fractional number (5.1, 5.5 — number != floor(number)). Computed in memory from the feed we already hold: no extra query, no call to the source. */
+            fractionalCount: number;
+            /** @description Those fractional chapter numbers, ascending, as display strings ("1.1", "5.5"). This is the EVIDENCE the owner needs before setting ignoreFractional: a mirror that re-uploads whole chapters under an "N.1" suffix shows a long SYSTEMATIC run (1.1, 2.1, 3.1, …), whereas a source carrying a genuine side-chapter (omake) shows a lone 5.5 — and ".5" is by far the most common fractional in a real library. The backend cannot tell those two apart, so it never guesses; the owner decides from this list. Always present, empty ([]) for a source with no fractional chapters — never null. */
+            fractionalChapters: string[];
+            /** @description The owner's per-(series, source) switch marking this source as a fractional re-uploader: when set, the source contributes no fractional-numbered chapters to this series (they are dropped at ingest and excluded from candidacy). It deletes nothing, and an ignored source still reports its fractionalChapters here, so the decision stays reviewable and reversible. */
+            ignoreFractional: boolean;
             /** @description Scanlation group (may be empty). */
             scanlator: string;
             /** @description Language code (e.g. en). */
@@ -1715,6 +1801,15 @@ export interface components {
             /** @description Whether the series is finished (no more chapters expected). */
             completed: boolean;
         };
+        SetIgnoreFractionalRequest: {
+            /**
+             * @description Whether this source is a fractional re-uploader for this series: when true it
+             *     contributes no fractional-numbered chapters (they are dropped at ingest and
+             *     excluded from candidacy); when false the source is restored. Required — an
+             *     omitted field is a 400, never a silent false.
+             */
+            ignoreFractional: boolean;
+        };
         ProviderRank: {
             /**
              * Format: uuid
@@ -1759,9 +1854,9 @@ export interface components {
              * @enum {string}
              */
             state: "wanted" | "downloading" | "downloaded" | "upgrade_available" | "upgrading" | "failed" | "permanently_failed" | "superseded";
-            /** @description Raw Suwayomi source-ID key (SeriesProvider.provider) of the satisfying source, else the series' top source. */
+            /** @description Raw Suwayomi source-ID key (SeriesProvider.provider) of the source this chapter is ACTUALLY coming from, resolved in three steps: (1) the source that SATISFIED it (satisfied_by) — true provenance, where the file on disk came from; (2) else the highest-importance source whose FEED CARRIES this chapter_key — the source the engine is fetching from (the scheduler's own primary-source rule); (3) else empty, when NO source carries the key: nothing is fetching this chapter and the UI renders an em-dash. NOT the series' top-ranked source — that lies whenever the top source has a feed gap. Step 2 is a UI HINT, not engine state: the engine additionally excludes retry-exhausted, cooled-down, or circuit-broken sources, which this read model does not know about, so it may name a source the engine defers this cycle. A downloaded chapter whose satisfier was cleared (the owner removed that source — the CBZ is kept) also resolves via step 2 or 3. */
             provider: string;
-            /** @description Human-readable source display name of that source; falls back to the id when unresolved. Shown in the UI in place of the id. */
+            /** @description Human-readable source display name of the source resolved by `provider` (same three steps, same caveat); falls back to the id when unresolved, and is empty exactly when `provider` is. Shown in the UI in place of the id. */
             providerName: string;
             /** @description Display name of the source this chapter is upgrading TO — the highest-importance source (other than the current one) whose feed carries the chapter and which outranks it. Empty for every chapter not in upgrade_available/upgrading. The UI renders "providerName → upgradeTarget". It is the INTENDED target: the engine additionally excludes retry-exhausted, cooled-down, or circuit-broken sources, which this read model does not know about, so it may name a source the engine defers this cycle. */
             upgradeTarget: string;
@@ -1798,6 +1893,42 @@ export interface components {
         };
         DedupeFilesResult: {
             /** @description Number of superseded duplicate CBZ files removed from disk by the owner-triggered dedupe-files sweep. Winning files are never removed. */
+            removed: number;
+        };
+        FractionalCleanupChapter: {
+            /**
+             * Format: uuid
+             * @description Chapter UUID — the id the cleanup POST names.
+             */
+            chapterId: string;
+            /**
+             * Format: double
+             * @description The chapter number. Always fractional (5.1, 181.5 …).
+             * @example 181.5
+             */
+            number: number;
+            /** @description How many pages the downloaded file has, or null when never recorded. This is the EVIDENCE: a 1-page "chapter" is a notice page; a 132-page one is a full-size chapter that merely carries a ".5" number. Judge by this, never by the number. */
+            pageCount: number | null;
+            /** @description Display label of the source that satisfies this chapter (where the file came from); "" when that source has since been removed. */
+            provider: string;
+            /** @description The CBZ filename that will be deleted. */
+            filename: string;
+        };
+        FractionalCleanupPreview: {
+            /**
+             * @description MEDIAN page count of the series' WHOLE (non-fractional) downloaded chapters — the yardstick the fractionals are judged against. 0 when no whole downloaded chapter carries a page count.
+             * @example 96
+             */
+            typicalPageCount: number;
+            /** @description The removable fractional chapters; empty when there is nothing to clean. */
+            chapters: components["schemas"]["FractionalCleanupChapter"][];
+        };
+        FractionalCleanupRequest: {
+            /** @description The Chapter UUIDs the owner ticked. A SELECTION from the preview, never an authorisation: the server re-computes the removable set and rejects (400) any id outside it. */
+            chapterIds: string[];
+        };
+        FractionalCleanupResult: {
+            /** @description Number of fractional chapters removed (CBZ file + Chapter row). The source feed rows are kept, so un-ticking the ignore-fractional toggle restores them. */
             removed: number;
         };
         Source: {
@@ -3303,6 +3434,110 @@ export interface operations {
             };
         };
     };
+    previewFractionalCleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The removable set (possibly empty) and the page-count yardstick. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FractionalCleanupPreview"];
+                };
+            };
+            /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    removeFractionalChapters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FractionalCleanupRequest"];
+            };
+        };
+        responses: {
+            /** @description Removal complete. Returns the number of chapters removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FractionalCleanupResult"];
+                };
+            };
+            /** @description Malformed series id or body, an empty chapterIds list, or a chapter that is not in the server-recomputed removable set. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     removeSeriesProvider: {
         parameters: {
             query?: never;
@@ -3327,6 +3562,65 @@ export interface operations {
                 };
             };
             /** @description Malformed series or provider UUID, or provider not in series. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setProviderIgnoreFractional: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description SeriesProvider UUID to flag. */
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetIgnoreFractionalRequest"];
+            };
+        };
+        responses: {
+            /** @description Flag updated. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /**
+             * @description Malformed series or provider UUID, missing ignoreFractional field, or the
+             *     provider does not belong to this series.
+             */
             400: {
                 headers: {
                     [name: string]: unknown;

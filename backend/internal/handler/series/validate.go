@@ -197,6 +197,56 @@ func validateSetMetadataSource(req SetMetadataSourceRequest) (*uuid.UUID, error)
 	return &id, nil
 }
 
+// SetIgnoreFractionalRequest is the
+// PATCH /api/series/{id}/providers/{providerId}/ignore-fractional request body.
+type SetIgnoreFractionalRequest struct {
+	// IgnoreFractional marks this source as a fractional re-uploader FOR THIS
+	// SERIES: a mirror that republishes whole chapter N as a lone "N.1". When set,
+	// the source contributes no fractional chapters to the series.
+	IgnoreFractional *bool `json:"ignoreFractional"`
+}
+
+// validateSetIgnoreFractional validates the PATCH body: the ignoreFractional
+// field must be explicitly present. It is a bool POINTER so an omitted field is
+// distinguishable from an explicit false — silently defaulting a suppression
+// switch to false would let a mis-shaped client quietly un-tick it. A missing
+// field yields a 400 echo.HTTPError.
+func validateSetIgnoreFractional(req SetIgnoreFractionalRequest) error {
+	if req.IgnoreFractional == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "ignoreFractional is required")
+	}
+	return nil
+}
+
+// FractionalCleanupRequest is the POST /api/series/{id}/fractional-cleanup request
+// body: the chapters the owner ticked in the cleanup dialog.
+type FractionalCleanupRequest struct {
+	// ChapterIDs are the Chapter UUIDs to remove. They are a SELECTION from the
+	// preview, never an authorisation: the service re-computes the removable set
+	// and rejects any id outside it.
+	ChapterIDs []string `json:"chapterIds"`
+}
+
+// validateFractionalCleanup validates the cleanup POST body: at least one chapter id
+// is required (an empty list is a no-op the client should not have sent, so it is a
+// 400 rather than a silent 0-removal) and each must parse as a UUID. Returns the
+// parsed ids ready for the service, or a 400 echo.HTTPError. Whether an id is
+// actually REMOVABLE is decided by the service — never here, and never by the client.
+func validateFractionalCleanup(req FractionalCleanupRequest) ([]uuid.UUID, error) {
+	if len(req.ChapterIDs) == 0 {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "chapterIds must have at least one entry")
+	}
+	ids := make([]uuid.UUID, len(req.ChapterIDs))
+	for i, raw := range req.ChapterIDs {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid chapter id: "+raw)
+		}
+		ids[i] = id
+	}
+	return ids, nil
+}
+
 // validateReorderProviders validates the PATCH body: at least one entry is
 // required and each id must parse as a valid UUID. The importance value is NOT
 // range-checked here — the service normalizes the submitted importances to a

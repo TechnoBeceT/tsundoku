@@ -41,6 +41,15 @@ export const WithUnlinkedGroup: Story = {
   args: { providers: seriesWithUnlinkedGroup.providers },
 }
 
+/**
+ * Six removable fractional files → the "Remove fractional files" button appears
+ * beside "Remove duplicate files". At 0 (every other story here) it is ABSENT —
+ * nothing to clean must never present a dead control.
+ */
+export const WithFractionalCleanup: Story = {
+  args: { providers: richSeries.providers, fractionalCleanupCount: 6 },
+}
+
 /** A drifted duplicate pair — the banner + "Clean up" and per-row DUPLICATE badge. */
 export const WithDuplicates: Story = {
   args: {

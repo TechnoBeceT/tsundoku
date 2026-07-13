@@ -177,6 +177,20 @@ func (_c *SeriesProviderCreate) SetNillableImportance(v *int) *SeriesProviderCre
 	return _c
 }
 
+// SetIgnoreFractional sets the "ignore_fractional" field.
+func (_c *SeriesProviderCreate) SetIgnoreFractional(v bool) *SeriesProviderCreate {
+	_c.mutation.SetIgnoreFractional(v)
+	return _c
+}
+
+// SetNillableIgnoreFractional sets the "ignore_fractional" field if the given value is not nil.
+func (_c *SeriesProviderCreate) SetNillableIgnoreFractional(v *bool) *SeriesProviderCreate {
+	if v != nil {
+		_c.SetIgnoreFractional(*v)
+	}
+	return _c
+}
+
 // SetCoverURL sets the "cover_url" field.
 func (_c *SeriesProviderCreate) SetCoverURL(v string) *SeriesProviderCreate {
 	_c.mutation.SetCoverURL(v)
@@ -358,6 +372,10 @@ func (_c *SeriesProviderCreate) defaults() {
 		v := seriesprovider.DefaultImportance
 		_c.mutation.SetImportance(v)
 	}
+	if _, ok := _c.mutation.IgnoreFractional(); !ok {
+		v := seriesprovider.DefaultIgnoreFractional
+		_c.mutation.SetIgnoreFractional(v)
+	}
 	if _, ok := _c.mutation.CoverURL(); !ok {
 		v := seriesprovider.DefaultCoverURL
 		_c.mutation.SetCoverURL(v)
@@ -407,6 +425,9 @@ func (_c *SeriesProviderCreate) check() error {
 	}
 	if _, ok := _c.mutation.Importance(); !ok {
 		return &ValidationError{Name: "importance", err: errors.New(`ent: missing required field "SeriesProvider.importance"`)}
+	}
+	if _, ok := _c.mutation.IgnoreFractional(); !ok {
+		return &ValidationError{Name: "ignore_fractional", err: errors.New(`ent: missing required field "SeriesProvider.ignore_fractional"`)}
 	}
 	if _, ok := _c.mutation.CoverURL(); !ok {
 		return &ValidationError{Name: "cover_url", err: errors.New(`ent: missing required field "SeriesProvider.cover_url"`)}
@@ -498,6 +519,10 @@ func (_c *SeriesProviderCreate) createSpec() (*SeriesProvider, *sqlgraph.CreateS
 	if value, ok := _c.mutation.Importance(); ok {
 		_spec.SetField(seriesprovider.FieldImportance, field.TypeInt, value)
 		_node.Importance = value
+	}
+	if value, ok := _c.mutation.IgnoreFractional(); ok {
+		_spec.SetField(seriesprovider.FieldIgnoreFractional, field.TypeBool, value)
+		_node.IgnoreFractional = value
 	}
 	if value, ok := _c.mutation.CoverURL(); ok {
 		_spec.SetField(seriesprovider.FieldCoverURL, field.TypeString, value)

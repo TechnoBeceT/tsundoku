@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { ReaderChapter } from '~/composables/useReader'
+import type { FractionalCleanupPreview } from '~/components/screens/seriesDetail.types'
 
 /**
  * Series detail page — route /series/:id.
@@ -52,6 +53,7 @@ import type { ReaderChapter } from '~/composables/useReader'
  *   @dismiss-error          → dismissError()
  *   @dedup-providers        → dedupProviders()   (merges drifted disk/live twins)
  *   @dedupe-files           → dedupeFiles()      (sweeps orphan/duplicate CBZs)
+ *   @request-fractional-cleanup → opens FractionalCleanupDialog (see below)
  *   @resume                 → onResume() (resolves the resume target via
  *                             useReadingProgress.resumeTarget and navigates to
  *                             the reader — see the "Resume FAB" section below)
@@ -97,6 +99,7 @@ const {
   setCategory,
   reorderProviders,
   removeSource,
+  setIgnoreFractional,
   chooseMetadataSource,
   deleteSeries,
   matchDiskProvider,
@@ -104,9 +107,12 @@ const {
   reseed,
   dedupBusy,
   dedupeFilesBusy,
+  fractionalBusy,
   dedupMessage,
   dedupProviders,
   dedupeFiles,
+  fetchFractionalCleanup,
+  removeFractionalChapters,
 } = useSeriesDetail(id)
 
 const {
@@ -156,6 +162,32 @@ async function onConfirmRemove(): Promise<void> {
   if (!removeTargetId.value) return
   const ok = await removeSource(removeTargetId.value)
   if (ok) removeOpen.value = false
+}
+
+// ---- Fractional cleanup (the owner-triggered half of "ignore fractional") ----
+// The toggle stops NEW fractional downloads and deletes nothing; the files
+// already on disk need this explicit, per-chapter, confirmed removal.
+//
+// The preview is loaded up front because it decides whether the Sources panel
+// offers the button AT ALL (empty set → no button — no dead control), and it
+// fills the dialog. It is re-loaded after a successful removal so the button
+// disappears once the last removable file is gone. Like the other confirm
+// dialogs, this one lives on the PAGE: only the page learns whether the removal
+// succeeded, and it closes the dialog ONLY on success (§16).
+const fractionalPreview = ref<FractionalCleanupPreview | null>(null)
+const fractionalOpen = ref(false)
+const fractionalCount = computed(() => fractionalPreview.value?.chapters.length ?? 0)
+
+async function loadFractionalPreview(): Promise<void> {
+  fractionalPreview.value = await fetchFractionalCleanup()
+}
+void loadFractionalPreview()
+
+async function onConfirmFractionalCleanup(chapterIds: string[]): Promise<void> {
+  const ok = await removeFractionalChapters(chapterIds)
+  if (!ok) return
+  fractionalOpen.value = false
+  await loadFractionalPreview()
 }
 
 // ---- Match to source (no-re-download link of an unlinked disk-origin group) ----
@@ -267,6 +299,7 @@ function onResume(): void {
       :error="error"
       :dedup-busy="dedupBusy"
       :dedupe-files-busy="dedupeFilesBusy"
+      :fractional-cleanup-count="fractionalCount"
       :dedup-message="dedupMessage"
       :resume-label="resumeLabel"
       @change-category="setCategory"
@@ -275,14 +308,26 @@ function onResume(): void {
       @reorder-providers="reorderProviders"
       @request-remove-source="openRemove"
       @match-provider="openMatchProvider"
+      @toggle-ignore-fractional="setIgnoreFractional"
       @choose-metadata-source="chooseMetadataSource"
       @delete-series="deleteSeries"
       @add-source="matchOpen = true"
       @dismiss-error="dismissError"
       @dedup-providers="dedupProviders"
       @dedupe-files="dedupeFiles"
+      @request-fractional-cleanup="fractionalOpen = true"
       @read="openReader"
       @resume="onResume"
+    />
+
+    <FractionalCleanupDialog
+      v-if="series"
+      v-model:open="fractionalOpen"
+      :chapters="fractionalPreview?.chapters ?? []"
+      :typical-page-count="fractionalPreview?.typicalPageCount ?? 0"
+      :busy="fractionalBusy"
+      :error="error"
+      @confirm="onConfirmFractionalCleanup"
     />
 
     <RemoveSourceDialog
