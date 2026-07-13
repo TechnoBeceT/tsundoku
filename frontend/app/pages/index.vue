@@ -7,8 +7,11 @@
  * are auto-imported from app/components/. navigateTo is a Nuxt auto-import.
  *
  * Wiring:
- *   @select  → navigate to /series/:id
- *   @filter  → setCategory (null = "All" tab)
+ *   @select          → navigate to /series/:id
+ *   @filter          → setCategory (null = "All" tab)
+ *   @update:search   → setSearch (in-memory narrow, no refetch)
+ *   @update:sort     → setSort (in-memory re-sort, no refetch)
+ *   @searchEverywhere → searchEverywhere (widen an in-category search to All)
  *
  * §16: pending true during fetch; error shown as a dismissible ErrorBanner.
  *
@@ -16,13 +19,18 @@
  * clicking a category card on the Categories page) the library pre-filters
  * to that category on first load without an extra round-trip.
  *
- * NOTE: the Komikku-model toolbar (search/sort) + empty states + category tabs
- * are a later task; this page is intentionally minimal for now. total/loadMore
- * are GONE from useLibrary — the whole library loads once and filters in memory.
+ * The whole library loads once (useLibrary) and category/search/sort are all
+ * in-memory derivations — no "Load more", no refetch on any of these.
  */
+import type { SortKey, SortDir } from '~/components/library/librarySort'
+
 const route = useRoute()
 const initialCategory = typeof route.query.category === 'string' ? route.query.category : null
-const { series, categories, pending, error, activeCategory, setCategory } = useLibrary({ initialCategory })
+const {
+  series, categories, pending, error, activeCategory,
+  searchQuery, sortKey, sortDir, matchesElsewhere,
+  setCategory, setSearch, setSort, searchEverywhere,
+} = useLibrary({ initialCategory })
 </script>
 
 <template>
@@ -32,9 +40,16 @@ const { series, categories, pending, error, activeCategory, setCategory } = useL
       :series="series"
       :categories="categories"
       :active-category="activeCategory"
+      :search="searchQuery"
+      :sort-key="sortKey"
+      :sort-dir="sortDir"
+      :matches-elsewhere="matchesElsewhere"
       :loading="pending"
       @select="(id: string) => navigateTo(`/series/${id}`)"
       @filter="setCategory"
+      @update:search="setSearch"
+      @update:sort="(p: { key: SortKey; dir: SortDir }) => setSort(p.key, p.dir)"
+      @search-everywhere="searchEverywhere"
     />
   </div>
 </template>
