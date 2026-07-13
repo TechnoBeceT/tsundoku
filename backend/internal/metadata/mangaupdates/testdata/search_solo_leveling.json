@@ -1,0 +1,175 @@
+{
+  "total_hits": 1660,
+  "page": 1,
+  "per_page": 3,
+  "results": [
+    {
+      "record": {
+        "series_id": 15180124327,
+        "title": "Solo Leveling",
+        "url": "https://www.mangaupdates.com/series/6z1uqw7/solo-leveling",
+        "description": "From Yen Press:  \nKnown as the Weakest Hunter of All Mankind, E-rank hunter Jinwoo Sung’s contribution to raids amounts to trying not to get killed. Unfortunately, between his mother’s hospital bills, his sister’s tuition, and his own lack of job prospects, he has no choice but to continue to put his life on the line. So when an opportunity arises for a bigger payout, he takes it. Only to come face-to-face with a being whose power outranks anything he’s ever seen! With the party leader missing an arm and the only healer a quivering mess, can Jinwoo somehow find them a way out?\n\n**Original Webtoon:**  \n[Daum](https://webtoon.kakao.com/content/%EB%82%98-%ED%98%BC%EC%9E%90%EB%A7%8C-%EB%A0%88%EB%B2%A8%EC%97%85/2320), [Kakaopage](https://page.kakao.com/content/50866481)\n\n**Official Translations:**  \nChinese ([S.Chinese](https://www.kuaikanmanhua.com/web/topic/4319/), [T.Chinese](https://tw.kakaowebtoon.com/content/%E6%88%91%E7%8D%A8%E8%87%AA%E5%8D%87%E7%B4%9A/53)), English ([Manta](https://manta.net/en/series/solo-leveling?seriesId=2729),  [Tapas](https://tapas.io/series/solo-leveling-comic/info), [Tappytoon](https://www.tappytoon.com/comics/solo-leveling-official), [Webcomics](https://webcomicsapp.com/comic/Solo-Leveling/6887312562661d31bc3c2952)), French ([Lezhin](https://www.lezhinfr.com/detail/daf_4100080), [Ono](https://www.ono.live/webtoon/solo-leveling), [Tappytoon](https://www.tappytoon.com/fr/book/solo-leveling-official-fr)), German ([Lezhin](https://www.lezhinde.com/detail/dad_4100014), [Tappytoon](https://www.tappytoon.com/de/book/solo-leveling-official-de)), Japanese ([Comico](https://www.comico.jp/comic/320), [Lezhin](https://lezhin.jp/comic/t5_730112), Piccoma ([Main Story](https://jp.piccoma.com/web/product/5523), [Side Story](https://jp.piccoma.com/web/product/130269)), [Pixiv Comic](https://comic.pixiv.net/store/products/730112)), [Spanish](https://www.pentacomix.com/webtoons/80-solo-leveling), [Thai](https://page.kakao.com/content/67010034)",
+        "image": {
+          "url": {
+            "original": "https://cdn.mangaupdates.com/image/i515366.jpg",
+            "thumb": "https://cdn.mangaupdates.com/image/thumb/i515366.jpg"
+          },
+          "height": 400,
+          "width": 278
+        },
+        "type": "Manhwa",
+        "year": "2018",
+        "bayesian_rating": 8.47,
+        "rating_votes": 2256,
+        "genres": [
+          {
+            "genre": "Action"
+          },
+          {
+            "genre": "Adventure"
+          },
+          {
+            "genre": "Drama"
+          },
+          {
+            "genre": "Fantasy"
+          },
+          {
+            "genre": "Shounen"
+          }
+        ],
+        "last_updated": {
+          "timestamp": 1781579852,
+          "as_rfc3339": "2026-06-15T20:17:32-07:00",
+          "as_string": "June 15th, 2026 8:17pm PDT"
+        }
+      },
+      "hit_title": "Solo Leveling",
+      "metadata": {
+        "user_list": {
+          "list_type": null,
+          "list_icon": null,
+          "status": {
+            "volume": null,
+            "chapter": null
+          }
+        },
+        "user_genre_highlights": []
+      }
+    },
+    {
+      "record": {
+        "series_id": 13184758110,
+        "title": "Solo Leveling (Novel)",
+        "url": "https://www.mangaupdates.com/series/621v4gu/solo-leveling-novel",
+        "description": "From Yen Press:  \nE-rank hunter Jinwoo Sung has no money, no talent, and no prospects to speak of-and apparently, no luck, either! When he enters a hidden double dungeon one fateful day, he’s abandoned by his party and left to die at the hands of some of the most horrific monsters he’s ever encountered. But just before the last, fatal blow. PING! Congratulations on becoming a Player.\n\n**Original Novel:**  \n[Joara](https://www.joara.com/book/1430230), [KakaoPage](https://page.kakao.com/content/48787313), [Naver Series](https://series.naver.com/novel/detail.series?productNo=3207276), [Ridibooks](https://ridibooks.com/books/777034313)\n\n**Official Translations:**  \n[Chinese](https://readmoo.com/book/210264406000101), English ([Tapas](https://tapas.io/series/solo-leveling-novel/info), [Webnovel](https://www.webnovel.com/book/solo-leveling(only-i-level-up)_12507348206677105)), [Japanese](https://jp.piccoma.com/web/product/18836)",
+        "image": {
+          "url": {
+            "original": "https://cdn.mangaupdates.com/image/i512397.jpg",
+            "thumb": "https://cdn.mangaupdates.com/image/thumb/i512397.jpg"
+          },
+          "height": 400,
+          "width": 270
+        },
+        "type": "Novel",
+        "year": "2016",
+        "bayesian_rating": 7.31,
+        "rating_votes": 80,
+        "genres": [
+          {
+            "genre": "Action"
+          },
+          {
+            "genre": "Adventure"
+          },
+          {
+            "genre": "Drama"
+          },
+          {
+            "genre": "Fantasy"
+          },
+          {
+            "genre": "Shounen"
+          }
+        ],
+        "last_updated": {
+          "timestamp": 1783259447,
+          "as_rfc3339": "2026-07-05T06:50:47-07:00",
+          "as_string": "July 5th, 2026 6:50am PDT"
+        }
+      },
+      "hit_title": "Solo Leveling (Novel)",
+      "metadata": {
+        "user_list": {
+          "list_type": null,
+          "list_icon": null,
+          "status": {
+            "volume": null,
+            "chapter": null
+          }
+        },
+        "user_genre_highlights": []
+      }
+    },
+    {
+      "record": {
+        "series_id": 47955563021,
+        "title": "Solo Leveling: Ragnarok",
+        "url": "https://www.mangaupdates.com/series/m13i58t/solo-leveling-ragnarok",
+        "description": "From Tapas:  \nAfter witnessing the death of one of their own, the Absolute Ones, creators of the many universes outside of our own,  frantically seek to fill the power void left by their fallen brother. With Earth's existence in danger once more as gates spill monsters into our dimension, Sung Suho must answer the call and conquer the shadow dungeon while learning of his father's legendary legacy.\n\n**Original Webtoon:**  \n[Daum](https://webtoon.kakao.com/content/%EB%82%98-%ED%98%BC%EC%9E%90%EB%A7%8C-%EB%A0%88%EB%B2%A8%EC%97%85-%EB%9D%BC%EA%B7%B8%EB%82%98%EB%A1%9C%ED%81%AC/4172), [KakaoPage](https://page.kakao.com/content/64612703)\n\n**Official Translations:**  \nEnglish: [Manta](https://manta.net/en/series/solo-leveling-ragnarok?seriesId=4007), [Tapas](https://tapas.io/series/solo-leveling-ragnarok/info), [Tappytoon](https://www.tappytoon.com/en/book/solo-leveling-ragnarok), [Webnovel](https://www.webnovel.com/comic/solo-leveling-ragnarok_34123390308141901)     \nFrench: [Ono](https://www.ono.live/webtoon/solo-leveling-ragnarok), [Tappytoon](https://www.tappytoon.com/fr/book/solo-leveling-ragnarok-fr), [Lezhin](https://www.lezhinfr.com/detail/daf_4100125)     \nGerman: [Tappytoon](https://www.tappytoon.com/de/book/solo-leveling-ragnarok-de)   \nJapanese: [Piccoma](https://jp.piccoma.com/web/product/169737)  \nS.Chinese: [AC.QQ](https://ac.qq.com/Comic/comicInfo/id/655894), [BiliBili](https://manga.bilibili.com/detail/mc36074), [KuaiKan](https://www.kuaikanmanhua.com/web/topic/24015/)",
+        "image": {
+          "url": {
+            "original": "https://cdn.mangaupdates.com/image/i505562.jpg",
+            "thumb": "https://cdn.mangaupdates.com/image/thumb/i505562.jpg"
+          },
+          "height": 400,
+          "width": 279
+        },
+        "type": "Manhwa",
+        "year": "2024",
+        "bayesian_rating": 7.46,
+        "rating_votes": 144,
+        "genres": [
+          {
+            "genre": "Action"
+          },
+          {
+            "genre": "Adventure"
+          },
+          {
+            "genre": "Comedy"
+          },
+          {
+            "genre": "Drama"
+          },
+          {
+            "genre": "Fantasy"
+          },
+          {
+            "genre": "School Life"
+          },
+          {
+            "genre": "Shounen"
+          }
+        ],
+        "last_updated": {
+          "timestamp": 1783449760,
+          "as_rfc3339": "2026-07-07T11:42:40-07:00",
+          "as_string": "July 7th, 2026 11:42am PDT"
+        }
+      },
+      "hit_title": "Solo Leveling : Ragnarok",
+      "metadata": {
+        "user_list": {
+          "list_type": null,
+          "list_icon": null,
+          "status": {
+            "volume": null,
+            "chapter": null
+          }
+        },
+        "user_genre_highlights": []
+      }
+    }
+  ]
+}
