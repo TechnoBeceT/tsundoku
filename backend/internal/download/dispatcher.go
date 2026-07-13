@@ -538,6 +538,20 @@ func (d *Dispatcher) finishDownload(ctx context.Context, ch *ent.Chapter, chapte
 		return fmt.Errorf("persist provenance for chapter %s: %w", chapterID, err)
 	}
 
+	// first_downloaded_at is WRITE-ONCE: the PREDICATE (not Go control flow) is what
+	// enforces it, so there is no read-modify-write and no race. This also survives
+	// the orphan-reset boot sweep — a chapter that is reset and re-downloaded keeps
+	// its ORIGINAL arrival time, which is the honest answer to "when did this
+	// chapter become readable". Deliberately NOT touched by upgrade.go's
+	// persistUpgradeSuccess — an upgrade re-fetches an OLD chapter, it does not make
+	// a new one readable.
+	if _, err := d.client.Chapter.Update().
+		Where(entchapter.ID(chapterID), entchapter.FirstDownloadedAtIsNil()).
+		SetFirstDownloadedAt(time.Now()).
+		Save(ctx); err != nil {
+		return fmt.Errorf("stamp first_downloaded_at for chapter %s: %w", chapterID, err)
+	}
+
 	// The winning source works: clear its per-source retry state so a prior
 	// transient failure never nudges it toward exhaustion.
 	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).

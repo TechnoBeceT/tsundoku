@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"entgo.io/ent/dialect"
@@ -21,6 +22,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/series"
 )
 
 // retryPolicy controls how Open retries a failed connection attempt.
@@ -114,6 +116,24 @@ func runPostMigrationCleanup(ctx context.Context, client *ent.Client, db *sql.DB
 	}
 	if err := library.DropLegacyImportEntryColumns(ctx, db); err != nil {
 		return fmt.Errorf("database: drop legacy import_entries columns: %w", err)
+	}
+	if err := backfillFirstDownloadedAt(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+// backfillFirstDownloadedAt runs the one-time series.BackfillFirstDownloadedAt
+// migration and logs the number of rows it updated once, at startup. It is
+// idempotent (see the function's own doc comment) so running it on every
+// startup is safe and cheap — subsequent runs update zero rows.
+func backfillFirstDownloadedAt(ctx context.Context, db *sql.DB) error {
+	rows, err := series.BackfillFirstDownloadedAt(ctx, db)
+	if err != nil {
+		return fmt.Errorf("database: backfill chapters first_downloaded_at: %w", err)
+	}
+	if rows > 0 {
+		slog.Info("database: backfilled chapters first_downloaded_at from download_date", "rows", rows)
 	}
 	return nil
 }

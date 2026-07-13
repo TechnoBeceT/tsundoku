@@ -347,15 +347,17 @@ func (h *Handler) LibraryHealth(c echo.Context) error {
 // function; it cannot be silently omitted from a subset of call sites (§16).
 func detailToSummary(d seriessvc.SeriesDetailDTO) seriessvc.SeriesSummaryDTO {
 	return seriessvc.SeriesSummaryDTO{
-		ID:            d.ID,
-		Title:         d.Title,
-		DisplayName:   d.DisplayName,
-		Slug:          d.Slug,
-		Category:      d.Category,
-		CoverURL:      d.CoverURL,
-		Monitored:     d.Monitored,
-		Completed:     d.Completed,
-		ChapterCounts: d.ChapterCounts,
+		ID:                      d.ID,
+		Title:                   d.Title,
+		DisplayName:             d.DisplayName,
+		Slug:                    d.Slug,
+		Category:                d.Category,
+		CoverURL:                d.CoverURL,
+		Monitored:               d.Monitored,
+		Completed:               d.Completed,
+		ChapterCounts:           d.ChapterCounts,
+		CreatedAt:               d.CreatedAt,
+		LastChapterDownloadedAt: d.LastChapterDownloadedAt,
 	}
 }
 

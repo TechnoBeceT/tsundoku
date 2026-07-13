@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import AppShell from './AppShell.vue'
 import type { NavItem } from './types'
 import LibraryList from '../screens/LibraryList.vue'
+import type { SortKey, SortDir } from '../library/librarySort'
 import { categories, seriesPage } from '../../fixtures/series'
 
 /**
@@ -111,7 +112,8 @@ export const Syncing: Story = {
 /**
  * The real proof: the LibraryList screen sitting inside the chrome, framed by the
  * rail + header exactly as it will appear in the running app. The category tabs
- * and "Load more" stay interactive.
+ * and the search + sort toolbar stay interactive (wired to local state, the
+ * Komikku model — no refetch).
  */
 export const InShell: Story = {
   render: () => ({
@@ -119,25 +121,54 @@ export const InShell: Story = {
     setup() {
       const theme = ref<'dark' | 'light'>('dark')
       const activeCategory = ref<string | null>(null)
-      const shown = ref(6)
+      const search = ref('')
+      const sortKey = ref<SortKey>('title')
+      const sortDir = ref<SortDir>('asc')
 
-      const filtered = computed(() =>
+      const inCategory = computed(() =>
         activeCategory.value == null
           ? seriesPage
           : seriesPage.filter((s) => s.category === activeCategory.value),
       )
-      const page = computed(() => filtered.value.slice(0, shown.value))
-      const total = computed(() => filtered.value.length)
+      const q = computed(() => search.value.trim().toLowerCase())
+      const page = computed(() =>
+        q.value === ''
+          ? inCategory.value
+          : inCategory.value.filter((s) => s.title.toLowerCase().includes(q.value)),
+      )
+      const matchesElsewhere = computed(() =>
+        q.value === ''
+          ? 0
+          : seriesPage.filter(
+              (s) => s.category !== activeCategory.value && s.title.toLowerCase().includes(q.value),
+            ).length,
+      )
 
       const onFilter = (c: string | null): void => {
         activeCategory.value = c
-        shown.value = 6
       }
-      const onLoadMore = (): void => {
-        shown.value += 6
+      const onSort = (p: { key: SortKey; dir: SortDir }): void => {
+        sortKey.value = p.key
+        sortDir.value = p.dir
+      }
+      const onWiden = (): void => {
+        activeCategory.value = null
       }
 
-      return { theme, navItems, activeCategory, page, total, categories, onFilter, onLoadMore }
+      return {
+        theme,
+        navItems,
+        activeCategory,
+        search,
+        sortKey,
+        sortDir,
+        page,
+        matchesElsewhere,
+        categories,
+        onFilter,
+        onSort,
+        onWiden,
+      }
     },
     template: `
       <AppShell
@@ -153,9 +184,13 @@ export const InShell: Story = {
           :series="page"
           :categories="categories"
           :active-category="activeCategory"
-          :total="total"
+          :matches-elsewhere="matchesElsewhere"
+          v-model:search="search"
+          :sort-key="sortKey"
+          :sort-dir="sortDir"
           @filter="onFilter"
-          @load-more="onLoadMore"
+          @update:sort="onSort"
+          @search-everywhere="onWiden"
         />
       </AppShell>
     `,

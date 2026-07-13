@@ -237,6 +237,8 @@ export const richSeries: SeriesDetail = {
   monitored: true,
   completed: false,
   chapterCounts: { total: 9, downloaded: 2, wanted: 2, failed: 2, unread: 1 },
+  createdAt: '2024-01-15T10:00:00Z',
+  lastChapterDownloadedAt: '2024-11-20T08:30:00Z',
   chapters,
   providers,
   metadataProviderId: null,

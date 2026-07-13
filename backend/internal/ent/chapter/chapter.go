@@ -33,6 +33,8 @@ const (
 	FieldFilename = "filename"
 	// FieldDownloadDate holds the string denoting the download_date field in the database.
 	FieldDownloadDate = "download_date"
+	// FieldFirstDownloadedAt holds the string denoting the first_downloaded_at field in the database.
+	FieldFirstDownloadedAt = "first_downloaded_at"
 	// FieldRetries holds the string denoting the retries field in the database.
 	FieldRetries = "retries"
 	// FieldNextAttemptAt holds the string denoting the next_attempt_at field in the database.
@@ -81,6 +83,7 @@ var Columns = []string{
 	FieldPageCount,
 	FieldFilename,
 	FieldDownloadDate,
+	FieldFirstDownloadedAt,
 	FieldRetries,
 	FieldNextAttemptAt,
 	FieldLastError,
@@ -200,6 +203,11 @@ func ByFilename(opts ...sql.OrderTermOption) OrderOption {
 // ByDownloadDate orders the results by the download_date field.
 func ByDownloadDate(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDownloadDate, opts...).ToFunc()
+}
+
+// ByFirstDownloadedAt orders the results by the first_downloaded_at field.
+func ByFirstDownloadedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFirstDownloadedAt, opts...).ToFunc()
 }
 
 // ByRetries orders the results by the retries field.

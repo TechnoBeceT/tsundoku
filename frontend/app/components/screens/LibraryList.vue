@@ -6,36 +6,49 @@ import EmptyState from '../ui/EmptyState.vue'
 import AppButton from '../ui/AppButton.vue'
 import BrandMark from '../ui/BrandMark.vue'
 import SeriesCard from '../library/SeriesCard.vue'
+import LibraryToolbar from '../library/LibraryToolbar.vue'
 import type { TabItem } from '../ui/nav.types'
+import type { SortKey, SortDir } from '../library/librarySort'
 import type { CategorySummary, SeriesSummary } from './types'
 
 /**
  * LibraryList — the cover-forward library grid: a dynamic category filter bar, a
- * responsive grid of series cards, an empty state, a skeleton loading state, and
- * "load more" pagination.
+ * search + sort toolbar, a responsive grid of series cards, three honest empty
+ * states, and a skeleton loading state.
  *
- * A thin container: it owns only the filter + grid + states. Each card is a
- * `SeriesCard`, the filter is a `SegmentedTabs`, and the loading/empty/load-more
- * affordances are the shared `Skeleton`/`EmptyState`/`AppButton` atoms.
+ * A thin container: it owns only the filter + toolbar + grid + states. Each card
+ * is a `SeriesCard`, the filter is a `SegmentedTabs`, the search/sort bar is a
+ * `LibraryToolbar`, and the loading/empty affordances are the shared
+ * `Skeleton`/`EmptyState` atoms.
+ *
+ * The empty state is THREE-WAY, because a single "No series in this category
+ * yet." becomes a lie the moment a search is active (it would claim the category
+ * is empty when the query simply matched nothing). When a search matches nothing
+ * HERE but N series elsewhere, the escape hatch offers a widen-to-all action.
  *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * no fetching, routing, or stores. It renders correctly in both themes because
  * it references only design tokens.
  */
 const props = withDefaults(defineProps<{
-  /** The series to render (the current, possibly-appended, page). */
+  /** The series to render (already filtered + searched + sorted upstream). */
   series: SeriesSummary[]
   /** Category filter entries (dynamic list with per-category counts). */
   categories: CategorySummary[]
   /** Active category NAME, or null for the "All" tab. */
   activeCategory?: string | null
-  /** Total series in the active filter — drives the "load more" affordance. */
-  total?: number
+  /** The current search string (v-model:search). */
+  search: string
+  /** The active sort field. */
+  sortKey: SortKey
+  /** The active sort direction. */
+  sortDir: SortDir
+  /** How many series match the query OUTSIDE the active category (escape hatch). */
+  matchesElsewhere: number
   /** When true, render skeleton cards instead of content. */
   loading?: boolean
 }>(), {
   activeCategory: null,
-  total: 0,
   loading: false,
 })
 
@@ -44,8 +57,12 @@ const emit = defineEmits<{
   select: [seriesId: string]
   /** The category filter changed — null means the "All" tab. */
   filter: [category: string | null]
-  /** The owner asked for the next page of results. */
-  loadMore: []
+  /** The search string changed ('' on clear). */
+  'update:search': [value: string]
+  /** The sort selection changed — carries the resolved key + direction. */
+  'update:sort': [payload: { key: SortKey; dir: SortDir }]
+  /** The owner widened an in-category search to the whole library. */
+  searchEverywhere: []
 }>()
 
 // Empty-string key for the "All" tab — category names are always non-blank, so
@@ -68,8 +85,11 @@ const activeKey = computed(() => props.activeCategory ?? ALL_KEY)
 // Translate a picked tab key back to the filter contract (ALL_KEY → null).
 const onTab = (key: string): void => emit('filter', key === ALL_KEY ? null : key)
 
-// More results exist when the loaded page is shorter than the filter's total.
-const hasMore = computed(() => props.series.length < props.total)
+// A search is active once the query has any non-whitespace content.
+const searching = computed(() => props.search.trim().length > 0)
+
+// The active category's display name for the escape-hatch line ("in <Name>").
+const activeName = computed(() => props.activeCategory ?? 'All')
 
 // A handful of skeleton placeholders for the loading state.
 const skeletons = Array.from({ length: 10 }, (_, i) => i)
@@ -85,12 +105,50 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
       @update:model-value="onTab"
     />
 
+    <!-- Search + sort toolbar -->
+    <LibraryToolbar
+      class="library__toolbar"
+      :search="search"
+      :sort-key="sortKey"
+      :sort-dir="sortDir"
+      @update:search="emit('update:search', $event)"
+      @update:sort="emit('update:sort', $event)"
+    />
+
     <!-- Loading skeletons -->
     <div v-if="loading" class="library__grid">
       <Skeleton v-for="n in skeletons" :key="n" variant="cover" />
     </div>
 
-    <!-- Empty state -->
+    <!-- Empty: search matched nothing HERE, but N series elsewhere → widen -->
+    <EmptyState
+      v-else-if="series.length === 0 && searching && matchesElsewhere > 0"
+      :title="`No matches in ${activeName}`"
+      :sub="`${matchesElsewhere} ${matchesElsewhere === 1 ? 'match' : 'matches'} in other categories`"
+    >
+      <template #icon>
+        <BrandMark :size="56" tone="gradient" />
+      </template>
+      <AppButton
+        data-test="widen-search"
+        variant="ghost"
+        @click="emit('searchEverywhere')"
+      >
+        Search all categories
+      </AppButton>
+    </EmptyState>
+
+    <!-- Empty: search matched nothing anywhere -->
+    <EmptyState
+      v-else-if="series.length === 0 && searching"
+      :title="`No series match '${search}'.`"
+    >
+      <template #icon>
+        <BrandMark :size="56" tone="gradient" />
+      </template>
+    </EmptyState>
+
+    <!-- Empty: the category genuinely has no series -->
     <EmptyState
       v-else-if="series.length === 0"
       title="No series in this category yet."
@@ -109,13 +167,6 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
         @select="emit('select', $event)"
       />
     </div>
-
-    <!-- Pagination -->
-    <div v-if="hasMore && !loading" class="library__more">
-      <AppButton variant="ghost" @click="emit('loadMore')">
-        Load more · {{ series.length }} of {{ total }}
-      </AppButton>
-    </div>
   </div>
 </template>
 
@@ -127,8 +178,13 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
 }
 
 /* The SegmentedTabs atom supplies the flex/gap; the screen only spaces it from
-   the grid below. */
+   the toolbar below. */
 .library__filters {
+  margin-bottom: 16px;
+}
+
+/* Search + sort bar spacing from the grid. */
+.library__toolbar {
   margin-bottom: 22px;
 }
 
@@ -137,12 +193,5 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));
   gap: 18px;
-}
-
-/* ---- Pagination ----------------------------------------------------------- */
-.library__more {
-  display: flex;
-  justify-content: center;
-  margin-top: 28px;
 }
 </style>

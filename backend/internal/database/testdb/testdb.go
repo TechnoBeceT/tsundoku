@@ -54,6 +54,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/series"
 )
 
 // adminDatabase is the bootstrap database the container is created with. It is
@@ -151,11 +152,21 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 		t.Fatalf("testdb: run ent migration: %v", err)
 	}
 
-	// Mirror production startup (database.Open seedCategories): seed the default
-	// categories so integration tests have the five defaults available and series
-	// can be linked to a real Category (the app invariant). BackfillSeries and
-	// DropLegacyColumn are both no-ops on the fresh schema (no rows, no legacy
-	// `category` column) but are run for parity with the production seed sequence.
+	mirrorProductionSeedSequence(t, ctx, client, db)
+
+	return client, db
+}
+
+// mirrorProductionSeedSequence runs, in order, every post-auto-migration step
+// database.Open's runPostMigrationCleanup runs in production, so an
+// integration test's fresh database ends up in the exact same shape a real
+// startup would leave it. Every step is a no-op on a brand-new schema (no
+// rows, no legacy columns) except category.EnsureDefaults (which seeds the
+// five default categories tests rely on) — the rest run purely for parity
+// with the production sequence and to exercise the call path.
+func mirrorProductionSeedSequence(t *testing.T, ctx context.Context, client *ent.Client, db *sql.DB) {
+	t.Helper()
+
 	if err := category.EnsureDefaults(ctx, client); err != nil {
 		t.Fatalf("testdb: seed default categories: %v", err)
 	}
@@ -165,16 +176,12 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 	if err := category.DropLegacyColumn(ctx, db); err != nil {
 		t.Fatalf("testdb: drop legacy category column: %v", err)
 	}
-
-	// Mirror production startup (database.Open): drop the orphaned columns
-	// left behind by the original unused ImportEntry stub. This is a no-op on
-	// the fresh testdb table (the columns never existed here) but is run for
-	// parity with the production sequence and to exercise the call path.
 	if err := library.DropLegacyImportEntryColumns(ctx, db); err != nil {
 		t.Fatalf("testdb: drop legacy import_entries columns: %v", err)
 	}
-
-	return client, db
+	if _, err := series.BackfillFirstDownloadedAt(ctx, db); err != nil {
+		t.Fatalf("testdb: backfill chapters first_downloaded_at: %v", err)
+	}
 }
 
 // dropDatabase removes a per-test database from the shared server.

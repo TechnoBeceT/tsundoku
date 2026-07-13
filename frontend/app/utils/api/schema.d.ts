@@ -1615,6 +1615,16 @@ export interface components {
             /** @description Whether the owner has marked the series finished (excluded from refresh + health). */
             completed: boolean;
             chapterCounts: components["schemas"]["ChapterCounts"];
+            /**
+             * Format: date-time
+             * @description When the series entered the library. Powers the "recently added" sort.
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description When this series' newest chapter became readable — MAX(first_downloaded_at) across its chapters. Powers the "recently updated" sort. Null when no chapter ever carried a first-downloaded time. NOT MAX(download_date): a download_date is a fetch timestamp a convergence upgrade rewrites on an old chapter, which would float a series to the top with nothing new to read. Always present as a key; its value may be null.
+             */
+            lastChapterDownloadedAt: string | null;
         };
         Chapter: {
             /**
@@ -1751,6 +1761,16 @@ export interface components {
             /** @description Whether the owner has marked the series finished (excluded from refresh + health). */
             completed: boolean;
             chapterCounts: components["schemas"]["ChapterCounts"];
+            /**
+             * Format: date-time
+             * @description When the series entered the library. Powers the "recently added" sort.
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description When this series' newest chapter became readable — MAX(first_downloaded_at) across its chapters. Powers the "recently updated" sort. Null when no chapter ever carried a first-downloaded time. NOT MAX(download_date): a download_date is a fetch timestamp a convergence upgrade rewrites on an old chapter, which would float a series to the top with nothing new to read. Always present as a key; its value may be null.
+             */
+            lastChapterDownloadedAt: string | null;
             /** @description The series' chapters, ordered by number then chapter key. */
             chapters: components["schemas"]["Chapter"][];
             /** @description The series' providers. */

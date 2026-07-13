@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -1189,5 +1190,74 @@ func TestListSeries_UnreadCount(t *testing.T) {
 	}
 	if page[0].ChapterCounts.Total != 4 {
 		t.Fatalf("ListSeries: Total = %d, want 4", page[0].ChapterCounts.Total)
+	}
+}
+
+// findSummary returns the SeriesSummaryDTO with the given title from a page, or
+// fails the test if it is absent.
+func findSummary(t *testing.T, page []series.SeriesSummaryDTO, title string) series.SeriesSummaryDTO {
+	t.Helper()
+	for _, s := range page {
+		if s.Title == title {
+			return s
+		}
+	}
+	t.Fatalf("series %q not found in page", title)
+	return series.SeriesSummaryDTO{}
+}
+
+// TestListSeriesCarriesSortKeys pins the two library-grid sort keys on the
+// summary row: CreatedAt (always present) and LastChapterDownloadedAt
+// (MAX(first_downloaded_at), nullable). It is deliberately NOT MAX(download_date)
+// — see the DTO doc — so a chapter that never became readable yields a nil key,
+// never the zero time and never now().
+func TestListSeriesCarriesSortKeys(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+
+	// Series A: two downloaded chapters, first_downloaded_at t1 < t2 -> MAX == t2.
+	a := client.Series.Create().SetTitle("Sort Key A").SetSlug("sort-key-a").
+		SetCategoryID(catID(ctx, client, "Manga")).SaveX(ctx)
+	client.Chapter.Create().SetSeriesID(a.ID).SetChapterKey("ska-1").
+		SetState(entchapter.StateDownloaded).SetFirstDownloadedAt(t1).SaveX(ctx)
+	client.Chapter.Create().SetSeriesID(a.ID).SetChapterKey("ska-2").
+		SetState(entchapter.StateDownloaded).SetFirstDownloadedAt(t2).SaveX(ctx)
+
+	// Series B: a chapter that never carried a first_downloaded_at -> nil key.
+	b := client.Series.Create().SetTitle("Sort Key B").SetSlug("sort-key-b").
+		SetCategoryID(catID(ctx, client, "Manga")).SaveX(ctx)
+	client.Chapter.Create().SetSeriesID(b.ID).SetChapterKey("skb-1").
+		SetState(entchapter.StateWanted).SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir(), 14)
+	page, err := svc.ListSeries(ctx, series.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+
+	got := findSummary(t, page, "Sort Key A")
+	if got.CreatedAt == "" {
+		t.Errorf("series A CreatedAt is empty, want a timestamp")
+	}
+	if got.LastChapterDownloadedAt == nil {
+		t.Fatalf("series A LastChapterDownloadedAt is nil, want %s (the MAX)", t2)
+	}
+	parsed, perr := time.Parse(time.RFC3339, *got.LastChapterDownloadedAt)
+	if perr != nil {
+		t.Fatalf("series A LastChapterDownloadedAt %q not RFC3339: %v", *got.LastChapterDownloadedAt, perr)
+	}
+	if !parsed.Equal(t2) {
+		t.Errorf("series A LastChapterDownloadedAt = %s, want %s (MAX, not MIN)", parsed, t2)
+	}
+
+	gotB := findSummary(t, page, "Sort Key B")
+	if gotB.CreatedAt == "" {
+		t.Errorf("series B CreatedAt is empty, want a timestamp")
+	}
+	if gotB.LastChapterDownloadedAt != nil {
+		t.Errorf("series B LastChapterDownloadedAt = %v, want nil (no chapter ever carried one)", *gotB.LastChapterDownloadedAt)
 	}
 }

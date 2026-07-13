@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/fetcher"
@@ -175,6 +176,15 @@ func TestScanLibrary_orphan_cbz(t *testing.T) {
 		t.Fatalf("CreateCBZ: %v", err)
 	}
 
+	// Stamp a KNOWN past mtime on the orphan CBZ so we can assert the
+	// ORPHAN path (chapterFactFromOrphanCBZ / orphanChapterFacts) actually
+	// populates ChapterFact.ModTime from it — the sidecar path is exercised
+	// by other tests and shares no code with this one.
+	wantModTime := time.Date(2026, 1, 14, 10, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(cbzPath, wantModTime, wantModTime); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
 	facts, err := disk.ScanLibrary(storage)
 	if err != nil {
 		t.Fatalf("ScanLibrary: %v", err)
@@ -191,6 +201,12 @@ func TestScanLibrary_orphan_cbz(t *testing.T) {
 	assertEqual(t, "orphan Provider", "comick", cf.Provider)
 	if !cf.FileExists {
 		t.Error("orphan CBZ FileExists = false, want true")
+	}
+	// The load-bearing assertion this test previously lacked: the orphan
+	// path must populate ModTime, or seedFirstDownloadedAtFromMtime silently
+	// no-ops on every disk-imported (Kaizoku) chapter.
+	if !cf.ModTime.Truncate(time.Second).Equal(wantModTime.Truncate(time.Second)) {
+		t.Errorf("orphan ModTime = %v, want %v", cf.ModTime, wantModTime)
 	}
 }
 

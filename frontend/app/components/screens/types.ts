@@ -45,6 +45,11 @@ export interface SeriesSummary {
   completed: boolean
   /** Chapter tallies for the progress bar + meta line. */
   chapterCounts: ChapterCounts
+  /** When the series entered the library (ISO date-time). Powers the "recently added" sort. */
+  createdAt: string
+  /** When this series' newest chapter became readable (ISO date-time), or null when
+   * no chapter ever carried a first-downloaded time. Powers the "recently updated" sort. */
+  lastChapterDownloadedAt: string | null
 }
 
 /**

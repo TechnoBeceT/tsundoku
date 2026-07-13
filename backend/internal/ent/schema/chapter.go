@@ -39,6 +39,17 @@ func (Chapter) Fields() []ent.Field {
 		field.Int("page_count").Optional().Nillable(),
 		field.String("filename").Default(""),
 		field.Time("download_date").Optional().Nillable(),
+		// first_downloaded_at is when this chapter FIRST became readable — written
+		// exactly once, on the first successful download, and NEVER rewritten.
+		//
+		// It exists because download_date CANNOT answer that question: a
+		// Library-Convergence upgrade re-fetches an OLD chapter from a better source
+		// and rewrites download_date, so MAX(download_date) floats a series to the
+		// top of "recently updated" with nothing new to read.
+		//
+		// Nillable: chapters imported from disk have no known arrival time until
+		// reconcile fills it from the CBZ's mtime (a later task).
+		field.Time("first_downloaded_at").Optional().Nillable(),
 		field.Int("retries").Default(0),
 		field.Time("next_attempt_at").Optional().Nillable(),
 		field.String("last_error").Default(""),

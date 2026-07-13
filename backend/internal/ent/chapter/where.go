@@ -96,6 +96,11 @@ func DownloadDate(v time.Time) predicate.Chapter {
 	return predicate.Chapter(sql.FieldEQ(FieldDownloadDate, v))
 }
 
+// FirstDownloadedAt applies equality check predicate on the "first_downloaded_at" field. It's identical to FirstDownloadedAtEQ.
+func FirstDownloadedAt(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldFirstDownloadedAt, v))
+}
+
 // Retries applies equality check predicate on the "retries" field. It's identical to RetriesEQ.
 func Retries(v int) predicate.Chapter {
 	return predicate.Chapter(sql.FieldEQ(FieldRetries, v))
@@ -529,6 +534,56 @@ func DownloadDateIsNil() predicate.Chapter {
 // DownloadDateNotNil applies the NotNil predicate on the "download_date" field.
 func DownloadDateNotNil() predicate.Chapter {
 	return predicate.Chapter(sql.FieldNotNull(FieldDownloadDate))
+}
+
+// FirstDownloadedAtEQ applies the EQ predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtEQ(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldFirstDownloadedAt, v))
+}
+
+// FirstDownloadedAtNEQ applies the NEQ predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtNEQ(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldNEQ(FieldFirstDownloadedAt, v))
+}
+
+// FirstDownloadedAtIn applies the In predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtIn(vs ...time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldIn(FieldFirstDownloadedAt, vs...))
+}
+
+// FirstDownloadedAtNotIn applies the NotIn predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtNotIn(vs ...time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldNotIn(FieldFirstDownloadedAt, vs...))
+}
+
+// FirstDownloadedAtGT applies the GT predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtGT(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldGT(FieldFirstDownloadedAt, v))
+}
+
+// FirstDownloadedAtGTE applies the GTE predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtGTE(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldGTE(FieldFirstDownloadedAt, v))
+}
+
+// FirstDownloadedAtLT applies the LT predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtLT(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldLT(FieldFirstDownloadedAt, v))
+}
+
+// FirstDownloadedAtLTE applies the LTE predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtLTE(v time.Time) predicate.Chapter {
+	return predicate.Chapter(sql.FieldLTE(FieldFirstDownloadedAt, v))
+}
+
+// FirstDownloadedAtIsNil applies the IsNil predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtIsNil() predicate.Chapter {
+	return predicate.Chapter(sql.FieldIsNull(FieldFirstDownloadedAt))
+}
+
+// FirstDownloadedAtNotNil applies the NotNil predicate on the "first_downloaded_at" field.
+func FirstDownloadedAtNotNil() predicate.Chapter {
+	return predicate.Chapter(sql.FieldNotNull(FieldFirstDownloadedAt))
 }
 
 // RetriesEQ applies the EQ predicate on the "retries" field.

@@ -38,6 +38,8 @@ type Chapter struct {
 	Filename string `json:"filename,omitempty"`
 	// DownloadDate holds the value of the "download_date" field.
 	DownloadDate *time.Time `json:"download_date,omitempty"`
+	// FirstDownloadedAt holds the value of the "first_downloaded_at" field.
+	FirstDownloadedAt *time.Time `json:"first_downloaded_at,omitempty"`
 	// Retries holds the value of the "retries" field.
 	Retries int `json:"retries,omitempty"`
 	// NextAttemptAt holds the value of the "next_attempt_at" field.
@@ -106,7 +108,7 @@ func (*Chapter) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullInt64)
 		case chapter.FieldChapterKey, chapter.FieldState, chapter.FieldFilename, chapter.FieldLastError, chapter.FieldErrorCategory:
 			values[i] = new(sql.NullString)
-		case chapter.FieldDownloadDate, chapter.FieldNextAttemptAt, chapter.FieldReadAt:
+		case chapter.FieldDownloadDate, chapter.FieldFirstDownloadedAt, chapter.FieldNextAttemptAt, chapter.FieldReadAt:
 			values[i] = new(sql.NullTime)
 		case chapter.FieldID, chapter.FieldSeriesID:
 			values[i] = new(uuid.UUID)
@@ -189,6 +191,13 @@ func (_m *Chapter) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.DownloadDate = new(time.Time)
 				*_m.DownloadDate = value.Time
+			}
+		case chapter.FieldFirstDownloadedAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field first_downloaded_at", values[i])
+			} else if value.Valid {
+				_m.FirstDownloadedAt = new(time.Time)
+				*_m.FirstDownloadedAt = value.Time
 			}
 		case chapter.FieldRetries:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -314,6 +323,11 @@ func (_m *Chapter) String() string {
 	builder.WriteString(", ")
 	if v := _m.DownloadDate; v != nil {
 		builder.WriteString("download_date=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	if v := _m.FirstDownloadedAt; v != nil {
+		builder.WriteString("first_downloaded_at=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
 	builder.WriteString(", ")

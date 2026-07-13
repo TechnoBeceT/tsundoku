@@ -7,19 +7,30 @@
  * are auto-imported from app/components/. navigateTo is a Nuxt auto-import.
  *
  * Wiring:
- *   @select  → navigate to /series/:id
- *   @filter  → setCategory (null = "All" tab)
- *   @load-more → loadMore (appends next page)
+ *   @select          → navigate to /series/:id
+ *   @filter          → setCategory (null = "All" tab)
+ *   @update:search   → setSearch (in-memory narrow, no refetch)
+ *   @update:sort     → setSort (in-memory re-sort, no refetch)
+ *   @searchEverywhere → searchEverywhere (widen an in-category search to All)
  *
  * §16: pending true during fetch; error shown as a dismissible ErrorBanner.
  *
  * Initial-category: if the page is opened with ?category=<name> (e.g. by
  * clicking a category card on the Categories page) the library pre-filters
  * to that category on first load without an extra round-trip.
+ *
+ * The whole library loads once (useLibrary) and category/search/sort are all
+ * in-memory derivations — no "Load more", no refetch on any of these.
  */
+import type { SortKey, SortDir } from '~/components/library/librarySort'
+
 const route = useRoute()
 const initialCategory = typeof route.query.category === 'string' ? route.query.category : null
-const { series, categories, total, pending, error, activeCategory, setCategory, loadMore } = useLibrary({ initialCategory })
+const {
+  series, categories, pending, error, activeCategory,
+  searchQuery, sortKey, sortDir, matchesElsewhere,
+  setCategory, setSearch, setSort, searchEverywhere,
+} = useLibrary({ initialCategory })
 </script>
 
 <template>
@@ -29,11 +40,16 @@ const { series, categories, total, pending, error, activeCategory, setCategory, 
       :series="series"
       :categories="categories"
       :active-category="activeCategory"
-      :total="total"
+      :search="searchQuery"
+      :sort-key="sortKey"
+      :sort-dir="sortDir"
+      :matches-elsewhere="matchesElsewhere"
       :loading="pending"
       @select="(id: string) => navigateTo(`/series/${id}`)"
       @filter="setCategory"
-      @load-more="loadMore"
+      @update:search="setSearch"
+      @update:sort="(p: { key: SortKey; dir: SortDir }) => setSort(p.key, p.dir)"
+      @search-everywhere="searchEverywhere"
     />
   </div>
 </template>

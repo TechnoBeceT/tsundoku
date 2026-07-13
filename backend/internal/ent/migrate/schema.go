@@ -34,6 +34,7 @@ var (
 		{Name: "page_count", Type: field.TypeInt, Nullable: true},
 		{Name: "filename", Type: field.TypeString, Default: ""},
 		{Name: "download_date", Type: field.TypeTime, Nullable: true},
+		{Name: "first_downloaded_at", Type: field.TypeTime, Nullable: true},
 		{Name: "retries", Type: field.TypeInt, Default: 0},
 		{Name: "next_attempt_at", Type: field.TypeTime, Nullable: true},
 		{Name: "last_error", Type: field.TypeString, Default: ""},
@@ -52,13 +53,13 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "chapters_series_providers_satisfied_by",
-				Columns:    []*schema.Column{ChaptersColumns[15]},
+				Columns:    []*schema.Column{ChaptersColumns[16]},
 				RefColumns: []*schema.Column{SeriesProvidersColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
 			{
 				Symbol:     "chapters_series_chapters",
-				Columns:    []*schema.Column{ChaptersColumns[16]},
+				Columns:    []*schema.Column{ChaptersColumns[17]},
 				RefColumns: []*schema.Column{SeriesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -67,7 +68,7 @@ var (
 			{
 				Name:    "chapter_series_id_chapter_key",
 				Unique:  true,
-				Columns: []*schema.Column{ChaptersColumns[16], ChaptersColumns[1]},
+				Columns: []*schema.Column{ChaptersColumns[17], ChaptersColumns[1]},
 			},
 		},
 	}

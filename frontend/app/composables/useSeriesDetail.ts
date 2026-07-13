@@ -108,6 +108,8 @@ function mapDetail(dto: SeriesDetailDTO): SeriesDetail {
       failed: dto.chapterCounts.failed,
       unread: dto.chapterCounts.unread,
     },
+    createdAt: dto.createdAt,
+    lastChapterDownloadedAt: dto.lastChapterDownloadedAt,
     chapters: dto.chapters.map(mapChapter),
     providers: dto.providers.map(mapProvider),
     metadataProviderId: dto.providers.find((p) => p.isMetadataSource)?.id ?? null,
