@@ -22,6 +22,7 @@ import (
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+	"github.com/technobecet/tsundoku/internal/pkg/urlx"
 )
 
 // Config is the root configuration type. Every subsystem receives a copy of
@@ -46,6 +47,8 @@ type Config struct {
 	Sources SourcesConfig
 	// Metadata holds the Phase-1 native metadata engine's provider credentials.
 	Metadata MetadataConfig
+	// Tracker holds the Phase-3 tracker OAuth subsystem's credentials.
+	Tracker TrackerConfig
 }
 
 // AuthConfig holds HMAC signing settings for the single-owner auth layer.
@@ -364,6 +367,57 @@ type MetadataConfig struct {
 	MALClientID string `koanf:"mal_clientid"`
 }
 
+// TrackerConfig holds credentials for the Phase-3 tracker OAuth subsystem's
+// two OAuth trackers (AniList, MAL — see internal/tracker/providers). This
+// is a SEPARATE credential set from MetadataConfig: metadata is public-read
+// (only MAL needs a client-id header, no login); trackers are OAuth-login
+// (spec/trackers-and-rich-library-umbrella-v2 §1 — the two subsystems share
+// a physical provider, never a config struct).
+//
+// Every field DEFAULTS BLANK, and validate() does NOT fail on blank — the
+// fleet "blank disables" pattern (mirrors SuwayomiConfig.ExternalURL): an
+// unconfigured tracker's AuthURL simply fails closed with
+// tracker.ErrClientIDNotConfigured (that tracker's connect button stays
+// hidden/disabled in the UI), and a blank PublicURL fails closed with
+// connect.ErrPublicURLNotConfigured — the whole subsystem is DORMANT until
+// the owner activates it (spec/trackers-oauth-phase3 §2), never a startup
+// failure.
+type TrackerConfig struct {
+	// AniListClientID is AniList's registered app client id, sent as the
+	// implicit-grant authorize URL's client_id parameter. Default ""
+	// (AniList tracker connect disabled until configured). Set via
+	// TSUNDOKU_TRACKER_ANILISTCLIENTID.
+	AniListClientID string `koanf:"anilistclientid"`
+	// MALClientID is MyAnimeList's registered app client id for the
+	// TRACKER (auth-code+PKCE) OAuth flow — may reuse the same app as
+	// MetadataConfig.MALClientID (a metadata-only app's client-id also
+	// works for OAuth as long as its registered redirect list includes
+	// this instance's callback) or a dedicated one; this package never
+	// assumes either. Default "" (MAL tracker connect disabled until
+	// configured). Set via TSUNDOKU_TRACKER_MALCLIENTID.
+	//
+	// Explicit koanf tags on both client-id fields (this one and
+	// AniListClientID) pin the env-key match EXPLICITLY rather than
+	// relying on koanf/mapstructure's default case-insensitive matching —
+	// the same defensive discipline as MetadataConfig.MALClientID's
+	// `mal_clientid` tag (see its doc comment for the underscore-collision
+	// footgun that fix guards against), applied here even though the
+	// current env-var spelling (TRACKER_MALCLIENTID, no inner underscore)
+	// does not itself hit that collision, so a future rename can't
+	// silently reintroduce it.
+	MALClientID string `koanf:"malclientid"`
+	// PublicURL is this instance's own public base URL — the redirect
+	// base every tracker's OAuth app must have "${PublicURL}/auth/tracker/
+	// callback" registered as its redirect_uri (spec §2 — direct instance
+	// redirect, no Cloudflare relay). Default "" (AuthURL fails closed
+	// with connect.ErrPublicURLNotConfigured until set). When non-blank it
+	// must be a well-formed absolute http/https URL; validate() fails
+	// closed otherwise — a malformed public URL would build a redirect_uri
+	// no provider could ever call back to. Set via
+	// TSUNDOKU_TRACKER_PUBLICURL.
+	PublicURL string `koanf:"publicurl"`
+}
+
 // StorageConfig holds library-path settings.
 type StorageConfig struct {
 	// Folder is the absolute path to the manga library on disk where
@@ -427,6 +481,11 @@ func defaults() map[string]any {
 		"sources.minrequestdelay":  "500ms",
 		// Metadata — Phase-1 native metadata engine provider credentials.
 		"metadata.mal_clientid": "",
+		// Tracker — Phase-3 tracker OAuth subsystem credentials. All blank
+		// ⇒ the whole subsystem is dormant (see TrackerConfig's doc comment).
+		"tracker.anilistclientid": "",
+		"tracker.malclientid":     "",
+		"tracker.publicurl":       "",
 	}
 }
 
@@ -520,6 +579,9 @@ func Load() (*Config, error) {
 //	TSUNDOKU_METADATA_MAL_CLIENTID          → metadata.mal_clientid (see the
 //	                                          `koanf:"mal_clientid"` tag on
 //	                                          MetadataConfig.MALClientID)
+//	TSUNDOKU_TRACKER_ANILISTCLIENTID        → tracker.anilistclientid
+//	TSUNDOKU_TRACKER_MALCLIENTID            → tracker.malclientid
+//	TSUNDOKU_TRACKER_PUBLICURL              → tracker.publicurl
 //
 // Convention: after stripping the prefix the first "_" separates the
 // top-level struct key from the field name; the remainder is kept as-is
@@ -567,6 +629,9 @@ const minAuthSecretLen = 16
 //     would let a tripped source re-trip immediately, defeating the breaker.
 //   - Sources.MinRequestDelay must not be negative — a negative politeness
 //     delay is meaningless (0 is the valid "disabled" sentinel).
+//   - Tracker.PublicURL, when set, must be a well-formed absolute http/https
+//     URL — blank leaves the whole tracker OAuth subsystem dormant and is
+//     NOT an error (see TrackerConfig's doc comment).
 func (c *Config) validate() error {
 	var errs []string
 
@@ -614,6 +679,7 @@ func (c *Config) validate() error {
 	}
 
 	errs = append(errs, validateSourcesConfig(c.Sources)...)
+	errs = append(errs, validateTrackerConfig(c.Tracker)...)
 
 	if len(errs) > 0 {
 		return errors.New("config: invalid configuration: " + strings.Join(errs, "; "))
@@ -675,6 +741,23 @@ const (
 	databaseTypeH2       = "H2"
 	databaseTypePostgres = "POSTGRESQL"
 )
+
+// validateTrackerConfig fails closed on a malformed tracker public URL. A
+// blank value leaves the whole tracker OAuth subsystem dormant and passes
+// (the check is skipped — see TrackerConfig's doc comment); a non-blank
+// value must be an absolute http/https URL with a host, mirroring
+// validateExternalURL's same rule for Suwayomi.ExternalURL — a malformed
+// public URL would build a redirect_uri no OAuth provider could ever call
+// back to, so it is worth rejecting at startup rather than failing only
+// when the owner first tries to connect a tracker. Extracted (mirrors
+// validateSourcesConfig) to keep validate() itself under the cyclop
+// complexity budget.
+func validateTrackerConfig(t TrackerConfig) []string {
+	if t.PublicURL == "" || urlx.IsAbsoluteHTTP(t.PublicURL) {
+		return nil
+	}
+	return []string{fmt.Sprintf("TSUNDOKU_TRACKER_PUBLICURL %q must be an absolute http/https URL", t.PublicURL)}
+}
 
 // validateSuwayomiDatabase fails closed on a misconfigured embedded-Suwayomi DB
 // selection. A blank DatabaseType selects Suwayomi's default H2 and passes (the

@@ -1190,3 +1190,69 @@ func TestMetadataConfig_MALClientIDFromEnv(t *testing.T) {
 		t.Fatalf("Metadata.MALClientID = %q, want %q", cfg.Metadata.MALClientID, "abc123clientid")
 	}
 }
+
+// TestTrackerConfig_DefaultsEmpty confirms every Tracker field defaults to
+// "" — the whole Phase-3 OAuth subsystem is dormant/config-gated until the
+// owner activates it (spec/trackers-oauth-phase3 §2), so a fresh install
+// with no tracker env vars set must still Load() cleanly.
+func TestTrackerConfig_DefaultsEmpty(t *testing.T) {
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Tracker.AniListClientID != "" || cfg.Tracker.MALClientID != "" || cfg.Tracker.PublicURL != "" {
+		t.Fatalf("Tracker defaults = %+v, want all blank", cfg.Tracker)
+	}
+}
+
+// TestTrackerConfig_FromEnv confirms all three TSUNDOKU_TRACKER_* env vars
+// populate their respective fields.
+func TestTrackerConfig_FromEnv(t *testing.T) {
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+	t.Setenv("TSUNDOKU_TRACKER_ANILISTCLIENTID", "anilist-cid")
+	t.Setenv("TSUNDOKU_TRACKER_MALCLIENTID", "mal-cid")
+	t.Setenv("TSUNDOKU_TRACKER_PUBLICURL", "https://tsundoku.example")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Tracker.AniListClientID != "anilist-cid" {
+		t.Fatalf("Tracker.AniListClientID = %q, want anilist-cid", cfg.Tracker.AniListClientID)
+	}
+	if cfg.Tracker.MALClientID != "mal-cid" {
+		t.Fatalf("Tracker.MALClientID = %q, want mal-cid", cfg.Tracker.MALClientID)
+	}
+	if cfg.Tracker.PublicURL != "https://tsundoku.example" {
+		t.Fatalf("Tracker.PublicURL = %q, want https://tsundoku.example", cfg.Tracker.PublicURL)
+	}
+}
+
+// TestTrackerConfig_MalformedPublicURLFailsClosed confirms a non-blank but
+// malformed Tracker.PublicURL aborts startup — a broken redirect_uri base
+// would build an OAuth callback URL no provider could ever reach.
+func TestTrackerConfig_MalformedPublicURLFailsClosed(t *testing.T) {
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+	t.Setenv("TSUNDOKU_TRACKER_PUBLICURL", "not-a-url")
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("Load with a malformed TSUNDOKU_TRACKER_PUBLICURL: want an error, got nil")
+	}
+}
+
+// TestTrackerConfig_BlankPublicURLPasses confirms a blank PublicURL is NOT
+// a validation error — it just leaves the subsystem dormant (mirrors
+// SuwayomiConfig.ExternalURL's blank-disables pattern).
+func TestTrackerConfig_BlankPublicURLPasses(t *testing.T) {
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
+
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("Load with a blank TSUNDOKU_TRACKER_PUBLICURL: %v", err)
+	}
+}
