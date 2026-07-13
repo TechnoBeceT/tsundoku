@@ -78,9 +78,17 @@ const providerLabel = computed(() => props.item.providerName || '—')
       </div>
     </button>
 
-    <slot name="before-badge" />
-    <StatusBadge :state="item.state" />
-    <slot name="after-badge" />
+    <!-- Grouped so the mobile breakpoint can drop the WHOLE trailing cluster to
+         its own line under the title/meta (mirrors seriesDetail/ChapterRow's
+         `.chapter__controls` fix) regardless of which slot content is present
+         per tab (progress bar / upgrade tag / retry-count+next-attempt+retry
+         button) — a plain flex-wrap on the individual siblings can't guarantee
+         that grouping since the slot contents vary per caller. -->
+    <div class="dl-row__controls">
+      <slot name="before-badge" />
+      <StatusBadge :state="item.state" />
+      <slot name="after-badge" />
+    </div>
   </div>
 </template>
 
@@ -159,5 +167,38 @@ const providerLabel = computed(() => props.item.providerName || '—')
 .dl-row__target {
   color: var(--accent);
   font-weight: var(--weight-medium);
+}
+
+/* The trailing cluster (before-badge slot + status badge + after-badge slot) —
+   flex:none on desktop, matching the individual siblings it replaces. */
+.dl-row__controls {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  flex: none;
+}
+
+@media (max-width: 900px) {
+  /* `.dl-row`'s flex:none trailing cluster (progress bar / retry-count /
+     status badge / retry button, depending on the caller) used to crowd the
+     fixed width a phone has, crushing `.dl-row__info`'s flex:1 down to near
+     nothing so the title had no room even for its own ellipsis. Wrapping the
+     row and forcing `.dl-row__controls` onto its own full-width line (indented
+     to align under the title, past the 40px cover + 13px gap) gives the cover
+     + title the whole row on line 1, and drops the trailing cluster to line 2
+     — nothing gets crushed, nothing overflows horizontally. */
+  .dl-row {
+    flex-wrap: wrap;
+  }
+
+  .dl-row__controls {
+    flex: 1 1 calc(100% - 53px);
+    margin-left: 53px;
+    justify-content: flex-start;
+    /* Defensive: Failed rows can pack retry-badge + next-attempt + status
+       badge + a retry button into this cluster — let it wrap onto a further
+       line rather than overflow on the narrowest phones. */
+    flex-wrap: wrap;
+  }
 }
 </style>
