@@ -54,6 +54,21 @@ withDefaults(defineProps<{
   background: var(--surface2);
 }
 
+@media (max-width: 900px) {
+  /* A long source name + language chip + PREFERRED tag + importance label
+   * can't share one nowrap line on a phone — wrap the row and let the
+   * importance label sit naturally after whatever it wraps to instead of
+   * being shoved to a lonely far edge by `margin-left: auto` (mirrors
+   * Downloads' `.downloads__cycle` mobile fix). */
+  .row {
+    flex-wrap: wrap;
+  }
+
+  .row__imp {
+    margin-left: 0;
+  }
+}
+
 .row__rank {
   width: 22px;
   height: 22px;
@@ -77,12 +92,14 @@ withDefaults(defineProps<{
   display: flex;
   flex-direction: column;
   gap: 1px;
+  min-width: 0;
 }
 
 .row__source {
   font-weight: var(--weight-bold);
   font-size: var(--text-md);
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .row__scanlator {

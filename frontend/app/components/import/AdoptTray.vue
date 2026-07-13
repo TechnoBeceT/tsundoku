@@ -110,6 +110,8 @@ const sourceWord = (n: number): string => `${n} source${n === 1 ? '' : 's'}`
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   color: var(--text);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .tray__chip-remove {

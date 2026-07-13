@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { ref } from 'vue'
 import { userEvent, within } from 'storybook/test'
+import { INITIAL_VIEWPORTS } from 'storybook/viewport'
 import Import from './Import.vue'
 import type { ChapterInspect } from './import.types'
 import { categories, inspectChapters, searchResults, sources } from '../../fixtures/import'
@@ -125,5 +126,33 @@ export const Adopting: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(await canvas.findByText(searchResults[0]!.title))
     await userEvent.click(await canvas.findByRole('button', { name: 'Review →' }))
+  },
+}
+
+/**
+ * Real mobile viewport (QCAT-230/231) — Stage 2 (Configure) at an actual
+ * phone-width VIEWPORT, the most crowded stage: each candidate row (select +
+ * cover + source/coverage + Inspect + rank stepper) must stack instead of
+ * crushing the source name into a sliver, the Stepper must not blow out the
+ * page width, and the row list scrolls INSIDE the bounded panel while the
+ * title/category fields + Back/Review actions stay pinned above/below it —
+ * with zero horizontal overflow at any width.
+ */
+export const MobileViewport: Story = {
+  args: {
+    sources,
+    searchResults,
+    searched: true,
+    categories,
+  },
+  parameters: {
+    viewport: { options: INITIAL_VIEWPORTS },
+  },
+  globals: {
+    viewport: { value: 'iphone12', isRotated: false },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
   },
 }

@@ -140,6 +140,7 @@ function onToggle(): void {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 11px;
+  flex-wrap: wrap;
 }
 
 .group__title {
@@ -147,6 +148,10 @@ function onToggle(): void {
   font-weight: var(--weight-bold);
   font-size: var(--text-lg);
   color: var(--text);
+  /* A long/unbroken title must wrap rather than push the card (and the page)
+   * wider than the viewport (QCAT-230). */
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .group__count {

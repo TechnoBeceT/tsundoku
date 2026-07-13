@@ -90,56 +90,65 @@ const emit = defineEmits<{
 <template>
   <div class="cand" :class="{ 'cand--on': selected }">
     <div class="cand__row">
-      <button
-        type="button"
-        class="check"
-        :class="{ 'check--on': selected }"
-        :aria-pressed="selected"
-        :aria-label="`Toggle ${candidate.sourceName}`"
-        @click="emit('toggle')"
-      >
-        <svg v-if="selected" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M20 6L9 17l-5-5" />
-        </svg>
-      </button>
+      <!-- Lead group (select + cover + name/coverage): stays together and takes
+           the full row width on mobile so the meta text never gets crushed into
+           a sliver beside the trailing controls (QCAT-230). -->
+      <div class="cand__lead">
+        <button
+          type="button"
+          class="check"
+          :class="{ 'check--on': selected }"
+          :aria-pressed="selected"
+          :aria-label="`Toggle ${candidate.sourceName}`"
+          @click="emit('toggle')"
+        >
+          <svg v-if="selected" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+        </button>
 
-      <span class="cand__cover">
-        <CoverImage
-          :src="candidate.thumbnailUrl"
-          :alt="`${candidate.title} cover`"
-          placeholder="initial"
-          :initial="candidate.title"
-          aspect="30 / 40"
-          radius="var(--radius-xs)"
-        />
-      </span>
-
-      <span class="cand__meta">
-        <span class="cand__source">{{ candidate.sourceName }}</span>
-        <span v-if="scanlator" class="cand__scanlator">{{ scanlator }}</span>
-        <span class="cand__lang">{{ candidate.lang.toUpperCase() }}</span>
-        <span v-if="coverageUnavailable" class="cand__coverage cand__coverage--muted">Coverage unavailable</span>
-        <span v-else-if="chapterCount != null" class="cand__coverage">
-          {{ chapterCount }} chapter{{ chapterCount === 1 ? '' : 's' }}<span v-if="chapterRanges"> · {{ chapterRanges }}</span>
+        <span class="cand__cover">
+          <CoverImage
+            :src="candidate.thumbnailUrl"
+            :alt="`${candidate.title} cover`"
+            placeholder="initial"
+            :initial="candidate.title"
+            aspect="30 / 40"
+            radius="var(--radius-xs)"
+          />
         </span>
-      </span>
 
-      <button v-if="!hideInspect" type="button" class="inspect" @click="emit('inspect')">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
-        Inspect
-      </button>
+        <span class="cand__meta">
+          <span class="cand__source">{{ candidate.sourceName }}</span>
+          <span v-if="scanlator" class="cand__scanlator">{{ scanlator }}</span>
+          <span class="cand__lang">{{ candidate.lang.toUpperCase() }}</span>
+          <span v-if="coverageUnavailable" class="cand__coverage cand__coverage--muted">Coverage unavailable</span>
+          <span v-else-if="chapterCount != null" class="cand__coverage">
+            {{ chapterCount }} chapter{{ chapterCount === 1 ? '' : 's' }}<span v-if="chapterRanges"> · {{ chapterRanges }}</span>
+          </span>
+        </span>
+      </div>
 
-      <ReorderControl
-        v-if="selected && !hideReorder"
-        :can-up="canUp"
-        :can-down="canDown"
-        :rank="rank"
-        :top-highlighted="rank === 1"
-        @move="emit('move', $event)"
-      />
+      <!-- Trailing group (inspect + rank): wraps onto its own right-aligned row
+           on mobile instead of squeezing the lead group down (QCAT-230). -->
+      <div class="cand__trail">
+        <button v-if="!hideInspect" type="button" class="inspect" @click="emit('inspect')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          Inspect
+        </button>
+
+        <ReorderControl
+          v-if="selected && !hideReorder"
+          :can-up="canUp"
+          :can-down="canDown"
+          :rank="rank"
+          :top-highlighted="rank === 1"
+          @move="emit('move', $event)"
+        />
+      </div>
     </div>
 
     <!-- Inspect preview: loading spinner → chapter list (§16) -->
@@ -170,6 +179,43 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* Lead (select+cover+meta) grows to fill the row; trail (inspect+rank) stays
+ * its natural width — matches the pre-split single-line layout at desktop
+ * width. See the `@media` override below for the mobile stack. */
+.cand__lead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.cand__trail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+@media (max-width: 900px) {
+  /* Force the trailing controls (Inspect + rank stepper) onto their OWN
+   * right-aligned row below the lead group, rather than letting the row's
+   * natural flex-shrink squeeze the source name/coverage text into an
+   * unreadable sliver (QCAT-230 — CandidateConfigRow crushed on mobile). */
+  .cand__row {
+    flex-wrap: wrap;
+  }
+
+  .cand__lead {
+    flex: 1 1 100%;
+  }
+
+  .cand__trail {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
 }
 
 .check {
@@ -214,6 +260,7 @@ const emit = defineEmits<{
   font-size: 13.5px;
   font-weight: var(--weight-bold);
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .cand__lang {

@@ -263,71 +263,84 @@ const submit = (): void => {
 
 <template>
   <div class="import">
-    <div class="import__shell">
-      <!-- Stepper: Search → Configure → Adopt -->
-      <div class="import__steps">
-        <Stepper :steps="stepItems" :current="currentStep" orientation="horizontal" />
-      </div>
+    <!-- Stepper: Search → Configure → Adopt — short, fixed-content, flows above
+         the bounded panel (QCAT-231: never trapped inside a fixed-height/
+         overflow-hidden ancestor). Wrapped in its own horizontal scroller as a
+         safety net for the shared <Stepper> atom (out of this sweep's scope to
+         edit) — see `.import__steps` below. -->
+    <div class="import__steps">
+      <Stepper :steps="stepItems" :current="currentStep" orientation="horizontal" />
+    </div>
 
+    <!-- QCAT-231 "fit the screen, scroll inside": everything from here down fits
+         the remaining viewport; `.import__panel` is itself a flex column whose
+         per-stage `.imp-stage__scroll` region is the ONE inner scroller, so a
+         long search-results/config-rows list never grows the whole page and the
+         Back/Next actions stay reachable without scrolling past it. -->
+    <div class="import__shell">
       <div class="import__panel">
         <!-- Error banner (search or adopt failure) -->
         <p v-if="error" class="import__error">{{ error }}</p>
 
         <!-- ================= Stage 1 — Search ================= -->
         <section v-if="stage === 1" class="imp-stage">
-          <div class="imp-search">
-            <SearchInput
-              v-model="query"
-              class="imp-search__field"
-              :clearable="false"
-              placeholder="Search a title across sources…"
-              @enter="runSearch"
-            />
-            <AppButton variant="primary" @click="runSearch">
-              <template #icon>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="M21 21l-4.3-4.3" />
-                </svg>
-              </template>
-              Search
-            </AppButton>
+          <div class="imp-stage__top">
+            <div class="imp-search">
+              <SearchInput
+                v-model="query"
+                class="imp-search__field"
+                :clearable="false"
+                placeholder="Search a title across sources…"
+                @enter="runSearch"
+              />
+              <AppButton variant="primary" @click="runSearch">
+                <template #icon>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="M21 21l-4.3-4.3" />
+                  </svg>
+                </template>
+                Search
+              </AppButton>
+            </div>
+
+            <!-- Source filter chips -->
+            <SourceFilterChips v-model:selected="srcFilter" :sources="sources" />
           </div>
 
-          <!-- Source filter chips -->
-          <SourceFilterChips v-model:selected="srcFilter" :sources="sources" />
+          <div class="imp-stage__scroll">
+            <!-- Searching / empty / prompt states (§16) -->
+            <div v-if="searching" class="imp-loading">
+              <Spinner :size="16" tone="accent" />
+              Searching sources…
+            </div>
+            <p v-else-if="noResults" class="imp-note imp-note--center">No matches found. Try another title.</p>
+            <p v-else-if="promptSearch" class="imp-note imp-note--center imp-note--faint">
+              Search a title to find sources to adopt from.
+            </p>
 
-          <!-- Searching / empty / prompt states (§16) -->
-          <div v-if="searching" class="imp-loading">
-            <Spinner :size="16" tone="accent" />
-            Searching sources…
-          </div>
-          <p v-else-if="noResults" class="imp-note imp-note--center">No matches found. Try another title.</p>
-          <p v-else-if="promptSearch" class="imp-note imp-note--center imp-note--faint">
-            Search a title to find sources to adopt from.
-          </p>
-
-          <!-- Cross-search adopt tray: persists across a new search, always above the results -->
-          <AdoptTray
-            v-if="trayActive"
-            :candidates="tray"
-            @configure="onConfigureTray"
-            @remove="removeCand"
-          />
-
-          <!-- Grouped results -->
-          <div v-if="!searching && groups.length" class="imp-groups">
-            <SearchGroupCard
-              v-for="g in groups"
-              :key="g.title"
-              :group="g"
-              tray-enabled
-              :added="isGroupAdded(g)"
-              :tray-active="trayActive"
-              @pick="pickGroup"
-              @add="addGroup"
-              @remove="removeGroup"
+            <!-- Cross-search adopt tray: persists across a new search, always above the results -->
+            <AdoptTray
+              v-if="trayActive"
+              :candidates="tray"
+              @configure="onConfigureTray"
+              @remove="removeCand"
             />
+
+            <!-- Grouped results -->
+            <div v-if="!searching && groups.length" class="imp-groups">
+              <SearchGroupCard
+                v-for="g in groups"
+                :key="g.title"
+                :group="g"
+                tray-enabled
+                :added="isGroupAdded(g)"
+                :tray-active="trayActive"
+                @pick="pickGroup"
+                @add="addGroup"
+                @remove="removeGroup"
+              />
+            </div>
           </div>
 
           <div class="imp-actions imp-actions--start">
@@ -337,29 +350,33 @@ const submit = (): void => {
 
         <!-- ================= Stage 2 — Configure ================= -->
         <section v-else-if="stage === 2" class="imp-stage">
-          <div class="imp-fields">
-            <label class="imp-field">
-              <span class="imp-field__label">Series title</span>
-              <input v-model="title" class="imp-input" type="text">
-            </label>
-            <label class="imp-field imp-field--cat">
-              <span class="imp-field__label">Category</span>
-              <select v-model="category" class="imp-input imp-input--select">
-                <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
-              </select>
-            </label>
+          <div class="imp-stage__top">
+            <div class="imp-fields">
+              <label class="imp-field">
+                <span class="imp-field__label">Series title</span>
+                <input v-model="title" class="imp-input" type="text">
+              </label>
+              <label class="imp-field imp-field--cat">
+                <span class="imp-field__label">Category</span>
+                <select v-model="category" class="imp-input imp-input--select">
+                  <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
+                </select>
+              </label>
+            </div>
           </div>
 
-          <SourceConfigurePanel
-            :rows="displayRows"
-            label="Sources to adopt · use arrows to rank priority"
-            :inspect-key="inspectKey"
-            :inspecting="inspecting"
-            :inspect-chapters="inspectChapters"
-            @toggle="toggleCand"
-            @move="moveCand($event.key, $event.dir)"
-            @inspect="onInspect"
-          />
+          <div class="imp-stage__scroll">
+            <SourceConfigurePanel
+              :rows="displayRows"
+              label="Sources to adopt · use arrows to rank priority"
+              :inspect-key="inspectKey"
+              :inspecting="inspecting"
+              :inspect-chapters="inspectChapters"
+              @toggle="toggleCand"
+              @move="moveCand($event.key, $event.dir)"
+              @inspect="onInspect"
+            />
+          </div>
 
           <div class="imp-actions imp-actions--between">
             <AppButton variant="ghost" @click="back">Back</AppButton>
@@ -378,26 +395,30 @@ const submit = (): void => {
 
         <!-- ================= Stage 3 — Adopt ================= -->
         <section v-else class="imp-stage">
-          <div class="imp-review-head">
-            <Chip variant="accent">{{ category }}</Chip>
-            <span class="imp-review-title">{{ title || groupTitle }}</span>
+          <div class="imp-stage__top">
+            <div class="imp-review-head">
+              <Chip variant="accent">{{ category }}</Chip>
+              <span class="imp-review-title">{{ title || groupTitle }}</span>
+            </div>
+
+            <p class="imp-eyebrow">Sources · higher importance is preferred</p>
           </div>
 
-          <p class="imp-eyebrow">Sources · higher importance is preferred</p>
+          <div class="imp-stage__scroll">
+            <ReviewSourceRow
+              v-for="s in reviewRows"
+              :key="s.key"
+              :candidate="s.row.candidate"
+              :rank="s.rank"
+              :importance="s.importance"
+              :preferred="s.preferred"
+              :scanlator="s.row.scanlator"
+            />
 
-          <ReviewSourceRow
-            v-for="s in reviewRows"
-            :key="s.key"
-            :candidate="s.row.candidate"
-            :rank="s.rank"
-            :importance="s.importance"
-            :preferred="s.preferred"
-            :scanlator="s.row.scanlator"
-          />
-
-          <p class="imp-note imp-explainer">
-            All chapters from the preferred source will be queued as <b>wanted</b> and downloaded automatically.
-          </p>
+            <p class="imp-note imp-explainer">
+              All chapters from the preferred source will be queued as <b>wanted</b> and downloaded automatically.
+            </p>
+          </div>
 
           <div class="imp-actions imp-actions--between">
             <AppButton variant="ghost" @click="back">Back</AppButton>
@@ -412,31 +433,69 @@ const submit = (): void => {
 </template>
 
 <style scoped>
+/* QCAT-231 "fit the screen, scroll inside": `.import` is bounded to ONE
+ * viewport under the sticky 64px AppShell header (mirrors Downloads/Discover's
+ * shape) and is itself a flex column. `.import__steps` is fixed-size and flows
+ * naturally above; `.import__shell` takes the rest of the height and is ALSO a
+ * flex column so its child `.import__panel` (and each stage's own
+ * `.imp-stage__scroll` inside it) can bound + scroll internally — a long
+ * search-results or config-rows list scrolls WITHIN the panel, never as an
+ * infinite page, and the Back/Next actions stay reachable without hunting for
+ * them below the list. Holds at every width (QCAT-230/231) — this wizard is a
+ * single column at every breakpoint, so no `@media` re-bound is needed for the
+ * scroll shape itself (only for spacing/wrap tweaks below).
+ */
 .import {
-  padding: 28px 30px 70px;
+  padding: 20px 30px 20px;
   background: var(--bg);
-  min-height: 100%;
+  height: calc(100dvh - 64px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Stepper ---------------------------------------------------------------
+ * `overflow-x: auto` is a safety net for the shared <Stepper> atom (out of
+ * this sweep's scope — `app/components/ui/*`): its horizontal pills are
+ * `white-space: nowrap`, so three un-abbreviated step labels can exceed a
+ * narrow phone's width. Rather than let that blow out the whole page's
+ * horizontal extent (QCAT-230's hard "zero horizontal overflow" gate), the
+ * strip contains its own overflow and scrolls locally — a common pattern for
+ * small nav/step bars, and harmless at desktop width where it never engages. */
+.import__steps {
+  flex: none;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .import__shell {
+  flex: 1;
+  min-height: 0;
   max-width: 880px;
+  width: 100%;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
 }
 
-/* ---- Stepper -------------------------------------------------------------- */
-.import__steps {
-  margin-bottom: 24px;
-}
-
-/* ---- Panel --------------------------------------------------------------- */
+/* ---- Panel ------------------------------------------------------------------
+ * The bounded region itself: a flex column so the error banner (when present)
+ * and the active stage each get their natural/allotted height, and the stage's
+ * OWN `.imp-stage__scroll` (see below) is the one inner scroller. */
 .import__panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-2xl);
   padding: 22px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .import__error {
+  flex: none;
   margin: 0 0 16px;
   padding: 11px 14px;
   border-radius: var(--radius-lg);
@@ -447,14 +506,38 @@ const submit = (): void => {
   font-weight: var(--weight-semibold);
 }
 
+/* Each stage fills whatever height `.import__panel` has left and is itself a
+ * flex column: `.imp-stage__top` (search/fields/review-head — short,
+ * fixed-content) flows at its natural height, `.imp-stage__scroll` takes the
+ * rest and is the ONE scroll container for that stage's list, and
+ * `.imp-actions` (Back/Next) sits OUTSIDE the scroller so it's never buried
+ * below a long list (mirrors Downloads' pinned "Load more"). */
 .imp-stage {
-  display: block;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.imp-stage__top {
+  flex: none;
+}
+
+/* 🔴 min-height: 0 is the same flex-item overflow-trap PanelCard/Downloads
+ * document: without it this region refuses to shrink below its content (every
+ * search group / config row) and the bounded ancestors above would grow
+ * instead of scrolling internally. */
+.imp-stage__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* ---- Actions row ---------------------------------------------------------- */
 .imp-actions {
+  flex: none;
   display: flex;
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .imp-actions--start {
@@ -471,16 +554,34 @@ const submit = (): void => {
   gap: 10px;
 }
 
+@media (max-width: 900px) {
+  /* `.imp-actions__end` can carry a "Loading coverage…" note beside the
+   * Review button — too wide next to Back on a phone. Wrap the whole row and
+   * let the end group wrap onto its own line rather than overflow. */
+  .imp-actions--between {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .imp-actions__end {
+    flex-wrap: wrap;
+  }
+}
+
 /* ---- Stage 1: search ------------------------------------------------------ */
 .imp-search {
   display: flex;
   gap: 10px;
   margin-bottom: 15px;
+  flex-wrap: wrap;
 }
 
-/* The shared <SearchInput> fills the row beside the Search button. */
+/* The shared <SearchInput> fills the row beside the Search button; min-width:0
+ * lets it shrink below its content size instead of forcing the row to wrap
+ * wider than the panel (the flex-item overflow trap again, one level up). */
 .imp-search__field {
   flex: 1;
+  min-width: 160px;
 }
 
 /* ---- Groups --------------------------------------------------------------- */
@@ -556,7 +657,7 @@ const submit = (): void => {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   flex-wrap: wrap;
 }
 
@@ -565,6 +666,10 @@ const submit = (): void => {
   font-weight: var(--weight-black);
   font-size: var(--text-3xl);
   color: var(--text);
+  /* A long adopted title (or a CJK title with no break opportunities) must
+   * wrap rather than push the panel wider than the viewport (QCAT-230). */
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .imp-explainer {
@@ -606,5 +711,18 @@ const submit = (): void => {
   padding: 40px 0;
   color: var(--muted);
   font-size: var(--text-base);
+}
+
+@media (max-width: 900px) {
+  /* Reclaim horizontal room on a phone — mirrors Discover's mobile padding
+   * tightening (390px minus the desktop 30px side padding + 22px panel
+   * padding leaves very little room for the search bar/rows/Stepper). */
+  .import {
+    padding: 14px 12px 14px;
+  }
+
+  .import__panel {
+    padding: 14px;
+  }
 }
 </style>
