@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "node": {
+        "id": 121496,
+        "title": "Solo Leveling",
+        "main_picture": {
+          "medium": "https://cdn.myanimelist.net/images/manga/3/222295.jpg",
+          "large": "https://cdn.myanimelist.net/images/manga/3/222295l.jpg"
+        },
+        "start_date": "2018-03-04"
+      }
+    },
+    {
+      "node": {
+        "id": 119184,
+        "title": "Solo Leveling",
+        "main_picture": {
+          "medium": "https://cdn.myanimelist.net/images/manga/3/265759.jpg",
+          "large": "https://cdn.myanimelist.net/images/manga/3/265759l.jpg"
+        },
+        "start_date": "2016-11-04"
+      }
+    },
+    {
+      "node": {
+        "id": 172429,
+        "title": "Solo Leveling: Ragnarok",
+        "main_picture": {
+          "medium": "https://cdn.myanimelist.net/images/manga/2/339933.jpg",
+          "large": "https://cdn.myanimelist.net/images/manga/2/339933l.jpg"
+        },
+        "start_date": "2024-07-31"
+      }
+    }
+  ],
+  "paging": {
+    "next": "https://api.myanimelist.net/v2/manga?offset=3&q=Solo+Leveling&nsfw=true&limit=3&fields=id%2Ctitle%2Cmain_picture%2Cstart_date"
+  }
+}
