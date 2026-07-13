@@ -137,12 +137,55 @@ export interface Provider {
 }
 
 /**
+ * SeriesLink — one external reference for a series (AniList, MangaDex, the
+ * official publisher page, …). Rendered by `LinksRow`/`LinkChip`; the `icon` is
+ * an optional explicit lucide name, otherwise the chip derives one from `label`.
+ */
+export interface SeriesLink {
+  /** Human label shown on the pill (e.g. `AniList`, `Official`). */
+  label: string
+  /** Destination URL — opened in a new tab, always gated through `safeUrl`. */
+  url: string
+  /** Optional explicit lucide icon name (`lucide:book-open`); auto-derived when absent. */
+  icon?: string
+}
+
+/**
+ * RichSeriesMeta — the richer, Komga-style catalogue metadata a series can carry
+ * for the rich card (synopsis, credits, genres/tags, external links). Every field
+ * is OPTIONAL: this data does not yet ride the live API, so a series may have none
+ * of it, and the rich card degrades gracefully when a field is missing/empty.
+ */
+export interface RichSeriesMeta {
+  /** Long-form synopsis; the rich card clamps it behind a "Read more" toggle. */
+  description?: string
+  /** Alternate / romanised / native titles shown under the main title. */
+  altTitles?: string[]
+  /** Publication status word (`Ongoing`, `Completed`, `Hiatus`, `Cancelled`). */
+  status?: string
+  /** First publication year. */
+  year?: number
+  /** Genre labels (the primary chip row). */
+  genres?: string[]
+  /** Free-form content tags (the secondary chip row). */
+  tags?: string[]
+  /** Writer / author credits (art credit is per-source and not modelled here). */
+  authors?: string[]
+  /** External reference links (tracker + official pages) — the rich card's links row. */
+  links?: SeriesLink[]
+}
+
+/**
  * SeriesDetail — the full single-series read model: every `SeriesSummary` field
  * plus the chapter and provider feeds. `metadataProviderId` is the source pinned
  * to supply the displayed title + cover (null = auto = highest importance); it
  * backs the (planned) metadata-source picker's active state.
+ *
+ * It also carries the OPTIONAL `RichSeriesMeta` catalogue fields consumed by the
+ * rich card. They are additive + all optional, so every existing consumer and
+ * fixture is unaffected.
  */
-export interface SeriesDetail extends SeriesSummary {
+export interface SeriesDetail extends SeriesSummary, RichSeriesMeta {
   /** Full chapter list (the screen sorts by number then key). */
   chapters: Chapter[]
   /** All tracked sources (the screen sorts by importance descending). */
@@ -153,6 +196,28 @@ export interface SeriesDetail extends SeriesSummary {
 
 /** The two mutually-exclusive choices in the required-choice delete dialog. */
 export type DeleteChoice = 'keep' | 'wipe'
+
+/** The metadata providers the Identify flow can match a series against. */
+export type MetadataProviderName = 'AniList' | 'MAL' | 'MangaDex' | 'MangaUpdates'
+
+/**
+ * MetadataCandidate — one search result in the "Identify" match flow (Komf-style):
+ * a series entry from a metadata provider (AniList / MAL / MangaDex / MangaUpdates)
+ * the owner can pick to pull rich metadata + a cover. Presentation-only — the
+ * modal renders these and emits the owner's pick; the parent owns the fetch.
+ */
+export interface MetadataCandidate {
+  /** Stable id for single-select (provider-scoped, e.g. `anilist:105398`). */
+  id: string
+  /** Which metadata provider this result came from (drives the badge). */
+  provider: MetadataProviderName
+  /** Series title as this provider knows it. */
+  title: string
+  /** Portrait cover URL for the result (empty → the initial placeholder). */
+  coverUrl: string
+  /** First publication year, when the provider reports one. */
+  year?: number
+}
 
 /**
  * FractionalCleanupChapter — one already-downloaded FRACTIONAL chapter the owner

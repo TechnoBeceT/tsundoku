@@ -7,7 +7,7 @@
  * provider-health values (incl. an erroring source with an inline error and a
  * stale source that is behind), so the badge palette renders in full.
  */
-import type { Chapter, Provider, SeriesDetail } from '../components/screens/seriesDetail.types'
+import type { Chapter, MetadataCandidate, Provider, SeriesDetail } from '../components/screens/seriesDetail.types'
 
 /** Helper: an ISO timestamp `n` hours in the past (drives the relative labels). */
 const hoursAgo = (n: number): string => new Date(Date.now() - n * 3_600_000).toISOString()
@@ -334,6 +334,124 @@ export const reuploaderProvider: Provider = {
   lastSyncedAt: hoursAgo(1),
   lastError: '',
 }
+
+/* ============================================================================
+ * Rich-card fixtures — the Komga-style catalogue metadata (synopsis, credits,
+ * genres/tags, external links). These live on the OPTIONAL RichSeriesMeta fields
+ * of SeriesDetail, so they only feed RichSeriesCard; every existing fixture and
+ * consumer above is untouched.
+ * ========================================================================== */
+
+/** Realistic external links: two trackers, an aggregator, and the official page. */
+const soloLevelingLinks = [
+  { label: 'AniList', url: 'https://anilist.co/manga/105398/Solo-Leveling' },
+  { label: 'MangaDex', url: 'https://mangadex.org/title/32d76d19-8a05-4db0-9fc2-e0b0648fe9d0' },
+  { label: 'MangaUpdates', url: 'https://www.mangaupdates.com/series/abcd1234/solo-leveling' },
+  { label: 'Official', url: 'https://www.webtoons.com/en/action/solo-leveling/list?title_no=2809' },
+]
+
+/** A rich series with the full catalogue metadata — the centrepiece fixture. */
+export const richSeriesFull: SeriesDetail = {
+  ...richSeries,
+  id: '0a4d1c8e-4444-4a00-9000-000000000004',
+  // Portrait dimensions (2:3) so the cover renders like a real manga cover —
+  // CoverImage fills the portrait box with object-fit: cover (no letterboxing).
+  coverUrl: 'https://picsum.photos/seed/solo-leveling/400/600',
+  description:
+    'Ten years ago, after "the Gate" that connected the real world with the ' +
+    'monster world opened, some of the ordinary, everyday people received the ' +
+    'power to hunt monsters within the Gate. They are known as "Hunters". However, ' +
+    'not all Hunters are powerful. Sung Jin-Woo, nicknamed the weakest Hunter of ' +
+    'all mankind, is an E-rank Hunter barely able to survive the lowest-rank ' +
+    'dungeons — until a hidden double dungeon nearly kills his whole party and ' +
+    'awakens a mysterious System that only he can see, one that lets him grow ' +
+    'stronger without limit.',
+  altTitles: ['나 혼자만 레벨업', 'Na Honjaman Level Up', 'Only I Level Up'],
+  status: 'Completed',
+  year: 2018,
+  genres: ['Action', 'Adventure', 'Fantasy', 'Shounen', 'Supernatural'],
+  tags: ['Overpowered MC', 'Dungeons', 'System', 'Monsters', 'Level Up'],
+  authors: ['Chugong', 'Dubu (Redice Studio)'],
+  links: soloLevelingLinks,
+}
+
+/** No cover — exercises the branded placeholder inside the rich card. */
+export const richSeriesNoCover: SeriesDetail = {
+  ...richSeriesFull,
+  id: '0a4d1c8e-5555-4a00-9000-000000000005',
+  coverUrl: '',
+}
+
+/**
+ * Data-poor: only the base summary + one source, NO description/genres/tags/
+ * authors/altTitles/links — proves the card degrades gracefully (whole sections
+ * drop out, no empty gaps).
+ */
+export const richSeriesMinimal: SeriesDetail = {
+  ...richSeries,
+  id: '0a4d1c8e-6666-4a00-9000-000000000006',
+  title: 'Untitled Draft',
+  // Portrait cover (see richSeriesFull) — the base `richSeries` cover is smaller.
+  coverUrl: 'https://picsum.photos/seed/untitled-draft/400/600',
+  providers: [providers[0]!],
+}
+
+/**
+ * Overflow stress: a very long title, many alt-titles, a long synopsis, and a
+ * large genre/tag/link set — proves clamping + wrapping hold up.
+ */
+export const richSeriesLong: SeriesDetail = {
+  ...richSeriesFull,
+  id: '0a4d1c8e-7777-4a00-9000-000000000007',
+  title: 'The Extraordinarily Long Chronicle of the Weakest Hunter Who Somehow Became the Strongest Shadow Monarch',
+  altTitles: [
+    '나 혼자만 레벨업',
+    'Na Honjaman Level Up',
+    'Only I Level Up',
+    'Solo Leveling: Ragnarök',
+    'I Alone Level-Up',
+    'Ore Dake Level Up na Ken',
+  ],
+  description:
+    'Ten years ago, after "the Gate" that connected the real world with the ' +
+    'monster world opened, ordinary people began to awaken as Hunters. ' +
+    'This synopsis is deliberately verbose so the "Read more" clamp has something ' +
+    'to hide: it repeats itself, meanders through the lore of ranks and dungeons, ' +
+    'lingers on the double-dungeon incident, describes the System interface in ' +
+    'needless detail, and generally runs well past four lines in any reasonable ' +
+    'column width so the toggle reliably appears in the overflow story. It keeps ' +
+    'going, and going, well beyond what any card would ever show at a glance.',
+  genres: ['Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Horror', 'Mystery', 'Psychological', 'Supernatural', 'Thriller'],
+  tags: ['Overpowered MC', 'Dungeons', 'System', 'Monsters', 'Level Up', 'Necromancy', 'Guilds', 'Reincarnation', 'Time Skip', 'Anti-Hero'],
+  links: [
+    ...soloLevelingLinks,
+    { label: 'Anime-Planet', url: 'https://www.anime-planet.com/manga/solo-leveling' },
+    { label: 'MyAnimeList', url: 'https://myanimelist.net/manga/121496/Solo_Leveling' },
+    { label: 'Kitsu', url: 'https://kitsu.io/manga/solo-leveling' },
+  ],
+}
+
+/* ============================================================================
+ * Metadata "Identify" fixtures — search results for the Komf-style match modal.
+ * Story-only: they feed MetadataIdentifyModal / MetadataCandidateCard so the
+ * design renders against realistic same-title-across-providers variants.
+ * ========================================================================== */
+
+/**
+ * A realistic Identify search: many near-identical "Dragon Slayer's Regression"
+ * variants across AniList / MangaDex / MangaUpdates / MAL — the exact ambiguity
+ * the owner disambiguates by cover + provider. Portrait picsum covers (2:3).
+ */
+export const metadataCandidates: MetadataCandidate[] = [
+  { id: 'anilist:1', provider: 'AniList', title: 'Dragon Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-anilist/400/600', year: 2023 },
+  { id: 'mangadex:1', provider: 'MangaDex', title: 'Dragon-Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-mangadex/400/600', year: 2023 },
+  { id: 'mangaupdates:1', provider: 'MangaUpdates', title: 'The Dragon Slayer’s Regression', coverUrl: 'https://picsum.photos/seed/dsr-mangaupdates/400/600', year: 2022 },
+  { id: 'anilist:2', provider: 'AniList', title: 'Regression of the Strongest Dragon Slayer', coverUrl: 'https://picsum.photos/seed/dsr-regress/400/600', year: 2024 },
+  { id: 'mal:1', provider: 'MAL', title: 'Dragon Slayer’s Regression (Web Novel)', coverUrl: 'https://picsum.photos/seed/dsr-mal/400/600', year: 2021 },
+  { id: 'mangadex:2', provider: 'MangaDex', title: 'Dragon Slayer no Kikan', coverUrl: 'https://picsum.photos/seed/dsr-kikan/400/600', year: 2023 },
+  { id: 'mangaupdates:2', provider: 'MangaUpdates', title: 'Return of the Dragon Slayer', coverUrl: '', year: 2020 },
+  { id: 'anilist:3', provider: 'AniList', title: 'The Weakest Dragon Slayer Levels Up Again After His Regression Through Time', coverUrl: 'https://picsum.photos/seed/dsr-long/400/600', year: 2024 },
+]
 
 /**
  * A source with ONE genuine side-chapter (a `5.5` omake). `.5` is by far the most

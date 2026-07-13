@@ -22,6 +22,9 @@ import IconButton from './IconButton.vue'
  *     visually-hidden fallback name is supplied so the dialog is still labelled.
  *   - `busy`: an in-flight flag — while true, Escape + overlay-click are blocked
  *     so a running mutation can't be interrupted (§16).
+ *   - `maxWidth`: the card's max-width (default `480px` — the standard dialog
+ *     width, so existing consumers are byte-unchanged). A wider value (e.g.
+ *     `800px`) turns the shell into a gallery for grid content.
  *
  * Slots: default (the body) + `actions` (the footer button row).
  * Emits `update:open` (v-model) and `close` (fired whenever it transitions to closed).
@@ -33,8 +36,11 @@ const props = withDefaults(defineProps<{
   title?: string
   /** In-flight flag — blocks Escape + overlay-click close. */
   busy?: boolean
+  /** The card's max-width (default `480px` — the standard dialog width). */
+  maxWidth?: string
 }>(), {
   busy: false,
+  maxWidth: '480px',
 })
 
 const emit = defineEmits<{
@@ -63,6 +69,7 @@ function guardClose(event: Event) {
       <DialogOverlay class="overlay" />
       <DialogContent
         class="dialog"
+        :style="{ maxWidth }"
         @escape-key-down="guardClose"
         @pointer-down-outside="guardClose"
         @interact-outside="guardClose"
@@ -111,7 +118,7 @@ function guardClose(event: Event) {
   z-index: 61;
   transform: translate(-50%, -50%);
   width: calc(100vw - 48px);
-  max-width: 480px;
+  /* max-width is supplied inline from the `maxWidth` prop (default 480px). */
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   padding: 24px;
