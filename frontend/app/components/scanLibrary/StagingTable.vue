@@ -88,30 +88,37 @@ const skeletons = Array.from({ length: 4 }, (_, i) => i)
 
     <ErrorBanner v-if="entriesError" class="staging-table__error" :message="entriesError" :dismissible="false" />
 
-    <div v-if="isInitialLoad" class="staging-table__rows">
-      <Skeleton v-for="n in skeletons" :key="n" variant="row" height="68px" />
-    </div>
+    <!-- QCAT-231 "fit the screen, scroll inside": the tab bar above stays
+         fixed and ONLY this region scrolls — a 1000-series scan's staging
+         table must scroll WITHIN the list, never grow the whole page. -->
+    <div class="staging-table__scroll">
+      <div v-if="isInitialLoad" class="staging-table__rows">
+        <Skeleton v-for="n in skeletons" :key="n" variant="row" height="68px" />
+      </div>
 
-    <EmptyState
-      v-else-if="entries.length === 0"
-      title="No staged entries"
-      sub="Nothing matches this filter yet."
-      icon-tone="faint"
-    />
-
-    <div v-else class="staging-table__rows">
-      <StagingRow
-        v-for="entry in entries"
-        :key="entry.path"
-        :entry="entry"
-        :busy="isRowBusy(entry.path)"
-        :error="rowError(entry.path)"
-        @import-disk-only="emit('import-disk-only', $event)"
-        @match="emit('match', $event)"
-        @skip="emit('skip', $event)"
+      <EmptyState
+        v-else-if="entries.length === 0"
+        title="No staged entries"
+        sub="Nothing matches this filter yet."
+        icon-tone="faint"
       />
+
+      <div v-else class="staging-table__rows">
+        <StagingRow
+          v-for="entry in entries"
+          :key="entry.path"
+          :entry="entry"
+          :busy="isRowBusy(entry.path)"
+          :error="rowError(entry.path)"
+          @import-disk-only="emit('import-disk-only', $event)"
+          @match="emit('match', $event)"
+          @skip="emit('skip', $event)"
+        />
+      </div>
     </div>
 
+    <!-- Pinned BELOW the scroll region (never buried at the bottom of a long
+         list, mirrors the Downloads screen's "Load more" affordance). -->
     <div v-if="hasMore" class="staging-table__more">
       <AppButton variant="mini" size="sm" :loading="pending && entries.length > 0" @click="emit('load-more')">
         Load more
@@ -121,12 +128,38 @@ const skeletons = Array.from({ length: 4 }, (_, i) => i)
 </template>
 
 <style scoped>
+/* QCAT-231 "fit the screen, scroll inside": a flex column that fills
+ * whatever bounded height the parent gives it (`ScanLibrary.vue`'s
+ * `.sl-review-list` class, merged onto this component's root — see that
+ * file's comment). Outside a bounded ancestor (a bare Storybook story with
+ * no fixed-height frame) `flex: 1` on `.staging-table__scroll` simply has
+ * nothing to grow into beyond its content, so the story still renders at its
+ * natural height — this never breaks an unbounded story (mirrors PanelCard /
+ * Downloads' documented fallback). */
+.staging-table {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .staging-table__head {
+  flex: none;
   margin-bottom: 16px;
 }
 
 .staging-table__error {
+  flex: none;
   margin-bottom: 14px;
+}
+
+/* The ONE scroll container — `min-height: 0` is the same flex-item overflow
+ * trap PanelCard/Downloads document: without it this region refuses to
+ * shrink below its content (every staged row) and the bounded ancestor above
+ * would grow instead of scrolling internally. */
+.staging-table__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .staging-table__rows {
@@ -136,8 +169,10 @@ const skeletons = Array.from({ length: 4 }, (_, i) => i)
 }
 
 .staging-table__more {
+  flex: none;
   display: flex;
   justify-content: center;
   margin-top: 20px;
+  padding-top: 4px;
 }
 </style>

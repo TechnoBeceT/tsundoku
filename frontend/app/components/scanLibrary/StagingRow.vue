@@ -82,21 +82,26 @@ const chapterLabel = computed(() => `${props.entry.chapterCount} chapter${props.
       <ErrorBanner v-if="error" class="staging-row__error" :message="error" :dismissible="false" />
     </div>
 
-    <Chip class="staging-row__status" :variant="statusMeta.variant">{{ statusMeta.label }}</Chip>
+    <!-- Status + actions grouped so they wrap onto their OWN row together
+         below the body on mobile (see the media query) instead of squeezing
+         the title/chips down to nothing on a phone (QCAT-230). -->
+    <div class="staging-row__tail">
+      <Chip class="staging-row__status" :variant="statusMeta.variant">{{ statusMeta.label }}</Chip>
 
-    <div v-if="isPending" class="staging-row__actions">
-      <Spinner v-if="busy" :size="15" tone="accent" />
-      <template v-else>
-        <AppButton variant="mini" size="sm" @click="emit('import-disk-only', entry.path)">
-          Import
-        </AppButton>
-        <AppButton variant="mini" size="sm" @click="emit('match', entry.path)">
-          Match
-        </AppButton>
-        <AppButton variant="mini" size="sm" @click="emit('skip', entry.path)">
-          Skip
-        </AppButton>
-      </template>
+      <div v-if="isPending" class="staging-row__actions">
+        <Spinner v-if="busy" :size="15" tone="accent" />
+        <template v-else>
+          <AppButton variant="mini" size="sm" @click="emit('import-disk-only', entry.path)">
+            Import
+          </AppButton>
+          <AppButton variant="mini" size="sm" @click="emit('match', entry.path)">
+            Match
+          </AppButton>
+          <AppButton variant="mini" size="sm" @click="emit('skip', entry.path)">
+            Skip
+          </AppButton>
+        </template>
+      </div>
     </div>
   </div>
 </template>
@@ -153,6 +158,13 @@ const chapterLabel = computed(() => `${props.entry.chapterCount} chapter${props.
   margin-top: 8px;
 }
 
+.staging-row__tail {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .staging-row__status {
   flex: none;
 }
@@ -162,5 +174,32 @@ const chapterLabel = computed(() => `${props.entry.chapterCount} chapter${props.
   display: flex;
   align-items: center;
   gap: 7px;
+}
+
+@media (max-width: 900px) {
+  /* Force the body onto its own full-width line (the "flex-basis: 100%"
+   * wrap trick), then let the status pill + action buttons wrap onto their
+   * own line together, right-aligned — instead of all four elements
+   * (title, category, status, 3 buttons) competing for one crushed row. */
+  .staging-row {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .staging-row__body {
+    flex-basis: 100%;
+  }
+
+  .staging-row__tail {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+
+  /* If "Import"/"Match"/"Skip" still don't fit one line beside the status
+   * pill, wrap them onto a further line rather than overflow. */
+  .staging-row__actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
 }
 </style>

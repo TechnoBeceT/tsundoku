@@ -307,4 +307,18 @@ function confirm(): void {
 .mp-note--loading {
   color: var(--faint);
 }
+
+@media (max-width: 900px) {
+  /* The Configure-stage footer (Back · loading note · Attach N sources) can't
+   * share one line at phone width — wrap it instead of overflowing. */
+  .mp-actions--between {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .mp-actions__end {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
 </style>
