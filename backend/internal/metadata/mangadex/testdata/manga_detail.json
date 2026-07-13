@@ -1,0 +1,197 @@
+{
+  "result": "ok",
+  "response": "entity",
+  "data": {
+    "id": "a1c7c817-4e59-43b7-9365-09675a149a6f",
+    "type": "manga",
+    "attributes": {
+      "title": {
+        "ja-ro": "One Piece"
+      },
+      "altTitles": [
+        {
+          "ja": "ワンピース"
+        },
+        {
+          "zh": "海贼王"
+        },
+        {
+          "zh": "海盗路飞"
+        },
+        {
+          "zh": "航海王"
+        },
+        {
+          "ko": "원피스"
+        },
+        {
+          "en": "One Piece"
+        }
+      ],
+      "description": {
+        "en": "Gol D. Roger, a man referred to as the \"Pirate King,\" is set to be executed by the World Government. But just before his demise, he confirms the existence of a great treasure, One Piece, located somewhere within the vast ocean known as the Grand Line. Announcing that One Piece can be claimed by anyone worthy enough to reach it, the Pirate King is executed and the Great Age of Pirates begins.  \n  \nTwenty-two years later, a young man by the name of Monkey D. Luffy is ready to embark on his own adventure, searching for One Piece and striving to become the new Pirate King. Armed with just a straw hat, a small boat, and an elastic body, he sets out on a fantastic journey to gather his own crew and a worthy ship that will take them across the Grand Line to claim the greatest status on the high seas.\n\n---\n\n**Note:**  \n**Because a takedown notice was sent to MangaDex from the owners of this series, English fan translations of One Piece are unable to be posted at this time. The series can be read in its entirety at [the official Shonen Jump website,](https://www.viz.com/shonenjump/chapters/one-piece) with the first and latest three chapters available at any time and the rest accessible with a Shonen Jump membership (which costs about $2 a month and can be accessed via a VPN if you are outside the US). The three most recent chapters can also be read on MangaPlus for free by clicking the chapter links below.**\n\n---\n- **The Best-Selling Manga in History**\n- **Won the 41st Japan Cartoonists Association Award Grand Prize alongside Neko Darake in 2012** \n- **Received the Kumamoto Prefecture Honorary Prize in 2018**"
+      },
+      "isLocked": false,
+      "links": {
+        "al": "30013",
+        "ap": "one-piece",
+        "bl": "185407",
+        "bw": "series/13002/list",
+        "kt": "one-piece",
+        "mu": "pb8uwds",
+        "amz": "https://www.amazon.co.jp/dp/B07CKFRZGW",
+        "cdj": "https://www.cdjapan.co.jp/product/NEOBK-2439974",
+        "ebj": "https://ebookjapan.yahoo.co.jp/books/145222/",
+        "mal": "13",
+        "raw": "https://shonenjumpplus.com/episode/10833519556325021794",
+        "engtl": "https://mangaplus.shueisha.co.jp/titles/100020"
+      },
+      "officialLinks": null,
+      "originalLanguage": "ja",
+      "lastVolume": "",
+      "lastChapter": "",
+      "publicationDemographic": "shounen",
+      "status": "ongoing",
+      "year": 1997,
+      "contentRating": "suggestive",
+      "tags": [
+        {
+          "id": "0a39b5a1-b235-4886-a747-1d05d216532d",
+          "type": "tag",
+          "attributes": {
+            "name": {
+              "en": "Award Winning"
+            },
+            "description": {},
+            "group": "format",
+            "version": 1
+          },
+          "relationships": []
+        },
+        {
+          "id": "256c8bd9-4904-4360-bf4f-508a76d67183",
+          "type": "tag",
+          "attributes": {
+            "name": {
+              "en": "Sci-Fi"
+            },
+            "description": {},
+            "group": "genre",
+            "version": 1
+          },
+          "relationships": []
+        },
+        {
+          "id": "391b0423-d847-456f-aff0-8b0cfc03066b",
+          "type": "tag",
+          "attributes": {
+            "name": {
+              "en": "Action"
+            },
+            "description": {},
+            "group": "genre",
+            "version": 1
+          },
+          "relationships": []
+        },
+        {
+          "id": "4d32cc48-9f00-4cca-9b5a-a839f0764984",
+          "type": "tag",
+          "attributes": {
+            "name": {
+              "en": "Comedy"
+            },
+            "description": {},
+            "group": "genre",
+            "version": 1
+          },
+          "relationships": []
+        },
+        {
+          "id": "87cc87cd-a395-47af-b27a-93258283bbc6",
+          "type": "tag",
+          "attributes": {
+            "name": {
+              "en": "Adventure"
+            },
+            "description": {},
+            "group": "genre",
+            "version": 1
+          },
+          "relationships": []
+        },
+        {
+          "id": "b29d6a3d-1569-4e7a-8caf-7557bc92cd5d",
+          "type": "tag",
+          "attributes": {
+            "name": {
+              "en": "Gore"
+            },
+            "description": {},
+            "group": "content",
+            "version": 1
+          },
+          "relationships": []
+        },
+        {
+          "id": "b9af3a63-f058-46de-a9a0-e0c13906197a",
+          "type": "tag",
+          "attributes": {
+            "name": {
+              "en": "Drama"
+            },
+            "description": {},
+            "group": "genre",
+            "version": 1
+          },
+          "relationships": []
+        },
+        {
+          "id": "cdc58593-87dd-415e-bbc0-2ec27bf404cc",
+          "type": "tag",
+          "attributes": {
+            "name": {
+              "en": "Fantasy"
+            },
+            "description": {},
+            "group": "genre",
+            "version": 1
+          },
+          "relationships": []
+        }
+      ],
+      "state": "published",
+      "chapterNumbersResetOnNewVolume": false,
+      "createdAt": "2018-01-18T19:31:27+00:00",
+      "updatedAt": "2026-07-12T03:07:49+00:00",
+      "version": 138,
+      "latestUploadedChapter": "15f7f2d3-1fbf-4741-8c87-a726275eefe6"
+    },
+    "relationships": [
+      {
+        "id": "b6045e2c-28f4-4ce0-b4dd-b14070f2f5ae",
+        "type": "author",
+        "attributes": {
+          "name": "Oda Eiichirou (尾田栄一郎)"
+        }
+      },
+      {
+        "id": "b6045e2c-28f4-4ce0-b4dd-b14070f2f5ae",
+        "type": "artist",
+        "attributes": {
+          "name": "Oda Eiichirou (尾田栄一郎)"
+        }
+      },
+      {
+        "id": "38383930-d836-4fd7-85f7-ecfebdea3e3c",
+        "type": "cover_art",
+        "attributes": {
+          "fileName": "2f4aca53-64c7-46ac-ae85-3bc9b3169890.png",
+          "volume": "1",
+          "locale": "ja",
+          "description": ""
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "result": "ok",
+  "response": "collection",
+  "data": [
+    {
+      "id": "f4ef87c9-7b28-480b-b8e6-85a8b8a89965",
+      "type": "cover_art",
+      "attributes": {
+        "description": "",
+        "volume": "115",
+        "fileName": "97753122-e351-4eab-8ba3-d7d9fb96bf24.jpg",
+        "locale": "ja",
+        "createdAt": "2026-06-21T07:26:23+00:00",
+        "updatedAt": "2026-06-21T07:26:23+00:00",
+        "version": 1
+      },
+      "relationships": [
+        {
+          "id": "a1c7c817-4e59-43b7-9365-09675a149a6f",
+          "type": "manga"
+        }
+      ]
+    },
+    {
+      "id": "84daec16-42ba-4989-8a3b-759991ed0bfb",
+      "type": "cover_art",
+      "attributes": {
+        "description": "",
+        "volume": "114",
+        "fileName": "403638af-f70c-4a27-bec8-b883ced89c53.jpg",
+        "locale": "ja",
+        "createdAt": "2026-02-22T12:23:02+00:00",
+        "updatedAt": "2026-02-22T12:23:02+00:00",
+        "version": 1
+      },
+      "relationships": [
+        {
+          "id": "a1c7c817-4e59-43b7-9365-09675a149a6f",
+          "type": "manga"
+        }
+      ]
+    },
+    {
+      "id": "e8351303-ca3f-4d41-b8c2-f70d31d6e72e",
+      "type": "cover_art",
+      "attributes": {
+        "fileName": "cb063999-b269-4a27-9fb5-f3ed067fe85a.jpg",
+        "description": "https://x.com/Eiichiro_Staff/status/1980108217037525378",
+        "volume": "113",
+        "locale": "ja",
+        "createdAt": "2025-10-20T14:21:23+00:00",
+        "updatedAt": "2025-10-20T14:21:23+00:00",
+        "version": 1
+      },
+      "relationships": [
+        {
+          "id": "a1c7c817-4e59-43b7-9365-09675a149a6f",
+          "type": "manga"
+        }
+      ]
+    },
+    {
+      "id": "6f79415c-46a3-46c8-92ba-ba519c24e642",
+      "type": "cover_art",
+      "attributes": {
+        "description": "https://x.com/Eiichiro_Staff/status/1936982798012911836",
+        "volume": "112",
+        "fileName": "47c0ee13-e6d5-40c0-bfb9-57b26b2b1d2a.jpg",
+        "locale": "ja",
+        "createdAt": "2025-06-23T09:33:58+00:00",
+        "updatedAt": "2025-06-23T09:33:58+00:00",
+        "version": 1
+      },
+      "relationships": [
+        {
+          "id": "a1c7c817-4e59-43b7-9365-09675a149a6f",
+          "type": "manga"
+        }
+      ]
+    }
+  ],
+  "limit": 10,
+  "offset": 0,
+  "total": 115
+}
