@@ -39,6 +39,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,8 +63,8 @@ const adminDatabase = "tsundoku_admin"
 
 // shared holds the process-wide (i.e. per-test-binary) postgres server.
 type shared struct {
-	admin   *sql.DB // maintenance connection to adminDatabase
-	connStr func(dbName string) string
+	admin    *sql.DB // maintenance connection to adminDatabase
+	adminDSN string  // DSN of adminDatabase; the template every per-test DSN is derived from
 }
 
 //nolint:gochecknoglobals // package-level singleton is the whole point: one container per test binary.
@@ -110,6 +111,13 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 
 	dbName := fmt.Sprintf("tsundoku_test_%d", dbSeq.Add(1))
 
+	// Resolve the DSN BEFORE provisioning, so an unusable DSN cannot leave an
+	// orphan database behind.
+	dsn, err := dsnForDatabase(srv.adminDSN, dbName)
+	if err != nil {
+		t.Fatalf("testdb: derive dsn for %s: %v", dbName, err)
+	}
+
 	provisionMu.Lock()
 	_, err = srv.admin.ExecContext(ctx, "CREATE DATABASE "+quoteIdent(dbName))
 	provisionMu.Unlock()
@@ -117,13 +125,27 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 		t.Fatalf("testdb: create database %s: %v", dbName, err)
 	}
 
-	db, err := sql.Open("pgx", srv.connStr(dbName))
+	// CLEANUP IS REGISTERED AT ACQUISITION TIME, never at the end of the happy path.
+	//
+	// Every step below (sql.Open, Schema.Create, the seed sequence) is fallible and
+	// calls t.Fatalf. If the cleanups were registered only after the last of them, a
+	// failing migration would leak this database AND its connection pool for the rest
+	// of the test binary's life — and because the shared server's max_connections is
+	// 100, a package with more tests than that would bury the REAL error under a
+	// cascade of "sorry, too many clients already". t.Cleanup runs LIFO, so
+	// registering in acquisition order (drop → pool close → ent close) executes in the
+	// required teardown order (ent close → pool close → drop).
+	t.Cleanup(func() { dropDatabase(t, srv, dbName) })
+
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("testdb: open database: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
 
 	drv := entsql.OpenDB(dialect.Postgres, db)
 	client := ent.NewClient(ent.Driver(drv))
+	t.Cleanup(func() { _ = client.Close() })
 
 	if err := client.Schema.Create(ctx); err != nil {
 		t.Fatalf("testdb: run ent migration: %v", err)
@@ -152,30 +174,40 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 		t.Fatalf("testdb: drop legacy import_entries columns: %v", err)
 	}
 
-	t.Cleanup(func() {
-		_ = client.Close()
-		_ = db.Close()
-
-		// FORCE terminates any connection the test leaked (a lingering pool
-		// conn would otherwise make the DROP fail and leak the database for the
-		// rest of the binary's run). Requires PG13+; the image is postgres:17.
-		dropCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		provisionMu.Lock()
-		_, err := srv.admin.ExecContext(dropCtx,
-			"DROP DATABASE IF EXISTS "+quoteIdent(dbName)+" WITH (FORCE)")
-		provisionMu.Unlock()
-		if err != nil {
-			t.Logf("testdb: drop database %s: %v", dbName, err)
-		}
-	})
-
 	return client, db
+}
+
+// dropDatabase removes a per-test database from the shared server.
+func dropDatabase(t *testing.T, srv *shared, dbName string) {
+	t.Helper()
+
+	// FORCE terminates any connection the test leaked (a lingering pool conn would
+	// otherwise make the DROP fail and leak the database for the rest of the binary's
+	// run). Requires PG13+; the image is postgres:17.
+	dropCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	provisionMu.Lock()
+	_, err := srv.admin.ExecContext(dropCtx,
+		"DROP DATABASE IF EXISTS "+quoteIdent(dbName)+" WITH (FORCE)")
+	provisionMu.Unlock()
+	if err != nil {
+		t.Logf("testdb: drop database %s: %v", dbName, err)
+	}
 }
 
 // startAttempts bounds the container-start retries. See runContainer.
 const startAttempts = 5
+
+// backoffStep is the linear backoff unit between start attempts (attempt N waits
+// N*backoffStep) — long enough for the daemon to release the contended port.
+const backoffStep = 500 * time.Millisecond
+
+// defaultBackoff is runContainer's backoff schedule, injected so the retry loop
+// itself can be exercised without real sleeps.
+func defaultBackoff(attempt int) time.Duration {
+	return time.Duration(attempt) * backoffStep
+}
 
 // runContainer starts the postgres container, retrying a transient failure.
 //
@@ -193,33 +225,61 @@ const startAttempts = 5
 // other error (bad image, no daemon) returns immediately rather than burning the
 // backoff on a fault that cannot heal.
 func runContainer(ctx context.Context) (*postgres.PostgresContainer, error) {
-	var lastErr error
-
-	for attempt := 1; attempt <= startAttempts; attempt++ {
-		ctr, err := postgres.Run(ctx,
+	return startWithRetry(ctx, func(ctx context.Context) (*postgres.PostgresContainer, error) {
+		return postgres.Run(ctx,
 			"postgres:17-alpine",
 			postgres.BasicWaitStrategies(),
 			postgres.WithDatabase(adminDatabase),
 			postgres.WithUsername("postgres"),
 			postgres.WithPassword("postgres"),
 		)
+	}, func(ctx context.Context, ctr *postgres.PostgresContainer) {
+		_ = ctr.Terminate(ctx)
+	}, defaultBackoff)
+}
+
+// startWithRetry is runContainer's retry loop, factored out of the postgres module
+// so it can be exercised directly (the start/terminate/backoff seams are injected).
+//
+// A FAILED start can still hand back a LIVE container: testcontainers creates the
+// container first and only then publishes ports / runs the wait strategy, so the
+// bind failure we retry on arrives *alongside* a non-nil handle. Terminating that
+// handle before retrying is what stops a retried attempt from stranding a container
+// for the rest of the run.
+func startWithRetry[T comparable](
+	ctx context.Context,
+	start func(context.Context) (T, error),
+	terminate func(context.Context, T),
+	backoff func(attempt int) time.Duration,
+) (T, error) {
+	var zero T
+	var lastErr error
+
+	for attempt := 1; attempt <= startAttempts; attempt++ {
+		ctr, err := start(ctx)
 		if err == nil {
 			return ctr, nil
 		}
+		if ctr != zero {
+			terminate(ctx, ctr)
+		}
 		if !isPortBindFailure(err) {
-			return nil, err
+			return zero, err
 		}
 
 		lastErr = err
-		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		time.Sleep(backoff(attempt))
 	}
 
-	return nil, fmt.Errorf("after %d attempts: %w", startAttempts, lastErr)
+	return zero, fmt.Errorf("after %d attempts: %w", startAttempts, lastErr)
 }
 
-// isPortBindFailure reports whether err is the transient rootless port-publish race.
+// isPortBindFailure reports whether err is the transient rootless port-publish race
+// (see runContainer). It is deliberately NARROW: every error it matches is retried,
+// so a classifier that over-matches would turn a REAL, permanent failure (bad image,
+// no daemon, OOM, a broken migration) into a slow flaky pass.
 func isPortBindFailure(err error) bool {
-	return strings.Contains(err.Error(), "address already in use")
+	return err != nil && strings.Contains(err.Error(), "address already in use")
 }
 
 // sharedServer lazily starts the one container this test binary uses. The container
@@ -246,17 +306,41 @@ func sharedServer(ctx context.Context) (*shared, error) {
 			return
 		}
 
-		sharedSrv = &shared{
-			admin: admin,
-			connStr: func(dbName string) string {
-				// The module hands back .../<adminDatabase>?sslmode=disable — swap
-				// only the database path segment, preserving host/port/credentials.
-				return strings.Replace(adminConnStr, "/"+adminDatabase+"?", "/"+dbName+"?", 1)
-			},
-		}
+		sharedSrv = &shared{admin: admin, adminDSN: adminConnStr}
 	})
 
 	return sharedSrv, sharedErr
+}
+
+// dsnForDatabase derives a per-test DSN from the admin DSN by replacing the database
+// PATH SEGMENT, preserving scheme/credentials/host/port and every query parameter.
+//
+// FAIL-LOUD BY CONSTRUCTION. This used to be a strings.Replace of "/<admin>?" — which
+// silently NO-OPS if the DSN ever lacks a query string (e.g. someone drops the
+// sslmode=disable argument from ConnectionString). The no-op would hand every
+// "isolated" test a DSN still pointing at the SHARED ADMIN DATABASE: total isolation
+// collapse, cross-test bleed, and not one error raised anywhere. Parsing the URL
+// removes the query-string assumption entirely, and an admin DSN that does not look
+// the way we expect is a hard error rather than a quietly wrong connection target.
+func dsnForDatabase(adminDSN, dbName string) (string, error) {
+	u, err := url.Parse(adminDSN)
+	if err != nil {
+		return "", fmt.Errorf("parse admin dsn: %w", err)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("admin dsn %q has no host", adminDSN)
+	}
+	if got := strings.TrimPrefix(u.Path, "/"); got != adminDatabase {
+		return "", fmt.Errorf(
+			"admin dsn database is %q, want %q — refusing to derive a per-test dsn from it", got, adminDatabase)
+	}
+	if dbName == "" {
+		return "", fmt.Errorf("empty target database name")
+	}
+
+	u.Path = "/" + dbName
+
+	return u.String(), nil
 }
 
 // quoteIdent double-quotes a PostgreSQL identifier. Database names here are
