@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { computed, ref } from 'vue'
+import { INITIAL_VIEWPORTS } from 'storybook/viewport'
 import Discover from './Discover.vue'
 import type { BrowseType } from './discover.types'
 import { latestResult, popularResult, sources } from '../../fixtures/discover'
@@ -98,5 +99,28 @@ export const ErrorState: Story = {
     activeSource: sources[0]!.id,
     activeType: 'popular',
     error: true,
+  },
+}
+
+/**
+ * Real mobile viewport (QCAT-230/231) — a populated Popular grid at an actual
+ * phone-width VIEWPORT. Proves: the controls (source select + Popular/Latest
+ * toggle) stack full-width instead of squeezing onto one line, the grid
+ * reflows to 2 columns via the mobile `minmax()` override, and the results
+ * region scrolls INSIDE itself (`.discover__scroll`) while the controls stay
+ * pinned above it — with zero horizontal overflow at any width.
+ */
+export const MobileViewport: Story = {
+  args: {
+    result: popularResult,
+    sources,
+    activeSource: sources[0]!.id,
+    activeType: 'popular',
+  },
+  parameters: {
+    viewport: { options: INITIAL_VIEWPORTS },
+  },
+  globals: {
+    viewport: { value: 'iphone12', isRotated: false },
   },
 }

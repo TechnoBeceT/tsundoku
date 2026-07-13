@@ -195,4 +195,19 @@ const creditLine = (c: DiscoverCandidate): string => {
   flex-wrap: wrap;
   gap: 5px;
 }
+
+@media (max-width: 900px) {
+  /* This is a desktop hover affordance (mouseenter-driven, see DiscoverCard) —
+   * touch has no hover, so it would otherwise sit permanently
+   * visibility:hidden while its fixed 304px width (wider than a narrow grid
+   * cell) still counts toward the nearest scrolling ancestor's overflow,
+   * since absolutely-positioned boxes contribute to scrollable overflow
+   * regardless of visibility (only `display:none` removes them from layout).
+   * On a 2-column phone grid (~132px cells, see Discover.vue) that would
+   * force horizontal scroll of the whole page (QCAT-230). display:none
+   * removes it from layout entirely — the popup simply never renders here. */
+  .disc-pop {
+    display: none;
+  }
+}
 </style>

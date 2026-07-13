@@ -124,6 +124,10 @@ const onSourceLink = (e: Event): void => {
 
 .disc-card {
   position: relative;
+  /* QCAT-230: grid items default to a content-size minimum — without this a
+   * narrow phone column (see Discover.vue's mobile minmax) could refuse to
+   * shrink below the card's intrinsic content width and overflow the grid. */
+  min-width: 0;
 }
 
 /* Lift the whole card above its neighbours so the popup is never covered. */

@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
+import { INITIAL_VIEWPORTS } from 'storybook/viewport'
 import DiscoverCard from './DiscoverCard.vue'
 import { popularResult } from '../../fixtures/discover'
 
@@ -40,4 +41,24 @@ export const InLibrary: Story = {
 /** No cover URL → the big faint initial-letter placeholder. */
 export const NoCover: Story = {
   args: { candidate: noCover },
+}
+
+/**
+ * A real mobile viewport at the narrow ~132px grid-cell width Discover.vue's
+ * mobile 2-column override produces (QCAT-230/231). The hover-preview popup
+ * (`DiscoverHoverPreview`) is fixed at 304px — wider than this cell — so its
+ * `@media (max-width: 900px) { display: none }` rule (touch has no hover
+ * anyway) is what keeps it from contributing horizontal overflow even while
+ * `visibility: hidden`. Confirms the card itself renders with zero overflow
+ * at the actual mobile column width, not just a narrowed desktop container.
+ */
+export const MobileNarrowCell: Story = {
+  args: { candidate: plain },
+  decorators: [() => ({ template: '<div style="position:relative;width:132px;padding:24px 12px"><story /></div>' })],
+  parameters: {
+    viewport: { options: INITIAL_VIEWPORTS },
+  },
+  globals: {
+    viewport: { value: 'iphone12', isRotated: false },
+  },
 }

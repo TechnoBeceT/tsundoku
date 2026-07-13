@@ -95,80 +95,112 @@ const loadMore = (): void => emit('page', props.result.page + 1)
 
 <template>
   <div class="discover">
-    <!-- Controls: source picker + Popular/Latest toggle + caption -->
-    <div class="discover__controls">
-      <div class="discover__source">
-        <span class="discover__source-label">Source</span>
-        <SelectField
-          class="discover__select"
-          :model-value="activeSource"
-          :options="sourceOptions"
-          aria-label="Source"
-          @update:model-value="emit('setSource', $event)"
+    <!-- Top: flows naturally, pinned above the scrolling grid region (QCAT-231) -->
+    <div class="discover__top">
+      <!-- Controls: source picker + Popular/Latest toggle + caption -->
+      <div class="discover__controls">
+        <div class="discover__source">
+          <span class="discover__source-label">Source</span>
+          <SelectField
+            class="discover__select"
+            :model-value="activeSource"
+            :options="sourceOptions"
+            aria-label="Source"
+            @update:model-value="emit('setSource', $event)"
+          />
+        </div>
+
+        <SegmentedToggle
+          class="discover__toggle"
+          :model-value="activeType"
+          :options="typeOptions"
+          @update:model-value="emit('setType', $event as BrowseType)"
         />
+
+        <p class="discover__caption">Browse a source &amp; adopt — covers are the focus</p>
       </div>
 
-      <SegmentedToggle
-        :model-value="activeType"
-        :options="typeOptions"
-        @update:model-value="emit('setType', $event as BrowseType)"
-      />
-
-      <p class="discover__caption">Browse a source &amp; adopt — covers are the focus</p>
+      <!-- Error banner (the active source failed) -->
+      <div v-if="error" class="discover__error">
+        <p class="discover__error-title">Couldn't reach this source</p>
+        <p class="discover__error-body">The source returned an error. It may be temporarily down.</p>
+        <button type="button" class="retry-btn" @click="emit('retry')">Retry</button>
+      </div>
     </div>
 
-    <!-- Error banner (the active source failed) -->
-    <div v-if="error" class="discover__error">
-      <p class="discover__error-title">Couldn't reach this source</p>
-      <p class="discover__error-body">The source returned an error. It may be temporarily down.</p>
-      <button type="button" class="retry-btn" @click="emit('retry')">Retry</button>
+    <!-- Scroll region: the grid FITS THE SCREEN and scrolls INSIDE itself
+         (QCAT-231) so paging/loading never scrolls the whole page. -->
+    <div class="discover__scroll">
+      <!-- Results grid (cards + first-load skeletons share the grid) -->
+      <div class="discover__grid">
+        <DiscoverCard
+          v-for="it in items"
+          :key="`${it.source}-${it.mangaId}`"
+          :candidate="it"
+          @inspect="emit('inspect', $event)"
+          @adopt="emit('adopt', $event)"
+          @open-source-link="emit('openSourceLink', $event)"
+          @hover="emit('hover', $event)"
+        />
+
+        <!-- First-load skeletons -->
+        <template v-if="isFirstLoad">
+          <div v-for="n in skeletons" :key="`sk-${n}`" class="disc-skel">
+            <div class="disc-skel__cover" />
+            <div class="disc-skel__foot" />
+          </div>
+        </template>
+      </div>
+
+      <!-- Empty state -->
+      <p v-if="isEmpty" class="discover__empty">This source returned nothing for this listing.</p>
+
+      <!-- Loading-more spinner row -->
+      <div v-if="isLoadingMore" class="discover__more-loading">
+        <Spinner :size="15" tone="accent" />
+        Loading more…
+      </div>
+
+      <!-- Load more -->
+      <div v-if="hasMore" class="discover__more">
+        <AppButton variant="mini" size="md" @click="loadMore">Load more</AppButton>
+      </div>
+
+      <!-- End of list -->
+      <p v-if="isEnd" class="discover__end">— End of list —</p>
     </div>
-
-    <!-- Results grid (cards + first-load skeletons share the grid) -->
-    <div class="discover__grid">
-      <DiscoverCard
-        v-for="it in items"
-        :key="`${it.source}-${it.mangaId}`"
-        :candidate="it"
-        @inspect="emit('inspect', $event)"
-        @adopt="emit('adopt', $event)"
-        @open-source-link="emit('openSourceLink', $event)"
-        @hover="emit('hover', $event)"
-      />
-
-      <!-- First-load skeletons -->
-      <template v-if="isFirstLoad">
-        <div v-for="n in skeletons" :key="`sk-${n}`" class="disc-skel">
-          <div class="disc-skel__cover" />
-          <div class="disc-skel__foot" />
-        </div>
-      </template>
-    </div>
-
-    <!-- Empty state -->
-    <p v-if="isEmpty" class="discover__empty">This source returned nothing for this listing.</p>
-
-    <!-- Loading-more spinner row -->
-    <div v-if="isLoadingMore" class="discover__more-loading">
-      <Spinner :size="15" tone="accent" />
-      Loading more…
-    </div>
-
-    <!-- Load more -->
-    <div v-if="hasMore" class="discover__more">
-      <AppButton variant="mini" size="md" @click="loadMore">Load more</AppButton>
-    </div>
-
-    <!-- End of list -->
-    <p v-if="isEnd" class="discover__end">— End of list —</p>
   </div>
 </template>
 
 <style scoped>
+/* QCAT-231 "fit the screen, scroll inside": `.discover` is bounded to ONE
+ * viewport under the sticky 64px AppShell header (mirrors SeriesDetail's
+ * `.columns` / PanelCard's `.panel` shape) and is itself a flex column —
+ * `.discover__top` (controls + error banner) is fixed-size and flows
+ * naturally, `.discover__scroll` takes the rest of the height and is the
+ * ONE scroll container for the grid + pagination/empty/end states. This
+ * replaces the old whole-page scroll, so paging through results never
+ * scrolls the controls out of reach. `min-height: 0` on both the outer flex
+ * container and the scrolling child is the same grid/flex overflow-trap
+ * override PanelCard documents — without it the column refuses to shrink
+ * below its content and the page-level scrollbar comes back. */
 .discover {
   padding: 24px 30px 70px;
   background: var(--bg);
-  min-height: 100%;
+  height: calc(100dvh - 64px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.discover__top {
+  flex: none;
+}
+
+.discover__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* ---- Controls ------------------------------------------------------------- */
@@ -184,12 +216,14 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   display: flex;
   align-items: center;
   gap: 9px;
+  min-width: 0;
 }
 
 .discover__source-label {
   font-size: var(--text-sm);
   color: var(--faint);
   font-weight: var(--weight-semibold);
+  flex: none;
 }
 
 /* Preserve the prototype source-picker width (the native select had min-width:200px). */
@@ -201,6 +235,37 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   margin: 0 0 0 auto;
   font-size: var(--text-sm);
   color: var(--faint);
+}
+
+@media (max-width: 900px) {
+  /* Stack the controls: source picker + toggle each take a full-width row
+   * instead of squeezing onto one line (the select's own min-width:200px
+   * would otherwise force a horizontal scrollbar on a narrow phone). The
+   * caption drops its auto-margin right-push (nothing left to push away
+   * from once stacked) and wraps under the toggle. */
+  .discover__controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .discover__source {
+    width: 100%;
+  }
+
+  .discover__select {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .discover__toggle {
+    align-self: flex-start;
+  }
+
+  .discover__caption {
+    margin: 0;
+  }
 }
 
 /* ---- Error banner --------------------------------------------------------- */
@@ -247,6 +312,21 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
   gap: 18px;
+}
+
+@media (max-width: 900px) {
+  /* A narrower tile + tighter outer padding so a phone (390px and down to
+   * ~320px) still fits 2 columns instead of collapsing to 1 — the 184px
+   * desktop tile only leaves room for a single column once the 30px side
+   * padding is subtracted. */
+  .discover {
+    padding: 16px 14px 60px;
+  }
+
+  .discover__grid {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 10px;
+  }
 }
 
 /* ---- Skeleton (first load) ------------------------------------------------ */
