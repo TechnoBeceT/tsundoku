@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
+import { userEvent, within } from 'storybook/test'
 import ChapterRow from './ChapterRow.vue'
 import { richSeries } from '../../fixtures/seriesDetail'
 
@@ -61,4 +62,24 @@ export const Read: Story = {
       readAt: new Date().toISOString(),
     },
   },
+}
+
+/**
+ * Set as current progress (QCAT-242, entry point B): a known-number chapter
+ * renders the target icon button in `.chapter__controls`, alongside "Read"
+ * and the state badge. The row only EMITS `set-current` — the confirm dialog
+ * (`SetChapterProgressDialog`, its own story) and the actual mutation live on
+ * the page, so this story just proves the control is present and clickable.
+ */
+export const SetCurrentProgress: Story = {
+  args: { chapter: richSeries.chapters[0]! },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: /Set chapter .* as current progress/ }))
+  },
+}
+
+/** Unknown number (no `set-current` target): the action is hidden — a chapter with no known number can't be a reset target. */
+export const NoCurrentProgressAction: Story = {
+  args: { chapter: richSeries.chapters[8]! },
 }

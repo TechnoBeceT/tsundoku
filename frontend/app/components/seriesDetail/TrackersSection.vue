@@ -9,6 +9,7 @@ import SearchInput from '../ui/SearchInput.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import TrackerIcon from '../ui/TrackerIcon.vue'
+import ResetProgressDialog from './ResetProgressDialog.vue'
 import TrackerBindingRow from './TrackerBindingRow.vue'
 import TrackerSearchResultCard from './TrackerSearchResultCard.vue'
 import type { TrackBinding, TrackSearchResult, UpdateTrackPatch } from '../screens/seriesDetail.types'
@@ -70,7 +71,20 @@ import type { TrackerStatus } from '../screens/settings.types'
  * `refresh` (the TrackBinding id), `update` (`{ recordId, patch }`), `sync`
  * (no payload — pull + converge every binding on this series), `clear-search`
  * (no payload — the expanded "Add tracking" row changed; the page routes this
- * to `useSeriesTracking.clearSearch()`).
+ * to `useSeriesTracking.clearSearch()`), `set-progress` (QCAT-242 entry point
+ * A — the resolved target chapter number, 0 = "from start"; the page routes
+ * this to `useSeriesDetail.setReadingProgress`).
+ *
+ * "Reset progress" (QCAT-242): a header button beside "Sync now" opens
+ * `ResetProgressDialog` (own local `resetProgressOpen`, same shape as
+ * `editingId` below). It is destructive AND remote-mutating (jumps every
+ * bound tracker), so — like the bound-row edit form's busy→idle auto-close —
+ * this section owns the dialog's OPEN state locally but relies on the PAGE
+ * (the only layer that learns whether the mutation actually succeeded) to
+ * report outcome back via the `settingProgress`/`progressError` props: a
+ * busy→idle transition with no `progressError` auto-closes the dialog,
+ * mirroring the `updateBusyId`/`updateError` watcher exactly. A failure keeps
+ * it open with the error shown inline (§16).
  *
  * BUG-1 (results leaking across trackers): `searchResults`/`searchError` are
  * SHARED state owned by `useSeriesTracking` (one series, not one row), so this
@@ -121,6 +135,10 @@ const props = withDefaults(defineProps<{
   syncing?: boolean
   /** A failed sync message, or null for none. */
   syncError?: string | null
+  /** True while a "Reset progress" (QCAT-242) POST is in flight. */
+  settingProgress?: boolean
+  /** A failed reset-progress message, or null for none. */
+  progressError?: string | null
 }>(), {
   bindings: () => [],
   trackers: () => [],
@@ -141,6 +159,8 @@ const props = withDefaults(defineProps<{
   updateError: null,
   syncing: false,
   syncError: null,
+  settingProgress: false,
+  progressError: null,
 })
 
 const emit = defineEmits<{
@@ -158,6 +178,8 @@ const emit = defineEmits<{
   'sync': []
   /** The expanded "Add tracking" tracker changed — clear the shared search state (bug 1). */
   'clear-search': []
+  /** "Reset progress" was confirmed — carries the resolved target chapter (0 = from start). */
+  'set-progress': [chapter: number]
 }>()
 
 // Connected trackers this series isn't already bound to — one "Add tracking"
@@ -254,11 +276,40 @@ function onBind(remoteId: string): void {
   if (expandedTracker.value?.supportsPrivate && privateFlag.value) payload.private = true
   emit('bind', payload)
 }
+
+// ---- Reset progress (QCAT-242 entry point A) --------------------------------
+const resetProgressOpen = ref(false)
+
+// Prefill for "Set to chapter": the furthest chapter any bound tracker
+// already reports (a decent proxy for "where the owner actually is"),
+// floored (trackers report fractional chapters), or 1 when nothing is bound
+// yet — never 0, so the field doesn't default to "from start".
+const defaultResetChapter = computed(() => {
+  if (props.bindings.length === 0) return 1
+  const furthest = Math.max(...props.bindings.map((b) => Math.floor(b.lastChapterRead)))
+  return furthest > 0 ? furthest : 1
+})
+
+// Same busy→idle-without-error auto-close shape as the bound-row edit form's
+// watcher above — the section owns the dialog's open state, but only the
+// PAGE (which drives the actual POST) knows whether it succeeded.
+watch(() => props.settingProgress, (busy, wasBusy) => {
+  if (wasBusy && !busy && resetProgressOpen.value && !props.progressError) {
+    resetProgressOpen.value = false
+  }
+})
+
+function onResetConfirm(chapter: number): void {
+  emit('set-progress', chapter)
+}
 </script>
 
 <template>
   <SurfaceCard title="Trackers">
     <template v-if="bindings.length" #actions>
+      <AppButton variant="ghost" size="sm" :disabled="pending || syncing" @click="resetProgressOpen = true">
+        Reset progress
+      </AppButton>
       <AppButton variant="ghost" size="sm" :loading="syncing" :disabled="pending" @click="emit('sync')">
         Sync now
       </AppButton>
@@ -356,6 +407,14 @@ function onBind(remoteId: string): void {
       </div>
     </template>
   </SurfaceCard>
+
+  <ResetProgressDialog
+    v-model:open="resetProgressOpen"
+    :busy="settingProgress"
+    :error="progressError"
+    :default-chapter="defaultResetChapter"
+    @confirm="onResetConfirm"
+  />
 </template>
 
 <style scoped>

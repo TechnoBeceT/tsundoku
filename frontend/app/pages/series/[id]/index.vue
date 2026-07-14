@@ -122,6 +122,24 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, Updat
  * `unbindErrorId`/`refreshErrorId` scope a failed unbind/refresh's message to
  * the row that caused it (unbind/refresh have no "open" row state to key off,
  * unlike `updateError`'s `editingId`).
+ *
+ * Reading-progress reset (QCAT-242, `useSeriesDetail.setReadingProgress`):
+ * a mutation shared by TWO entry points, both routed through
+ * `onSetReadingProgress` so the tracker-bindings reconciliation lives in ONE
+ * place — the reset mutates local chapters directly (reflected via the usual
+ * reseed) AND force-sets every bound tracker, a SEPARATE composable's state
+ * this action can't reach on its own, so a successful call additionally fires
+ * a SILENT background `loadBindings({ silent: true })` (same shape as
+ * `useSeriesTracking`'s own post-mutation reconciliation) so the Trackers
+ * section reflects the jump without a manual refresh.
+ *   - `@reset-progress` (TrackersSection's dialog, bubbled via SeriesDetail):
+ *     fire-and-forget from the screen's perspective — the dialog's own open
+ *     state auto-closes off the `settingProgress`/`progressError` props fed
+ *     back down, so the page does not track a separate open ref for it.
+ *   - `@request-set-chapter-progress` (a chapter row's "Set as current
+ *     progress", bubbled via SeriesDetail): the page owns
+ *     `SetChapterProgressDialog` (mirrors `RemoveSourceDialog`'s page-owned
+ *     confirm) and closes it ONLY on a successful reset (§16).
  */
 const route = useRoute()
 const id = route.params.id as string
@@ -153,6 +171,9 @@ const {
   dedupeFiles,
   fetchFractionalCleanup,
   removeFractionalChapters,
+  settingProgress,
+  progressError,
+  setReadingProgress,
 } = useSeriesDetail(id)
 
 const {
@@ -378,6 +399,7 @@ const {
   refresh: refreshTracker,
   updateTrack,
   syncNow,
+  loadBindings,
 } = useSeriesTracking(id)
 
 const { trackers: connectedTrackers } = useTrackers()
@@ -410,6 +432,44 @@ function onSyncTracker(): void {
 
 function onClearSearchTracker(): void {
   clearSearch()
+}
+
+// ---- Reading-progress reset (QCAT-242) -------------------------------------
+// The one mutation shared by both entry points (TrackersSection's "Reset
+// progress" dialog and a chapter row's "Set as current progress"): it
+// reseeds `series` itself (setReadingProgress does that), but it ALSO
+// force-sets every bound tracker — state `useSeriesTracking` owns separately
+// — so a successful call fires a SILENT background reconciliation refetch,
+// the same shape `useSeriesTracking`'s own mutations already use after
+// bind/unbind/update.
+async function onSetReadingProgress(chapter: number): Promise<boolean> {
+  const ok = await setReadingProgress(chapter)
+  if (ok) void loadBindings({ silent: true })
+  return ok
+}
+
+// TrackersSection owns its dialog's open state locally (closes itself off
+// the settingProgress/progressError props once the call resolves) — the page
+// just fires the mutation.
+function onResetProgress(chapter: number): void {
+  void onSetReadingProgress(chapter)
+}
+
+// A chapter row's "Set as current progress" — the page owns the confirm
+// dialog (mirrors RemoveSourceDialog) since only it learns whether the reset
+// succeeded, and closes it ONLY on success (§16).
+const setChapterProgressOpen = ref(false)
+const setChapterProgressTarget = ref<number | null>(null)
+
+function openSetChapterProgress(chapterNumber: number): void {
+  setChapterProgressTarget.value = chapterNumber
+  setChapterProgressOpen.value = true
+}
+
+async function onConfirmSetChapterProgress(): Promise<void> {
+  if (setChapterProgressTarget.value === null) return
+  const ok = await onSetReadingProgress(setChapterProgressTarget.value)
+  if (ok) setChapterProgressOpen.value = false
 }
 
 // ---- Resume FAB (Komikku-style "continue reading" button) -----------------
@@ -497,6 +557,8 @@ function onResume(): void {
       :track-update-error="trackUpdateError"
       :track-syncing="trackSyncing"
       :track-sync-error="trackSyncError"
+      :setting-progress="settingProgress"
+      :progress-error="progressError"
       @change-category="setCategory"
       @toggle-monitored="setMonitored"
       @toggle-completed="setCompleted"
@@ -521,6 +583,8 @@ function onResume(): void {
       @track-update="onUpdateTracker"
       @track-sync="onSyncTracker"
       @track-clear-search="onClearSearchTracker"
+      @reset-progress="onResetProgress"
+      @request-set-chapter-progress="openSetChapterProgress"
     />
 
     <FractionalCleanupDialog
@@ -595,6 +659,15 @@ function onResume(): void {
       :loading="coversLoading || settingCover"
       :error="coverPickerError"
       @confirm="onCoverConfirm"
+    />
+
+    <SetChapterProgressDialog
+      v-if="series"
+      v-model:open="setChapterProgressOpen"
+      :chapter-number="setChapterProgressTarget"
+      :busy="settingProgress"
+      :error="progressError"
+      @confirm="onConfirmSetChapterProgress"
     />
   </div>
 </template>

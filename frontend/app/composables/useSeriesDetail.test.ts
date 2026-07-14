@@ -44,6 +44,7 @@ let nextPatchOk = true
 let nextFractionalPreviewOk = true
 let nextFractionalPreviewMalformed = false
 let nextFractionalRemoveOk = true
+let nextReadingProgressOk = true
 
 /** The owner's live removable set (see FractionalCleanupDialog.test.ts). */
 const fractionalPreview = {
@@ -137,6 +138,14 @@ const matchedDetail = {
   ],
 }
 
+// The refreshed detail /reading-progress returns: chapterCounts.unread is
+// distinct from initialDetail's, so a direct-reseed assertion can't be
+// satisfied by a stale copy of initialDetail sneaking through.
+const readingProgressDetail = {
+  ...initialDetail,
+  chapterCounts: { total: 10, downloaded: 8, wanted: 2, failed: 0, unread: 3 },
+}
+
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
     GET: vi.fn().mockImplementation((path: string, opts?: { params?: { path?: Record<string, unknown> } }) => {
@@ -186,6 +195,12 @@ vi.mock('~/utils/api/client', () => ({
           return Promise.resolve({ data: null, error: { message: 'dedupe-files failed' }, response: new Response(null, { status: 500 }) })
         }
         return Promise.resolve({ data: { removed: 3 }, error: null, response: new Response(null, { status: 200 }) })
+      }
+      if (path === '/api/series/{id}/reading-progress') {
+        if (!nextReadingProgressOk) {
+          return Promise.resolve({ data: null, error: { message: 'chapter must be >= 0' }, response: new Response(null, { status: 400 }) })
+        }
+        return Promise.resolve({ data: readingProgressDetail, error: null, response: new Response(null, { status: 200 }) })
       }
       return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
     }),
@@ -534,5 +549,86 @@ describe('useSeriesDetail — dedupProviders / dedupeFiles', () => {
     await refresh()
     await dedupeFiles()
     expect(error.value).toBeTruthy()
+  })
+})
+
+/**
+ * setReadingProgress (QCAT-242) — the owner's "re-read from start"/"jump to
+ * chapter N" action. Pins:
+ *   1. It POSTs /api/series/{id}/reading-progress with the exact {chapter} body.
+ *   2. On success it reseeds `series` DIRECTLY from the response — NOT via a
+ *      second GET /api/series/{id} (mutate-reseeds-from-response, §16) —
+ *      and resolves true.
+ *   3. On failure it sets `progressError` to the backend's OWN message
+ *      (never a generic fallback when the backend supplied one), resolves
+ *      false, and leaves `series` untouched.
+ *   4. `settingProgress` flips true for the duration of the call and back to
+ *      false once it resolves, win or lose.
+ *   5. It never touches the shared `error` ref — a failure here must not be
+ *      mistaken for a different mutation's error by a screen watching `error`.
+ */
+describe('useSeriesDetail — setReadingProgress', () => {
+  beforeEach(() => {
+    calls = []
+    nextReadingProgressOk = true
+  })
+
+  it('POSTs the reading-progress endpoint with the path param and exact {chapter} body', async () => {
+    const { refresh, setReadingProgress } = useSeriesDetail('series-1')
+    await refresh()
+
+    await setReadingProgress(42)
+
+    const post = calls.find((c) => c.path === '/api/series/{id}/reading-progress')
+    expect(post).toBeDefined()
+    expect(post!.params).toEqual({ id: 'series-1' })
+    expect(post!.body).toEqual({ chapter: 42 })
+  })
+
+  it('accepts chapter 0 (re-read from scratch) — a falsy-but-valid value', async () => {
+    const { setReadingProgress } = useSeriesDetail('series-1')
+
+    await setReadingProgress(0)
+
+    const post = calls.find((c) => c.path === '/api/series/{id}/reading-progress')
+    expect(post!.body).toEqual({ chapter: 0 })
+  })
+
+  it('reseeds series directly from the response on success, without a second GET', async () => {
+    const { series, refresh, setReadingProgress } = useSeriesDetail('series-1')
+    await refresh()
+    const getCountBefore = calls.filter((c) => c.method === 'GET' && c.path === '/api/series/{id}').length
+
+    const ok = await setReadingProgress(5)
+
+    expect(ok).toBe(true)
+    expect(series.value?.chapterCounts.unread).toBe(3) // readingProgressDetail's distinct value
+    const getCountAfter = calls.filter((c) => c.method === 'GET' && c.path === '/api/series/{id}').length
+    expect(getCountAfter).toBe(getCountBefore)
+  })
+
+  it('failure surfaces the backend\'s own message via progressError, resolves false, and leaves series untouched', async () => {
+    nextReadingProgressOk = false
+    const { series, error, progressError, refresh, setReadingProgress } = useSeriesDetail('series-1')
+    await refresh()
+
+    const ok = await setReadingProgress(-1)
+
+    expect(ok).toBe(false)
+    expect(progressError.value).toBe('chapter must be >= 0')
+    // The shared `error` ref belongs to OTHER mutations — this one never touches it.
+    expect(error.value).toBeNull()
+    expect(series.value?.chapterCounts.unread).toBeUndefined()
+  })
+
+  it('settingProgress flips true during the call and back to false once it resolves', async () => {
+    const { settingProgress, setReadingProgress } = useSeriesDetail('series-1')
+    expect(settingProgress.value).toBe(false)
+
+    const promise = setReadingProgress(5)
+    expect(settingProgress.value).toBe(true)
+    await promise
+
+    expect(settingProgress.value).toBe(false)
   })
 })

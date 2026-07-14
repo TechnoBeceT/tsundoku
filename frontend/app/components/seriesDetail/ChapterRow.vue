@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import StatusBadge from '../ui/StatusBadge.vue'
 import AppButton from '../ui/AppButton.vue'
+import IconButton from '../ui/IconButton.vue'
 import type { Chapter } from '../screens/seriesDetail.types'
 
 /**
  * ChapterRow — one row in the Series-Detail chapter table: the (display) number,
  * the resolved chapter name with its CBZ filename beneath, an optional page-count,
- * a "Read" button for on-disk chapters, and a `StatusBadge` for the download state.
- * The chapter arrives via the `chapter` prop; the row emits `read` (the chapter
- * UUID) when the owner opens it in the reader.
+ * a "Read" button for on-disk chapters, a "Set as current progress" action
+ * (QCAT-242), and a `StatusBadge` for the download state. The chapter arrives
+ * via the `chapter` prop; the row emits `read` (the chapter UUID) when the
+ * owner opens it in the reader, and `set-current` (the chapter's NUMBER) when
+ * the owner picks "Set as current progress".
  *
  * The state badge reads the unified `--state-*` palette (via `StatusBadge`), so
  * every chapter-state hue across the app comes from one source and both themes work.
@@ -22,6 +25,13 @@ import type { Chapter } from '../screens/seriesDetail.types'
  *   - partially read (`lastReadPage > 0 && !read`) → a "Page N / M" resume line
  *                  under the chapter name. `lastReadPage` is 0-BASED but the
  *                  line displays 1-based (page index 17 → "Page 18").
+ *
+ * "Set as current progress" (QCAT-242) needs a real chapter NUMBER (the
+ * backend target is a plain number, not an id) — it only renders when
+ * `chapter.number` is known, and is destructive (marks later chapters unread,
+ * jumps every bound tracker), so the row only EMITS the request; the actual
+ * confirm + mutation live upstream (the page owns `SetChapterProgressDialog`,
+ * mirroring the Remove-source confirm dialog's page-owned pattern).
  */
 const props = defineProps<{
   /** The chapter to render (identity is `chapterKey`, not the number). */
@@ -31,7 +41,15 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Open this chapter in the reader (carries the chapter UUID). */
   read: [chapterId: string]
+  /** "Set as current progress" was picked — carries the chapter's display NUMBER. */
+  'set-current': [chapterNumber: number]
 }>()
+
+// Guards the emit: the button itself is v-if'd on a known number, but the
+// handler re-checks so a null number can never slip a NaN target upstream.
+function onSetCurrent(): void {
+  if (props.chapter.number != null) emit('set-current', props.chapter.number)
+}
 
 // Display name: provider title, else "Chapter N", else an em-dash placeholder.
 const name = (): string =>
@@ -80,6 +98,16 @@ const resumeLine = (): string => {
       >
         Read
       </AppButton>
+      <!-- eslint-disable vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+      <IconButton
+        v-if="chapter.number != null"
+        size="sm"
+        :ariaLabel="`Set chapter ${number()} as current progress`"
+        @click="onSetCurrent"
+      >
+        <Icon name="lucide:target" width="14" height="14" />
+      </IconButton>
+      <!-- eslint-enable vue/attribute-hyphenation -->
       <StatusBadge :state="chapter.state" />
     </div>
   </div>

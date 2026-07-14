@@ -42,6 +42,18 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  * `trackUpdate`/`trackSync` — same page-owns-the-mutation reasoning as above,
  * since only the page can see whether a tracking mutation succeeded.
  *
+ * Reading-progress reset (QCAT-242, two entry points, both page-owned mutations
+ * routed through `useSeriesDetail.setReadingProgress`):
+ *   - `TrackersSection`'s own "Reset progress" dialog emits `set-progress`,
+ *     bubbled here as `resetProgress` — the page calls `setReadingProgress`
+ *     directly and feeds `settingProgress`/`progressError` back down so the
+ *     section's dialog can auto-close on success / stay open on failure.
+ *   - `ChaptersPanel`'s per-row "Set as current progress" emits `set-current`
+ *     (the chapter NUMBER), bubbled here as `requestSetChapterProgress` — the
+ *     page owns the confirm dialog (`SetChapterProgressDialog`, same
+ *     page-owned-dialog reasoning as `RemoveSourceDialog`) since only it
+ *     learns whether the reset succeeded.
+ *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
  * surfacing loading (busy spinners / disabled controls) and error (a dismissible
@@ -117,6 +129,10 @@ const props = withDefaults(defineProps<{
   trackSyncing?: boolean
   /** A failed tracker-sync message, or null for none. */
   trackSyncError?: string | null
+  /** True while a reading-progress reset (QCAT-242) POST is in flight. */
+  settingProgress?: boolean
+  /** A failed reading-progress-reset message, or null for none. */
+  progressError?: string | null
 }>(), {
   saving: false,
   deleteBusy: false,
@@ -145,6 +161,8 @@ const props = withDefaults(defineProps<{
   trackUpdateError: null,
   trackSyncing: false,
   trackSyncError: null,
+  settingProgress: false,
+  progressError: null,
 })
 
 const emit = defineEmits<{
@@ -196,6 +214,10 @@ const emit = defineEmits<{
   trackSync: []
   /** TrackersSection's expanded "Add tracking" tracker changed — clear the shared search state (bug 1). */
   trackClearSearch: []
+  /** TrackersSection's "Reset progress" dialog was confirmed — carries the resolved target chapter (0 = from start). */
+  resetProgress: [chapter: number]
+  /** A chapter row's "Set as current progress" was clicked — carries the chapter NUMBER (→ opens the page's confirm dialog). */
+  requestSetChapterProgress: [chapterNumber: number]
 }>()
 
 // ---- Derived data ----------------------------------------------------------
@@ -283,6 +305,8 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         :update-error="trackUpdateError"
         :syncing="trackSyncing"
         :sync-error="trackSyncError"
+        :setting-progress="settingProgress"
+        :progress-error="progressError"
         @search="emit('trackSearch', $event)"
         @bind="emit('trackBind', $event)"
         @unbind="emit('trackUnbind', $event)"
@@ -290,11 +314,17 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         @update="emit('trackUpdate', $event)"
         @sync="emit('trackSync')"
         @clear-search="emit('trackClearSearch')"
+        @set-progress="emit('resetProgress', $event)"
       />
     </div>
 
     <div class="columns">
-      <ChaptersPanel :chapters="sortedChapters" :total="series.chapterCounts.total" @read="emit('read', $event)" />
+      <ChaptersPanel
+        :chapters="sortedChapters"
+        :total="series.chapterCounts.total"
+        @read="emit('read', $event)"
+        @set-current="emit('requestSetChapterProgress', $event)"
+      />
       <SourcesPanel
         :providers="sortedProviders"
         :saving="saving"

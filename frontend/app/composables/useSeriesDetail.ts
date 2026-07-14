@@ -154,6 +154,8 @@ export function useSeriesDetail(id: string) {
   const dedupeFilesBusy = ref(false)
   const fractionalBusy = ref(false)
   const dedupMessage = ref<string | null>(null)
+  const settingProgress = ref(false)
+  const progressError = ref<string | null>(null)
 
   async function refresh(): Promise<void> {
     pending.value = true
@@ -411,6 +413,48 @@ export function useSeriesDetail(id: string) {
       fractionalBusy,
     )
 
+  /**
+   * Sets the series' reading progress to `chapter` (QCAT-242, `POST
+   * /api/series/{id}/reading-progress`) — the "re-read from start" (chapter
+   * 0) or "jump to chapter N" action. The backend resets local chapters
+   * (<= chapter read, > chapter unread) AND force-sets every bound tracker to
+   * the same target, then returns the refreshed `SeriesDetail`.
+   *
+   * On success `series` is reseeded DIRECTLY from the response (§16
+   * mutate-reseeds-from-response) — the chapter list reflects the new
+   * read/unread split with no extra GET. It does NOT refresh tracker
+   * bindings: those live in a SEPARATE composable (`useSeriesTracking`), so
+   * the page additionally calls that composable's `loadBindings({ silent:
+   * true })` after a successful call, the same way it reconciles bindings
+   * after any other tracker-affecting mutation.
+   *
+   * Resolves true/false; a failure sets `progressError` to the backend's own
+   * message (never swallowed, never generic) so the calling dialog can show
+   * exactly why the reset was rejected. Uses its OWN busy/error refs (not the
+   * shared `mutate` wrapper) so it never fights the Trackers section's or the
+   * chapter row's own in-flight state with a shared flag.
+   */
+  const setReadingProgress = async (chapter: number): Promise<boolean> => {
+    settingProgress.value = true
+    progressError.value = null
+    try {
+      const res = await apiClient.POST('/api/series/{id}/reading-progress', {
+        params: { path: { id } },
+        body: { chapter },
+      })
+      if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Failed to set reading progress')
+      series.value = mapDetail(res.data)
+      return true
+    }
+    catch (err) {
+      progressError.value = err instanceof Error ? err.message : 'Failed to set reading progress'
+      return false
+    }
+    finally {
+      settingProgress.value = false
+    }
+  }
+
   const dismissError = (): void => { error.value = null }
 
   /**
@@ -441,6 +485,8 @@ export function useSeriesDetail(id: string) {
     dedupeFilesBusy,
     fractionalBusy,
     dedupMessage,
+    settingProgress,
+    progressError,
     setMonitored,
     setCompleted,
     setCategory,
@@ -454,6 +500,7 @@ export function useSeriesDetail(id: string) {
     dedupeFiles,
     fetchFractionalCleanup,
     removeFractionalChapters,
+    setReadingProgress,
     dismissError,
     refresh,
     reseed,

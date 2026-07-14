@@ -184,6 +184,28 @@ export const ScoreFormatKitsu: Story = {
 }
 
 /**
+ * Reset progress (QCAT-242, entry point A) — click the header's "Reset
+ * progress" button (beside "Sync now") to open `ResetProgressDialog` live,
+ * defaulted to "Set to chapter" mode. See `ResetProgressDialog`'s own
+ * stories for the "from start" segment + busy/error states in isolation.
+ */
+export const ResetProgress: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: 'Reset progress' }))
+  },
+}
+
+/** §16: a failed reset — open the dialog with `progressError` already set, showing the inline FormError. */
+export const ResetProgressFailed: Story = {
+  args: { progressError: 'anilist: rate limited — try again shortly.' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: 'Reset progress' }))
+  },
+}
+
+/**
  * Real mobile viewport (QCAT-230/231) — the Add-tracking search row's
  * `@media (max-width: 900px)` rule stacks the search field full-width above
  * the eye toggle + Search button, with no horizontal overflow.
