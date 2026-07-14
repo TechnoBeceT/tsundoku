@@ -38,3 +38,34 @@ func TestEnsureVAPID_GeneratesOnceStable(t *testing.T) {
 		t.Fatalf("keys not stable: (%q,%q) != (%q,%q)", pub2, priv2, pub1, priv1)
 	}
 }
+
+// TestEnsureVAPID_ReadErrorDoesNotRotate proves a transient READ error at boot
+// aborts (returns the error) rather than regenerating — rotating the keypair
+// would silently invalidate every existing device subscription.
+func TestEnsureVAPID_ReadErrorDoesNotRotate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	pub1, priv1, err := push.EnsureVAPID(ctx, client)
+	if err != nil {
+		t.Fatalf("seed EnsureVAPID: %v", err)
+	}
+
+	// A cancelled context makes the settings read fail (a real error, not a
+	// missing row): EnsureVAPID must abort, not regenerate.
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, _, err := push.EnsureVAPID(cancelled, client); err == nil {
+		t.Fatalf("expected EnsureVAPID to abort on a read error, got nil")
+	}
+
+	// The stored keypair is untouched.
+	pub2, priv2, err := push.EnsureVAPID(ctx, client)
+	if err != nil {
+		t.Fatalf("re-read EnsureVAPID: %v", err)
+	}
+	if pub2 != pub1 || priv2 != priv1 {
+		t.Fatalf("keypair rotated after a transient read error: (%q,%q) != (%q,%q)", pub2, priv2, pub1, priv1)
+	}
+}
