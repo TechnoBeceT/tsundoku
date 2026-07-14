@@ -15,9 +15,10 @@ import (
 // Handler holds the dependencies for the library (series) HTTP handlers.
 // All business logic lives in the series.Service; the handler is thin.
 type Handler struct {
-	svc     *seriessvc.Service
-	trigger func()
-	sw      suwayomi.Client
+	svc        *seriessvc.Service
+	trigger    func()
+	sw         suwayomi.Client
+	viewSyncer ViewSyncer
 }
 
 // NewHandler constructs a Handler bound to a series.Service, an auto-converge
@@ -66,6 +67,13 @@ func (h *Handler) List(c echo.Context) error {
 //
 // It parses the :id path param as a UUID (malformed → 400) and returns the
 // full SeriesDetailDTO for that series. A missing series yields 404.
+//
+// Opening a series' detail page is a deliberate view action, so on a
+// successful load it ALSO fires a detached, best-effort tracker-sync
+// reconcile for the series (fireSyncOnView) IN ADDITION to the existing
+// reading-triggered push — the response is built and returned from the
+// already-fetched DTO regardless of the sync's outcome, so a slow or
+// unreachable tracker can never delay or fail this request.
 func (h *Handler) Detail(c echo.Context) error {
 	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
@@ -76,6 +84,7 @@ func (h *Handler) Detail(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+	h.fireSyncOnView(c.Request().Context(), id)
 	return c.JSON(http.StatusOK, out)
 }
 

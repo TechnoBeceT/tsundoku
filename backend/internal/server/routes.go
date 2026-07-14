@@ -173,7 +173,15 @@ func registerRoutes(
 	// that first fetch, and never pings the source for it again).
 	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays).
 		WithCoverFetcher(suwayomiClient)
-	seriesH := seriesh.NewHandler(seriesSvc, trigger, suwayomiClient)
+	// WithViewSyncer wires the detail-open tracker reconcile: opening a series'
+	// detail page fires a detached, best-effort syncsvc.Service.SyncOnView IN
+	// ADDITION to the existing reading-triggered push (series.ProgressPusher —
+	// a DIFFERENT hook, attached to seriesSvc itself, not the handler; see
+	// handler/series.ViewSyncer's doc comment for why detail-open is ungated
+	// where the reading push is toggle-gated). trackerSyncSvc satisfies both
+	// hooks' narrow interfaces — one service, two independent trigger points.
+	seriesH := seriesh.NewHandler(seriesSvc, trigger, suwayomiClient).
+		WithViewSyncer(trackerSyncSvc)
 	authed.GET("/series", seriesH.List)
 	authed.GET("/series/:id", seriesH.Detail)
 	authed.PATCH("/series/:id/category", seriesH.SetCategory)
