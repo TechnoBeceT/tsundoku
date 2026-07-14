@@ -10,6 +10,8 @@ package suwayomi_test
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -71,6 +73,25 @@ func validWebP(t *testing.T) []byte {
 	return data
 }
 
+// webpLosslessBase64 is a real 2x2 LOSSLESS (VP8L) WebP produced by ImageMagick.
+// VP8L is a distinct WebP bitstream from lossy VP8 and is common for manga pages, so
+// it is exercised separately to prove x/image/webp's VP8L decode path is wired.
+const webpLosslessBase64 = "UklGRhwAAABXRUJQVlA4TA8AAAAvAUAAAAdQwIj+ByKi/wEA"
+
+// validWebPLossless returns real VP8L WebP bytes and asserts x/image/webp can decode
+// them, so the fixture itself is proven valid before any test relies on it.
+func validWebPLossless(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(webpLosslessBase64)
+	if err != nil {
+		t.Fatalf("decode embedded VP8L WebP base64: %v", err)
+	}
+	if _, err := webp.Decode(bytes.NewReader(data)); err != nil {
+		t.Fatalf("embedded VP8L WebP fixture is not a valid WebP: %v", err)
+	}
+	return data
+}
+
 // avifBase64 is a real 2x2 AVIF produced by ImageMagick. Go cannot decode AVIF, so
 // validAVIF only asserts the container magic (the exact property validateImagePage
 // relies on to accept a format it cannot fully decode).
@@ -106,4 +127,50 @@ func truncatedJPEG(t *testing.T) []byte {
 func htmlPage() []byte {
 	return []byte("<!DOCTYPE html>\n<html><head><title>Just a moment...</title></head>" +
 		"<body>Checking your browser before accessing.</body></html>")
+}
+
+// dimensionBombPNG returns a tiny PNG — the 8-byte signature plus a single IHDR
+// chunk (no pixel data) — that DECLARES the given dimensions. DecodeConfig parses
+// the IHDR and reports w×h without allocating any pixels, so this models a
+// decompression bomb: a small body claiming a huge area. The IHDR chunk length is a
+// fixed 13 bytes (a literal, so no size conversion is needed).
+func dimensionBombPNG(_ *testing.T, w, h uint32) []byte {
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], w)
+	binary.BigEndian.PutUint32(ihdr[4:8], h)
+	ihdr[8] = 8 // bit depth
+	ihdr[9] = 2 // colour type: truecolour (RGB)
+	// ihdr[10..12] compression/filter/interlace all 0.
+
+	// PNG chunk: 4-byte length (IHDR data is always 13), type, data, CRC32(type+data).
+	// png.DecodeConfig verifies the CRC, so it must be correct.
+	crc := crc32.NewIEEE()
+	_, _ = crc.Write([]byte("IHDR"))
+	_, _ = crc.Write(ihdr)
+
+	var buf bytes.Buffer
+	buf.Write([]byte("\x89PNG\r\n\x1a\n")) // PNG signature
+	buf.Write([]byte{0, 0, 0, 13})         // IHDR chunk length
+	buf.WriteString("IHDR")
+	buf.Write(ihdr)
+	var sum [4]byte
+	binary.BigEndian.PutUint32(sum[:], crc.Sum32())
+	buf.Write(sum[:])
+	return buf.Bytes()
+}
+
+// tallStripPNG returns a REAL, fully-decodable PNG of the given size — used to prove
+// a legitimate webtoon long-strip page (huge in ONE dimension, modest total pixels)
+// is ACCEPTED, i.e. the pixel cap is on total area, never per-side.
+func tallStripPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i := range img.Pix {
+		img.Pix[i] = 0xFF // opaque white; uniform ⇒ tiny compressed body
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode tall-strip PNG: %v", err)
+	}
+	return buf.Bytes()
 }

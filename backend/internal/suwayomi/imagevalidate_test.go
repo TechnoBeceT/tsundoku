@@ -14,22 +14,46 @@ import (
 )
 
 // TestValidateImagePage_AcceptsRealImages verifies that fully-decodable JPEG, PNG,
-// and WebP pages — and a valid AVIF container we accept on magic — all pass. A
-// false-reject here silently fails real chapters, the worst outcome, so this is the
-// #1 guard.
+// lossy (VP8) and lossless (VP8L) WebP pages — and a valid AVIF container we accept
+// on magic — all pass. A false-reject here silently fails real chapters, the worst
+// outcome, so this is the #1 guard.
 func TestValidateImagePage_AcceptsRealImages(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string][]byte{
-		"jpeg": validJPEG(t),
-		"png":  validPNG(t),
-		"webp": validWebP(t),
-		"avif": validAVIF(t),
+		"jpeg":          validJPEG(t),
+		"png":           validPNG(t),
+		"webp lossy":    validWebP(t),
+		"webp lossless": validWebPLossless(t),
+		"avif":          validAVIF(t),
 	}
 	for name, data := range cases {
 		if err := suwayomi.ValidateImagePage(data); err != nil {
 			t.Errorf("%s: valid image rejected: %v", name, err)
 		}
+	}
+}
+
+// TestValidateImagePage_DimensionCap verifies the decompression-bomb guard: a small
+// body declaring an absurd total area is rejected BEFORE a full decode, while a
+// legitimate webtoon long-strip page (huge in one dimension, modest total pixels) is
+// ACCEPTED — proving the cap is on total area, never per-side.
+func TestValidateImagePage_DimensionCap(t *testing.T) {
+	t.Parallel()
+
+	// 30000x30000 = 900 MP ≫ the 300 MP cap: a decompression bomb, rejected.
+	err := suwayomi.ValidateImagePage(dimensionBombPNG(t, 30000, 30000))
+	if err == nil {
+		t.Fatal("dimension bomb (30000x30000) accepted, want rejection")
+	}
+	if !errors.Is(err, suwayomi.ErrBrokenPage) {
+		t.Errorf("dimension bomb: err %v does not wrap ErrBrokenPage", err)
+	}
+
+	// 800x20000 = 16 MP: a legitimate long-strip page — huge height, well under the
+	// total-area cap. Must be ACCEPTED (a per-side cap would wrongly reject it).
+	if err := suwayomi.ValidateImagePage(tallStripPNG(t, 800, 20000)); err != nil {
+		t.Errorf("legitimate 800x20000 long-strip page rejected: %v", err)
 	}
 }
 
