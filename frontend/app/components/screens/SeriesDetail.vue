@@ -336,7 +336,16 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
  * `.head` is a fixed 64px; its `.head`/`.rail` stay `position: sticky` through
  * this document scroll — untouched here). The card flows; only `.columns`
  * below is bounded. */
+/* A flex column so the three top-level sections — RichSeriesCard/Trackers
+ * block (`.detail__top`) and the Chapters/Sources `.columns` — share ONE
+ * consistent 18px gap. Previously `.detail` was a plain block: `.detail__top`
+ * gave the card↔Trackers gap, but the Trackers↔columns transition had no
+ * defined gap and fell back to stray spacing (the uneven rhythm the owner
+ * flagged). Flex `gap` here is exact and overrides that. */
 .detail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
   padding: 24px 30px 70px;
   background: var(--bg);
   min-height: calc(100dvh - 64px);
@@ -374,6 +383,9 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
   gap: 18px;
   height: calc(100dvh - 64px);
   min-height: 0;
+  /* `.detail` is now a flex column; keep the viewport-fit height from being
+   * compressed by flex-shrink. */
+  flex-shrink: 0;
 }
 
 @media (max-width: 900px) {
