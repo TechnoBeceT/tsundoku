@@ -75,6 +75,15 @@ func (Series) Fields() []ent.Field {
 		// sweep and excluded from source-health. Default false → existing rows
 		// backfill via the column default (no data migration).
 		field.Bool("completed").Default(false),
+		// notify_armed gates new-readable-chapter notifications (internal/notify).
+		// A series notifies only once it is "armed": it becomes armed the first
+		// cycle it is fully caught up (no wanted/downloading chapters remaining),
+		// which suppresses the whole backlog storm of a fresh adopt/import — those
+		// chapters arm the series but never fire. Thereafter genuinely-new readable
+		// chapters notify. Additive/defaulted ⇒ zero-data migration; existing
+		// series start disarmed and are armed once (BackfillArm) at boot so a
+		// caught-up library does not re-announce its entire back-catalogue.
+		field.Bool("notify_armed").Default(false),
 		// metadata_provider_id selects which SeriesProvider supplies the series'
 		// DISPLAY name + cover. Nil = auto (highest-importance provider). NEVER
 		// changes the canonical Series.title (slug/folder/Komga); display name +

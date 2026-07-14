@@ -30,6 +30,9 @@ type PendingTrackPush func(*sql.Selector)
 // ProviderChapter is the predicate function for providerchapter builders.
 type ProviderChapter func(*sql.Selector)
 
+// PushSubscription is the predicate function for pushsubscription builders.
+type PushSubscription func(*sql.Selector)
+
 // Series is the predicate function for series builders.
 type Series func(*sql.Selector)
 

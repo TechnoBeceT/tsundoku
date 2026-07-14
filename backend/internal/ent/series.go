@@ -49,6 +49,8 @@ type Series struct {
 	Monitored bool `json:"monitored,omitempty"`
 	// Completed holds the value of the "completed" field.
 	Completed bool `json:"completed,omitempty"`
+	// NotifyArmed holds the value of the "notify_armed" field.
+	NotifyArmed bool `json:"notify_armed,omitempty"`
 	// MetadataProviderID holds the value of the "metadata_provider_id" field.
 	MetadataProviderID *uuid.UUID `json:"metadata_provider_id,omitempty"`
 	// MetadataSource holds the value of the "metadata_source" field.
@@ -135,7 +137,7 @@ func (*Series) scanValues(columns []string) ([]any, error) {
 			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
 		case series.FieldGenres, series.FieldTags, series.FieldAltTitles, series.FieldAuthors, series.FieldLinks, series.FieldMetadataSource, series.FieldCoverSource:
 			values[i] = new([]byte)
-		case series.FieldMonitored, series.FieldCompleted, series.FieldMetadataLocked:
+		case series.FieldMonitored, series.FieldCompleted, series.FieldNotifyArmed, series.FieldMetadataLocked:
 			values[i] = new(sql.NullBool)
 		case series.FieldYear:
 			values[i] = new(sql.NullInt64)
@@ -259,6 +261,12 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field completed", values[i])
 			} else if value.Valid {
 				_m.Completed = value.Bool
+			}
+		case series.FieldNotifyArmed:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field notify_armed", values[i])
+			} else if value.Valid {
+				_m.NotifyArmed = value.Bool
 			}
 		case series.FieldMetadataProviderID:
 			if value, ok := values[i].(*sql.NullScanner); !ok {
@@ -416,6 +424,9 @@ func (_m *Series) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("completed=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Completed))
+	builder.WriteString(", ")
+	builder.WriteString("notify_armed=")
+	builder.WriteString(fmt.Sprintf("%v", _m.NotifyArmed))
 	builder.WriteString(", ")
 	if v := _m.MetadataProviderID; v != nil {
 		builder.WriteString("metadata_provider_id=")
