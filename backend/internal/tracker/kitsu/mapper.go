@@ -141,13 +141,13 @@ type libraryEntryWriteRequest struct {
 const kitsuDateLayout = time.RFC3339
 
 // kitsuMangaURL builds Kitsu's canonical manga page URL from its slug, or ""
-// when the slug is absent (mirrors internal/metadata/kitsu's own
-// kitsuSeriesURL).
+// when the slug is absent (mirrors Suwayomi-Server's/Komikku's KitsuApi.kt
+// BASE_MANGA_URL, both on kitsu.app).
 func kitsuMangaURL(slug string) string {
 	if slug == "" {
 		return ""
 	}
-	return "https://kitsu.io/manga/" + slug
+	return "https://kitsu.app/manga/" + slug
 }
 
 // toTrackSearchResult maps one Kitsu manga search-page resource into the

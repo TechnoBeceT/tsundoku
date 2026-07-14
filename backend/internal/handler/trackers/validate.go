@@ -43,11 +43,14 @@ func validateQuery(raw string) (string, error) {
 	return q, nil
 }
 
-// OAuthLoginRequest is the POST /api/trackers/:id/login/oauth body. callbackUrl
-// is the FULL callback URL the SPA's own OAuth callback route received —
-// carrying "state" plus either "code" (MAL) or "access_token" (AniList; the
-// SPA turns the browser's URL fragment into a query param before posting
-// here, since a server never sees a fragment).
+// OAuthLoginRequest is the POST /api/trackers/:id/login/oauth body.
+// callbackUrl is the FULL callback URL the SPA's own OAuth callback route
+// received — carrying either "code" (MAL) or "access_token" (AniList,
+// delivered in the URL FRAGMENT). The SPA forwards window.location.href
+// verbatim, fragment intact — it does NOT pre-convert the fragment into a
+// query param — since connect.Service.callbackParams reads both. No "state"
+// param is involved: correlation with the pending login is by the :id path
+// param alone (see internal/tracker/connect's package doc comment).
 type OAuthLoginRequest struct {
 	CallbackURL string `json:"callbackUrl"`
 }

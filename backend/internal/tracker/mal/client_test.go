@@ -15,11 +15,14 @@ import (
 	"github.com/technobecet/tsundoku/internal/tracker/mal"
 )
 
-// TestAuthURL_PKCEPlainShape pins MAL's AuthURL to the auth-code +
-// PKCE-PLAIN shape spec/trackers-oauth-phase3 §4 requires: code_challenge
-// equal to the RETURNED verifier verbatim, NO code_challenge_method
-// parameter at all (MAL defaults to plain when it's absent), and NO client
-// secret anywhere in the URL.
+// TestAuthURL_PKCEPlainShape pins MAL's AuthURL to the REAL auth-code +
+// PKCE-PLAIN shape (re-verified against Suwayomi-Server's/Komikku's
+// MyAnimeListApi.kt authUrl()): code_challenge equal to the RETURNED
+// verifier verbatim, NO code_challenge_method parameter at all (MAL
+// defaults to plain when it's absent), and NO redirect_uri, NO state, NO
+// client secret anywhere in the URL. state/redirectURI are passed in but
+// must be IGNORED (see the Client.AuthURL doc comment: correlation moved to
+// internal/tracker/connect's per-tracker pending stash).
 func TestAuthURL_PKCEPlainShape(t *testing.T) {
 	c := mal.New("test-client-id", nil)
 
@@ -42,11 +45,29 @@ func TestAuthURL_PKCEPlainShape(t *testing.T) {
 	assertQueryParam(t, q, "response_type", "code")
 	assertQueryParam(t, q, "client_id", "test-client-id")
 	assertQueryParam(t, q, "code_challenge", verifier)
-	assertQueryParam(t, q, "state", "csrf-state-456")
-	assertQueryParam(t, q, "redirect_uri", "https://tsundoku.example/auth/tracker/callback")
 
+	if len(q) != 3 {
+		t.Fatalf("AuthURL query = %v, want EXACTLY response_type+client_id+code_challenge (no redirect_uri, no state)", q)
+	}
 	if q.Has("code_challenge_method") {
 		t.Fatalf("AuthURL sent code_challenge_method=%q — PKCE-plain must OMIT this parameter entirely", q.Get("code_challenge_method"))
+	}
+	assertAuthURLDropsStateAndRedirectURI(t, authURL, q)
+}
+
+// assertAuthURLDropsStateAndRedirectURI is the shared "no state, no
+// redirect_uri, no client secret" shape check — extracted so
+// TestAuthURL_PKCEPlainShape stays under the fleet's per-function
+// cyclomatic-complexity budget (mirrors the identically-named helper in
+// internal/tracker/anilist's own client_test.go; kept as a small duplicate
+// rather than a shared import since it is test-only and package-scoped).
+func assertAuthURLDropsStateAndRedirectURI(t *testing.T, authURL string, q url.Values) {
+	t.Helper()
+	if q.Has("state") {
+		t.Fatalf("AuthURL leaked a state param %q — the real endpoint rejects it (the unsupported_grant_type bug)", q.Get("state"))
+	}
+	if q.Has("redirect_uri") {
+		t.Fatalf("AuthURL leaked a redirect_uri param %q — the real endpoint takes no redirect_uri", q.Get("redirect_uri"))
 	}
 	if q.Has("client_secret") || strings.Contains(authURL, "secret") {
 		t.Fatalf("AuthURL leaked a client secret: %q", authURL)
@@ -117,10 +138,12 @@ func (rt *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // TestExchangeCode_RequestBodyShape is the mission-required test: it drives
 // ExchangeCode against a fake token server and asserts the POSTed FORM
-// BODY carries exactly the fields MAL's PKCE-plain auth-code grant needs
-// (client_id, grant_type=authorization_code, code, code_verifier ==
-// pkceVerifier verbatim, redirect_uri) — and that the parsed TokenSet
-// carries access/refresh/expiry correctly.
+// BODY carries EXACTLY the fields MAL's real PKCE-plain auth-code grant
+// needs (client_id, grant_type=authorization_code, code, code_verifier ==
+// pkceVerifier verbatim) — re-verified against Suwayomi-Server's/Komikku's
+// MyAnimeListApi.kt getAccessToken(), neither of which sends redirect_uri
+// or a client_secret — and that the parsed TokenSet carries
+// access/refresh/expiry correctly.
 func TestExchangeCode_RequestBodyShape(t *testing.T) {
 	var gotForm url.Values
 	var gotContentType string
@@ -146,7 +169,12 @@ func TestExchangeCode_RequestBodyShape(t *testing.T) {
 	assertQueryParam(t, gotForm, "grant_type", "authorization_code")
 	assertQueryParam(t, gotForm, "code", "the-auth-code")
 	assertQueryParam(t, gotForm, "code_verifier", "the-pkce-verifier")
-	assertQueryParam(t, gotForm, "redirect_uri", "https://tsundoku.example/auth/tracker/callback")
+	if len(gotForm) != 4 {
+		t.Fatalf("ExchangeCode form = %v, want EXACTLY client_id+grant_type+code+code_verifier (no redirect_uri)", gotForm)
+	}
+	if gotForm.Has("redirect_uri") {
+		t.Fatalf("form leaked a redirect_uri field %q — MAL's token endpoint takes no redirect_uri", gotForm.Get("redirect_uri"))
+	}
 	if gotForm.Has("client_secret") {
 		t.Fatalf("form leaked a client_secret field")
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -17,17 +16,25 @@ import (
 // fakeCodeTracker is an auth-code (MAL-shaped) tracker.Tracker test double
 // — ExchangeCode succeeds deterministically from the code it is given, so
 // tests can assert the exact TokenSet that lands in TrackerConnection.
+// AuthURL always returns the SAME fixed PKCE verifier — mirroring the real
+// mal.Client, which generates a fresh one per call, this fake only needs a
+// deterministic one for tests to assert against.
 type fakeCodeTracker struct {
-	id         int
-	exchangeFn func(ctx context.Context, code, verifier, redirectURI string) (tracker.TokenSet, error)
+	id           int
+	authVerifier string
+	exchangeFn   func(ctx context.Context, code, verifier, redirectURI string) (tracker.TokenSet, error)
 }
 
 func (f *fakeCodeTracker) Key() string      { return "fake-code" }
 func (f *fakeCodeTracker) ID() int          { return f.id }
 func (f *fakeCodeTracker) Name() string     { return "Fake Code Tracker" }
 func (f *fakeCodeTracker) NeedsOAuth() bool { return true }
-func (f *fakeCodeTracker) AuthURL(state, _ string) (string, string, error) {
-	return "https://fake.test/authorize?state=" + state, "verifier-xyz", nil
+func (f *fakeCodeTracker) AuthURL(_, _ string) (string, string, error) {
+	verifier := f.authVerifier
+	if verifier == "" {
+		verifier = "verifier-xyz"
+	}
+	return "https://fake.test/authorize", verifier, nil
 }
 func (f *fakeCodeTracker) ExchangeCode(ctx context.Context, code, verifier, redirectURI string) (tracker.TokenSet, error) {
 	if f.exchangeFn != nil {
@@ -64,8 +71,8 @@ func (f *fakeImplicitTracker) Key() string      { return "fake-implicit" }
 func (f *fakeImplicitTracker) ID() int          { return f.id }
 func (f *fakeImplicitTracker) Name() string     { return "Fake Implicit Tracker" }
 func (f *fakeImplicitTracker) NeedsOAuth() bool { return true }
-func (f *fakeImplicitTracker) AuthURL(state, _ string) (string, string, error) {
-	return "https://fake.test/authorize?state=" + state, "", nil
+func (f *fakeImplicitTracker) AuthURL(_, _ string) (string, string, error) {
+	return "https://fake.test/authorize", "", nil
 }
 func (f *fakeImplicitTracker) ExchangeCode(context.Context, string, string, string) (tracker.TokenSet, error) {
 	return tracker.TokenSet{}, tracker.ErrImplicitFlow
@@ -104,22 +111,6 @@ var (
 	_ tracker.AccountInfoProvider    = (*fakeImplicitTracker)(nil)
 )
 
-// stateFromAuthURL extracts the "state" query parameter AuthURL embedded in
-// its returned authorize URL — tests use this to build a realistic callback
-// URL for CompleteOAuth without reaching into the service's internals.
-func stateFromAuthURL(t *testing.T, authURL string) string {
-	t.Helper()
-	u, err := url.Parse(authURL)
-	if err != nil {
-		t.Fatalf("parse authURL %q: %v", authURL, err)
-	}
-	state := u.Query().Get("state")
-	if state == "" {
-		t.Fatalf("authURL %q carries no state", authURL)
-	}
-	return state
-}
-
 const (
 	fakeCodeID     = 101
 	fakeImplicitID = 102
@@ -146,7 +137,7 @@ func TestAuthURL_UnknownTracker(t *testing.T) {
 
 // TestAuthURL_PublicURLNotConfigured confirms AuthURL fails closed when the
 // instance has no public URL configured — the whole subsystem stays
-// dormant per spec §2 rather than building a redirect_uri of "".
+// dormant per spec §2.
 func TestAuthURL_PublicURLNotConfigured(t *testing.T) {
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "")
@@ -158,19 +149,19 @@ func TestAuthURL_PublicURLNotConfigured(t *testing.T) {
 
 // TestCompleteOAuth_CodeFlow_CreatesConnection drives the full auth-code
 // round-trip (AuthURL → callback → CompleteOAuth) and asserts a
-// TrackerConnection row lands with the exchanged access token.
+// TrackerConnection row lands with the exchanged access token. The callback
+// URL carries NO state parameter at all — correlation is by trackerID alone
+// (see the connect package doc comment).
 func TestCompleteOAuth_CodeFlow_CreatesConnection(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	authURL, err := svc.AuthURL(fakeCodeID)
-	if err != nil {
+	if _, err := svc.AuthURL(fakeCodeID); err != nil {
 		t.Fatalf("AuthURL: %v", err)
 	}
-	state := stateFromAuthURL(t, authURL)
 
-	callback := "https://tsundoku.example/auth/tracker/callback?code=abc123&state=" + state
+	callback := "https://tsundoku.example/auth/tracker/callback?code=abc123"
 	if err := svc.CompleteOAuth(ctx, fakeCodeID, callback); err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
 	}
@@ -186,38 +177,66 @@ func TestCompleteOAuth_CodeFlow_CreatesConnection(t *testing.T) {
 	}
 }
 
+// TestCompleteOAuth_CodeFlow_VerifierCorrelatedByTrackerID confirms the PKCE
+// verifier AuthURL stashed for a tracker is the EXACT one ExchangeCode
+// receives back — the whole point of re-keying the pending stash by tracker
+// id instead of a returned OAuth state.
+func TestCompleteOAuth_CodeFlow_VerifierCorrelatedByTrackerID(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	var gotVerifier string
+	code := &fakeCodeTracker{
+		id:           fakeCodeID,
+		authVerifier: "the-real-verifier",
+		exchangeFn: func(_ context.Context, code, verifier, _ string) (tracker.TokenSet, error) {
+			gotVerifier = verifier
+			return tracker.TokenSet{Access: "access-" + code}, nil
+		},
+	}
+	reg := tracker.NewRegistry(code)
+	svc := connect.NewService(client, reg, "https://tsundoku.example")
+
+	if _, err := svc.AuthURL(fakeCodeID); err != nil {
+		t.Fatalf("AuthURL: %v", err)
+	}
+	callback := "https://tsundoku.example/auth/tracker/callback?code=abc123"
+	if err := svc.CompleteOAuth(ctx, fakeCodeID, callback); err != nil {
+		t.Fatalf("CompleteOAuth: %v", err)
+	}
+	if gotVerifier != "the-real-verifier" {
+		t.Fatalf("ExchangeCode verifier = %q, want the-real-verifier (the one AuthURL stashed for this tracker id)", gotVerifier)
+	}
+}
+
 // TestCompleteOAuth_ImplicitFlow_CreatesConnectionWithAccountInfo drives the
 // implicit-grant round-trip for both callback shapes CompleteOAuth must
 // accept and asserts the row carries the access token (extracted by
 // TokenFromImplicit) PLUS the captured username/score-format
-// (AccountInfoProvider) in each case:
-//   - "query": access_token/state in the QUERY string — not how a real
-//     AniList redirect arrives, but callbackParams reads the query first,
-//     so this shape must keep working unchanged as a regression guard.
-//   - "fragment": access_token/state in the URL FRAGMENT
-//     (`#access_token=…&state=…`) — the REAL shape AniList's redirect uses;
-//     the frontend forwards the browser's full `window.location.href`
-//     (fragment intact) verbatim, so this is the exact callback the backend
-//     receives in production. Before the query+fragment merge fix,
-//     u.Query() saw an empty query (everything was past the "#"), so the
-//     state lookup missed and this failed with ErrInvalidState — the
-//     reported AniList-login-is-broken bug.
+// (AccountInfoProvider) in each case — NEITHER shape carries a state
+// parameter, since correlation is by trackerID alone:
+//   - "query": access_token in the QUERY string — not how a real AniList
+//     redirect arrives, but callbackParams reads the query first, so this
+//     shape must keep working unchanged as a regression guard.
+//   - "fragment": access_token in the URL FRAGMENT (`#access_token=…`) —
+//     the REAL shape AniList's redirect uses; the frontend forwards the
+//     browser's full `window.location.href` (fragment intact) verbatim, so
+//     this is the exact callback the backend receives in production.
+//     Before the query+fragment merge fix, u.Query() saw an empty query
+//     (everything was past the "#"), so this failed outright — the
+//     originally-reported AniList-login-is-broken bug.
 func TestCompleteOAuth_ImplicitFlow_CreatesConnectionWithAccountInfo(t *testing.T) {
 	tests := []struct {
-		name        string
-		callbackFor func(state string) string
+		name     string
+		callback string
 	}{
 		{
-			name: "query",
-			callbackFor: func(state string) string {
-				return "https://tsundoku.example/auth/tracker/callback?access_token=frag-token-xyz&state=" + state
-			},
+			name:     "query",
+			callback: "https://tsundoku.example/auth/tracker/callback?access_token=frag-token-xyz",
 		},
 		{
-			name: "fragment",
-			callbackFor: func(state string) string {
-				return "https://tsundoku.example/auth/tracker/callback#access_token=frag-token-xyz&token_type=Bearer&expires_in=31536000&state=" + state
-			},
+			name:     "fragment",
+			callback: "https://tsundoku.example/auth/tracker/callback#access_token=frag-token-xyz&token_type=Bearer&expires_in=31536000",
 		},
 	}
 
@@ -227,14 +246,11 @@ func TestCompleteOAuth_ImplicitFlow_CreatesConnectionWithAccountInfo(t *testing.
 			client := testdb.New(t)
 			svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-			authURL, err := svc.AuthURL(fakeImplicitID)
-			if err != nil {
+			if _, err := svc.AuthURL(fakeImplicitID); err != nil {
 				t.Fatalf("AuthURL: %v", err)
 			}
-			state := stateFromAuthURL(t, authURL)
 
-			callback := tt.callbackFor(state)
-			if err := svc.CompleteOAuth(ctx, fakeImplicitID, callback); err != nil {
+			if err := svc.CompleteOAuth(ctx, fakeImplicitID, tt.callback); err != nil {
 				t.Fatalf("CompleteOAuth: %v", err)
 			}
 
@@ -254,82 +270,64 @@ func TestCompleteOAuth_ImplicitFlow_CreatesConnectionWithAccountInfo(t *testing.
 	}
 }
 
-// TestCompleteOAuth_FragmentShape_InvalidState confirms a fragment-carried
-// state that was never stashed (or is simply wrong) is still rejected —
-// reading the fragment must not weaken the CSRF/session-correlation check,
-// it only widens WHERE a valid state can be found.
-func TestCompleteOAuth_FragmentShape_InvalidState(t *testing.T) {
-	client := testdb.New(t)
-	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
+// TestCompleteOAuth_NoPendingLogin_Fails confirms a callback for a tracker
+// that never had AuthURL called (so nothing is stashed under its id) is
+// rejected — the trackerID-keyed equivalent of the old "invalid state"
+// check. Exercised for BOTH callback shapes (query and fragment) since a
+// present-but-irrelevant access_token/code must not paper over a missing
+// pending login.
+func TestCompleteOAuth_NoPendingLogin_Fails(t *testing.T) {
+	tests := []struct {
+		name     string
+		callback string
+	}{
+		{name: "query", callback: "https://tsundoku.example/auth/tracker/callback?access_token=x"},
+		{name: "fragment", callback: "https://tsundoku.example/auth/tracker/callback#access_token=x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := testdb.New(t)
+			svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	callback := "https://tsundoku.example/auth/tracker/callback#access_token=frag-token-xyz&state=never-stashed"
-	err := svc.CompleteOAuth(context.Background(), fakeImplicitID, callback)
-	if !errors.Is(err, connect.ErrInvalidState) {
-		t.Fatalf("CompleteOAuth with an unknown fragment state: err = %v, want connect.ErrInvalidState", err)
+			err := svc.CompleteOAuth(context.Background(), fakeImplicitID, tt.callback)
+			if !errors.Is(err, connect.ErrInvalidState) {
+				t.Fatalf("CompleteOAuth with no pending login: err = %v, want connect.ErrInvalidState", err)
+			}
+		})
 	}
 }
 
-// TestCompleteOAuth_FragmentShape_MissingState confirms a fragment that
-// carries an access_token but no state at all is rejected the same way a
-// query-only callback missing state is — callbackParams merges the
-// fragment in, it doesn't invent a state that isn't there.
-func TestCompleteOAuth_FragmentShape_MissingState(t *testing.T) {
+// TestCompleteOAuth_CrossTrackerCallback_Fails confirms a pending login
+// stashed for ONE tracker can never be consumed by a callback naming a
+// DIFFERENT tracker id — structurally guaranteed by keying the stash by
+// tracker id (there is nothing in the callback URL itself that could be
+// replayed across trackers, unlike the old shared "state" string).
+func TestCompleteOAuth_CrossTrackerCallback_Fails(t *testing.T) {
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	callback := "https://tsundoku.example/auth/tracker/callback#access_token=frag-token-xyz"
-	err := svc.CompleteOAuth(context.Background(), fakeImplicitID, callback)
-	if !errors.Is(err, connect.ErrInvalidState) {
-		t.Fatalf("CompleteOAuth with a fragment carrying no state: err = %v, want connect.ErrInvalidState", err)
-	}
-}
-
-// TestCompleteOAuth_InvalidState confirms a callback whose state was never
-// stashed (or already consumed) is rejected.
-func TestCompleteOAuth_InvalidState(t *testing.T) {
-	client := testdb.New(t)
-	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
-
-	callback := "https://tsundoku.example/auth/tracker/callback?code=abc&state=never-stashed"
-	if err := svc.CompleteOAuth(context.Background(), fakeCodeID, callback); !errors.Is(err, connect.ErrInvalidState) {
-		t.Fatalf("CompleteOAuth with an unknown state: err = %v, want connect.ErrInvalidState", err)
-	}
-}
-
-// TestCompleteOAuth_StateTrackerMismatch confirms a state stashed for one
-// tracker cannot be replayed against a DIFFERENT tracker's callback route —
-// the CSRF-correlation check failing closed even with a technically-valid
-// (but wrong-tracker) state.
-func TestCompleteOAuth_StateTrackerMismatch(t *testing.T) {
-	client := testdb.New(t)
-	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
-
-	authURL, err := svc.AuthURL(fakeCodeID)
-	if err != nil {
+	if _, err := svc.AuthURL(fakeCodeID); err != nil {
 		t.Fatalf("AuthURL: %v", err)
 	}
-	state := stateFromAuthURL(t, authURL)
 
-	callback := "https://tsundoku.example/auth/tracker/callback?access_token=x&state=" + state
+	callback := "https://tsundoku.example/auth/tracker/callback?access_token=x"
 	if err := svc.CompleteOAuth(context.Background(), fakeImplicitID, callback); !errors.Is(err, connect.ErrInvalidState) {
-		t.Fatalf("CompleteOAuth with a cross-tracker state: err = %v, want connect.ErrInvalidState", err)
+		t.Fatalf("CompleteOAuth against a DIFFERENT tracker's pending login: err = %v, want connect.ErrInvalidState", err)
 	}
 }
 
-// TestCompleteOAuth_ReplayFails confirms a state can only complete ONE
-// login — a second CompleteOAuth call with the same callback fails, since
-// the pending stash consumes the state on first use.
+// TestCompleteOAuth_ReplayFails confirms a pending login can only complete
+// ONE login — a second CompleteOAuth call for the same tracker fails, since
+// the pending stash consumes the entry on first use.
 func TestCompleteOAuth_ReplayFails(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	authURL, err := svc.AuthURL(fakeCodeID)
-	if err != nil {
+	if _, err := svc.AuthURL(fakeCodeID); err != nil {
 		t.Fatalf("AuthURL: %v", err)
 	}
-	state := stateFromAuthURL(t, authURL)
-	callback := "https://tsundoku.example/auth/tracker/callback?code=abc&state=" + state
+	callback := "https://tsundoku.example/auth/tracker/callback?code=abc"
 
 	if err := svc.CompleteOAuth(ctx, fakeCodeID, callback); err != nil {
 		t.Fatalf("first CompleteOAuth: %v", err)
@@ -345,13 +343,11 @@ func TestCompleteOAuth_MissingCode(t *testing.T) {
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	authURL, err := svc.AuthURL(fakeCodeID)
-	if err != nil {
+	if _, err := svc.AuthURL(fakeCodeID); err != nil {
 		t.Fatalf("AuthURL: %v", err)
 	}
-	state := stateFromAuthURL(t, authURL)
 
-	callback := "https://tsundoku.example/auth/tracker/callback?state=" + state
+	callback := "https://tsundoku.example/auth/tracker/callback"
 	if err := svc.CompleteOAuth(context.Background(), fakeCodeID, callback); !errors.Is(err, connect.ErrMissingCode) {
 		t.Fatalf("CompleteOAuth with no code: err = %v, want connect.ErrMissingCode", err)
 	}
@@ -363,13 +359,11 @@ func TestCompleteOAuth_MissingToken(t *testing.T) {
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	authURL, err := svc.AuthURL(fakeImplicitID)
-	if err != nil {
+	if _, err := svc.AuthURL(fakeImplicitID); err != nil {
 		t.Fatalf("AuthURL: %v", err)
 	}
-	state := stateFromAuthURL(t, authURL)
 
-	callback := "https://tsundoku.example/auth/tracker/callback?state=" + state
+	callback := "https://tsundoku.example/auth/tracker/callback"
 	if err := svc.CompleteOAuth(context.Background(), fakeImplicitID, callback); !errors.Is(err, connect.ErrMissingToken) {
 		t.Fatalf("CompleteOAuth with no access_token: err = %v, want connect.ErrMissingToken", err)
 	}
@@ -377,19 +371,19 @@ func TestCompleteOAuth_MissingToken(t *testing.T) {
 
 // TestUpsertConnection_SecondLoginUpdatesRow confirms a second login for the
 // SAME tracker overwrites the existing TrackerConnection row's token rather
-// than creating a duplicate — exactly one row per tracker_id survives.
+// than creating a duplicate — exactly one row per tracker_id survives. Each
+// login re-runs AuthURL, which REPLACES any earlier pending entry for that
+// tracker id (see pendingStash.Put's doc comment).
 func TestUpsertConnection_SecondLoginUpdatesRow(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
 	for _, code := range []string{"first-code", "second-code"} {
-		authURL, err := svc.AuthURL(fakeCodeID)
-		if err != nil {
+		if _, err := svc.AuthURL(fakeCodeID); err != nil {
 			t.Fatalf("AuthURL: %v", err)
 		}
-		state := stateFromAuthURL(t, authURL)
-		callback := "https://tsundoku.example/auth/tracker/callback?code=" + code + "&state=" + state
+		callback := "https://tsundoku.example/auth/tracker/callback?code=" + code
 		if err := svc.CompleteOAuth(ctx, fakeCodeID, callback); err != nil {
 			t.Fatalf("CompleteOAuth(%s): %v", code, err)
 		}
@@ -416,12 +410,10 @@ func TestLogout_DeletesConnection(t *testing.T) {
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	authURL, err := svc.AuthURL(fakeCodeID)
-	if err != nil {
+	if _, err := svc.AuthURL(fakeCodeID); err != nil {
 		t.Fatalf("AuthURL: %v", err)
 	}
-	state := stateFromAuthURL(t, authURL)
-	callback := "https://tsundoku.example/auth/tracker/callback?code=abc&state=" + state
+	callback := "https://tsundoku.example/auth/tracker/callback?code=abc"
 	if err := svc.CompleteOAuth(ctx, fakeCodeID, callback); err != nil {
 		t.Fatalf("CompleteOAuth: %v", err)
 	}

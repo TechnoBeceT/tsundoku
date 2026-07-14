@@ -15,10 +15,14 @@ import (
 	"github.com/technobecet/tsundoku/internal/tracker/anilist"
 )
 
-// TestAuthURL_ImplicitShape pins AniList's AuthURL to the implicit-grant
-// shape spec/trackers-oauth-phase3 §4 requires: response_type=token (no
-// PKCE — an empty verifier), client_id/redirect_uri/state all present, and
-// NO client secret anywhere in the URL.
+// TestAuthURL_ImplicitShape pins AniList's AuthURL to the REAL implicit-
+// grant shape (re-verified against Suwayomi-Server's/Komikku's
+// AnilistApi.kt authUrl()): response_type=token (no PKCE — an empty
+// verifier), client_id present, and — the "unsupported_grant_type" login
+// bug this fixes — NO redirect_uri, NO state, and NO client secret
+// anywhere in the URL. state/redirectURI are passed in but must be IGNORED
+// (see the Client.AuthURL doc comment: correlation moved to
+// internal/tracker/connect's per-tracker pending stash).
 func TestAuthURL_ImplicitShape(t *testing.T) {
 	c := anilist.New("test-client-id", nil)
 
@@ -40,14 +44,29 @@ func TestAuthURL_ImplicitShape(t *testing.T) {
 	q := u.Query()
 	assertQueryParam(t, q, "client_id", "test-client-id")
 	assertQueryParam(t, q, "response_type", "token")
-	assertQueryParam(t, q, "state", "csrf-state-123")
-	assertQueryParam(t, q, "redirect_uri", "https://tsundoku.example/auth/tracker/callback")
-
-	if q.Has("client_secret") || strings.Contains(authURL, "secret") {
-		t.Fatalf("AuthURL leaked a client secret: %q", authURL)
+	if len(q) != 2 {
+		t.Fatalf("AuthURL query = %v, want EXACTLY client_id+response_type (no redirect_uri, no state)", q)
 	}
 	if q.Has("code_challenge") {
 		t.Fatalf("AuthURL carries a PKCE code_challenge — AniList's implicit flow must not use PKCE")
+	}
+	assertAuthURLDropsStateAndRedirectURI(t, authURL, q)
+}
+
+// assertAuthURLDropsStateAndRedirectURI is the shared "no state, no
+// redirect_uri, no client secret" shape check both AniList's and MAL's
+// AuthURL tests need — extracted so the driving tests stay under the
+// fleet's per-function cyclomatic-complexity budget.
+func assertAuthURLDropsStateAndRedirectURI(t *testing.T, authURL string, q url.Values) {
+	t.Helper()
+	if q.Has("state") {
+		t.Fatalf("AuthURL leaked a state param %q — the real endpoint rejects it (the unsupported_grant_type bug)", q.Get("state"))
+	}
+	if q.Has("redirect_uri") {
+		t.Fatalf("AuthURL leaked a redirect_uri param %q — the real endpoint takes no redirect_uri", q.Get("redirect_uri"))
+	}
+	if q.Has("client_secret") || strings.Contains(authURL, "secret") {
+		t.Fatalf("AuthURL leaked a client secret: %q", authURL)
 	}
 }
 

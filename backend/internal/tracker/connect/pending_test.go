@@ -8,45 +8,42 @@ import (
 )
 
 // TestPendingStash_PutTakeRoundTrips confirms a stashed login is retrievable
-// exactly once with its tracker id and PKCE verifier intact.
+// exactly once with its PKCE verifier intact.
 func TestPendingStash_PutTakeRoundTrips(t *testing.T) {
 	s := newPendingStash()
-	s.Put("state-1", pendingLogin{TrackerID: 1, PKCEVerifier: "verifier-1"})
+	s.Put(1, pendingLogin{PKCEVerifier: "verifier-1"})
 
-	got, ok := s.Take("state-1")
+	got, ok := s.Take(1)
 	if !ok {
-		t.Fatal("Take(state-1) = false, want true")
+		t.Fatal("Take(1) = false, want true")
 	}
-	if got.TrackerID != 1 || got.PKCEVerifier != "verifier-1" {
-		t.Fatalf("Take(state-1) = %+v, want TrackerID=1 PKCEVerifier=verifier-1", got)
+	if got.PKCEVerifier != "verifier-1" {
+		t.Fatalf("Take(1) = %+v, want PKCEVerifier=verifier-1", got)
 	}
 }
 
-// TestPendingStash_TakeIsSingleUse confirms a state can only be consumed
-// ONCE — a replayed callback with the same state must fail, closing the
-// CSRF-replay window a reusable entry would leave open.
+// TestPendingStash_TakeIsSingleUse confirms a tracker id can only be
+// consumed ONCE — a replayed callback for the same tracker must fail,
+// closing the replay window a reusable entry would leave open.
 func TestPendingStash_TakeIsSingleUse(t *testing.T) {
 	s := newPendingStash()
-	s.Put("state-1", pendingLogin{TrackerID: 1})
+	s.Put(1, pendingLogin{})
 
-	if _, ok := s.Take("state-1"); !ok {
-		t.Fatal("first Take(state-1) = false, want true")
+	if _, ok := s.Take(1); !ok {
+		t.Fatal("first Take(1) = false, want true")
 	}
-	if _, ok := s.Take("state-1"); ok {
-		t.Fatal("second Take(state-1) = true, want false (single-use)")
+	if _, ok := s.Take(1); ok {
+		t.Fatal("second Take(1) = true, want false (single-use)")
 	}
 }
 
-// TestPendingStash_TakeUnknownState confirms an unrecognized state (never
-// stashed, or expired+swept) is reported as not-found, never a zero-value
-// pendingLogin masquerading as valid.
-func TestPendingStash_TakeUnknownState(t *testing.T) {
+// TestPendingStash_TakeUnknownTracker confirms an unrecognized tracker id
+// (never stashed, or expired+swept) is reported as not-found, never a
+// zero-value pendingLogin masquerading as valid.
+func TestPendingStash_TakeUnknownTracker(t *testing.T) {
 	s := newPendingStash()
-	if _, ok := s.Take("never-stashed"); ok {
-		t.Fatal("Take(never-stashed) = true, want false")
-	}
-	if _, ok := s.Take(""); ok {
-		t.Fatal("Take(\"\") = true, want false")
+	if _, ok := s.Take(9999); ok {
+		t.Fatal("Take(9999) = true, want false")
 	}
 }
 
@@ -57,10 +54,28 @@ func TestPendingStash_TakeUnknownState(t *testing.T) {
 func TestPendingStash_ExpiredEntryIsRejected(t *testing.T) {
 	s := newPendingStash()
 	// Bypass Put's TTL stamping to inject an already-expired entry directly.
-	s.byKey["state-1"] = pendingLogin{TrackerID: 1, ExpiresAt: time.Now().Add(-time.Minute)}
+	s.byKey[1] = pendingLogin{ExpiresAt: time.Now().Add(-time.Minute)}
 
-	if _, ok := s.Take("state-1"); ok {
-		t.Fatal("Take(state-1) on an expired entry = true, want false")
+	if _, ok := s.Take(1); ok {
+		t.Fatal("Take(1) on an expired entry = true, want false")
+	}
+}
+
+// TestPendingStash_PutReplacesEarlierPending confirms a fresh AuthURL for a
+// tracker that already has a pending login supersedes it — only the LATEST
+// verifier is honored, mirroring the reference implementations' single
+// per-tracker verifier.
+func TestPendingStash_PutReplacesEarlierPending(t *testing.T) {
+	s := newPendingStash()
+	s.Put(1, pendingLogin{PKCEVerifier: "first"})
+	s.Put(1, pendingLogin{PKCEVerifier: "second"})
+
+	got, ok := s.Take(1)
+	if !ok {
+		t.Fatal("Take(1) = false, want true")
+	}
+	if got.PKCEVerifier != "second" {
+		t.Fatalf("Take(1).PKCEVerifier = %q, want second (the latest AuthURL wins)", got.PKCEVerifier)
 	}
 }
 
@@ -72,21 +87,21 @@ func TestPendingStash_NotAGlobal(t *testing.T) {
 	a := newPendingStash()
 	b := newPendingStash()
 
-	a.Put("shared-looking-state", pendingLogin{TrackerID: tracker1})
-	if _, ok := b.Take("shared-looking-state"); ok {
+	a.Put(1, pendingLogin{PKCEVerifier: "a-verifier"})
+	if _, ok := b.Take(1); ok {
 		t.Fatal("stash b saw stash a's entry — the stash is leaking through shared/global state")
 	}
 	// a's own entry is still there, untouched by b's failed Take.
-	if _, ok := a.Take("shared-looking-state"); !ok {
+	if _, ok := a.Take(1); !ok {
 		t.Fatal("stash a lost its own entry after an unrelated Take on stash b")
 	}
 }
 
 // TestPendingStash_ConcurrentLoginsDontCollide drives many concurrent
-// Put/Take pairs against ONE stash with distinct random-looking states
-// (mirroring AuthURL's real crypto/rand state generation) and asserts every
-// login gets back exactly its own PKCEVerifier — no cross-talk between
-// concurrent logins sharing the one stash a real Service instance uses.
+// Put/Take pairs against ONE stash with distinct tracker ids and asserts
+// every login gets back exactly its own PKCEVerifier — no cross-talk
+// between concurrent logins for different trackers sharing the one stash a
+// real Service instance uses.
 func TestPendingStash_ConcurrentLoginsDontCollide(t *testing.T) {
 	s := newPendingStash()
 	const n = 50
@@ -97,15 +112,14 @@ func TestPendingStash_ConcurrentLoginsDontCollide(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			state := stateFor(i)
 			verifier := verifierFor(i)
-			s.Put(state, pendingLogin{TrackerID: i, PKCEVerifier: verifier})
-			got, ok := s.Take(state)
+			s.Put(i, pendingLogin{PKCEVerifier: verifier})
+			got, ok := s.Take(i)
 			if !ok {
-				errs <- "Take reported not-found for its own just-stashed state"
+				errs <- "Take reported not-found for its own just-stashed tracker id"
 				return
 			}
-			if got.TrackerID != i || got.PKCEVerifier != verifier {
+			if got.PKCEVerifier != verifier {
 				errs <- "Take returned a DIFFERENT login's data — collision"
 			}
 		}(i)
@@ -117,7 +131,4 @@ func TestPendingStash_ConcurrentLoginsDontCollide(t *testing.T) {
 	}
 }
 
-const tracker1 = 1
-
-func stateFor(i int) string    { return "state-" + strconv.Itoa(i) }
 func verifierFor(i int) string { return "verifier-" + strconv.Itoa(i) }

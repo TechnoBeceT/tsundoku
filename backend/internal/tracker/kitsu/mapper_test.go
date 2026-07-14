@@ -10,11 +10,25 @@ import (
 
 // TestKitsuMangaURL covers the slug-present and slug-absent cases.
 func TestKitsuMangaURL(t *testing.T) {
-	if got := kitsuMangaURL("solo-leveling"); got != "https://kitsu.io/manga/solo-leveling" {
+	if got := kitsuMangaURL("solo-leveling"); got != "https://kitsu.app/manga/solo-leveling" {
 		t.Fatalf("kitsuMangaURL(slug) = %q", got)
 	}
 	if got := kitsuMangaURL(""); got != "" {
 		t.Fatalf("kitsuMangaURL(\"\") = %q, want \"\"", got)
+	}
+}
+
+// TestKitsuDomainConstants pins the base/token endpoints to kitsu.app —
+// kitsu.io is a dead domain (the reported "Kitsu: dead domain" bug) since
+// Kitsu's migration; this is a regression guard against the old host
+// creeping back in.
+func TestKitsuDomainConstants(t *testing.T) {
+	if apiBaseURL != "https://kitsu.app/api/edge" {
+		t.Fatalf("apiBaseURL = %q, want https://kitsu.app/api/edge", apiBaseURL)
+	}
+	//nolint:gosec // tokenURL is Kitsu's public OAuth token ENDPOINT URL, not a credential (mirrors client.go's own nolint on the constant).
+	if tokenURL != "https://kitsu.app/api/oauth/token" {
+		t.Fatalf("tokenURL = %q, want https://kitsu.app/api/oauth/token", tokenURL)
 	}
 }
 
@@ -34,7 +48,7 @@ func TestToTrackSearchResult_MapsFields(t *testing.T) {
 	}
 	got := toTrackSearchResult(d)
 	if got.RemoteID != "7224" || got.Title != "Solo Leveling" || got.TotalChapters != 179 ||
-		got.URL != "https://kitsu.io/manga/solo-leveling" || got.CoverURL != d.Attributes.PosterImage.Original ||
+		got.URL != "https://kitsu.app/manga/solo-leveling" || got.CoverURL != d.Attributes.PosterImage.Original ||
 		got.Status != "finished" {
 		t.Fatalf("toTrackSearchResult mismatch: %+v", got)
 	}

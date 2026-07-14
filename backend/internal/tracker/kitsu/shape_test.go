@@ -1,7 +1,7 @@
 //go:build tracker_shape
 
-// This file hits the REAL https://kitsu.io/api/oauth/token and
-// https://kitsu.io/api/edge tracker-sync surface. Build-tagged out of the
+// This file hits the REAL https://kitsu.app/api/oauth/token and
+// https://kitsu.app/api/edge tracker-sync surface. Build-tagged out of the
 // default `go test ./...` gate (mirrors internal/tracker/mal's
 // *_shape convention) and NEVER run in CI — slice 3b is DORMANT/
 // credential-gated (no owner Kitsu account tonight, spec §6). The OWNER

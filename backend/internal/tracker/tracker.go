@@ -161,21 +161,32 @@ type Tracker interface {
 	// false; such a tracker instead implements CredentialLogin).
 	NeedsOAuth() bool
 
-	// AuthURL builds the provider's authorize URL for a fresh login,
-	// carrying state (CSRF/session correlation) and redirectURI (this
-	// instance's callback route). It returns the URL to send the owner's
-	// browser to, plus a PKCE code verifier for trackers that use PKCE
-	// (MAL) — empty for trackers that don't (AniList's implicit flow has no
-	// PKCE). Returns ErrClientIDNotConfigured when this tracker's app
-	// client-id is blank (fail-closed — the "blank disables this tracker"
-	// pattern).
+	// AuthURL builds the provider's authorize URL for a fresh login. It
+	// returns the URL to send the owner's browser to, plus a PKCE code
+	// verifier for trackers that use PKCE (MAL) — empty for trackers that
+	// don't (AniList's implicit flow has no PKCE). Returns
+	// ErrClientIDNotConfigured when this tracker's app client-id is blank
+	// (fail-closed — the "blank disables this tracker" pattern).
+	//
+	// state/redirectURI are UNUSED by every concrete implementation as of
+	// the OAuth-alignment fix: AniList's and MAL's REAL authorize endpoints
+	// accept neither (confirmed against the proven reference
+	// implementations Suwayomi-Server and Komikku both ship — sending
+	// either produced AniList's "unsupported_grant_type" error). The two
+	// parameters are kept on the interface only so a caller-side signature
+	// change doesn't ripple through every fake across the tree (an
+	// established INTERFACE FOOTGUN this codebase avoids elsewhere too);
+	// internal/tracker/connect no longer generates a CSRF state at all —
+	// it correlates a pending login by TRACKER ID instead (see that
+	// package's doc comment).
 	AuthURL(state, redirectURI string) (authURL string, pkceVerifier string, err error)
-	// ExchangeCode exchanges an OAuth authorization code (+ PKCE verifier +
-	// the exact redirectURI used in AuthURL, which the token endpoint
-	// re-validates) for a TokenSet. Trackers that use the OAuth IMPLICIT
-	// grant (AniList) have no server-exchangeable code and return
-	// ErrImplicitFlow — such a tracker instead implements
-	// ImplicitTokenExtractor.
+	// ExchangeCode exchanges an OAuth authorization code (+ PKCE verifier)
+	// for a TokenSet. redirectURI is likewise UNUSED (MAL's real token
+	// endpoint requires no redirect_uri — see mal.Client.ExchangeCode's
+	// doc comment) and kept only for the same interface-stability reason
+	// as AuthURL's. Trackers that use the OAuth IMPLICIT grant (AniList)
+	// have no server-exchangeable code and return ErrImplicitFlow — such a
+	// tracker instead implements ImplicitTokenExtractor.
 	ExchangeCode(ctx context.Context, code, pkceVerifier, redirectURI string) (TokenSet, error)
 	// Refresh mints a fresh TokenSet from a refresh token. A tracker with
 	// no refresh grant (AniList) always returns ErrNoRefresh.

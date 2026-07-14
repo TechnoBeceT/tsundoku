@@ -169,7 +169,7 @@ func TestClient_Search_Parses(t *testing.T) {
 	if got.RemoteID != "7224" || got.Title != "Solo Leveling" || got.TotalChapters != 179 {
 		t.Fatalf("Search result = %+v", got)
 	}
-	if got.URL != "https://kitsu.io/manga/solo-leveling" {
+	if got.URL != "https://kitsu.app/manga/solo-leveling" {
 		t.Fatalf("Search result URL = %q", got.URL)
 	}
 }

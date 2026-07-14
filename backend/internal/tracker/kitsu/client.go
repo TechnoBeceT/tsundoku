@@ -1,5 +1,5 @@
 // Package kitsu implements tracker.Tracker against Kitsu's public JSON:API
-// (kitsu.io/api/edge) — the tracker-SYNC half (credential login, search,
+// (kitsu.app/api/edge) — the tracker-SYNC half (credential login, search,
 // get/save/update/delete a reading-progress library-entry) that needs an
 // account. This is a SEPARATE client from internal/metadata/kitsu, which
 // covers Kitsu's public METADATA-read half (no login at all); the two share
@@ -40,8 +40,8 @@ import (
 )
 
 const (
-	apiBaseURL = "https://kitsu.io/api/edge"
-	tokenURL   = "https://kitsu.io/api/oauth/token" //nolint:gosec // Kitsu's public OAuth token ENDPOINT URL, not a credential
+	apiBaseURL = "https://kitsu.app/api/edge"
+	tokenURL   = "https://kitsu.app/api/oauth/token" //nolint:gosec // Kitsu's public OAuth token ENDPOINT URL, not a credential
 
 	// jsonAPIMediaType is the content type Kitsu's JSON:API documents for
 	// every request/response body.
@@ -51,9 +51,13 @@ const (
 	// credentials for the password grant — see the package doc comment.
 	// They are NOT a per-owner secret; if Kitsu ever rotates them, update
 	// here (never move to config.TrackerConfig, which holds per-instance
-	// app registrations, not a shared public constant).
-	clientID     = "dd031a29e5f92c5cc1de1874b8c95cf6be4a05f6c30ec6df7de53a9d5f5c3dcc"
-	clientSecret = "54d7307928f63414defd96399fc31ba847961ce3d7f694e8b6d3b0c22f24df80" //nolint:gosec // public native-client credential, see doc comment
+	// app registrations, not a shared public constant). Values re-confirmed
+	// against Suwayomi-Server's KitsuApi.kt and Komikku's own KitsuApi.kt —
+	// both proven-working reference implementations ship this exact pair;
+	// Tsundoku's prior constants were a mistyped variant that Kitsu's token
+	// endpoint had never actually accepted.
+	clientID     = "dd031b32d2f56c990b1425efe6c42ad847e7fe3ab46bf1299f05ecd856bdb7dd"
+	clientSecret = "54d7307928f63414defd96399fc31ba847961ceaecef3a5fd93144e960c0e151" //nolint:gosec // public native-client credential, see doc comment
 
 	httpTimeout        = 30 * time.Second
 	defaultSearchLimit = 10

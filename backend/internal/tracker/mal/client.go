@@ -101,9 +101,18 @@ func (c *Client) NeedsOAuth() bool { return true }
 // AuthURL builds MAL's auth-code authorize URL using PKCE-PLAIN: the
 // generated verifier is sent AS code_challenge verbatim (no
 // code_challenge_method parameter at all — MAL treats that omission as
-// "plain"), and no client secret is included. Returns
-// tracker.ErrClientIDNotConfigured when this Client's clientID is blank.
-func (c *Client) AuthURL(state, redirectURI string) (string, string, error) {
+// "plain"), and no client secret is included. MAL's real authorize endpoint
+// takes ONLY client_id + code_challenge + response_type=code — confirmed
+// against Suwayomi-Server's MyAnimeListApi.kt authUrl() and Komikku's own
+// MyAnimeListApi.kt, neither of which sends redirect_uri OR state (MAL's
+// registered-app model has no per-request redirect_uri to validate).
+// state/redirectURI are therefore UNUSED here — kept only so Client still
+// satisfies the shared tracker.Tracker interface every OAuth tracker
+// implements; internal/tracker/connect now correlates a pending login by
+// TRACKER ID rather than a returned state value (see that package's doc
+// comment). Returns tracker.ErrClientIDNotConfigured when this Client's
+// clientID is blank.
+func (c *Client) AuthURL(_, _ string) (string, string, error) {
 	if c.clientID == "" {
 		return "", "", tracker.ErrClientIDNotConfigured
 	}
@@ -115,23 +124,26 @@ func (c *Client) AuthURL(state, redirectURI string) (string, string, error) {
 		"response_type":  {"code"},
 		"client_id":      {c.clientID},
 		"code_challenge": {verifier},
-		"state":          {state},
-		"redirect_uri":   {redirectURI},
 	}
 	return authorizeURL + "?" + q.Encode(), verifier, nil
 }
 
-// ExchangeCode POSTs the authorization code (plus the PKCE verifier
-// AuthURL generated and the same redirectURI) to MAL's token endpoint —
-// PKCE-plain means code_verifier is sent as the SAME raw string
-// code_challenge carried, no transform.
-func (c *Client) ExchangeCode(ctx context.Context, code, pkceVerifier, redirectURI string) (tracker.TokenSet, error) {
+// ExchangeCode POSTs the authorization code plus the PKCE verifier AuthURL
+// generated to MAL's token endpoint — PKCE-plain means code_verifier is
+// sent as the SAME raw string code_challenge carried, no transform. The
+// form carries ONLY client_id + code + code_verifier +
+// grant_type=authorization_code — confirmed against Suwayomi-Server's
+// MyAnimeListApi.kt getAccessToken()/Komikku's own equivalent, neither of
+// which sends redirect_uri (MAL's token endpoint does not require it) or a
+// client secret (this is a public, self-hosted-app grant). redirectURI is
+// therefore UNUSED — kept only so Client still satisfies the shared
+// tracker.Tracker interface.
+func (c *Client) ExchangeCode(ctx context.Context, code, pkceVerifier, _ string) (tracker.TokenSet, error) {
 	form := url.Values{
 		"client_id":     {c.clientID},
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"code_verifier": {pkceVerifier},
-		"redirect_uri":  {redirectURI},
 	}
 	return c.doToken(ctx, form)
 }

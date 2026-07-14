@@ -114,19 +114,27 @@ func (c *Client) Name() string { return providerName }
 func (c *Client) NeedsOAuth() bool { return true }
 
 // AuthURL builds AniList's implicit-grant authorize URL. AniList's implicit
-// flow has no PKCE, so pkceVerifier is always "". Returns
-// tracker.ErrClientIDNotConfigured when this Client's clientID is blank
-// (fail-closed — an owner who hasn't registered an AniList app yet gets a
-// clear error, never a URL that can never work).
-func (c *Client) AuthURL(state, redirectURI string) (string, string, error) {
+// flow has no PKCE, so pkceVerifier is always "". AniList's real authorize
+// endpoint accepts ONLY client_id + response_type=token — confirmed against
+// Suwayomi-Server's AnilistApi.kt authUrl() and Komikku's own AnilistApi.kt,
+// neither of which sends redirect_uri OR state (AniList's app-registration
+// model has no per-request redirect_uri to validate, and rejects an
+// unrecognized state-shaped param with "unsupported_grant_type" — the bug
+// this alignment fixes). Both of this method's parameters are therefore
+// UNUSED — kept only so Client still satisfies the shared tracker.Tracker
+// interface every OAuth tracker implements. Login-correlation without a
+// CSRF state value is handled one layer up: internal/tracker/connect now
+// keys its pending-login stash by TRACKER ID instead (see that package's
+// doc comment). Returns tracker.ErrClientIDNotConfigured when this Client's
+// clientID is blank (fail-closed — an owner who hasn't registered an
+// AniList app yet gets a clear error, never a URL that can never work).
+func (c *Client) AuthURL(_, _ string) (string, string, error) {
 	if c.clientID == "" {
 		return "", "", tracker.ErrClientIDNotConfigured
 	}
 	q := url.Values{
 		"client_id":     {c.clientID},
 		"response_type": {"token"},
-		"redirect_uri":  {redirectURI},
-		"state":         {state},
 	}
 	return authorizeURL + "?" + q.Encode(), "", nil
 }

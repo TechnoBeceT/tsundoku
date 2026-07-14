@@ -96,12 +96,13 @@ func (h *Handler) List(c echo.Context) error {
 }
 
 // AuthURL handles GET /api/trackers/:id/auth-url. It builds a FRESH
-// authorize URL on demand (connect.Service.AuthURL generates a random state
-// and stashes any PKCE verifier server-side) — kept as its own endpoint,
-// separate from List, so a plain GET /api/trackers never stashes N pending
-// logins the owner never completes. Returns 404 for an unknown trackerId,
-// 400 when the tracker doesn't support OAuth, its client-id isn't
-// configured, or this instance's public URL isn't configured yet (see
+// authorize URL on demand (connect.Service.AuthURL stashes any PKCE
+// verifier server-side, keyed by this tracker id — see that package's doc
+// comment for why there is no OAuth state param involved) — kept as its own
+// endpoint, separate from List, so a plain GET /api/trackers never stashes
+// N pending logins the owner never completes. Returns 404 for an unknown
+// trackerId, 400 when the tracker doesn't support OAuth, its client-id
+// isn't configured, or this instance's public URL isn't configured yet (see
 // mapServiceError).
 func (h *Handler) AuthURL(c echo.Context) error {
 	trackerID, err := validateTrackerID(c.Param("id"))
@@ -448,8 +449,9 @@ func (h *Handler) SyncTracking(c echo.Context) error {
 //     syncsvc.ErrBindingNotFound — syncsvc's sentinels deliberately mirror
 //     bind's own shape, see syncsvc's package doc comment).
 //   - 400 — the request cannot succeed as shaped: no connected account
-//     (bind.ErrTrackerNotConnected, syncsvc.ErrTrackerNotConnected), a
-//     bad/expired/missing OAuth callback state
+//     (bind.ErrTrackerNotConnected, syncsvc.ErrTrackerNotConnected), no
+//     matching pending login for this tracker (never started, already
+//     consumed, or expired) or a callback missing its code/token
 //     (connect.ErrInvalidState/ErrMissingCode/ErrMissingToken), this
 //     instance isn't configured for OAuth yet
 //     (connect.ErrPublicURLNotConfigured, tracker.ErrClientIDNotConfigured),

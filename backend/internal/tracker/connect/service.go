@@ -1,9 +1,35 @@
 // Package connect is the tracker CONNECT service: it builds a tracker's
-// OAuth authorize URL (stashing any PKCE verifier server-side, keyed to a
-// per-login random state — never a process-global var), completes the
-// callback round-trip, and upserts the resulting TokenSet (+ username /
+// OAuth authorize URL (stashing any PKCE verifier server-side), completes
+// the callback round-trip, and upserts the resulting TokenSet (+ username /
 // AniList score-format) into the app-wide TrackerConnection row for that
 // tracker.
+//
+// PENDING-LOGIN CORRELATION IS BY TRACKER ID, NOT BY AN OAUTH "state"
+// PARAMETER. AniList's and MAL's REAL authorize endpoints do not accept a
+// state (or redirect_uri) parameter at all — confirmed against the proven
+// reference implementations Suwayomi-Server and Komikku ship
+// (AnilistApi.kt/MyAnimeListApi.kt authUrl()), neither of which sends
+// either. Tsundoku's earlier version invented both, and AniList answered
+// with "unsupported_grant_type" — a login that could never succeed. Since
+// there is no server-generated state for a callback to echo back, this
+// package stashes the in-flight PKCE verifier keyed by the TRACKER ID
+// itself (see pending.go): AuthURL(trackerID) and CompleteOAuth(trackerID,
+// url) already both carry the tracker id end to end (the HTTP routes are
+// /api/trackers/:id/auth-url and /api/trackers/:id/login/oauth), so this is
+// a clean 1:1 correlation — one in-flight login per tracker, exactly
+// mirroring the reference clients' own single per-tracker verifier.
+//
+// SECURITY NOTE (accepted trade-off): dropping the OAuth "state" parameter
+// removes the classic CSRF token an authorize redirect would otherwise
+// carry. This is acceptable under Tsundoku's single-owner threat model: for
+// AniList's implicit grant the access token only ever lands in fragment of
+// the OWNER'S OWN browser (never sent to any server, let alone an
+// attacker's), and for MAL's auth-code grant PKCE (code_verifier) already
+// proves the code exchange came from the same client that started the
+// login — a bare "state" echo would have added no further protection here.
+// The frontend additionally correlates which tracker a callback belongs to
+// via its own sessionStorage before ever calling this service. This mirrors
+// the reference implementations, which likewise send no state.
 //
 // This package (unlike internal/tracker itself) DOES use ent — it is the
 // "subpkg that CAN use ent" internal/tracker's own doc comment calls out,
@@ -14,8 +40,6 @@ package connect
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -31,10 +55,12 @@ var (
 	// ErrUnknownTracker is returned when trackerID does not match any
 	// tracker in the Service's Registry.
 	ErrUnknownTracker = errors.New("connect: unknown tracker id")
-	// ErrInvalidState is returned when a callback's state query parameter
-	// is missing, unrecognized, expired, or names a different tracker than
-	// the one CompleteOAuth was called for — the CSRF-correlation check
-	// failing closed.
+	// ErrInvalidState is returned when a callback names a tracker with no
+	// matching pending login — never started (AuthURL not called first),
+	// already consumed (a replay), or expired (pendingStashTTL elapsed).
+	// Named "state" for backward compatibility with earlier CSRF-state
+	// terminology, but the check itself is now purely "is there a pending
+	// login for this tracker id" — see the package doc comment.
 	ErrInvalidState = errors.New("connect: invalid or expired login state")
 	// ErrMissingCode is returned when a callback URL for an auth-code
 	// tracker (MAL) carries no "code" query parameter.
@@ -45,9 +71,9 @@ var (
 	// both, so the SPA does not need to pre-convert the fragment itself).
 	ErrMissingToken = errors.New("connect: callback is missing the access token")
 	// ErrPublicURLNotConfigured is returned by AuthURL when
-	// TSUNDOKU_TRACKER_PUBLICURL is blank — there is no valid redirect_uri
-	// to send a provider, so the whole subsystem stays dormant (spec §2)
-	// rather than construct a request that can never succeed.
+	// TSUNDOKU_TRACKER_PUBLICURL is blank — there is no configured instance
+	// URL, so the whole subsystem stays dormant (spec §2) rather than
+	// build a redirect the owner could never complete a callback against.
 	ErrPublicURLNotConfigured = errors.New("connect: TSUNDOKU_TRACKER_PUBLICURL is not configured")
 	// ErrCredentialLoginNotSupported is returned by LoginCredentials when
 	// trackerID names a tracker that connects via OAuth (AniList, MAL) —
@@ -55,16 +81,6 @@ var (
 	// caller should be using AuthURL/CompleteOAuth instead.
 	ErrCredentialLoginNotSupported = errors.New("connect: this tracker connects via OAuth, not username/password")
 )
-
-// callbackPath is the instance route the owner's OAuth apps must have
-// registered as their redirect_uri (spec/trackers-oauth-phase3 §2 —
-// "${PublicURL}/auth/tracker/callback"; direct-redirect, no relay).
-const callbackPath = "/auth/tracker/callback"
-
-// stateBytes is the amount of randomness in a login's state value — 16
-// bytes hex-encodes to 32 characters, comfortably unguessable for a
-// short-lived (pendingStashTTL) CSRF/session-correlation token.
-const stateBytes = 16
 
 // Service is the tracker connect service.
 type Service struct {
@@ -75,10 +91,11 @@ type Service struct {
 }
 
 // NewService builds a Service. publicURL is this instance's own public base
-// URL (config.TrackerConfig.PublicURL), combined with callbackPath to form
-// the redirect_uri every AuthURL/ExchangeCode call uses; trailing slashes
-// are trimmed so a trailing-slash config value doesn't double up against
-// callbackPath's leading one.
+// URL (config.TrackerConfig.PublicURL) — its only remaining role is the
+// AuthURL fail-closed gate below (spec §2: the whole OAuth subsystem stays
+// dormant until an instance URL is configured); it is no longer combined
+// into a redirect_uri sent to any provider (see the package doc comment).
+// Trailing slashes are trimmed for a stable ErrPublicURLNotConfigured check.
 func NewService(client *ent.Client, registry *tracker.Registry, publicURL string) *Service {
 	return &Service{
 		client:    client,
@@ -88,16 +105,14 @@ func NewService(client *ent.Client, registry *tracker.Registry, publicURL string
 	}
 }
 
-// redirectURI returns this instance's OAuth callback URL.
-func (s *Service) redirectURI() string {
-	return s.publicURL + callbackPath
-}
-
-// AuthURL builds trackerID's authorize URL for a fresh login: it generates
-// a random, unpredictable state, stashes it — together with any PKCE
-// verifier the tracker's own AuthURL produced — in s.stash (an instance
-// field, never a package-level var; see pendingStash's doc comment), and
-// returns the authorize URL to send the owner's browser to.
+// AuthURL builds trackerID's authorize URL for a fresh login: it stashes
+// any PKCE verifier the tracker's own AuthURL produced in s.stash (an
+// instance field, never a package-level var; see pendingStash's doc
+// comment), keyed by trackerID itself (see the package doc comment for why
+// there is no CSRF state to key by instead), and returns the authorize URL
+// to send the owner's browser to. state/redirectURI are passed as "" — no
+// real tracker's authorize endpoint accepts either (see anilist/mal's own
+// AuthURL doc comments).
 //
 // Returns ErrUnknownTracker for an unregistered trackerID,
 // ErrPublicURLNotConfigured when this instance has no public URL set, and
@@ -113,35 +128,31 @@ func (s *Service) AuthURL(trackerID int) (string, error) {
 		return "", ErrPublicURLNotConfigured
 	}
 
-	state, err := randomState()
+	authURL, verifier, err := t.AuthURL("", "")
 	if err != nil {
 		return "", err
 	}
 
-	authURL, verifier, err := t.AuthURL(state, s.redirectURI())
-	if err != nil {
-		return "", err
-	}
-
-	s.stash.Put(state, pendingLogin{TrackerID: trackerID, PKCEVerifier: verifier})
+	s.stash.Put(trackerID, pendingLogin{PKCEVerifier: verifier})
 	return authURL, nil
 }
 
 // CompleteOAuth finishes the login trackerID's AuthURL started: it parses
 // callbackURL's parameters (see callbackParams — query AND fragment, both),
-// looks up the login pending under its "state" parameter (consuming it — a
-// callback can only be completed once), exchanges the code/token for a
-// TokenSet (via ExchangeCode for an auth-code tracker, or TokenFromImplicit
-// for an implicit-flow one — see exchangeToken), best-effort captures the
+// looks up the login pending FOR THIS TRACKER ID (consuming it — a callback
+// can only be completed once; see the package doc comment for why this is
+// no longer a state lookup), exchanges the code/token for a TokenSet (via
+// ExchangeCode for an auth-code tracker, or TokenFromImplicit for an
+// implicit-flow one — see exchangeToken), best-effort captures the
 // account's username/score-format when the tracker supports it, and upserts
 // the result into that tracker's TrackerConnection row.
 //
-// callbackURL is expected to be a real URL carrying "state" plus either
-// "code" (MAL — delivered in the query string) or "access_token" (AniList's
-// implicit grant — delivered in the URL FRAGMENT). The frontend forwards
-// the browser's full `window.location.href` verbatim (fragment intact) —
-// it does NOT pre-convert the fragment into a query parameter — so this is
-// the one and only place both shapes are read; see callbackParams.
+// callbackURL is expected to be a real URL carrying either "code" (MAL —
+// delivered in the query string) or "access_token" (AniList's implicit
+// grant — delivered in the URL FRAGMENT). The frontend forwards the
+// browser's full `window.location.href` verbatim (fragment intact) — it
+// does NOT pre-convert the fragment into a query parameter — so this is the
+// one and only place both shapes are read; see callbackParams.
 func (s *Service) CompleteOAuth(ctx context.Context, trackerID int, callbackURL string) error {
 	t, ok := s.registry.ByID(trackerID)
 	if !ok {
@@ -154,8 +165,8 @@ func (s *Service) CompleteOAuth(ctx context.Context, trackerID int, callbackURL 
 	}
 	params := callbackParams(u)
 
-	pending, ok := s.stash.Take(params.Get("state"))
-	if !ok || pending.TrackerID != trackerID {
+	pending, ok := s.stash.Take(trackerID)
+	if !ok {
 		return ErrInvalidState
 	}
 
@@ -171,16 +182,15 @@ func (s *Service) CompleteOAuth(ctx context.Context, trackerID int, callbackURL 
 // callbackParams returns the merged OAuth callback parameters for u: the
 // standard query string, topped up with whatever u's URL FRAGMENT carries
 // for any key the query doesn't already have. AniList's implicit grant
-// delivers "access_token"/"state" in the fragment (browsers never send a
-// fragment to a server on a normal request — a server-side url.Parse still
-// sees it here only because the frontend read window.location.href
-// client-side and posted the whole string in the request body); MAL's
-// auth-code flow puts everything in the query and carries no fragment at
-// all, so its behavior is unchanged by this merge. Precedence: a value
-// already present in the query always wins over the same key in the
-// fragment — the query is queried first and never overwritten — though in
-// practice a real callback URL only ever populates one or the other, never
-// both, for a given key.
+// delivers "access_token" in the fragment (browsers never send a fragment
+// to a server on a normal request — a server-side url.Parse still sees it
+// here only because the frontend read window.location.href client-side and
+// posted the whole string in the request body); MAL's auth-code flow puts
+// everything in the query and carries no fragment at all, so its behavior
+// is unchanged by this merge. Precedence: a value already present in the
+// query always wins over the same key in the fragment — the query is
+// queried first and never overwritten — though in practice a real callback
+// URL only ever populates one or the other, never both, for a given key.
 func callbackParams(u *url.URL) url.Values {
 	params := u.Query()
 	if u.Fragment == "" {
@@ -207,8 +217,8 @@ func callbackParams(u *url.URL) url.Values {
 // callbackParams) into a TokenSet, branching on whether t uses the OAuth
 // implicit grant (AniList — reads access_token, never calls ExchangeCode)
 // or auth-code (MAL — reads code, calls ExchangeCode with pending's
-// stashed PKCE verifier and this instance's own redirect_uri, which the
-// token endpoint re-validates against the one AuthURL sent).
+// stashed PKCE verifier). redirectURI is passed as "" — MAL's real token
+// endpoint doesn't require one (see mal.Client.ExchangeCode's doc comment).
 func (s *Service) exchangeToken(ctx context.Context, t tracker.Tracker, q url.Values, pending pendingLogin) (tracker.TokenSet, error) {
 	if impl, ok := t.(tracker.ImplicitTokenExtractor); ok {
 		accessToken := q.Get("access_token")
@@ -222,7 +232,7 @@ func (s *Service) exchangeToken(ctx context.Context, t tracker.Tracker, q url.Va
 	if code == "" {
 		return tracker.TokenSet{}, ErrMissingCode
 	}
-	return t.ExchangeCode(ctx, code, pending.PKCEVerifier, s.redirectURI())
+	return t.ExchangeCode(ctx, code, pending.PKCEVerifier, "")
 }
 
 // lookupAccountInfo best-effort captures the account's username/score
@@ -331,17 +341,4 @@ func (s *Service) upsertConnection(ctx context.Context, trackerID int, tok track
 		}
 		return nil
 	}
-}
-
-// randomState returns a cryptographically random, hex-encoded state value
-// for one login attempt (CSRF/session correlation — spec §5).
-func randomState() (string, error) {
-	buf := make([]byte, stateBytes)
-	if _, err := rand.Read(buf); err != nil {
-		// Defensive path: crypto/rand.Read only fails if the OS entropy
-		// source is unavailable, which does not happen on any platform
-		// this codebase targets; unreachable in practice.
-		return "", fmt.Errorf("connect: generate state: %w", err)
-	}
-	return hex.EncodeToString(buf), nil
 }
