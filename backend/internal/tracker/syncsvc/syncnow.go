@@ -86,6 +86,17 @@ func (s *Service) syncOneBinding(ctx context.Context, b *ent.TrackBinding) (*ent
 		return nil, fmt.Errorf("syncsvc: persist sync result for binding %s: %w", b.ID, err)
 	}
 	s.syncSidecar(ctx, updated.SeriesID)
+
+	// Pull-direction convergence (spec §2b): the binding row above is the
+	// source of truth for this sync and is already durable, so a mark-read
+	// failure is logged, not fatal — it must not undo a successful binding
+	// sync, but it also must not be swallowed silently (it hides a real bug
+	// otherwise; mirrors syncSidecar's own best-effort posture).
+	if markErr := s.markLocalRead(ctx, updated.SeriesID, converged); markErr != nil {
+		slog.WarnContext(ctx, "syncsvc: SyncNow: mark-local-read failed",
+			"track_binding_id", b.ID, "series_id", updated.SeriesID, "err", markErr)
+	}
+
 	return updated, nil
 }
 
