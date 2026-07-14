@@ -40,10 +40,9 @@ var (
 	// tracker (MAL) carries no "code" query parameter.
 	ErrMissingCode = errors.New("connect: callback is missing the authorization code")
 	// ErrMissingToken is returned when a callback URL for an implicit-flow
-	// tracker (AniList) carries no "access_token" query parameter — the SPA
-	// is expected to have already extracted it from the redirect
-	// fragment and forwarded it as a query param (see
-	// tracker.ImplicitTokenExtractor's doc comment).
+	// tracker (AniList) carries no "access_token" in either its query
+	// string or its URL fragment (see callbackParams — the backend parses
+	// both, so the SPA does not need to pre-convert the fragment itself).
 	ErrMissingToken = errors.New("connect: callback is missing the access token")
 	// ErrPublicURLNotConfigured is returned by AuthURL when
 	// TSUNDOKU_TRACKER_PUBLICURL is blank — there is no valid redirect_uri
@@ -129,19 +128,20 @@ func (s *Service) AuthURL(trackerID int) (string, error) {
 }
 
 // CompleteOAuth finishes the login trackerID's AuthURL started: it parses
-// callbackURL's query parameters, looks up the login pending under its
-// "state" parameter (consuming it — a callback can only be completed once),
-// exchanges the code/token for a TokenSet (via ExchangeCode for an
-// auth-code tracker, or TokenFromImplicit for an implicit-flow one — see
-// exchangeToken), best-effort captures the account's username/score-format
-// when the tracker supports it, and upserts the result into that tracker's
-// TrackerConnection row.
+// callbackURL's parameters (see callbackParams — query AND fragment, both),
+// looks up the login pending under its "state" parameter (consuming it — a
+// callback can only be completed once), exchanges the code/token for a
+// TokenSet (via ExchangeCode for an auth-code tracker, or TokenFromImplicit
+// for an implicit-flow one — see exchangeToken), best-effort captures the
+// account's username/score-format when the tracker supports it, and upserts
+// the result into that tracker's TrackerConnection row.
 //
-// callbackURL is expected to be a real URL whose query carries "state" plus
-// either "code" (MAL) or "access_token" (AniList — the SPA is responsible
-// for turning the browser's URL FRAGMENT into a query parameter before
-// posting here, since a server never sees a fragment; see spec §4/§5 and
-// tracker.ImplicitTokenExtractor's doc comment).
+// callbackURL is expected to be a real URL carrying "state" plus either
+// "code" (MAL — delivered in the query string) or "access_token" (AniList's
+// implicit grant — delivered in the URL FRAGMENT). The frontend forwards
+// the browser's full `window.location.href` verbatim (fragment intact) —
+// it does NOT pre-convert the fragment into a query parameter — so this is
+// the one and only place both shapes are read; see callbackParams.
 func (s *Service) CompleteOAuth(ctx context.Context, trackerID int, callbackURL string) error {
 	t, ok := s.registry.ByID(trackerID)
 	if !ok {
@@ -152,14 +152,14 @@ func (s *Service) CompleteOAuth(ctx context.Context, trackerID int, callbackURL 
 	if err != nil {
 		return fmt.Errorf("connect: invalid callback url: %w", err)
 	}
-	q := u.Query()
+	params := callbackParams(u)
 
-	pending, ok := s.stash.Take(q.Get("state"))
+	pending, ok := s.stash.Take(params.Get("state"))
 	if !ok || pending.TrackerID != trackerID {
 		return ErrInvalidState
 	}
 
-	tok, err := s.exchangeToken(ctx, t, q, pending)
+	tok, err := s.exchangeToken(ctx, t, params, pending)
 	if err != nil {
 		return err
 	}
@@ -168,12 +168,47 @@ func (s *Service) CompleteOAuth(ctx context.Context, trackerID int, callbackURL 
 	return s.upsertConnection(ctx, trackerID, tok, username, scoreFormat)
 }
 
-// exchangeToken turns the callback's query parameters into a TokenSet,
-// branching on whether t uses the OAuth implicit grant (AniList — reads
-// access_token, never calls ExchangeCode) or auth-code (MAL — reads code,
-// calls ExchangeCode with pending's stashed PKCE verifier and this
-// instance's own redirect_uri, which the token endpoint re-validates
-// against the one AuthURL sent).
+// callbackParams returns the merged OAuth callback parameters for u: the
+// standard query string, topped up with whatever u's URL FRAGMENT carries
+// for any key the query doesn't already have. AniList's implicit grant
+// delivers "access_token"/"state" in the fragment (browsers never send a
+// fragment to a server on a normal request — a server-side url.Parse still
+// sees it here only because the frontend read window.location.href
+// client-side and posted the whole string in the request body); MAL's
+// auth-code flow puts everything in the query and carries no fragment at
+// all, so its behavior is unchanged by this merge. Precedence: a value
+// already present in the query always wins over the same key in the
+// fragment — the query is queried first and never overwritten — though in
+// practice a real callback URL only ever populates one or the other, never
+// both, for a given key.
+func callbackParams(u *url.URL) url.Values {
+	params := u.Query()
+	if u.Fragment == "" {
+		return params
+	}
+	frag, err := url.ParseQuery(u.Fragment)
+	if err != nil {
+		// A malformed fragment is treated as "no fragment params" rather
+		// than failing the whole callback — the query alone (e.g. a bare
+		// "state" on its own) still gets a chance to be valid, and an
+		// invalid/missing required param surfaces via the normal
+		// ErrInvalidState/ErrMissingCode/ErrMissingToken checks below.
+		return params
+	}
+	for key, values := range frag {
+		if _, exists := params[key]; !exists {
+			params[key] = values
+		}
+	}
+	return params
+}
+
+// exchangeToken turns the callback's merged query+fragment parameters (see
+// callbackParams) into a TokenSet, branching on whether t uses the OAuth
+// implicit grant (AniList — reads access_token, never calls ExchangeCode)
+// or auth-code (MAL — reads code, calls ExchangeCode with pending's
+// stashed PKCE verifier and this instance's own redirect_uri, which the
+// token endpoint re-validates against the one AuthURL sent).
 func (s *Service) exchangeToken(ctx context.Context, t tracker.Tracker, q url.Values, pending pendingLogin) (tracker.TokenSet, error) {
 	if impl, ok := t.(tracker.ImplicitTokenExtractor); ok {
 		accessToken := q.Get("access_token")

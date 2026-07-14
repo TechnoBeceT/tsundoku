@@ -187,39 +187,100 @@ func TestCompleteOAuth_CodeFlow_CreatesConnection(t *testing.T) {
 }
 
 // TestCompleteOAuth_ImplicitFlow_CreatesConnectionWithAccountInfo drives the
-// implicit-grant round-trip and asserts the row carries the access token
-// (extracted by TokenFromImplicit from the callback's access_token query
-// param) PLUS the captured username/score-format (AccountInfoProvider).
+// implicit-grant round-trip for both callback shapes CompleteOAuth must
+// accept and asserts the row carries the access token (extracted by
+// TokenFromImplicit) PLUS the captured username/score-format
+// (AccountInfoProvider) in each case:
+//   - "query": access_token/state in the QUERY string — not how a real
+//     AniList redirect arrives, but callbackParams reads the query first,
+//     so this shape must keep working unchanged as a regression guard.
+//   - "fragment": access_token/state in the URL FRAGMENT
+//     (`#access_token=…&state=…`) — the REAL shape AniList's redirect uses;
+//     the frontend forwards the browser's full `window.location.href`
+//     (fragment intact) verbatim, so this is the exact callback the backend
+//     receives in production. Before the query+fragment merge fix,
+//     u.Query() saw an empty query (everything was past the "#"), so the
+//     state lookup missed and this failed with ErrInvalidState — the
+//     reported AniList-login-is-broken bug.
 func TestCompleteOAuth_ImplicitFlow_CreatesConnectionWithAccountInfo(t *testing.T) {
-	ctx := context.Background()
+	tests := []struct {
+		name        string
+		callbackFor func(state string) string
+	}{
+		{
+			name: "query",
+			callbackFor: func(state string) string {
+				return "https://tsundoku.example/auth/tracker/callback?access_token=frag-token-xyz&state=" + state
+			},
+		},
+		{
+			name: "fragment",
+			callbackFor: func(state string) string {
+				return "https://tsundoku.example/auth/tracker/callback#access_token=frag-token-xyz&token_type=Bearer&expires_in=31536000&state=" + state
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := testdb.New(t)
+			svc, _, _ := newTestService(t, client, "https://tsundoku.example")
+
+			authURL, err := svc.AuthURL(fakeImplicitID)
+			if err != nil {
+				t.Fatalf("AuthURL: %v", err)
+			}
+			state := stateFromAuthURL(t, authURL)
+
+			callback := tt.callbackFor(state)
+			if err := svc.CompleteOAuth(ctx, fakeImplicitID, callback); err != nil {
+				t.Fatalf("CompleteOAuth: %v", err)
+			}
+
+			row, err := client.TrackerConnection.Query().
+				Where(entrackerconnection.TrackerID(fakeImplicitID)).
+				Only(ctx)
+			if err != nil {
+				t.Fatalf("query TrackerConnection: %v", err)
+			}
+			if row.AccessToken != "frag-token-xyz" {
+				t.Fatalf("row.AccessToken = %q, want frag-token-xyz", row.AccessToken)
+			}
+			if row.Username != "owner" || row.ScoreFormat != "POINT_100" {
+				t.Fatalf("row username/score_format = %q/%q, want owner/POINT_100", row.Username, row.ScoreFormat)
+			}
+		})
+	}
+}
+
+// TestCompleteOAuth_FragmentShape_InvalidState confirms a fragment-carried
+// state that was never stashed (or is simply wrong) is still rejected —
+// reading the fragment must not weaken the CSRF/session-correlation check,
+// it only widens WHERE a valid state can be found.
+func TestCompleteOAuth_FragmentShape_InvalidState(t *testing.T) {
 	client := testdb.New(t)
 	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	authURL, err := svc.AuthURL(fakeImplicitID)
-	if err != nil {
-		t.Fatalf("AuthURL: %v", err)
+	callback := "https://tsundoku.example/auth/tracker/callback#access_token=frag-token-xyz&state=never-stashed"
+	err := svc.CompleteOAuth(context.Background(), fakeImplicitID, callback)
+	if !errors.Is(err, connect.ErrInvalidState) {
+		t.Fatalf("CompleteOAuth with an unknown fragment state: err = %v, want connect.ErrInvalidState", err)
 	}
-	state := stateFromAuthURL(t, authURL)
+}
 
-	// The SPA is expected to turn the browser's fragment into a query
-	// param before posting the callback URL here — see
-	// tracker.ImplicitTokenExtractor's doc comment.
-	callback := "https://tsundoku.example/auth/tracker/callback?access_token=frag-token-xyz&state=" + state
-	if err := svc.CompleteOAuth(ctx, fakeImplicitID, callback); err != nil {
-		t.Fatalf("CompleteOAuth: %v", err)
-	}
+// TestCompleteOAuth_FragmentShape_MissingState confirms a fragment that
+// carries an access_token but no state at all is rejected the same way a
+// query-only callback missing state is — callbackParams merges the
+// fragment in, it doesn't invent a state that isn't there.
+func TestCompleteOAuth_FragmentShape_MissingState(t *testing.T) {
+	client := testdb.New(t)
+	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
 
-	row, err := client.TrackerConnection.Query().
-		Where(entrackerconnection.TrackerID(fakeImplicitID)).
-		Only(ctx)
-	if err != nil {
-		t.Fatalf("query TrackerConnection: %v", err)
-	}
-	if row.AccessToken != "frag-token-xyz" {
-		t.Fatalf("row.AccessToken = %q, want frag-token-xyz", row.AccessToken)
-	}
-	if row.Username != "owner" || row.ScoreFormat != "POINT_100" {
-		t.Fatalf("row username/score_format = %q/%q, want owner/POINT_100", row.Username, row.ScoreFormat)
+	callback := "https://tsundoku.example/auth/tracker/callback#access_token=frag-token-xyz"
+	err := svc.CompleteOAuth(context.Background(), fakeImplicitID, callback)
+	if !errors.Is(err, connect.ErrInvalidState) {
+		t.Fatalf("CompleteOAuth with a fragment carrying no state: err = %v, want connect.ErrInvalidState", err)
 	}
 }
 
