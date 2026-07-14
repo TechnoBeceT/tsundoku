@@ -1463,6 +1463,108 @@ components:
             SSE stream for actual progress.
           example: true
 
+    VapidKey:
+      type: object
+      required: [key]
+      properties:
+        key:
+          type: string
+          description: |
+            The server's VAPID public key (base64url), passed to the browser's
+            pushManager.subscribe as its applicationServerKey. Empty only when
+            server-side VAPID init failed (Web Push then unavailable; the client
+            feature-detects and degrades to the in-app SSE toast).
+          example: "BEl0abc123-server-public-key"
+
+    PushSubscriptionRequest:
+      type: object
+      required: [endpoint, keys]
+      description: |
+        A browser Web Push subscription, exactly the shape produced by
+        PushSubscription.toJSON(). Upserted by endpoint (idempotent).
+      properties:
+        endpoint:
+          type: string
+          format: uri
+          description: The push-service URL (the subscription's unique identity).
+          example: "https://fcm.googleapis.com/fcm/send/abc123"
+        keys:
+          type: object
+          required: [p256dh, auth]
+          properties:
+            p256dh:
+              type: string
+              description: The subscription's public encryption key (base64url).
+            auth:
+              type: string
+              description: The subscription's auth secret (base64url).
+
+    PushUnsubscribeRequest:
+      type: object
+      required: [endpoint]
+      description: Identifies the device subscription to remove, by its endpoint.
+      properties:
+        endpoint:
+          type: string
+          format: uri
+          description: The push-service URL of the subscription to remove.
+          example: "https://fcm.googleapis.com/fcm/send/abc123"
+
+    ChapterNew:
+      type: object
+      description: |
+        The data payload of the `chapter.new` SSE event (and the identical Web
+        Push payload) — emitted once per download cycle when one or more armed,
+        monitored, non-completed series gained new readable chapters. Pre-rendered
+        server-side so the service worker can showNotification straight from it.
+      required: [groups, total, digest, title, body]
+      properties:
+        groups:
+          type: array
+          description: Per-series breakdown of the new readable chapters.
+          items:
+            $ref: "#/components/schemas/ChapterNewGroup"
+        total:
+          type: integer
+          description: Sum of all groups' counts.
+          example: 4
+        digest:
+          type: boolean
+          description: |
+            True when the notification collapsed to a cross-series digest (more
+            than the per-series threshold of distinct series). The client
+            deep-links to the library ("/") for a digest, else to groups[0].url.
+          example: false
+        title:
+          type: string
+          description: Pre-rendered notification title.
+          example: "Solo Leveling"
+        body:
+          type: string
+          description: Pre-rendered notification body.
+          example: "1 new chapter"
+
+    ChapterNewGroup:
+      type: object
+      required: [seriesId, title, count, url]
+      properties:
+        seriesId:
+          type: string
+          format: uuid
+          description: The series that gained new chapters.
+        title:
+          type: string
+          description: The series' display title.
+          example: "Solo Leveling"
+        count:
+          type: integer
+          description: Number of new readable chapters in this cycle for the series.
+          example: 1
+        url:
+          type: string
+          description: In-app deep-link to the series page.
+          example: "/series/6f1c2b3a-0000-0000-0000-000000000000"
+
     SuwayomiSettings:
       type: object
       description: |
@@ -5234,6 +5336,96 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SourceWarmStarted"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/push/vapid-key:
+    get:
+      operationId: getVapidKey
+      summary: Get the server's Web Push VAPID public key
+      description: |
+        Returns the server's VAPID public key so a browser can create a Web Push
+        subscription (pushManager.subscribe applicationServerKey). Generated once
+        at boot and stable thereafter.
+      tags:
+        - push
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The server VAPID public key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VapidKey"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/push/subscriptions:
+    post:
+      operationId: subscribePush
+      summary: Register this device's Web Push subscription
+      description: |
+        Upserts this device's Web Push subscription by endpoint (idempotent). The
+        notifier fans new-chapter notifications to every stored subscription.
+      tags:
+        - push
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushSubscriptionRequest"
+      responses:
+        "204":
+          description: The subscription was stored.
+        "400":
+          description: Invalid subscription body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: unsubscribePush
+      summary: Remove this device's Web Push subscription
+      description: |
+        Removes this device's Web Push subscription by endpoint. Removing an
+        unknown endpoint is a no-op (still 204).
+      tags:
+        - push
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushUnsubscribeRequest"
+      responses:
+        "204":
+          description: The subscription was removed (or was already absent).
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing or invalid Bearer token.
           content:

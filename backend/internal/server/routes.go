@@ -18,6 +18,7 @@ import (
 	libraryh "github.com/technobecet/tsundoku/internal/handler/library"
 	metadatah "github.com/technobecet/tsundoku/internal/handler/metadata"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	pushh "github.com/technobecet/tsundoku/internal/handler/push"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
 	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
@@ -30,6 +31,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
@@ -90,6 +92,9 @@ import (
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
 //   - /api/sources/metrics (GET)                   — per-source performance metrics + isSlow (RequireOwner).
 //   - /api/sources/warmup (POST)                   — trigger a full anti-bot warm-up pass (RequireOwner).
+//   - /api/push/vapid-key (GET)                     — server VAPID public key for Web Push subscribe (RequireOwner).
+//   - /api/push/subscriptions (POST)               — upsert this device's Web Push subscription (RequireOwner).
+//   - /api/push/subscriptions (DELETE)             — remove this device's Web Push subscription (RequireOwner).
 //   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
 //   - /api/suwayomi/settings (GET)                  — read Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
@@ -152,6 +157,8 @@ func registerRoutes(
 	trackerConnectSvc *connect.Service,
 	trackerBindSvc *bind.Service,
 	trackerSyncSvc *syncsvc.Service,
+	pushSubsSvc *pushsvc.Service,
+	vapidPublicKey string,
 	trigger func(),
 ) {
 	// Infrastructure routes — no authentication required.
@@ -266,6 +273,15 @@ func registerRoutes(
 	sourcesH := sourcesh.NewHandler(metricsSvc, warmupSvc, settingsSvc)
 	authed.GET("/sources/metrics", sourcesH.Metrics)
 	authed.POST("/sources/warmup", sourcesH.Warmup)
+
+	// Web Push registration API. The handler serves the server VAPID public key
+	// and upserts/removes a device's subscription (internal/push store); the
+	// notifier (internal/notify) fans new-chapter notifications to every stored
+	// subscription.
+	pushH := pushh.NewHandler(pushSubsSvc, vapidPublicKey)
+	authed.GET("/push/vapid-key", pushH.VAPIDKey)
+	authed.POST("/push/subscriptions", pushH.Subscribe)
+	authed.DELETE("/push/subscriptions", pushH.Unsubscribe)
 
 	// System info — read-only credential-free structural config (storage path,
 	// server port, DB host:port/name). The handler needs only the config struct;

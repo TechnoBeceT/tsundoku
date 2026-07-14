@@ -226,7 +226,10 @@ func main() {
 
 	// Web Push + new-chapter notifier (see buildNotifier). VAPID failure degrades
 	// gracefully — the notifier still broadcasts over SSE; only Web Push is off.
-	buildNotifier(ctx, entClient, hub, settingsSvc, runner)
+	// The returned public key + subscription store are threaded into the push
+	// handler (server.New) so a browser can subscribe.
+	pushSubsSvc := push.NewService(entClient)
+	vapidPublic := buildNotifier(ctx, entClient, hub, settingsSvc, runner)
 
 	// Tracker-push retry worker: independent of the Suwayomi engine (it only
 	// ever talks to the native trackers, never Suwayomi), so it starts
@@ -274,7 +277,7 @@ func main() {
 	// called when tsundoku owns the process.
 	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 
