@@ -10,8 +10,8 @@
  * this `.ts` (never exported from a `.vue`) so stories + fixtures import freely.
  */
 
-/** The six settings panes, selected from the sticky sidebar nav. */
-export type SettingsPane = 'library' | 'categories' | 'engine' | 'suwayomi' | 'extensions' | 'sources'
+/** The seven settings panes, selected from the sticky sidebar nav. */
+export type SettingsPane = 'library' | 'categories' | 'engine' | 'suwayomi' | 'extensions' | 'sources' | 'trackers'
 
 /** Duration unit for the number+unit inputs (serialises to Go `2h`/`15m`/`30s`). */
 export type DurationUnit = 'h' | 'm' | 's'
@@ -305,4 +305,41 @@ export interface SourceMetric {
   updatedAt: string
   /** Derived — true when never measured OR EWMA over the slow threshold. */
   isSlow: boolean
+}
+
+/* ---- 2g. Trackers (Phase 3d — connect + bind; sync is Phase 4) ------------ */
+
+/**
+ * TrackerStatus — one native tracker's (AniList, MAL, Kitsu, MangaUpdates)
+ * connect status, screen-facing mirror of the backend `Tracker` DTO (no field
+ * renames — it's already flat/camelCase). `needsOAuth` picks the row's shape:
+ * true → AniList/MAL (a "Connect" full-tab redirect); false → Kitsu/MangaUpdates
+ * (an inline username/password form). `isTokenExpired` is only ever true
+ * alongside `isLoggedIn` (a disconnected tracker always reports it false).
+ */
+export interface TrackerStatus {
+  /** Stable numeric registry id (MAL=1, AniList=2, Kitsu=3, MangaUpdates=7). */
+  id: number
+  /** Human display name. */
+  name: string
+  /** True for AniList/MAL (OAuth redirect); false for Kitsu/MangaUpdates (credentials). */
+  needsOAuth: boolean
+  /** Whether a connected account exists for this tracker. */
+  isLoggedIn: boolean
+  /** Whether the connected account's token has expired and needs a fresh login. */
+  isTokenExpired: boolean
+  /** The connected account's display username ("" when not logged in). */
+  username: string
+}
+
+/**
+ * TrackerActionState — the §16 state of the one in-flight tracker action
+ * (connect / OAuth or credential login / disconnect). Mirrors `RowActionState`
+ * but keyed by the tracker's NUMERIC registry id rather than a string row id.
+ */
+export interface TrackerActionState {
+  /** Id of the tracker currently mutating; null when idle. */
+  busyId?: number | null
+  /** A human-readable failure surfaced inline; empty/absent when none. */
+  error?: string
 }

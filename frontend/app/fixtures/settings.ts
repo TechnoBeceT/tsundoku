@@ -18,6 +18,7 @@ import type {
   SourcesSettings,
   SuwayomiConfig,
   SystemInfo,
+  TrackerStatus,
   UpgradeStep,
 } from '../components/screens/settings.types'
 
@@ -232,4 +233,12 @@ export const sourceMetrics: SourceMetric[] = [
     updatedAt: agoIso(2 * MIN),
     isSlow: false,
   },
+]
+
+/** The four registered trackers (2g) — one of each connect shape. */
+export const trackers: TrackerStatus[] = [
+  { id: 2, name: 'AniList', needsOAuth: true, isLoggedIn: true, isTokenExpired: false, username: 'technobecet' },
+  { id: 1, name: 'MyAnimeList', needsOAuth: true, isLoggedIn: false, isTokenExpired: false, username: '' },
+  { id: 3, name: 'Kitsu', needsOAuth: false, isLoggedIn: false, isTokenExpired: false, username: '' },
+  { id: 7, name: 'MangaUpdates', needsOAuth: false, isLoggedIn: false, isTokenExpired: false, username: '' },
 ]

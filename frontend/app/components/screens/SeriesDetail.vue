@@ -32,7 +32,9 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  * `requestCoverPicker` for the SAME reason — the native-metadata-engine
  * "Identify" and "Choose cover" modals (`MetadataIdentifyModal`/
  * `CoverPickerModal`) mutate and hand back a fresh `SeriesDetail`, an outcome
- * only the page can observe.
+ * only the page can observe. `RichSeriesCard`'s `openTrackers` emit (Phase 3d,
+ * additive) bubbles here as `requestTracking` for the same reason: the
+ * Tracking panel's bind/unbind mutations, whose outcome only the page can see.
  *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
@@ -103,6 +105,8 @@ const emit = defineEmits<{
   requestIdentify: []
   /** RichSeriesCard's "Change cover" affordance was pressed (→ the page opens CoverPickerModal). */
   requestCoverPicker: []
+  /** RichSeriesCard's "Trackers" button was pressed (→ the page opens the Tracking panel, Phase 3d). */
+  requestTracking: []
   /** The series delete was confirmed — carries the required deleteFiles choice. */
   deleteSeries: [deleteFiles: boolean]
   /** The owner asked to add a source (→ opens the Match Source dialog). */
@@ -194,6 +198,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         @request-delete="deleteOpen = true"
         @open-metadata="emit('requestIdentify')"
         @open-cover-picker="emit('requestCoverPicker')"
+        @open-trackers="emit('requestTracking')"
       />
 
       <MetadataSourcePicker

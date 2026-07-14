@@ -2,7 +2,7 @@
 /**
  * Settings page — route "/settings".
  *
- * Assembles the 6-pane Settings screen from five composables:
+ * Assembles the 7-pane Settings screen from six composables:
  *   useSettings()         → library knobs + system info + saveLibrary
  *                           + extensionCheckInterval + saveExtensionCheckInterval
  *                           + sourcesSettings + saveSourcesSettings (warm-up +
@@ -14,6 +14,8 @@
  *   useSourceMetrics()    → sourceMetrics + pending/error + warmNow (Warm now)
  *   useLibraryMaintenance() → dedupAllBusy/Message/Error + dedupAllProviders
  *                           (library-wide duplicate-source dedup sweep)
+ *   useTrackers()         → trackers + trackerAction (busyId/error) + misconfigured
+ *                           + connect/loginCredentials/logout (Phase 3d Trackers pane)
  *
  * Prop wiring:
  *   :active-pane          — local activePane ref (default 'library')
@@ -50,6 +52,13 @@
  *   :dedup-all-busy       — dedupAllBusy from useLibraryMaintenance
  *   :dedup-all-message    — dedupAllMessage from useLibraryMaintenance
  *   :dedup-all-error      — dedupAllError from useLibraryMaintenance
+ *   :trackers             — trackers from useTrackers
+ *   :tracker-action       — { busyId: actionBusyId, error: actionError } from useTrackers
+ *   :misconfigured-tracker-ids — [...misconfigured] from useTrackers
+ *   :tracker-redirect-url — trackerRedirectUrl (computed, this instance's OAuth callback URL)
+ *   :trackers-pending     — pending from useTrackers (pane-owned, NOT in the
+ *                           global loading gate — mirrors source-metrics-pending)
+ *   :trackers-error       — error from useTrackers
  *   :loading              — true while any primary dataset is still fetching
  *
  * Emit wiring:
@@ -73,8 +82,22 @@
  *   @save-sources-settings       → saveSourcesSettings
  *   @warm-now                    → warmNow
  *   @dedup-all                   → dedupAllProviders
+ *   @connect-tracker             → onConnectTracker (authUrl() → full-tab redirect;
+ *                                   stashes the tracker id first — see trackerCallback.ts)
+ *   @login-tracker-credentials   → onLoginTrackerCredentials
+ *   @logout-tracker              → logoutTracker
+ *
+ * OAuth flash handling: the callback route (`pages/auth/tracker/callback.vue`)
+ * redirects back here with `?trackersFlash=connected` or
+ * `?trackersFlash=error&trackersFlashMessage=...`. On mount, a present
+ * `trackersFlash` opens the Trackers pane and — for the error case — writes
+ * straight into `useTrackers`'s own `actionError` ref so it renders through the
+ * SAME pane-level FormError a live connect failure would use (no separate flash
+ * state to keep in sync). The query is stripped via `router.replace` so a page
+ * refresh never replays the flash.
  */
 import type { EngineInfo, SettingsPane } from '~/components/screens/settings.types'
+import { stashPendingTrackerId } from '~/utils/trackerCallback'
 
 const {
   library,
@@ -141,6 +164,45 @@ const {
   dedupAllProviders,
 } = useLibraryMaintenance()
 
+const {
+  trackers,
+  actionBusyId: trackerBusyId,
+  actionError: trackerActionError,
+  misconfigured: misconfiguredTrackers,
+  pending: trackersPending,
+  error: trackersError,
+  authUrl,
+  loginCredentials,
+  logout: logoutTracker,
+} = useTrackers()
+
+/** { busyId, error } shape TrackersPane expects, derived from useTrackers' own refs. */
+const trackerAction = computed(() => ({ busyId: trackerBusyId.value, error: trackerActionError.value ?? undefined }))
+const misconfiguredTrackerIds = computed(() => [...misconfiguredTrackers.value])
+
+/** This instance's OAuth callback URL — every tracker's app must register it. */
+const trackerRedirectUrl = computed(() =>
+  typeof window === 'undefined' ? '' : `${window.location.origin}/auth/tracker/callback`)
+
+/**
+ * "Connect" was pressed for an OAuth tracker: build a fresh authorize URL,
+ * stash the tracker id (the callback route has no other way to learn it — see
+ * trackerCallback.ts), then hand the WHOLE TAB to the tracker's own site. A
+ * misconfigured tracker's `authUrl()` call resolves null and never navigates —
+ * the row instead flips to its "Not configured" shape (misconfiguredTrackerIds).
+ */
+async function onConnectTracker(trackerId: number): Promise<void> {
+  const url = await authUrl(trackerId)
+  if (!url) return
+  stashPendingTrackerId(trackerId)
+  window.location.href = url
+}
+
+/** A credential tracker's sign-in form was submitted. */
+async function onLoginTrackerCredentials(payload: { trackerId: number, username: string, password: string }): Promise<void> {
+  await loginCredentials(payload.trackerId, payload.username, payload.password)
+}
+
 /**
  * Engine upgrade flow is deferred.
  * This static constant satisfies the required EngineInfo prop so the Engine
@@ -165,6 +227,19 @@ const activePane = ref<SettingsPane>('library')
 /** Update the active pane; called by @set-pane from the Settings sidebar nav. */
 function setPane(p: SettingsPane): void {
   activePane.value = p
+}
+
+// ---- OAuth callback flash (see the doc comment above) ----------------------
+const route = useRoute()
+const router = useRouter()
+if (route.query.trackersFlash) {
+  activePane.value = 'trackers'
+  if (route.query.trackersFlash === 'error') {
+    trackerActionError.value = typeof route.query.trackersFlashMessage === 'string'
+      ? route.query.trackersFlashMessage
+      : 'The tracker connection failed — try again.'
+  }
+  void router.replace({ path: '/settings', query: {} })
 }
 
 /**
@@ -210,6 +285,12 @@ const loading = computed(
       :dedup-all-busy="dedupAllBusy"
       :dedup-all-message="dedupAllMessage"
       :dedup-all-error="dedupAllError"
+      :trackers="trackers"
+      :tracker-action="trackerAction"
+      :misconfigured-tracker-ids="misconfiguredTrackerIds"
+      :tracker-redirect-url="trackerRedirectUrl"
+      :trackers-pending="trackersPending"
+      :trackers-error="trackersError"
       :loading="loading"
       @set-pane="setPane"
       @save-library="saveLibrary"
@@ -231,6 +312,9 @@ const loading = computed(
       @save-sources-settings="saveSourcesSettings"
       @warm-now="warmNow"
       @dedup-all="dedupAllProviders"
+      @connect-tracker="onConnectTracker"
+      @login-tracker-credentials="onLoginTrackerCredentials"
+      @logout-tracker="logoutTracker"
     />
   </div>
 </template>

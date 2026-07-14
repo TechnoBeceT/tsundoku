@@ -97,6 +97,19 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate } from
  * §16: pending true during the initial fetch; ErrorBanner shown on hard fetch
  * failure. Mutation errors are surfaced via the :error prop (dismissible banner
  * inside SeriesDetail).
+ *
+ * Trackers (Phase 3d, `TrackingDialog`): `useSeriesTracking(id)` owns this
+ * series' bindings + search/bind/unbind/refresh; `useTrackers()` supplies the
+ * connected-tracker list the "Add tracker" picker filters against (same
+ * composable the Settings → Trackers pane uses — this is an independent
+ * instance, so it re-fetches its own fresh connect status on open rather than
+ * assuming the Settings page happens to be live in another tab). Opened by
+ * `@request-tracking` (bubbled from `RichSeriesCard`'s additive `openTrackers`
+ * button via `SeriesDetail`); `search`/`bind`/`unbind`/`refresh` drive the
+ * matching `useSeriesTracking` method directly (no dialog-close-on-success
+ * gating like the other page-owned dialogs — bind/unbind/refresh each apply
+ * their own result into `bindings` and the dialog just keeps reflecting it,
+ * §16 mutate-reseeds-from-response).
  */
 const route = useRoute()
 const id = route.params.id as string
@@ -314,6 +327,56 @@ function openReader(chapterId: string): void {
   void navigateTo(`/series/${id}/read/${chapterId}`)
 }
 
+// ---- Trackers (bind/unbind, Phase 3d) --------------------------------------
+const {
+  bindings: trackBindings,
+  pending: trackBindingsPending,
+  error: trackBindingsError,
+  searchResults: trackSearchResults,
+  searching: trackSearching,
+  searchError: trackSearchError,
+  binding: trackBinding,
+  bindError: trackBindError,
+  unbindBusyId: trackUnbindBusyId,
+  refreshBusyId: trackRefreshBusyId,
+  loadBindings: loadTrackBindings,
+  search: searchTracker,
+  bind: bindTracker,
+  unbind: unbindTracker,
+  refresh: refreshTracker,
+} = useSeriesTracking(id)
+
+const { trackers: connectedTrackers, list: listTrackers } = useTrackers()
+
+const trackingOpen = ref(false)
+
+// Re-fetch both the connect status and this series' bindings fresh every time
+// the panel opens — the owner may have connected a NEW tracker in Settings (a
+// different tab/session) since this page loaded.
+watch(trackingOpen, (isOpen) => {
+  if (!isOpen) return
+  void listTrackers()
+  void loadTrackBindings()
+})
+
+function onSearchTracker(payload: { trackerId: number, q: string }): void {
+  void searchTracker(payload.trackerId, payload.q)
+}
+
+function onBindTracker(payload: { trackerId: number, remoteId: string }): void {
+  void bindTracker(payload.trackerId, payload.remoteId)
+}
+
+function onUnbindTracker(recordId: string): void {
+  // Local-only unbind from this dialog (see TrackingDialog's own doc comment);
+  // "also remove from the tracker's account" is a Phase-4 nicety.
+  void unbindTracker(recordId, false)
+}
+
+function onRefreshTracker(recordId: string): void {
+  void refreshTracker(recordId)
+}
+
 // ---- Resume FAB (Komikku-style "continue reading" button) -----------------
 // Reuses useReadingProgress.resumeTarget — the SAME resume-point logic the
 // reader route itself runs on open — instead of reimplementing it. This page
@@ -390,6 +453,7 @@ function onResume(): void {
       @choose-metadata-source="chooseMetadataSource"
       @request-identify="identifyOpen = true"
       @request-cover-picker="coverPickerOpen = true"
+      @request-tracking="trackingOpen = true"
       @delete-series="deleteSeries"
       @add-source="matchOpen = true"
       @dismiss-error="dismissError"
@@ -472,6 +536,26 @@ function onResume(): void {
       :loading="coversLoading || settingCover"
       :error="coverPickerError"
       @confirm="onCoverConfirm"
+    />
+
+    <TrackingDialog
+      v-if="series"
+      v-model:open="trackingOpen"
+      :bindings="trackBindings"
+      :trackers="connectedTrackers"
+      :pending="trackBindingsPending"
+      :error="trackBindingsError"
+      :search-results="trackSearchResults"
+      :searching="trackSearching"
+      :search-error="trackSearchError"
+      :binding="trackBinding"
+      :bind-error="trackBindError"
+      :unbind-busy-id="trackUnbindBusyId"
+      :refresh-busy-id="trackRefreshBusyId"
+      @search="onSearchTracker"
+      @bind="onBindTracker"
+      @unbind="onUnbindTracker"
+      @refresh="onRefreshTracker"
     />
   </div>
 </template>

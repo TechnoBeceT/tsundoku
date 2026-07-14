@@ -66,6 +66,8 @@ const emit = defineEmits<{
   openCoverPicker: []
   /** The Delete button was pressed (→ the parent opens the delete dialog). */
   requestDelete: []
+  /** The Trackers button was pressed (→ the parent opens the Tracking panel, Phase 3d). ADDITIVE — every existing prop/emit above is unchanged. */
+  openTrackers: []
 }>()
 
 // The authoritative source for display: the pinned metadata provider if set,
@@ -157,6 +159,10 @@ const hasBadges = computed(
             <AppButton variant="ghost" size="sm" @click="emit('openMetadata')">
               <template #icon><Icon name="lucide:scan-search" /></template>
               Metadata
+            </AppButton>
+            <AppButton variant="ghost" size="sm" @click="emit('openTrackers')">
+              <template #icon><Icon name="lucide:link" /></template>
+              Trackers
             </AppButton>
             <AppButton variant="danger-ghost" size="sm" @click="emit('requestDelete')">
               <template #icon><Icon name="lucide:trash-2" /></template>

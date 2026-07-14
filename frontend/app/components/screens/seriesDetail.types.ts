@@ -306,3 +306,52 @@ export interface FractionalCleanupPreview {
   /** The removable fractional chapters. */
   chapters: FractionalCleanupChapter[]
 }
+
+/**
+ * TrackBinding — one series↔tracker link (the Tracking panel's bound-tracker
+ * list). `status`/`score`/`lastChapterRead` are the tracker's OWN native
+ * vocabulary/scale (spec `spec/trackers-oauth-phase3` §2 — never normalized to a
+ * Tsundoku scale); Phase 3d only CONNECTS + BINDS + SHOWS these read-only — the
+ * edit sheet (status/score/dates) is Phase 4.
+ */
+export interface TrackBinding {
+  /** TrackBinding UUID — the unbind/refresh target. */
+  id: string
+  /** Which tracker this binding is on. */
+  trackerId: number
+  /** The tracker's display name (e.g. "AniList"). */
+  trackerName: string
+  /** The tracker's own manga id for this entry. */
+  remoteId: string
+  /** Canonical link to the remote entry; "" when not derivable. */
+  remoteUrl: string
+  /** The remote entry's title (may differ from the series' own title). */
+  title: string
+  /** The tracker's own native status code (e.g. AniList `CURRENT`). */
+  status: string
+  /** Furthest chapter read on the tracker, fractional-safe. */
+  lastChapterRead: number
+  /** The tracker's reported total; 0 = unknown/ongoing. */
+  totalChapters: number
+  /** Reading score, on the tracker's own native scale. */
+  score: number
+}
+
+/**
+ * TrackSearchResult — one hit from an authed tracker search (the Tracking
+ * panel's "Add tracker" search step) — a candidate the owner picks to bind.
+ */
+export interface TrackSearchResult {
+  /** The tracker's manga id — the `bind()` payload's `remoteId`. */
+  remoteId: string
+  /** The result's title, as the tracker knows it. */
+  title: string
+  /** Canonical link to the entry on the tracker's own site. */
+  url: string
+  /** Portrait cover URL for the result (empty → no thumbnail shown). */
+  coverUrl: string
+  /** The tracker's own native status vocabulary. */
+  status: string
+  /** The tracker's reported total chapter count; 0 = unknown/ongoing. */
+  totalChapters: number
+}

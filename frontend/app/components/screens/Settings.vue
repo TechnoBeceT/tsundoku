@@ -7,6 +7,7 @@ import SuwayomiPane from '../settings/SuwayomiPane.vue'
 import ExtensionsPane from '../settings/ExtensionsPane.vue'
 import SourceMetricsPane from '../settings/SourceMetricsPane.vue'
 import SourcesSettingsPane from '../settings/SourcesSettingsPane.vue'
+import TrackersPane from '../settings/TrackersPane.vue'
 import type {
   DurationValue,
   EngineInfo,
@@ -22,6 +23,8 @@ import type {
   SourcesSettings,
   SuwayomiConfig,
   SystemInfo,
+  TrackerActionState,
+  TrackerStatus,
   UpgradeStep,
 } from './settings.types'
 
@@ -38,6 +41,8 @@ import type {
  *                   the library-wide dedup-sweep trigger)
  *                   + SourceMetricsPane (per-source search metrics + Warm now),
  *                   stacked — mirrors how LibraryPane stacks its own two cards
+ *   - trackers    → TrackersPane (Phase 3d: connect/disconnect AniList/MAL/
+ *                   Kitsu/MangaUpdates; per-series bind lives on Series Detail)
  *
  * Presentation only: ALL state arrives via props and every mutation is emitted —
  * the panes own their local editable copies (§16 round-trip) and re-emit each
@@ -104,6 +109,18 @@ withDefaults(defineProps<{
   dedupAllMessage?: string | null
   /** Error from the last dedup sweep trigger. */
   dedupAllError?: string | null
+  /** Every registered tracker's connect status (2g, Trackers pane). */
+  trackers?: TrackerStatus[]
+  /** §16 state of the one in-flight tracker connect/login/logout action. */
+  trackerAction?: TrackerActionState
+  /** OAuth tracker ids known to be missing client-id/public-URL config. */
+  misconfiguredTrackerIds?: number[]
+  /** The callback URL to register with each OAuth tracker's app. */
+  trackerRedirectUrl?: string
+  /** Whether the tracker list is loading (kept OUT of the global `loading` gate — its own pane-local skeleton, mirrors sourceMetricsPending). */
+  trackersPending?: boolean
+  /** A tracker-list load failure, surfaced inline in the pane. */
+  trackersError?: string | null
   /** When true, the whole screen renders as skeletons. */
   loading?: boolean
 }>(), {
@@ -126,6 +143,12 @@ withDefaults(defineProps<{
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
+  trackers: () => [],
+  trackerAction: () => ({ busyId: null }),
+  misconfiguredTrackerIds: () => [],
+  trackerRedirectUrl: '',
+  trackersPending: false,
+  trackersError: null,
   loading: false,
 })
 
@@ -170,6 +193,12 @@ const emit = defineEmits<{
   'warm-now': []
   /** Trigger the library-wide duplicate-source dedup sweep. */
   'dedup-all': []
+  /** The OAuth "Connect" button was pressed for a tracker id. */
+  'connect-tracker': [trackerId: number]
+  /** A credential sign-in form was submitted — carries the tracker id + pair. */
+  'login-tracker-credentials': [payload: { trackerId: number, username: string, password: string }]
+  /** The "Disconnect" button was pressed for a tracker id. */
+  'logout-tracker': [trackerId: number]
 }>()
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
@@ -239,7 +268,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @update:ext-check-interval="emit('update:ext-check-interval', $event)"
         />
 
-        <div v-else class="pane-stack">
+        <div v-else-if="activePane === 'sources'" class="pane-stack">
           <SourcesSettingsPane
             :sources="sourcesSettings"
             :save="sourcesSettingsSave"
@@ -260,6 +289,19 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             @warm-now="emit('warm-now')"
           />
         </div>
+
+        <TrackersPane
+          v-else
+          :trackers="trackers"
+          :tracker-action="trackerAction"
+          :misconfigured-ids="misconfiguredTrackerIds"
+          :redirect-url="trackerRedirectUrl"
+          :pending="trackersPending"
+          :error="trackersError"
+          @connect="emit('connect-tracker', $event)"
+          @login-credentials="emit('login-tracker-credentials', $event)"
+          @logout="emit('logout-tracker', $event)"
+        />
       </div>
     </div>
   </div>
