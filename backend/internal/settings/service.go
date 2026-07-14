@@ -135,6 +135,14 @@ func (s *Service) AutoUpdateTrack(ctx context.Context) bool {
 	return s.resolveBool(ctx, KeyAutoUpdateTrack)
 }
 
+// MetadataAutoIdentify reports whether the Phase-1 metadata engine's
+// background auto-identify pass is currently enabled (DB override else
+// default true). Read at use-time by metadatasvc.Service.AutoIdentify, so a
+// toggle hot-reloads on the very next adopt/import.
+func (s *Service) MetadataAutoIdentify(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeyMetadataAutoIdentify)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

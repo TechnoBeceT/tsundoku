@@ -382,6 +382,14 @@ type MetadataConfig struct {
 	// NOT case-insensitively equal "MALClientID" without a tag pinning the
 	// match explicitly.
 	MALClientID string `koanf:"mal_clientid"`
+	// AutoIdentify gates the background auto-identify pass (spec/metadata-
+	// engine-phase1 §4): when true (the default), a freshly adopted/imported
+	// series is automatically matched + merged against the registered
+	// providers. This is the env-sourced DEFAULT the runtime settings overlay
+	// (metadata.auto_identify) can override without a restart — see
+	// internal/settings' KeyMetadataAutoIdentify. Set via
+	// TSUNDOKU_METADATA_AUTOIDENTIFY.
+	AutoIdentify bool
 }
 
 // TrackerConfig holds credentials for the Phase-3 tracker OAuth subsystem's
@@ -514,6 +522,7 @@ func defaults() map[string]any {
 		"sources.minrequestdelay":  "500ms",
 		// Metadata — Phase-1 native metadata engine provider credentials.
 		"metadata.mal_clientid": "",
+		"metadata.autoidentify": true,
 		// Tracker — Phase-3 tracker OAuth subsystem credentials. All blank
 		// ⇒ the whole subsystem is dormant (see TrackerConfig's doc comment).
 		"tracker.anilistclientid": "",
@@ -615,6 +624,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_METADATA_MAL_CLIENTID          → metadata.mal_clientid (see the
 //	                                          `koanf:"mal_clientid"` tag on
 //	                                          MetadataConfig.MALClientID)
+//	TSUNDOKU_METADATA_AUTOIDENTIFY           → metadata.autoidentify
 //	TSUNDOKU_TRACKER_ANILISTCLIENTID        → tracker.anilistclientid
 //	TSUNDOKU_TRACKER_MALCLIENTID            → tracker.malclientid
 //	TSUNDOKU_TRACKER_PUBLICURL              → tracker.publicurl

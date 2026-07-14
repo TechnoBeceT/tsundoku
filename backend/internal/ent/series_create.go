@@ -186,6 +186,20 @@ func (_c *SeriesCreate) SetMetadataSource(v *metadata.SourceRef) *SeriesCreate {
 	return _c
 }
 
+// SetMetadataLocked sets the "metadata_locked" field.
+func (_c *SeriesCreate) SetMetadataLocked(v bool) *SeriesCreate {
+	_c.mutation.SetMetadataLocked(v)
+	return _c
+}
+
+// SetNillableMetadataLocked sets the "metadata_locked" field if the given value is not nil.
+func (_c *SeriesCreate) SetNillableMetadataLocked(v *bool) *SeriesCreate {
+	if v != nil {
+		_c.SetMetadataLocked(*v)
+	}
+	return _c
+}
+
 // SetCoverFile sets the "cover_file" field.
 func (_c *SeriesCreate) SetCoverFile(v string) *SeriesCreate {
 	_c.mutation.SetCoverFile(v)
@@ -385,6 +399,10 @@ func (_c *SeriesCreate) defaults() {
 		v := series.DefaultCompleted
 		_c.mutation.SetCompleted(v)
 	}
+	if _, ok := _c.mutation.MetadataLocked(); !ok {
+		v := series.DefaultMetadataLocked
+		_c.mutation.SetMetadataLocked(v)
+	}
 	if _, ok := _c.mutation.CoverFile(); !ok {
 		v := series.DefaultCoverFile
 		_c.mutation.SetCoverFile(v)
@@ -436,6 +454,9 @@ func (_c *SeriesCreate) check() error {
 	}
 	if _, ok := _c.mutation.Completed(); !ok {
 		return &ValidationError{Name: "completed", err: errors.New(`ent: missing required field "Series.completed"`)}
+	}
+	if _, ok := _c.mutation.MetadataLocked(); !ok {
+		return &ValidationError{Name: "metadata_locked", err: errors.New(`ent: missing required field "Series.metadata_locked"`)}
 	}
 	if _, ok := _c.mutation.CoverFile(); !ok {
 		return &ValidationError{Name: "cover_file", err: errors.New(`ent: missing required field "Series.cover_file"`)}
@@ -546,6 +567,10 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.MetadataSource(); ok {
 		_spec.SetField(series.FieldMetadataSource, field.TypeJSON, value)
 		_node.MetadataSource = value
+	}
+	if value, ok := _c.mutation.MetadataLocked(); ok {
+		_spec.SetField(series.FieldMetadataLocked, field.TypeBool, value)
+		_node.MetadataLocked = value
 	}
 	if value, ok := _c.mutation.CoverFile(); ok {
 		_spec.SetField(series.FieldCoverFile, field.TypeString, value)

@@ -27,6 +27,9 @@
  *   jobs.extension_check_interval → extensionCheckInterval (DurationValue)
  *   trackers.auto_update_track    → autoUpdateTrack (boolean, "true"/"false" —
  *                                    the Trackers pane's toggle)
+ *   metadata.auto_identify        → metadataAutoIdentify (boolean, "true"/"false" —
+ *                                    the Library pane's toggle; gates the Phase-1
+ *                                    metadata engine's background auto-identify pass)
  *
  * Sources pane tunables (SourcesSettings — the source-politeness spec):
  *   jobs.warmup_interval           → warmupInterval        (DurationValue)
@@ -146,6 +149,11 @@ const EXT_CHECK_DEFAULT: DurationValue = { value: 24, unit: 'h' }
 // until the owner opts in (mirrors the backend's boolTunable default).
 const AUTO_UPDATE_TRACK_DEFAULT = false
 
+// Default for the standalone metadata-auto-identify tunable (Library pane) —
+// on by default, mirroring the backend's metadata.auto_identify default true
+// (config.MetadataConfig.AutoIdentify).
+const METADATA_AUTO_IDENTIFY_DEFAULT = true
+
 // Defaults for the Sources pane tunables (source-politeness spec; mirrors the
 // backend config defaults in internal/settings/tunables.go).
 const SOURCES_DEFAULTS: SourcesSettings = {
@@ -241,6 +249,10 @@ export function useSettings() {
   const autoUpdateTrack = ref<boolean>(AUTO_UPDATE_TRACK_DEFAULT)
   const autoUpdateTrackSave = ref<SaveState>({ status: 'idle' })
 
+  // Standalone tunable: metadata-engine background auto-identify gate (Library pane).
+  const metadataAutoIdentify = ref<boolean>(METADATA_AUTO_IDENTIFY_DEFAULT)
+  const metadataAutoIdentifySave = ref<SaveState>({ status: 'idle' })
+
   // Sources pane: warm-up + circuit-breaker + politeness-delay tunables.
   const sourcesSettings = ref<SourcesSettings>({
     warmupInterval: { ...SOURCES_DEFAULTS.warmupInterval },
@@ -276,6 +288,11 @@ export function useSettings() {
       autoUpdateTrack.value = rawAutoUpdateTrack !== undefined
         ? rawAutoUpdateTrack === 'true'
         : AUTO_UPDATE_TRACK_DEFAULT
+      // Standalone: extract the metadata-auto-identify toggle from the same settings list.
+      const rawMetadataAutoIdentify = settingsRes.data.find(s => s.key === 'metadata.auto_identify')?.value
+      metadataAutoIdentify.value = rawMetadataAutoIdentify !== undefined
+        ? rawMetadataAutoIdentify === 'true'
+        : METADATA_AUTO_IDENTIFY_DEFAULT
       // Sources pane: the same settings list carries all 5 warm-up/politeness keys.
       sourcesSettings.value = mapSourcesSettings(settingsRes.data)
     }
@@ -391,6 +408,37 @@ export function useSettings() {
   }
 
   /**
+   * §16 save for the standalone metadata-auto-identify tunable. Sends a
+   * single-key PATCH, drives metadataAutoIdentifySave through the SaveState
+   * lifecycle, and reseeds metadataAutoIdentify from the authoritative response.
+   */
+  async function saveMetadataAutoIdentify(value: boolean): Promise<void> {
+    metadataAutoIdentifySave.value = { status: 'saving' }
+    try {
+      const res = await apiClient.PATCH('/api/settings', {
+        body: {
+          settings: [{ key: 'metadata.auto_identify', value: String(value) }],
+        },
+      })
+      if (res.error) {
+        const msg = (res.error as { message?: string }).message ?? 'Save failed'
+        metadataAutoIdentifySave.value = { status: 'error', message: msg }
+        return
+      }
+      // §16: reseed from the authoritative response body.
+      if (res.data) {
+        const raw = res.data.find(s => s.key === 'metadata.auto_identify')?.value
+        metadataAutoIdentify.value = raw !== undefined ? raw === 'true' : METADATA_AUTO_IDENTIFY_DEFAULT
+      }
+      metadataAutoIdentifySave.value = { status: 'success' }
+    }
+    catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      metadataAutoIdentifySave.value = { status: 'error', message: msg }
+    }
+  }
+
+  /**
    * §16 save for the Sources pane: builds the 5-key batch from the edited
    * SourcesSettings, PATCHes /api/settings, drives sourcesSettingsSave through
    * the SaveState lifecycle, and reseeds sourcesSettings from the authoritative
@@ -435,6 +483,8 @@ export function useSettings() {
     extSave,
     autoUpdateTrack,
     autoUpdateTrackSave,
+    metadataAutoIdentify,
+    metadataAutoIdentifySave,
     sourcesSettings,
     sourcesSettingsSave,
     pending,
@@ -442,6 +492,7 @@ export function useSettings() {
     saveLibrary,
     saveExtensionCheckInterval,
     saveAutoUpdateTrack,
+    saveMetadataAutoIdentify,
     saveSourcesSettings,
     refresh,
   }

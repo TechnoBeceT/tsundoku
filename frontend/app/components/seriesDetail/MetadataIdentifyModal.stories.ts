@@ -31,7 +31,7 @@ type Story = StoryObj<typeof meta>
 /** Default — the Title field prefilled over a populated candidate gallery. */
 export const Default: Story = {}
 
-/** Results — the populated candidate grid, single-select (alias of Default). */
+/** Results — the populated candidate grid, multi-select (alias of Default). */
 export const Results: Story = {}
 
 /** Loading — a skeleton grid while a search is in flight. */
@@ -46,7 +46,10 @@ export const Empty: Story = {
 
 /** Selected — a candidate preselected via an initial-slice fixture is not
  *  possible from props alone (selection is local), so this renders the same
- *  gallery; pick any card to see the selected treatment + enabled Confirm. */
+ *  gallery; pick any card to see the selected treatment + enabled Confirm.
+ *  Pick a SECOND card to see the multi-select merge — each picked card shows
+ *  its 1-based pick order (rank 1 is the primary/anchor) and the Confirm
+ *  button relabels to "Merge N matches". */
 export const Selected: Story = {}
 
 /**

@@ -32,7 +32,8 @@ import type {
  * Settings — the single-owner control panel. A thin container: a sticky sidebar
  * nav (SettingsNav) plus the one active pane, each pane extracted into its own
  * organism under `components/settings/`:
- *   - library     → LibraryPane     (schedules + read-only System)
+ *   - library     → LibraryPane     (schedules + the metadata.auto_identify
+ *                   toggle + read-only System)
  *   - categories  → CategoriesPane   (user-definable category CRUD)
  *   - engine      → EnginePane       (read-only status + upgrade stepper)
  *   - suwayomi    → SuwayomiPane      (proxied SOCKS + FlareSolverr config)
@@ -61,6 +62,10 @@ withDefaults(defineProps<{
   system: SystemInfo
   /** §16 state of the library Save button. */
   librarySave?: SaveState
+  /** The `metadata.auto_identify` setting value (Library pane). */
+  autoIdentify?: boolean
+  /** True while the auto-identify toggle's own save is in flight. */
+  autoIdentifyBusy?: boolean
   /** The user-defined category list (2b). */
   categories: SettingsCategory[]
   /** §16 state of category mutations (add/rename/reorder/delete): busy row + error. */
@@ -132,6 +137,8 @@ withDefaults(defineProps<{
 }>(), {
   activePane: 'library',
   librarySave: () => ({ status: 'idle' }),
+  autoIdentify: true,
+  autoIdentifyBusy: false,
   categoryAction: () => ({ busyId: null }),
   upgradeSteps: () => [],
   upgrading: false,
@@ -209,6 +216,8 @@ const emit = defineEmits<{
   'logout-tracker': [trackerId: number]
   /** The auto-update-track toggle was flipped — carries the new value. */
   'toggle-auto-update-track': [value: boolean]
+  /** The auto-identify toggle was flipped — carries the new value. */
+  'toggle-auto-identify': [value: boolean]
 }>()
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
@@ -230,7 +239,10 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           :library="library"
           :system="system"
           :save="librarySave"
+          :auto-identify="autoIdentify"
+          :auto-identify-busy="autoIdentifyBusy"
           @save="emit('save-library', $event)"
+          @toggle-auto-identify="emit('toggle-auto-identify', $event)"
         />
 
         <CategoriesPane

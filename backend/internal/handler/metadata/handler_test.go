@@ -334,6 +334,74 @@ func TestIdentify_MissingFields(t *testing.T) {
 	}
 }
 
+// TestIdentify_MultiSelectMerge asserts the {selections:[...]} body merges
+// TWO owner-picked providers (union collections, selection[0]-anchored
+// scalars), locks metadataLocked, and returns it all on the refreshed
+// SeriesDetailDTO — the end-to-end proof of the multi-select HTTP surface.
+func TestIdentify_MultiSelectMerge(t *testing.T) {
+	ctx := context.Background()
+	mangadex := &fakeProvider{
+		key: "mangadex",
+		metas: map[string]metadata.SeriesMetadata{
+			"5": {Title: "Chainsaw Man", Description: "Denji becomes Chainsaw Man.", Genres: []string{"Action"}},
+		},
+	}
+	anilist := &fakeProvider{
+		key:   "anilist",
+		metas: map[string]metadata.SeriesMetadata{"9": {Title: "CSM", Genres: []string{"Fantasy"}}},
+	}
+	client := testdb.New(t)
+	storage := t.TempDir()
+	registry := metadata.NewRegistry(mangadex, anilist)
+	metaSvc := metadatasvc.NewService(client, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
+	env := wireTestEnv(t, client, storage, metaSvc)
+	id := seedSeries(ctx, t, env.client, "Chainsaw Man", "chainsaw-man")
+
+	body := `{"selections":[{"provider":"mangadex","remoteId":"5"},{"provider":"anilist","remoteId":"9"}]}`
+	rec := env.do(http.MethodPost, "/api/series/"+id.String()+"/metadata/identify", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var out seriessvc.SeriesDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Genres) != 2 || out.Genres[0] != "Action" || out.Genres[1] != "Fantasy" {
+		t.Errorf("Genres = %v, want [Action Fantasy] (union, mangadex first)", out.Genres)
+	}
+	if out.MetadataSource == nil || out.MetadataSource.Ref != "mangadex" {
+		t.Errorf("MetadataSource = %+v, want selections[0] (mangadex) as primary", out.MetadataSource)
+	}
+	if !out.MetadataLocked {
+		t.Error("MetadataLocked = false, want true after a multi-select identify")
+	}
+}
+
+// TestIdentify_MultiSelectEmptyArrayIsBadRequest asserts an explicit empty
+// `selections: []` is a 400, same as the missing-fields legacy shape — an
+// empty array carries no picks to merge.
+func TestIdentify_MultiSelectEmptyArrayIsBadRequest(t *testing.T) {
+	env := newTestEnv(t, &fakeProvider{key: "anilist"})
+
+	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/metadata/identify", `{"selections":[]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIdentify_MultiSelectBlankEntryIsBadRequest asserts a selections entry
+// with a blank provider/remoteId is rejected before the service is called.
+func TestIdentify_MultiSelectBlankEntryIsBadRequest(t *testing.T) {
+	env := newTestEnv(t, &fakeProvider{key: "anilist"})
+
+	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/metadata/identify",
+		`{"selections":[{"provider":"anilist","remoteId":"1"},{"provider":"","remoteId":"2"}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestCovers_Success asserts the aggregated cover gallery round-trips through
 // the CoverCandidateDTO mapper.
 func TestCovers_Success(t *testing.T) {

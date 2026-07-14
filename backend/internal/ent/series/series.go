@@ -47,6 +47,8 @@ const (
 	FieldMetadataProviderID = "metadata_provider_id"
 	// FieldMetadataSource holds the string denoting the metadata_source field in the database.
 	FieldMetadataSource = "metadata_source"
+	// FieldMetadataLocked holds the string denoting the metadata_locked field in the database.
+	FieldMetadataLocked = "metadata_locked"
 	// FieldCoverFile holds the string denoting the cover_file field in the database.
 	FieldCoverFile = "cover_file"
 	// FieldCoverSourceURL holds the string denoting the cover_source_url field in the database.
@@ -118,6 +120,7 @@ var Columns = []string{
 	FieldCompleted,
 	FieldMetadataProviderID,
 	FieldMetadataSource,
+	FieldMetadataLocked,
 	FieldCoverFile,
 	FieldCoverSourceURL,
 	FieldCoverVersion,
@@ -149,6 +152,8 @@ var (
 	DefaultMonitored bool
 	// DefaultCompleted holds the default value on creation for the "completed" field.
 	DefaultCompleted bool
+	// DefaultMetadataLocked holds the default value on creation for the "metadata_locked" field.
+	DefaultMetadataLocked bool
 	// DefaultCoverFile holds the default value on creation for the "cover_file" field.
 	DefaultCoverFile string
 	// DefaultCoverSourceURL holds the default value on creation for the "cover_source_url" field.
@@ -221,6 +226,11 @@ func ByCompleted(opts ...sql.OrderTermOption) OrderOption {
 // ByMetadataProviderID orders the results by the metadata_provider_id field.
 func ByMetadataProviderID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMetadataProviderID, opts...).ToFunc()
+}
+
+// ByMetadataLocked orders the results by the metadata_locked field.
+func ByMetadataLocked(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMetadataLocked, opts...).ToFunc()
 }
 
 // ByCoverFile orders the results by the cover_file field.

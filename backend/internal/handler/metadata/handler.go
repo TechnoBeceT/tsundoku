@@ -63,11 +63,20 @@ func (h *Handler) Search(c echo.Context) error {
 	return c.JSON(http.StatusOK, toSearchResultDTOs(results))
 }
 
-// Identify handles POST /api/series/:id/metadata/identify. The owner's chosen
-// (provider, remoteId) pair becomes the primary metadata_source; the engine
-// auto-matches every other provider by the primary's own title and merges the
-// result (metadatasvc.Service.Identify — the "anchor-then-aggregate" pick,
-// QCAT-228). On success it returns the refreshed SeriesDetailDTO.
+// Identify handles POST /api/series/:id/metadata/identify. It accepts EITHER
+// the legacy single-pick {provider, remoteId} body or the multi-select
+// {selections:[...]} body (see IdentifyRequest's doc comment).
+//
+// A single resolved selection (whichever shape it came from) routes through
+// metadatasvc.Service.Identify — the owner's pick becomes the primary
+// metadata_source and the engine auto-matches every OTHER registered
+// provider by the primary's own title, merging the result ("anchor-then-
+// aggregate", QCAT-228). TWO OR MORE selections route through
+// metadatasvc.Service.IdentifyMerge instead — the owner's OWN picks are
+// merged directly, with NO auto-matching beyond them (a deliberate,
+// narrower multi-select merge — see IdentifyMerge's doc comment). Either
+// path locks Series.metadata_locked (hand-curation guard against
+// AutoIdentify). On success it returns the refreshed SeriesDetailDTO.
 func (h *Handler) Identify(c echo.Context) error {
 	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
@@ -77,13 +86,18 @@ func (h *Handler) Identify(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return httperr.BadRequest("invalid request body")
 	}
-	provider, remoteID, err := validateIdentify(req)
+	selections, err := validateIdentify(req)
 	if err != nil {
 		return err
 	}
 
 	ctx := c.Request().Context()
-	if err := h.svc.Identify(ctx, id, provider, remoteID); err != nil {
+	if len(selections) == 1 {
+		err = h.svc.Identify(ctx, id, selections[0].Provider, selections[0].RemoteID)
+	} else {
+		err = h.svc.IdentifyMerge(ctx, id, selections)
+	}
+	if err != nil {
 		return mapServiceError(err)
 	}
 	updated, err := h.seriesSvc.GetSeries(ctx, id)
@@ -143,15 +157,20 @@ func (h *Handler) SetCover(c echo.Context) error {
 // HTTP status, leaving any unexpected error (a DB failure, an upstream
 // provider fetch failure inside Identify/SetCover — metadatasvc does not
 // distinguish the two with its own sentinel) to fall through to the central
-// error middleware as a 500. ErrSeriesNotFound → 404; ErrProviderNotFound →
-// 400 (the caller supplied a provider key the registry does not hold, a bad
-// request, not a missing resource).
+// error middleware as a 500. ErrSeriesNotFound → 404; ErrProviderNotFound /
+// ErrNoSelections → 400 (a caller-supplied bad request, not a missing
+// resource); ErrAllSelectionsFailed is deliberately NOT special-cased — like
+// Identify's own primary-fetch failure, "every provider I asked for failed"
+// is a genuine upstream failure, not best-effort, so it falls through as a
+// 500 (mirrors Identify's existing behavior for a failed primary fetch).
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, metadatasvc.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "series not found")
 	case errors.Is(err, metadatasvc.ErrProviderNotFound):
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown metadata provider")
+	case errors.Is(err, metadatasvc.ErrNoSelections):
+		return echo.NewHTTPError(http.StatusBadRequest, "at least one selection is required")
 	default:
 		return err
 	}

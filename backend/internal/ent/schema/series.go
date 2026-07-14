@@ -89,6 +89,15 @@ func (Series) Fields() []ent.Field {
 		// display-name/cover resolution stays untouched until a later,
 		// owner-approved migration (spec §3). nil = not yet identified.
 		field.JSON("metadata_source", &metadata.SourceRef{}).Optional(),
+		// metadata_locked marks the series' rich metadata as OWNER-HAND-CURATED
+		// (multi-select merge identify, spec/metadata-engine-phase1 §5 extension) —
+		// it is set true ONLY by metadatasvc.Service.IdentifyMerge (the owner's
+		// explicit multi-provider pick). AutoIdentify checks this FIRST and no-ops
+		// on a locked series, so a manually-curated merge is never silently
+		// clobbered by the next background pass. Default false ⇒ zero-data
+		// migration; an existing series stays eligible for auto-identify exactly
+		// as before.
+		field.Bool("metadata_locked").Default(false),
 		// cover_file + cover_source_url are the FAST INDEX over the on-disk cover
 		// cache: the filename inside the series folder ("cover.webp") and the
 		// provider cover_url those bytes were fetched from (the cache key).

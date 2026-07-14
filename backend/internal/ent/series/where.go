@@ -106,6 +106,11 @@ func MetadataProviderID(v uuid.UUID) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldMetadataProviderID, v))
 }
 
+// MetadataLocked applies equality check predicate on the "metadata_locked" field. It's identical to MetadataLockedEQ.
+func MetadataLocked(v bool) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldMetadataLocked, v))
+}
+
 // CoverFile applies equality check predicate on the "cover_file" field. It's identical to CoverFileEQ.
 func CoverFile(v string) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCoverFile, v))
@@ -654,6 +659,16 @@ func MetadataSourceIsNil() predicate.Series {
 // MetadataSourceNotNil applies the NotNil predicate on the "metadata_source" field.
 func MetadataSourceNotNil() predicate.Series {
 	return predicate.Series(sql.FieldNotNull(FieldMetadataSource))
+}
+
+// MetadataLockedEQ applies the EQ predicate on the "metadata_locked" field.
+func MetadataLockedEQ(v bool) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldMetadataLocked, v))
+}
+
+// MetadataLockedNEQ applies the NEQ predicate on the "metadata_locked" field.
+func MetadataLockedNEQ(v bool) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldMetadataLocked, v))
 }
 
 // CoverFileEQ applies the EQ predicate on the "cover_file" field.

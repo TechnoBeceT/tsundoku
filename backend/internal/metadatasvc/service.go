@@ -61,6 +61,19 @@ var ErrProviderNotFound = errors.New("metadata provider not found")
 // beats a nil-pointer panic on the very first source-cover pick.
 var ErrSourceCoverFetcherNotConfigured = errors.New("metadatasvc: no source cover fetcher configured")
 
+// ErrNoSelections is returned by IdentifyMerge when called with an empty
+// selections slice — there is no meaningful "merge nothing" request. The
+// HTTP handler layer validates this before the call ever reaches the
+// service, so this is primarily a defensive guard for direct callers.
+var ErrNoSelections = errors.New("metadatasvc: no selections given")
+
+// ErrAllSelectionsFailed is returned by IdentifyMerge when EVERY selected
+// provider either names an unregistered key or fails its own
+// GetSeriesMetadata fetch — there is nothing left to merge. A partial
+// failure (at least one selection succeeds) is NOT an error: IdentifyMerge
+// proceeds with whichever selections it could fetch (see its doc comment).
+var ErrAllSelectionsFailed = errors.New("metadatasvc: every selected provider failed")
+
 // defaultHTTPTimeout bounds a single cover-image fetch performed by
 // saveCoverFromURL. A cover is one image, not a paginated API call, so a
 // generous-but-bounded client-wide timeout (rather than a per-request
@@ -85,6 +98,13 @@ type Service struct {
 	// WithSourceCoverFetcher; nil until then (see SourceCoverFetcher's doc
 	// comment for why the concrete adapter is NOT built in this package).
 	sourceCoverFetcher SourceCoverFetcher
+	// autoIdentifyGate is the optional global on/off switch AutoIdentify
+	// consults before doing any work (the metadata.auto_identify runtime
+	// tunable). Attached via WithAutoIdentifyGate; nil = always enabled (the
+	// default — every existing NewService call site). This is INDEPENDENT of
+	// the per-series metadata_locked flag: either one alone suppresses
+	// AutoIdentify.
+	autoIdentifyGate func(ctx context.Context) bool
 }
 
 // Option configures a Service at construction time. The only production use
@@ -130,6 +150,17 @@ func (s *Service) WithSourceCoverFetcher(f SourceCoverFetcher) *Service {
 	return s
 }
 
+// WithAutoIdentifyGate attaches the global auto-identify on/off switch and
+// returns the service, mirroring WithSourceCoverFetcher's fluent shape.
+// gate is called at the top of every AutoIdentify — a nil gate (the
+// default) leaves auto-identify always enabled; production wires it to
+// settings.Service.MetadataAutoIdentify so an owner can pause the
+// background pass without a restart (read at use-time = hot reload).
+func (s *Service) WithAutoIdentifyGate(gate func(ctx context.Context) bool) *Service {
+	s.autoIdentifyGate = gate
+	return s
+}
+
 // NewService builds the metadata-engine orchestration service. http defaults
 // to newSSRFSafeHTTPClient() — a bounded-timeout client whose dialer refuses
 // non-public destinations (see httpclient.go) — because AutoIdentify follows
@@ -165,17 +196,33 @@ func (s *Service) Search(ctx context.Context, q string, providerKeys []string) (
 // merges their metadata (primary-anchored per QCAT-228, primary = the
 // registry-priority-ordered first match) and persists it.
 //
+// TWO independent no-op gates run BEFORE any matching happens (spec/metadata-
+// engine-phase1's multi-select-merge extension): the global
+// metadata.auto_identify runtime tunable (autoIdentifyGate, checked first —
+// no DB call needed) and the per-series Series.metadata_locked flag (set by
+// IdentifyMerge — the owner's manual multi-provider curation must never be
+// silently clobbered by the next background pass). Either alone suppresses
+// the pass; both return nil, the same "nothing to do" contract as "no
+// confident match anywhere" below.
+//
 // "No confident match anywhere" is an EXPECTED outcome, not a failure — the
 // series' metadata is simply left untouched and AutoIdentify returns nil, so
 // a caller firing this from a detached goroutine (the C5 import/adopt hook)
 // never needs special-case handling for "nothing found" vs "identified".
 func (s *Service) AutoIdentify(ctx context.Context, seriesID uuid.UUID) error {
+	if s.autoIdentifyGate != nil && !s.autoIdentifyGate(ctx) {
+		return nil // owner has paused auto-identify globally — best-effort no-op.
+	}
+
 	row, err := s.client.Series.Query().Where(entseries.IDEQ(seriesID)).Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return ErrSeriesNotFound
 		}
 		return fmt.Errorf("metadatasvc: load series %s: %w", seriesID, err)
+	}
+	if row.MetadataLocked {
+		return nil // owner hand-curated this series' metadata — never auto-overwrite it.
 	}
 
 	mq := metadata.MatchQuery{Title: row.Title, AltTitles: altTitleNames(row.AltTitles)}
@@ -200,7 +247,9 @@ func (s *Service) AutoIdentify(ctx context.Context, seriesID uuid.UUID) error {
 		coverURL = primaryMatch.CoverURL
 	}
 
-	return s.persist(ctx, seriesID, result.Merged, src, coverURL)
+	// locked=false: AutoIdentify never hand-curates — a background match stays
+	// eligible for the NEXT auto-identify pass (only IdentifyMerge locks).
+	return s.persist(ctx, seriesID, result.Merged, src, coverURL, false)
 }
 
 // Identify performs the owner's manual "anchor-then-aggregate" pick
@@ -274,7 +323,9 @@ func (s *Service) Identify(ctx context.Context, seriesID uuid.UUID, providerKey,
 		RemoteURL: resolvePrimaryURL(ctx, provider, primary.Title, remoteID),
 	}
 
-	return s.persist(ctx, seriesID, merged, src, primary.CoverURL)
+	// locked=true: any explicit owner Identify (single or multi-select, see
+	// IdentifyMerge) is hand-curation — AutoIdentify must never overwrite it.
+	return s.persist(ctx, seriesID, merged, src, primary.CoverURL, true)
 }
 
 // CoverCandidates aggregates cover options from every metadata provider AND
@@ -404,15 +455,23 @@ func (s *Service) SetCover(ctx context.Context, seriesID uuid.UUID, kind, ref, c
 // Metadata block (disk is the rebuild seed — disk.Reconcile's
 // restoreMetadataIndex reads it back after a DB loss), and — when coverURL is
 // non-empty — best-effort fetches and caches the chosen cover. It is the ONE
-// write path shared by AutoIdentify and Identify; it NEVER touches
-// SeriesProvider or Chapter (see the package doc's never-link-a-source
+// write path shared by AutoIdentify, Identify, and IdentifyMerge; it NEVER
+// touches SeriesProvider or Chapter (see the package doc's never-link-a-source
 // invariant).
+//
+// locked sets Series.metadata_locked: true for any explicit owner call
+// (Identify/IdentifyMerge — hand-curation AutoIdentify must never overwrite),
+// false for AutoIdentify's own background pass (an auto-match stays eligible
+// for re-matching on a later pass, and never clears a lock — AutoIdentify
+// short-circuits before ever reaching persist on an already-locked series,
+// see its own doc comment).
 func (s *Service) persist(
 	ctx context.Context,
 	seriesID uuid.UUID,
 	merged metadata.SeriesMetadata,
 	src metadata.SourceRef,
 	coverURL string,
+	locked bool,
 ) error {
 	original, err := s.client.Series.Query().
 		Where(entseries.IDEQ(seriesID)).
@@ -436,6 +495,7 @@ func (s *Service) persist(
 		SetLinks(merged.Links).
 		SetYear(merged.Year).
 		SetMetadataSource(&src).
+		SetMetadataLocked(locked).
 		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("metadatasvc: persist metadata for series %s: %w", seriesID, err)

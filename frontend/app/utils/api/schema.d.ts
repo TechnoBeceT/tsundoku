@@ -609,12 +609,16 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Identify a series against a metadata provider
-         * @description The owner's picked (provider, remoteId) candidate becomes the series'
-         *     primary metadata_source ("anchor-then-aggregate"): the engine auto-matches
-         *     every other registered provider by the primary's own title and merges the
-         *     result (union collections + primary-anchored scalar gap-fill). Returns the
-         *     refreshed series detail (§16).
+         * Identify a series against one or more metadata providers
+         * @description Accepts either the legacy single-pick {provider, remoteId} body or the
+         *     multi-select {selections: [...]} body. A single resolved pick becomes the
+         *     series' primary metadata_source ("anchor-then-aggregate"): the engine
+         *     auto-matches every OTHER registered provider by the primary's own title
+         *     and merges the result (union collections + primary-anchored scalar
+         *     gap-fill, QCAT-228). Two or more selections merge EXACTLY the owner's own
+         *     picks instead — no auto-matching beyond them. Either way the series'
+         *     metadataLocked is set true (hand-curation — the background AutoIdentify
+         *     pass never overwrites it). Returns the refreshed series detail (§16).
          */
         post: operations["identifySeriesMetadata"];
         delete?: never;
@@ -2142,6 +2146,8 @@ export interface components {
             metadataSource: components["schemas"]["SourceRef"] | null;
             /** @description Provenance of the chosen cover; null until the owner explicitly picks one via the metadata engine. */
             coverSource: components["schemas"]["SourceRef"] | null;
+            /** @description True once the owner has hand-curated this series' rich metadata via a manual Identify/IdentifyMerge pick — the background AutoIdentify pass never overwrites a locked series. */
+            metadataLocked: boolean;
         };
         Category: {
             /**
@@ -2477,7 +2483,16 @@ export interface components {
             coverUrl: string;
             label: string;
         };
+        /** @description Either the legacy single-pick shape ({provider, remoteId}) or the multi-select merge shape ({selections: [...]}). When selections is non-empty it wins outright and the legacy fields are ignored. At least one of the two forms is required. */
         MetadataIdentifyRequest: {
+            /** @description Metadata provider Key() (e.g. "anilist"). Legacy single-pick shape; ignored when selections is non-empty. */
+            provider?: string;
+            /** @description The provider's own identifier for the picked series. Legacy single-pick shape; ignored when selections is non-empty. */
+            remoteId?: string;
+            /** @description Multi-select merge picks, in priority order — selections[0] is primary (anchors scalar precedence + the resulting metadataSource). Two or more entries route through the multi-select merge (union collections, no auto-matching beyond the given picks); a single entry behaves like the legacy shape (auto-matches every other registered provider too). */
+            selections?: components["schemas"]["MetadataSelection"][];
+        };
+        MetadataSelection: {
             /** @description Metadata provider Key() (e.g. "anilist"). */
             provider: string;
             /** @description The provider's own identifier for the picked series. */
@@ -4498,7 +4513,7 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesDetail"];
                 };
             };
-            /** @description Malformed series id, missing provider/remoteId, or an unknown provider key. */
+            /** @description Malformed series id, missing provider/remoteId (or a blank entry inside selections), an empty selections array, or an unknown provider key. */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -5,13 +5,15 @@ import LockedRow from '../ui/LockedRow.vue'
 import SaveFooter from '../ui/SaveFooter.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import TextField from '../ui/TextField.vue'
+import Toggle from '../ui/Toggle.vue'
 import SettingRow from './SettingRow.vue'
 import type { LibrarySettings, SaveState, SystemInfo } from '../screens/settings.types'
 
 /**
  * LibraryPane — the "Schedules & Behavior" pane: the runtime-editable library
- * knobs (three duration rows + three integer rows + an advanced disclosure) and
- * the read-only System card of deploy-time facts.
+ * knobs (three duration rows + three integer rows + an advanced disclosure),
+ * the metadata-engine auto-identify toggle, and the read-only System card of
+ * deploy-time facts.
  *
  * Keeps a LOCAL editable copy seeded from `library`; Save emits that copy, and
  * when the parent reflects the persisted value back the copy re-seeds (§16
@@ -20,8 +22,14 @@ import type { LibrarySettings, SaveState, SystemInfo } from '../screens/settings
  *   - `library`: the runtime-editable knobs (the source of truth).
  *   - `system`: read-only deploy-time facts for the System card.
  *   - `save`: the §16 save lifecycle (loading / success / error).
+ *   - `autoIdentify`: the current `metadata.auto_identify` setting value —
+ *     mirrors TrackersPane's own `autoUpdateTrack` toggle wiring (a
+ *     standalone tunable, saved independently of the Save-button batch above,
+ *     since flipping it takes effect immediately rather than needing Save).
+ *   - `autoIdentifyBusy`: true while the toggle's own save is in flight.
  *
- * Emits `save` with the full edited copy.
+ * Emits `save` with the full edited copy, and `toggle-auto-identify` with the
+ * new boolean value.
  */
 const props = withDefaults(defineProps<{
   /** The runtime-editable library knobs. */
@@ -30,13 +38,21 @@ const props = withDefaults(defineProps<{
   system: SystemInfo
   /** §16 state of the Save button. */
   save?: SaveState
+  /** The current `metadata.auto_identify` setting value. */
+  autoIdentify?: boolean
+  /** True while the auto-identify toggle's own save is in flight. */
+  autoIdentifyBusy?: boolean
 }>(), {
   save: () => ({ status: 'idle' }),
+  autoIdentify: true,
+  autoIdentifyBusy: false,
 })
 
 const emit = defineEmits<{
   /** Persist the edited knobs — carries the full edited copy. */
   save: [settings: LibrarySettings]
+  /** The auto-identify toggle was flipped — carries the new value. */
+  'toggle-auto-identify': [value: boolean]
 }>()
 
 // Deep-clone so the local copy is fully detached from the prop object.
@@ -99,6 +115,11 @@ function onSave() {
 
       <SettingRow name="Stale-grace days" hint="Health threshold before a source counts as stale">
         <TextField compact type="number" :model-value="String(lib.staleGraceDays)" @update:model-value="lib.staleGraceDays = clampInt($event)" />
+      </SettingRow>
+
+      <SettingRow name="Auto-identify new series" hint="Automatically match + merge rich metadata for a freshly adopted/imported series. Applies immediately (no Save needed) and never overrides a series you've hand-picked matches for.">
+        <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+        <Toggle :model-value="autoIdentify" :ariaLabel="'Auto-identify new series'" :disabled="autoIdentifyBusy" @update:model-value="emit('toggle-auto-identify', $event)" />
       </SettingRow>
 
       <div class="advanced">

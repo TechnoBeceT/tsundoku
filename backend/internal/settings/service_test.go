@@ -32,6 +32,7 @@ func testDefaults() settings.Defaults {
 		SourcesMinRequestDelay:  500 * time.Millisecond,
 		SuppressSplitParts:      true,
 		TrackRetryInterval:      5 * time.Minute,
+		MetadataAutoIdentify:    true,
 	}
 }
 
@@ -234,8 +235,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 18 {
-		t.Fatalf("List len = %d, want 18", len(list))
+	if len(list) != 19 {
+		t.Fatalf("List len = %d, want 19", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -294,6 +295,7 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 		Retries: 5, Backoff: 3 * time.Second, StaleGrace: 7,
 		ExtCheck: 12 * time.Hour, WarmupIv: 15 * time.Minute, WarmupSlow: 4000,
 		SourcesFailureThresh: 8, SourcesCooldownIv: 45 * time.Minute, SourcesMinDelay: 750 * time.Millisecond,
+		MetadataAutoIdentifyFlag: true,
 	}
 	checks := []struct {
 		name string
@@ -313,6 +315,7 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 		{"SourcesFailureThreshold", s.SourcesFailureThreshold(ctx), 8},
 		{"SourcesCooldown", s.SourcesCooldown(ctx), 45 * time.Minute},
 		{"SourcesMinRequestDelay", s.SourcesMinRequestDelay(ctx), 750 * time.Millisecond},
+		{"MetadataAutoIdentify", s.MetadataAutoIdentify(ctx), true},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -606,6 +609,28 @@ func TestSuppressSplitParts_DefaultAndOverride(t *testing.T) {
 		t.Fatal("after Set false, SuppressSplitParts = true, want false")
 	}
 	if err := svc.Set(ctx, settings.KeySuppressSplitParts, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
+	}
+}
+
+// TestMetadataAutoIdentify_DefaultAndOverride proves the metadata.auto_identify
+// tunable defaults to true and round-trips a Set override, mirroring
+// TestSuppressSplitParts_DefaultAndOverride for the other bool tunable.
+func TestMetadataAutoIdentify_DefaultAndOverride(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if !svc.MetadataAutoIdentify(ctx) {
+		t.Fatal("default MetadataAutoIdentify = false, want true")
+	}
+	if err := svc.Set(ctx, settings.KeyMetadataAutoIdentify, "false"); err != nil {
+		t.Fatalf("Set false: %v", err)
+	}
+	if svc.MetadataAutoIdentify(ctx) {
+		t.Fatal("after Set false, MetadataAutoIdentify = true, want false")
+	}
+	if err := svc.Set(ctx, settings.KeyMetadataAutoIdentify, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
 		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
 	}
 }

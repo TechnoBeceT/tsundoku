@@ -211,6 +211,7 @@ var (
 		{Name: "completed", Type: field.TypeBool, Default: false},
 		{Name: "metadata_provider_id", Type: field.TypeUUID, Nullable: true},
 		{Name: "metadata_source", Type: field.TypeJSON, Nullable: true},
+		{Name: "metadata_locked", Type: field.TypeBool, Default: false},
 		{Name: "cover_file", Type: field.TypeString, Default: ""},
 		{Name: "cover_source_url", Type: field.TypeString, Default: ""},
 		{Name: "cover_version", Type: field.TypeString, Default: ""},
@@ -227,7 +228,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "series_categories_series",
-				Columns:    []*schema.Column{SeriesColumns[22]},
+				Columns:    []*schema.Column{SeriesColumns[23]},
 				RefColumns: []*schema.Column{CategoriesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},

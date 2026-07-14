@@ -1,21 +1,42 @@
 package metadata
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
+	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/pkg/urlx"
 )
 
-// IdentifyRequest is the POST /api/series/:id/metadata/identify body — the
-// owner's picked candidate (from the Search gallery) that becomes the
-// series' primary metadata_source.
+// IdentifyRequest is the POST /api/series/:id/metadata/identify body. It
+// accepts EITHER shape:
+//   - the legacy single-pick {provider, remoteId} (back-compat — routes to
+//     metadatasvc.Service.Identify's own anchor-then-aggregate behavior);
+//   - the multi-select {selections:[...]} (routes to
+//     metadatasvc.Service.IdentifyMerge when it carries more than one entry).
+//
+// When Selections is non-empty it wins outright — the legacy fields are
+// ignored (validateIdentify never mixes the two shapes).
 type IdentifyRequest struct {
-	// Provider is the metadata Provider's Key() (e.g. "anilist").
+	// Provider is the metadata Provider's Key() (e.g. "anilist"). Legacy
+	// single-pick shape; ignored when Selections is non-empty.
 	Provider string `json:"provider"`
 	// RemoteID is the provider's own identifier for the picked series.
+	// Legacy single-pick shape; ignored when Selections is non-empty.
+	RemoteID string `json:"remoteId"`
+	// Selections is the multi-select merge picks, in priority order —
+	// Selections[0] is primary (anchors scalar precedence + metadataSource).
+	Selections []SelectionRequest `json:"selections"`
+}
+
+// SelectionRequest is one entry of IdentifyRequest.Selections — mirrors the
+// legacy {provider, remoteId} pair shape so the two request forms share a
+// field vocabulary.
+type SelectionRequest struct {
+	Provider string `json:"provider"`
 	RemoteID string `json:"remoteId"`
 }
 
@@ -54,19 +75,38 @@ func validateQuery(raw string) (string, error) {
 	return q, nil
 }
 
-// validateIdentify requires both provider and remoteId to be non-blank —
-// there is no meaningful "identify against nothing" request. Values are
-// trimmed before use.
-func validateIdentify(req IdentifyRequest) (provider, remoteID string, err error) {
-	provider = strings.TrimSpace(req.Provider)
-	remoteID = strings.TrimSpace(req.RemoteID)
+// validateIdentify normalizes IdentifyRequest into the selections
+// metadatasvc consumes. A non-empty Selections wins outright (the multi-
+// select shape); otherwise it falls back to the legacy {provider, remoteId}
+// pair, wrapped as a single selection. Either way, every provider/remoteId
+// value is trimmed and required non-blank — there is no meaningful "identify
+// against nothing" request.
+func validateIdentify(req IdentifyRequest) ([]metadatasvc.Selection, error) {
+	if len(req.Selections) > 0 {
+		out := make([]metadatasvc.Selection, 0, len(req.Selections))
+		for i, sel := range req.Selections {
+			provider := strings.TrimSpace(sel.Provider)
+			remoteID := strings.TrimSpace(sel.RemoteID)
+			if provider == "" {
+				return nil, httperr.BadRequest(fmt.Sprintf("selections[%d].provider is required", i))
+			}
+			if remoteID == "" {
+				return nil, httperr.BadRequest(fmt.Sprintf("selections[%d].remoteId is required", i))
+			}
+			out = append(out, metadatasvc.Selection{Provider: provider, RemoteID: remoteID})
+		}
+		return out, nil
+	}
+
+	provider := strings.TrimSpace(req.Provider)
+	remoteID := strings.TrimSpace(req.RemoteID)
 	if provider == "" {
-		return "", "", httperr.BadRequest("provider is required")
+		return nil, httperr.BadRequest("provider is required")
 	}
 	if remoteID == "" {
-		return "", "", httperr.BadRequest("remoteId is required")
+		return nil, httperr.BadRequest("remoteId is required")
 	}
-	return provider, remoteID, nil
+	return []metadatasvc.Selection{{Provider: provider, RemoteID: remoteID}}, nil
 }
 
 // validSourceKinds is the closed allowlist SetCoverRequest.SourceKind must

@@ -212,6 +212,13 @@ export interface SeriesDetail extends SeriesSummary, RichSeriesMeta {
   metadataSource?: SourceRef | null
   /** Provenance of the chosen cover; null/absent until the owner explicitly picks one. */
   coverSource?: SourceRef | null
+  /**
+   * True once the owner has hand-curated this series' rich metadata via a
+   * manual Identify/IdentifyMerge pick — the background auto-identify pass
+   * never overwrites a locked series. False (or absent) on a series that has
+   * never been manually identified.
+   */
+  metadataLocked?: boolean
 }
 
 /** The two mutually-exclusive choices in the required-choice delete dialog. */

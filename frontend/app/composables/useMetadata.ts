@@ -113,20 +113,24 @@ export function useMetadata(seriesId: string) {
   const identifyError = ref<string | null>(null)
 
   /**
-   * Confirms a candidate as the series' primary metadata source
-   * (POST /api/series/{id}/metadata/identify). The backend anchor-then-
-   * aggregates: it auto-matches every other provider by the primary's title,
-   * merges, and persists — this call's response already carries the fully
-   * refreshed series. Resolves the raw DTO on success (the caller reseeds
+   * Confirms one or more picked candidates as the series' merged metadata
+   * source (POST /api/series/{id}/metadata/identify, always sent as
+   * `{selections: [...]}` — index 0 is the primary/anchor). A SINGLE
+   * selection still gets the backend's full anchor-then-aggregate treatment
+   * (it auto-matches every OTHER registered provider by the primary's
+   * title); TWO OR MORE selections merge EXACTLY the owner's own picks, no
+   * auto-matching beyond them (the multi-select merge, QCAT-228). Either
+   * way the call locks the series' metadata against the background
+   * auto-identify pass. Resolves the raw DTO on success (the caller reseeds
    * `useSeriesDetail`'s `series`), or null on failure (`identifyError` set).
    */
-  async function identify(provider: string, remoteId: string): Promise<SeriesDetailDTO | null> {
+  async function identify(selections: { provider: string, remoteId: string }[]): Promise<SeriesDetailDTO | null> {
     identifying.value = true
     identifyError.value = null
     try {
       const res = await apiClient.POST('/api/series/{id}/metadata/identify', {
         params: { path: { id: seriesId } },
-        body: { provider, remoteId },
+        body: { selections },
       })
       if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Identify failed')
       return res.data

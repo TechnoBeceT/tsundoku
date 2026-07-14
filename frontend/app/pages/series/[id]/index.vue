@@ -66,7 +66,8 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, Updat
  * directly from the returned DTO (§16 mutate-reseeds-from-response, same shape
  * as `matchDiskProvider`/`batchAddProviders`):
  *   - MetadataIdentifyModal: `search` → `metadata.search(query)`;
- *     `confirm` → `metadata.identify(candidate.providerKey, candidate.remoteId)`,
+ *     `confirm` (one or more MULTI-SELECT picks, in pick order) →
+ *     `metadata.identify(candidates.map(c => ({provider: c.providerKey, remoteId: c.remoteId})))`,
  *     closes + reseeds on success, stays open with the error shown on failure.
  *   - CoverPickerModal: opening it (`coverPickerOpen` watcher) →
  *     `metadata.loadCovers()`; `confirm` → `metadata.setCover(candidate.sourceKind,
@@ -291,8 +292,8 @@ async function onIdentifySearch(query: string): Promise<void> {
   await searchMetadata(query)
 }
 
-async function onIdentifyConfirm(candidate: MetadataCandidate): Promise<void> {
-  const detail = await identifySeries(candidate.providerKey, candidate.remoteId)
+async function onIdentifyConfirm(candidates: MetadataCandidate[]): Promise<void> {
+  const detail = await identifySeries(candidates.map((c) => ({ provider: c.providerKey, remoteId: c.remoteId })))
   if (detail) {
     identifyOpen.value = false
     reseed(detail)

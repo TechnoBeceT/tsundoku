@@ -8,8 +8,12 @@
  *      MetadataSearchResult onto the screen MetadataCandidate shape
  *      (id = `${provider}:${remoteId}`, provider label prettified, year 0 → undefined).
  *   2. search() failure clears candidates and sets searchError (never throws).
- *   3. identify(provider, remoteId) POSTs /api/series/{id}/metadata/identify
- *      with the exact {provider, remoteId} body and resolves the raw DTO.
+ *   3. identify(selections) POSTs /api/series/{id}/metadata/identify with the
+ *      exact {selections:[...]} body (a single-entry array included — the
+ *      composable ALWAYS sends the multi-select shape, letting the backend
+ *      decide single-pick vs merge behavior by count) and resolves the raw DTO.
+ *   3b. identify() with TWO selections sends both entries, in the given order
+ *      (selections[0] stays primary).
  *   4. identify() failure sets identifyError and resolves null.
  *   5. loadCovers() GETs /api/series/{id}/metadata/covers and maps each
  *      CoverCandidate DTO onto the screen shape, carrying sourceKind/sourceRef.
@@ -145,10 +149,10 @@ describe('useMetadata', () => {
     expect(searchError.value).toBe('search failed')
   })
 
-  it('identify(provider, remoteId) POSTs the exact body and resolves the raw DTO', async () => {
+  it('identify(selections) with one entry POSTs the exact {selections:[...]} body and resolves the raw DTO', async () => {
     const { identify, identifyError, identifying } = useMetadata('series-1')
 
-    const pending = identify('anilist', '105398')
+    const pending = identify([{ provider: 'anilist', remoteId: '105398' }])
     expect(identifying.value).toBe(true)
     const result = await pending
     expect(identifying.value).toBe(false)
@@ -156,17 +160,37 @@ describe('useMetadata', () => {
     expect(calls).toEqual([{
       method: 'POST',
       path: '/api/series/{id}/metadata/identify',
-      body: { provider: 'anilist', remoteId: '105398' },
+      body: { selections: [{ provider: 'anilist', remoteId: '105398' }] },
     }])
     expect(result).toEqual(seriesDetailStub)
     expect(identifyError.value).toBeNull()
+  })
+
+  it('identify(selections) with TWO entries sends both, in the given order (selections[0] stays primary)', async () => {
+    const { identify } = useMetadata('series-1')
+
+    await identify([
+      { provider: 'mangadex', remoteId: '5' },
+      { provider: 'anilist', remoteId: '9' },
+    ])
+
+    expect(calls).toEqual([{
+      method: 'POST',
+      path: '/api/series/{id}/metadata/identify',
+      body: {
+        selections: [
+          { provider: 'mangadex', remoteId: '5' },
+          { provider: 'anilist', remoteId: '9' },
+        ],
+      },
+    }])
   })
 
   it('identify() failure sets identifyError and resolves null', async () => {
     nextIdentifyOk = false
     const { identify, identifyError } = useMetadata('series-1')
 
-    const result = await identify('anilist', '105398')
+    const result = await identify([{ provider: 'anilist', remoteId: '105398' }])
 
     expect(result).toBeNull()
     expect(identifyError.value).toBe('identify failed')

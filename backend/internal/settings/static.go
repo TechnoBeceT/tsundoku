@@ -36,6 +36,8 @@ type Static struct {
 	TrackRetryIv time.Duration
 	// AutoUpdate backs the AutoUpdateTrack accessor.
 	AutoUpdate bool
+	// MetadataAutoIdentifyFlag backs the MetadataAutoIdentify accessor.
+	MetadataAutoIdentifyFlag bool
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -91,3 +93,6 @@ func (s Static) TrackRetryInterval(context.Context) time.Duration { return s.Tra
 
 // AutoUpdateTrack returns the fixed reading-triggered tracker-sync toggle.
 func (s Static) AutoUpdateTrack(context.Context) bool { return s.AutoUpdate }
+
+// MetadataAutoIdentify returns the fixed metadata-engine auto-identify toggle.
+func (s Static) MetadataAutoIdentify(context.Context) bool { return s.MetadataAutoIdentifyFlag }

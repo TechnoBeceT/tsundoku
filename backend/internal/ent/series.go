@@ -53,6 +53,8 @@ type Series struct {
 	MetadataProviderID *uuid.UUID `json:"metadata_provider_id,omitempty"`
 	// MetadataSource holds the value of the "metadata_source" field.
 	MetadataSource *metadata.SourceRef `json:"metadata_source,omitempty"`
+	// MetadataLocked holds the value of the "metadata_locked" field.
+	MetadataLocked bool `json:"metadata_locked,omitempty"`
 	// CoverFile holds the value of the "cover_file" field.
 	CoverFile string `json:"cover_file,omitempty"`
 	// CoverSourceURL holds the value of the "cover_source_url" field.
@@ -133,7 +135,7 @@ func (*Series) scanValues(columns []string) ([]any, error) {
 			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
 		case series.FieldGenres, series.FieldTags, series.FieldAltTitles, series.FieldAuthors, series.FieldLinks, series.FieldMetadataSource, series.FieldCoverSource:
 			values[i] = new([]byte)
-		case series.FieldMonitored, series.FieldCompleted:
+		case series.FieldMonitored, series.FieldCompleted, series.FieldMetadataLocked:
 			values[i] = new(sql.NullBool)
 		case series.FieldYear:
 			values[i] = new(sql.NullInt64)
@@ -272,6 +274,12 @@ func (_m *Series) assignValues(columns []string, values []any) error {
 				if err := json.Unmarshal(*value, &_m.MetadataSource); err != nil {
 					return fmt.Errorf("unmarshal field metadata_source: %w", err)
 				}
+			}
+		case series.FieldMetadataLocked:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field metadata_locked", values[i])
+			} else if value.Valid {
+				_m.MetadataLocked = value.Bool
 			}
 		case series.FieldCoverFile:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -416,6 +424,9 @@ func (_m *Series) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("metadata_source=")
 	builder.WriteString(fmt.Sprintf("%v", _m.MetadataSource))
+	builder.WriteString(", ")
+	builder.WriteString("metadata_locked=")
+	builder.WriteString(fmt.Sprintf("%v", _m.MetadataLocked))
 	builder.WriteString(", ")
 	builder.WriteString("cover_file=")
 	builder.WriteString(_m.CoverFile)

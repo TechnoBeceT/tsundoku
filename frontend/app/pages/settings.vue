@@ -7,6 +7,9 @@
  *                           + extensionCheckInterval + saveExtensionCheckInterval
  *                           + autoUpdateTrack + saveAutoUpdateTrack (Phase 4
  *                           reading-triggered tracker-sync gate, Trackers pane)
+ *                           + metadataAutoIdentify + saveMetadataAutoIdentify
+ *                           (metadata-engine background auto-identify gate,
+ *                           Library pane)
  *                           + sourcesSettings + saveSourcesSettings (warm-up +
  *                           circuit-breaker knobs, source-politeness spec)
  *   useCategories()       → settingsCategories + categoryAction + CRUD methods
@@ -24,6 +27,8 @@
  *   :library              — library from useSettings
  *   :system               — system from useSettings
  *   :library-save         — librarySave from useSettings
+ *   :auto-identify        — metadataAutoIdentify from useSettings (Library pane)
+ *   :auto-identify-busy   — computed, metadataAutoIdentifySave.status === 'saving'
  *   :categories           — settingsCategories from useCategories
  *   :category-action      — categoryAction from useCategories
  *   :engine               — ENGINE_PLACEHOLDER (engine upgrade flow is deferred;
@@ -68,6 +73,7 @@
  * Emit wiring:
  *   @set-pane                    → setPane (updates local activePane ref)
  *   @save-library                → saveLibrary
+ *   @toggle-auto-identify        → saveMetadataAutoIdentify
  *   @save-suwayomi               → save
  *   @add-category                → addCategory
  *   @rename-category             → renameCategory
@@ -113,6 +119,9 @@ const {
   autoUpdateTrack,
   autoUpdateTrackSave,
   saveAutoUpdateTrack,
+  metadataAutoIdentify,
+  metadataAutoIdentifySave,
+  saveMetadataAutoIdentify,
   sourcesSettings,
   sourcesSettingsSave,
   saveSourcesSettings,
@@ -195,6 +204,9 @@ const trackerRedirectUrl = computed(() =>
 /** True while the auto-update-track toggle's own save is in flight (Phase 4). */
 const autoUpdateTrackBusy = computed(() => autoUpdateTrackSave.value.status === 'saving')
 
+/** True while the auto-identify toggle's own save is in flight (Library pane). */
+const autoIdentifyBusy = computed(() => metadataAutoIdentifySave.value.status === 'saving')
+
 /**
  * "Connect" was pressed for an OAuth tracker: build a fresh authorize URL,
  * stash the tracker id (the callback route has no other way to learn it — see
@@ -271,6 +283,8 @@ const loading = computed(
       :library="library"
       :system="system"
       :library-save="librarySave"
+      :auto-identify="metadataAutoIdentify"
+      :auto-identify-busy="autoIdentifyBusy"
       :categories="settingsCategories"
       :category-action="categoryAction"
       :engine="ENGINE_PLACEHOLDER"
@@ -307,6 +321,7 @@ const loading = computed(
       :loading="loading"
       @set-pane="setPane"
       @save-library="saveLibrary"
+      @toggle-auto-identify="saveMetadataAutoIdentify"
       @save-suwayomi="save"
       @add-category="addCategory"
       @rename-category="renameCategory"

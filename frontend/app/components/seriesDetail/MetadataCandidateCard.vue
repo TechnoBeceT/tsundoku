@@ -5,19 +5,31 @@ import type { MetadataCandidate } from '../screens/seriesDetail.types'
 
 /**
  * MetadataCandidateCard — one selectable search result in the "Identify" match
- * flow: a portrait cover, the provider's title (2-line clamp), and a provider
- * badge (AniList / MAL / MangaDex / MangaUpdates) with the year. The whole card
- * is a single `<button>`, so it is keyboard-selectable and carries a visible
- * focus ring; `aria-pressed` exposes the selected state to assistive tech.
+ * flow (MULTI-SELECT: any number of cards may be picked at once, to merge
+ * several providers into the series' rich metadata): a portrait cover, the
+ * provider's title (2-line clamp), and a provider badge (AniList / MAL /
+ * MangaDex / MangaUpdates) with the year. The whole card is a single
+ * `<button>`, so it is keyboard-selectable and carries a visible focus ring;
+ * `aria-pressed` exposes the selected state to assistive tech.
  *
- * Selected = the accent ring/border + a check badge on the cover. Presentation-
- * only: the candidate + selected flag arrive via props, a pick emits `select`.
+ * Selected = the accent ring/border + a badge on the cover. When `rank` is a
+ * positive number the badge shows that number instead of a checkmark — the
+ * owner's PICK ORDER, so rank 1 (the primary/anchor for the merge) is visibly
+ * distinct from a later pick. Omit `rank` (or pass 0/undefined) for a plain
+ * checkmark badge. Presentation-only: the candidate + selection state arrive
+ * via props, a pick emits `select` (the parent owns add/remove + ordering).
  */
 defineProps<{
   /** The search result to render. */
   candidate: MetadataCandidate
-  /** Whether this card is the currently-chosen candidate. */
+  /** Whether this card is currently picked. */
   selected: boolean
+  /**
+   * 1-based pick order when selected (1 = primary/anchor for the merge).
+   * Renders as the badge's number instead of a checkmark. Omit for a plain
+   * checkmark (single-select callers, or when order doesn't matter).
+   */
+  rank?: number
 }>()
 
 const emit = defineEmits<{
@@ -43,7 +55,8 @@ const emit = defineEmits<{
         radius="var(--radius-md)"
       />
       <span v-if="selected" class="cand__check" aria-hidden="true">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+        <span v-if="rank">{{ rank }}</span>
+        <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M20 6 9 17l-5-5" />
         </svg>
       </span>
@@ -108,6 +121,9 @@ const emit = defineEmits<{
   background: var(--accent);
   color: var(--cover-text);
   box-shadow: var(--shadow-accent-sm);
+  font-size: 11px;
+  font-weight: var(--weight-bold);
+  line-height: 1;
 }
 
 /* ---- Body ----------------------------------------------------------------- */

@@ -30,6 +30,8 @@
  *   altTitles ← dto.altTitles.map(name)   (the card renders names only, not type/lang)
  *   authors   ← dto.authors.map(name)     (the card renders names only, not role)
  *   metadataSource / coverSource ← pass-through (null until identified/cover-picked)
+ *   metadataLocked ← pass-through (true once the owner hand-curates via Identify/
+ *     IdentifyMerge; the background auto-identify pass never overwrites a locked series)
  *   description ← dto.description || undefined (RichSeriesMeta field is optional;
  *     "" on an unidentified series collapses to undefined so RichSeriesCard's
  *     `v-if="series.description"` hides the synopsis block cleanly)
@@ -134,6 +136,7 @@ function mapDetail(dto: SeriesDetailDTO): SeriesDetail {
     links: dto.links,
     metadataSource: dto.metadataSource,
     coverSource: dto.coverSource,
+    metadataLocked: dto.metadataLocked,
   }
 }
 

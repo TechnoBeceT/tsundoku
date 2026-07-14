@@ -24,6 +24,7 @@ type fakeProvider struct {
 
 	matchResult *metadata.SearchResult
 	matchErr    error
+	matchCalls  int32 // atomic — the AutoIdentify no-op guard tests assert this stays 0
 
 	// metas is keyed by remoteID so GetSeriesMetadata returns the right
 	// record for whatever RemoteID a test drives it with.
@@ -68,6 +69,7 @@ func (f *fakeProvider) GetSeriesCover(_ context.Context, _ string) ([]byte, stri
 }
 
 func (f *fakeProvider) Match(_ context.Context, _ metadata.MatchQuery) (*metadata.SearchResult, error) {
+	atomic.AddInt32(&f.matchCalls, 1)
 	if f.matchErr != nil {
 		return nil, f.matchErr
 	}

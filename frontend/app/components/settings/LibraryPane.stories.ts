@@ -17,6 +17,8 @@ const meta = {
   args: {
     library: librarySettings,
     system: systemInfo,
+    autoIdentify: true,
+    autoIdentifyBusy: false,
   },
 } satisfies Meta<typeof LibraryPane>
 
@@ -36,4 +38,14 @@ export const Saving: Story = {
 /** §16 error — a visible, specific failure message beside the Save button. */
 export const SaveError: Story = {
   args: { save: { status: 'error', message: 'Save failed — refresh interval must be at least 10m.' } },
+}
+
+/** Auto-identify off — the owner has paused the background metadata-engine pass. */
+export const AutoIdentifyOff: Story = {
+  args: { save: { status: 'idle' }, autoIdentify: false },
+}
+
+/** Auto-identify toggle busy — its own save is in flight (disabled while saving). */
+export const AutoIdentifyBusy: Story = {
+  args: { save: { status: 'idle' }, autoIdentifyBusy: true },
 }

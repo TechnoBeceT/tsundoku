@@ -123,6 +123,16 @@ const (
 	// reader progress write — it does NOT gate manual "sync now"/tracking-
 	// sheet edits (those are explicit owner actions, never best-effort).
 	KeyAutoUpdateTrack = "trackers.auto_update_track"
+	// KeyMetadataAutoIdentify gates the Phase-1 native metadata engine's
+	// background auto-identify pass (bool, default true): when false, a
+	// freshly adopted/imported series' metadata is left untouched until the
+	// owner manually identifies it. Read at use-time by
+	// metadatasvc.Service.AutoIdentify (via the WithAutoIdentifyGate port),
+	// so a change hot-reloads on the very next adopt/import. This is a
+	// SEPARATE gate from Series.metadata_locked (the per-series "owner
+	// hand-curated" flag, set by IdentifyMerge) — either one suppresses
+	// AutoIdentify independently.
+	KeyMetadataAutoIdentify = "metadata.auto_identify"
 )
 
 // Defaults carries the config-resolved default for every tunable key. main
@@ -148,6 +158,7 @@ type Defaults struct {
 	SuppressSplitParts      bool
 	TrackRetryInterval      time.Duration
 	AutoUpdateTrack         bool
+	MetadataAutoIdentify    bool
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -185,6 +196,7 @@ var tunableOrder = []string{
 	KeySuppressSplitParts,
 	KeyTrackRetryInterval,
 	KeyAutoUpdateTrack,
+	KeyMetadataAutoIdentify,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -270,6 +282,10 @@ var tunables = map[string]tunable{
 	KeyAutoUpdateTrack: boolTunable(
 		KeyAutoUpdateTrack,
 		func(d Defaults) bool { return d.AutoUpdateTrack },
+	),
+	KeyMetadataAutoIdentify: boolTunable(
+		KeyMetadataAutoIdentify,
+		func(d Defaults) bool { return d.MetadataAutoIdentify },
 	),
 }
 

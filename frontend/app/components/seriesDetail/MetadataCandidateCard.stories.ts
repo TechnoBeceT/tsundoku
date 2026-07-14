@@ -38,6 +38,15 @@ export const Selected: Story = {
   args: { selected: true },
 }
 
+/**
+ * Ranked — a multi-select pick showing its 1-based order (rank 2 here) instead
+ * of a plain checkmark, so the owner can see WHICH picks are primary vs
+ * secondary in the merge.
+ */
+export const Ranked: Story = {
+  args: { selected: true, rank: 2 },
+}
+
 /** MangaDex provider badge. */
 export const MangaDexProvider: Story = {
   args: { candidate: mangaDex },
@@ -64,16 +73,21 @@ export const LongTitle: Story = {
 }
 
 /**
- * A small grid of cards — the density the modal renders at, with one selected,
+ * A small grid of cards — the density the modal renders at, with TWO selected
+ * (multi-select merge) showing their pick order (1 = primary, 2 = secondary),
  * so the whole picker reads at a glance.
  */
 export const Grid: Story = {
   render: () => ({
     components: { MetadataCandidateCard },
-    setup: () => ({ candidates: metadataCandidates.slice(0, 6), selectedId: metadataCandidates[0]!.id }),
+    setup: () => ({
+      candidates: metadataCandidates.slice(0, 6),
+      selectedIds: [metadataCandidates[0]!.id, metadataCandidates[2]!.id],
+    }),
     template:
       '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;max-width:440px">' +
-      '<MetadataCandidateCard v-for="c in candidates" :key="c.id" :candidate="c" :selected="c.id === selectedId" />' +
+      '<MetadataCandidateCard v-for="c in candidates" :key="c.id" :candidate="c" '
+      + ':selected="selectedIds.includes(c.id)" :rank="selectedIds.indexOf(c.id) + 1 || undefined" />' +
       '</div>',
   }),
 }

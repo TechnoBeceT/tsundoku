@@ -125,7 +125,12 @@ func main() {
 	// (cfg.Metadata.MALClientID, optional — see MetadataConfig's doc comment);
 	// the other four carry the engine end-to-end without it.
 	metaRegistry := providers.NewRegistry(providers.Config{MALClientID: cfg.Metadata.MALClientID})
-	metaSvc := metadatasvc.NewService(entClient, metaRegistry, cfg.Storage.Folder)
+	// WithAutoIdentifyGate wires the metadata.auto_identify runtime tunable
+	// (settingsSvc is already constructed above) so an owner can pause the
+	// background auto-identify pass without a restart, hot-reloadable —
+	// mirrors settingsSvc.AutoUpdateTrack's own gate wiring in syncsvc.
+	metaSvc := metadatasvc.NewService(entClient, metaRegistry, cfg.Storage.Folder).
+		WithAutoIdentifyGate(settingsSvc.MetadataAutoIdentify)
 
 	// Phase-3 tracker subsystem (spec/trackers-oauth-phase3): the composed
 	// registry of the four native trackers (AniList, MAL, Kitsu,
@@ -295,6 +300,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		SuppressSplitParts:      cfg.Jobs.SuppressSplitParts,
 		TrackRetryInterval:      cfg.Jobs.TrackRetryInterval,
 		AutoUpdateTrack:         cfg.Jobs.AutoUpdateTrack,
+		MetadataAutoIdentify:    cfg.Metadata.AutoIdentify,
 	}
 }
 

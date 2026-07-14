@@ -296,6 +296,20 @@ func (_u *SeriesUpdate) ClearMetadataSource() *SeriesUpdate {
 	return _u
 }
 
+// SetMetadataLocked sets the "metadata_locked" field.
+func (_u *SeriesUpdate) SetMetadataLocked(v bool) *SeriesUpdate {
+	_u.mutation.SetMetadataLocked(v)
+	return _u
+}
+
+// SetNillableMetadataLocked sets the "metadata_locked" field if the given value is not nil.
+func (_u *SeriesUpdate) SetNillableMetadataLocked(v *bool) *SeriesUpdate {
+	if v != nil {
+		_u.SetMetadataLocked(*v)
+	}
+	return _u
+}
+
 // SetCoverFile sets the "cover_file" field.
 func (_u *SeriesUpdate) SetCoverFile(v string) *SeriesUpdate {
 	_u.mutation.SetCoverFile(v)
@@ -618,6 +632,9 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.MetadataSourceCleared() {
 		_spec.ClearField(series.FieldMetadataSource, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.MetadataLocked(); ok {
+		_spec.SetField(series.FieldMetadataLocked, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CoverFile(); ok {
 		_spec.SetField(series.FieldCoverFile, field.TypeString, value)
@@ -1082,6 +1099,20 @@ func (_u *SeriesUpdateOne) ClearMetadataSource() *SeriesUpdateOne {
 	return _u
 }
 
+// SetMetadataLocked sets the "metadata_locked" field.
+func (_u *SeriesUpdateOne) SetMetadataLocked(v bool) *SeriesUpdateOne {
+	_u.mutation.SetMetadataLocked(v)
+	return _u
+}
+
+// SetNillableMetadataLocked sets the "metadata_locked" field if the given value is not nil.
+func (_u *SeriesUpdateOne) SetNillableMetadataLocked(v *bool) *SeriesUpdateOne {
+	if v != nil {
+		_u.SetMetadataLocked(*v)
+	}
+	return _u
+}
+
 // SetCoverFile sets the "cover_file" field.
 func (_u *SeriesUpdateOne) SetCoverFile(v string) *SeriesUpdateOne {
 	_u.mutation.SetCoverFile(v)
@@ -1434,6 +1465,9 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	}
 	if _u.mutation.MetadataSourceCleared() {
 		_spec.ClearField(series.FieldMetadataSource, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.MetadataLocked(); ok {
+		_spec.SetField(series.FieldMetadataLocked, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CoverFile(); ok {
 		_spec.SetField(series.FieldCoverFile, field.TypeString, value)

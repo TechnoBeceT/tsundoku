@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -188,5 +189,111 @@ func TestAutoIdentify_UnknownSeriesReturnsErrSeriesNotFound(t *testing.T) {
 	err := svc.AutoIdentify(ctx, randomUUID())
 	if !errors.Is(err, metadatasvc.ErrSeriesNotFound) {
 		t.Fatalf("AutoIdentify(unknown series) error = %v, want ErrSeriesNotFound", err)
+	}
+}
+
+// TestAutoIdentify_NoopWhenMetadataLocked confirms the per-series hand-
+// curation guard: a series with metadata_locked=true (set by a prior
+// IdentifyMerge) is left completely untouched by a background AutoIdentify
+// pass, even though the registered provider WOULD confidently match — the
+// provider's own Match/GetSeriesMetadata are never even called, proving the
+// guard short-circuits before any matching happens (not just before the
+// write).
+func TestAutoIdentify_NoopWhenMetadataLocked(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	id := seedSeries(ctx, t, db, "Locked Series", "locked-series")
+	db.Series.UpdateOneID(id).SetMetadataLocked(true).SetDescription("owner-curated, do not touch").SaveX(ctx)
+
+	provider := &fakeProvider{
+		key:         "anilist",
+		matchResult: &metadata.SearchResult{Provider: "anilist", RemoteID: "1"},
+		metas: map[string]metadata.SeriesMetadata{
+			"1": {Title: "Locked Series", Description: "would overwrite if the guard failed"},
+		},
+	}
+	registry := metadata.NewRegistry(provider)
+	svc := metadatasvc.NewService(db, registry, storage)
+
+	if err := svc.AutoIdentify(ctx, id); err != nil {
+		t.Fatalf("AutoIdentify on a locked series: want nil error, got %v", err)
+	}
+
+	row := db.Series.GetX(ctx, id)
+	if row.Description != "owner-curated, do not touch" {
+		t.Fatalf("Description = %q, want the pre-existing hand-curated value untouched", row.Description)
+	}
+	if got := atomic.LoadInt32(&provider.matchCalls); got != 0 {
+		t.Fatalf("provider.Match was called %d times, want 0 — the lock must short-circuit before any matching", got)
+	}
+}
+
+// TestAutoIdentify_NoopWhenAutoIdentifyGateDisabled confirms the GLOBAL
+// metadata.auto_identify gate (WithAutoIdentifyGate) independently
+// suppresses AutoIdentify, mirroring the per-series lock test above: the
+// provider is never even queried.
+func TestAutoIdentify_NoopWhenAutoIdentifyGateDisabled(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	id := seedSeries(ctx, t, db, "Gated Series", "gated-series")
+
+	provider := &fakeProvider{
+		key:         "anilist",
+		matchResult: &metadata.SearchResult{Provider: "anilist", RemoteID: "1"},
+		metas:       map[string]metadata.SeriesMetadata{"1": {Title: "Gated Series"}},
+	}
+	registry := metadata.NewRegistry(provider)
+	svc := metadatasvc.NewService(db, registry, storage).
+		WithAutoIdentifyGate(func(context.Context) bool { return false })
+
+	if err := svc.AutoIdentify(ctx, id); err != nil {
+		t.Fatalf("AutoIdentify with the gate off: want nil error, got %v", err)
+	}
+
+	row := db.Series.GetX(ctx, id)
+	if row.MetadataSource != nil {
+		t.Fatalf("MetadataSource = %+v, want untouched (nil) — the gate must suppress the pass entirely", row.MetadataSource)
+	}
+	if got := atomic.LoadInt32(&provider.matchCalls); got != 0 {
+		t.Fatalf("provider.Match was called %d times, want 0 — the gate must short-circuit before any matching", got)
+	}
+}
+
+// TestAutoIdentify_RunsWhenGateEnabledAndNotLocked confirms the two guards
+// are opt-out only: an explicitly-true gate on an unlocked series behaves
+// exactly like the no-gate default (mirrors
+// TestAutoIdentify_MatchPersistsMetadataAndSidecarNeverTouchesProviders,
+// minus the sidecar/cover assertions — this test's whole point is the gate
+// wiring, not re-proving the persist tail).
+func TestAutoIdentify_RunsWhenGateEnabledAndNotLocked(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	id := seedSeries(ctx, t, db, "Ungated Series", "ungated-series")
+
+	provider := &fakeProvider{
+		key:         "anilist",
+		matchResult: &metadata.SearchResult{Provider: "anilist", RemoteID: "1"},
+		metas:       map[string]metadata.SeriesMetadata{"1": {Title: "Ungated Series", Description: "matched"}},
+	}
+	registry := metadata.NewRegistry(provider)
+	svc := metadatasvc.NewService(db, registry, storage).
+		WithAutoIdentifyGate(func(context.Context) bool { return true })
+
+	if err := svc.AutoIdentify(ctx, id); err != nil {
+		t.Fatalf("AutoIdentify with the gate on: %v", err)
+	}
+
+	row := db.Series.GetX(ctx, id)
+	if row.Description != "matched" {
+		t.Fatalf("Description = %q, want %q — the gate=true path must run normally", row.Description, "matched")
+	}
+	if row.MetadataLocked {
+		t.Fatal("MetadataLocked = true after AutoIdentify, want false — only Identify/IdentifyMerge lock")
 	}
 }

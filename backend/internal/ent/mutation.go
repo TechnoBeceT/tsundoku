@@ -6701,6 +6701,7 @@ type SeriesMutation struct {
 	completed             *bool
 	metadata_provider_id  *uuid.UUID
 	metadata_source       **metadata.SourceRef
+	metadata_locked       *bool
 	cover_file            *string
 	cover_source_url      *string
 	cover_version         *string
@@ -7608,6 +7609,42 @@ func (m *SeriesMutation) ResetMetadataSource() {
 	delete(m.clearedFields, series.FieldMetadataSource)
 }
 
+// SetMetadataLocked sets the "metadata_locked" field.
+func (m *SeriesMutation) SetMetadataLocked(b bool) {
+	m.metadata_locked = &b
+}
+
+// MetadataLocked returns the value of the "metadata_locked" field in the mutation.
+func (m *SeriesMutation) MetadataLocked() (r bool, exists bool) {
+	v := m.metadata_locked
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMetadataLocked returns the old "metadata_locked" field's value of the Series entity.
+// If the Series object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesMutation) OldMetadataLocked(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMetadataLocked is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMetadataLocked requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMetadataLocked: %w", err)
+	}
+	return oldValue.MetadataLocked, nil
+}
+
+// ResetMetadataLocked resets all changes to the "metadata_locked" field.
+func (m *SeriesMutation) ResetMetadataLocked() {
+	m.metadata_locked = nil
+}
+
 // SetCoverFile sets the "cover_file" field.
 func (m *SeriesMutation) SetCoverFile(s string) {
 	m.cover_file = &s
@@ -8060,7 +8097,7 @@ func (m *SeriesMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesMutation) Fields() []string {
-	fields := make([]string, 0, 22)
+	fields := make([]string, 0, 23)
 	if m.title != nil {
 		fields = append(fields, series.FieldTitle)
 	}
@@ -8108,6 +8145,9 @@ func (m *SeriesMutation) Fields() []string {
 	}
 	if m.metadata_source != nil {
 		fields = append(fields, series.FieldMetadataSource)
+	}
+	if m.metadata_locked != nil {
+		fields = append(fields, series.FieldMetadataLocked)
 	}
 	if m.cover_file != nil {
 		fields = append(fields, series.FieldCoverFile)
@@ -8167,6 +8207,8 @@ func (m *SeriesMutation) Field(name string) (ent.Value, bool) {
 		return m.MetadataProviderID()
 	case series.FieldMetadataSource:
 		return m.MetadataSource()
+	case series.FieldMetadataLocked:
+		return m.MetadataLocked()
 	case series.FieldCoverFile:
 		return m.CoverFile()
 	case series.FieldCoverSourceURL:
@@ -8220,6 +8262,8 @@ func (m *SeriesMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldMetadataProviderID(ctx)
 	case series.FieldMetadataSource:
 		return m.OldMetadataSource(ctx)
+	case series.FieldMetadataLocked:
+		return m.OldMetadataLocked(ctx)
 	case series.FieldCoverFile:
 		return m.OldCoverFile(ctx)
 	case series.FieldCoverSourceURL:
@@ -8352,6 +8396,13 @@ func (m *SeriesMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetMetadataSource(v)
+		return nil
+	case series.FieldMetadataLocked:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMetadataLocked(v)
 		return nil
 	case series.FieldCoverFile:
 		v, ok := value.(string)
@@ -8563,6 +8614,9 @@ func (m *SeriesMutation) ResetField(name string) error {
 		return nil
 	case series.FieldMetadataSource:
 		m.ResetMetadataSource()
+		return nil
+	case series.FieldMetadataLocked:
+		m.ResetMetadataLocked()
 		return nil
 	case series.FieldCoverFile:
 		m.ResetCoverFile()

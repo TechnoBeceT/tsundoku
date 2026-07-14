@@ -539,6 +539,7 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		Year:           row.Year,
 		MetadataSource: mapSourceRef(row.MetadataSource),
 		CoverSource:    mapSourceRef(row.CoverSource),
+		MetadataLocked: row.MetadataLocked,
 	}, nil
 }
 

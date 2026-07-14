@@ -131,6 +131,13 @@ type SeriesDetailDTO struct {
 	// explicitly chosen via the metadata engine.
 	MetadataSource *SourceRefDTO `json:"metadataSource"`
 	CoverSource    *SourceRefDTO `json:"coverSource"`
+	// MetadataLocked is true once the owner has hand-curated this series'
+	// rich metadata via a manual Identify/IdentifyMerge pick — the Phase-1
+	// metadata engine's background AutoIdentify pass never overwrites a
+	// locked series (see metadatasvc.Service.AutoIdentify's guard). False on
+	// a series that has never been manually identified (AutoIdentify may
+	// still populate it).
+	MetadataLocked bool `json:"metadataLocked"`
 }
 
 // AltTitleDTO mirrors metadata.AltTitle for the wire (camelCase JSON).
