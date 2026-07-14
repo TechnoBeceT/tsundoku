@@ -18,6 +18,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/tracker"
+	"github.com/technobecet/tsundoku/internal/tracker/bind"
+	"github.com/technobecet/tsundoku/internal/tracker/connect"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -46,6 +49,12 @@ import (
 // (spec/metadata-engine-phase1) — it both serves the metadata HTTP endpoints
 // directly and is injected as the imports/library AutoIdentifier so a fresh
 // Adopt/Import fires a background rich-metadata pass.
+//
+// trackerRegistry/trackerConnectSvc/trackerBindSvc are the Phase-3 tracker
+// subsystem (spec/trackers-oauth-phase3): the composed registry of the four
+// native trackers plus the connect (per-account OAuth/credential login) and
+// bind (per-series search/bind/unbind/fetch) services over it, all built in
+// main.go over the SAME registry.
 func New(
 	cfg *config.Config,
 	client *entpkg.Client,
@@ -59,6 +68,9 @@ func New(
 	gate *sourcegate.Service,
 	chapterCache *suwayomi.ChapterCache,
 	metaSvc *metadatasvc.Service,
+	trackerRegistry *tracker.Registry,
+	trackerConnectSvc *connect.Service,
+	trackerBindSvc *bind.Service,
 	trigger func(),
 ) *echo.Echo {
 	e := echo.New()
@@ -82,6 +94,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trigger)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trigger)
 	return e
 }

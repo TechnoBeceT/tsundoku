@@ -53,6 +53,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/tracker/bind"
+	"github.com/technobecet/tsundoku/internal/tracker/connect"
+	trackerproviders "github.com/technobecet/tsundoku/internal/tracker/providers"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -121,6 +124,25 @@ func main() {
 	// the other four carry the engine end-to-end without it.
 	metaRegistry := providers.NewRegistry(providers.Config{MALClientID: cfg.Metadata.MALClientID})
 	metaSvc := metadatasvc.NewService(entClient, metaRegistry, cfg.Storage.Folder)
+
+	// Phase-3 tracker subsystem (spec/trackers-oauth-phase3): the composed
+	// registry of the four native trackers (AniList, MAL, Kitsu,
+	// MangaUpdates — internal/tracker/providers is the ONE place that
+	// depends on every concrete tracker package, mirroring
+	// internal/metadata/providers) plus the connect (per-ACCOUNT: OAuth/
+	// credential login, token storage) and bind (per-SERIES: search, bind,
+	// unbind, fetch) services over it. A blank AniList/MAL client-id, or a
+	// blank PublicURL, leaves the affected tracker(s)/the whole OAuth path
+	// dormant (AuthURL fails closed with tracker.ErrClientIDNotConfigured /
+	// connect.ErrPublicURLNotConfigured) rather than a startup failure —
+	// the same "blank disables" pattern as SuwayomiConfig.ExternalURL;
+	// Kitsu/MangaUpdates need no client-id at all (credential login).
+	trackerRegistry := trackerproviders.NewRegistry(trackerproviders.Config{
+		AniListClientID: cfg.Tracker.AniListClientID,
+		MALClientID:     cfg.Tracker.MALClientID,
+	})
+	trackerConnectSvc := connect.NewService(entClient, trackerRegistry, cfg.Tracker.PublicURL)
+	trackerBindSvc := bind.NewService(entClient, trackerRegistry, cfg.Storage.Folder)
 
 	// Source-politeness gate: a per-physical-source circuit-breaker (persisted
 	// in SourceCircuitState) + in-memory politeness delay, shared by every
@@ -191,7 +213,7 @@ func main() {
 	// called when tsundoku owns the process.
 	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 

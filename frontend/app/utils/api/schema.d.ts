@@ -1603,6 +1603,222 @@ export interface paths {
         patch: operations["setExtensionPreference"];
         trace?: never;
     };
+    "/api/trackers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List tracker connect status
+         * @description Returns every registered native tracker (AniList, MAL, Kitsu,
+         *     MangaUpdates) with its connect status. A disabled/unconfigured OAuth
+         *     tracker (blank client-id) is still listed, with isLoggedIn=false —
+         *     never omitted. This endpoint does NOT build an authorize URL (see
+         *     GET /api/trackers/{id}/auth-url) — it only reads connect state, so
+         *     it never stashes a pending OAuth login.
+         */
+        get: operations["listTrackers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trackers/{id}/auth-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Build a fresh OAuth authorize URL
+         * @description Builds a FRESH authorize URL on demand: generates a random state and
+         *     stashes any PKCE verifier (MAL) server-side, keyed to that state.
+         *     Kept separate from GET /api/trackers so a plain status list never
+         *     stashes a pending login the owner does not complete. Fails closed
+         *     (400) when the tracker doesn't support OAuth, its app client-id
+         *     isn't configured, or this instance's public URL isn't configured yet
+         *     (spec/trackers-oauth-phase3 §2 — the whole subsystem is dormant
+         *     until activated).
+         */
+        get: operations["getTrackerAuthURL"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trackers/{id}/login/oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete an OAuth login callback
+         * @description Finishes the OAuth round-trip the authorize URL started: exchanges
+         *     the callback's code (MAL) or access_token (AniList) for a token,
+         *     best-effort captures the account's username/score-format, and
+         *     upserts the result into this tracker's connection. Returns the
+         *     refreshed Tracker (§16 round-trip).
+         */
+        post: operations["loginTrackerOAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trackers/{id}/login/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Direct username/password tracker login
+         * @description A direct username/password (Kitsu password grant) or session
+         *     (MangaUpdates) login for a credential-based tracker. Returns the
+         *     refreshed Tracker (§16 round-trip). The password is never logged or
+         *     echoed back.
+         */
+        post: operations["loginTrackerCredentials"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trackers/{id}/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disconnect a tracker account
+         * @description Deletes this tracker's connected account, discarding its stored
+         *     token. Idempotent — logging out an already-disconnected tracker is
+         *     still a 204.
+         */
+        post: operations["logoutTracker"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trackers/{id}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Authed tracker search
+         * @description Searches trackerId's manga catalog using the connected account's
+         *     token — the candidate list an owner picks from when binding a
+         *     series.
+         */
+        get: operations["searchTracker"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/tracking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a series' tracker bindings
+         * @description Returns every tracker binding for the series.
+         */
+        get: operations["listSeriesTracking"];
+        put?: never;
+        /**
+         * Bind a series to a tracker entry
+         * @description Binds the series to trackerId's remoteId entry, registering a fresh
+         *     entry on the tracker's own account when it isn't already tracked
+         *     there. Re-binding an already-bound tracker re-points it to the new
+         *     remoteId. Returns the created/updated TrackBinding.
+         */
+        post: operations["createSeriesTracking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/tracking/{recordId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unbind a series' tracker entry
+         * @description Removes the binding. When deleteRemote=true the remote entry is ALSO
+         *     deleted from the tracker's own account first — a partial unbind
+         *     never leaves the local row deleted while a failed remote deletion
+         *     hides a still-live remote entry.
+         */
+        delete: operations["deleteSeriesTracking"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/tracking/{recordId}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-pull a binding's remote entry
+         * @description Re-pulls the binding's remote entry from the tracker's own account
+         *     and writes the fresh status/progress/score/dates. When the remote
+         *     entry has since vanished from the account's list, the existing row
+         *     is returned UNCHANGED rather than zeroed.
+         */
+        post: operations["refreshSeriesTracking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2721,6 +2937,108 @@ export interface components {
             /** @description Number of matching pairs left untouched because the linked twin has no fetched chapters yet (merging would orphan the disk chapters). */
             skipped: number;
             series: components["schemas"]["SeriesDetail"];
+        };
+        /**
+         * @description One registered native tracker's connect status (AniList, MAL, Kitsu,
+         *     MangaUpdates — spec/trackers-oauth-phase3). Every registered tracker
+         *     is always listed, including a disabled/unconfigured OAuth tracker
+         *     (blank client-id) — it is reported with isLoggedIn=false rather than
+         *     omitted.
+         */
+        Tracker: {
+            /**
+             * @description The tracker's stable numeric registry id (MAL=1, AniList=2, Kitsu=3, MangaUpdates=7).
+             * @example 2
+             */
+            id: number;
+            /**
+             * @description Human-display name.
+             * @example AniList
+             */
+            name: string;
+            /** @description True for AniList/MAL (OAuth redirect); false for Kitsu/MangaUpdates (direct username/password). */
+            needsOAuth: boolean;
+            /** @description Whether a connected account exists for this tracker. */
+            isLoggedIn: boolean;
+            /** @description Whether the connected account's token has expired and needs a fresh login. Always false when isLoggedIn is false. */
+            isTokenExpired: boolean;
+            /** @description The connected account's display username ("" when not logged in). */
+            username: string;
+        };
+        /** @description A freshly built OAuth authorize URL for one tracker login attempt. */
+        TrackerAuthURL: {
+            /** @description The URL to send the owner's browser to. */
+            authUrl: string;
+        };
+        /**
+         * @description Completes the OAuth round-trip an authorize URL started. callbackUrl
+         *     is the FULL callback URL the SPA's own OAuth callback route received
+         *     — carrying "state" plus either "code" (MAL) or "access_token"
+         *     (AniList; the SPA extracts the browser's URL fragment into a query
+         *     param before posting here, since a server never sees a fragment).
+         */
+        OAuthLoginRequest: {
+            callbackUrl: string;
+        };
+        /** @description A direct username/password login for a credential-based tracker (Kitsu, MangaUpdates). */
+        CredentialLoginRequest: {
+            username: string;
+            /** Format: password */
+            password: string;
+        };
+        /**
+         * @description One tracker's search hit for a manga. status/totalChapters are the
+         *     tracker's OWN native vocabulary/scale — never normalized (spec §2).
+         */
+        TrackSearchResult: {
+            /** @description The tracker's manga id. */
+            remoteId: string;
+            title: string;
+            url: string;
+            coverUrl: string;
+            /** @description The tracker's own native status vocabulary (e.g. AniList RELEASING/FINISHED). */
+            status: string;
+            /** @description The tracker's reported total chapter count; 0 = unknown/ongoing. */
+            totalChapters: number;
+        };
+        /**
+         * @description A series↔tracker binding — the remote link and reading progress on
+         *     one tracker's own account. status/score/lastChapterRead are the
+         *     tracker's OWN native scale (spec §2 — converted only at display).
+         */
+        TrackBinding: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            seriesId: string;
+            trackerId: number;
+            trackerName: string;
+            /** @description The tracker's manga id. */
+            remoteId: string;
+            /** @description The canonical link to the remote entry ("" when not derivable). */
+            remoteUrl: string;
+            /** @description The AniList MediaList entry id ("" for MAL / trackers without one). */
+            libraryId: string;
+            /** @description The remote entry's title. */
+            title: string;
+            /** @description The tracker's own native status code. */
+            status: string;
+            /** @description The furthest chapter read (fractional-safe). */
+            lastChapterRead: number;
+            /** @description The remote total; 0 = unknown/ongoing. */
+            totalChapters: number;
+            /** @description Reading score on the tracker's native scale. */
+            score: number;
+            /** Format: date-time */
+            startDate: string | null;
+            /** Format: date-time */
+            finishDate: string | null;
+            private: boolean;
+        };
+        /** @description The owner's picked tracker + remote entry (from the search results) to bind the series to. */
+        BindRequest: {
+            trackerId: number;
+            remoteId: string;
         };
     };
     responses: never;
@@ -6193,6 +6511,530 @@ export interface operations {
                 };
             };
             /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listTrackers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every registered tracker's connect status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tracker"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getTrackerAuthURL: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The tracker's numeric registry id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A fresh authorize URL. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackerAuthURL"];
+                };
+            };
+            /** @description This tracker doesn't support OAuth, its client-id isn't configured, or the instance public URL isn't configured. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown tracker id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    loginTrackerOAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The tracker's numeric registry id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Login completed. Returns the refreshed tracker connect status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tracker"];
+                };
+            };
+            /** @description Missing callbackUrl, or an invalid/expired/missing login state, code, or access token. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown tracker id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The tracker's token exchange failed (network or upstream rejection). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    loginTrackerCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The tracker's numeric registry id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Login completed. Returns the refreshed tracker connect status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tracker"];
+                };
+            };
+            /** @description Missing username/password, or this tracker connects via OAuth (not credentials). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown tracker id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The credential login failed (network or bad credentials rejected upstream). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    logoutTracker: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The tracker's numeric registry id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Logged out (or already disconnected). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown tracker id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    searchTracker: {
+        parameters: {
+            query: {
+                /** @description Free-text search query. */
+                q: string;
+            };
+            header?: never;
+            path: {
+                /** @description The tracker's numeric registry id. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Search hits. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackSearchResult"][];
+                };
+            };
+            /** @description Missing/blank q, or the tracker has no connected account. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown tracker id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The tracker search failed upstream. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSeriesTracking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The series' tracker bindings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackBinding"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createSeriesTracking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BindRequest"];
+            };
+        };
+        responses: {
+            /** @description The bound TrackBinding. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackBinding"];
+                };
+            };
+            /** @description Missing trackerId/remoteId, or the tracker has no connected account. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id, or unknown trackerId. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The tracker fetch/create-entry call failed upstream. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteSeriesTracking: {
+        parameters: {
+            query?: {
+                /** @description Whether to also delete the entry from the tracker's own account. Defaults to false. */
+                deleteRemote?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description TrackBinding UUID. */
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unbound. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed id, or deleteRemote is present but not true/false. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No binding with the given recordId. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description deleteRemote=true and the remote deletion failed upstream. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    refreshSeriesTracking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description TrackBinding UUID. */
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The refreshed TrackBinding. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackBinding"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No binding with the given recordId. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The tracker fetch-entry call failed upstream. */
             502: {
                 headers: {
                     [name: string]: unknown;

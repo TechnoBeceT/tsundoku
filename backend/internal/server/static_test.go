@@ -19,6 +19,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/tracker"
+	"github.com/technobecet/tsundoku/internal/tracker/bind"
+	"github.com/technobecet/tsundoku/internal/tracker/connect"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -113,7 +116,13 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	// registry never fires an outbound call, matching the nil-DB/panic-on-use
 	// discipline the other stubs above follow.
 	metaSvc := metadatasvc.NewService(nil, metadata.NewRegistry(), "")
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, func() {}), authSvc
+	// No tracker connections wired for these route-level tests either — an
+	// empty registry + nil-client connect/bind services never fire an
+	// outbound call or DB query, matching the other stubs' discipline.
+	trackerRegistry := tracker.NewRegistry()
+	trackerConnectSvc := connect.NewService(nil, trackerRegistry, "")
+	trackerBindSvc := bind.NewService(nil, trackerRegistry, "")
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, func() {}), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

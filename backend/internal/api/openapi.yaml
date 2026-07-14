@@ -2011,6 +2011,189 @@ components:
         series:
           $ref: "#/components/schemas/SeriesDetail"
 
+    Tracker:
+      type: object
+      description: |
+        One registered native tracker's connect status (AniList, MAL, Kitsu,
+        MangaUpdates — spec/trackers-oauth-phase3). Every registered tracker
+        is always listed, including a disabled/unconfigured OAuth tracker
+        (blank client-id) — it is reported with isLoggedIn=false rather than
+        omitted.
+      required:
+        - id
+        - name
+        - needsOAuth
+        - isLoggedIn
+        - isTokenExpired
+        - username
+      properties:
+        id:
+          type: integer
+          description: The tracker's stable numeric registry id (MAL=1, AniList=2, Kitsu=3, MangaUpdates=7).
+          example: 2
+        name:
+          type: string
+          description: Human-display name.
+          example: AniList
+        needsOAuth:
+          type: boolean
+          description: True for AniList/MAL (OAuth redirect); false for Kitsu/MangaUpdates (direct username/password).
+        isLoggedIn:
+          type: boolean
+          description: Whether a connected account exists for this tracker.
+        isTokenExpired:
+          type: boolean
+          description: Whether the connected account's token has expired and needs a fresh login. Always false when isLoggedIn is false.
+        username:
+          type: string
+          description: The connected account's display username ("" when not logged in).
+
+    TrackerAuthURL:
+      type: object
+      description: A freshly built OAuth authorize URL for one tracker login attempt.
+      required:
+        - authUrl
+      properties:
+        authUrl:
+          type: string
+          description: The URL to send the owner's browser to.
+
+    OAuthLoginRequest:
+      type: object
+      description: |
+        Completes the OAuth round-trip an authorize URL started. callbackUrl
+        is the FULL callback URL the SPA's own OAuth callback route received
+        — carrying "state" plus either "code" (MAL) or "access_token"
+        (AniList; the SPA extracts the browser's URL fragment into a query
+        param before posting here, since a server never sees a fragment).
+      required:
+        - callbackUrl
+      properties:
+        callbackUrl:
+          type: string
+
+    CredentialLoginRequest:
+      type: object
+      description: A direct username/password login for a credential-based tracker (Kitsu, MangaUpdates).
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    TrackSearchResult:
+      type: object
+      description: |
+        One tracker's search hit for a manga. status/totalChapters are the
+        tracker's OWN native vocabulary/scale — never normalized (spec §2).
+      required:
+        - remoteId
+        - title
+        - url
+        - coverUrl
+        - status
+        - totalChapters
+      properties:
+        remoteId:
+          type: string
+          description: The tracker's manga id.
+        title:
+          type: string
+        url:
+          type: string
+        coverUrl:
+          type: string
+        status:
+          type: string
+          description: The tracker's own native status vocabulary (e.g. AniList RELEASING/FINISHED).
+        totalChapters:
+          type: integer
+          description: The tracker's reported total chapter count; 0 = unknown/ongoing.
+
+    TrackBinding:
+      type: object
+      description: |
+        A series↔tracker binding — the remote link and reading progress on
+        one tracker's own account. status/score/lastChapterRead are the
+        tracker's OWN native scale (spec §2 — converted only at display).
+      required:
+        - id
+        - seriesId
+        - trackerId
+        - trackerName
+        - remoteId
+        - remoteUrl
+        - libraryId
+        - title
+        - status
+        - lastChapterRead
+        - totalChapters
+        - score
+        - startDate
+        - finishDate
+        - private
+      properties:
+        id:
+          type: string
+          format: uuid
+        seriesId:
+          type: string
+          format: uuid
+        trackerId:
+          type: integer
+        trackerName:
+          type: string
+        remoteId:
+          type: string
+          description: The tracker's manga id.
+        remoteUrl:
+          type: string
+          description: The canonical link to the remote entry ("" when not derivable).
+        libraryId:
+          type: string
+          description: The AniList MediaList entry id ("" for MAL / trackers without one).
+        title:
+          type: string
+          description: The remote entry's title.
+        status:
+          type: string
+          description: The tracker's own native status code.
+        lastChapterRead:
+          type: number
+          description: The furthest chapter read (fractional-safe).
+        totalChapters:
+          type: integer
+          description: The remote total; 0 = unknown/ongoing.
+        score:
+          type: number
+          description: Reading score on the tracker's native scale.
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+        finishDate:
+          type: string
+          format: date-time
+          nullable: true
+        private:
+          type: boolean
+
+    BindRequest:
+      type: object
+      description: The owner's picked tracker + remote entry (from the search results) to bind the series to.
+      required:
+        - trackerId
+        - remoteId
+      properties:
+        trackerId:
+          type: integer
+        remoteId:
+          type: string
+
 paths:
   /health:
     get:
@@ -5445,6 +5628,511 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/trackers:
+    get:
+      operationId: listTrackers
+      summary: List tracker connect status
+      description: |
+        Returns every registered native tracker (AniList, MAL, Kitsu,
+        MangaUpdates) with its connect status. A disabled/unconfigured OAuth
+        tracker (blank client-id) is still listed, with isLoggedIn=false —
+        never omitted. This endpoint does NOT build an authorize URL (see
+        GET /api/trackers/{id}/auth-url) — it only reads connect state, so
+        it never stashes a pending OAuth login.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Every registered tracker's connect status.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tracker"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/trackers/{id}/auth-url:
+    get:
+      operationId: getTrackerAuthURL
+      summary: Build a fresh OAuth authorize URL
+      description: |
+        Builds a FRESH authorize URL on demand: generates a random state and
+        stashes any PKCE verifier (MAL) server-side, keyed to that state.
+        Kept separate from GET /api/trackers so a plain status list never
+        stashes a pending login the owner does not complete. Fails closed
+        (400) when the tracker doesn't support OAuth, its app client-id
+        isn't configured, or this instance's public URL isn't configured yet
+        (spec/trackers-oauth-phase3 §2 — the whole subsystem is dormant
+        until activated).
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The tracker's numeric registry id.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: A fresh authorize URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackerAuthURL"
+        "400":
+          description: This tracker doesn't support OAuth, its client-id isn't configured, or the instance public URL isn't configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown tracker id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/trackers/{id}/login/oauth:
+    post:
+      operationId: loginTrackerOAuth
+      summary: Complete an OAuth login callback
+      description: |
+        Finishes the OAuth round-trip the authorize URL started: exchanges
+        the callback's code (MAL) or access_token (AniList) for a token,
+        best-effort captures the account's username/score-format, and
+        upserts the result into this tracker's connection. Returns the
+        refreshed Tracker (§16 round-trip).
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The tracker's numeric registry id.
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OAuthLoginRequest"
+      responses:
+        "200":
+          description: Login completed. Returns the refreshed tracker connect status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tracker"
+        "400":
+          description: Missing callbackUrl, or an invalid/expired/missing login state, code, or access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown tracker id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The tracker's token exchange failed (network or upstream rejection).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/trackers/{id}/login/credentials:
+    post:
+      operationId: loginTrackerCredentials
+      summary: Direct username/password tracker login
+      description: |
+        A direct username/password (Kitsu password grant) or session
+        (MangaUpdates) login for a credential-based tracker. Returns the
+        refreshed Tracker (§16 round-trip). The password is never logged or
+        echoed back.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The tracker's numeric registry id.
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialLoginRequest"
+      responses:
+        "200":
+          description: Login completed. Returns the refreshed tracker connect status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tracker"
+        "400":
+          description: Missing username/password, or this tracker connects via OAuth (not credentials).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown tracker id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The credential login failed (network or bad credentials rejected upstream).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/trackers/{id}/logout:
+    post:
+      operationId: logoutTracker
+      summary: Disconnect a tracker account
+      description: |
+        Deletes this tracker's connected account, discarding its stored
+        token. Idempotent — logging out an already-disconnected tracker is
+        still a 204.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The tracker's numeric registry id.
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Logged out (or already disconnected).
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown tracker id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/trackers/{id}/search:
+    get:
+      operationId: searchTracker
+      summary: Authed tracker search
+      description: |
+        Searches trackerId's manga catalog using the connected account's
+        token — the candidate list an owner picks from when binding a
+        series.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The tracker's numeric registry id.
+          schema:
+            type: integer
+        - name: q
+          in: query
+          required: true
+          description: Free-text search query.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Search hits.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrackSearchResult"
+        "400":
+          description: Missing/blank q, or the tracker has no connected account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown tracker id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The tracker search failed upstream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/tracking:
+    get:
+      operationId: listSeriesTracking
+      summary: List a series' tracker bindings
+      description: Returns every tracker binding for the series.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The series' tracker bindings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrackBinding"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      operationId: createSeriesTracking
+      summary: Bind a series to a tracker entry
+      description: |
+        Binds the series to trackerId's remoteId entry, registering a fresh
+        entry on the tracker's own account when it isn't already tracked
+        there. Re-binding an already-bound tracker re-points it to the new
+        remoteId. Returns the created/updated TrackBinding.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BindRequest"
+      responses:
+        "201":
+          description: The bound TrackBinding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackBinding"
+        "400":
+          description: Missing trackerId/remoteId, or the tracker has no connected account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id, or unknown trackerId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The tracker fetch/create-entry call failed upstream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/tracking/{recordId}:
+    delete:
+      operationId: deleteSeriesTracking
+      summary: Unbind a series' tracker entry
+      description: |
+        Removes the binding. When deleteRemote=true the remote entry is ALSO
+        deleted from the tracker's own account first — a partial unbind
+        never leaves the local row deleted while a failed remote deletion
+        hides a still-live remote entry.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: recordId
+          in: path
+          required: true
+          description: TrackBinding UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: deleteRemote
+          in: query
+          required: false
+          description: Whether to also delete the entry from the tracker's own account. Defaults to false.
+          schema:
+            type: boolean
+      responses:
+        "204":
+          description: Unbound.
+        "400":
+          description: Malformed id, or deleteRemote is present but not true/false.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No binding with the given recordId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: deleteRemote=true and the remote deletion failed upstream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/tracking/{recordId}/refresh:
+    post:
+      operationId: refreshSeriesTracking
+      summary: Re-pull a binding's remote entry
+      description: |
+        Re-pulls the binding's remote entry from the tracker's own account
+        and writes the fresh status/progress/score/dates. When the remote
+        entry has since vanished from the account's list, the existing row
+        is returned UNCHANGED rather than zeroed.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: recordId
+          in: path
+          required: true
+          description: TrackBinding UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The refreshed TrackBinding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackBinding"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No binding with the given recordId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The tracker fetch-entry call failed upstream.
           content:
             application/json:
               schema:

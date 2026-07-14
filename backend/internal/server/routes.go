@@ -22,6 +22,7 @@ import (
 	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
 	suwayomih "github.com/technobecet/tsundoku/internal/handler/suwayomi"
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
+	trackersh "github.com/technobecet/tsundoku/internal/handler/trackers"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
@@ -33,6 +34,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/tracker"
+	"github.com/technobecet/tsundoku/internal/tracker/bind"
+	"github.com/technobecet/tsundoku/internal/tracker/connect"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -110,6 +114,16 @@ import (
 //   - /api/series/:id/providers (POST)             — attach an additional source to an existing series (RequireOwner).
 //   - /api/series/:id/providers/batch (POST)       — attach several sources to an existing series in one call (RequireOwner).
 //   - /api/series/:id/providers/:providerId/match (POST) — attribute existing on-disk chapters to a real source without re-downloading (RequireOwner).
+//   - /api/trackers (GET)                          — list tracker connect status (RequireOwner).
+//   - /api/trackers/:id/auth-url (GET)             — build a fresh OAuth authorize URL on demand (RequireOwner).
+//   - /api/trackers/:id/login/oauth (POST)         — complete an OAuth login callback (RequireOwner).
+//   - /api/trackers/:id/login/credentials (POST)   — direct username/password tracker login (RequireOwner).
+//   - /api/trackers/:id/logout (POST)              — disconnect a tracker account (RequireOwner).
+//   - /api/trackers/:id/search (GET)                — authed tracker search (RequireOwner).
+//   - /api/series/:id/tracking (GET)               — a series' tracker bindings (RequireOwner).
+//   - /api/series/:id/tracking (POST)              — bind a series to a tracker entry (RequireOwner).
+//   - /api/series/:id/tracking/:recordId (DELETE)  — unbind (?deleteRemote=) (RequireOwner).
+//   - /api/series/:id/tracking/:recordId/refresh (POST) — re-pull a binding's remote entry (RequireOwner).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
 func registerRoutes(
@@ -126,6 +140,9 @@ func registerRoutes(
 	gate *sourcegate.Service,
 	chapterCache *suwayomi.ChapterCache,
 	metaSvc *metadatasvc.Service,
+	trackerRegistry *tracker.Registry,
+	trackerConnectSvc *connect.Service,
+	trackerBindSvc *bind.Service,
 	trigger func(),
 ) {
 	// Infrastructure routes — no authentication required.
@@ -182,6 +199,24 @@ func registerRoutes(
 	authed.POST("/series/:id/metadata/identify", metadataH.Identify)
 	authed.GET("/series/:id/metadata/covers", metadataH.Covers)
 	authed.POST("/series/:id/cover", metadataH.SetCover)
+
+	// Phase-3 tracker subsystem (spec/trackers-oauth-phase3): per-account
+	// connect (OAuth/credential login, status, logout) + per-series bind
+	// (search, bind, unbind, refresh). trackerRegistry/trackerConnectSvc/
+	// trackerBindSvc are built in main.go over the four native trackers
+	// (AniList, MAL, Kitsu, MangaUpdates); a blank client-id/public-URL
+	// leaves the affected OAuth path dormant rather than failing startup.
+	trackersH := trackersh.NewHandler(client, trackerRegistry, trackerConnectSvc, trackerBindSvc)
+	authed.GET("/trackers", trackersH.List)
+	authed.GET("/trackers/:id/auth-url", trackersH.AuthURL)
+	authed.POST("/trackers/:id/login/oauth", trackersH.LoginOAuth)
+	authed.POST("/trackers/:id/login/credentials", trackersH.LoginCredentials)
+	authed.POST("/trackers/:id/logout", trackersH.Logout)
+	authed.GET("/trackers/:id/search", trackersH.Search)
+	authed.GET("/series/:id/tracking", trackersH.ListBindings)
+	authed.POST("/series/:id/tracking", trackersH.CreateBinding)
+	authed.DELETE("/series/:id/tracking/:recordId", trackersH.DeleteBinding)
+	authed.POST("/series/:id/tracking/:recordId/refresh", trackersH.RefreshBinding)
 
 	// Settings (runtime tunables) API. The service is built in main.go (it shares
 	// the Ent client + carries the config-resolved defaults) and threaded in here.
