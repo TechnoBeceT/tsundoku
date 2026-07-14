@@ -11,6 +11,10 @@ onMounted(connect)
 // shows the floating "Install app" button until installed.
 const { installable, promptInstall } = usePwaInstall()
 
+// Service-worker update prompt — the pwa plugin's watch() flips updateAvailable
+// when a new SW parks in waiting; the toast lets the owner reload into it.
+const { updateAvailable, applyUpdate } = useSwUpdate()
+
 /**
  * In-app new-chapter toast (chapter.new SSE). Shown ONLY while the tab is
  * visible — when it is hidden/closed the service worker's Web Push handler shows
@@ -143,5 +147,6 @@ function handleOpenAdopt(): void {
       @dismiss="dismissToast"
     />
     <InstallButton :installable="installable" @install="promptInstall" />
+    <UpdateToast :update-available="updateAvailable" @reload="applyUpdate" />
   </AppShell>
 </template>

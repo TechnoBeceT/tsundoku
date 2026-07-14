@@ -19,13 +19,16 @@
  * keep `/api/**` on NetworkOnly regardless.
  */
 
-// Activate a new worker immediately instead of waiting for all tabs to close,
-// so an updated SW (and any future logic) takes effect on the next load.
-self.addEventListener('install', () => {
-  self.skipWaiting()
+// An updated worker now PARKS in `waiting` instead of activating immediately:
+// the frontend (useSwUpdate) detects the waiting worker, surfaces a "New version
+// — Reload" toast, and only on the owner's click posts SKIP_WAITING here. This
+// avoids swapping the app out from under an active reader mid-session.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting()
 })
 
-// Take control of already-open clients as soon as this worker activates.
+// Take control of already-open clients as soon as this worker activates (after
+// the owner accepts the update via SKIP_WAITING).
 self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim())
 })

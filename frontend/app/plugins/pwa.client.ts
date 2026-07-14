@@ -16,10 +16,16 @@ export default defineNuxtPlugin(() => {
   if (import.meta.dev) return
   if (!('serviceWorker' in navigator)) return
 
+  const { watch } = useSwUpdate()
+
   window.addEventListener('load', () => {
     // Best-effort: a registration failure must never break the app — it only
     // means the install prompt is unavailable, which we log for the owner.
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
+    navigator.serviceWorker.register('/sw.js').then((reg) => {
+      // Watch for a future deployed SW parking in `waiting` so the layout can
+      // surface the "New version — Reload" prompt.
+      watch(reg)
+    }).catch((err) => {
       console.error('[pwa] service worker registration failed:', err)
     })
   })
