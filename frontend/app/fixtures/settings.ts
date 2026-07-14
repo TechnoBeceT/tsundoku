@@ -235,10 +235,14 @@ export const sourceMetrics: SourceMetric[] = [
   },
 ]
 
-/** The four registered trackers (2g) — one of each connect shape. */
+/**
+ * The four registered trackers (2g) — one of each connect shape.
+ * `supportsPrivate` mirrors the backend: true for AniList/Kitsu, false for
+ * MAL/MangaUpdates (no remote private concept — see `TrackerStatus`).
+ */
 export const trackers: TrackerStatus[] = [
-  { id: 2, name: 'AniList', needsOAuth: true, isLoggedIn: true, isTokenExpired: false, username: 'technobecet' },
-  { id: 1, name: 'MyAnimeList', needsOAuth: true, isLoggedIn: false, isTokenExpired: false, username: '' },
-  { id: 3, name: 'Kitsu', needsOAuth: false, isLoggedIn: false, isTokenExpired: false, username: '' },
-  { id: 7, name: 'MangaUpdates', needsOAuth: false, isLoggedIn: false, isTokenExpired: false, username: '' },
+  { id: 2, name: 'AniList', needsOAuth: true, isLoggedIn: true, isTokenExpired: false, username: 'technobecet', supportsPrivate: true },
+  { id: 1, name: 'MyAnimeList', needsOAuth: true, isLoggedIn: false, isTokenExpired: false, username: '', supportsPrivate: false },
+  { id: 3, name: 'Kitsu', needsOAuth: false, isLoggedIn: false, isTokenExpired: false, username: '', supportsPrivate: true },
+  { id: 7, name: 'MangaUpdates', needsOAuth: false, isLoggedIn: false, isTokenExpired: false, username: '', supportsPrivate: false },
 ]

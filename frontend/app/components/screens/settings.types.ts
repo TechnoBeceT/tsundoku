@@ -330,6 +330,13 @@ export interface TrackerStatus {
   isTokenExpired: boolean
   /** The connected account's display username ("" when not logged in). */
   username: string
+  /**
+   * Whether this tracker's entries can be marked private on the remote
+   * account (true for AniList/Kitsu; false for MAL/MangaUpdates, which have
+   * no such remote concept — a bind `private` request field is silently
+   * ignored for them). Drives the Trackers section's private eye-toggle.
+   */
+  supportsPrivate: boolean
 }
 
 /**

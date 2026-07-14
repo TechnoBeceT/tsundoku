@@ -561,8 +561,9 @@ export const omakeProvider: Provider = {
 }
 
 /* ============================================================================
- * Tracking-dialog fixtures (Phase 4) — bound trackers + an "Add tracker"
- * search result set, for TrackingDialog's stories.
+ * Trackers-section fixtures (Phase 4 + QCAT-234) — bound trackers + an
+ * "Add tracking" search result set, for TrackersSection/TrackerBindingRow/
+ * TrackerSearchResultCard's stories.
  * ========================================================================== */
 
 /**
@@ -608,9 +609,9 @@ export const trackBindings: TrackBinding[] = [
 
 /**
  * A third, Kitsu-shaped binding (KITSU_RATING_TWENTY, native 0-20) — used by
- * TrackingDialog's `ScoreFormatKitsu` story to demonstrate the closest-fit
- * `point10decimal` conversion (`scoreToDisplay`/`scoreToNative`): 17/20
- * native displays as 8.5/10.
+ * the `ScoreFormatKitsu` stories (`TrackerBindingRow`/`TrackersSection`) to
+ * demonstrate the closest-fit `point10decimal` conversion
+ * (`scoreToDisplay`/`scoreToNative`): 17/20 native displays as 8.5/10.
  */
 export const trackBindingKitsu: TrackBinding = {
   id: 'bind-kitsu',
@@ -629,7 +630,11 @@ export const trackBindingKitsu: TrackBinding = {
   private: false,
 }
 
-/** "Add tracker" search results — one with a cover, one without (placeholder tile). */
+/**
+ * "Add tracking" search results — one full rich card (cover + every
+ * enrichment field), one thin card (no cover, no enrichment — the "" / 0
+ * zero-value shape a tracker with a sparser search response returns).
+ */
 export const trackSearchResults: TrackSearchResult[] = [
   {
     remoteId: '105398',
@@ -638,6 +643,10 @@ export const trackSearchResults: TrackSearchResult[] = [
     coverUrl: 'https://picsum.photos/seed/tracksearch-1/200/300',
     status: 'RELEASING',
     totalChapters: 0,
+    type: 'MANGA',
+    startDate: '2018',
+    score: 91,
+    description: 'The weakest hunter of all mankind, Sung Jin-Woo, finds himself in a mysterious dungeon that gifts him extraordinary powers.',
   },
   {
     remoteId: '999999',
@@ -646,5 +655,9 @@ export const trackSearchResults: TrackSearchResult[] = [
     coverUrl: '',
     status: 'NOT_YET_RELEASED',
     totalChapters: 0,
+    type: '',
+    startDate: '',
+    score: 0,
+    description: '',
   },
 ]

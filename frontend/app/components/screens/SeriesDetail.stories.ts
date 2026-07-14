@@ -12,7 +12,9 @@ import {
   richSeries,
   seriesWithUnlinkedGroup,
   singleProviderSeries,
+  trackBindings,
 } from '../../fixtures/seriesDetail'
+import { trackers } from '../../fixtures/settings'
 
 /**
  * Stories for the Series Detail screen. Flip the Storybook theme toolbar to
@@ -55,19 +57,19 @@ const interactive = (initial: SeriesDetailData) => ({
     const onRemove = (id: string): void => {
       series.providers = series.providers.filter((p) => p.id !== id)
     }
-    const onMeta = (id: string): void => { series.metadataProviderId = id }
-    return { series, categoryOptions, onCategory, onMonitored, onCompleted, onReorder, onRemove, onMeta }
+    return { series, categoryOptions, trackBindings, trackers, onCategory, onMonitored, onCompleted, onReorder, onRemove }
   },
   template: `
     <SeriesDetail
       :series="series"
       :category-options="categoryOptions"
+      :track-bindings="trackBindings"
+      :trackers="trackers"
       @change-category="onCategory"
       @toggle-monitored="onMonitored"
       @toggle-completed="onCompleted"
       @reorder-providers="onReorder"
       @request-remove-source="onRemove"
-      @choose-metadata-source="onMeta"
     />
   `,
 })

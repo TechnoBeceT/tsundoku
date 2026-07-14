@@ -45,7 +45,7 @@ import type {
  *   - trackers    → TrackersPane (connect/disconnect AniList/MAL/Kitsu/
  *                   MangaUpdates + the Phase 4 auto-update-track toggle;
  *                   per-series bind + the tracking-sheet edit live on Series
- *                   Detail's TrackingDialog)
+ *                   Detail's inline TrackersSection, QCAT-234)
  *
  * Presentation only: ALL state arrives via props and every mutation is emitted —
  * the panes own their local editable copies (§16 round-trip) and re-emit each

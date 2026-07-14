@@ -43,6 +43,7 @@ function mapTracker(dto: TrackerDTO): TrackerStatus {
     isLoggedIn: dto.isLoggedIn,
     isTokenExpired: dto.isTokenExpired,
     username: dto.username,
+    supportsPrivate: dto.supportsPrivate,
   }
 }
 

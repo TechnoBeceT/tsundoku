@@ -47,7 +47,6 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, Updat
  *   @reorder-providers      → reorderProviders(list)
  *   @request-remove-source  → opens RemoveSourceDialog for that provider
  *   @match-provider         → opens MatchDiskProviderDialog for that provider
- *   @choose-metadata-source → chooseMetadataSource(providerId)   (M10 per-source display pin — distinct from Identify below)
  *   @request-identify       → opens MetadataIdentifyModal (identifyOpen = true)
  *   @request-cover-picker   → opens CoverPickerModal (coverPickerOpen = true)
  *   @delete-series          → deleteSeries(deleteFiles)   (navigates to / on success)
@@ -59,6 +58,9 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, Updat
  *   @resume                 → onResume() (resolves the resume target via
  *                             useReadingProgress.resumeTarget and navigates to
  *                             the reader — see the "Resume FAB" section below)
+ *   @track-search / @track-bind / @track-unbind / @track-refresh /
+ *   @track-update / @track-sync → the matching useSeriesTracking method (see
+ *                             the "Trackers" section below)
  *
  * Native metadata engine (useMetadata(id), Slice D): two more page-owned
  * dialogs, same reasoning as the ones above — only the page learns whether the
@@ -99,20 +101,20 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, Updat
  * failure. Mutation errors are surfaced via the :error prop (dismissible banner
  * inside SeriesDetail).
  *
- * Trackers (`TrackingDialog`): `useSeriesTracking(id)` owns this series'
- * bindings + search/bind/unbind/refresh/updateTrack/syncNow; `useTrackers()`
- * supplies the connected-tracker list the "Add tracker" picker filters
- * against (same composable the Settings → Trackers pane uses — this is an
- * independent instance, so it re-fetches its own fresh connect status on open
- * rather than assuming the Settings page happens to be live in another tab).
- * Opened by `@request-tracking` (bubbled from `RichSeriesCard`'s additive
- * `openTrackers` button via `SeriesDetail`); `search`/`bind`/`unbind`/
- * `refresh`/`update`/`sync` drive the matching `useSeriesTracking` method
- * directly (no dialog-close-on-success gating like the other page-owned
- * dialogs — each mutation applies its own result into `bindings` and the
- * dialog just keeps reflecting it, §16 mutate-reseeds-from-response; the
- * per-row edit form's own open/close is TrackingDialog's own local state, not
- * the page's).
+ * Trackers (`TrackersSection`, QCAT-234 — inline, always visible, no
+ * dialog): `useSeriesTracking(id)` owns this series' bindings +
+ * search/bind/unbind/refresh/updateTrack/syncNow; `useTrackers()` supplies
+ * the connected-tracker list the "Add tracking" rows filter against (same
+ * composable the Settings → Trackers pane uses — this is an independent
+ * instance, fetched unconditionally on page load rather than lazily on a
+ * dialog open, since the section is always on-screen). `@track-search`/
+ * `@track-bind`/`@track-unbind`/`@track-refresh`/`@track-update`/
+ * `@track-sync` (bubbled through `SeriesDetail`'s matching pass-through
+ * emits) drive the matching `useSeriesTracking` method directly (no
+ * dialog-close-on-success gating like the other page-owned dialogs — each
+ * mutation applies its own result into `bindings` and the section just keeps
+ * reflecting it, §16 mutate-reseeds-from-response; the per-row edit form's
+ * own open/close is TrackersSection's own local state, not the page's).
  */
 const route = useRoute()
 const id = route.params.id as string
@@ -132,7 +134,6 @@ const {
   reorderProviders,
   removeSource,
   setIgnoreFractional,
-  chooseMetadataSource,
   deleteSeries,
   matchDiskProvider,
   dismissError,
@@ -338,7 +339,12 @@ function openReader(chapterId: string): void {
   void navigateTo(`/series/${id}/read/${chapterId}`)
 }
 
-// ---- Trackers (bind/unbind, Phase 3d) --------------------------------------
+// ---- Trackers (QCAT-234 — inline TrackersSection, always visible) ---------
+// Both composables self-load on construction (useSeriesTracking.loadBindings
+// / useTrackers.list), so this series' bindings and every registered
+// tracker's connect status are already in flight the moment the page mounts
+// — no open-triggered lazy fetch needed now that the section has no
+// open/close state.
 const {
   bindings: trackBindings,
   pending: trackBindingsPending,
@@ -354,7 +360,6 @@ const {
   updateError: trackUpdateError,
   syncing: trackSyncing,
   syncError: trackSyncError,
-  loadBindings: loadTrackBindings,
   search: searchTracker,
   bind: bindTracker,
   unbind: unbindTracker,
@@ -363,30 +368,19 @@ const {
   syncNow,
 } = useSeriesTracking(id)
 
-const { trackers: connectedTrackers, list: listTrackers } = useTrackers()
-
-const trackingOpen = ref(false)
-
-// Re-fetch both the connect status and this series' bindings fresh every time
-// the panel opens — the owner may have connected a NEW tracker in Settings (a
-// different tab/session) since this page loaded.
-watch(trackingOpen, (isOpen) => {
-  if (!isOpen) return
-  void listTrackers()
-  void loadTrackBindings()
-})
+const { trackers: connectedTrackers } = useTrackers()
 
 function onSearchTracker(payload: { trackerId: number, q: string }): void {
   void searchTracker(payload.trackerId, payload.q)
 }
 
-function onBindTracker(payload: { trackerId: number, remoteId: string }): void {
-  void bindTracker(payload.trackerId, payload.remoteId)
+function onBindTracker(payload: { trackerId: number, remoteId: string, private?: boolean }): void {
+  void bindTracker(payload.trackerId, payload.remoteId, payload.private)
 }
 
 function onUnbindTracker(recordId: string): void {
-  // Local-only unbind from this dialog (see TrackingDialog's own doc comment);
-  // "also remove from the tracker's account" is a Phase-4 nicety.
+  // Local-only unbind from this section (see TrackersSection's own doc
+  // comment); "also remove from the tracker's account" is a nicety deferred.
   void unbindTracker(recordId, false)
 }
 
@@ -468,6 +462,21 @@ function onResume(): void {
       :fractional-cleanup-count="fractionalCount"
       :dedup-message="dedupMessage"
       :resume-label="resumeLabel"
+      :track-bindings="trackBindings"
+      :trackers="connectedTrackers"
+      :track-bindings-pending="trackBindingsPending"
+      :track-bindings-error="trackBindingsError"
+      :track-search-results="trackSearchResults"
+      :track-searching="trackSearching"
+      :track-search-error="trackSearchError"
+      :track-binding="trackBinding"
+      :track-bind-error="trackBindError"
+      :track-unbind-busy-id="trackUnbindBusyId"
+      :track-refresh-busy-id="trackRefreshBusyId"
+      :track-update-busy-id="trackUpdateBusyId"
+      :track-update-error="trackUpdateError"
+      :track-syncing="trackSyncing"
+      :track-sync-error="trackSyncError"
       @change-category="setCategory"
       @toggle-monitored="setMonitored"
       @toggle-completed="setCompleted"
@@ -475,10 +484,8 @@ function onResume(): void {
       @request-remove-source="openRemove"
       @match-provider="openMatchProvider"
       @toggle-ignore-fractional="setIgnoreFractional"
-      @choose-metadata-source="chooseMetadataSource"
       @request-identify="identifyOpen = true"
       @request-cover-picker="coverPickerOpen = true"
-      @request-tracking="trackingOpen = true"
       @delete-series="deleteSeries"
       @add-source="matchOpen = true"
       @dismiss-error="dismissError"
@@ -487,6 +494,12 @@ function onResume(): void {
       @request-fractional-cleanup="fractionalOpen = true"
       @read="openReader"
       @resume="onResume"
+      @track-search="onSearchTracker"
+      @track-bind="onBindTracker"
+      @track-unbind="onUnbindTracker"
+      @track-refresh="onRefreshTracker"
+      @track-update="onUpdateTracker"
+      @track-sync="onSyncTracker"
     />
 
     <FractionalCleanupDialog
@@ -561,32 +574,6 @@ function onResume(): void {
       :loading="coversLoading || settingCover"
       :error="coverPickerError"
       @confirm="onCoverConfirm"
-    />
-
-    <TrackingDialog
-      v-if="series"
-      v-model:open="trackingOpen"
-      :bindings="trackBindings"
-      :trackers="connectedTrackers"
-      :pending="trackBindingsPending"
-      :error="trackBindingsError"
-      :search-results="trackSearchResults"
-      :searching="trackSearching"
-      :search-error="trackSearchError"
-      :binding="trackBinding"
-      :bind-error="trackBindError"
-      :unbind-busy-id="trackUnbindBusyId"
-      :refresh-busy-id="trackRefreshBusyId"
-      :update-busy-id="trackUpdateBusyId"
-      :update-error="trackUpdateError"
-      :syncing="trackSyncing"
-      :sync-error="trackSyncError"
-      @search="onSearchTracker"
-      @bind="onBindTracker"
-      @unbind="onUnbindTracker"
-      @refresh="onRefreshTracker"
-      @update="onUpdateTracker"
-      @sync="onSyncTracker"
     />
   </div>
 </template>

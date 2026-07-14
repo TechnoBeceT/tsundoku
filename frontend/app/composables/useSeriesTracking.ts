@@ -61,6 +61,10 @@ function mapSearchResult(dto: TrackSearchResultDTO): TrackSearchResult {
     coverUrl: dto.coverUrl,
     status: dto.status,
     totalChapters: dto.totalChapters,
+    type: dto.type,
+    startDate: dto.startDate,
+    score: dto.score,
+    description: dto.description,
   }
 }
 
@@ -131,17 +135,21 @@ export function useSeriesTracking(seriesId: string) {
 
   /**
    * Binds this series to trackerId's remoteId entry (POST /api/series/{id}/
-   * tracking). Resolves true/false; on success the returned TrackBinding is
+   * tracking). `private` (optional, default false) marks a FRESHLY-created
+   * remote entry private on trackers that support it (see
+   * `TrackerStatus.supportsPrivate`) — silently ignored by the backend on a
+   * tracker that doesn't support it, and a no-op when the manga was already
+   * tracked. Resolves true/false; on success the returned TrackBinding is
    * applied directly into `bindings` (appended, or replacing an existing row
    * for the same tracker — re-binding re-points it per the backend contract).
    */
-  async function bind(trackerId: number, remoteId: string): Promise<boolean> {
+  async function bind(trackerId: number, remoteId: string, isPrivate?: boolean): Promise<boolean> {
     binding.value = true
     bindError.value = null
     try {
       const res = await apiClient.POST('/api/series/{id}/tracking', {
         params: { path: { id: seriesId } },
-        body: { trackerId, remoteId },
+        body: isPrivate ? { trackerId, remoteId, private: isPrivate } : { trackerId, remoteId },
       })
       if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Bind failed')
       const mapped = mapBinding(res.data)

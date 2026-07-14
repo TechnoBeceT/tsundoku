@@ -4,23 +4,24 @@ import ErrorBanner from '../ui/ErrorBanner.vue'
 import type { MoveDirection } from '../ui/controls.types'
 import ChaptersPanel from '../seriesDetail/ChaptersPanel.vue'
 import DeleteSeriesDialog from '../seriesDetail/DeleteSeriesDialog.vue'
-import MetadataSourcePicker from '../seriesDetail/MetadataSourcePicker.vue'
 import ResumeFab from '../seriesDetail/ResumeFab.vue'
 import RichSeriesCard from '../seriesDetail/RichSeriesCard.vue'
 import SourcesPanel from '../seriesDetail/SourcesPanel.vue'
-import type { Chapter, Provider, SeriesDetail } from './seriesDetail.types'
+import TrackersSection from '../seriesDetail/TrackersSection.vue'
+import type { Chapter, Provider, SeriesDetail, TrackBinding, TrackSearchResult, UpdateTrackPatch } from './seriesDetail.types'
+import type { TrackerStatus } from './settings.types'
 import { findDriftedProviderIds } from '~/utils/providerDedup'
 
 /**
  * SeriesDetail — the full single-series management screen: a thin container that
  * composes the rich catalogue card (cover/title/synopsis/credits/genres/tags/
  * links/stats/toggles/category/delete — `RichSeriesCard`, superseding the
- * plainer `SeriesHeader`), the (planned, M10) per-source metadata-source
- * picker, the chapter table, the ranked source list (reorder / remove / add /
- * match-to-source for unlinked disk-origin groups), plus the required-choice
- * delete dialog. The `matchProvider` emit (bubbled from
- * `SourcesPanel`'s unlinked-row action) opens the page's
- * `MatchDiskProviderDialog` for the no-re-download Match, and
+ * plainer `SeriesHeader`), the INLINE `TrackersSection` (QCAT-234 — replaces
+ * the retired PLANNED metadata-source picker card), the chapter table, the
+ * ranked source list (reorder / remove / add / match-to-source for unlinked
+ * disk-origin groups), plus the required-choice delete dialog. The
+ * `matchProvider` emit (bubbled from `SourcesPanel`'s unlinked-row action)
+ * opens the page's `MatchDiskProviderDialog` for the no-re-download Match, and
  * `requestRemoveSource` (bubbled from the row's Remove action) opens the page's
  * `RemoveSourceDialog` — the confirm dialogs whose lifetime depends on a
  * mutation OUTCOME live on the page, which is the only layer that learns whether
@@ -32,9 +33,14 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  * `requestCoverPicker` for the SAME reason — the native-metadata-engine
  * "Identify" and "Choose cover" modals (`MetadataIdentifyModal`/
  * `CoverPickerModal`) mutate and hand back a fresh `SeriesDetail`, an outcome
- * only the page can observe. `RichSeriesCard`'s `openTrackers` emit (Phase 3d,
- * additive) bubbles here as `requestTracking` for the same reason: the
- * Tracking panel's bind/unbind mutations, whose outcome only the page can see.
+ * only the page can observe.
+ *
+ * `TrackersSection` is always visible (no button, no dialog — QCAT-234 killed
+ * both the RichSeriesCard "Trackers" toolbar button and the modal
+ * `TrackingDialog` it used to open) and its bind/unbind/refresh/update/sync
+ * actions bubble here as `trackBind`/`trackUnbind`/`trackRefresh`/
+ * `trackUpdate`/`trackSync` — same page-owns-the-mutation reasoning as above,
+ * since only the page can see whether a tracking mutation succeeded.
  *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
@@ -73,6 +79,36 @@ const props = withDefaults(defineProps<{
   dedupMessage?: string | null
   /** "Start"/"Continue" — renders the floating resume button; null/"" hides it (nothing downloaded). */
   resumeLabel?: string | null
+  /** This series' current tracker bindings (TrackersSection). */
+  trackBindings?: TrackBinding[]
+  /** Every registered tracker's connect status (TrackersSection). */
+  trackers?: TrackerStatus[]
+  /** True while the tracker bindings list is loading. */
+  trackBindingsPending?: boolean
+  /** A tracker-bindings-load failure, or null for none. */
+  trackBindingsError?: string | null
+  /** The "Add tracking" search results. */
+  trackSearchResults?: TrackSearchResult[]
+  /** True while a tracker search is in flight. */
+  trackSearching?: boolean
+  /** A failed tracker-search message, or null for none. */
+  trackSearchError?: string | null
+  /** True while a tracker bind POST is in flight. */
+  trackBinding?: boolean
+  /** A failed tracker-bind message, or null for none. */
+  trackBindError?: string | null
+  /** The TrackBinding id currently being unbound, or null. */
+  trackUnbindBusyId?: string | null
+  /** The TrackBinding id currently being remote-refreshed, or null. */
+  trackRefreshBusyId?: string | null
+  /** The TrackBinding id currently being manually edited, or null. */
+  trackUpdateBusyId?: string | null
+  /** A failed manual tracker-edit message, or null for none. */
+  trackUpdateError?: string | null
+  /** True while "Sync now" (pull + converge every binding) is in flight. */
+  trackSyncing?: boolean
+  /** A failed tracker-sync message, or null for none. */
+  trackSyncError?: string | null
 }>(), {
   saving: false,
   deleteBusy: false,
@@ -82,6 +118,21 @@ const props = withDefaults(defineProps<{
   fractionalCleanupCount: 0,
   dedupMessage: null,
   resumeLabel: null,
+  trackBindings: () => [],
+  trackers: () => [],
+  trackBindingsPending: false,
+  trackBindingsError: null,
+  trackSearchResults: () => [],
+  trackSearching: false,
+  trackSearchError: null,
+  trackBinding: false,
+  trackBindError: null,
+  trackUnbindBusyId: null,
+  trackRefreshBusyId: null,
+  trackUpdateBusyId: null,
+  trackUpdateError: null,
+  trackSyncing: false,
+  trackSyncError: null,
 })
 
 const emit = defineEmits<{
@@ -99,14 +150,10 @@ const emit = defineEmits<{
   matchProvider: [providerId: string]
   /** A source's "Ignore fractional chapters" switch flipped — carries its SeriesProvider id and the NEW value. */
   toggleIgnoreFractional: [providerId: string, ignore: boolean]
-  /** A metadata source was picked — carries the SeriesProvider id. */
-  chooseMetadataSource: [providerId: string]
   /** RichSeriesCard's "Metadata" button was pressed (→ the page opens MetadataIdentifyModal). */
   requestIdentify: []
   /** RichSeriesCard's "Change cover" affordance was pressed (→ the page opens CoverPickerModal). */
   requestCoverPicker: []
-  /** RichSeriesCard's "Trackers" button was pressed (→ the page opens the Tracking panel, Phase 3d). */
-  requestTracking: []
   /** The series delete was confirmed — carries the required deleteFiles choice. */
   deleteSeries: [deleteFiles: boolean]
   /** The owner asked to add a source (→ opens the Match Source dialog). */
@@ -123,6 +170,18 @@ const emit = defineEmits<{
   read: [chapterId: string]
   /** The resume FAB was clicked (→ the page resolves the resume target and opens the reader). */
   resume: []
+  /** TrackersSection ran a search on the given tracker for the trimmed query. */
+  trackSearch: [payload: { trackerId: number, q: string }]
+  /** TrackersSection asked to bind the series to a tracker's remote entry. */
+  trackBind: [payload: { trackerId: number, remoteId: string, private?: boolean }]
+  /** TrackersSection asked to unbind a TrackBinding — carries its id. */
+  trackUnbind: [recordId: string]
+  /** TrackersSection asked to re-pull a TrackBinding's remote entry — carries its id. */
+  trackRefresh: [recordId: string]
+  /** TrackersSection applied a changed-fields-only manual edit to a TrackBinding. */
+  trackUpdate: [payload: { recordId: string, patch: UpdateTrackPatch }]
+  /** TrackersSection asked to pull + converge every one of this series' tracker bindings. */
+  trackSync: []
 }>()
 
 // ---- Derived data ----------------------------------------------------------
@@ -145,11 +204,6 @@ const sortedProviders = computed<Provider[]>(() =>
 // surfaces the "Clean up duplicate sources" affordance in SourcesPanel.
 const driftedIds = computed(() => findDriftedProviderIds(props.series.providers))
 
-// The preferred (rank-1) source id, and the active metadata source (pinned, else
-// the preferred one when auto/unset).
-const preferredId = computed(() => sortedProviders.value[0]?.id ?? null)
-const metaActiveId = computed(() => props.series.metadataProviderId ?? preferredId.value)
-
 // ---- Reorder ---------------------------------------------------------------
 // Move a source up (dir -1) or down (dir +1) one rank, then emit the FULL list
 // with the existing importance values reassigned by new position (higher rank =
@@ -163,11 +217,6 @@ const onMove = (id: string, dir: MoveDirection): void => {
   ;[list[i], list[j]] = [list[j]!, list[i]!]
   const importances = sortedProviders.value.map((p) => p.importance).sort((a, b) => b - a)
   emit('reorderProviders', list.map((p, idx) => ({ id: p.id, importance: importances[idx]! })))
-}
-
-// ---- Metadata source -------------------------------------------------------
-const onPickMeta = (id: string): void => {
-  if (!props.saving) emit('chooseMetadataSource', id)
 }
 
 // ---- Delete dialog ---------------------------------------------------------
@@ -198,16 +247,30 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         @request-delete="deleteOpen = true"
         @open-metadata="emit('requestIdentify')"
         @open-cover-picker="emit('requestCoverPicker')"
-        @open-trackers="emit('requestTracking')"
       />
 
-      <MetadataSourcePicker
-        :providers="sortedProviders"
-        :title="series.title"
-        :active-id="metaActiveId"
-        :preferred-id="preferredId"
-        :saving="saving"
-        @pick="onPickMeta"
+      <TrackersSection
+        :bindings="trackBindings"
+        :trackers="trackers"
+        :pending="trackBindingsPending"
+        :error="trackBindingsError"
+        :search-results="trackSearchResults"
+        :searching="trackSearching"
+        :search-error="trackSearchError"
+        :binding="trackBinding"
+        :bind-error="trackBindError"
+        :unbind-busy-id="trackUnbindBusyId"
+        :refresh-busy-id="trackRefreshBusyId"
+        :update-busy-id="trackUpdateBusyId"
+        :update-error="trackUpdateError"
+        :syncing="trackSyncing"
+        :sync-error="trackSyncError"
+        @search="emit('trackSearch', $event)"
+        @bind="emit('trackBind', $event)"
+        @unbind="emit('trackUnbind', $event)"
+        @refresh="emit('trackRefresh', $event)"
+        @update="emit('trackUpdate', $event)"
+        @sync="emit('trackSync')"
       />
     </div>
 
@@ -260,8 +323,8 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
   min-height: calc(100dvh - 64px);
 }
 
-/* A flex column so RichSeriesCard and MetadataSourcePicker get a consistent
- * gap regardless of which optional siblings (the error banner) are present —
+/* A flex column so RichSeriesCard and TrackersSection get a consistent gap
+ * regardless of which optional siblings (the error banner) are present —
  * neither SurfaceCard-based child carries its own top/bottom margin, so
  * without this the two panels sat flush against each other (a regression
  * from the old SeriesHeader→RichSeriesCard swap). Matches `.columns`' 18px. */

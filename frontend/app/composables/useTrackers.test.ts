@@ -11,8 +11,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useTrackers } from './useTrackers'
 
-const ANILIST = { id: 2, name: 'AniList', needsOAuth: true, isLoggedIn: false, isTokenExpired: false, username: '' }
-const MAL = { id: 1, name: 'MyAnimeList', needsOAuth: true, isLoggedIn: false, isTokenExpired: false, username: '' }
+const ANILIST = { id: 2, name: 'AniList', needsOAuth: true, isLoggedIn: false, isTokenExpired: false, username: '', supportsPrivate: true }
+const MAL = { id: 1, name: 'MyAnimeList', needsOAuth: true, isLoggedIn: false, isTokenExpired: false, username: '', supportsPrivate: false }
 
 let getCalls: { path: string, opts: unknown }[] = []
 let postCalls: { path: string, opts: unknown }[] = []
@@ -120,7 +120,7 @@ describe('useTrackers', () => {
   })
 
   it('loginCredentials() never puts the password anywhere but the request body', async () => {
-    loginResponse = { data: { id: 3, name: 'Kitsu', needsOAuth: false, isLoggedIn: true, isTokenExpired: false, username: 'reader' }, error: null }
+    loginResponse = { data: { id: 3, name: 'Kitsu', needsOAuth: false, isLoggedIn: true, isTokenExpired: false, username: 'reader', supportsPrivate: true }, error: null }
     const { loginCredentials, trackers, pending } = useTrackers()
     await vi.waitFor(() => expect(pending.value).toBe(false))
 

@@ -323,12 +323,13 @@ export interface FractionalCleanupPreview {
 }
 
 /**
- * TrackBinding — one series↔tracker link (the Tracking panel's bound-tracker
- * list). `status`/`score`/`lastChapterRead` are the tracker's OWN native
+ * TrackBinding — one series↔tracker link (the inline Trackers section's
+ * bound-tracker list, `TrackersSection`/`TrackerBindingRow`, QCAT-234).
+ * `status`/`score`/`lastChapterRead` are the tracker's OWN native
  * vocabulary/scale (spec `spec/trackers-oauth-phase3` §2 — never normalized to a
  * Tsundoku scale). Phase 3d CONNECTS + BINDS + SHOWS these; Phase 4 adds the
  * manual edit sheet (`startDate`/`finishDate`/`private` + the `update`/`sync`
- * flows in TrackingDialog).
+ * flows).
  */
 export interface TrackBinding {
   /** TrackBinding UUID — the unbind/refresh/update target. */
@@ -387,8 +388,12 @@ export interface UpdateTrackPatch {
 }
 
 /**
- * TrackSearchResult — one hit from an authed tracker search (the Tracking
- * panel's "Add tracker" search step) — a candidate the owner picks to bind.
+ * TrackSearchResult — one hit from an authed tracker search (the Trackers
+ * section's "Add tracking" search step) — a candidate the owner picks to
+ * bind. `type`/`startDate`/`score`/`description` are BEST-EFFORT enrichment
+ * fields mirroring the backend `TrackSearchResult` DTO — every tracker
+ * populates whatever its own search response actually carries and leaves the
+ * rest at its zero value ("" / 0), never fabricated.
  */
 export interface TrackSearchResult {
   /** The tracker's manga id — the `bind()` payload's `remoteId`. */
@@ -403,4 +408,12 @@ export interface TrackSearchResult {
   status: string
   /** The tracker's reported total chapter count; 0 = unknown/ongoing. */
   totalChapters: number
+  /** The tracker's own publication-format label (e.g. "MANGA"/"NOVEL"); "" when absent. */
+  type: string
+  /** The tracker's reported publication-start year/date, native granularity; "" when unknown. */
+  startDate: string
+  /** The catalog/community average rating, on the tracker's own native scale; 0 = unknown. */
+  score: number
+  /** The tracker's own synopsis/summary text, verbatim; "" when absent. */
+  description: string
 }

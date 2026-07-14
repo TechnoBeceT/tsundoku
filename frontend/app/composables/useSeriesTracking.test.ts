@@ -110,6 +110,35 @@ describe('useSeriesTracking', () => {
     expect(searchResults.value[0]?.title).toBe('One Piece')
   })
 
+  it('search() carries the type/startDate/score/description enrichment fields through', async () => {
+    searchResponse = {
+      data: [{
+        remoteId: '999',
+        title: 'One Piece',
+        url: 'https://x',
+        coverUrl: '',
+        status: 'RELEASING',
+        totalChapters: 0,
+        type: 'MANGA',
+        startDate: '1997',
+        score: 89,
+        description: 'A pirate adventure.',
+      }],
+      error: null,
+    }
+    const { search, searchResults, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    await search(2, 'one piece')
+
+    expect(searchResults.value[0]).toMatchObject({
+      type: 'MANGA',
+      startDate: '1997',
+      score: 89,
+      description: 'A pirate adventure.',
+    })
+  })
+
   it('bind() POSTs {trackerId, remoteId} and applies the returned binding directly (§16, no refetch)', async () => {
     bindingsResponse = { data: [], error: null }
     const NEW_BINDING = { ...BINDING_ANILIST, trackerId: 1, trackerName: 'MyAnimeList', id: 'bind-2' }
@@ -131,6 +160,23 @@ describe('useSeriesTracking', () => {
     // No extra GET round-trip — the response is applied directly.
     const bindingGetCalls = getCalls.filter((c) => c.path === '/api/series/{id}/tracking').length
     expect(bindingGetCalls).toBe(1)
+  })
+
+  it('bind() sends {private: true} when the owner opts in, and omits it otherwise', async () => {
+    const { bind, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    await bind(2, '105398', true)
+    expect(postCalls.at(-1)).toEqual({
+      path: '/api/series/{id}/tracking',
+      opts: { params: { path: { id: SERIES_ID } }, body: { trackerId: 2, remoteId: '105398', private: true } },
+    })
+
+    await bind(2, '105398', false)
+    expect(postCalls.at(-1)).toEqual({
+      path: '/api/series/{id}/tracking',
+      opts: { params: { path: { id: SERIES_ID } }, body: { trackerId: 2, remoteId: '105398' } },
+    })
   })
 
   it('unbind() DELETEs with the deleteRemote query flag and removes the row locally on success', async () => {
