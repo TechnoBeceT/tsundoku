@@ -5264,6 +5264,77 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/flaresolverr/settings:
+    get:
+      operationId: getFlareSolverrSettings
+      summary: Read Tsundoku-owned FlareSolverr settings
+      description: |
+        Returns Tsundoku's OWN FlareSolverr (Cloudflare-bypass) settings — a
+        runtime setting on Tsundoku's settings overlay (QCAT-238), NOT read
+        from Suwayomi and NOT an env var. Reuses the same shape as the
+        Suwayomi-proxy FlareSolverr group so a client can rebind from one
+        endpoint to the other with no field changes.
+      tags:
+        - flaresolverr
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The current Tsundoku-owned FlareSolverr settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlareSolverrSettings"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateFlareSolverrSettings
+      summary: Update Tsundoku-owned FlareSolverr settings
+      description: |
+        Applies a PARTIAL update to Tsundoku's own FlareSolverr settings
+        (only the provided fields change; an empty body is a 400). On
+        success, the full resulting state is ALSO best-effort mirrored down
+        to Suwayomi's own settings (via the same Suwayomi settings proxy) so
+        Suwayomi's source-scraping stays in sync while Suwayomi still
+        exists — a Suwayomi-down mirror failure is logged and NEVER fails
+        this request, since the Tsundoku save already persisted. The
+        settings are RE-READ after the write and returned so the caller sees
+        the persisted values without a refetch (§16).
+      tags:
+        - flaresolverr
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlareSolverrUpdate"
+      responses:
+        "200":
+          description: Settings updated (and best-effort mirrored to Suwayomi). Returns the refreshed FlareSolverr settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlareSolverrSettings"
+        "400":
+          description: A validation failure (malformed URL, out-of-bounds timeout/sessionTtl, or empty body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/suwayomi/extensions:
     get:
       operationId: listExtensions

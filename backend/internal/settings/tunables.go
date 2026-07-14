@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/technobecet/tsundoku/internal/pkg/urlx"
 )
 
 // ErrUnknownSetting is returned by Set when a key is not in the closed allowlist.
@@ -39,6 +41,10 @@ const (
 	TypeInt Type = "int"
 	// TypeBool is a boolean ("true"/"false").
 	TypeBool Type = "bool"
+	// TypeString is a free-form or constrained string value (e.g. a URL or a
+	// session name) — added for the FlareSolverr tunables, the first
+	// string-shaped keys in the allowlist.
+	TypeString Type = "string"
 )
 
 // The closed allowlist of runtime-tunable keys. These are the ONLY keys the
@@ -133,6 +139,47 @@ const (
 	// hand-curated" flag, set by IdentifyMerge) — either one suppresses
 	// AutoIdentify independently.
 	KeyMetadataAutoIdentify = "metadata.auto_identify"
+	// KeyFlareSolverrEnabled toggles Tsundoku's own use of FlareSolverr (bool,
+	// default false). See the doc comment block below (QCAT-238): this whole
+	// flaresolverr.* group is TSUNDOKU-OWNED — it is NOT read from Suwayomi and
+	// NOT an env var. Kitsu's Cloudflare-clearing transport (internal/tracker/
+	// kitsu) resolves it at request-time; on save the FlareSolverr handler
+	// best-effort MIRRORS the same values down to Suwayomi's own settings via
+	// suwayomi.Client.SetServerSettings, so Suwayomi's source-scraping stays in
+	// sync while Suwayomi still exists.
+	KeyFlareSolverrEnabled = "flaresolverr.enabled"
+	// KeyFlareSolverrURL is the FlareSolverr endpoint (e.g. http://host:8191).
+	// Blank (default) disables it regardless of KeyFlareSolverrEnabled — the
+	// Kitsu transport passes through untouched when the URL is empty.
+	KeyFlareSolverrURL = "flaresolverr.url"
+	// KeyFlareSolverrTimeout is the per-request solve timeout in seconds
+	// (int, 5..600, default 60).
+	KeyFlareSolverrTimeout = "flaresolverr.timeout"
+	// KeyFlareSolverrSessionName is the FlareSolverr session identifier
+	// (free-form string, default "" — FlareSolverr treats a blank session as
+	// "no session", solving fresh every time).
+	KeyFlareSolverrSessionName = "flaresolverr.session_name"
+	// KeyFlareSolverrSessionTTL is the session time-to-live in minutes
+	// (int, 0..1440, default 15) — also the local cf_clearance cache TTL the
+	// Kitsu transport uses before it re-solves.
+	KeyFlareSolverrSessionTTL = "flaresolverr.session_ttl"
+	// KeyFlareSolverrResponseFallback mirrors Suwayomi's own
+	// asResponseFallback flag (bool, default false): whether FlareSolverr is
+	// used only as a fallback for a blocked request rather than proactively.
+	// Tsundoku stores + mirrors this value but its own Kitsu transport always
+	// behaves in the "fallback" shape (direct request first, solve only on a
+	// detected Cloudflare challenge) regardless of this flag's value — see
+	// internal/tracker/kitsu's Cloudflare-clearing transport doc comment.
+	KeyFlareSolverrResponseFallback = "flaresolverr.response_fallback"
+)
+
+// flareSolverrTimeoutMin/Max and flareSolverrSessionTTLMin/Max bound the two
+// FlareSolverr int tunables (seconds / minutes respectively).
+const (
+	flareSolverrTimeoutMin    = 5
+	flareSolverrTimeoutMax    = 600
+	flareSolverrSessionTTLMin = 0
+	flareSolverrSessionTTLMax = 1440
 )
 
 // Defaults carries the config-resolved default for every tunable key. main
@@ -159,6 +206,18 @@ type Defaults struct {
 	TrackRetryInterval      time.Duration
 	AutoUpdateTrack         bool
 	MetadataAutoIdentify    bool
+	// FlareSolverrEnabled..FlareSolverrResponseFallback back the Tsundoku-owned
+	// FlareSolverr tunables (QCAT-238). Unlike every other Defaults field these
+	// are NOT sourced from cfg.* in defaultsFromConfig — there is deliberately
+	// no env var for them — but they still flow through this single bridge
+	// struct so the settings layer never special-cases where a default comes
+	// from.
+	FlareSolverrEnabled          bool
+	FlareSolverrURL              string
+	FlareSolverrTimeout          int
+	FlareSolverrSessionName      string
+	FlareSolverrSessionTTL       int
+	FlareSolverrResponseFallback bool
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -197,6 +256,12 @@ var tunableOrder = []string{
 	KeyTrackRetryInterval,
 	KeyAutoUpdateTrack,
 	KeyMetadataAutoIdentify,
+	KeyFlareSolverrEnabled,
+	KeyFlareSolverrURL,
+	KeyFlareSolverrTimeout,
+	KeyFlareSolverrSessionName,
+	KeyFlareSolverrSessionTTL,
+	KeyFlareSolverrResponseFallback,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -287,6 +352,32 @@ var tunables = map[string]tunable{
 		KeyMetadataAutoIdentify,
 		func(d Defaults) bool { return d.MetadataAutoIdentify },
 	),
+	// The FlareSolverr group (QCAT-238, Tsundoku-owned Cloudflare-bypass
+	// config — see the KeyFlareSolverr* doc comments above).
+	KeyFlareSolverrEnabled: boolTunable(
+		KeyFlareSolverrEnabled,
+		func(d Defaults) bool { return d.FlareSolverrEnabled },
+	),
+	KeyFlareSolverrURL: urlOrBlankTunable(
+		KeyFlareSolverrURL, "url",
+		func(d Defaults) string { return d.FlareSolverrURL },
+	),
+	KeyFlareSolverrTimeout: intTunable(
+		KeyFlareSolverrTimeout, "seconds", flareSolverrTimeoutMin, flareSolverrTimeoutMax,
+		func(d Defaults) int { return d.FlareSolverrTimeout },
+	),
+	KeyFlareSolverrSessionName: stringTunable(
+		KeyFlareSolverrSessionName, "text",
+		func(d Defaults) string { return d.FlareSolverrSessionName },
+	),
+	KeyFlareSolverrSessionTTL: intTunable(
+		KeyFlareSolverrSessionTTL, "minutes", flareSolverrSessionTTLMin, flareSolverrSessionTTLMax,
+		func(d Defaults) int { return d.FlareSolverrSessionTTL },
+	),
+	KeyFlareSolverrResponseFallback: boolTunable(
+		KeyFlareSolverrResponseFallback,
+		func(d Defaults) bool { return d.FlareSolverrResponseFallback },
+	),
 }
 
 // durationTunable builds a duration-typed tunable that rejects values below min
@@ -372,5 +463,45 @@ func boolTunable(key string, def func(Defaults) bool) tunable {
 			return strconv.FormatBool(b), nil
 		},
 		def: func(d Defaults) string { return strconv.FormatBool(def(d)) },
+	}
+}
+
+// stringTunable builds a free-text string-typed tunable: the only
+// normalisation is trimming surrounding whitespace, with no further format
+// constraint. Used for values Suwayomi itself treats as an opaque string
+// (e.g. the FlareSolverr session name — any string, including "", is legal).
+func stringTunable(key, unit string, def func(Defaults) string) tunable {
+	return tunable{
+		key:  key,
+		typ:  TypeString,
+		unit: unit,
+		validate: func(raw string) (string, error) {
+			return strings.TrimSpace(raw), nil
+		},
+		def: func(d Defaults) string { return def(d) },
+	}
+}
+
+// urlOrBlankTunable builds a string-typed tunable that accepts either an
+// empty value (cleared / not configured) or a well-formed absolute http(s)
+// URL, sharing the urlx.IsAbsoluteHTTP kernel with the Suwayomi settings
+// proxy + extension-repo validators (§2 DRY — "valid absolute http(s) URL" is
+// defined in exactly one place across the whole backend).
+func urlOrBlankTunable(key, unit string, def func(Defaults) string) tunable {
+	return tunable{
+		key:  key,
+		typ:  TypeString,
+		unit: unit,
+		validate: func(raw string) (string, error) {
+			trimmed := strings.TrimSpace(raw)
+			if trimmed == "" {
+				return "", nil
+			}
+			if !urlx.IsAbsoluteHTTP(trimmed) {
+				return "", fmt.Errorf("%w: %s must be blank or a valid absolute http(s) URL", ErrInvalidSetting, key)
+			}
+			return trimmed, nil
+		},
+		def: func(d Defaults) string { return def(d) },
 	}
 }

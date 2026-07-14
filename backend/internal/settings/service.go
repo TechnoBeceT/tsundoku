@@ -143,6 +143,50 @@ func (s *Service) MetadataAutoIdentify(ctx context.Context) bool {
 	return s.resolveBool(ctx, KeyMetadataAutoIdentify)
 }
 
+// FlareSolverrEnabled reports whether Tsundoku's own use of FlareSolverr is
+// currently enabled (DB override else default false). Read at use-time by the
+// Kitsu Cloudflare-clearing transport's gate, so a toggle hot-reloads on the
+// very next request (QCAT-238 — this is TSUNDOKU-OWNED config, never read
+// from Suwayomi or an env var).
+func (s *Service) FlareSolverrEnabled(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeyFlareSolverrEnabled)
+}
+
+// FlareSolverrURL is the FlareSolverr endpoint (DB override else default "").
+// A blank value disables the Kitsu transport regardless of
+// FlareSolverrEnabled — see the Kitsu transport's own gate-resolution doc
+// comment.
+func (s *Service) FlareSolverrURL(ctx context.Context) string {
+	return s.resolve(ctx, KeyFlareSolverrURL)
+}
+
+// FlareSolverrTimeout is the per-request solve timeout in seconds (DB
+// override else default 60).
+func (s *Service) FlareSolverrTimeout(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyFlareSolverrTimeout)
+}
+
+// FlareSolverrSessionName is the FlareSolverr session identifier (DB override
+// else default ""); a blank value means "no session".
+func (s *Service) FlareSolverrSessionName(ctx context.Context) string {
+	return s.resolve(ctx, KeyFlareSolverrSessionName)
+}
+
+// FlareSolverrSessionTTL is the session time-to-live in minutes (DB override
+// else default 15) — also the TTL the Kitsu transport's local cf_clearance
+// cache uses before it re-solves.
+func (s *Service) FlareSolverrSessionTTL(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyFlareSolverrSessionTTL)
+}
+
+// FlareSolverrResponseFallback mirrors Suwayomi's own asResponseFallback flag
+// (DB override else default false); stored + mirrored to Suwayomi but does
+// not itself change the Kitsu transport's own behaviour — see the
+// KeyFlareSolverrResponseFallback doc comment.
+func (s *Service) FlareSolverrResponseFallback(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeyFlareSolverrResponseFallback)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

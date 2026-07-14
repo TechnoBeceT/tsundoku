@@ -11,6 +11,7 @@
 package providers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/technobecet/tsundoku/internal/tracker"
@@ -40,15 +41,26 @@ type Config struct {
 	// comment).
 	MALClientSecret string
 	HTTPClient      *http.Client
+	// FlareSolverrGate, when non-nil, wraps Kitsu's client in the
+	// Cloudflare-clearing transport (kitsu.WithFlareSolverrGate) — resolved
+	// fresh per request from the Tsundoku-owned FlareSolverr settings
+	// (QCAT-238; see internal/settings' FlareSolverr* accessors, the ONLY
+	// intended source). nil leaves Kitsu's client a pure passthrough — its
+	// pre-feature behaviour.
+	FlareSolverrGate func(ctx context.Context) kitsu.FlareSolverrConfig
 }
 
 // NewRegistry builds the four Phase-3 real trackers (AniList, MAL, Kitsu,
 // MangaUpdates) and returns a ready tracker.Registry over them.
 func NewRegistry(cfg Config) *tracker.Registry {
+	kitsuClient := kitsu.New(cfg.HTTPClient)
+	if cfg.FlareSolverrGate != nil {
+		kitsuClient = kitsuClient.WithFlareSolverrGate(cfg.FlareSolverrGate)
+	}
 	return tracker.NewRegistry(
 		anilist.New(cfg.AniListClientID, cfg.HTTPClient),
 		mal.New(cfg.MALClientID, cfg.MALClientSecret, cfg.HTTPClient),
-		kitsu.New(cfg.HTTPClient),
+		kitsuClient,
 		mangaupdates.New(cfg.HTTPClient),
 	)
 }

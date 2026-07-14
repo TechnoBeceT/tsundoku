@@ -55,6 +55,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
+	"github.com/technobecet/tsundoku/internal/tracker/kitsu"
 	trackerproviders "github.com/technobecet/tsundoku/internal/tracker/providers"
 	"github.com/technobecet/tsundoku/internal/tracker/retry"
 	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
@@ -148,6 +149,20 @@ func main() {
 		AniListClientID: cfg.Tracker.AniListClientID,
 		MALClientID:     cfg.Tracker.MALClientID,
 		MALClientSecret: cfg.Tracker.MALClientSecret,
+		// FlareSolverrGate resolves Kitsu's Cloudflare-clearing config from the
+		// Tsundoku-owned settings overlay AT REQUEST TIME (settingsSvc is
+		// already constructed above) — never an env var, never read from
+		// Suwayomi (QCAT-238). A Settings-screen change hot-reloads on the very
+		// next Kitsu request.
+		FlareSolverrGate: func(ctx context.Context) kitsu.FlareSolverrConfig {
+			return kitsu.FlareSolverrConfig{
+				Enabled:     settingsSvc.FlareSolverrEnabled(ctx),
+				URL:         settingsSvc.FlareSolverrURL(ctx),
+				Timeout:     time.Duration(settingsSvc.FlareSolverrTimeout(ctx)) * time.Second,
+				SessionName: settingsSvc.FlareSolverrSessionName(ctx),
+				SessionTTL:  time.Duration(settingsSvc.FlareSolverrSessionTTL(ctx)) * time.Minute,
+			}
+		},
 	})
 	trackerConnectSvc := connect.NewService(entClient, trackerRegistry, cfg.Tracker.PublicURL)
 	trackerBindSvc := bind.NewService(entClient, trackerRegistry, cfg.Storage.Folder)
@@ -301,6 +316,16 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		TrackRetryInterval:      cfg.Jobs.TrackRetryInterval,
 		AutoUpdateTrack:         cfg.Jobs.AutoUpdateTrack,
 		MetadataAutoIdentify:    cfg.Metadata.AutoIdentify,
+		// FlareSolverrEnabled..FlareSolverrResponseFallback are deliberately
+		// LITERAL, not cfg.*-sourced (QCAT-238): FlareSolverr config is
+		// Tsundoku-owned runtime settings, never an env var. These are just the
+		// fixed factory defaults an owner overrides via the Settings UI.
+		FlareSolverrEnabled:          false,
+		FlareSolverrURL:              "",
+		FlareSolverrTimeout:          60,
+		FlareSolverrSessionName:      "",
+		FlareSolverrSessionTTL:       15,
+		FlareSolverrResponseFallback: false,
 	}
 }
 

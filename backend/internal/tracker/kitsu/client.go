@@ -107,6 +107,40 @@ func New(httpClient *http.Client) *Client {
 	return &Client{http: httpClient}
 }
 
+// WithFlareSolverrGate returns a NEW Client (the existing one is left
+// untouched — mirrors the metadatasvc.Service.WithAutoIdentifyGate /
+// series.Service.WithCoverFetcher optional-dep builder style) whose outbound
+// transport is wrapped in the Cloudflare-clearing cfTransport (cfclearance.go):
+// on a detected Cloudflare managed challenge it solves via FlareSolverr and
+// retries once with the earned cf_clearance cookie + browser User-Agent.
+//
+// gate is called fresh on every request (via req.Context()) — it is expected
+// to be backed by the Tsundoku settings overlay (settings.Service's
+// FlareSolverr* accessors), so an owner's Settings-screen change hot-reloads
+// without a restart (QCAT-238). gate returning FlareSolverrConfig{Enabled:
+// false} (or a blank URL) makes every request a pure passthrough — today's
+// exact behaviour before this feature.
+func (c *Client) WithFlareSolverrGate(gate func(ctx context.Context) FlareSolverrConfig) *Client {
+	base := c.http.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	wrapped := &http.Client{
+		Transport: &cfTransport{
+			base: base,
+			gate: gate,
+			// The FlareSolverr solve POST itself never goes through cfTransport
+			// (that would be self-referential — a challenge on FlareSolverr's
+			// OWN endpoint is not this transport's problem to solve). It gets a
+			// plain client bounded generously; flaresolverr.Solve applies its
+			// own tighter per-call timeout on top via the context it builds.
+			solveClient: &http.Client{Timeout: 2 * time.Minute},
+		},
+		Timeout: c.http.Timeout,
+	}
+	return &Client{http: wrapped}
+}
+
 // Key returns this tracker's stable string identity.
 func (c *Client) Key() string { return providerKey }
 

@@ -13,6 +13,7 @@ import (
 	categoryh "github.com/technobecet/tsundoku/internal/handler/category"
 	downloadsh "github.com/technobecet/tsundoku/internal/handler/downloads"
 	extensionsh "github.com/technobecet/tsundoku/internal/handler/extensions"
+	flaresolverrh "github.com/technobecet/tsundoku/internal/handler/flaresolverr"
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
 	libraryh "github.com/technobecet/tsundoku/internal/handler/library"
 	metadatah "github.com/technobecet/tsundoku/internal/handler/metadata"
@@ -90,6 +91,8 @@ import (
 //   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
 //   - /api/suwayomi/settings (GET)                  — read Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
+//   - /api/flaresolverr/settings (GET)              — read Tsundoku-owned FlareSolverr settings (RequireOwner).
+//   - /api/flaresolverr/settings (PATCH)            — partial-update + best-effort mirror to Suwayomi (RequireOwner).
 //   - /api/suwayomi/extensions (GET)                — list Suwayomi extensions (RequireOwner).
 //   - /api/suwayomi/extensions/refresh (POST)       — refresh available extensions from repos (RequireOwner).
 //     The static /repos routes are registered BEFORE the dynamic /:pkgName routes
@@ -269,6 +272,14 @@ func registerRoutes(
 	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient)
 	authed.GET("/suwayomi/settings", suwayomiSettingsH.Get)
 	authed.PATCH("/suwayomi/settings", suwayomiSettingsH.Update)
+
+	// Tsundoku-owned FlareSolverr settings (QCAT-238): a runtime setting on
+	// settingsSvc, NOT read from Suwayomi. PATCH best-effort mirrors down to
+	// Suwayomi's own settings via the same suwayomiClient the proxy above
+	// uses, so the two never fall out of sync while Suwayomi still exists.
+	flareSolverrH := flaresolverrh.NewHandler(settingsSvc, suwayomiClient)
+	authed.GET("/flaresolverr/settings", flareSolverrH.Get)
+	authed.PATCH("/flaresolverr/settings", flareSolverrH.Update)
 
 	// Suwayomi extension (Sources & Extensions) management. Like the settings
 	// proxy, the handler holds the Suwayomi client directly and proxies its

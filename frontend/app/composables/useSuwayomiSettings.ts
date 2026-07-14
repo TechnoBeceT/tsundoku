@@ -1,19 +1,20 @@
 /**
- * useSuwayomiSettings — data layer for the Settings → Suwayomi pane.
+ * useSuwayomiSettings — data layer for the Settings → Suwayomi pane's SOCKS
+ * proxy card (+ the read-only DB display).
  *
  * Fetches GET /api/suwayomi/settings and maps the backend SuwayomiSettings DTO
  * onto the screen's SuwayomiConfig. Exposes save() with the §16 SaveState
  * lifecycle: idle → saving → success/error.
  *
- * Field renames (API → screen):
- *   flareSolverr.sessionName      → flareSolverr.session
- *   flareSolverr.asResponseFallback → flareSolverr.fallback
- *   socksProxy                    → socks
+ * FlareSolverr moved OFF this composable (QCAT-238, 2026-07-14): it is now
+ * Tsundoku-owned config served by its own endpoint — see
+ * useFlareSolverrSettings.ts, wired as a SEPARATE card + save action in
+ * SuwayomiPane.vue. This composable's PATCH only ever sends the socksProxy
+ * group (the backend's FlareSolverr group is left entirely untouched — a nil
+ * group in the partial update, never clobbered).
  *
  * Unit conversions (API → screen):
- *   flareSolverr.timeout   (integer seconds) → DurationValue { value, unit:'s' }
- *   flareSolverr.sessionTtl (integer minutes) → DurationValue { value, unit:'m' }
- *   socksProxy.version     (integer 4|5)     → string '4'|'5'
+ *   socksProxy.version — integer 4|5 → screen string '4'|'5'
  *
  * The `database` sub-object is not exposed by the API (it is a deploy concern).
  * SuwayomiConfig.database is satisfied with an empty stub so the type compiles;
@@ -22,36 +23,10 @@
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { DurationValue, SuwayomiConfig, SaveState } from '~/components/screens/settings.types'
+import type { SuwayomiConfig, SaveState } from '~/components/screens/settings.types'
 
 type SuwayomiSettingsDTO = components['schemas']['SuwayomiSettings']
 type SuwayomiSettingsUpdateDTO = components['schemas']['SuwayomiSettingsUpdate']
-
-// ── Unit conversion helpers ───────────────────────────────────────────────────
-
-/** Integer seconds → DurationValue (expressed in seconds). */
-function fromSeconds(s: number): DurationValue {
-  return { value: s, unit: 's' }
-}
-
-/** Integer minutes → DurationValue (expressed in minutes). */
-function fromMinutes(m: number): DurationValue {
-  return { value: m, unit: 'm' }
-}
-
-/** DurationValue → integer seconds (for the API timeout field). */
-function toSeconds(d: DurationValue): number {
-  if (d.unit === 'h') return d.value * 3600
-  if (d.unit === 'm') return d.value * 60
-  return d.value
-}
-
-/** DurationValue → integer minutes (for the API sessionTtl field). */
-function toMinutes(d: DurationValue): number {
-  if (d.unit === 'h') return d.value * 60
-  if (d.unit === 's') return Math.round(d.value / 60)
-  return d.value
-}
 
 // ── Empty DB stub ─────────────────────────────────────────────────────────────
 
@@ -65,18 +40,9 @@ const EMPTY_DB = { type: '', url: '', username: '' }
 // ── DTO mappers ───────────────────────────────────────────────────────────────
 
 function mapSettings(dto: SuwayomiSettingsDTO): SuwayomiConfig {
-  const f = dto.flareSolverr
   const s = dto.socksProxy
   return {
     database: { ...EMPTY_DB },
-    flareSolverr: {
-      enabled: f.enabled,
-      url: f.url,
-      timeout: fromSeconds(f.timeout),
-      session: f.sessionName,            // API: sessionName → screen: session
-      sessionTtl: fromMinutes(f.sessionTtl),
-      fallback: f.asResponseFallback,    // API: asResponseFallback → screen: fallback
-    },
     socks: {
       enabled: s.enabled,
       version: String(s.version),        // API: 4|5 integer → screen: '4'|'5' string
@@ -89,17 +55,8 @@ function mapSettings(dto: SuwayomiSettingsDTO): SuwayomiConfig {
 }
 
 function buildUpdate(cfg: SuwayomiConfig): SuwayomiSettingsUpdateDTO {
-  const f = cfg.flareSolverr
   const s = cfg.socks
   return {
-    flareSolverr: {
-      enabled: f.enabled,
-      url: f.url,
-      timeout: toSeconds(f.timeout),
-      sessionName: f.session,            // screen: session → API: sessionName
-      sessionTtl: toMinutes(f.sessionTtl),
-      asResponseFallback: f.fallback,    // screen: fallback → API: asResponseFallback
-    },
     socksProxy: {
       enabled: s.enabled,
       version: s.version === '4' ? 4 : 5,
@@ -116,14 +73,6 @@ function buildUpdate(cfg: SuwayomiConfig): SuwayomiSettingsUpdateDTO {
 export function useSuwayomiSettings() {
   const config = ref<SuwayomiConfig>({
     database: { ...EMPTY_DB },
-    flareSolverr: {
-      enabled: false,
-      url: '',
-      timeout: { value: 60, unit: 's' },
-      session: '',
-      sessionTtl: { value: 15, unit: 'm' },
-      fallback: false,
-    },
     socks: {
       enabled: false,
       version: '5',
@@ -154,11 +103,13 @@ export function useSuwayomiSettings() {
   }
 
   /**
-   * §16 save: build the partial SuwayomiSettingsUpdate from the edited config,
-   * PATCH /api/suwayomi/settings, drive suwayomiSave through the SaveState
-   * lifecycle, and reseed config from the authoritative response (never the local
-   * copy). The backend returns the refreshed settings on success; on a validation
-   * or upstream error it returns { message } — surfaced verbatim.
+   * §16 save: build the partial SuwayomiSettingsUpdate (socksProxy ONLY —
+   * flareSolverr is omitted, so the backend's FlareSolverr group is never
+   * touched by this save) from the edited config, PATCH
+   * /api/suwayomi/settings, drive suwayomiSave through the SaveState
+   * lifecycle, and reseed config from the authoritative response (never the
+   * local copy). The backend returns the refreshed settings on success; on a
+   * validation or upstream error it returns { message } — surfaced verbatim.
    */
   async function save(next: SuwayomiConfig): Promise<void> {
     suwayomiSave.value = { status: 'saving' }

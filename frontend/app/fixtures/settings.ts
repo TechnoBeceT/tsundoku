@@ -4,13 +4,15 @@
  *
  * Mirrors the Claude Design prototype's seed state: the M12 library knobs, the
  * five seed categories (Other protected + default), an embedded engine with an
- * upgrade available, the proxied Suwayomi server config (FlareSolverr on, SOCKS
- * off), and the installed/available/repo extension sets.
+ * upgrade available, the proxied Suwayomi SOCKS config (off) + the Tsundoku-owned
+ * FlareSolverr config (on, QCAT-238 — a separate fixture), and the
+ * installed/available/repo extension sets.
  */
 import type {
   DurationValue,
   EngineInfo,
   Extension,
+  FlareSolverrConfig,
   LibrarySettings,
   Repo,
   SettingsCategory,
@@ -71,7 +73,7 @@ export const upgradeStepsInProgress: UpgradeStep[] = [
   { label: 'Verify', status: 'pending' },
 ]
 
-/** The proxied Suwayomi server config: read-only DB, SOCKS off, FlareSolverr on. */
+/** The proxied Suwayomi server config: read-only DB, SOCKS off. */
 export const suwayomiConfig: SuwayomiConfig = {
   database: {
     type: 'PostgreSQL',
@@ -86,14 +88,19 @@ export const suwayomiConfig: SuwayomiConfig = {
     username: '',
     password: '',
   },
-  flareSolverr: {
-    enabled: true,
-    url: 'http://flaresolverr:8191',
-    timeout: { value: 60, unit: 's' },
-    session: 'tsundoku',
-    sessionTtl: { value: 15, unit: 'm' },
-    fallback: true,
-  },
+}
+
+/**
+ * The Tsundoku-owned FlareSolverr config (QCAT-238) — a SEPARATE fixture from
+ * suwayomiConfig since it is now served/saved through its own endpoint.
+ */
+export const flareSolverrConfig: FlareSolverrConfig = {
+  enabled: true,
+  url: 'http://flaresolverr:8191',
+  timeout: { value: 60, unit: 's' },
+  session: 'tsundoku',
+  sessionTtl: { value: 15, unit: 'm' },
+  fallback: true,
 }
 
 /**

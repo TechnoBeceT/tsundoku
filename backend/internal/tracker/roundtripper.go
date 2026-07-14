@@ -59,7 +59,7 @@ type authRoundTripper struct {
 // the start; this only works when req.GetBody is set, which
 // http.NewRequestWithContext populates automatically for the common body
 // types this codebase's tracker clients use (bytes.Reader, bytes.Buffer,
-// strings.Reader) — see cloneWithFreshBody.
+// strings.Reader) — see CloneRequestForRetry.
 func NewAuthRoundTripper(base http.RoundTripper, refresher TokenRefresher, source TokenSource) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
@@ -120,10 +120,10 @@ func (rt *authRoundTripper) refresh(req *http.Request, tok TokenSet) (TokenSet, 
 }
 
 // send clones req (rewinding its body via GetBody when present — see
-// cloneWithFreshBody), attaches the Bearer header for tok, and delegates to
+// CloneRequestForRetry), attaches the Bearer header for tok, and delegates to
 // the base transport.
 func (rt *authRoundTripper) send(req *http.Request, tok TokenSet) (*http.Response, error) {
-	clone, err := cloneWithFreshBody(req)
+	clone, err := CloneRequestForRetry(req)
 	if err != nil {
 		return nil, err
 	}
@@ -131,15 +131,19 @@ func (rt *authRoundTripper) send(req *http.Request, tok TokenSet) (*http.Respons
 	return rt.base.RoundTrip(clone)
 }
 
-// cloneWithFreshBody clones req for a (possibly repeat) send. When req
+// CloneRequestForRetry clones req for a (possibly repeat) send. When req
 // carries a body AND a GetBody rewinder (set automatically by
 // http.NewRequestWithContext for bytes.Reader/bytes.Buffer/strings.Reader
 // bodies — every request this codebase's tracker clients build), the clone
-// gets a FRESH, unconsumed reader so a retry after a reactive refresh can
-// resend the same payload. A body with no GetBody (a raw io.Reader) is
-// passed through unchanged — a retry of such a request risks sending an
-// already-drained body, but no caller in this codebase constructs one.
-func cloneWithFreshBody(req *http.Request) (*http.Request, error) {
+// gets a FRESH, unconsumed reader so a retry after a reactive refresh (or a
+// FlareSolverr Cloudflare-challenge retry — see internal/tracker/kitsu's
+// clearing transport, the other caller) can resend the same payload. A body
+// with no GetBody (a raw io.Reader) is passed through unchanged — a retry of
+// such a request risks sending an already-drained body, but no caller in this
+// codebase constructs one. EXPORTED (not just this file's own send caller)
+// so a sibling RoundTripper elsewhere in the tracker tree can reuse the exact
+// same rewind logic instead of re-deriving it (§2 DRY).
+func CloneRequestForRetry(req *http.Request) (*http.Request, error) {
 	clone := req.Clone(req.Context())
 	if req.Body != nil && req.GetBody != nil {
 		body, err := req.GetBody()

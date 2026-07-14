@@ -46,6 +46,8 @@ func testDefaults() settingssvc.Defaults {
 		SourcesFailureThreshold: 5,
 		SourcesCooldown:         30 * time.Minute,
 		SourcesMinRequestDelay:  500 * time.Millisecond,
+		FlareSolverrTimeout:     60,
+		FlareSolverrSessionTTL:  15,
 	}
 }
 
@@ -97,8 +99,8 @@ func TestList_OK(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 19 {
-		t.Fatalf("want 19 settings, got %d", len(got))
+	if len(got) != 25 {
+		t.Fatalf("want 25 settings, got %d", len(got))
 	}
 	if got[0].Key != settingssvc.KeyDownloadInterval || got[0].Value != "15m0s" {
 		t.Errorf("first row = %+v, want download_interval=15m0s", got[0])

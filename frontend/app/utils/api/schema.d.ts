@@ -1384,6 +1384,42 @@ export interface paths {
         patch: operations["updateSuwayomiSettings"];
         trace?: never;
     };
+    "/api/flaresolverr/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Tsundoku-owned FlareSolverr settings
+         * @description Returns Tsundoku's OWN FlareSolverr (Cloudflare-bypass) settings — a
+         *     runtime setting on Tsundoku's settings overlay (QCAT-238), NOT read
+         *     from Suwayomi and NOT an env var. Reuses the same shape as the
+         *     Suwayomi-proxy FlareSolverr group so a client can rebind from one
+         *     endpoint to the other with no field changes.
+         */
+        get: operations["getFlareSolverrSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Tsundoku-owned FlareSolverr settings
+         * @description Applies a PARTIAL update to Tsundoku's own FlareSolverr settings
+         *     (only the provided fields change; an empty body is a 400). On
+         *     success, the full resulting state is ALSO best-effort mirrored down
+         *     to Suwayomi's own settings (via the same Suwayomi settings proxy) so
+         *     Suwayomi's source-scraping stays in sync while Suwayomi still
+         *     exists — a Suwayomi-down mirror failure is logged and NEVER fails
+         *     this request, since the Tsundoku save already persisted. The
+         *     settings are RE-READ after the write and returned so the caller sees
+         *     the persisted values without a refetch (§16).
+         */
+        patch: operations["updateFlareSolverrSettings"];
+        trace?: never;
+    };
     "/api/suwayomi/extensions": {
         parameters: {
             query?: never;
@@ -6104,6 +6140,77 @@ export interface operations {
             };
             /** @description Suwayomi was unreachable or returned a GraphQL error. */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getFlareSolverrSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current Tsundoku-owned FlareSolverr settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlareSolverrSettings"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateFlareSolverrSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlareSolverrUpdate"];
+            };
+        };
+        responses: {
+            /** @description Settings updated (and best-effort mirrored to Suwayomi). Returns the refreshed FlareSolverr settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlareSolverrSettings"];
+                };
+            };
+            /** @description A validation failure (malformed URL, out-of-bounds timeout/sessionTtl, or empty body). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

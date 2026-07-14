@@ -12,6 +12,7 @@ import type {
   DurationValue,
   EngineInfo,
   Extension,
+  FlareSolverrConfig,
   LibrarySettings,
   Repo,
   ReorderDirection,
@@ -36,7 +37,8 @@ import type {
  *                   toggle + read-only System)
  *   - categories  → CategoriesPane   (user-definable category CRUD)
  *   - engine      → EnginePane       (read-only status + upgrade stepper)
- *   - suwayomi    → SuwayomiPane      (proxied SOCKS + FlareSolverr config)
+ *   - suwayomi    → SuwayomiPane      (proxied SOCKS config + the Tsundoku-owned
+ *                   FlareSolverr card, QCAT-238 — two independent save actions)
  *   - extensions  → ExtensionsPane    (installed / available / repositories)
  *   - sources     → SourcesSettingsPane (warm-up + circuit-breaker knobs +
  *                   the library-wide dedup-sweep trigger)
@@ -76,10 +78,14 @@ withDefaults(defineProps<{
   upgradeSteps?: UpgradeStep[]
   /** Whether an engine upgrade is currently running. */
   upgrading?: boolean
-  /** The proxied Suwayomi server config (2d). */
+  /** The proxied Suwayomi SOCKS config (2d). */
   suwayomi: SuwayomiConfig
-  /** §16 state of the Suwayomi Save button. */
+  /** §16 state of the Suwayomi (SOCKS) Save button. */
   suwayomiSave?: SaveState
+  /** The Tsundoku-owned FlareSolverr config (QCAT-238, 2d). */
+  flareSolverr: FlareSolverrConfig
+  /** §16 state of the FlareSolverr Save button. */
+  flareSolverrSave?: SaveState
   /** Installed extensions (2e). */
   extensions: Extension[]
   /** Available (installable) extensions (2e). */
@@ -143,6 +149,7 @@ withDefaults(defineProps<{
   upgradeSteps: () => [],
   upgrading: false,
   suwayomiSave: () => ({ status: 'idle' }),
+  flareSolverrSave: () => ({ status: 'idle' }),
   extensionAction: () => ({ busyId: null }),
   repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
@@ -172,8 +179,10 @@ const emit = defineEmits<{
   'set-pane': [pane: SettingsPane]
   /** Persist the edited library knobs (carries the full edited copy). */
   'save-library': [settings: LibrarySettings]
-  /** Persist the edited Suwayomi server config. */
+  /** Persist the edited Suwayomi SOCKS config. */
   'save-suwayomi': [config: SuwayomiConfig]
+  /** Persist the edited Tsundoku-owned FlareSolverr config. */
+  'save-flaresolverr': [config: FlareSolverrConfig]
   /** Add a new category by name. */
   'add-category': [name: string]
   /** Rename a category. */
@@ -268,7 +277,10 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           v-else-if="activePane === 'suwayomi'"
           :config="suwayomi"
           :save="suwayomiSave"
+          :flare-solverr="flareSolverr"
+          :flare-solverr-save="flareSolverrSave"
           @save="emit('save-suwayomi', $event)"
+          @save-flaresolverr="emit('save-flaresolverr', $event)"
         />
 
         <ExtensionsPane

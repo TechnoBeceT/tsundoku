@@ -33,6 +33,11 @@ func testDefaults() settings.Defaults {
 		SuppressSplitParts:      true,
 		TrackRetryInterval:      5 * time.Minute,
 		MetadataAutoIdentify:    true,
+		FlareSolverrEnabled:     false,
+		FlareSolverrURL:         "",
+		FlareSolverrTimeout:     60,
+		FlareSolverrSessionName: "",
+		FlareSolverrSessionTTL:  15,
 	}
 }
 
@@ -235,8 +240,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 19 {
-		t.Fatalf("List len = %d, want 19", len(list))
+	if len(list) != 25 {
+		t.Fatalf("List len = %d, want 25", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -632,5 +637,187 @@ func TestMetadataAutoIdentify_DefaultAndOverride(t *testing.T) {
 	}
 	if err := svc.Set(ctx, settings.KeyMetadataAutoIdentify, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
 		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
+	}
+}
+
+// TestFlareSolverrDefaults proves every FlareSolverr accessor returns its
+// injected default when the Settings table has no override (QCAT-238 —
+// Tsundoku-owned Cloudflare-bypass config).
+func TestFlareSolverrDefaults(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if svc.FlareSolverrEnabled(ctx) {
+		t.Error("FlareSolverrEnabled default = true, want false")
+	}
+	if got := svc.FlareSolverrURL(ctx); got != "" {
+		t.Errorf("FlareSolverrURL default = %q, want \"\"", got)
+	}
+	if got := svc.FlareSolverrTimeout(ctx); got != 60 {
+		t.Errorf("FlareSolverrTimeout default = %d, want 60", got)
+	}
+	if got := svc.FlareSolverrSessionName(ctx); got != "" {
+		t.Errorf("FlareSolverrSessionName default = %q, want \"\"", got)
+	}
+	if got := svc.FlareSolverrSessionTTL(ctx); got != 15 {
+		t.Errorf("FlareSolverrSessionTTL default = %d, want 15", got)
+	}
+	if svc.FlareSolverrResponseFallback(ctx) {
+		t.Error("FlareSolverrResponseFallback default = true, want false")
+	}
+}
+
+// TestFlareSolverrSetAndResolve_Enabled proves the enabled flag round-trips.
+func TestFlareSolverrSetAndResolve_Enabled(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if err := svc.Set(ctx, settings.KeyFlareSolverrEnabled, "true"); err != nil {
+		t.Fatalf("Set enabled: %v", err)
+	}
+	if !svc.FlareSolverrEnabled(ctx) {
+		t.Error("after Set true, FlareSolverrEnabled = false")
+	}
+}
+
+// TestFlareSolverrSetAndResolve_URL proves the URL round-trips, including
+// clearing it back to blank (blank is always legal — "not configured").
+func TestFlareSolverrSetAndResolve_URL(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if err := svc.Set(ctx, settings.KeyFlareSolverrURL, "http://flaresolverr:8191"); err != nil {
+		t.Fatalf("Set url: %v", err)
+	}
+	if got := svc.FlareSolverrURL(ctx); got != "http://flaresolverr:8191" {
+		t.Errorf("FlareSolverrURL after Set = %q, want http://flaresolverr:8191", got)
+	}
+	if err := svc.Set(ctx, settings.KeyFlareSolverrURL, ""); err != nil {
+		t.Fatalf("Set url blank: %v", err)
+	}
+	if got := svc.FlareSolverrURL(ctx); got != "" {
+		t.Errorf("FlareSolverrURL after Set \"\" = %q, want \"\"", got)
+	}
+}
+
+// TestFlareSolverrSetAndResolve_TimeoutAndSession proves the timeout, session
+// name (trimmed), and session TTL round-trip through their accessors.
+func TestFlareSolverrSetAndResolve_TimeoutAndSession(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if err := svc.Set(ctx, settings.KeyFlareSolverrTimeout, "120"); err != nil {
+		t.Fatalf("Set timeout: %v", err)
+	}
+	if got := svc.FlareSolverrTimeout(ctx); got != 120 {
+		t.Errorf("FlareSolverrTimeout after Set = %d, want 120", got)
+	}
+
+	if err := svc.Set(ctx, settings.KeyFlareSolverrSessionName, "  tsundoku  "); err != nil {
+		t.Fatalf("Set session name: %v", err)
+	}
+	if got := svc.FlareSolverrSessionName(ctx); got != "tsundoku" {
+		t.Errorf("FlareSolverrSessionName after Set = %q, want trimmed \"tsundoku\"", got)
+	}
+
+	if err := svc.Set(ctx, settings.KeyFlareSolverrSessionTTL, "30"); err != nil {
+		t.Fatalf("Set session ttl: %v", err)
+	}
+	if got := svc.FlareSolverrSessionTTL(ctx); got != 30 {
+		t.Errorf("FlareSolverrSessionTTL after Set = %d, want 30", got)
+	}
+}
+
+// TestFlareSolverrSetAndResolve_ResponseFallback proves the
+// asResponseFallback mirror flag round-trips.
+func TestFlareSolverrSetAndResolve_ResponseFallback(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if err := svc.Set(ctx, settings.KeyFlareSolverrResponseFallback, "true"); err != nil {
+		t.Fatalf("Set response fallback: %v", err)
+	}
+	if !svc.FlareSolverrResponseFallback(ctx) {
+		t.Error("after Set true, FlareSolverrResponseFallback = false")
+	}
+}
+
+// TestFlareSolverrURLValidation proves the URL tunable accepts blank or a
+// well-formed absolute http(s) URL and rejects everything else (a relative
+// path, a non-http(s) scheme, or a hostless URL).
+func TestFlareSolverrURLValidation(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	cases := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{"blank clears", "", false},
+		{"valid http", "http://10.0.1.17:8191", false},
+		{"valid https", "https://flaresolverr.example.com", false},
+		{"relative path rejected", "/flaresolverr", true},
+		{"non-http scheme rejected", "ftp://flaresolverr:8191", true},
+		{"hostless rejected", "http://", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := svc.Set(ctx, settings.KeyFlareSolverrURL, tc.raw)
+			if tc.wantErr {
+				if !errors.Is(err, settings.ErrInvalidSetting) {
+					t.Fatalf("Set(%q): want ErrInvalidSetting, got %v", tc.raw, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Set(%q): %v", tc.raw, err)
+			}
+		})
+	}
+}
+
+// TestFlareSolverrIntBounds proves the timeout (5..600s) and session-ttl
+// (0..1440m) tunables reject out-of-bounds values.
+func TestFlareSolverrIntBounds(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	cases := []struct {
+		name, key, value string
+	}{
+		{"timeout below min", settings.KeyFlareSolverrTimeout, "4"},
+		{"timeout above max", settings.KeyFlareSolverrTimeout, "601"},
+		{"timeout unparseable", settings.KeyFlareSolverrTimeout, "soon"},
+		{"session ttl negative", settings.KeyFlareSolverrSessionTTL, "-1"},
+		{"session ttl above max", settings.KeyFlareSolverrSessionTTL, "1441"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := svc.Set(ctx, tc.key, tc.value); !errors.Is(err, settings.ErrInvalidSetting) {
+				t.Fatalf("Set(%q, %q): want ErrInvalidSetting, got %v", tc.key, tc.value, err)
+			}
+		})
+	}
+
+	// Bounds edges are accepted.
+	if err := svc.Set(ctx, settings.KeyFlareSolverrTimeout, "5"); err != nil {
+		t.Fatalf("Set timeout=5 (min): %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyFlareSolverrTimeout, "600"); err != nil {
+		t.Fatalf("Set timeout=600 (max): %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyFlareSolverrSessionTTL, "0"); err != nil {
+		t.Fatalf("Set sessionTtl=0 (min): %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyFlareSolverrSessionTTL, "1440"); err != nil {
+		t.Fatalf("Set sessionTtl=1440 (max): %v", err)
 	}
 }

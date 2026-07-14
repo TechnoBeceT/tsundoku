@@ -4,8 +4,9 @@
  * These mirror the PLANNED Settings surface (see the Settings design brief):
  * a few runtime-editable Tsundoku knobs (the M12 allowlist), user-defined
  * categories, read-only engine info + the embedded-engine upgrade flow, the
- * proxied Suwayomi server config (SOCKS + FlareSolverr), and extension/repo
- * management. Everything is presentation-only: the screen receives state via
+ * proxied Suwayomi server config (SOCKS), the Tsundoku-owned FlareSolverr
+ * config (QCAT-238), and extension/repo management. Everything is
+ * presentation-only: the screen receives state via
  * props and emits every mutation — no fetching, routing, or stores. Kept in
  * this `.ts` (never exported from a `.vue`) so stories + fixtures import freely.
  */
@@ -208,14 +209,18 @@ export interface FlareSolverrConfig {
   fallback: boolean
 }
 
-/** The whole proxied Suwayomi server config (read-only DB + two editable cards). */
+/**
+ * The proxied Suwayomi server config (read-only DB + the editable SOCKS
+ * card). FlareSolverr is deliberately NOT part of this type (QCAT-238,
+ * 2026-07-14): it is Tsundoku-OWNED config served by its own endpoint, kept
+ * as the standalone FlareSolverrConfig below — even though its card renders
+ * alongside this one in SuwayomiPane.vue, it is wired + saved independently.
+ */
 export interface SuwayomiConfig {
   /** Read-only DB backend display. */
   database: SuwayomiDatabaseInfo
   /** Editable SOCKS proxy. */
   socks: SocksProxyConfig
-  /** Editable FlareSolverr. */
-  flareSolverr: FlareSolverrConfig
 }
 
 /* ---- 2e. Sources & Extensions --------------------------------------------- */

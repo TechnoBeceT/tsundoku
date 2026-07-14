@@ -38,6 +38,14 @@ type Static struct {
 	AutoUpdate bool
 	// MetadataAutoIdentifyFlag backs the MetadataAutoIdentify accessor.
 	MetadataAutoIdentifyFlag bool
+	// FlareSolverrOn..FlareSolverrFallback back the FlareSolverr* accessors
+	// below (QCAT-238, Tsundoku-owned Cloudflare-bypass config).
+	FlareSolverrOn          bool
+	FlareSolverrURLValue    string
+	FlareSolverrTimeoutSecs int
+	FlareSolverrSession     string
+	FlareSolverrTTLMinutes  int
+	FlareSolverrFallback    bool
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -96,3 +104,21 @@ func (s Static) AutoUpdateTrack(context.Context) bool { return s.AutoUpdate }
 
 // MetadataAutoIdentify returns the fixed metadata-engine auto-identify toggle.
 func (s Static) MetadataAutoIdentify(context.Context) bool { return s.MetadataAutoIdentifyFlag }
+
+// FlareSolverrEnabled returns the fixed FlareSolverr enabled toggle.
+func (s Static) FlareSolverrEnabled(context.Context) bool { return s.FlareSolverrOn }
+
+// FlareSolverrURL returns the fixed FlareSolverr endpoint.
+func (s Static) FlareSolverrURL(context.Context) string { return s.FlareSolverrURLValue }
+
+// FlareSolverrTimeout returns the fixed per-request solve timeout in seconds.
+func (s Static) FlareSolverrTimeout(context.Context) int { return s.FlareSolverrTimeoutSecs }
+
+// FlareSolverrSessionName returns the fixed FlareSolverr session identifier.
+func (s Static) FlareSolverrSessionName(context.Context) string { return s.FlareSolverrSession }
+
+// FlareSolverrSessionTTL returns the fixed session time-to-live in minutes.
+func (s Static) FlareSolverrSessionTTL(context.Context) int { return s.FlareSolverrTTLMinutes }
+
+// FlareSolverrResponseFallback returns the fixed asResponseFallback mirror flag.
+func (s Static) FlareSolverrResponseFallback(context.Context) bool { return s.FlareSolverrFallback }

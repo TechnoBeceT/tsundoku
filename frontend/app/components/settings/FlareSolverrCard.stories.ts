@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { ref } from 'vue'
 import FlareSolverrCard from './FlareSolverrCard.vue'
-import { suwayomiConfig } from '../../fixtures/settings'
+import { flareSolverrConfig } from '../../fixtures/settings'
 import type { FlareSolverrConfig } from '../screens/settings.types'
 // Load this screen's status tokens directly: index.css does not @import them yet
 // (a coordinator wires that line to avoid parallel-worker conflicts), so the
@@ -18,7 +18,7 @@ const meta = {
   parameters: { layout: 'padded' },
   // modelValue is a required prop; each story renders its own live-model wrapper,
   // so this default only satisfies the CSF3 story typing.
-  args: { modelValue: suwayomiConfig.flareSolverr },
+  args: { modelValue: flareSolverrConfig },
 } satisfies Meta<typeof FlareSolverrCard>
 
 export default meta
@@ -40,10 +40,10 @@ const withModel = (seed: FlareSolverrConfig) => ({
 
 /** Enabled — the URL, timeout, session, and fallback controls (seed config). */
 export const On: Story = {
-  render: () => withModel(suwayomiConfig.flareSolverr),
+  render: () => withModel(flareSolverrConfig),
 }
 
 /** Disabled — only the header + toggle show. */
 export const Off: Story = {
-  render: () => withModel({ ...suwayomiConfig.flareSolverr, enabled: false }),
+  render: () => withModel({ ...flareSolverrConfig, enabled: false }),
 }
