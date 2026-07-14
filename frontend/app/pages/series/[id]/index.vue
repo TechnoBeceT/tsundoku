@@ -59,8 +59,9 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, Updat
  *                             useReadingProgress.resumeTarget and navigates to
  *                             the reader — see the "Resume FAB" section below)
  *   @track-search / @track-bind / @track-unbind / @track-refresh /
- *   @track-update / @track-sync → the matching useSeriesTracking method (see
- *                             the "Trackers" section below)
+ *   @track-update / @track-sync / @track-clear-search → the matching
+ *                             useSeriesTracking method (see the "Trackers"
+ *                             section below)
  *
  * Native metadata engine (useMetadata(id), Slice D): two more page-owned
  * dialogs, same reasoning as the ones above — only the page learns whether the
@@ -103,18 +104,24 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, Updat
  *
  * Trackers (`TrackersSection`, QCAT-234 — inline, always visible, no
  * dialog): `useSeriesTracking(id)` owns this series' bindings +
- * search/bind/unbind/refresh/updateTrack/syncNow; `useTrackers()` supplies
- * the connected-tracker list the "Add tracking" rows filter against (same
- * composable the Settings → Trackers pane uses — this is an independent
+ * search/bind/unbind/refresh/updateTrack/syncNow/clearSearch; `useTrackers()`
+ * supplies the connected-tracker list the "Add tracking" rows filter against
+ * (same composable the Settings → Trackers pane uses — this is an independent
  * instance, fetched unconditionally on page load rather than lazily on a
  * dialog open, since the section is always on-screen). `@track-search`/
  * `@track-bind`/`@track-unbind`/`@track-refresh`/`@track-update`/
- * `@track-sync` (bubbled through `SeriesDetail`'s matching pass-through
- * emits) drive the matching `useSeriesTracking` method directly (no
- * dialog-close-on-success gating like the other page-owned dialogs — each
- * mutation applies its own result into `bindings` and the section just keeps
- * reflecting it, §16 mutate-reseeds-from-response; the per-row edit form's
- * own open/close is TrackersSection's own local state, not the page's).
+ * `@track-sync`/`@track-clear-search` (bubbled through `SeriesDetail`'s
+ * matching pass-through emits) drive the matching `useSeriesTracking` method
+ * directly (no dialog-close-on-success gating like the other page-owned
+ * dialogs — each mutation applies its own result into `bindings` and the
+ * section just keeps reflecting it, §16 mutate-reseeds-from-response, backed
+ * by a silent background refetch after bind/unbind/update so a server-side
+ * side effect the single-row response can't carry still reaches the screen
+ * without a manual page refresh — SSE is NOT relied on here; the per-row edit
+ * form's own open/close is TrackersSection's own local state, not the page's).
+ * `unbindErrorId`/`refreshErrorId` scope a failed unbind/refresh's message to
+ * the row that caused it (unbind/refresh have no "open" row state to key off,
+ * unlike `updateError`'s `editingId`).
  */
 const route = useRoute()
 const id = route.params.id as string
@@ -355,12 +362,17 @@ const {
   binding: trackBinding,
   bindError: trackBindError,
   unbindBusyId: trackUnbindBusyId,
+  unbindError: trackUnbindError,
+  unbindErrorId: trackUnbindErrorId,
   refreshBusyId: trackRefreshBusyId,
+  refreshError: trackRefreshError,
+  refreshErrorId: trackRefreshErrorId,
   updateBusyId: trackUpdateBusyId,
   updateError: trackUpdateError,
   syncing: trackSyncing,
   syncError: trackSyncError,
   search: searchTracker,
+  clearSearch,
   bind: bindTracker,
   unbind: unbindTracker,
   refresh: refreshTracker,
@@ -394,6 +406,10 @@ function onUpdateTracker(payload: { recordId: string, patch: UpdateTrackPatch })
 
 function onSyncTracker(): void {
   void syncNow()
+}
+
+function onClearSearchTracker(): void {
+  clearSearch()
 }
 
 // ---- Resume FAB (Komikku-style "continue reading" button) -----------------
@@ -472,7 +488,11 @@ function onResume(): void {
       :track-binding="trackBinding"
       :track-bind-error="trackBindError"
       :track-unbind-busy-id="trackUnbindBusyId"
+      :track-unbind-error="trackUnbindError"
+      :track-unbind-error-id="trackUnbindErrorId"
       :track-refresh-busy-id="trackRefreshBusyId"
+      :track-refresh-error="trackRefreshError"
+      :track-refresh-error-id="trackRefreshErrorId"
       :track-update-busy-id="trackUpdateBusyId"
       :track-update-error="trackUpdateError"
       :track-syncing="trackSyncing"
@@ -500,6 +520,7 @@ function onResume(): void {
       @track-refresh="onRefreshTracker"
       @track-update="onUpdateTracker"
       @track-sync="onSyncTracker"
+      @track-clear-search="onClearSearchTracker"
     />
 
     <FractionalCleanupDialog

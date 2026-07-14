@@ -68,7 +68,19 @@ import type { TrackerStatus } from '../screens/settings.types'
  * Emits `search` (`{ trackerId, q }`), `bind`
  * (`{ trackerId, remoteId, private? }`), `unbind` (the TrackBinding id),
  * `refresh` (the TrackBinding id), `update` (`{ recordId, patch }`), `sync`
- * (no payload — pull + converge every binding on this series).
+ * (no payload — pull + converge every binding on this series), `clear-search`
+ * (no payload — the expanded "Add tracking" row changed; the page routes this
+ * to `useSeriesTracking.clearSearch()`).
+ *
+ * BUG-1 (results leaking across trackers): `searchResults`/`searchError` are
+ * SHARED state owned by `useSeriesTracking` (one series, not one row), so this
+ * section additionally tracks LOCALLY which tracker the current
+ * `searchResults` were searched FOR (`searchedTrackerId`, set in `runSearch`).
+ * Only when it matches the currently EXPANDED tracker are results/errors
+ * rendered — `toggleAddTracker` resets it (and emits `clear-search`) whenever
+ * the expanded tracker actually changes, so switching rows can never keep
+ * showing a previous tracker's stale results while a NEW search for the new
+ * tracker's row hasn't run yet.
  */
 const props = withDefaults(defineProps<{
   /** This series' current tracker bindings. */
@@ -91,8 +103,16 @@ const props = withDefaults(defineProps<{
   bindError?: string | null
   /** The TrackBinding id currently being unbound, or null. */
   unbindBusyId?: string | null
+  /** A failed unbind message, or null for none. */
+  unbindError?: string | null
+  /** The TrackBinding id `unbindError` belongs to, or null. */
+  unbindErrorId?: string | null
   /** The TrackBinding id currently being remote-refreshed, or null. */
   refreshBusyId?: string | null
+  /** A failed remote-refresh message, or null for none. */
+  refreshError?: string | null
+  /** The TrackBinding id `refreshError` belongs to, or null. */
+  refreshErrorId?: string | null
   /** The TrackBinding id currently being manually edited, or null. */
   updateBusyId?: string | null
   /** A failed manual edit message, or null for none. */
@@ -112,7 +132,11 @@ const props = withDefaults(defineProps<{
   binding: false,
   bindError: null,
   unbindBusyId: null,
+  unbindError: null,
+  unbindErrorId: null,
   refreshBusyId: null,
+  refreshError: null,
+  refreshErrorId: null,
   updateBusyId: null,
   updateError: null,
   syncing: false,
@@ -132,6 +156,8 @@ const emit = defineEmits<{
   'update': [payload: { recordId: string, patch: UpdateTrackPatch }]
   /** Pull + converge every one of this series' tracker bindings. */
   'sync': []
+  /** The expanded "Add tracking" tracker changed — clear the shared search state (bug 1). */
+  'clear-search': []
 }>()
 
 // Connected trackers this series isn't already bound to — one "Add tracking"
@@ -170,11 +196,20 @@ const expandedTrackerId = ref<number | null>(null)
 const query = ref('')
 const searched = ref(false)
 const privateFlag = ref(false)
+// BUG-1: which tracker the CURRENT props.searchResults/searchError were
+// searched FOR — set by runSearch(), cleared whenever the expanded tracker
+// changes. Results/errors only render while this matches expandedTrackerId,
+// so a shared (per-series, not per-row) searchResults ref can never leak a
+// previous tracker's data onto a freshly-opened row.
+const searchedTrackerId = ref<number | null>(null)
 
 const expandedTracker = computed<TrackerStatus | null>(() =>
   addableTrackers.value.find((t) => t.id === expandedTrackerId.value) ?? null)
 
-const noResults = computed(() => searched.value && !props.searching && props.searchResults.length === 0)
+// The results/error genuinely belong to the tracker currently expanded.
+const resultsCurrent = computed(() => searchedTrackerId.value === expandedTrackerId.value)
+
+const noResults = computed(() => searched.value && resultsCurrent.value && !props.searching && props.searchResults.length === 0)
 
 function toggleAddTracker(trackerId: number): void {
   if (expandedTrackerId.value === trackerId) {
@@ -185,6 +220,8 @@ function toggleAddTracker(trackerId: number): void {
   query.value = ''
   searched.value = false
   privateFlag.value = false
+  searchedTrackerId.value = null
+  emit('clear-search')
 }
 
 // A successful bind removes its tracker from `addableTrackers` — collapse the
@@ -195,6 +232,7 @@ watch(addableTrackers, (list) => {
     expandedTrackerId.value = null
     query.value = ''
     searched.value = false
+    searchedTrackerId.value = null
   }
 })
 
@@ -203,6 +241,7 @@ function runSearch(): void {
   const q = query.value.trim()
   if (!q) return
   searched.value = true
+  searchedTrackerId.value = expandedTrackerId.value
   emit('search', { trackerId: expandedTrackerId.value, q })
 }
 
@@ -243,7 +282,9 @@ function onBind(remoteId: string): void {
           :update-busy="updateBusyId === b.id"
           :update-error="editingId === b.id ? updateError : null"
           :unbind-busy="unbindBusyId === b.id"
+          :unbind-error="unbindErrorId === b.id ? unbindError : null"
           :refresh-busy="refreshBusyId === b.id"
+          :refresh-error="refreshErrorId === b.id ? refreshError : null"
           @toggle-edit="toggleEdit(b)"
           @cancel-edit="closeEdit"
           @submit="onSubmit(b, $event)"
@@ -296,12 +337,12 @@ function onBind(remoteId: string): void {
               </AppButton>
             </div>
 
-            <FormError v-if="searchError" class="add-row__error" :message="searchError" />
+            <FormError v-if="resultsCurrent && searchError" class="add-row__error" :message="searchError" />
             <FormError v-if="bindError" class="add-row__error" :message="bindError" />
 
             <p v-if="noResults" class="trackers__empty">No matches found.</p>
 
-            <div v-else-if="searchResults.length" class="track-results">
+            <div v-else-if="resultsCurrent && searchResults.length" class="track-results">
               <TrackerSearchResultCard
                 v-for="r in searchResults"
                 :key="r.remoteId"

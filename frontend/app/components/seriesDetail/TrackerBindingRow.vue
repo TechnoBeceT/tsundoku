@@ -31,7 +31,14 @@ import { scoreSelectorFormat, scoreToDisplay, scoreToNative } from '../../utils/
  *   - `binding`: the bound tracker to render.
  *   - `editing`: whether this row's inline edit form is open.
  *   - `updateBusy`/`updateError`: this row's manual-edit mutation state.
- *   - `unbindBusy`/`refreshBusy`: this row's unbind/refresh mutation state.
+ *   - `unbindBusy`/`unbindError`: this row's unbind mutation state.
+ *   - `refreshBusy`/`refreshError`: this row's remote-refresh mutation state.
+ *
+ * §16: `unbindError`/`refreshError` are rendered inline via `FormError`
+ * (reused, QCAT-237) below the head row — unlike the edit form's error, unbind
+ * and refresh have no persistent "open" affordance to attach the message to,
+ * so it's shown directly under the row until the next attempt (success clears
+ * it; the PARENT, `TrackersSection`, is the one that scopes it to THIS row).
  *
  * Emits `toggleEdit` (Edit icon pressed), `cancelEdit` (form Cancel pressed),
  * `submit` (Save pressed — carries the changed-fields-only patch), `unbind`,
@@ -48,14 +55,20 @@ const props = withDefaults(defineProps<{
   updateError?: string | null
   /** True while this row's unbind is in flight. */
   unbindBusy?: boolean
+  /** A failed unbind message for this row, or null for none. */
+  unbindError?: string | null
   /** True while this row's remote refresh is in flight. */
   refreshBusy?: boolean
+  /** A failed remote-refresh message for this row, or null for none. */
+  refreshError?: string | null
 }>(), {
   editing: false,
   updateBusy: false,
   updateError: null,
   unbindBusy: false,
+  unbindError: null,
   refreshBusy: false,
+  refreshError: null,
 })
 
 const emit = defineEmits<{
@@ -175,6 +188,11 @@ function submitEdit(): void {
       </div>
     </div>
 
+    <!-- §16: unbind/refresh have no persistent "open" affordance to attach the
+         error to, so it renders directly under the row (no form to nest inside). -->
+    <FormError v-if="unbindError" class="track-bound__error" :message="unbindError" />
+    <FormError v-if="refreshError" class="track-bound__error" :message="refreshError" />
+
     <!-- Inline edit form — mirrors the retired TrackingDialog's Phase 4 sheet. -->
     <form v-if="editing" class="track-edit" @submit.prevent="submitEdit">
       <FormError v-if="updateError" class="track-edit__error" :message="updateError" />
@@ -265,6 +283,10 @@ function submitEdit(): void {
   margin: 2px 0 0;
   font-size: var(--text-sm);
   color: var(--muted);
+}
+
+.track-bound__error {
+  margin-top: 6px;
 }
 
 .track-bound__actions {

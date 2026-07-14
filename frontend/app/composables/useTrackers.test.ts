@@ -135,6 +135,19 @@ describe('useTrackers', () => {
     expect(trackers.value.find((t) => t.id === 3)?.isLoggedIn).toBe(true)
   })
 
+  it('loginCredentials() resolves false and sets actionError to the backend message on failure (bug 2: Settings sign-in error surfacing)', async () => {
+    loginResponse = { data: null, error: { message: 'mangaupdates: sign-in rejected — 405' } }
+    const { loginCredentials, actionError, trackers, pending } = useTrackers()
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    const ok = await loginCredentials(7, 'reader', 'wrongpass')
+
+    expect(ok).toBe(false)
+    expect(actionError.value).toBe('mangaupdates: sign-in rejected — 405')
+    // A failed sign-in never fabricates/applies a row.
+    expect(trackers.value.find((t) => t.id === 7)).toBeUndefined()
+  })
+
   it('logout() patches the row to logged-out locally instead of refetching (204 has no body)', async () => {
     loginResponse = { data: { ...ANILIST, isLoggedIn: true, username: 'technobecet' }, error: null }
     const { loginOAuth, logout, trackers, pending } = useTrackers()

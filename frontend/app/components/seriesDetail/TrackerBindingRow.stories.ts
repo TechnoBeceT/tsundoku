@@ -97,9 +97,19 @@ export const Unbinding: Story = {
   args: { unbindBusy: true },
 }
 
+/** §16/bug 2: a failed unbind — the row shows the error inline, no persistent "open" state to attach it to. */
+export const UnbindFailed: Story = {
+  args: { unbindError: 'anilist: could not delete the remote entry — 502.' },
+}
+
 /** Refresh (remote re-pull) in flight — the Refresh icon button disables. */
 export const Refreshing: Story = {
   args: { refreshBusy: true },
+}
+
+/** §16/bug 2: a failed remote refresh — the row shows the error inline. */
+export const RefreshFailed: Story = {
+  args: { refreshError: 'anilist: entry not found — it may have been deleted remotely.' },
 }
 
 /**

@@ -140,6 +140,34 @@ export const Binding: Story = {
   },
 }
 
+/** §16/bug 2: a failed search — open Kitsu's "Add tracking" row to see the inline error near the search box. */
+export const SearchError: Story = {
+  args: { searchError: 'anilist: rate limited — try again shortly.' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: /Kitsu/ }))
+  },
+}
+
+/** §16/bug 2: a failed bind — open Kitsu's row with results showing and see the error under the search area. */
+export const BindError: Story = {
+  args: { searchResults: trackSearchResults, bindError: 'kitsu: entry already tracked by another series.' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: /Kitsu/ }))
+  },
+}
+
+/** §16/bug 2: a failed unbind — surfaced under the AniList row itself (no per-row "open" state to attach it to). */
+export const UnbindError: Story = {
+  args: { unbindError: 'anilist: could not delete the remote entry — 502.', unbindErrorId: trackBindings[0]!.id },
+}
+
+/** §16/bug 2: a failed remote refresh — surfaced under the AniList row itself. */
+export const RefreshError: Story = {
+  args: { refreshError: 'anilist: entry not found — it may have been deleted remotely.', refreshErrorId: trackBindings[0]!.id },
+}
+
 /** "Sync now" in flight — the header button spins. */
 export const Syncing: Story = {
   args: { syncing: true },

@@ -99,8 +99,16 @@ const props = withDefaults(defineProps<{
   trackBindError?: string | null
   /** The TrackBinding id currently being unbound, or null. */
   trackUnbindBusyId?: string | null
+  /** A failed tracker-unbind message, or null for none. */
+  trackUnbindError?: string | null
+  /** The TrackBinding id `trackUnbindError` belongs to, or null. */
+  trackUnbindErrorId?: string | null
   /** The TrackBinding id currently being remote-refreshed, or null. */
   trackRefreshBusyId?: string | null
+  /** A failed tracker-refresh message, or null for none. */
+  trackRefreshError?: string | null
+  /** The TrackBinding id `trackRefreshError` belongs to, or null. */
+  trackRefreshErrorId?: string | null
   /** The TrackBinding id currently being manually edited, or null. */
   trackUpdateBusyId?: string | null
   /** A failed manual tracker-edit message, or null for none. */
@@ -128,7 +136,11 @@ const props = withDefaults(defineProps<{
   trackBinding: false,
   trackBindError: null,
   trackUnbindBusyId: null,
+  trackUnbindError: null,
+  trackUnbindErrorId: null,
   trackRefreshBusyId: null,
+  trackRefreshError: null,
+  trackRefreshErrorId: null,
   trackUpdateBusyId: null,
   trackUpdateError: null,
   trackSyncing: false,
@@ -182,6 +194,8 @@ const emit = defineEmits<{
   trackUpdate: [payload: { recordId: string, patch: UpdateTrackPatch }]
   /** TrackersSection asked to pull + converge every one of this series' tracker bindings. */
   trackSync: []
+  /** TrackersSection's expanded "Add tracking" tracker changed — clear the shared search state (bug 1). */
+  trackClearSearch: []
 }>()
 
 // ---- Derived data ----------------------------------------------------------
@@ -260,7 +274,11 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         :binding="trackBinding"
         :bind-error="trackBindError"
         :unbind-busy-id="trackUnbindBusyId"
+        :unbind-error="trackUnbindError"
+        :unbind-error-id="trackUnbindErrorId"
         :refresh-busy-id="trackRefreshBusyId"
+        :refresh-error="trackRefreshError"
+        :refresh-error-id="trackRefreshErrorId"
         :update-busy-id="trackUpdateBusyId"
         :update-error="trackUpdateError"
         :syncing="trackSyncing"
@@ -271,6 +289,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         @refresh="emit('trackRefresh', $event)"
         @update="emit('trackUpdate', $event)"
         @sync="emit('trackSync')"
+        @clear-search="emit('trackClearSearch')"
       />
     </div>
 

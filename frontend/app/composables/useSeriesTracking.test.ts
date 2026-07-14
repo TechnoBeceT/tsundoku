@@ -139,7 +139,60 @@ describe('useSeriesTracking', () => {
     })
   })
 
-  it('bind() POSTs {trackerId, remoteId} and applies the returned binding directly (§16, no refetch)', async () => {
+  it('search() sets searchError to the backend message on failure and clears any stale results (bug 2)', async () => {
+    searchResponse = { data: [{ remoteId: '999', title: 'One Piece', url: 'https://x', coverUrl: '', status: 'RELEASING', totalChapters: 0 }], error: null }
+    const { search, searchResults, searchError, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+    await search(2, 'one piece')
+    expect(searchResults.value).toHaveLength(1)
+
+    searchResponse = { data: null, error: { message: 'anilist: rate limited — 429' } }
+    await search(2, 'one piece')
+
+    expect(searchError.value).toBe('anilist: rate limited — 429')
+    expect(searchResults.value).toHaveLength(0)
+  })
+
+  it('search() clears stale results/error SYNCHRONOUSLY when switching to a different tracker (bug 1 — results must not leak across trackers)', async () => {
+    searchResponse = {
+      data: [{ remoteId: '1', title: 'AniList hit', url: 'https://x', coverUrl: '', status: 'RELEASING', totalChapters: 0 }],
+      error: null,
+    }
+    const { search, searchResults } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(searchResults.value).toHaveLength(0))
+
+    await search(2, 'query') // AniList (trackerId 2)
+    expect(searchResults.value).toHaveLength(1)
+    expect(searchResults.value[0]?.title).toBe('AniList hit')
+
+    // Switching to a different tracker (MyAnimeList, id 1) must clear the
+    // stale AniList results BEFORE the new request even resolves — the owner
+    // must never see the previous tracker's results under the new row.
+    const pending2 = search(1, 'other query')
+    expect(searchResults.value).toHaveLength(0)
+    await pending2
+  })
+
+  it('clearSearch() resets searchResults/searchError/bindError (bug 1 — the row-switch UI trigger)', async () => {
+    searchResponse = { data: [{ remoteId: '1', title: 'Hit', url: 'https://x', coverUrl: '', status: 'RELEASING', totalChapters: 0 }], error: null }
+    bindResponse = { data: null, error: { message: 'bind failed' } }
+
+    const { search, bind, clearSearch, searchResults, searchError, bindError, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    await search(2, 'q')
+    await bind(2, '1')
+    expect(searchResults.value).toHaveLength(1)
+    expect(bindError.value).toBe('bind failed')
+
+    clearSearch()
+
+    expect(searchResults.value).toHaveLength(0)
+    expect(searchError.value).toBeNull()
+    expect(bindError.value).toBeNull()
+  })
+
+  it('bind() POSTs {trackerId, remoteId} and applies the returned binding directly (§16)', async () => {
     bindingsResponse = { data: [], error: null }
     const NEW_BINDING = { ...BINDING_ANILIST, trackerId: 1, trackerName: 'MyAnimeList', id: 'bind-2' }
     bindResponse = { data: NEW_BINDING, error: null }
@@ -148,6 +201,10 @@ describe('useSeriesTracking', () => {
     await vi.waitFor(() => expect(pending.value).toBe(false))
     expect(bindings.value).toHaveLength(0)
 
+    // The backend's list-view already reflects the mutation by the time the
+    // BUG-3 background reconciliation refetch runs (see below) — keep the mock
+    // consistent with what a real backend would return post-bind.
+    bindingsResponse = { data: [NEW_BINDING], error: null }
     const ok = await bind(1, '12345')
 
     expect(ok).toBe(true)
@@ -157,9 +214,43 @@ describe('useSeriesTracking', () => {
     })
     expect(bindings.value).toHaveLength(1)
     expect(bindings.value[0]?.id).toBe('bind-2')
-    // No extra GET round-trip — the response is applied directly.
-    const bindingGetCalls = getCalls.filter((c) => c.path === '/api/series/{id}/tracking').length
-    expect(bindingGetCalls).toBe(1)
+  })
+
+  it('bind() sets bindError to the backend message on failure and leaves bindings untouched (bug 2)', async () => {
+    bindResponse = { data: null, error: { message: 'anilist: manga not found — 404' } }
+
+    const { bind, bindings, bindError, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    const ok = await bind(2, 'bogus-id')
+
+    expect(ok).toBe(false)
+    expect(bindError.value).toBe('anilist: manga not found — 404')
+    expect(bindings.value).toHaveLength(1)
+  })
+
+  it('a successful bind() triggers a silent background bindings refetch (bug 3 — no manual refresh needed)', async () => {
+    bindingsResponse = { data: [], error: null }
+    const NEW_BINDING = { ...BINDING_ANILIST, trackerId: 1, trackerName: 'MyAnimeList', id: 'bind-2' }
+    bindResponse = { data: NEW_BINDING, error: null }
+
+    const { bind, bindings, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+    const bindingGetCallsBefore = getCalls.filter((c) => c.path === '/api/series/{id}/tracking').length
+
+    // The backend now reflects the new binding — the refetch should reconfirm it.
+    bindingsResponse = { data: [NEW_BINDING], error: null }
+    await bind(1, '12345')
+    // The background refetch fires on a microtask — flush it.
+    await vi.waitFor(() => {
+      const calls = getCalls.filter((c) => c.path === '/api/series/{id}/tracking').length
+      expect(calls).toBe(bindingGetCallsBefore + 1)
+    })
+
+    // Silent — never flashes the loading skeleton over the just-applied state.
+    expect(pending.value).toBe(false)
+    expect(bindings.value).toHaveLength(1)
+    expect(bindings.value[0]?.id).toBe('bind-2')
   })
 
   it('bind() sends {private: true} when the owner opts in, and omits it otherwise', async () => {
@@ -184,6 +275,9 @@ describe('useSeriesTracking', () => {
     await vi.waitFor(() => expect(pending.value).toBe(false))
     expect(bindings.value).toHaveLength(1)
 
+    // The backend's list-view already reflects the deletion by the time the
+    // BUG-3 background reconciliation refetch runs.
+    bindingsResponse = { data: [], error: null }
     const ok = await unbind('bind-1', true)
 
     expect(ok).toBe(true)
@@ -194,16 +288,34 @@ describe('useSeriesTracking', () => {
     expect(bindings.value).toHaveLength(0)
   })
 
-  it('unbind() keeps the row and surfaces unbindError on failure', async () => {
+  it('unbind() keeps the row and surfaces unbindError + unbindErrorId on failure (bug 2 — scoped to the failing row)', async () => {
     unbindResponse = { error: { message: 'remote deletion failed' } }
-    const { unbind, bindings, unbindError, pending } = useSeriesTracking(SERIES_ID)
+    const { unbind, bindings, unbindError, unbindErrorId, pending } = useSeriesTracking(SERIES_ID)
     await vi.waitFor(() => expect(pending.value).toBe(false))
 
     const ok = await unbind('bind-1', true)
 
     expect(ok).toBe(false)
     expect(unbindError.value).toBe('remote deletion failed')
+    expect(unbindErrorId.value).toBe('bind-1')
     expect(bindings.value).toHaveLength(1)
+  })
+
+  it('a successful unbind() triggers a silent background bindings refetch (bug 3)', async () => {
+    const { unbind, bindings, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+    const bindingGetCallsBefore = getCalls.filter((c) => c.path === '/api/series/{id}/tracking').length
+
+    // The backend now has nothing left — the refetch should reconfirm it.
+    bindingsResponse = { data: [], error: null }
+    await unbind('bind-1', true)
+
+    await vi.waitFor(() => {
+      const calls = getCalls.filter((c) => c.path === '/api/series/{id}/tracking').length
+      expect(calls).toBe(bindingGetCallsBefore + 1)
+    })
+    expect(pending.value).toBe(false)
+    expect(bindings.value).toHaveLength(0)
   })
 
   it('refresh() POSTs to the refresh route and replaces the row with the response (§16)', async () => {
@@ -223,6 +335,19 @@ describe('useSeriesTracking', () => {
     expect(bindings.value[0]?.lastChapterRead).toBe(20)
   })
 
+  it('refresh() keeps the row and surfaces refreshError + refreshErrorId on failure (bug 2 — scoped to the failing row)', async () => {
+    refreshResponse = { data: null, error: { message: 'anilist: entry not found — 404' } }
+    const { refresh, bindings, refreshError, refreshErrorId, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    const ok = await refresh('bind-1')
+
+    expect(ok).toBe(false)
+    expect(refreshError.value).toBe('anilist: entry not found — 404')
+    expect(refreshErrorId.value).toBe('bind-1')
+    expect(bindings.value[0]?.lastChapterRead).toBe(BINDING_ANILIST.lastChapterRead)
+  })
+
   it('updateTrack() POSTs the patch and replaces the row with the response (§16)', async () => {
     const UPDATED = { ...BINDING_ANILIST, status: 'COMPLETED', score: 9 }
     updateResponse = { data: UPDATED, error: null }
@@ -230,6 +355,9 @@ describe('useSeriesTracking', () => {
     const { updateTrack, bindings, pending } = useSeriesTracking(SERIES_ID)
     await vi.waitFor(() => expect(pending.value).toBe(false))
 
+    // The backend's list-view already reflects the update by the time the
+    // BUG-3 background reconciliation refetch runs.
+    bindingsResponse = { data: [UPDATED], error: null }
     const ok = await updateTrack('bind-1', { status: 'COMPLETED', score: 9 })
 
     expect(ok).toBe(true)
@@ -252,6 +380,25 @@ describe('useSeriesTracking', () => {
     expect(ok).toBe(false)
     expect(updateError.value).toBe('tracker rejected the update')
     expect(bindings.value[0]?.score).toBe(BINDING_ANILIST.score)
+  })
+
+  it('a successful updateTrack() triggers a silent background bindings refetch (bug 3)', async () => {
+    const UPDATED = { ...BINDING_ANILIST, status: 'COMPLETED', score: 9 }
+    updateResponse = { data: UPDATED, error: null }
+
+    const { updateTrack, bindings, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+    const bindingGetCallsBefore = getCalls.filter((c) => c.path === '/api/series/{id}/tracking').length
+
+    bindingsResponse = { data: [UPDATED], error: null }
+    await updateTrack('bind-1', { status: 'COMPLETED', score: 9 })
+
+    await vi.waitFor(() => {
+      const calls = getCalls.filter((c) => c.path === '/api/series/{id}/tracking').length
+      expect(calls).toBe(bindingGetCallsBefore + 1)
+    })
+    expect(pending.value).toBe(false)
+    expect(bindings.value[0]?.status).toBe('COMPLETED')
   })
 
   it('syncNow() POSTs to the sync route and replaces the WHOLE bindings list (§16)', async () => {
