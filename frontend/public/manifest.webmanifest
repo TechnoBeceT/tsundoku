@@ -2,6 +2,7 @@
   "name": "Tsundoku",
   "short_name": "Tsundoku",
   "description": "Personal manga & manhwa library manager and downloader.",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
