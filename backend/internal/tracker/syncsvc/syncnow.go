@@ -63,6 +63,7 @@ func (s *Service) syncOneBinding(ctx context.Context, b *ent.TrackBinding) (*ent
 
 	remote, err := t.GetEntry(ctx, token, b.RemoteID)
 	if err != nil {
+		s.markExpiredOnTokenFailure(ctx, b.TrackerID, err)
 		return nil, fmt.Errorf("syncsvc: fetch remote entry from %s for binding %s: %w", t.Key(), b.ID, err)
 	}
 	if remote == nil {
@@ -134,6 +135,7 @@ func (s *Service) pushBack(ctx context.Context, t tracker.Tracker, token string,
 	entry := *remote
 	entry.Progress = push
 	if _, pushErr := t.UpdateEntry(ctx, token, entry); pushErr != nil {
+		s.markExpiredOnTokenFailure(ctx, b.TrackerID, pushErr)
 		slog.WarnContext(ctx, "syncsvc: SyncNow: push-back failed, enqueueing for retry",
 			"track_binding_id", b.ID, "err", pushErr)
 		if enqErr := s.retryQueue.Enqueue(ctx, b.ID, push); enqErr != nil {

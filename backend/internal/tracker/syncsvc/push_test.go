@@ -10,6 +10,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entpendingtrackpush "github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	enttrackbinding "github.com/technobecet/tsundoku/internal/ent/trackbinding"
+	enttrackerconnection "github.com/technobecet/tsundoku/internal/ent/trackerconnection"
 	"github.com/technobecet/tsundoku/internal/tracker"
 )
 
@@ -308,6 +309,39 @@ func TestPushProgress_FiltersUnparseableChapterNumber(t *testing.T) {
 	}
 	if ft.updateEntryCalls != 0 {
 		t.Fatalf("UpdateEntry calls = %d, want 0 (unparseable sentinel must never sync)", ft.updateEntryCalls)
+	}
+}
+
+// TestPushProgress_ReactiveTokenExpiryFlagsConnection confirms a push whose
+// UpdateEntry call itself reports tracker.ErrTokenExpired (the reactive
+// 401-exhausted signal — distinct from accountToken's own PROACTIVE
+// pre-call expiry check) flags the connection row token_expired=true, on
+// top of the normal failure-enqueues-for-retry behavior.
+func TestPushProgress_ReactiveTokenExpiryFlagsConnection(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Reactive Expiry", "reactive-expiry")
+	seedConnection(ctx, t, client, fakeTrackerID, "acct-token")
+	seedBinding(ctx, t, client, seriesID, fakeTrackerID, "r9", 1, 0)
+
+	ft := &fakeTracker{
+		id: fakeTrackerID,
+		updateEntryFn: func(context.Context, string, tracker.TrackEntry) (tracker.TrackEntry, error) {
+			return tracker.TrackEntry{}, tracker.ErrTokenExpired
+		},
+	}
+	svc := newService(client, ft, nil, nil)
+
+	if err := svc.PushProgress(ctx, seriesID, 5); err == nil {
+		t.Fatalf("PushProgress with a token-expired UpdateEntry: want an error, got nil")
+	}
+
+	conn, err := client.TrackerConnection.Query().Where(enttrackerconnection.TrackerID(fakeTrackerID)).Only(ctx)
+	if err != nil {
+		t.Fatalf("reload tracker connection: %v", err)
+	}
+	if !conn.TokenExpired {
+		t.Fatalf("token_expired = false after a reactive ErrTokenExpired, want true")
 	}
 }
 

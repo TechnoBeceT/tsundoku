@@ -6,6 +6,7 @@ package bind_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -614,6 +615,38 @@ func TestSearchTracker_NotConnected(t *testing.T) {
 
 	if _, err := svc.SearchTracker(context.Background(), ft.id, "q"); err != bind.ErrTrackerNotConnected {
 		t.Fatalf("SearchTracker: err = %v, want bind.ErrTrackerNotConnected", err)
+	}
+}
+
+// TestSearchTracker_ReactiveTokenExpiryFlagsConnection confirms an authed
+// Search call that itself reports tracker.ErrTokenExpired (the reactive
+// 401-exhausted signal — distinct from accountToken's own PROACTIVE
+// pre-call expiry check) flags the connection row token_expired=true,
+// WITHOUT masking the original error returned to the caller (§16: the flag
+// is a side effect, never a substitute for surfacing the real failure).
+func TestSearchTracker_ReactiveTokenExpiryFlagsConnection(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	ft := &fakeTracker{
+		id: fakeTrackerID,
+		searchFn: func(context.Context, string, string) ([]tracker.TrackSearchResult, error) {
+			return nil, tracker.ErrTokenExpired
+		},
+	}
+	seedConnection(ctx, t, client, ft.id, "acct-token")
+	svc := bind.NewService(client, tracker.NewRegistry(ft), t.TempDir())
+
+	_, err := svc.SearchTracker(ctx, ft.id, "q")
+	if !errors.Is(err, tracker.ErrTokenExpired) {
+		t.Fatalf("SearchTracker err = %v, want it to wrap tracker.ErrTokenExpired (not masked)", err)
+	}
+
+	conn, qerr := client.TrackerConnection.Query().Where(enttrackerconnection.TrackerID(ft.id)).Only(ctx)
+	if qerr != nil {
+		t.Fatalf("reload tracker connection: %v", qerr)
+	}
+	if !conn.TokenExpired {
+		t.Fatalf("token_expired = false after a reactive ErrTokenExpired, want true")
 	}
 }
 

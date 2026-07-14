@@ -71,7 +71,7 @@ func NewAuthRoundTripper(base http.RoundTripper, refresher TokenRefresher, sourc
 // comment for the proactive/reactive refresh strategy.
 func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	tok := rt.source.Token()
-	if tokenExpired(tok) {
+	if TokenExpired(tok) {
 		refreshed, err := rt.refresh(req, tok)
 		if err != nil {
 			return nil, ErrTokenExpired
@@ -151,10 +151,16 @@ func cloneWithFreshBody(req *http.Request) (*http.Request, error) {
 	return clone, nil
 }
 
-// tokenExpired reports whether tok's ExpiresAt has already passed. A nil
+// TokenExpired reports whether tok's ExpiresAt has already passed. A nil
 // ExpiresAt (unknown expiry) is treated as NOT expired — the reactive 401
 // path is the only signal for a tracker whose expiry is unknowable
 // up front.
-func tokenExpired(tok TokenSet) bool {
+//
+// EXPORTED (not just this file's own RoundTrip caller) so
+// internal/tracker/account.ResolveToken can reuse the exact same proactive
+// expiry rule instead of re-deriving it — see that function's own doc
+// comment for the pre-activation gap this closes (a stored token used to be
+// returned verbatim, never checked, until it 401'd forever).
+func TokenExpired(tok TokenSet) bool {
 	return tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now())
 }

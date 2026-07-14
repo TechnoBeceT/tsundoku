@@ -18,11 +18,10 @@ package syncsvc
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/technobecet/tsundoku/internal/ent"
-	enttrackerconnection "github.com/technobecet/tsundoku/internal/ent/trackerconnection"
 	"github.com/technobecet/tsundoku/internal/tracker"
+	"github.com/technobecet/tsundoku/internal/tracker/account"
 	"github.com/technobecet/tsundoku/internal/tracker/retry"
 
 	"github.com/google/uuid"
@@ -89,24 +88,38 @@ func NewService(client *ent.Client, registry *tracker.Registry, retryQueue *retr
 	}
 }
 
-// accountToken loads trackerID's connected account's access token. Mirrors
-// bind.Service.accountToken exactly (both packages are small, unexported,
-// ~10-line query helpers over the same TrackerConnection row — not worth an
-// import just to share one query, the same call made for
-// metadatasvc.coverVersion's deliberate miniature duplication of
-// series.coverVersion; see that function's own doc comment for the
-// rationale).
+// accountToken loads trackerID's connected account's current, USABLE
+// access token via the shared internal/tracker/account resolver — see
+// account.ResolveToken's own doc comment for the proactive-refresh +
+// token_expired-flagging behavior this closes (pre-activation gap: a
+// stored token used to be returned verbatim, never refreshed, until it
+// 401'd forever with the UI still showing "connected"). Mirrors
+// bind.Service.accountToken's same shape (both now delegate to the ONE
+// shared resolver instead of duplicating a raw "return conn.AccessToken"
+// read); account.ErrTrackerNotConnected is translated to THIS package's own
+// sentinel of the same shape so mapServiceError's existing errors.Is checks
+// keep matching unchanged.
 func (s *Service) accountToken(ctx context.Context, trackerID int) (string, error) {
-	conn, err := s.client.TrackerConnection.Query().
-		Where(enttrackerconnection.TrackerID(trackerID)).
-		Only(ctx)
+	token, err := account.ResolveToken(ctx, s.client, s.registry, trackerID)
 	if err != nil {
-		if ent.IsNotFound(err) {
+		if errors.Is(err, account.ErrTrackerNotConnected) {
 			return "", ErrTrackerNotConnected
 		}
-		return "", fmt.Errorf("syncsvc: query tracker connection: %w", err)
+		return "", err
 	}
-	return conn.AccessToken, nil
+	return token, nil
+}
+
+// markExpiredOnTokenFailure flags trackerID's connection token_expired when
+// err is tracker.ErrTokenExpired — the REACTIVE signal (an authed
+// GetEntry/UpdateEntry call itself came back reporting the token dead),
+// distinct from accountToken's PROACTIVE pre-call check. Best-effort via
+// account.MarkExpired; returns nothing, so it can never mask or replace the
+// original err at any call site.
+func (s *Service) markExpiredOnTokenFailure(ctx context.Context, trackerID int, err error) {
+	if errors.Is(err, tracker.ErrTokenExpired) {
+		account.MarkExpired(ctx, s.client, trackerID)
+	}
 }
 
 // syncSidecar calls the injected SidecarSyncer when one is attached — a nil

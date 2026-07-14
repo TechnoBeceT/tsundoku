@@ -62,6 +62,7 @@ func (s *Service) UpdateTrack(ctx context.Context, recordID uuid.UUID, patch Upd
 	upd := applyUpdatePatch(&entry, binding.Update(), patch)
 
 	if _, err := t.UpdateEntry(ctx, token, entry); err != nil {
+		s.markExpiredOnTokenFailure(ctx, binding.TrackerID, err)
 		return nil, fmt.Errorf("syncsvc: UpdateTrack: push edit to %s for binding %s: %w", t.Key(), recordID, err)
 	}
 

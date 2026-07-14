@@ -36,8 +36,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	enttrackbinding "github.com/technobecet/tsundoku/internal/ent/trackbinding"
-	enttrackerconnection "github.com/technobecet/tsundoku/internal/ent/trackerconnection"
 	"github.com/technobecet/tsundoku/internal/tracker"
+	"github.com/technobecet/tsundoku/internal/tracker/account"
 )
 
 // Sentinel errors. The HTTP handler layer (slice 3c) maps these to their
@@ -108,6 +108,7 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 
 	entry, err := t.GetEntry(ctx, token, remoteID)
 	if err != nil {
+		s.markExpiredOnTokenFailure(ctx, trackerID, err)
 		return nil, fmt.Errorf("bind: fetch remote entry from %s: %w", t.Key(), err)
 	}
 	if entry == nil {
@@ -116,6 +117,7 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 			Status:   defaultBindStatus(trackerID),
 		})
 		if saveErr != nil {
+			s.markExpiredOnTokenFailure(ctx, trackerID, saveErr)
 			return nil, fmt.Errorf("bind: create remote entry on %s: %w", t.Key(), saveErr)
 		}
 		entry = &created
@@ -213,6 +215,7 @@ func (s *Service) FetchTrack(ctx context.Context, recordID uuid.UUID) (*ent.Trac
 
 	entry, err := t.GetEntry(ctx, token, binding.RemoteID)
 	if err != nil {
+		s.markExpiredOnTokenFailure(ctx, binding.TrackerID, err)
 		return nil, fmt.Errorf("bind: fetch remote entry from %s: %w", t.Key(), err)
 	}
 	if entry == nil {
@@ -247,25 +250,43 @@ func (s *Service) SearchTracker(ctx context.Context, trackerID int, query string
 	}
 	results, err := t.Search(ctx, token, query)
 	if err != nil {
+		s.markExpiredOnTokenFailure(ctx, trackerID, err)
 		return nil, fmt.Errorf("bind: search %s: %w", t.Key(), err)
 	}
 	return results, nil
 }
 
-// accountToken loads trackerID's connected account's access token.
-// ErrTrackerNotConnected when the owner has never logged in (or logged
-// out) — every authenticated operation in this service needs one.
+// accountToken loads trackerID's connected account's current, USABLE
+// access token via the shared internal/tracker/account resolver — see
+// account.ResolveToken's own doc comment for the proactive-refresh +
+// token_expired-flagging behavior this closes (pre-activation gap: a
+// stored token used to be returned verbatim, never refreshed, until it
+// 401'd forever with the UI still showing "connected"). ErrTrackerNotConnected
+// when the owner has never logged in (or logged out) — every authenticated
+// operation in this service needs one; account.ErrTrackerNotConnected is
+// translated to THIS package's own sentinel of the same shape so
+// mapServiceError's existing errors.Is checks keep matching unchanged.
 func (s *Service) accountToken(ctx context.Context, trackerID int) (string, error) {
-	conn, err := s.client.TrackerConnection.Query().
-		Where(enttrackerconnection.TrackerID(trackerID)).
-		Only(ctx)
+	token, err := account.ResolveToken(ctx, s.client, s.registry, trackerID)
 	if err != nil {
-		if ent.IsNotFound(err) {
+		if errors.Is(err, account.ErrTrackerNotConnected) {
 			return "", ErrTrackerNotConnected
 		}
-		return "", fmt.Errorf("bind: query tracker connection: %w", err)
+		return "", err
 	}
-	return conn.AccessToken, nil
+	return token, nil
+}
+
+// markExpiredOnTokenFailure flags trackerID's connection token_expired when
+// err is tracker.ErrTokenExpired — the REACTIVE signal (an authed
+// Search/GetEntry/SaveEntry/UpdateEntry call itself came back reporting the
+// token dead), distinct from accountToken's PROACTIVE pre-call check.
+// Best-effort via account.MarkExpired; returns nothing, so it can never
+// mask or replace the original err at any call site.
+func (s *Service) markExpiredOnTokenFailure(ctx context.Context, trackerID int, err error) {
+	if errors.Is(err, tracker.ErrTokenExpired) {
+		account.MarkExpired(ctx, s.client, trackerID)
+	}
 }
 
 // upsertBinding finds or creates the TrackBinding row for

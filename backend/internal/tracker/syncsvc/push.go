@@ -101,6 +101,7 @@ func (s *Service) pushOne(ctx context.Context, binding *ent.TrackBinding, localF
 	entry := buildPushEntry(binding, truncated, time.Now().UTC())
 
 	if _, err := t.UpdateEntry(ctx, token, entry); err != nil {
+		s.markExpiredOnTokenFailure(ctx, binding.TrackerID, err)
 		return fmt.Errorf("syncsvc: push binding %s to %s: %w", binding.ID, t.Key(), err)
 	}
 
