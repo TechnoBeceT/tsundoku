@@ -56,7 +56,12 @@ query {
 
 // mediaListEntrySelection is the field set shared by the get/save/update
 // entry operations, so the three response shapes stay identical (all three
-// need score/progress/status/dates back to build a TrackEntry).
+// need score/progress/status/dates back to build a TrackEntry). It also
+// selects the bound media's own title (`media { title }`) so every one of
+// GetEntry/SaveEntry/UpdateEntry can populate TrackEntry.Title with AniList's
+// OWN title for the manga (romaji/english/native) — the per-tracker title the
+// binding row displays, which differs from the local library title and from
+// the other trackers' titles.
 const mediaListEntrySelection = `
     id
     mediaId
@@ -65,7 +70,8 @@ const mediaListEntrySelection = `
     progress
     private
     startedAt { year month day }
-    completedAt { year month day }`
+    completedAt { year month day }
+    media { title { romaji english native } }`
 
 // getEntryQuery reads the caller's own MediaList entry for one media, or
 // null when the manga is not yet on the account's list at all.

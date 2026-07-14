@@ -117,8 +117,9 @@ func TestToTrackEntry_MapsFieldsAndDates(t *testing.T) {
 			Manga: relationshipRef{Data: resourceRef{ID: "7224", Type: "manga"}},
 		},
 	}
-	got := toTrackEntry(d)
-	if got.RemoteID != "7224" || got.LibraryID != "999" || got.Status != "current" ||
+	included := []includedManga{{ID: "7224", Type: "manga", Attributes: includedMangaAttrs{CanonicalTitle: "Berserk"}}}
+	got := toTrackEntry(d, included)
+	if got.RemoteID != "7224" || got.LibraryID != "999" || got.Title != "Berserk" || got.Status != "current" ||
 		got.Progress != 42 || got.Score != 16 || !got.Private {
 		t.Fatalf("toTrackEntry mismatch: %+v", got)
 	}
@@ -134,7 +135,7 @@ func TestToTrackEntry_MapsFieldsAndDates(t *testing.T) {
 // (RatingTwenty nil) maps to Score 0, distinguishable in the request
 // direction (buildLibraryEntryRequest never sends a rating for a 0 score).
 func TestToTrackEntry_NoRatingIsZeroScore(t *testing.T) {
-	got := toTrackEntry(libraryEntryData{Attributes: libraryEntryAttrs{RatingTwenty: nil}})
+	got := toTrackEntry(libraryEntryData{Attributes: libraryEntryAttrs{RatingTwenty: nil}}, nil)
 	if got.Score != 0 {
 		t.Fatalf("Score = %v, want 0", got.Score)
 	}

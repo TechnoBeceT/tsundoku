@@ -313,6 +313,34 @@ func TestClient_GetEntry_Real404IsStillAnError(t *testing.T) {
 	}
 }
 
+// TestClient_GetEntry_MapsMediaTitle confirms a tracked MediaList entry maps
+// its bound media's own title (the `media { title }` selection) onto
+// TrackEntry.Title — AniList's OWN title for the manga, which the binding row
+// displays and which differs from the other trackers' titles.
+func TestClient_GetEntry_MapsMediaTitle(t *testing.T) {
+	srv := newGraphQLTestServer(t, nil, func(t *testing.T, env gqlEnvelope) string {
+		switch {
+		case strings.Contains(env.Query, "Viewer"):
+			return `{"Viewer":{"id":9,"name":"owner","mediaListOptions":{"scoreFormat":"POINT_100"}}}`
+		case strings.Contains(env.Query, "MediaList(userId"):
+			return `{"MediaList":{"id":100,"mediaId":42,"status":"CURRENT","score":0,"progress":5,"private":false,"startedAt":{},"completedAt":{},"media":{"title":{"romaji":"Kanojo","english":"Girlfriend","native":"彼女"}}}}`
+		default:
+			t.Fatalf("unexpected query: %s", env.Query)
+			return "{}"
+		}
+	})
+	defer srv.Close()
+
+	c := anilist.New("cid", newTestClient(t, srv))
+	entry, err := c.GetEntry(context.Background(), "acct-token", "42")
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if entry == nil || entry.Title != "Girlfriend" {
+		t.Fatalf("GetEntry Title = %+v, want the media's English title \"Girlfriend\"", entry)
+	}
+}
+
 // TestClient_GetEntry_RequiresToken confirms GetEntry refuses an empty
 // token rather than issuing a doomed anonymous viewer lookup.
 func TestClient_GetEntry_RequiresToken(t *testing.T) {

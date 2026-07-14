@@ -137,6 +137,13 @@ func applyRemoteFields(upd *ent.TrackBindingUpdateOne, remote *tracker.TrackEntr
 	if remote.LibraryID != "" {
 		upd = upd.SetLibraryID(remote.LibraryID)
 	}
+	// Adopt the tracker's OWN title for the manga whenever the pull carried
+	// one — this is how a fresh MAL bind (whose SaveEntry response has no
+	// title) gets its title filled by the post-bind SyncNow. Never clobber a
+	// good title with "" (a title-less remote report).
+	if remote.Title != "" {
+		upd = upd.SetTitle(remote.Title)
+	}
 	if remote.StartDate != nil {
 		upd = upd.SetStartDate(*remote.StartDate)
 	}

@@ -260,6 +260,10 @@ func (c *Client) GetEntry(ctx context.Context, token, remoteID string) (*tracker
 		"filter[userId]":  {userID},
 		"filter[mangaId]": {remoteID},
 		"filter[kind]":    {"manga"},
+		// include the bound manga so its canonicalTitle rides along and
+		// TrackEntry.Title can be populated (a library-entry alone carries
+		// only a manga relationship reference, not its title).
+		"include": {"manga"},
 	}.Encode()
 
 	var page libraryEntryCollectionResponse
@@ -269,7 +273,7 @@ func (c *Client) GetEntry(ctx context.Context, token, remoteID string) (*tracker
 	if len(page.Data) == 0 {
 		return nil, nil
 	}
-	entry := toTrackEntry(page.Data[0])
+	entry := toTrackEntry(page.Data[0], page.Included)
 	return &entry, nil
 }
 
@@ -285,10 +289,10 @@ func (c *Client) SaveEntry(ctx context.Context, token string, entry tracker.Trac
 	}
 	body := buildLibraryEntryRequest("", entry, userID)
 	var resp libraryEntryResponse
-	if err := c.doJSONAPI(ctx, token, http.MethodPost, apiBaseURL+"/library-entries", body, &resp); err != nil {
+	if err := c.doJSONAPI(ctx, token, http.MethodPost, apiBaseURL+"/library-entries?include=manga", body, &resp); err != nil {
 		return tracker.TrackEntry{}, err
 	}
-	return toTrackEntry(resp.Data), nil
+	return toTrackEntry(resp.Data, resp.Included), nil
 }
 
 // UpdateEntry writes progress/status/score/dates to the EXISTING
@@ -304,12 +308,12 @@ func (c *Client) UpdateEntry(ctx context.Context, token string, entry tracker.Tr
 		return tracker.TrackEntry{}, err
 	}
 	body := buildLibraryEntryRequest(entry.LibraryID, entry, userID)
-	reqURL := apiBaseURL + "/library-entries/" + url.PathEscape(entry.LibraryID)
+	reqURL := apiBaseURL + "/library-entries/" + url.PathEscape(entry.LibraryID) + "?include=manga"
 	var resp libraryEntryResponse
 	if err := c.doJSONAPI(ctx, token, http.MethodPatch, reqURL, body, &resp); err != nil {
 		return tracker.TrackEntry{}, err
 	}
-	return toTrackEntry(resp.Data), nil
+	return toTrackEntry(resp.Data, resp.Included), nil
 }
 
 // DeleteEntry removes the library-entry identified by entry.LibraryID from
