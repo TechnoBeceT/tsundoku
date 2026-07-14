@@ -13,6 +13,7 @@ import Toggle from '../ui/Toggle.vue'
 import type { SelectOption } from '../ui/forms.types'
 import type { TrackBinding, TrackSearchResult, UpdateTrackPatch } from '../screens/seriesDetail.types'
 import type { TrackerStatus } from '../screens/settings.types'
+import { scoreSelectorFormat, scoreToDisplay, scoreToNative } from '../../utils/scoreFormat'
 
 /**
  * TrackingDialog — the Series-Detail "Trackers" panel. Phase 3d shipped
@@ -176,9 +177,13 @@ const noResults = computed(() => searched.value && !props.searching && props.sea
 
 // ---- Edit sheet (Phase 4) ---------------------------------------------------
 // Local UI state: which bound row's edit form is open (at most one at a time)
-// + its field drafts. Score defaults to the point10 scale — the tracker's own
-// score-format isn't part of TrackBinding (only AniList's is captured, at
-// login), so this stays the simple common-denominator shape.
+// + its field drafts. `editScore` is kept on the DISPLAY scale for whichever
+// ScoreSelector shape `b.scoreFormat` resolves to (see `scoreFormat` on
+// TrackBinding + `utils/scoreFormat.ts`) — converted to/from the binding's
+// STORED NATIVE scale by `scoreToDisplay`/`scoreToNative` in openEdit/
+// buildPatch below. This is the fix for the score-scale bug: a fixed 0-10
+// control used to send its raw value straight back as the native score,
+// writing e.g. 8/100 for an AniList entry instead of 80/100.
 const editingId = ref<string | null>(null)
 const editStatus = ref('')
 const editLastChapterRead = ref('0')
@@ -197,12 +202,14 @@ function fromDateInput(value: string): string | null {
   return value ? new Date(value).toISOString() : null
 }
 
-/** Opens b's edit form, seeding every draft field from its current values. */
+/** Opens b's edit form, seeding every draft field from its current values.
+ *  editScore is seeded on the DISPLAY scale (scoreToDisplay), not the raw
+ *  stored native value — see the field's own doc comment above. */
 function openEdit(b: TrackBinding): void {
   editingId.value = b.id
   editStatus.value = b.status
   editLastChapterRead.value = String(b.lastChapterRead)
-  editScore.value = b.score
+  editScore.value = scoreToDisplay(b.score, b.scoreFormat)
   editStartDate.value = toDateInput(b.startDate)
   editFinishDate.value = toDateInput(b.finishDate)
   editPrivate.value = b.private
@@ -219,13 +226,17 @@ function toggleEdit(b: TrackBinding): void {
 
 /** Builds a patch of ONLY the fields that differ from b's current values —
  *  the backend leaves an omitted field unchanged, so an untouched field must
- *  never be sent. */
+ *  never be sent. editScore is on the DISPLAY scale, so it is converted back
+ *  to the binding's native scale (scoreToNative) before comparing/sending —
+ *  comparing raw display-vs-native values here would both false-positive a
+ *  no-op edit as changed AND re-introduce the score-scale bug on submit. */
 function buildPatch(b: TrackBinding): UpdateTrackPatch {
   const patch: UpdateTrackPatch = {}
   if (editStatus.value !== b.status) patch.status = editStatus.value
   const lastChapterRead = Number(editLastChapterRead.value)
   if (Number.isFinite(lastChapterRead) && lastChapterRead !== b.lastChapterRead) patch.lastChapterRead = lastChapterRead
-  if (editScore.value !== b.score) patch.score = editScore.value
+  const nativeScore = scoreToNative(editScore.value, b.scoreFormat)
+  if (nativeScore !== b.score) patch.score = nativeScore
   const startDate = fromDateInput(editStartDate.value)
   if (startDate !== b.startDate) patch.startDate = startDate
   const finishDate = fromDateInput(editFinishDate.value)
@@ -314,7 +325,7 @@ watch(() => props.updateBusyId, (busyId, prevBusyId) => {
 
             <div class="track-edit__field">
               <span class="track-edit__label">Score</span>
-              <ScoreSelector v-model="editScore" format="point10" :disabled="updateBusyId === b.id" />
+              <ScoreSelector v-model="editScore" :format="scoreSelectorFormat(b.scoreFormat)" :disabled="updateBusyId === b.id" />
             </div>
 
             <div class="track-edit__row">

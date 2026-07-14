@@ -336,6 +336,18 @@ export interface TrackBinding {
   totalChapters: number
   /** Reading score, on the tracker's own native scale. */
   score: number
+  /**
+   * The native scale `score` is stored/must be written on (e.g. `"POINT_100"`
+   * for AniList's default 0-100 scale, `"KITSU_RATING_TWENTY"` for Kitsu's
+   * 0-20 scale, `"MAL"` for MyAnimeList's fixed 0-10 scale) — resolved by the
+   * backend from the connected account's own captured format or a
+   * per-tracker default. `""` only for a binding whose tracker is
+   * unregistered. Feed this into `scoreSelectorFormat`/`scoreToDisplay`/
+   * `scoreToNative` (`utils/scoreFormat.ts`) — NEVER assume a fixed 0-10
+   * scale when rendering/editing this binding's score (the score-scale bug:
+   * picking "8" on a fixed 0-10 control used to write 8/100 for AniList).
+   */
+  scoreFormat: string
   /** When the owner started reading, per the tracker's own record (ISO, or null). */
   startDate: string | null
   /** When the owner finished reading, per the tracker's own record (ISO, or null). */

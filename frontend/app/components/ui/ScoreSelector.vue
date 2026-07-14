@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { ScoreSelectorFormat } from './controls.types'
 
 /**
  * ScoreSelector — a personal-score input that renders in whatever shape a
@@ -35,7 +36,7 @@ const props = withDefaults(defineProps<{
   /** The current score (0 = unscored), interpreted per `format`. */
   modelValue: number
   /** Which scale to render. */
-  format?: 'point100' | 'point10' | 'point10decimal' | 'point5' | 'point3'
+  format?: ScoreSelectorFormat
   /** Blocks interaction + dims the control. */
   disabled?: boolean
 }>(), {

@@ -46,6 +46,7 @@ function mapBinding(dto: TrackBindingDTO): TrackBinding {
     lastChapterRead: dto.lastChapterRead,
     totalChapters: dto.totalChapters,
     score: dto.score,
+    scoreFormat: dto.scoreFormat,
     startDate: dto.startDate,
     finishDate: dto.finishDate,
     private: dto.private,

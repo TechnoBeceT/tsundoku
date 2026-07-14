@@ -19,6 +19,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
 	handler "github.com/technobecet/tsundoku/internal/handler/trackers"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
@@ -974,5 +975,155 @@ func TestSyncTracking_BadSeriesId(t *testing.T) {
 	rec := env.do(http.MethodPost, "/api/series/not-a-uuid/tracking/sync", "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// setConnectionScoreFormat overwrites trackerID's TrackerConnection row's
+// score_format directly via Ent — simulating an AccountInfoProvider tracker
+// (real AniList) having captured a non-default format at login, which none
+// of this package's fake trackers implement (see fakeOAuthTracker's doc
+// comment: lookupAccountInfo always no-ops for it, so score_format is ""
+// after a normal loginOAuth call in these tests).
+func setConnectionScoreFormat(ctx context.Context, t *testing.T, db *ent.Client, trackerID int, format string) {
+	t.Helper()
+	n, err := db.TrackerConnection.Update().
+		Where(trackerconnection.TrackerID(trackerID)).
+		SetScoreFormat(format).
+		Save(ctx)
+	if err != nil {
+		t.Fatalf("setConnectionScoreFormat: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("setConnectionScoreFormat: updated %d rows, want 1", n)
+	}
+}
+
+// TestCreateBinding_ScoreFormatFromConnection asserts a binding's
+// scoreFormat reflects the connected account's OWN captured score_format
+// (rather than a fixed 0-10 assumption — the score-scale bug this feature
+// fixes) and that GET /api/series/:id/tracking (the batch
+// resolveScoreFormats path) reports the SAME value for the same binding.
+func TestCreateBinding_ScoreFormatFromConnection(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t, "https://tsundoku.example")
+	loginOAuth(t, env, oauthTrackerID)
+	setConnectionScoreFormat(ctx, t, env.client, oauthTrackerID, "POINT_10_DECIMAL")
+	id := seedSeries(ctx, t, env.client, "Score Scale", "score-scale")
+	env.oauth.getEntryFn = func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+		return &tracker.TrackEntry{RemoteID: remoteID, Status: "current", Score: 7.5}, nil
+	}
+
+	body := fmt.Sprintf(`{"trackerId":%d,"remoteId":"1"}`, oauthTrackerID)
+	rec := env.do(http.MethodPost, "/api/series/"+id.String()+"/tracking", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	var out handler.TrackBindingDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.ScoreFormat != "POINT_10_DECIMAL" || out.Score != 7.5 {
+		t.Fatalf("TrackBindingDTO = %+v, want scoreFormat POINT_10_DECIMAL / score 7.5", out)
+	}
+
+	listRec := env.do(http.MethodGet, "/api/series/"+id.String()+"/tracking", "")
+	var list []handler.TrackBindingDTO
+	if err := json.Unmarshal(listRec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list) != 1 || list[0].ScoreFormat != "POINT_10_DECIMAL" {
+		t.Fatalf("list after bind = %+v, want scoreFormat POINT_10_DECIMAL", list)
+	}
+}
+
+// TestCreateBinding_ScoreFormatDefaultsWhenConnectionBlank asserts a
+// connected account whose score_format is still "" (the normal state for
+// every fake tracker here — none implement AccountInfoProvider) falls back
+// to defaultScoreFormat(trackerId), never a blindly-assumed 0-10 scale.
+// oauthTrackerID is not one of the real tracker.ID* constants, so the
+// documented fallback for an unrecognized id is "".
+func TestCreateBinding_ScoreFormatDefaultsWhenConnectionBlank(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t, "https://tsundoku.example")
+	loginOAuth(t, env, oauthTrackerID)
+	id := seedSeries(ctx, t, env.client, "Blank Format", "blank-format")
+
+	body := fmt.Sprintf(`{"trackerId":%d,"remoteId":"1"}`, oauthTrackerID)
+	rec := env.do(http.MethodPost, "/api/series/"+id.String()+"/tracking", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	var out handler.TrackBindingDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.ScoreFormat != "" {
+		t.Errorf("ScoreFormat = %q, want \"\" (oauthTrackerID has no default mapping)", out.ScoreFormat)
+	}
+}
+
+// TestUpdateTrack_ScoreFormatFromConnection asserts the manual-edit endpoint
+// resolves scoreFormat the same way as CreateBinding, even though the
+// binding itself comes back from the (fake) SyncService rather than a real
+// bind.Service call.
+func TestUpdateTrack_ScoreFormatFromConnection(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t, "https://tsundoku.example")
+	loginOAuth(t, env, oauthTrackerID)
+	setConnectionScoreFormat(ctx, t, env.client, oauthTrackerID, "POINT_5")
+	seriesID := uuid.New()
+	recordID := uuid.New()
+	env.sync.updateTrackFn = func(context.Context, uuid.UUID, syncsvc.UpdatePatch) (*ent.TrackBinding, error) {
+		return &ent.TrackBinding{ID: recordID, SeriesID: seriesID, TrackerID: oauthTrackerID, Score: 4}, nil
+	}
+
+	body := `{"score":4}`
+	rec := env.do(http.MethodPost, "/api/series/"+seriesID.String()+"/tracking/"+recordID.String()+"/update", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var out handler.TrackBindingDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.ScoreFormat != "POINT_5" || out.Score != 4 {
+		t.Fatalf("TrackBindingDTO = %+v, want scoreFormat POINT_5 / score 4", out)
+	}
+}
+
+// TestSyncTracking_ScoreFormatBatchResolvesPerTracker asserts the batch path
+// (resolveScoreFormats) resolves EACH binding's tracker independently in a
+// mixed set: one binding's tracker has a captured score_format, the other's
+// connection has none — proving the map-per-request-not-per-binding shape
+// still returns the right value per row, not one value smeared across all
+// of them.
+func TestSyncTracking_ScoreFormatBatchResolvesPerTracker(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t, "https://tsundoku.example")
+	loginOAuth(t, env, oauthTrackerID)
+	setConnectionScoreFormat(ctx, t, env.client, oauthTrackerID, "POINT_3")
+	seriesID := uuid.New()
+	b1 := &ent.TrackBinding{ID: uuid.New(), SeriesID: seriesID, TrackerID: oauthTrackerID, RemoteID: "1"}
+	b2 := &ent.TrackBinding{ID: uuid.New(), SeriesID: seriesID, TrackerID: credentialTrackerID, RemoteID: "2"}
+	env.sync.syncNowFn = func(context.Context, uuid.UUID) ([]*ent.TrackBinding, error) {
+		return []*ent.TrackBinding{b1, b2}, nil
+	}
+
+	rec := env.do(http.MethodPost, "/api/series/"+seriesID.String()+"/tracking/sync", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var out []handler.TrackBindingDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("list = %+v, want 2 bindings", out)
+	}
+	if out[0].ScoreFormat != "POINT_3" {
+		t.Errorf("out[0].ScoreFormat (oauth, connected+captured) = %q, want POINT_3", out[0].ScoreFormat)
+	}
+	if out[1].ScoreFormat != "" {
+		t.Errorf("out[1].ScoreFormat (credential, never logged in) = %q, want \"\"", out[1].ScoreFormat)
 	}
 }

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import TrackingDialog from './TrackingDialog.vue'
-import { trackBindings, trackSearchResults } from '../../fixtures/seriesDetail'
+import { trackBindingKitsu, trackBindings, trackSearchResults } from '../../fixtures/seriesDetail'
 import type { TrackerStatus } from '../screens/settings.types'
 
 /**
@@ -62,6 +62,28 @@ export const Empty: Story = {
  * state, not prop-driven — mirrors MetadataIdentifyModal's "Selected" story).
  */
 export const EditState: Story = {}
+
+/**
+ * ScoreFormatPoint100 — the score-scale fix (spec: per-binding `scoreFormat`).
+ * The AniList row's fixture score is 92 on its OWN native POINT_100 (0-100)
+ * scale, NOT a 0-10 value. Click its Edit (pencil) icon: the Score field
+ * renders a 0-100 slider seeded at 92 — the OLD behaviour rendered a fixed
+ * 0-10 control here and would have silently written back 9/100 instead.
+ */
+export const ScoreFormatPoint100: Story = {}
+
+/**
+ * ScoreFormatKitsu — Kitsu's native scale (KITSU_RATING_TWENTY) is 0-20, which
+ * no ScoreSelector shape spans directly; `scoreSelectorFormat` maps it to the
+ * closest fit, `point10decimal` (0-10, 0.5 steps — matches Kitsu's own web UI
+ * convention), and `scoreToDisplay`/`scoreToNative` convert the value at the
+ * boundary. Click the Kitsu row's Edit icon: its fixture score is 17/20
+ * native, so the slider should show 8.5 — never 17 (which would overflow the
+ * 0-10 control) or 9 (rounding, not the real halved value).
+ */
+export const ScoreFormatKitsu: Story = {
+  args: { bindings: [...trackBindings, trackBindingKitsu] },
+}
 
 /** §16: a failed manual edit — open a row's Edit form to see the inline error (updateError is prop-driven; the form itself is opened by hand). */
 export const UpdateFailed: Story = {

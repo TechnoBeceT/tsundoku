@@ -3079,6 +3079,15 @@ export interface components {
             totalChapters: number;
             /** @description Reading score on the tracker's native scale. */
             score: number;
+            /**
+             * @description The native scale `score` is stored/must be written on for this
+             *     binding's tracker (e.g. "POINT_100" for AniList's default 0-100
+             *     scale, "KITSU_RATING_TWENTY" for Kitsu's 0-20 scale, "MAL" for
+             *     MyAnimeList's fixed 0-10 scale). Resolved from the connected
+             *     account's own captured format (AniList) or a per-tracker
+             *     default. "" only for a binding whose tracker is unregistered.
+             */
+            scoreFormat: string;
             /** Format: date-time */
             startDate: string | null;
             /** Format: date-time */

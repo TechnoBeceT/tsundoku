@@ -22,6 +22,7 @@ const BINDING_ANILIST = {
   lastChapterRead: 12,
   totalChapters: 0,
   score: 0,
+  scoreFormat: 'POINT_100',
   startDate: null,
   finishDate: null,
   private: false,

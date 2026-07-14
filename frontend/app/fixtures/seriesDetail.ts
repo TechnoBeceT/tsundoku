@@ -530,7 +530,12 @@ export const omakeProvider: Provider = {
  * search result set, for TrackingDialog's stories.
  * ========================================================================== */
 
-/** Two bound trackers on one series — one in-progress, one completed+private. */
+/**
+ * Two bound trackers on one series — one in-progress, one completed+private.
+ * `score`/`scoreFormat` are on the AniList/MAL trackers' OWN native scales
+ * (score-scale fix — see `utils/scoreFormat.ts`): AniList's 92 is a POINT_100
+ * (0-100) value, NOT the "9" a pre-fix fixed-0-10 editor would have shown.
+ */
 export const trackBindings: TrackBinding[] = [
   {
     id: 'bind-anilist',
@@ -542,7 +547,8 @@ export const trackBindings: TrackBinding[] = [
     status: 'CURRENT',
     lastChapterRead: 179,
     totalChapters: 0,
-    score: 9,
+    score: 92,
+    scoreFormat: 'POINT_100',
     startDate: daysAgo(120),
     finishDate: null,
     private: false,
@@ -558,11 +564,35 @@ export const trackBindings: TrackBinding[] = [
     lastChapterRead: 179,
     totalChapters: 179,
     score: 10,
+    scoreFormat: 'MAL',
     startDate: daysAgo(200),
     finishDate: daysAgo(3),
     private: true,
   },
 ]
+
+/**
+ * A third, Kitsu-shaped binding (KITSU_RATING_TWENTY, native 0-20) — used by
+ * TrackingDialog's `ScoreFormatKitsu` story to demonstrate the closest-fit
+ * `point10decimal` conversion (`scoreToDisplay`/`scoreToNative`): 17/20
+ * native displays as 8.5/10.
+ */
+export const trackBindingKitsu: TrackBinding = {
+  id: 'bind-kitsu',
+  trackerId: 3,
+  trackerName: 'Kitsu',
+  remoteId: '42203',
+  remoteUrl: 'https://kitsu.app/manga/42203',
+  title: 'Solo Leveling',
+  status: 'current',
+  lastChapterRead: 150,
+  totalChapters: 0,
+  score: 17,
+  scoreFormat: 'KITSU_RATING_TWENTY',
+  startDate: daysAgo(60),
+  finishDate: null,
+  private: false,
+}
 
 /** "Add tracker" search results — one with a cover, one without (placeholder tile). */
 export const trackSearchResults: TrackSearchResult[] = [

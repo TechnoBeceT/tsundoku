@@ -63,29 +63,40 @@ type TrackerAuthURLDTO struct {
 // status/score/progress field is the tracker's OWN native scale (spec §2 —
 // converted only at display, never here).
 type TrackBindingDTO struct {
-	ID              string     `json:"id"`
-	SeriesID        string     `json:"seriesId"`
-	TrackerID       int        `json:"trackerId"`
-	TrackerName     string     `json:"trackerName"`
-	RemoteID        string     `json:"remoteId"`
-	RemoteURL       string     `json:"remoteUrl"`
-	LibraryID       string     `json:"libraryId"`
-	Title           string     `json:"title"`
-	Status          string     `json:"status"`
-	LastChapterRead float64    `json:"lastChapterRead"`
-	TotalChapters   int        `json:"totalChapters"`
-	Score           float64    `json:"score"`
-	StartDate       *time.Time `json:"startDate"`
-	FinishDate      *time.Time `json:"finishDate"`
-	Private         bool       `json:"private"`
+	ID              string  `json:"id"`
+	SeriesID        string  `json:"seriesId"`
+	TrackerID       int     `json:"trackerId"`
+	TrackerName     string  `json:"trackerName"`
+	RemoteID        string  `json:"remoteId"`
+	RemoteURL       string  `json:"remoteUrl"`
+	LibraryID       string  `json:"libraryId"`
+	Title           string  `json:"title"`
+	Status          string  `json:"status"`
+	LastChapterRead float64 `json:"lastChapterRead"`
+	TotalChapters   int     `json:"totalChapters"`
+	Score           float64 `json:"score"`
+	// ScoreFormat is the native scale Score is stored/must be written on for
+	// this binding's tracker (one of the internal/tracker/sync.ScoreFormat
+	// wire strings — e.g. "POINT_100", "KITSU_RATING_TWENTY", "MAL"),
+	// resolved by resolveScoreFormat/resolveScoreFormats. The frontend's
+	// score editor MUST read/write on this scale rather than assuming a
+	// fixed 0-10 (the score-scale bug this field fixes: AniList is 0-100,
+	// Kitsu is 0-20). "" only for a binding whose tracker is unregistered.
+	ScoreFormat string     `json:"scoreFormat"`
+	StartDate   *time.Time `json:"startDate"`
+	FinishDate  *time.Time `json:"finishDate"`
+	Private     bool       `json:"private"`
 }
 
 // toTrackBindingDTO maps one *ent.TrackBinding into its wire DTO, resolving
 // TrackerName from the registry (falls back to "" for a binding whose
 // tracker has since been unregistered — display-only, never an error: the
 // bind service itself still surfaces ErrTrackerNotFound on any operation
-// that needs a live Tracker).
-func toTrackBindingDTO(b *ent.TrackBinding, registry *tracker.Registry) TrackBindingDTO {
+// that needs a live Tracker). scoreFormat is the binding's ALREADY-resolved
+// score format (see resolveScoreFormat/resolveScoreFormats in
+// scoreformat.go) — this mapper never queries the DB itself, so it stays
+// safe to call from a loop without becoming an N+1.
+func toTrackBindingDTO(b *ent.TrackBinding, registry *tracker.Registry, scoreFormat string) TrackBindingDTO {
 	var trackerName string
 	if t, ok := registry.ByID(b.TrackerID); ok {
 		trackerName = t.Name()
@@ -103,6 +114,7 @@ func toTrackBindingDTO(b *ent.TrackBinding, registry *tracker.Registry) TrackBin
 		LastChapterRead: b.LastChapterRead,
 		TotalChapters:   b.TotalChapters,
 		Score:           b.Score,
+		ScoreFormat:     scoreFormat,
 		StartDate:       b.StartDate,
 		FinishDate:      b.FinishDate,
 		Private:         b.Private,
@@ -111,11 +123,13 @@ func toTrackBindingDTO(b *ent.TrackBinding, registry *tracker.Registry) TrackBin
 
 // toTrackBindingDTOs maps a whole series' binding set. Always returns a
 // non-nil slice so the JSON renders [] rather than null when a series has
-// no bindings.
-func toTrackBindingDTOs(bindings []*ent.TrackBinding, registry *tracker.Registry) []TrackBindingDTO {
+// no bindings. scoreFormats is trackerId→resolved-score-format (see
+// resolveScoreFormats) — built ONCE by the caller from a single batch query,
+// so mapping N bindings here never issues N queries.
+func toTrackBindingDTOs(bindings []*ent.TrackBinding, registry *tracker.Registry, scoreFormats map[int]string) []TrackBindingDTO {
 	out := make([]TrackBindingDTO, 0, len(bindings))
 	for _, b := range bindings {
-		out = append(out, toTrackBindingDTO(b, registry))
+		out = append(out, toTrackBindingDTO(b, registry, scoreFormats[b.TrackerID]))
 	}
 	return out
 }

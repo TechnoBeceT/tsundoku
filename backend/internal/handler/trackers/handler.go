@@ -240,7 +240,11 @@ func (h *Handler) ListBindings(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, toTrackBindingDTOs(rows, h.registry))
+	scoreFormats, err := h.resolveScoreFormats(ctx, rows)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, toTrackBindingDTOs(rows, h.registry, scoreFormats))
 }
 
 // CreateBinding handles POST /api/series/:id/tracking — binds the series to
@@ -260,11 +264,16 @@ func (h *Handler) CreateBinding(c echo.Context) error {
 		return err
 	}
 
-	binding, err := h.bindSvc.Bind(c.Request().Context(), seriesID, trackerID, remoteID)
+	ctx := c.Request().Context()
+	binding, err := h.bindSvc.Bind(ctx, seriesID, trackerID, remoteID)
 	if err != nil {
 		return mapServiceError(err)
 	}
-	return c.JSON(http.StatusCreated, toTrackBindingDTO(binding, h.registry))
+	scoreFormat, err := h.resolveScoreFormat(ctx, binding.TrackerID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusCreated, toTrackBindingDTO(binding, h.registry, scoreFormat))
 }
 
 // DeleteBinding handles DELETE /api/series/:id/tracking/:recordId?deleteRemote=
@@ -302,11 +311,16 @@ func (h *Handler) RefreshBinding(c echo.Context) error {
 		return err
 	}
 
-	binding, err := h.bindSvc.FetchTrack(c.Request().Context(), recordID)
+	ctx := c.Request().Context()
+	binding, err := h.bindSvc.FetchTrack(ctx, recordID)
 	if err != nil {
 		return mapServiceError(err)
 	}
-	return c.JSON(http.StatusOK, toTrackBindingDTO(binding, h.registry))
+	scoreFormat, err := h.resolveScoreFormat(ctx, binding.TrackerID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, toTrackBindingDTO(binding, h.registry, scoreFormat))
 }
 
 // UpdateTrack handles POST /api/series/:id/tracking/:recordId/update — the
@@ -333,11 +347,16 @@ func (h *Handler) UpdateTrack(c echo.Context) error {
 		return err
 	}
 
-	binding, err := h.syncSvc.UpdateTrack(c.Request().Context(), recordID, patch)
+	ctx := c.Request().Context()
+	binding, err := h.syncSvc.UpdateTrack(ctx, recordID, patch)
 	if err != nil {
 		return mapServiceError(err)
 	}
-	return c.JSON(http.StatusOK, toTrackBindingDTO(binding, h.registry))
+	scoreFormat, err := h.resolveScoreFormat(ctx, binding.TrackerID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, toTrackBindingDTO(binding, h.registry, scoreFormat))
 }
 
 // SyncTracking handles POST /api/series/:id/tracking/sync — pulls EVERY one
@@ -355,11 +374,16 @@ func (h *Handler) SyncTracking(c echo.Context) error {
 		return err
 	}
 
-	bindings, err := h.syncSvc.SyncNow(c.Request().Context(), seriesID)
+	ctx := c.Request().Context()
+	bindings, err := h.syncSvc.SyncNow(ctx, seriesID)
 	if err != nil {
 		return mapServiceError(err)
 	}
-	return c.JSON(http.StatusOK, toTrackBindingDTOs(bindings, h.registry))
+	scoreFormats, err := h.resolveScoreFormats(ctx, bindings)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, toTrackBindingDTOs(bindings, h.registry, scoreFormats))
 }
 
 // mapServiceError translates a connect/bind/tracker sentinel error into its
