@@ -8,6 +8,7 @@ import {
   richSeriesMinimal,
   richSeriesNeedsSource,
   richSeriesNoCover,
+  richSeriesWithSourceLinks,
 } from '../../fixtures/seriesDetail'
 
 /**
@@ -91,6 +92,17 @@ export const NoCover: Story = {
  */
 export const NeedsSource: Story = {
   args: { series: richSeriesNeedsSource },
+}
+
+/**
+ * Library SOURCE links (from each `SeriesProvider.url`) merged into the LINKS
+ * row alongside the metadata-engine links — see `richSeriesWithSourceLinks`.
+ * Proves the merge lands in the existing `LinksRow` with no card changes: both
+ * "Asura Scans" (known-site icon) and "Comic Asura" (falls back to the generic
+ * external-link glyph) render as ordinary chips beside AniList/MangaDex/etc.
+ */
+export const WithSourceLinks: Story = {
+  args: { series: richSeriesWithSourceLinks },
 }
 
 /** Overflow stress — long title/alts/synopsis and large chip + link sets. */

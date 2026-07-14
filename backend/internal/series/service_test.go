@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/metadata"
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
@@ -270,6 +272,85 @@ func TestGetSeriesReturnsDetail(t *testing.T) {
 		t.Fatalf("GetSeries: want 2 providers, got %d", len(got.Providers))
 	}
 	assertProviderNames(t, got.Providers)
+}
+
+// TestGetSeriesLinksIncludeSourceLinks verifies the detail DTO's Links field
+// merges the metadata-engine links with the library's actual SOURCE links
+// (SeriesProvider.URL — the scanlation/aggregator site each provider was
+// adopted from), deduping a source URL a metadata link already lists
+// (case-insensitive exact match) and leaving a provider with no URL out
+// entirely. A deduped source keeps the METADATA link's label (metadata links
+// come first; sourceLinks only appends what isn't already present).
+func TestGetSeriesLinksIncludeSourceLinks(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	s := client.Series.Create().
+		SetTitle("Delta Rising").
+		SetSlug("delta-rising").
+		SetCategoryID(catID(ctx, client, "Manga")).
+		SetLinks([]metadata.Link{
+			{Label: "MyAnimeList", URL: "https://myanimelist.net/manga/1"},
+			// Deliberately the SAME site as the "flame" provider below, differing
+			// only by case — proves the dedup is case-insensitive.
+			{Label: "Flame Scans", URL: "HTTPS://FLAME.example/delta"},
+		}).
+		SaveX(ctx)
+
+	client.SeriesProvider.Create().
+		SetSeriesID(s.ID).
+		SetProvider("flame").
+		SetProviderName("Flame Scans").
+		SetURL("https://flame.example/delta"). // dup of the metadata link above
+		SetImportance(10).
+		SaveX(ctx)
+	client.SeriesProvider.Create().
+		SetSeriesID(s.ID).
+		SetProvider("asura").
+		SetProviderName("Asura Scans").
+		SetURL("https://asura.example/delta").
+		SetImportance(5).
+		SaveX(ctx)
+	// A provider with no URL (e.g. a disk-origin/unlinked row) contributes no link.
+	client.SeriesProvider.Create().
+		SetSeriesID(s.ID).
+		SetProvider("disk-import").
+		SetImportance(1).
+		SaveX(ctx)
+
+	svc := series.NewService(client, t.TempDir(), 14)
+	got, err := svc.GetSeries(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+
+	if got.Links == nil {
+		t.Fatalf("GetSeries: Links must be non-nil")
+	}
+	// 2 metadata links + 1 new source link (asura) = 3; flame's URL is a dup.
+	if len(got.Links) != 3 {
+		t.Fatalf("GetSeries: want 3 links (2 metadata + 1 deduped source), got %d: %+v", len(got.Links), got.Links)
+	}
+
+	byURL := map[string]string{}
+	occurrences := map[string]int{}
+	for _, l := range got.Links {
+		key := strings.ToLower(l.URL)
+		byURL[key] = l.Label
+		occurrences[key]++
+	}
+	if _, ok := byURL["https://myanimelist.net/manga/1"]; !ok {
+		t.Errorf("GetSeries: missing metadata link MyAnimeList: %+v", got.Links)
+	}
+	if label := byURL["https://flame.example/delta"]; label != "Flame Scans" {
+		t.Errorf("GetSeries: flame link should keep its metadata label (deduped), got %q", label)
+	}
+	if occurrences["https://flame.example/delta"] != 1 {
+		t.Errorf("GetSeries: flame URL should appear exactly once (deduped), got %d: %+v", occurrences["https://flame.example/delta"], got.Links)
+	}
+	if label := byURL["https://asura.example/delta"]; label != "Asura Scans" {
+		t.Errorf("GetSeries: want asura source link with label 'Asura Scans', got %q", label)
+	}
 }
 
 // TestChapterCountsExcludeSuperseded verifies both ListSeries' rollup and

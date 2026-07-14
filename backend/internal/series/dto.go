@@ -7,6 +7,7 @@ package series
 import (
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -191,6 +192,42 @@ func mapLinks(links []metadata.Link) []LinkDTO {
 	out := make([]LinkDTO, 0, len(links))
 	for _, l := range links {
 		out = append(out, LinkDTO{Label: l.Label, URL: l.URL})
+	}
+	return out
+}
+
+// sourceLinks appends one LinkDTO per SeriesProvider carrying a non-empty URL
+// (the scanlation/aggregator site the series was actually adopted from — e.g.
+// Asura, Comix) onto the metadata-engine merged links, so the rich card's LINKS
+// row surfaces the real library sources alongside MAL/AniList/MangaUpdates/etc.
+// The label reuses ProviderLabel (provider_name, falling back to the raw
+// provider id) — the same label the providers list already shows — NOT
+// SeriesProvider.Title, which is that source's per-manga title (usually just
+// the series title again) and would make a poor link label.
+//
+// DEDUP: a provider URL that already appears among existing (case-insensitive
+// exact match) is skipped, so a source a metadata provider also lists isn't
+// doubled. providers must be the series' already-eager-loaded Edges.Providers
+// (every caller — GetSeries — loads it for ProviderDTO already), so this adds
+// zero extra queries. existing is returned untouched (still non-nil) when no
+// provider qualifies.
+func sourceLinks(providers []*ent.SeriesProvider, existing []LinkDTO) []LinkDTO {
+	seen := make(map[string]struct{}, len(existing))
+	for _, l := range existing {
+		seen[strings.ToLower(l.URL)] = struct{}{}
+	}
+
+	out := existing
+	for _, p := range providers {
+		if p.URL == "" {
+			continue
+		}
+		key := strings.ToLower(p.URL)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, LinkDTO{Label: ProviderLabel(p), URL: p.URL})
 	}
 	return out
 }

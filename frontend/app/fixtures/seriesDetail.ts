@@ -376,6 +376,25 @@ export const richSeriesFull: SeriesDetail = {
   links: soloLevelingLinks,
 }
 
+/**
+ * The metadata links PLUS library SOURCE links — proves the backend's merged
+ * `links` (metadata-engine links + one per `SeriesProvider.url`, deduped
+ * against the metadata set — see `internal/series/dto.go sourceLinks`) render
+ * together in `LinksRow`/`LinkChip` with no FE changes needed. "Asura Scans"
+ * matches `LinkChip`'s known-site table; "Comic Asura" does not, so it falls
+ * back to the generic `lucide:external-link` glyph — proving that fallback
+ * path renders correctly for an arbitrary scanlation source label.
+ */
+export const richSeriesWithSourceLinks: SeriesDetail = {
+  ...richSeriesFull,
+  id: '0a4d1c8e-8888-4a00-9000-000000000008',
+  links: [
+    ...soloLevelingLinks,
+    { label: 'Asura Scans', url: 'https://asuracomic.net/series/solo-leveling' },
+    { label: 'Comic Asura', url: 'https://comicasura.net/manga/solo-leveling' },
+  ],
+}
+
 /** No cover — exercises the branded placeholder inside the rich card. */
 export const richSeriesNoCover: SeriesDetail = {
   ...richSeriesFull,
