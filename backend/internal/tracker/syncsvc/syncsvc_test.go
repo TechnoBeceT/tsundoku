@@ -158,6 +158,24 @@ func newServiceMulti(client *ent.Client, trackers []tracker.Tracker, sidecar syn
 	return syncsvc.NewService(client, registry, queue, sidecar, autoUpdate)
 }
 
+// setBindingScorePrivateStatus directly updates bindingID's Score/Private/
+// Status columns — used by tests that need a binding pre-seeded with
+// non-zero/non-default values on those fields BEFORE exercising a push
+// (seedBinding itself only seeds the progress/total-chapters axis every
+// other test cares about), so a test can prove those fields SURVIVE a push
+// unchanged rather than being silently clobbered back to 0/false/"" (the
+// pre-activation data-corruption bug this fix closes).
+func setBindingScorePrivateStatus(ctx context.Context, t *testing.T, client *ent.Client, bindingID uuid.UUID, score float64, private bool, status string) {
+	t.Helper()
+	if _, err := client.TrackBinding.UpdateOneID(bindingID).
+		SetScore(score).
+		SetPrivate(private).
+		SetStatus(status).
+		Save(ctx); err != nil {
+		t.Fatalf("set binding score/private/status: %v", err)
+	}
+}
+
 // deleteConnection removes trackerID's TrackerConnection row, simulating a
 // since-disconnected tracker.
 func deleteConnection(ctx context.Context, t *testing.T, client *ent.Client, trackerID int) {

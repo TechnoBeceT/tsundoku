@@ -111,7 +111,10 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 		return nil, fmt.Errorf("bind: fetch remote entry from %s: %w", t.Key(), err)
 	}
 	if entry == nil {
-		created, saveErr := t.SaveEntry(ctx, token, tracker.TrackEntry{RemoteID: remoteID})
+		created, saveErr := t.SaveEntry(ctx, token, tracker.TrackEntry{
+			RemoteID: remoteID,
+			Status:   defaultBindStatus(trackerID),
+		})
 		if saveErr != nil {
 			return nil, fmt.Errorf("bind: create remote entry on %s: %w", t.Key(), saveErr)
 		}

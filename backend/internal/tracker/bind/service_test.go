@@ -39,6 +39,7 @@ type fakeTracker struct {
 	deleteEntryCalls int
 	searchCalls      int
 	lastDeleteEntry  tracker.TrackEntry
+	lastSaveEntry    tracker.TrackEntry
 	lastSearchToken  string
 }
 
@@ -78,6 +79,7 @@ func (f *fakeTracker) GetEntry(ctx context.Context, token, remoteID string) (*tr
 
 func (f *fakeTracker) SaveEntry(ctx context.Context, token string, entry tracker.TrackEntry) (tracker.TrackEntry, error) {
 	f.saveEntryCalls++
+	f.lastSaveEntry = entry
 	if f.saveEntryFn != nil {
 		return f.saveEntryFn(ctx, token, entry)
 	}
@@ -264,6 +266,47 @@ func TestBind_RegistersFreshEntryWhenNotYetTracked(t *testing.T) {
 	}
 	if binding.LibraryID != "new-lib" || binding.RemoteID != "remote-1" {
 		t.Fatalf("binding = %+v", binding)
+	}
+}
+
+// TestBind_RegistersFreshEntryWithDefaultStatus confirms Bind's fresh
+// SaveEntry call (the not-yet-tracked path) seeds a NON-EMPTY, tracker-native
+// "currently reading" status for AniList/MAL/Kitsu — the bind-path half of
+// the pre-activation data-corruption fix. An empty Status here would make
+// AniList's MediaListStatus GraphQL enum REJECT the create outright (the
+// common bind case failing), and Kitsu's status field has no sane empty
+// default either.
+func TestBind_RegistersFreshEntryWithDefaultStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		trackerID  int
+		wantStatus string
+	}{
+		{"AniList", tracker.IDAniList, "CURRENT"},
+		{"MAL", tracker.IDMAL, "reading"},
+		{"Kitsu", tracker.IDKitsu, "current"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := testdb.New(t)
+			storage := t.TempDir()
+			row := seedBoundSeries(ctx, t, client, storage, "Fresh "+tc.name)
+
+			ft := &fakeTracker{id: tc.trackerID}
+			seedConnection(ctx, t, client, ft.id, "acct-token")
+			svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
+
+			if _, err := svc.Bind(ctx, row.ID, ft.id, "remote-1"); err != nil {
+				t.Fatalf("Bind: %v", err)
+			}
+			if ft.saveEntryCalls != 1 {
+				t.Fatalf("SaveEntry calls = %d, want 1", ft.saveEntryCalls)
+			}
+			if ft.lastSaveEntry.Status != tc.wantStatus {
+				t.Fatalf("SaveEntry Status = %q, want %q (NOT empty)", ft.lastSaveEntry.Status, tc.wantStatus)
+			}
+		})
 	}
 }
 

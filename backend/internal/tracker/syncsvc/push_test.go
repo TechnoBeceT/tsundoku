@@ -82,6 +82,41 @@ func TestPushProgress_LocalAheadPushesTruncatedValue(t *testing.T) {
 	}
 }
 
+// TestPushProgress_PreservesScorePrivateStatusOnAdvance confirms a NORMAL
+// advance push (local strictly ahead, not completing) carries the binding's
+// EXISTING Score/Private/Status to UpdateEntry UNCHANGED — the
+// pre-activation data-corruption bug this fix closes: every concrete
+// Tracker client full-field-writes, so a sparse entry (only RemoteID/
+// LibraryID/Progress) used to silently clobber the remote's score to 0,
+// flip private to public, and send an empty (AniList-rejected) status on
+// every single advance.
+func TestPushProgress_PreservesScorePrivateStatusOnAdvance(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Preserve Fields", "preserve-fields")
+	seedConnection(ctx, t, client, fakeTrackerID, "acct-token")
+	binding := seedBinding(ctx, t, client, seriesID, fakeTrackerID, "r8", 10, 0)
+	setBindingScorePrivateStatus(ctx, t, client, binding.ID, 9, true, "reading")
+
+	ft := &fakeTracker{id: fakeTrackerID}
+	svc := newService(client, ft, nil, nil)
+
+	if err := svc.PushProgress(ctx, seriesID, 15); err != nil {
+		t.Fatalf("PushProgress: %v", err)
+	}
+
+	if ft.updateEntryCalls != 1 {
+		t.Fatalf("UpdateEntry calls = %d, want 1", ft.updateEntryCalls)
+	}
+	pushed := ft.lastUpdateEntry
+	if pushed.Score != 9 || !pushed.Private || pushed.Status != "reading" {
+		t.Fatalf("pushed entry = %+v, want Score=9 Private=true Status=reading preserved (NOT zero/empty)", pushed)
+	}
+	if pushed.Progress != 15 {
+		t.Fatalf("pushed Progress = %v, want 15", pushed.Progress)
+	}
+}
+
 // TestPushProgress_FailureEnqueuesForRetry confirms a push failure never
 // loses progress: it is durably enqueued in the retry queue (coalescing key
 // = the track_binding_id) for a later drain.
@@ -152,6 +187,10 @@ func TestPushProgress_AutoCompleteOnlyWhenTotalKnown(t *testing.T) {
 		seriesID := seedSeries(ctx, t, client, "Finished", "finished")
 		seedConnection(ctx, t, client, trackerID, "acct-token-2")
 		binding := seedBinding(ctx, t, client, seriesID, trackerID, "r5", 10, 20)
+		// Score=6/Private=true pre-exist on the remote (e.g. the owner rated
+		// it mid-read) — the auto-complete transition must layer FinishDate +
+		// the completed status on TOP of these, never reset them.
+		setBindingScorePrivateStatus(ctx, t, client, binding.ID, 6, true, "CURRENT")
 		ft := &fakeTracker{id: trackerID}
 		svc := newService(client, ft, nil, nil)
 
@@ -159,6 +198,9 @@ func TestPushProgress_AutoCompleteOnlyWhenTotalKnown(t *testing.T) {
 			t.Fatalf("PushProgress: %v", err)
 		}
 		assertAutoCompleted(t, ft.lastUpdateEntry, reloadBinding(ctx, t, client, binding.ID), "COMPLETED")
+		if ft.lastUpdateEntry.Score != 6 || !ft.lastUpdateEntry.Private {
+			t.Fatalf("pushed entry = %+v, want Score=6 Private=true preserved through auto-complete", ft.lastUpdateEntry)
+		}
 	})
 }
 

@@ -57,17 +57,8 @@ func (s *Service) UpdateTrack(ctx context.Context, recordID uuid.UUID, patch Upd
 		return nil, err
 	}
 
-	entry := tracker.TrackEntry{
-		RemoteID:      binding.RemoteID,
-		LibraryID:     binding.LibraryID,
-		Status:        binding.Status,
-		Score:         binding.Score,
-		Progress:      binding.LastChapterRead,
-		TotalChapters: binding.TotalChapters,
-		StartDate:     binding.StartDate,
-		FinishDate:    binding.FinishDate,
-		Private:       binding.Private,
-	}
+	entry := baseEntryFromBinding(binding)
+	entry.Progress = binding.LastChapterRead
 	upd := applyUpdatePatch(&entry, binding.Update(), patch)
 
 	if _, err := t.UpdateEntry(ctx, token, entry); err != nil {

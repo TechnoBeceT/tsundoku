@@ -115,12 +115,24 @@ func applyRemoteFields(upd *ent.TrackBindingUpdateOne, remote *tracker.TrackEntr
 // here does not fail the whole sync — the local row's convergence is still
 // correct and durable; the failure is logged and the outstanding remote
 // push is enqueued to the retry queue.
+//
+// The pushed entry is seeded from remote itself (a full copy, Progress
+// overridden) — NOT from b, the STALE pre-sync local row — so every other
+// field (Score/Private/Status/dates) round-trips back to the tracker
+// exactly as it currently holds them. remote is the freshest known truth
+// for those fields (just-fetched via GetEntry, and syncOneBinding's own
+// applyRemoteFields unconditionally adopts them onto the local row too);
+// b's in-memory Score/Private/Status can be stale relative to it (e.g. the
+// owner edited them directly on the tracker's own site since the last
+// sync), and pushing THOSE back would reintroduce the exact
+// clobber-the-remote bug this fix closes, just via a narrower path.
 func (s *Service) pushBack(ctx context.Context, t tracker.Tracker, token string, b *ent.TrackBinding, truncated float64, remote *tracker.TrackEntry) {
 	push, shouldPush := kernel.NextPush(truncated, remote.Progress)
 	if !shouldPush {
 		return
 	}
-	entry := tracker.TrackEntry{RemoteID: b.RemoteID, LibraryID: b.LibraryID, Progress: push}
+	entry := *remote
+	entry.Progress = push
 	if _, pushErr := t.UpdateEntry(ctx, token, entry); pushErr != nil {
 		slog.WarnContext(ctx, "syncsvc: SyncNow: push-back failed, enqueueing for retry",
 			"track_binding_id", b.ID, "err", pushErr)

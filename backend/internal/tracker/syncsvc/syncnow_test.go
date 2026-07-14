@@ -9,7 +9,10 @@ import (
 
 // TestSyncNow_LocalAheadPushesBack confirms SyncNow's max-wins convergence
 // (sync.Converge) adopts the higher LOCAL value and pushes it back to the
-// remote when local was strictly ahead of what GetEntry reports.
+// remote when local was strictly ahead of what GetEntry reports — carrying
+// the just-fetched remote's OWN Score/Private/Status unchanged (never the
+// stale pre-sync local row's) so the push-back can never clobber them, the
+// pushBack half of the pre-activation data-corruption fix.
 func TestSyncNow_LocalAheadPushesBack(t *testing.T) {
 	ctx := context.Background()
 	client := newTestDB(t)
@@ -20,7 +23,7 @@ func TestSyncNow_LocalAheadPushesBack(t *testing.T) {
 	ft := &fakeTracker{
 		id: fakeTrackerID,
 		getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
-			return &tracker.TrackEntry{RemoteID: remoteID, Progress: 50}, nil
+			return &tracker.TrackEntry{RemoteID: remoteID, Progress: 50, Score: 8, Private: true, Status: "CURRENT"}, nil
 		},
 	}
 	svc := newService(client, ft, nil, nil)
@@ -34,6 +37,9 @@ func TestSyncNow_LocalAheadPushesBack(t *testing.T) {
 	}
 	if ft.updateEntryCalls != 1 || ft.lastUpdateEntry.Progress != 60 {
 		t.Fatalf("push-back = calls=%d entry=%+v, want 1 call with Progress=60", ft.updateEntryCalls, ft.lastUpdateEntry)
+	}
+	if ft.lastUpdateEntry.Score != 8 || !ft.lastUpdateEntry.Private || ft.lastUpdateEntry.Status != "CURRENT" {
+		t.Fatalf("push-back entry = %+v, want the just-fetched remote's Score=8/Private=true/Status=CURRENT carried through unchanged (NOT zero/false/empty)", ft.lastUpdateEntry)
 	}
 
 	fresh := reloadBinding(ctx, t, client, binding.ID)

@@ -115,18 +115,19 @@ func (s *Service) pushOne(ctx context.Context, binding *ent.TrackBinding, localF
 }
 
 // buildPushEntry constructs the TrackEntry pushOne sends to the tracker for
-// binding, given the already-truncated progress value and "now". It makes
-// the two decisions pushOne needs before calling UpdateEntry: stamp a start
-// date on the binding's first-ever push, and (spec §2) auto-complete when
-// the tracker reported a non-zero total that truncated has now reached —
-// only then does it look up the tracker's own native completed-status
-// string via completedStatus.
+// binding, given the already-truncated progress value and "now". It seeds
+// EVERY field from binding's own currently-persisted state
+// (baseEntryFromBinding — see that helper's doc comment for why: every
+// concrete Tracker client full-field-writes, so a sparse entry would
+// clobber the remote's score/privacy/status) and then makes the two
+// decisions pushOne needs on top of that seed: stamp a start date on the
+// binding's first-ever push, and (spec §2) auto-complete when the tracker
+// reported a non-zero total that truncated has now reached — only then does
+// it look up the tracker's own native completed-status string via
+// completedStatus, overriding the carried-through binding.Status.
 func buildPushEntry(binding *ent.TrackBinding, truncated float64, now time.Time) tracker.TrackEntry {
-	entry := tracker.TrackEntry{
-		RemoteID:  binding.RemoteID,
-		LibraryID: binding.LibraryID,
-		Progress:  truncated,
-	}
+	entry := baseEntryFromBinding(binding)
+	entry.Progress = truncated
 	if binding.StartDate == nil {
 		// First-ever progress on this binding: stamp (and push) a start date.
 		entry.StartDate = &now
