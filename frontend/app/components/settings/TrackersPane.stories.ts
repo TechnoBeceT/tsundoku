@@ -43,3 +43,13 @@ export const Misconfigured: Story = {
 export const Connecting: Story = {
   args: { trackerAction: { busyId: 1 } },
 }
+
+/** Phase 4: the auto-update-track toggle switched on. */
+export const AutoUpdateOn: Story = {
+  args: { autoUpdateTrack: true },
+}
+
+/** Phase 4: the auto-update-track toggle's own save in flight — dimmed + disabled. */
+export const AutoUpdateSaving: Story = {
+  args: { autoUpdateTrack: true, autoUpdateTrackBusy: true },
+}

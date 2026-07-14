@@ -25,6 +25,8 @@
  *
  * Standalone tunables (not part of LibrarySettings — live in other panes):
  *   jobs.extension_check_interval → extensionCheckInterval (DurationValue)
+ *   trackers.auto_update_track    → autoUpdateTrack (boolean, "true"/"false" —
+ *                                    the Trackers pane's toggle)
  *
  * Sources pane tunables (SourcesSettings — the source-politeness spec):
  *   jobs.warmup_interval           → warmupInterval        (DurationValue)
@@ -140,6 +142,10 @@ const DEFAULTS: LibrarySettings = {
 // Default for the standalone extension-check-interval tunable (Extensions pane).
 const EXT_CHECK_DEFAULT: DurationValue = { value: 24, unit: 'h' }
 
+// Default for the standalone auto-update-track tunable (Trackers pane) — off
+// until the owner opts in (mirrors the backend's boolTunable default).
+const AUTO_UPDATE_TRACK_DEFAULT = false
+
 // Defaults for the Sources pane tunables (source-politeness spec; mirrors the
 // backend config defaults in internal/settings/tunables.go).
 const SOURCES_DEFAULTS: SourcesSettings = {
@@ -231,6 +237,10 @@ export function useSettings() {
   const extensionCheckInterval = ref<DurationValue>({ ...EXT_CHECK_DEFAULT })
   const extSave = ref<SaveState>({ status: 'idle' })
 
+  // Standalone tunable: reading-triggered tracker-sync push gate (Trackers pane).
+  const autoUpdateTrack = ref<boolean>(AUTO_UPDATE_TRACK_DEFAULT)
+  const autoUpdateTrackSave = ref<SaveState>({ status: 'idle' })
+
   // Sources pane: warm-up + circuit-breaker + politeness-delay tunables.
   const sourcesSettings = ref<SourcesSettings>({
     warmupInterval: { ...SOURCES_DEFAULTS.warmupInterval },
@@ -261,6 +271,11 @@ export function useSettings() {
       extensionCheckInterval.value = rawExtCheck !== undefined
         ? parseGoDuration(rawExtCheck)
         : { ...EXT_CHECK_DEFAULT }
+      // Standalone: extract the auto-update-track toggle from the same settings list.
+      const rawAutoUpdateTrack = settingsRes.data.find(s => s.key === 'trackers.auto_update_track')?.value
+      autoUpdateTrack.value = rawAutoUpdateTrack !== undefined
+        ? rawAutoUpdateTrack === 'true'
+        : AUTO_UPDATE_TRACK_DEFAULT
       // Sources pane: the same settings list carries all 5 warm-up/politeness keys.
       sourcesSettings.value = mapSourcesSettings(settingsRes.data)
     }
@@ -345,6 +360,37 @@ export function useSettings() {
   }
 
   /**
+   * §16 save for the standalone auto-update-track tunable. Sends a single-key
+   * PATCH, drives autoUpdateTrackSave through the SaveState lifecycle, and
+   * reseeds autoUpdateTrack from the authoritative response.
+   */
+  async function saveAutoUpdateTrack(value: boolean): Promise<void> {
+    autoUpdateTrackSave.value = { status: 'saving' }
+    try {
+      const res = await apiClient.PATCH('/api/settings', {
+        body: {
+          settings: [{ key: 'trackers.auto_update_track', value: String(value) }],
+        },
+      })
+      if (res.error) {
+        const msg = (res.error as { message?: string }).message ?? 'Save failed'
+        autoUpdateTrackSave.value = { status: 'error', message: msg }
+        return
+      }
+      // §16: reseed from the authoritative response body.
+      if (res.data) {
+        const raw = res.data.find(s => s.key === 'trackers.auto_update_track')?.value
+        autoUpdateTrack.value = raw !== undefined ? raw === 'true' : AUTO_UPDATE_TRACK_DEFAULT
+      }
+      autoUpdateTrackSave.value = { status: 'success' }
+    }
+    catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      autoUpdateTrackSave.value = { status: 'error', message: msg }
+    }
+  }
+
+  /**
    * §16 save for the Sources pane: builds the 5-key batch from the edited
    * SourcesSettings, PATCHes /api/settings, drives sourcesSettingsSave through
    * the SaveState lifecycle, and reseeds sourcesSettings from the authoritative
@@ -387,12 +433,15 @@ export function useSettings() {
     librarySave,
     extensionCheckInterval,
     extSave,
+    autoUpdateTrack,
+    autoUpdateTrackSave,
     sourcesSettings,
     sourcesSettingsSave,
     pending,
     error,
     saveLibrary,
     saveExtensionCheckInterval,
+    saveAutoUpdateTrack,
     saveSourcesSettings,
     refresh,
   }

@@ -7,7 +7,7 @@
  * provider-health values (incl. an erroring source with an inline error and a
  * stale source that is behind), so the badge palette renders in full.
  */
-import type { Chapter, CoverCandidate, MetadataCandidate, Provider, SeriesDetail } from '../components/screens/seriesDetail.types'
+import type { Chapter, CoverCandidate, MetadataCandidate, Provider, SeriesDetail, TrackBinding, TrackSearchResult } from '../components/screens/seriesDetail.types'
 
 /** Helper: an ISO timestamp `n` hours in the past (drives the relative labels). */
 const hoursAgo = (n: number): string => new Date(Date.now() - n * 3_600_000).toISOString()
@@ -524,3 +524,62 @@ export const omakeProvider: Provider = {
   lastSyncedAt: hoursAgo(2),
   lastError: '',
 }
+
+/* ============================================================================
+ * Tracking-dialog fixtures (Phase 4) — bound trackers + an "Add tracker"
+ * search result set, for TrackingDialog's stories.
+ * ========================================================================== */
+
+/** Two bound trackers on one series — one in-progress, one completed+private. */
+export const trackBindings: TrackBinding[] = [
+  {
+    id: 'bind-anilist',
+    trackerId: 2,
+    trackerName: 'AniList',
+    remoteId: '105398',
+    remoteUrl: 'https://anilist.co/manga/105398',
+    title: 'Solo Leveling',
+    status: 'CURRENT',
+    lastChapterRead: 179,
+    totalChapters: 0,
+    score: 9,
+    startDate: daysAgo(120),
+    finishDate: null,
+    private: false,
+  },
+  {
+    id: 'bind-mal',
+    trackerId: 1,
+    trackerName: 'MyAnimeList',
+    remoteId: '138705',
+    remoteUrl: 'https://myanimelist.net/manga/138705',
+    title: 'Solo Leveling',
+    status: 'COMPLETED',
+    lastChapterRead: 179,
+    totalChapters: 179,
+    score: 10,
+    startDate: daysAgo(200),
+    finishDate: daysAgo(3),
+    private: true,
+  },
+]
+
+/** "Add tracker" search results — one with a cover, one without (placeholder tile). */
+export const trackSearchResults: TrackSearchResult[] = [
+  {
+    remoteId: '105398',
+    title: 'Solo Leveling',
+    url: 'https://anilist.co/manga/105398',
+    coverUrl: 'https://picsum.photos/seed/tracksearch-1/200/300',
+    status: 'RELEASING',
+    totalChapters: 0,
+  },
+  {
+    remoteId: '999999',
+    title: 'Solo Leveling: Ragnarok',
+    url: 'https://anilist.co/manga/999999',
+    coverUrl: '',
+    status: 'NOT_YET_RELEASED',
+    totalChapters: 0,
+  },
+]

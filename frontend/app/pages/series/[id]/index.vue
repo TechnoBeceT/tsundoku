@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { ReaderChapter } from '~/composables/useReader'
-import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate } from '~/components/screens/seriesDetail.types'
+import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, UpdateTrackPatch } from '~/components/screens/seriesDetail.types'
 
 /**
  * Series detail page — route /series/:id.
@@ -98,18 +98,20 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate } from
  * failure. Mutation errors are surfaced via the :error prop (dismissible banner
  * inside SeriesDetail).
  *
- * Trackers (Phase 3d, `TrackingDialog`): `useSeriesTracking(id)` owns this
- * series' bindings + search/bind/unbind/refresh; `useTrackers()` supplies the
- * connected-tracker list the "Add tracker" picker filters against (same
- * composable the Settings → Trackers pane uses — this is an independent
- * instance, so it re-fetches its own fresh connect status on open rather than
- * assuming the Settings page happens to be live in another tab). Opened by
- * `@request-tracking` (bubbled from `RichSeriesCard`'s additive `openTrackers`
- * button via `SeriesDetail`); `search`/`bind`/`unbind`/`refresh` drive the
- * matching `useSeriesTracking` method directly (no dialog-close-on-success
- * gating like the other page-owned dialogs — bind/unbind/refresh each apply
- * their own result into `bindings` and the dialog just keeps reflecting it,
- * §16 mutate-reseeds-from-response).
+ * Trackers (`TrackingDialog`): `useSeriesTracking(id)` owns this series'
+ * bindings + search/bind/unbind/refresh/updateTrack/syncNow; `useTrackers()`
+ * supplies the connected-tracker list the "Add tracker" picker filters
+ * against (same composable the Settings → Trackers pane uses — this is an
+ * independent instance, so it re-fetches its own fresh connect status on open
+ * rather than assuming the Settings page happens to be live in another tab).
+ * Opened by `@request-tracking` (bubbled from `RichSeriesCard`'s additive
+ * `openTrackers` button via `SeriesDetail`); `search`/`bind`/`unbind`/
+ * `refresh`/`update`/`sync` drive the matching `useSeriesTracking` method
+ * directly (no dialog-close-on-success gating like the other page-owned
+ * dialogs — each mutation applies its own result into `bindings` and the
+ * dialog just keeps reflecting it, §16 mutate-reseeds-from-response; the
+ * per-row edit form's own open/close is TrackingDialog's own local state, not
+ * the page's).
  */
 const route = useRoute()
 const id = route.params.id as string
@@ -339,11 +341,17 @@ const {
   bindError: trackBindError,
   unbindBusyId: trackUnbindBusyId,
   refreshBusyId: trackRefreshBusyId,
+  updateBusyId: trackUpdateBusyId,
+  updateError: trackUpdateError,
+  syncing: trackSyncing,
+  syncError: trackSyncError,
   loadBindings: loadTrackBindings,
   search: searchTracker,
   bind: bindTracker,
   unbind: unbindTracker,
   refresh: refreshTracker,
+  updateTrack,
+  syncNow,
 } = useSeriesTracking(id)
 
 const { trackers: connectedTrackers, list: listTrackers } = useTrackers()
@@ -375,6 +383,14 @@ function onUnbindTracker(recordId: string): void {
 
 function onRefreshTracker(recordId: string): void {
   void refreshTracker(recordId)
+}
+
+function onUpdateTracker(payload: { recordId: string, patch: UpdateTrackPatch }): void {
+  void updateTrack(payload.recordId, payload.patch)
+}
+
+function onSyncTracker(): void {
+  void syncNow()
 }
 
 // ---- Resume FAB (Komikku-style "continue reading" button) -----------------
@@ -552,10 +568,16 @@ function onResume(): void {
       :bind-error="trackBindError"
       :unbind-busy-id="trackUnbindBusyId"
       :refresh-busy-id="trackRefreshBusyId"
+      :update-busy-id="trackUpdateBusyId"
+      :update-error="trackUpdateError"
+      :syncing="trackSyncing"
+      :sync-error="trackSyncError"
       @search="onSearchTracker"
       @bind="onBindTracker"
       @unbind="onUnbindTracker"
       @refresh="onRefreshTracker"
+      @update="onUpdateTracker"
+      @sync="onSyncTracker"
     />
   </div>
 </template>

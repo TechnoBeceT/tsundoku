@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import FormError from '../ui/FormError.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
+import Toggle from '../ui/Toggle.vue'
 import TrackerRow from './TrackerRow.vue'
 import type { TrackerActionState, TrackerStatus } from '../screens/settings.types'
 
 /**
- * TrackersPane — the Settings → Trackers pane (Phase 3d): connect/disconnect the
- * four native trackers (AniList, MAL, Kitsu, MangaUpdates). Presentation-only:
- * the page owns the data (useTrackers) and every mutation is emitted — this pane
- * never fetches or navigates itself (the OAuth full-tab redirect is the page's
- * job, since only the page can `window.location.href` after a successful
- * `authUrl()` resolve).
+ * TrackersPane — the Settings → Trackers pane: connect/disconnect the four
+ * native trackers (AniList, MAL, Kitsu, MangaUpdates), plus the Phase 4
+ * `trackers.auto_update_track` toggle that gates the reading-triggered
+ * tracker-sync push (the reader auto-pushes progress on chapter-finish only
+ * when this is on). Presentation-only: the page owns the data (useTrackers +
+ * useSettings) and every mutation is emitted — this pane never fetches or
+ * navigates itself (the OAuth full-tab redirect is the page's job, since only
+ * the page can `window.location.href` after a successful `authUrl()` resolve).
  *
  *   - `trackers`: every tracker's connect status.
  *   - `trackerAction`: §16 state of the one in-flight connect/login/logout
@@ -19,6 +22,8 @@ import type { TrackerActionState, TrackerStatus } from '../screens/settings.type
  *     client-id/public-URL configured (drives the "Not configured" row shape).
  *   - `redirectUrl`: the callback URL to register, shown on a misconfigured row.
  *   - `pending`/`error`: the initial list-load state.
+ *   - `autoUpdateTrack`: the current `trackers.auto_update_track` value.
+ *   - `autoUpdateTrackBusy`: true while the toggle's own save is in flight.
  */
 withDefaults(defineProps<{
   /** Every registered tracker's connect status. */
@@ -33,12 +38,18 @@ withDefaults(defineProps<{
   pending?: boolean
   /** A list-load failure, surfaced inline. */
   error?: string | null
+  /** The current `trackers.auto_update_track` setting value. */
+  autoUpdateTrack?: boolean
+  /** True while the auto-update-track toggle's own save is in flight. */
+  autoUpdateTrackBusy?: boolean
 }>(), {
   trackerAction: () => ({ busyId: null }),
   misconfiguredIds: () => [],
   redirectUrl: '',
   pending: false,
   error: null,
+  autoUpdateTrack: false,
+  autoUpdateTrackBusy: false,
 })
 
 const emit = defineEmits<{
@@ -48,6 +59,8 @@ const emit = defineEmits<{
   'login-credentials': [payload: { trackerId: number, username: string, password: string }]
   /** The "Disconnect" button was pressed for a tracker id. */
   logout: [trackerId: number]
+  /** The auto-update-track toggle was flipped — carries the new value. */
+  'toggle-auto-update-track': [value: boolean]
 }>()
 
 // A few skeleton rows while the tracker list loads.
@@ -59,6 +72,17 @@ const skeletons = [0, 1, 2, 3]
     title="Trackers"
     sub="Connect AniList, MAL, Kitsu, or MangaUpdates to bind your series and track reading progress."
   >
+    <div class="tracker-auto-update">
+      <div class="tracker-auto-update__text">
+        <p class="tracker-auto-update__label">Update trackers automatically while reading</p>
+        <p class="tracker-auto-update__hint">
+          Push your progress to bound trackers automatically when you finish a chapter.
+        </p>
+      </div>
+      <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+      <Toggle :model-value="autoUpdateTrack" :ariaLabel="'Update trackers automatically while reading'" :disabled="autoUpdateTrackBusy" @update:model-value="emit('toggle-auto-update-track', $event)" />
+    </div>
+
     <!-- Loading skeletons -->
     <div v-if="pending" class="tracker-list">
       <div v-for="n in skeletons" :key="n" class="skeleton-row" />
@@ -99,6 +123,35 @@ const skeletons = [0, 1, 2, 3]
 </template>
 
 <style scoped>
+.tracker-auto-update {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.tracker-auto-update__text {
+  min-width: 0;
+}
+
+.tracker-auto-update__label {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.tracker-auto-update__hint {
+  margin: 2px 0 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
 .tracker-error {
   margin-bottom: 12px;
 }

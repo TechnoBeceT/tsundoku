@@ -41,8 +41,10 @@ import type {
  *                   the library-wide dedup-sweep trigger)
  *                   + SourceMetricsPane (per-source search metrics + Warm now),
  *                   stacked — mirrors how LibraryPane stacks its own two cards
- *   - trackers    → TrackersPane (Phase 3d: connect/disconnect AniList/MAL/
- *                   Kitsu/MangaUpdates; per-series bind lives on Series Detail)
+ *   - trackers    → TrackersPane (connect/disconnect AniList/MAL/Kitsu/
+ *                   MangaUpdates + the Phase 4 auto-update-track toggle;
+ *                   per-series bind + the tracking-sheet edit live on Series
+ *                   Detail's TrackingDialog)
  *
  * Presentation only: ALL state arrives via props and every mutation is emitted —
  * the panes own their local editable copies (§16 round-trip) and re-emit each
@@ -121,6 +123,10 @@ withDefaults(defineProps<{
   trackersPending?: boolean
   /** A tracker-list load failure, surfaced inline in the pane. */
   trackersError?: string | null
+  /** The `trackers.auto_update_track` setting value (Phase 4). */
+  autoUpdateTrack?: boolean
+  /** True while the auto-update-track toggle's own save is in flight. */
+  autoUpdateTrackBusy?: boolean
   /** When true, the whole screen renders as skeletons. */
   loading?: boolean
 }>(), {
@@ -149,6 +155,8 @@ withDefaults(defineProps<{
   trackerRedirectUrl: '',
   trackersPending: false,
   trackersError: null,
+  autoUpdateTrack: false,
+  autoUpdateTrackBusy: false,
   loading: false,
 })
 
@@ -199,6 +207,8 @@ const emit = defineEmits<{
   'login-tracker-credentials': [payload: { trackerId: number, username: string, password: string }]
   /** The "Disconnect" button was pressed for a tracker id. */
   'logout-tracker': [trackerId: number]
+  /** The auto-update-track toggle was flipped — carries the new value. */
+  'toggle-auto-update-track': [value: boolean]
 }>()
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
@@ -298,9 +308,12 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           :redirect-url="trackerRedirectUrl"
           :pending="trackersPending"
           :error="trackersError"
+          :auto-update-track="autoUpdateTrack"
+          :auto-update-track-busy="autoUpdateTrackBusy"
           @connect="emit('connect-tracker', $event)"
           @login-credentials="emit('login-tracker-credentials', $event)"
           @logout="emit('logout-tracker', $event)"
+          @toggle-auto-update-track="emit('toggle-auto-update-track', $event)"
         />
       </div>
     </div>

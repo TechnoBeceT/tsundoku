@@ -311,11 +311,12 @@ export interface FractionalCleanupPreview {
  * TrackBinding — one series↔tracker link (the Tracking panel's bound-tracker
  * list). `status`/`score`/`lastChapterRead` are the tracker's OWN native
  * vocabulary/scale (spec `spec/trackers-oauth-phase3` §2 — never normalized to a
- * Tsundoku scale); Phase 3d only CONNECTS + BINDS + SHOWS these read-only — the
- * edit sheet (status/score/dates) is Phase 4.
+ * Tsundoku scale). Phase 3d CONNECTS + BINDS + SHOWS these; Phase 4 adds the
+ * manual edit sheet (`startDate`/`finishDate`/`private` + the `update`/`sync`
+ * flows in TrackingDialog).
  */
 export interface TrackBinding {
-  /** TrackBinding UUID — the unbind/refresh target. */
+  /** TrackBinding UUID — the unbind/refresh/update target. */
   id: string
   /** Which tracker this binding is on. */
   trackerId: number
@@ -335,6 +336,27 @@ export interface TrackBinding {
   totalChapters: number
   /** Reading score, on the tracker's own native scale. */
   score: number
+  /** When the owner started reading, per the tracker's own record (ISO, or null). */
+  startDate: string | null
+  /** When the owner finished reading, per the tracker's own record (ISO, or null). */
+  finishDate: string | null
+  /** Whether this entry is marked private on the tracker's own account. */
+  private: boolean
+}
+
+/**
+ * UpdateTrackPatch — the owner's manual tracking-sheet edit (Phase 4, spec
+ * `spec/trackers-sync-phase4` §2 trigger (c)). Every field is optional — only
+ * CHANGED fields are sent, mirroring the backend's `UpdateTrackRequest`
+ * (partial: an omitted field is left unchanged on the binding).
+ */
+export interface UpdateTrackPatch {
+  status?: string
+  lastChapterRead?: number
+  score?: number
+  startDate?: string | null
+  finishDate?: string | null
+  private?: boolean
 }
 
 /**

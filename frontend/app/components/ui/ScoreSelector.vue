@@ -14,6 +14,19 @@ import { computed } from 'vue'
  * mutates its own value. `0` means "unscored" for every format. This is a
  * first-pass design surface — each format is a distinct, self-contained render.
  *
+ * A11y (star/face/number rows — the `point5`/`point3`/`point10` shapes): each
+ * row is a real WAI-ARIA radio group, not just a `role="radiogroup"` label
+ * wrapping plain toggle buttons — every option carries `role="radio"` +
+ * `aria-checked` (not `aria-pressed`, which is toggle-button semantics and
+ * mismatches a `radiogroup` parent), and the group is a SINGLE tab stop:
+ * only the checked option (or the first when unscored) has `tabindex="0"`,
+ * every other option is `tabindex="-1"` (roving tabindex), and ArrowRight/
+ * ArrowDown/ArrowLeft/ArrowUp/Home/End move + SELECT the focused option —
+ * the same behaviour native `<input type="radio">` groups give for free. The
+ * `point10decimal`/`point100` slider shapes were already correct (a native
+ * `<input type="range">` is natively keyboard-operable with a proper
+ * `aria-label` — no change needed there).
+ *
  *   - `modelValue` (required): the current score (0 = unscored).
  *   - `format` (default `point10`): the scale to render.
  *   - `disabled`: blocks interaction + dims the control.
@@ -56,6 +69,45 @@ const isSlider = computed(() => props.format === 'point100' || props.format === 
 const sliderMax = computed(() => (props.format === 'point100' ? 100 : 10))
 const sliderStep = computed(() => (props.format === 'point10decimal' ? 0.5 : 1))
 const displayScore = computed(() => (props.modelValue === 0 ? '—' : props.modelValue))
+
+/**
+ * Roving-tabindex helper for a radio-group row: the checked option is the
+ * one tab stop, or the row's FIRST option when nothing is scored yet (0) —
+ * mirrors how a native radio group always keeps exactly one member tabbable.
+ */
+const rovingTabIndex = (value: number, firstValue: number): string =>
+  value === (props.modelValue || firstValue) ? '0' : '-1'
+
+/**
+ * Arrow-key navigation for a radio-group row (WAI-ARIA radio pattern):
+ * Right/Down moves to the next option, Left/Up to the previous (both wrap),
+ * Home/End jump to the first/last. Movement both FOCUSES and SELECTS the
+ * target option — the same behaviour a native `<input type="radio">` group
+ * gives for free. Reads sibling buttons off the DOM (all options in a row
+ * are direct siblings) rather than re-deriving the value list per format.
+ */
+function onGroupKeydown(event: KeyboardEvent): void {
+  if (props.disabled) return
+  const nav: Record<string, (i: number, n: number) => number> = {
+    ArrowRight: (i, n) => (i + 1) % n,
+    ArrowDown: (i, n) => (i + 1) % n,
+    ArrowLeft: (i, n) => (i - 1 + n) % n,
+    ArrowUp: (i, n) => (i - 1 + n) % n,
+    Home: () => 0,
+    End: (_i, n) => n - 1,
+  }
+  const step = nav[event.key]
+  if (!step) return
+  const group = (event.currentTarget as HTMLElement).parentElement
+  if (!group) return
+  const options = Array.from(group.children) as HTMLButtonElement[]
+  const current = options.indexOf(event.currentTarget as HTMLButtonElement)
+  if (current === -1) return
+  event.preventDefault()
+  const next = options[step(current, options.length)]
+  next?.focus()
+  next?.click()
+}
 </script>
 
 <template>
@@ -66,12 +118,15 @@ const displayScore = computed(() => (props.modelValue === 0 ? '—' : props.mode
         v-for="n in 5"
         :key="n"
         type="button"
+        role="radio"
         class="score__star"
         :class="{ 'score__star--on': n <= modelValue }"
         :disabled="disabled"
         :aria-label="`${n} star${n > 1 ? 's' : ''}`"
-        :aria-pressed="n <= modelValue"
+        :aria-checked="n === modelValue"
+        :tabindex="rovingTabIndex(n, 1)"
         @click="set(n)"
+        @keydown="onGroupKeydown"
       >
         <Icon name="lucide:star" />
       </button>
@@ -83,12 +138,15 @@ const displayScore = computed(() => (props.modelValue === 0 ? '—' : props.mode
         v-for="f in faces"
         :key="f.value"
         type="button"
+        role="radio"
         class="score__face"
         :class="{ 'score__face--on': f.value === modelValue }"
         :disabled="disabled"
         :aria-label="f.label"
-        :aria-pressed="f.value === modelValue"
+        :aria-checked="f.value === modelValue"
+        :tabindex="rovingTabIndex(f.value, 1)"
         @click="set(f.value)"
+        @keydown="onGroupKeydown"
       >
         <Icon :name="f.icon" />
       </button>
@@ -100,12 +158,15 @@ const displayScore = computed(() => (props.modelValue === 0 ? '—' : props.mode
         v-for="n in tens"
         :key="n"
         type="button"
+        role="radio"
         class="score__num"
         :class="{ 'score__num--on': n <= modelValue }"
         :disabled="disabled"
         :aria-label="`${n} out of 10`"
-        :aria-pressed="n === modelValue"
+        :aria-checked="n === modelValue"
+        :tabindex="rovingTabIndex(n, 1)"
         @click="set(n)"
+        @keydown="onGroupKeydown"
       >{{ n }}</button>
     </div>
 

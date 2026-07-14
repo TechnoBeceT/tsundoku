@@ -36,6 +36,8 @@ let searchResponse: { data: unknown, error: unknown } = { data: [], error: null 
 let bindResponse: { data: unknown, error: unknown } = { data: BINDING_ANILIST, error: null }
 let refreshResponse: { data: unknown, error: unknown } = { data: BINDING_ANILIST, error: null }
 let unbindResponse: { error: unknown } = { error: null }
+let updateResponse: { data: unknown, error: unknown } = { data: BINDING_ANILIST, error: null }
+let syncResponse: { data: unknown, error: unknown } = { data: [BINDING_ANILIST], error: null }
 
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
@@ -49,6 +51,8 @@ vi.mock('~/utils/api/client', () => ({
       postCalls.push({ path, opts })
       if (path === '/api/series/{id}/tracking') return Promise.resolve(bindResponse)
       if (path === '/api/series/{id}/tracking/{recordId}/refresh') return Promise.resolve(refreshResponse)
+      if (path === '/api/series/{id}/tracking/{recordId}/update') return Promise.resolve(updateResponse)
+      if (path === '/api/series/{id}/tracking/sync') return Promise.resolve(syncResponse)
       return Promise.resolve({ data: null, error: null })
     }),
     DELETE: vi.fn().mockImplementation((path: string, opts: unknown) => {
@@ -72,6 +76,8 @@ describe('useSeriesTracking', () => {
     bindResponse = { data: BINDING_ANILIST, error: null }
     refreshResponse = { data: BINDING_ANILIST, error: null }
     unbindResponse = { error: null }
+    updateResponse = { data: BINDING_ANILIST, error: null }
+    syncResponse = { data: [BINDING_ANILIST], error: null }
   })
 
   it('loads the series\' bindings on construction', async () => {
@@ -168,5 +174,68 @@ describe('useSeriesTracking', () => {
       opts: { params: { path: { id: SERIES_ID, recordId: 'bind-1' } } },
     })
     expect(bindings.value[0]?.lastChapterRead).toBe(20)
+  })
+
+  it('updateTrack() POSTs the patch and replaces the row with the response (§16)', async () => {
+    const UPDATED = { ...BINDING_ANILIST, status: 'COMPLETED', score: 9 }
+    updateResponse = { data: UPDATED, error: null }
+
+    const { updateTrack, bindings, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    const ok = await updateTrack('bind-1', { status: 'COMPLETED', score: 9 })
+
+    expect(ok).toBe(true)
+    expect(postCalls.at(-1)).toEqual({
+      path: '/api/series/{id}/tracking/{recordId}/update',
+      opts: { params: { path: { id: SERIES_ID, recordId: 'bind-1' } }, body: { status: 'COMPLETED', score: 9 } },
+    })
+    expect(bindings.value[0]?.status).toBe('COMPLETED')
+    expect(bindings.value[0]?.score).toBe(9)
+  })
+
+  it('updateTrack() leaves the list intact and sets updateError on failure', async () => {
+    updateResponse = { data: null, error: { message: 'tracker rejected the update' } }
+
+    const { updateTrack, bindings, updateError, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    const ok = await updateTrack('bind-1', { score: 9 })
+
+    expect(ok).toBe(false)
+    expect(updateError.value).toBe('tracker rejected the update')
+    expect(bindings.value[0]?.score).toBe(BINDING_ANILIST.score)
+  })
+
+  it('syncNow() POSTs to the sync route and replaces the WHOLE bindings list (§16)', async () => {
+    const CONVERGED = { ...BINDING_ANILIST, lastChapterRead: 60 }
+    syncResponse = { data: [CONVERGED], error: null }
+
+    const { syncNow, bindings, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    const ok = await syncNow()
+
+    expect(ok).toBe(true)
+    expect(postCalls.at(-1)).toEqual({
+      path: '/api/series/{id}/tracking/sync',
+      opts: { params: { path: { id: SERIES_ID } } },
+    })
+    expect(bindings.value).toHaveLength(1)
+    expect(bindings.value[0]?.lastChapterRead).toBe(60)
+  })
+
+  it('syncNow() leaves the list intact and sets syncError on failure', async () => {
+    syncResponse = { data: null, error: { message: 'sync failed' } }
+
+    const { syncNow, bindings, syncError, pending } = useSeriesTracking(SERIES_ID)
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+
+    const ok = await syncNow()
+
+    expect(ok).toBe(false)
+    expect(syncError.value).toBe('sync failed')
+    expect(bindings.value).toHaveLength(1)
+    expect(bindings.value[0]?.id).toBe('bind-1')
   })
 })

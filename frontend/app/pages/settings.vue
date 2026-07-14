@@ -5,6 +5,8 @@
  * Assembles the 7-pane Settings screen from six composables:
  *   useSettings()         → library knobs + system info + saveLibrary
  *                           + extensionCheckInterval + saveExtensionCheckInterval
+ *                           + autoUpdateTrack + saveAutoUpdateTrack (Phase 4
+ *                           reading-triggered tracker-sync gate, Trackers pane)
  *                           + sourcesSettings + saveSourcesSettings (warm-up +
  *                           circuit-breaker knobs, source-politeness spec)
  *   useCategories()       → settingsCategories + categoryAction + CRUD methods
@@ -15,7 +17,7 @@
  *   useLibraryMaintenance() → dedupAllBusy/Message/Error + dedupAllProviders
  *                           (library-wide duplicate-source dedup sweep)
  *   useTrackers()         → trackers + trackerAction (busyId/error) + misconfigured
- *                           + connect/loginCredentials/logout (Phase 3d Trackers pane)
+ *                           + connect/loginCredentials/logout (Trackers pane)
  *
  * Prop wiring:
  *   :active-pane          — local activePane ref (default 'library')
@@ -59,6 +61,8 @@
  *   :trackers-pending     — pending from useTrackers (pane-owned, NOT in the
  *                           global loading gate — mirrors source-metrics-pending)
  *   :trackers-error       — error from useTrackers
+ *   :auto-update-track    — autoUpdateTrack from useSettings (Phase 4)
+ *   :auto-update-track-busy — computed, autoUpdateTrackSave.status === 'saving'
  *   :loading              — true while any primary dataset is still fetching
  *
  * Emit wiring:
@@ -86,6 +90,7 @@
  *                                   stashes the tracker id first — see trackerCallback.ts)
  *   @login-tracker-credentials   → onLoginTrackerCredentials
  *   @logout-tracker              → logoutTracker
+ *   @toggle-auto-update-track    → saveAutoUpdateTrack
  *
  * OAuth flash handling: the callback route (`pages/auth/tracker/callback.vue`)
  * redirects back here with `?trackersFlash=connected` or
@@ -105,6 +110,9 @@ const {
   librarySave,
   extensionCheckInterval,
   saveExtensionCheckInterval,
+  autoUpdateTrack,
+  autoUpdateTrackSave,
+  saveAutoUpdateTrack,
   sourcesSettings,
   sourcesSettingsSave,
   saveSourcesSettings,
@@ -183,6 +191,9 @@ const misconfiguredTrackerIds = computed(() => [...misconfiguredTrackers.value])
 /** This instance's OAuth callback URL — every tracker's app must register it. */
 const trackerRedirectUrl = computed(() =>
   typeof window === 'undefined' ? '' : `${window.location.origin}/auth/tracker/callback`)
+
+/** True while the auto-update-track toggle's own save is in flight (Phase 4). */
+const autoUpdateTrackBusy = computed(() => autoUpdateTrackSave.value.status === 'saving')
 
 /**
  * "Connect" was pressed for an OAuth tracker: build a fresh authorize URL,
@@ -291,6 +302,8 @@ const loading = computed(
       :tracker-redirect-url="trackerRedirectUrl"
       :trackers-pending="trackersPending"
       :trackers-error="trackersError"
+      :auto-update-track="autoUpdateTrack"
+      :auto-update-track-busy="autoUpdateTrackBusy"
       :loading="loading"
       @set-pane="setPane"
       @save-library="saveLibrary"
@@ -315,6 +328,7 @@ const loading = computed(
       @connect-tracker="onConnectTracker"
       @login-tracker-credentials="onLoginTrackerCredentials"
       @logout-tracker="logoutTracker"
+      @toggle-auto-update-track="saveAutoUpdateTrack"
     />
   </div>
 </template>
