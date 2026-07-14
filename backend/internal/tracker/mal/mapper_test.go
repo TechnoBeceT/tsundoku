@@ -41,8 +41,8 @@ func TestToTrackEntry_MapsFieldsAndDates(t *testing.T) {
 		StartDate:       "2024-03-15",
 		FinishDate:      "",
 	}
-	got := toTrackEntry("887", s)
-	if got.RemoteID != "887" || got.Status != "reading" || got.Score != 8 || got.Progress != 42 {
+	got := toTrackEntry("887", s, 364)
+	if got.RemoteID != "887" || got.Status != "reading" || got.Score != 8 || got.Progress != 42 || got.TotalChapters != 364 {
 		t.Fatalf("toTrackEntry mismatch: %+v", got)
 	}
 	if got.StartDate == nil || !got.StartDate.Equal(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)) {
@@ -102,9 +102,37 @@ func TestMangaDetail_JSONUnmarshal(t *testing.T) {
 	if d.MyListStatus == nil {
 		t.Fatal("MyListStatus not parsed")
 	}
-	entry := toTrackEntry("887", d.MyListStatus)
-	if entry.Status != "reading" || entry.Score != 7 || entry.Progress != 364 {
+	entry := toTrackEntry("887", d.MyListStatus, d.NumChapters)
+	if entry.Status != "reading" || entry.Score != 7 || entry.Progress != 364 || entry.TotalChapters != 0 {
 		t.Fatalf("toTrackEntry(from JSON) mismatch: %+v", entry)
+	}
+}
+
+// TestToTrackEntry_TotalChaptersPopulatedFromDetail is the MAL
+// TotalChapters-gap regression test (spec/trackers-oauth-phase3 §6 fix):
+// GetEntry's manga-detail response carries num_chapters ALONGSIDE
+// my_list_status, and it must land on TrackEntry.TotalChapters — the field
+// Phase 4's auto-COMPLETED rule (total>0 && last==total) depends on.
+func TestToTrackEntry_TotalChaptersPopulatedFromDetail(t *testing.T) {
+	raw := []byte(`{
+		"id": 887,
+		"title": "Berserk",
+		"num_chapters": 380,
+		"my_list_status": {
+			"status": "reading",
+			"score": 7,
+			"num_chapters_read": 364,
+			"start_date": "2021-05-01",
+			"finish_date": ""
+		}
+	}`)
+	var d mangaDetail
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	entry := toTrackEntry("887", d.MyListStatus, d.NumChapters)
+	if entry.TotalChapters != 380 {
+		t.Fatalf("entry.TotalChapters = %d, want 380 (from the detail's num_chapters)", entry.TotalChapters)
 	}
 }
 

@@ -1,10 +1,10 @@
 // Package tracker defines the provider-agnostic contracts for the native
-// tracker subsystem (AniList, MAL, Kitsu (3b), MangaUpdates (3b)):
-// OAuth/credential connect, per-series search, and reading-progress
-// read/write. This mirrors internal/metadata's Provider-port shape
-// (internal/metadata/provider.go) but is a SEPARATE subsystem — trackers are
-// login+sync (Suwayomi/Komikku model), metadata providers are public-read
-// (Komf model). See spec/trackers-and-rich-library-umbrella-v2 §1.
+// tracker subsystem (AniList, MAL, Kitsu, MangaUpdates): OAuth/credential
+// connect, per-series search, and reading-progress read/write. This mirrors
+// internal/metadata's Provider-port shape (internal/metadata/provider.go)
+// but is a SEPARATE subsystem — trackers are login+sync (Suwayomi/Komikku
+// model), metadata providers are public-read (Komf model). See
+// spec/trackers-and-rich-library-umbrella-v2 §1.
 //
 // This package is deliberately ENT-FREE (only stdlib + context/net/http): it
 // holds no *ent.Client and imports nothing under internal/ent. A concrete
@@ -32,8 +32,8 @@ import (
 const (
 	IDMAL          = 1
 	IDAniList      = 2
-	IDKitsu        = 3 // internal/tracker/kitsu, slice 3b — not built yet.
-	IDMangaUpdates = 7 // internal/tracker/mangaupdates, slice 3b — not built yet.
+	IDKitsu        = 3 // internal/tracker/kitsu (slice 3b).
+	IDMangaUpdates = 7 // internal/tracker/mangaupdates (slice 3b).
 )
 
 // Sentinel errors every Tracker implementation returns for the same
@@ -60,6 +60,12 @@ var (
 	// fails closed rather than emitting an authorize URL that can never
 	// exchange.
 	ErrClientIDNotConfigured = errors.New("tracker: client id is not configured")
+	// ErrOAuthNotSupported is returned by AuthURL/ExchangeCode on a tracker
+	// that connects via a direct username/password or session login
+	// instead of an OAuth redirect (Kitsu, MangaUpdates — NeedsOAuth() ==
+	// false): there is no authorize URL or authorization code to exchange
+	// for such a tracker; the caller must use CredentialLogin instead.
+	ErrOAuthNotSupported = errors.New("tracker: this tracker connects via username/password, not OAuth; call LoginCredentials")
 )
 
 // TokenSet is the OAuth/session credential for one connected tracker
@@ -150,9 +156,9 @@ type Tracker interface {
 	// Name is the tracker's human-display name (e.g. "AniList").
 	Name() string
 	// NeedsOAuth reports whether this tracker connects via an OAuth
-	// redirect (AniList, MAL — both true here) as opposed to a direct
-	// username/password or session login (Kitsu, MangaUpdates — slice 3b,
-	// both false).
+	// redirect (AniList, MAL — both true) as opposed to a direct
+	// username/password or session login (Kitsu, MangaUpdates — both
+	// false; such a tracker instead implements CredentialLogin).
 	NeedsOAuth() bool
 
 	// AuthURL builds the provider's authorize URL for a fresh login,
@@ -215,4 +221,21 @@ type ImplicitTokenExtractor interface {
 // never an error.
 type AccountInfoProvider interface {
 	AccountInfo(ctx context.Context, token string) (AccountInfo, error)
+}
+
+// CredentialLogin is implemented by a Tracker that connects via a direct
+// username/password or session login rather than an OAuth redirect (Kitsu,
+// MangaUpdates — NeedsOAuth() == false). The connect service type-asserts a
+// Tracker to this interface for its LoginCredentials method (mirroring how
+// ImplicitTokenExtractor/AccountInfoProvider are type-asserted for their own
+// optional capabilities) rather than adding LoginCredentials to every
+// Tracker: AniList/MAL have no username/password concept at all, so forcing
+// them to implement a method that could only ever error would be a
+// meaningless stub, not a real capability.
+type CredentialLogin interface {
+	// LoginCredentials exchanges a username+password (Kitsu's OAuth
+	// password grant; MangaUpdates' session login) for a TokenSet. The
+	// returned token is used exactly like an OAuth-derived one — attached
+	// as a Bearer credential to every subsequent authenticated call.
+	LoginCredentials(ctx context.Context, username, password string) (TokenSet, error)
 }

@@ -394,3 +394,166 @@ func TestLogout_UnknownTracker(t *testing.T) {
 		t.Fatalf("Logout(9999): err = %v, want connect.ErrUnknownTracker", err)
 	}
 }
+
+// fakeCredentialTracker is a Kitsu/MangaUpdates-shaped tracker.Tracker test
+// double: NeedsOAuth() is false, AuthURL/ExchangeCode fail closed with
+// tracker.ErrOAuthNotSupported (mirroring the real kitsu/mangaupdates
+// clients), and LoginCredentials succeeds deterministically from the
+// username it is given, so tests can assert the exact TokenSet that lands
+// in TrackerConnection.
+type fakeCredentialTracker struct {
+	id      int
+	loginFn func(ctx context.Context, username, password string) (tracker.TokenSet, error)
+}
+
+func (f *fakeCredentialTracker) Key() string      { return "fake-credential" }
+func (f *fakeCredentialTracker) ID() int          { return f.id }
+func (f *fakeCredentialTracker) Name() string     { return "Fake Credential Tracker" }
+func (f *fakeCredentialTracker) NeedsOAuth() bool { return false }
+func (f *fakeCredentialTracker) AuthURL(string, string) (string, string, error) {
+	return "", "", tracker.ErrOAuthNotSupported
+}
+func (f *fakeCredentialTracker) ExchangeCode(context.Context, string, string, string) (tracker.TokenSet, error) {
+	return tracker.TokenSet{}, tracker.ErrOAuthNotSupported
+}
+func (f *fakeCredentialTracker) Refresh(context.Context, string) (tracker.TokenSet, error) {
+	return tracker.TokenSet{}, tracker.ErrNoRefresh
+}
+func (f *fakeCredentialTracker) LoginCredentials(ctx context.Context, username, password string) (tracker.TokenSet, error) {
+	if f.loginFn != nil {
+		return f.loginFn(ctx, username, password)
+	}
+	return tracker.TokenSet{Access: "access-" + username}, nil
+}
+func (f *fakeCredentialTracker) Search(context.Context, string, string) ([]tracker.TrackSearchResult, error) {
+	return nil, nil
+}
+func (f *fakeCredentialTracker) GetEntry(context.Context, string, string) (*tracker.TrackEntry, error) {
+	return nil, nil
+}
+func (f *fakeCredentialTracker) SaveEntry(_ context.Context, _ string, e tracker.TrackEntry) (tracker.TrackEntry, error) {
+	return e, nil
+}
+func (f *fakeCredentialTracker) UpdateEntry(_ context.Context, _ string, e tracker.TrackEntry) (tracker.TrackEntry, error) {
+	return e, nil
+}
+func (f *fakeCredentialTracker) DeleteEntry(context.Context, string, tracker.TrackEntry) error {
+	return nil
+}
+
+var (
+	_ tracker.Tracker         = (*fakeCredentialTracker)(nil)
+	_ tracker.CredentialLogin = (*fakeCredentialTracker)(nil)
+)
+
+const fakeCredentialID = 103
+
+// TestLoginCredentials_CreatesConnection drives the credential-login flow
+// end-to-end and asserts the exchanged TokenSet plus the owner-typed
+// username land in TrackerConnection — the SAME store CompleteOAuth writes.
+func TestLoginCredentials_CreatesConnection(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	reg := tracker.NewRegistry(&fakeCredentialTracker{id: fakeCredentialID})
+	svc := connect.NewService(client, reg, "https://tsundoku.example")
+
+	if err := svc.LoginCredentials(ctx, fakeCredentialID, "owner@example.test", "hunter2"); err != nil {
+		t.Fatalf("LoginCredentials: %v", err)
+	}
+
+	row, err := client.TrackerConnection.Query().
+		Where(entrackerconnection.TrackerID(fakeCredentialID)).
+		Only(ctx)
+	if err != nil {
+		t.Fatalf("query TrackerConnection: %v", err)
+	}
+	if row.AccessToken != "access-owner@example.test" {
+		t.Fatalf("row.AccessToken = %q, want access-owner@example.test", row.AccessToken)
+	}
+	if row.Username != "owner@example.test" {
+		t.Fatalf("row.Username = %q, want the owner-typed username", row.Username)
+	}
+}
+
+// TestLoginCredentials_UnknownTracker confirms LoginCredentials fails
+// closed for a trackerID the registry doesn't know.
+func TestLoginCredentials_UnknownTracker(t *testing.T) {
+	client := testdb.New(t)
+	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
+
+	if err := svc.LoginCredentials(context.Background(), 9999, "u", "p"); !errors.Is(err, connect.ErrUnknownTracker) {
+		t.Fatalf("LoginCredentials(9999): err = %v, want connect.ErrUnknownTracker", err)
+	}
+}
+
+// TestLoginCredentials_OAuthTrackerNotSupported confirms LoginCredentials
+// refuses an OAuth-only tracker (one that does not implement
+// tracker.CredentialLogin) rather than silently no-op-ing or panicking on
+// a failed type assertion.
+func TestLoginCredentials_OAuthTrackerNotSupported(t *testing.T) {
+	client := testdb.New(t)
+	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
+
+	err := svc.LoginCredentials(context.Background(), fakeCodeID, "u", "p")
+	if !errors.Is(err, connect.ErrCredentialLoginNotSupported) {
+		t.Fatalf("LoginCredentials on an OAuth tracker: err = %v, want connect.ErrCredentialLoginNotSupported", err)
+	}
+}
+
+// TestLoginCredentials_PropagatesTrackerError confirms a failed credential
+// exchange (bad password) surfaces as an error rather than a false-success
+// TrackerConnection row.
+func TestLoginCredentials_PropagatesTrackerError(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	reg := tracker.NewRegistry(&fakeCredentialTracker{
+		id: fakeCredentialID,
+		loginFn: func(context.Context, string, string) (tracker.TokenSet, error) {
+			return tracker.TokenSet{}, fmt.Errorf("invalid credentials")
+		},
+	})
+	svc := connect.NewService(client, reg, "https://tsundoku.example")
+
+	if err := svc.LoginCredentials(ctx, fakeCredentialID, "owner", "wrong"); err == nil {
+		t.Fatalf("LoginCredentials with a failing tracker: want an error, got nil")
+	}
+
+	count, err := client.TrackerConnection.Query().
+		Where(entrackerconnection.TrackerID(fakeCredentialID)).
+		Count(ctx)
+	if err != nil {
+		t.Fatalf("count TrackerConnection: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("TrackerConnection row count after a failed login = %d, want 0", count)
+	}
+}
+
+// TestLoginCredentials_SecondLoginUpdatesRow mirrors
+// TestUpsertConnection_SecondLoginUpdatesRow for the credential-login path.
+func TestLoginCredentials_SecondLoginUpdatesRow(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	reg := tracker.NewRegistry(&fakeCredentialTracker{id: fakeCredentialID})
+	svc := connect.NewService(client, reg, "https://tsundoku.example")
+
+	if err := svc.LoginCredentials(ctx, fakeCredentialID, "first-user", "p1"); err != nil {
+		t.Fatalf("first LoginCredentials: %v", err)
+	}
+	if err := svc.LoginCredentials(ctx, fakeCredentialID, "second-user", "p2"); err != nil {
+		t.Fatalf("second LoginCredentials: %v", err)
+	}
+
+	rows, err := client.TrackerConnection.Query().
+		Where(entrackerconnection.TrackerID(fakeCredentialID)).
+		All(ctx)
+	if err != nil {
+		t.Fatalf("query TrackerConnection: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("row count = %d, want 1 (second login must UPDATE, not duplicate)", len(rows))
+	}
+	if rows[0].Username != "second-user" {
+		t.Fatalf("row.Username = %q, want second-user (the SECOND login)", rows[0].Username)
+	}
+}

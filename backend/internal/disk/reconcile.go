@@ -14,6 +14,7 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	enttrackbinding "github.com/technobecet/tsundoku/internal/ent/trackbinding"
 )
 
 // ReconcileResult reports what Reconcile changed in the DB on a single run.
@@ -127,6 +128,10 @@ func reconcileSeries(ctx context.Context, client *ent.Client, sf SeriesFacts, re
 		return err
 	}
 
+	if err := restoreTrackBindings(ctx, client, series.ID, sf.TrackBindings); err != nil {
+		return err
+	}
+
 	providerIDs, err := upsertProviders(ctx, client, series.ID, sf.Chapters, result)
 	if err != nil {
 		return err
@@ -216,6 +221,80 @@ func restoreMetadataIndex(ctx context.Context, client *ent.Client, series *ent.S
 	if err := update.Exec(ctx); err != nil {
 		// Defensive path: reachable only on DB connection loss mid-run.
 		return fmt.Errorf("disk.Reconcile: update metadata index (series=%s): %w", series.ID, err)
+	}
+	return nil
+}
+
+// restoreTrackBindings upserts a TrackBinding row per sidecar entry in
+// bindings, restoring which tracker entries seriesID was bound to and its
+// last-known progress after a total DB loss
+// (spec/trackers-oauth-phase3 §3/§5).
+//
+// DIRECTION IS ONE-WAY, mirroring restoreMetadataIndex/restoreCoverIndex:
+// the sidecar is the durable seed and always WINS — bind.Service writes the
+// sidecar block FIRST (via disk.WriteTrackBindings) and only then upserts
+// the DB row, so disk→DB is the only direction Reconcile may carry. 🔴
+// Tokens are NEVER restored here (TrackBindingSidecar carries none — see
+// its own doc comment); only the binding identity + a progress snapshot.
+// The binding's TrackerConnection (account token) is a SEPARATE, non-
+// sidecar'd table this function never touches — a bound series with no
+// reconnected account simply cannot FetchTrack until the owner re-logs in,
+// exactly like any other post-wipe tracker state.
+//
+// A series with no bindings on disk (the common case — most series predate
+// this feature or were never bound) is left entirely alone: every new
+// TrackBinding row's fields keep their zero value, and no row is created,
+// exactly as an additive feature requires for a zero-data migration.
+func restoreTrackBindings(ctx context.Context, client *ent.Client, seriesID uuid.UUID, bindings []TrackBindingSidecar) error {
+	for _, b := range bindings {
+		if err := upsertTrackBinding(ctx, client, seriesID, b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// upsertTrackBinding finds or creates the TrackBinding row for
+// (seriesID, b.TrackerID) and writes b's fields onto it — the
+// query-then-create/update pattern this package's other restore helpers
+// use (mirrors restoreCoverIndex/resolveCategoryID).
+func upsertTrackBinding(ctx context.Context, client *ent.Client, seriesID uuid.UUID, b TrackBindingSidecar) error {
+	existing, err := client.TrackBinding.Query().
+		Where(enttrackbinding.SeriesID(seriesID), enttrackbinding.TrackerID(b.TrackerID)).
+		Only(ctx)
+	if err != nil && !ent.IsNotFound(err) {
+		// Defensive path: reachable only on DB connection loss or cancelled context.
+		return fmt.Errorf("disk.Reconcile: query TrackBinding (series=%s tracker=%d): %w", seriesID, b.TrackerID, err)
+	}
+
+	if existing != nil {
+		_, err := existing.Update().
+			SetRemoteID(b.RemoteID).
+			SetRemoteURL(b.RemoteURL).
+			SetStatus(b.Status).
+			SetLastChapterRead(b.LastChapterRead).
+			SetScore(b.Score).
+			Save(ctx)
+		if err != nil {
+			// Defensive path: reachable only on DB connection loss mid-run.
+			return fmt.Errorf("disk.Reconcile: update TrackBinding (series=%s tracker=%d): %w", seriesID, b.TrackerID, err)
+		}
+		return nil
+	}
+
+	_, err = client.TrackBinding.Create().
+		SetSeriesID(seriesID).
+		SetTrackerID(b.TrackerID).
+		SetRemoteID(b.RemoteID).
+		SetRemoteURL(b.RemoteURL).
+		SetStatus(b.Status).
+		SetLastChapterRead(b.LastChapterRead).
+		SetScore(b.Score).
+		Save(ctx)
+	if err != nil {
+		// Defensive path: reachable only on DB connection loss or a concurrent
+		// INSERT that races with the query above.
+		return fmt.Errorf("disk.Reconcile: create TrackBinding (series=%s tracker=%d): %w", seriesID, b.TrackerID, err)
 	}
 	return nil
 }

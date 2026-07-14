@@ -50,6 +50,11 @@ var (
 	// to send a provider, so the whole subsystem stays dormant (spec §2)
 	// rather than construct a request that can never succeed.
 	ErrPublicURLNotConfigured = errors.New("connect: TSUNDOKU_TRACKER_PUBLICURL is not configured")
+	// ErrCredentialLoginNotSupported is returned by LoginCredentials when
+	// trackerID names a tracker that connects via OAuth (AniList, MAL) —
+	// such a tracker does not implement tracker.CredentialLogin, and the
+	// caller should be using AuthURL/CompleteOAuth instead.
+	ErrCredentialLoginNotSupported = errors.New("connect: this tracker connects via OAuth, not username/password")
 )
 
 // callbackPath is the instance route the owner's OAuth apps must have
@@ -200,6 +205,39 @@ func (s *Service) lookupAccountInfo(ctx context.Context, t tracker.Tracker, tok 
 		return "", ""
 	}
 	return info.Username, info.ScoreFormat
+}
+
+// LoginCredentials completes a direct username/password login for a
+// credential-based tracker (Kitsu, MangaUpdates — NeedsOAuth() == false):
+// it type-asserts the tracker to tracker.CredentialLogin (returning
+// ErrCredentialLoginNotSupported for an OAuth tracker, which does not
+// implement it), exchanges the credentials for a TokenSet, and upserts the
+// result into that tracker's TrackerConnection row — the SAME store
+// CompleteOAuth writes, so a bind/fetch caller never needs to know which
+// login flow produced a given account's token. username is stored verbatim
+// as the connection's display username (mirrors CompleteOAuth's
+// lookupAccountInfo capture, but here the owner-typed username is already
+// known — no extra self-lookup call is needed).
+//
+// Returns ErrUnknownTracker for an unregistered trackerID and whatever the
+// tracker's own LoginCredentials returns (e.g. a wrapped 401 on bad
+// credentials) on failure.
+func (s *Service) LoginCredentials(ctx context.Context, trackerID int, username, password string) error {
+	t, ok := s.registry.ByID(trackerID)
+	if !ok {
+		return ErrUnknownTracker
+	}
+	cl, ok := t.(tracker.CredentialLogin)
+	if !ok {
+		return ErrCredentialLoginNotSupported
+	}
+
+	tok, err := cl.LoginCredentials(ctx, username, password)
+	if err != nil {
+		return fmt.Errorf("connect: %s credential login: %w", t.Key(), err)
+	}
+
+	return s.upsertConnection(ctx, trackerID, tok, username, "")
 }
 
 // Logout deletes trackerID's TrackerConnection row, discarding its stored

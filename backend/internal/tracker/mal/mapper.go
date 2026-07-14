@@ -76,18 +76,27 @@ func toTrackSearchResult(n mangaSearchNode) tracker.TrackSearchResult {
 }
 
 // toTrackEntry maps a manga detail's my_list_status (plus the surrounding
-// detail's id/title/chapter total) into the shared tracker.TrackEntry
-// shape. remoteID is passed explicitly (not read off detail) so this same
-// mapper also serves the upsert response, which carries no manga id of its
-// own — only the my_list_status fields.
-func toTrackEntry(remoteID string, s *myListStatus) tracker.TrackEntry {
+// detail's id/chapter total) into the shared tracker.TrackEntry shape.
+// remoteID and totalChapters are passed explicitly (not read off a shared
+// struct) so this same mapper also serves the upsert response, which
+// carries no manga id or chapter total of its own — only the
+// my_list_status fields; callers that lack a real total (upsertEntry, whose
+// PUT response is my_list_status-only) pass through the value already on
+// hand (the caller's own entry.TotalChapters) rather than silently
+// dropping it. TotalChapters is what feeds Phase-4's auto-COMPLETED rule
+// (total>0 && last==total, spec/trackers-and-rich-library-umbrella-v2 §6) —
+// leaving it unset here was a Phase-3a gap (fixed in 3b): GetEntry's own
+// manga-detail response always carries num_chapters, so there was no
+// excuse for not threading it through.
+func toTrackEntry(remoteID string, s *myListStatus, totalChapters int) tracker.TrackEntry {
 	return tracker.TrackEntry{
-		RemoteID:   remoteID,
-		Status:     s.Status,
-		Score:      float64(s.Score),
-		Progress:   float64(s.NumChaptersRead),
-		StartDate:  parseMALDate(s.StartDate),
-		FinishDate: parseMALDate(s.FinishDate),
+		RemoteID:      remoteID,
+		Status:        s.Status,
+		Score:         float64(s.Score),
+		Progress:      float64(s.NumChaptersRead),
+		TotalChapters: totalChapters,
+		StartDate:     parseMALDate(s.StartDate),
+		FinishDate:    parseMALDate(s.FinishDate),
 	}
 }
 

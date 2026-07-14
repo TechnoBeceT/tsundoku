@@ -15,7 +15,9 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/anilist"
+	"github.com/technobecet/tsundoku/internal/tracker/kitsu"
 	"github.com/technobecet/tsundoku/internal/tracker/mal"
+	"github.com/technobecet/tsundoku/internal/tracker/mangaupdates"
 )
 
 // Config configures the real tracker set NewRegistry builds. HTTPClient,
@@ -24,20 +26,23 @@ import (
 // tracker's OAuth connect (AuthURL fails closed with
 // tracker.ErrClientIDNotConfigured) while leaving the rest of this package
 // usable — the fleet "blank disables" pattern (spec §2), NOT a construction
-// error: NewRegistry always builds both trackers so GET /api/trackers (3c)
-// can still list a disabled tracker with isLoggedIn=false.
+// error: NewRegistry always builds all four trackers so GET /api/trackers
+// (3c) can still list a disabled OAuth tracker with isLoggedIn=false. Kitsu
+// and MangaUpdates need no client-id at all (credential login — see their
+// own New doc comments), so Config carries no field for either.
 type Config struct {
 	AniListClientID string
 	MALClientID     string
 	HTTPClient      *http.Client
 }
 
-// NewRegistry builds the two Phase-3a real trackers (AniList, MAL) and
-// returns a ready tracker.Registry over them. Kitsu (3) and MangaUpdates
-// (7) join in slice 3b.
+// NewRegistry builds the four Phase-3 real trackers (AniList, MAL, Kitsu,
+// MangaUpdates) and returns a ready tracker.Registry over them.
 func NewRegistry(cfg Config) *tracker.Registry {
 	return tracker.NewRegistry(
 		anilist.New(cfg.AniListClientID, cfg.HTTPClient),
 		mal.New(cfg.MALClientID, cfg.HTTPClient),
+		kitsu.New(cfg.HTTPClient),
+		mangaupdates.New(cfg.HTTPClient),
 	)
 }

@@ -107,6 +107,42 @@ type SeriesMetadataSidecar struct {
 	CoverSource *metadata.SourceRef `json:"cover_source,omitempty"`
 }
 
+// TrackBindingSidecar records ONE series↔tracker binding's durable seed —
+// which tracker entry a series is bound to, and its last-known progress —
+// so disk.Reconcile can restore TrackBinding rows after a total DB loss
+// (spec/trackers-oauth-phase3 §3/§5, the tracker subsystem's own extension
+// of the same disk-is-truth discipline the Phase-1 metadata block and the
+// M1 chapter provenance already give). 🔴 TOKENS ARE NEVER SIDECAR'D: this
+// struct carries no credential of any kind — only WHICH tracker entry a
+// series is bound to and a last-known-progress snapshot. A DB wipe loses
+// the TrackerConnection (account token) entirely; the accepted recovery is
+// re-login (LoginCredentials/CompleteOAuth), never a disk-cached secret.
+// The binding itself (which entry, its status/progress) survives the wipe
+// and re-pulls fresh progress from the tracker on the next FetchTrack.
+type TrackBindingSidecar struct {
+	// TrackerID is the tracker's numeric registry id (mirrors
+	// TrackBinding.tracker_id — MAL=1, AniList=2, Kitsu=3, MangaUpdates=7).
+	TrackerID int `json:"tracker_id"`
+
+	// RemoteID is the tracker's manga id this series is bound to.
+	RemoteID string `json:"remote_id"`
+
+	// RemoteURL is the canonical link to the remote entry, when known.
+	RemoteURL string `json:"remote_url,omitempty"`
+
+	// Status is the tracker's own native status code/string (never
+	// normalized here — see TrackBinding.status's own doc comment).
+	Status string `json:"status,omitempty"`
+
+	// LastChapterRead is the furthest chapter read as of the last sync —
+	// a snapshot, not live; a reconcile restore re-pulls the true current
+	// value on the next FetchTrack rather than trusting this as fresh.
+	LastChapterRead float64 `json:"last_chapter_read,omitempty"`
+
+	// Score is the reading score on the tracker's native scale.
+	Score float64 `json:"score,omitempty"`
+}
+
 // Sidecar is the per-series tsundoku.json file.
 //
 // It records series-level metadata, the provider importance order, and the
@@ -136,6 +172,13 @@ type Sidecar struct {
 	// Metadata is the Phase-1 metadata engine's rich-card durable seed; nil
 	// when the series has never been auto-identified or manually identified.
 	Metadata *SeriesMetadataSidecar `json:"metadata,omitempty"`
+
+	// TrackBindings is the series' current set of tracker bindings (one
+	// per tracker the series is bound to); nil/empty when the series has
+	// no tracker binding at all. Always a FULL snapshot — a writer
+	// overwrites this block wholesale, never merges a single binding into
+	// it in place (mirrors WriteMetadata's own full-snapshot contract).
+	TrackBindings []TrackBindingSidecar `json:"track_bindings,omitempty"`
 }
 
 // mutateSidecar applies fn to the series' sidecar and writes the result back:
@@ -199,6 +242,37 @@ func WriteMetadata(seriesDir string, block SeriesMetadataSidecar) error {
 	})
 	if err != nil {
 		return fmt.Errorf("disk.WriteMetadata: update sidecar: %w", err)
+	}
+	return nil
+}
+
+// WriteTrackBindings persists the FULL current set of a series' tracker
+// bindings into its tsundoku.json sidecar — the durable seed
+// disk.Reconcile's restoreTrackBindings rebuilds TrackBinding rows from
+// after a total DB loss (spec/trackers-oauth-phase3 §3/§5). Callers pass
+// the COMPLETE current list every time (never a partial patch), mirroring
+// WriteMetadata's full-snapshot contract: the sidecar block is always
+// overwritten wholesale, so a caller that just unbound one tracker and
+// re-lists the remainder correctly drops the removed entry from disk too.
+//
+// Mirrors WriteMetadata/SaveCover: it NEVER creates the series directory
+// (see ErrNoSeriesDir) — a series with nothing downloaded yet has no
+// folder, and the durable DB row is enough until the first chapter lands;
+// the sidecar catches up the first time the series gets one.
+func WriteTrackBindings(seriesDir string, bindings []TrackBindingSidecar) error {
+	info, statErr := os.Stat(seriesDir)
+	if statErr != nil || !info.IsDir() {
+		return fmt.Errorf("disk.WriteTrackBindings: %w: %q", ErrNoSeriesDir, seriesDir)
+	}
+
+	defer lockSidecar(seriesDir)()
+
+	def := Sidecar{Title: filepath.Base(seriesDir), Category: filepath.Base(filepath.Dir(seriesDir))}
+	err := mutateSidecar(seriesDir, def, func(s *Sidecar) {
+		s.TrackBindings = bindings
+	})
+	if err != nil {
+		return fmt.Errorf("disk.WriteTrackBindings: update sidecar: %w", err)
 	}
 	return nil
 }

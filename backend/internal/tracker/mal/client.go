@@ -186,7 +186,7 @@ func (c *Client) GetEntry(ctx context.Context, token, remoteID string) (*tracker
 	if detail.MyListStatus == nil {
 		return nil, nil
 	}
-	entry := toTrackEntry(remoteID, detail.MyListStatus)
+	entry := toTrackEntry(remoteID, detail.MyListStatus, detail.NumChapters)
 	return &entry, nil
 }
 
@@ -223,7 +223,12 @@ func (c *Client) upsertEntry(ctx context.Context, token string, entry tracker.Tr
 	if err := c.doForm(ctx, token, http.MethodPut, reqURL, form, &status); err != nil {
 		return tracker.TrackEntry{}, err
 	}
-	return toTrackEntry(entry.RemoteID, &status), nil
+	// MAL's PUT .../my_list_status response carries only the my_list_status
+	// fields — no manga id or num_chapters of its own — so TotalChapters is
+	// carried through from the caller's OWN entry (typically already
+	// populated from an earlier GetEntry/Search) rather than lost on every
+	// save/update round-trip.
+	return toTrackEntry(entry.RemoteID, &status, entry.TotalChapters), nil
 }
 
 // DeleteEntry removes entry.RemoteID's my_list_status from the account.

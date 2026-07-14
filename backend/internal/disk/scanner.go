@@ -36,6 +36,13 @@ type SeriesFacts struct {
 	// authors/links/year/description/status + metadata_source/cover_source)
 	// after a DB loss, with zero calls to any metadata provider.
 	Metadata *SeriesMetadataSidecar
+
+	// TrackBindings is the sidecar's tracker-binding snapshot (nil/empty
+	// when the series has no tracker binding). It is what lets Reconcile
+	// restore TrackBinding rows after a total DB loss — which
+	// series↔tracker entry survives; live progress re-pulls on the next
+	// FetchTrack (spec/trackers-oauth-phase3 §3/§5).
+	TrackBindings []TrackBindingSidecar
 }
 
 // ChapterFact holds the per-chapter facts reconstructed from disk.
@@ -277,6 +284,7 @@ func buildSeriesFacts(dir, category string, sidecar *Sidecar, facts []ChapterFac
 	cat := category
 	var cover *CoverProvenance
 	var meta *SeriesMetadataSidecar
+	var bindings []TrackBindingSidecar
 	if sidecar != nil {
 		if sidecar.Title != "" {
 			title = sidecar.Title
@@ -286,8 +294,9 @@ func buildSeriesFacts(dir, category string, sidecar *Sidecar, facts []ChapterFac
 		}
 		cover = sidecar.Cover
 		meta = sidecar.Metadata
+		bindings = sidecar.TrackBindings
 	}
-	return &SeriesFacts{Title: title, Category: cat, Chapters: facts, Cover: cover, Metadata: meta}
+	return &SeriesFacts{Title: title, Category: cat, Chapters: facts, Cover: cover, Metadata: meta, TrackBindings: bindings}
 }
 
 // chapterFactFromOrphanCBZ reads provenance from the ComicInfo.xml inside a
