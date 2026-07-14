@@ -208,16 +208,56 @@ func (c *Client) GetEntry(ctx context.Context, token, remoteID string) (*tracker
 		return nil, err
 	}
 
-	var data getEntryData
-	vars := map[string]any{"userId": viewerID, "mediaId": mediaID}
-	if err := c.do(ctx, token, getEntryQuery, vars, &data); err != nil {
+	ml, err := c.fetchMediaListEntry(ctx, token, viewerID, mediaID)
+	if err != nil {
 		return nil, err
 	}
-	if data.MediaList == nil {
+	if ml == nil {
 		return nil, nil
 	}
-	entry := toTrackEntry(data.MediaList)
+	entry := toTrackEntry(ml)
 	return &entry, nil
+}
+
+// fetchMediaListEntry issues the MediaList query and TOLERATES AniList's real
+// "not on the account's list" response shape. Production AniList answers a
+// MediaList the caller has NOT added with HTTP 404 whose GraphQL body STILL
+// carries `data` present and MediaList explicitly null — e.g.
+// {"errors":[{"message":"Not Found","status":404}],"data":{"MediaList":null}}.
+// do()'s generic non-200-is-error path mistook that for a transport failure,
+// so Bind aborted with an error instead of falling through to SaveEntry
+// (creating the entry) — the bug this fixes. That exact shape returns
+// (nil, nil) here ("not tracked"); a 200 whose MediaList is null (AniList's
+// other documented not-tracked encoding) returns nil the same way. Any OTHER
+// non-200 — and a 404 that ISN'T the data-present-MediaList-null shape — is
+// still surfaced as a real error (isMediaListNotTracked is deliberately
+// narrow so a genuine 404 is never swallowed).
+func (c *Client) fetchMediaListEntry(ctx context.Context, token string, viewerID, mediaID int) (*mediaListEntry, error) {
+	resp, err := c.postGraphQL(ctx, token, getEntryQuery, map[string]any{"userId": viewerID, "mediaId": mediaID})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("anilist: read response: %w", err)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var data getEntryData
+		if err := decodeGraphQLBody(body, &data); err != nil {
+			return nil, err
+		}
+		return data.MediaList, nil
+	case http.StatusNotFound:
+		if isMediaListNotTracked(body) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("anilist: HTTP 404: %s", strings.TrimSpace(string(body)))
+	default:
+		return nil, fmt.Errorf("anilist: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 }
 
 // SaveEntry creates a new MediaList entry (a bind) for entry.RemoteID,
@@ -340,18 +380,18 @@ type gqlResponse struct {
 	Errors []gqlError      `json:"errors"`
 }
 
-// do POSTs a GraphQL request to AniList (attaching Bearer token when
-// non-empty) and decodes the "data" field into out (skipped when out is
-// nil). Any non-empty "errors" array fails the whole call — AniList's
-// GraphQL layer can return partial data alongside errors, but a tracker
-// operation has no use for a partially-populated result.
-func (c *Client) do(ctx context.Context, token, query string, vars map[string]any, out any) error {
+// postGraphQL marshals and POSTs a GraphQL request to AniList (attaching a
+// Bearer token when non-empty) and returns the raw HTTP response — the CALLER
+// owns resp.Body.Close(). Shared by do() (the generic decode path) and
+// GetEntry's fetchMediaListEntry, which additionally needs the raw status +
+// body do() hides so it can recognise AniList's 404 not-tracked shape.
+func (c *Client) postGraphQL(ctx context.Context, token, query string, vars map[string]any) (*http.Response, error) {
 	body, err := json.Marshal(gqlRequest{Query: query, Variables: vars})
 	if err != nil {
 		// Defensive path: gqlRequest holds only a string and a
 		// map[string]any of JSON-safe scalars, which json.Marshal never
 		// fails on; unreachable in practice.
-		return fmt.Errorf("anilist: marshal request: %w", err)
+		return nil, fmt.Errorf("anilist: marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphQLEndpoint, bytes.NewReader(body))
@@ -359,7 +399,7 @@ func (c *Client) do(ctx context.Context, token, query string, vars map[string]an
 		// Defensive path: reachable only with a nil context, which every
 		// caller here always supplies a real one for; unreachable in
 		// practice.
-		return fmt.Errorf("anilist: build request: %w", err)
+		return nil, fmt.Errorf("anilist: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -369,17 +409,40 @@ func (c *Client) do(ctx context.Context, token, query string, vars map[string]an
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("anilist: request: %w", err)
+		return nil, fmt.Errorf("anilist: request: %w", err)
+	}
+	return resp, nil
+}
+
+// do POSTs a GraphQL request to AniList and decodes the "data" field into out
+// (skipped when out is nil). Any non-200 HTTP status fails the whole call; see
+// GetEntry/fetchMediaListEntry for the ONE endpoint that instead tolerates a
+// 404 not-tracked shape.
+func (c *Client) do(ctx context.Context, token, query string, vars map[string]any, out any) error {
+	resp, err := c.postGraphQL(ctx, token, query, vars)
+	if err != nil {
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("anilist: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("anilist: read response: %w", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("anilist: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return decodeGraphQLBody(body, out)
+}
 
+// decodeGraphQLBody decodes a GraphQL-over-HTTP envelope from body: a
+// non-empty "errors" array fails the whole call — AniList's GraphQL layer can
+// return partial data alongside errors, but a tracker operation has no use for
+// a partially-populated result — otherwise the "data" field is unmarshaled
+// into out (skipped when out is nil).
+func decodeGraphQLBody(body []byte, out any) error {
 	var envelope gqlResponse
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	if err := json.Unmarshal(body, &envelope); err != nil {
 		return fmt.Errorf("anilist: decode response: %w", err)
 	}
 
@@ -395,4 +458,27 @@ func (c *Client) do(ctx context.Context, token, query string, vars map[string]an
 		return nil
 	}
 	return json.Unmarshal(envelope.Data, out)
+}
+
+// isMediaListNotTracked reports whether body is AniList's "this manga is not on
+// the account's list" response: a GraphQL body whose top-level `data` object is
+// PRESENT (not absent, not JSON null) and whose MediaList field is explicitly
+// JSON null. Production AniList serves this alongside HTTP 404 + an
+// {"errors":[{"message":"Not Found","status":404}]} array. Being this narrow —
+// data present AND MediaList literally null — means a genuine 404 (no data key,
+// data:null, or any other query's error shape) is never mistaken for
+// "not tracked" and silently swallowed.
+func isMediaListNotTracked(body []byte) bool {
+	var env struct {
+		Data *struct {
+			MediaList json.RawMessage `json:"MediaList"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false
+	}
+	if env.Data == nil {
+		return false
+	}
+	return string(bytes.TrimSpace(env.Data.MediaList)) == "null"
 }

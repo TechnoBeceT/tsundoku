@@ -50,18 +50,41 @@ func (s *Service) PushProgress(ctx context.Context, seriesID uuid.UUID, localFur
 	}
 
 	var errs []error
+	anyCompleted := false
 	for _, b := range bindings {
-		if pushErr := s.pushOne(ctx, b, localFurthest); pushErr != nil {
-			slog.WarnContext(ctx, "syncsvc: push failed, enqueueing for retry",
-				"track_binding_id", b.ID, "series_id", seriesID, "err", pushErr)
-			if enqErr := s.retryQueue.Enqueue(ctx, b.ID, localFurthest); enqErr != nil {
-				slog.WarnContext(ctx, "syncsvc: enqueue after push failure also failed",
-					"track_binding_id", b.ID, "err", enqErr)
-			}
+		completed, pushErr := s.pushOne(ctx, b, localFurthest)
+		if pushErr != nil {
+			s.enqueueFailedPush(ctx, b, localFurthest, pushErr)
 			errs = append(errs, pushErr)
+			continue
+		}
+		anyCompleted = anyCompleted || completed
+	}
+
+	// BUG-4 (QCAT-243): if a reading push auto-completed any binding (it
+	// reached that tracker's OWN reported total), propagate the terminal
+	// status to the series' OTHER trackers — including any that report no
+	// total and so could never auto-complete themselves.
+	if anyCompleted {
+		if err := s.CompleteSeries(ctx, seriesID); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// enqueueFailedPush logs a per-binding push failure and enqueues it on the
+// durable retry queue (never-lose-progress) — extracted from PushProgress's
+// loop so that method stays under the fleet's per-function complexity budget.
+// An enqueue that ALSO fails is logged, not returned: the original push error
+// is what the caller already records.
+func (s *Service) enqueueFailedPush(ctx context.Context, b *ent.TrackBinding, localFurthest float64, pushErr error) {
+	slog.WarnContext(ctx, "syncsvc: push failed, enqueueing for retry",
+		"track_binding_id", b.ID, "series_id", b.SeriesID, "err", pushErr)
+	if enqErr := s.retryQueue.Enqueue(ctx, b.ID, localFurthest); enqErr != nil {
+		slog.WarnContext(ctx, "syncsvc: enqueue after push failure also failed",
+			"track_binding_id", b.ID, "err", enqErr)
+	}
 }
 
 // pushOne applies the never-regress decision (sync.NextPush) to ONE binding
@@ -76,19 +99,25 @@ func (s *Service) PushProgress(ctx context.Context, seriesID uuid.UUID, localFur
 // row's own backoff/attempts bookkeeping is already owned by
 // retry.Queue.RunOnce, and a second Enqueue here would reset it to a fresh
 // budget, defeating the hard attempt cap (spec §3).
-func (s *Service) pushOne(ctx context.Context, binding *ent.TrackBinding, localFurthest float64) error {
+//
+// It returns completed=true when this push AUTO-COMPLETED the binding (it
+// reached the tracker's OWN reported total) — the signal PushProgress/Push use
+// to fan the terminal status out to the series' other trackers (BUG-4). A
+// declined push (already up to date) and a plain non-completing push both
+// return completed=false.
+func (s *Service) pushOne(ctx context.Context, binding *ent.TrackBinding, localFurthest float64) (bool, error) {
 	push, shouldPush := kernel.NextPush(localFurthest, binding.LastChapterRead)
 	if !shouldPush {
-		return nil
+		return false, nil
 	}
 
 	t, ok := s.registry.ByID(binding.TrackerID)
 	if !ok {
-		return ErrTrackerNotFound
+		return false, ErrTrackerNotFound
 	}
 	token, err := s.accountToken(ctx, binding.TrackerID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Truncate to whatever the tracker's wire field actually stores (spec §2:
@@ -102,17 +131,26 @@ func (s *Service) pushOne(ctx context.Context, binding *ent.TrackBinding, localF
 
 	if _, err := t.UpdateEntry(ctx, token, entry); err != nil {
 		s.markExpiredOnTokenFailure(ctx, binding.TrackerID, err)
-		return fmt.Errorf("syncsvc: push binding %s to %s: %w", binding.ID, t.Key(), err)
+		return false, fmt.Errorf("syncsvc: push binding %s to %s: %w", binding.ID, t.Key(), err)
 	}
 
 	upd := applyPushEntryToUpdate(binding.Update().SetLastChapterRead(truncated), entry)
 	updated, err := upd.Save(ctx)
 	if err != nil {
-		return fmt.Errorf("syncsvc: persist push result for binding %s: %w", binding.ID, err)
+		return false, fmt.Errorf("syncsvc: persist push result for binding %s: %w", binding.ID, err)
 	}
 
 	s.syncSidecar(ctx, updated.SeriesID)
-	return nil
+	return autoCompletes(binding, truncated), nil
+}
+
+// autoCompletes reports whether pushing truncated onto binding reaches the
+// tracker's OWN reported total (a non-zero total the read count has met) — the
+// SINGLE condition shared by buildPushEntry (which sets the completed status +
+// finish date) and pushOne (which reports it up for cross-tracker
+// propagation), so the "auto-complete" rule lives in exactly one place.
+func autoCompletes(binding *ent.TrackBinding, truncated float64) bool {
+	return binding.TotalChapters > 0 && kernel.ShouldAutoComplete(truncated, float64(binding.TotalChapters))
 }
 
 // buildPushEntry constructs the TrackEntry pushOne sends to the tracker for
@@ -133,7 +171,7 @@ func buildPushEntry(binding *ent.TrackBinding, truncated float64, now time.Time)
 		// First-ever progress on this binding: stamp (and push) a start date.
 		entry.StartDate = &now
 	}
-	if binding.TotalChapters > 0 && kernel.ShouldAutoComplete(truncated, float64(binding.TotalChapters)) {
+	if autoCompletes(binding, truncated) {
 		entry.FinishDate = &now
 		if status, ok := completedStatus(binding.TrackerID); ok {
 			entry.Status = status

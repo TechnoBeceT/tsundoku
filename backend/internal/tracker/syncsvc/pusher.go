@@ -3,6 +3,7 @@ package syncsvc
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -37,7 +38,21 @@ func (s *Service) Push(ctx context.Context, trackBindingID uuid.UUID, chapter fl
 		}
 		return fmt.Errorf("syncsvc: retry push: load binding %s: %w", trackBindingID, err)
 	}
-	return s.pushOne(ctx, binding, chapter)
+	completed, err := s.pushOne(ctx, binding, chapter)
+	if err != nil {
+		return err
+	}
+	// BUG-4 (QCAT-243): a retried push that finally auto-completes the binding
+	// propagates the terminal status to the series' other trackers, exactly
+	// like a fresh PushProgress. Best-effort: a propagation failure must not
+	// fail the retry itself (the queued push DID land) — it is logged only.
+	if completed {
+		if cErr := s.CompleteSeries(ctx, binding.SeriesID); cErr != nil {
+			slog.WarnContext(ctx, "syncsvc: retry push: completion propagation had per-binding failures",
+				"track_binding_id", binding.ID, "series_id", binding.SeriesID, "err", cErr)
+		}
+	}
+	return nil
 }
 
 // compile-time assertion that Service satisfies retry.Pusher.

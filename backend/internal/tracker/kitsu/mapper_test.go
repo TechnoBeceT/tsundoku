@@ -117,11 +117,9 @@ func TestToTrackEntry_MapsFieldsAndDates(t *testing.T) {
 			Manga: relationshipRef{Data: resourceRef{ID: "7224", Type: "manga"}},
 		},
 	}
-	got := toTrackEntry(d)
-	if got.RemoteID != "7224" || got.LibraryID != "999" || got.Status != "current" ||
-		got.Progress != 42 || got.Score != 16 || !got.Private {
-		t.Fatalf("toTrackEntry mismatch: %+v", got)
-	}
+	included := []includedManga{{ID: "7224", Type: "manga", Attributes: includedMangaAttrs{CanonicalTitle: "Berserk"}}}
+	got := toTrackEntry(d, included)
+	assertScalarFields(t, got)
 	if got.StartDate == nil || !got.StartDate.Equal(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("toTrackEntry.StartDate = %v, want 2024-03-15", got.StartDate)
 	}
@@ -130,11 +128,21 @@ func TestToTrackEntry_MapsFieldsAndDates(t *testing.T) {
 	}
 }
 
+// assertScalarFields checks the non-date fields of the mapped entry — extracted
+// so the driving test stays under the fleet's per-function complexity budget.
+func assertScalarFields(t *testing.T, got tracker.TrackEntry) {
+	t.Helper()
+	if got.RemoteID != "7224" || got.LibraryID != "999" || got.Title != "Berserk" || got.Status != "current" ||
+		got.Progress != 42 || got.Score != 16 || !got.Private {
+		t.Fatalf("toTrackEntry mismatch: %+v", got)
+	}
+}
+
 // TestToTrackEntry_NoRatingIsZeroScore confirms an unrated entry
 // (RatingTwenty nil) maps to Score 0, distinguishable in the request
 // direction (buildLibraryEntryRequest never sends a rating for a 0 score).
 func TestToTrackEntry_NoRatingIsZeroScore(t *testing.T) {
-	got := toTrackEntry(libraryEntryData{Attributes: libraryEntryAttrs{RatingTwenty: nil}})
+	got := toTrackEntry(libraryEntryData{Attributes: libraryEntryAttrs{RatingTwenty: nil}}, nil)
 	if got.Score != 0 {
 		t.Fatalf("Score = %v, want 0", got.Score)
 	}

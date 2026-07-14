@@ -3,6 +3,7 @@ package syncsvc
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,7 +73,33 @@ func (s *Service) UpdateTrack(ctx context.Context, recordID uuid.UUID, patch Upd
 	}
 
 	s.syncSidecar(ctx, updated.SeriesID)
-	return updated, nil
+	return s.propagateOwnerCompletion(ctx, updated, patch), nil
+}
+
+// propagateOwnerCompletion fans a terminal completed status out to the
+// series' OTHER trackers (BUG-4 / QCAT-243) when the owner's edit set THIS
+// binding's status to its tracker's own completed value, then returns the
+// (possibly progress-advanced) triggering binding. Best-effort: a per-binding
+// propagation failure is logged, never surfaced to the owner (their OWN edit
+// already succeeded and its outcome is what the response reports). When the
+// edit wasn't a completion, the binding is returned unchanged.
+func (s *Service) propagateOwnerCompletion(ctx context.Context, binding *ent.TrackBinding, patch UpdatePatch) *ent.TrackBinding {
+	if patch.Status == nil || !isPropagatedCompletedStatus(binding.TrackerID, *patch.Status) {
+		return binding
+	}
+	if err := s.CompleteSeries(ctx, binding.SeriesID); err != nil {
+		slog.WarnContext(ctx, "syncsvc: UpdateTrack: completion propagation had per-binding failures",
+			"track_binding_id", binding.ID, "series_id", binding.SeriesID, "err", err)
+	}
+	// CompleteSeries may have advanced this binding's own progress to its
+	// total — re-read so the §16 round-trip response reflects it. A reload
+	// failure falls back to the pre-propagation row (still durable + correct
+	// on status).
+	fresh, err := s.client.TrackBinding.Query().Where(enttrackbinding.IDEQ(binding.ID)).Only(ctx)
+	if err != nil {
+		return binding
+	}
+	return fresh
 }
 
 // applyUpdatePatch applies every non-nil field of patch to BOTH entry (the

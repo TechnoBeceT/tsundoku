@@ -317,7 +317,7 @@ func (s *Service) upsertBinding(ctx context.Context, seriesID uuid.UUID, tracker
 	}
 
 	if existing != nil {
-		updated, uerr := existing.Update().
+		upd := existing.Update().
 			SetRemoteID(remoteID).
 			SetRemoteURL(remoteURL).
 			SetLibraryID(entry.LibraryID).
@@ -327,15 +327,21 @@ func (s *Service) upsertBinding(ctx context.Context, seriesID uuid.UUID, tracker
 			SetScore(entry.Score).
 			SetNillableStartDate(entry.StartDate).
 			SetNillableFinishDate(entry.FinishDate).
-			SetPrivate(entry.Private).
-			Save(ctx)
+			SetPrivate(entry.Private)
+		// Only write the tracker's own title when the resolved entry actually
+		// carried one — a title-less refresh (e.g. MAL's PUT response, which
+		// omits the title) must never CLOBBER a good title back to "".
+		if entry.Title != "" {
+			upd = upd.SetTitle(entry.Title)
+		}
+		updated, uerr := upd.Save(ctx)
 		if uerr != nil {
 			return nil, fmt.Errorf("bind: update track binding (series=%s tracker=%d): %w", seriesID, trackerID, uerr)
 		}
 		return updated, nil
 	}
 
-	created, err := s.client.TrackBinding.Create().
+	create := s.client.TrackBinding.Create().
 		SetSeriesID(seriesID).
 		SetTrackerID(trackerID).
 		SetRemoteID(remoteID).
@@ -347,8 +353,11 @@ func (s *Service) upsertBinding(ctx context.Context, seriesID uuid.UUID, tracker
 		SetScore(entry.Score).
 		SetNillableStartDate(entry.StartDate).
 		SetNillableFinishDate(entry.FinishDate).
-		SetPrivate(entry.Private).
-		Save(ctx)
+		SetPrivate(entry.Private)
+	if entry.Title != "" {
+		create = create.SetTitle(entry.Title)
+	}
+	created, err := create.Save(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("bind: create track binding (series=%s tracker=%d): %w", seriesID, trackerID, err)
 	}

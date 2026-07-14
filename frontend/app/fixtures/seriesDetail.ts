@@ -579,7 +579,9 @@ export const trackBindings: TrackBinding[] = [
     trackerName: 'AniList',
     remoteId: '105398',
     remoteUrl: 'https://anilist.co/manga/105398',
-    title: 'Solo Leveling',
+    // Each tracker stores its OWN title for the manga — AniList's romaji here
+    // vs MyAnimeList's English below — so the binding rows legitimately differ.
+    title: 'Na Honjaman Level Up',
     status: 'CURRENT',
     lastChapterRead: 179,
     totalChapters: 0,

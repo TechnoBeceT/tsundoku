@@ -2,6 +2,41 @@ package syncsvc
 
 import "github.com/technobecet/tsundoku/internal/tracker"
 
+// muCompletedLabel is MangaUpdates' native "completed" status — the label of
+// its Complete list (list id 2). This MIRRORS internal/tracker/mangaupdates'
+// own listStatusLabels[2] value rather than importing it, the same
+// "each ent-touching package keeps its own copy of the tiny per-tracker table"
+// convention readingStatus/completedStatus already document.
+const muCompletedLabel = "complete"
+
+// propagatedCompletedStatus returns the native completed-status string to
+// STORE (and push) when completion is PROPAGATED across a series' trackers
+// (CompleteSeries, BUG-4 / QCAT-243). It EXTENDS completedStatus with
+// MangaUpdates' own list-based completed label ("complete", the Complete
+// list). Unlike completedStatus — used by the auto-complete-on-reach-total
+// push, which deliberately leaves MangaUpdates untouched because it cannot
+// know a total for it — completion propagation is an EXPLICIT terminal signal
+// that SHOULD move even a totalless tracker to completed. ok is false only for
+// a tracker not in the table (an unregistered id), so the caller skips it.
+func propagatedCompletedStatus(trackerID int) (status string, ok bool) {
+	if s, done := completedStatus(trackerID); done {
+		return s, true
+	}
+	if trackerID == tracker.IDMangaUpdates {
+		return muCompletedLabel, true
+	}
+	return "", false
+}
+
+// isPropagatedCompletedStatus reports whether status is trackerID's OWN
+// completed label (see propagatedCompletedStatus) — used by UpdateTrack to
+// detect an owner edit that TRANSITIONS a binding to completed and therefore
+// must fan the completion out to the series' other trackers.
+func isPropagatedCompletedStatus(trackerID int, status string) bool {
+	completed, ok := propagatedCompletedStatus(trackerID)
+	return ok && status == completed
+}
+
 // completedStatus returns the native "completed" status string in trackerID's
 // OWN vocabulary — consulted ONLY when sync.ShouldAutoComplete fires
 // (phase-4 spec §2: "auto-COMPLETED ONLY when the tracker reported a

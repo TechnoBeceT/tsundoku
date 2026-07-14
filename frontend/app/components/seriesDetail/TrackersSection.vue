@@ -99,6 +99,13 @@ import type { TrackerStatus } from '../screens/settings.types'
 const props = withDefaults(defineProps<{
   /** This series' current tracker bindings. */
   bindings?: TrackBinding[]
+  /**
+   * The series title — PREFILLS each "Add tracking" search box on expand
+   * (still editable), exactly like the metadata Identify modal prefills its
+   * search from the series title. Threading it from the page saves the owner
+   * retyping the title for every tracker.
+   */
+  seriesTitle?: string
   /** Every registered tracker's connect status. */
   trackers?: TrackerStatus[]
   /** True while the bindings list is loading. */
@@ -141,6 +148,7 @@ const props = withDefaults(defineProps<{
   progressError?: string | null
 }>(), {
   bindings: () => [],
+  seriesTitle: '',
   trackers: () => [],
   pending: false,
   error: null,
@@ -239,7 +247,9 @@ function toggleAddTracker(trackerId: number): void {
     return
   }
   expandedTrackerId.value = trackerId
-  query.value = ''
+  // Prefill the search with the series title (still editable), mirroring the
+  // metadata Identify modal — the owner rarely needs to retype it.
+  query.value = props.seriesTitle
   searched.value = false
   privateFlag.value = false
   searchedTrackerId.value = null

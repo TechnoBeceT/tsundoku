@@ -213,6 +213,43 @@ func TestBind_CreatesBindingAndWritesSidecar(t *testing.T) {
 	assertSidecarBinding(t, seriesDir, ft.id, "remote-7224", "current", 12, 8)
 }
 
+// TestBind_PersistsTrackerTitle proves the resolved entry's per-tracker Title
+// (each tracker's OWN title for the manga, which differs across trackers) is
+// written onto the TrackBinding row — the field the binding row displays. A
+// second bind whose entry carries NO title (e.g. MAL's title-less PUT
+// response) must NOT clobber the stored title back to "".
+func TestBind_PersistsTrackerTitle(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	row := seedBoundSeries(ctx, t, client, storage, "Solo Leveling")
+
+	ft := &fakeTracker{
+		id:         fakeTrackerID,
+		getEntryFn: entryFn(tracker.TrackEntry{Title: "Ore dake Level Up na Ken", Status: "current", Progress: 1}),
+	}
+	seedConnection(ctx, t, client, ft.id, "acct-token")
+	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
+
+	binding, err := svc.Bind(ctx, row.ID, ft.id, "remote-7224", false)
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if binding.Title != "Ore dake Level Up na Ken" {
+		t.Fatalf("binding.Title = %q, want the tracker's own title", binding.Title)
+	}
+
+	// Re-bind with a title-less entry — the stored title must survive.
+	ft.getEntryFn = entryFn(tracker.TrackEntry{Title: "", Status: "current", Progress: 2})
+	rebound, err := svc.Bind(ctx, row.ID, ft.id, "remote-7224", false)
+	if err != nil {
+		t.Fatalf("re-Bind: %v", err)
+	}
+	if rebound.Title != "Ore dake Level Up na Ken" {
+		t.Fatalf("rebound.Title = %q, want the title preserved (a title-less entry must not clobber it)", rebound.Title)
+	}
+}
+
 // assertBindingFields fails the test unless binding carries exactly the
 // given field values — extracted so the tests driving it stay under the
 // fleet's per-function cyclomatic-complexity budget.
