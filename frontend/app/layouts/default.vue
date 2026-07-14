@@ -7,6 +7,10 @@ const route = useRoute()
 const { connect, unhealthyCount, syncing, on } = useProgressStream()
 onMounted(connect)
 
+// PWA install affordance — captures beforeinstallprompt (Android Chrome) and
+// shows the floating "Install app" button until installed.
+const { installable, promptInstall } = usePwaInstall()
+
 /**
  * In-app new-chapter toast (chapter.new SSE). Shown ONLY while the tab is
  * visible — when it is hidden/closed the service worker's Web Push handler shows
@@ -138,5 +142,6 @@ function handleOpenAdopt(): void {
       @open="openToast"
       @dismiss="dismissToast"
     />
+    <InstallButton :installable="installable" @install="promptInstall" />
   </AppShell>
 </template>
