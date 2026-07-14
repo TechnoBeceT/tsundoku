@@ -16,10 +16,17 @@ import (
 // SyncNow pulls EVERY one of seriesID's TrackBinding entries from its
 // tracker's own account (GetEntry) and converges local↔remote per the
 // umbrella spec §6 "conflict = MAX wins BOTH directions" rule
-// (sync.Converge): whichever side (local or remote) is behind adopts the
-// higher value. When local was strictly ahead, the converged value is ALSO
-// pushed back to the remote (reusing sync.NextPush's own decision) so both
-// sides genuinely end up in agreement, not just the local row.
+// (sync.Converge), extended to a THREE-WAY convergence that also folds in
+// the local LIBRARY's own read-count (seriesLocalFurthest) — not just the
+// binding's stored value — so a series read far ahead locally (e.g. right
+// after adopting a backlog, or right after a fresh Bind) converges to that
+// real progress immediately, the same "converge on add" behavior the
+// reference apps (Suwayomi/Komikku) have. Whichever of the three
+// (local-library read-count / binding's stored value / remote's reported
+// progress) is furthest ahead wins; see syncOneBinding for the exact
+// never-regress chain. When local was strictly ahead, the converged value
+// is ALSO pushed back to the remote (reusing sync.NextPush's own decision)
+// so both sides genuinely end up in agreement, not just the local row.
 //
 // One binding's failure (GetEntry/UpdateEntry error, unregistered/
 // disconnected tracker) is logged and that binding's PRE-SYNC row is kept
@@ -70,7 +77,26 @@ func (s *Service) syncOneBinding(ctx context.Context, b *ent.TrackBinding) (*ent
 		return b, nil
 	}
 
-	converged := kernel.Converge(b.LastChapterRead, remote.Progress)
+	localFurthest, err := s.seriesLocalFurthest(ctx, b.SeriesID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Three-way max-wins convergence (umbrella spec §6 "MAX wins both
+	// directions", extended to fold in the LOCAL LIBRARY's own read-count —
+	// the reference apps' converge-on-add behavior): the target is the
+	// highest of (1) localFurthest, how far the owner has actually read in
+	// the local library right now, (2) b.LastChapterRead, the binding's own
+	// STORED value from the last sync, and (3) remote.Progress, what the
+	// tracker reports right now. b.LastChapterRead MUST stay in the chain as
+	// a floor: it is what stops a REGRESSED remote report — or a series with
+	// zero locally-read chapters, e.g. immediately after a fresh bind whose
+	// only prior state is whatever the remote happened to report at that
+	// moment — from dragging a binding DOWN below a value it was already
+	// converged to on a previous sync. Dropping it would turn "never
+	// regress" into "regress whenever local happens to be behind the last
+	// sync," the exact bug this three-way chain exists to prevent.
+	converged := kernel.Converge(kernel.Converge(localFurthest, b.LastChapterRead), remote.Progress)
 	truncated := float64(kernel.TruncateForInteger(converged))
 
 	upd := applyRemoteFields(b.Update().

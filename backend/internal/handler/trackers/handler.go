@@ -23,6 +23,7 @@ package trackers
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -249,7 +250,21 @@ func (h *Handler) ListBindings(c echo.Context) error {
 
 // CreateBinding handles POST /api/series/:id/tracking — binds the series to
 // trackerId's remoteId entry (bind.Service.Bind; create-if-absent on the
-// remote account) and returns the created/updated TrackBindingDTO.
+// remote account), then immediately runs the max-wins local↔remote
+// convergence (syncsvc.Service.SyncNow) so the owner sees the converged
+// progress on the very first response instead of needing a follow-up manual
+// Sync-now — the "converge on add" behavior the reference apps
+// (Suwayomi/Komikku) already have. Handler-layer orchestration only: bind.
+// Service itself does NOT import syncsvc (syncsvc already imports bind, so
+// the reverse would cycle), so bind-then-converge is sequenced here.
+//
+// The bind call itself still HARD-fails the request on error, as before
+// (mapServiceError's existing 404/400/409/502 mapping is untouched). Once
+// Bind succeeds the binding row is durable; a SyncNow failure afterwards
+// (a transient tracker/DB error) must NOT undo that or 500 the whole
+// request — it is logged and the handler falls back to re-reading the
+// just-created row, so the owner still gets a 201 with the binding Bind
+// produced and can retry convergence via the existing Sync-now endpoint.
 func (h *Handler) CreateBinding(c echo.Context) error {
 	seriesID, err := validateUUID(c.Param("id"), "series id")
 	if err != nil {
@@ -269,11 +284,50 @@ func (h *Handler) CreateBinding(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+
+	binding = h.convergeAfterBind(ctx, binding)
+
 	scoreFormat, err := h.resolveScoreFormat(ctx, binding.TrackerID)
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusCreated, toTrackBindingDTO(binding, h.registry, scoreFormat))
+}
+
+// convergeAfterBind runs SyncNow over binding's whole series right after a
+// fresh Bind and returns the converged row for binding.ID out of SyncNow's
+// result set. A SyncNow failure (or a result that — e.g. in a test double —
+// doesn't carry this binding at all) falls back to reloadBinding rather than
+// the caller's now-possibly-stale in-memory binding, since SyncNow may have
+// durably converged a DIFFERENT one of the series' other bindings before
+// failing on this one.
+func (h *Handler) convergeAfterBind(ctx context.Context, binding *ent.TrackBinding) *ent.TrackBinding {
+	bindings, err := h.syncSvc.SyncNow(ctx, binding.SeriesID)
+	if err != nil {
+		slog.WarnContext(ctx, "trackers: CreateBinding: post-bind convergence failed, binding was still created",
+			"track_binding_id", binding.ID, "series_id", binding.SeriesID, "err", err)
+		return h.reloadBinding(ctx, binding)
+	}
+	for _, b := range bindings {
+		if b.ID == binding.ID {
+			return b
+		}
+	}
+	return h.reloadBinding(ctx, binding)
+}
+
+// reloadBinding re-reads binding.ID's current row — convergeAfterBind's
+// fallback when SyncNow's result doesn't carry this binding. A reload
+// failure is logged and the caller's original (pre-sync but still durable)
+// binding is returned rather than erroring the whole request.
+func (h *Handler) reloadBinding(ctx context.Context, binding *ent.TrackBinding) *ent.TrackBinding {
+	fresh, err := h.client.TrackBinding.Query().Where(enttrackbinding.IDEQ(binding.ID)).Only(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "trackers: CreateBinding: reload binding after convergence failed",
+			"track_binding_id", binding.ID, "err", err)
+		return binding
+	}
+	return fresh
 }
 
 // DeleteBinding handles DELETE /api/series/:id/tracking/:recordId?deleteRemote=
