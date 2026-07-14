@@ -1,0 +1,10 @@
+.gradle/
+build/
+/data/
+*.apk
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+/out/
+*.log
+.kotlin/
+proofs/
