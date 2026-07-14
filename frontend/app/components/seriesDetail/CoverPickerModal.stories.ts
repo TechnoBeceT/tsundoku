@@ -52,6 +52,22 @@ export const Empty: Story = {
 }
 
 /**
+ * SameProviderDisambiguation — BUG-1 regression guard. Both tiles are
+ * MangaDex covers (`sourceKind:sourceRef` = "metadata:mangadex" for BOTH),
+ * distinguished only by `coverUrl` in their `id`. The first is marked
+ * "Current" (open preselection); click the OTHER tile — only it gets the
+ * accent ring + check, the first is deselected. Before the id fix
+ * (`${sourceKind}:${sourceRef}` alone, no `coverUrl`) the two tiles shared
+ * one id, so clicking either one would have marked BOTH selected.
+ */
+export const SameProviderDisambiguation: Story = {
+  args: {
+    candidates: coverCandidates.filter((c) => c.sourceRef === 'mangadex'),
+    currentId: currentCoverId,
+  },
+}
+
+/**
  * Light theme — pinned via a `data-theme="light"` subtree so the gallery renders
  * light regardless of the toolbar. Args-driven; no interaction.
  */

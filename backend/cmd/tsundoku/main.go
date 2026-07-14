@@ -227,6 +227,14 @@ func main() {
 	// suwayomi.NewIngest.
 	healthSvc := series.NewServiceWithStaleGrace(entClient, cfg.Storage.Folder, settingsSvc.StaleGraceDays)
 
+	// Wire the metadata engine's "set a library source's own cover" pick
+	// (metadatasvc.Service.SetCover, kind=="source"): it needs the real
+	// Suwayomi client (only just built above) plus the series domain's own
+	// provider-cover resolution, so this can't be attached at metaSvc's own
+	// construction site earlier in this function — see sourceCoverAdapter's
+	// doc comment for why the adapter itself lives outside internal/metadatasvc.
+	metaSvc = metaSvc.WithSourceCoverFetcher(sourceCoverAdapter{series: healthSvc, sw: suwayomiClient})
+
 	// Start the Suwayomi engine. pm is the embedded process manager (nil in
 	// external mode) — the shutdown path guards on pm != nil so Stop() is only
 	// called when tsundoku owns the process.

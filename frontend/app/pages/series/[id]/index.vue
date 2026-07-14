@@ -311,9 +311,17 @@ watch(coverPickerOpen, (isOpen) => {
   if (isOpen) void loadCovers()
 })
 
+// Mirrors useMetadata's mapCoverCandidate id scheme exactly
+// (`${sourceKind}:${sourceRef}:${coverUrl}`) so the gallery tile the series
+// is CURRENTLY using is the one — and only one — marked "Current"/preselected.
+// `coverSource.remoteUrl` is what SetCover recorded coverUrl AS (both the
+// metadata- and source-kind branches persist it verbatim — see
+// metadatasvc.finalizeCover), so it reconstructs the exact same id a fresh
+// `loadCovers()` gallery hit would carry for that pick, with no extra field
+// needed on the DTO.
 const currentCoverId = computed(() => {
   const src = series.value?.coverSource
-  return src ? `${src.kind}:${src.ref}` : undefined
+  return src ? `${src.kind}:${src.ref}:${src.remoteUrl}` : undefined
 })
 
 async function onCoverConfirm(candidate: CoverCandidate): Promise<void> {

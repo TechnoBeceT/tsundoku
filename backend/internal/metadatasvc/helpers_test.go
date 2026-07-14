@@ -57,3 +57,19 @@ func seriesProviderCount(ctx context.Context, t *testing.T, db *ent.Client, id u
 	}
 	return n
 }
+
+// seedSeriesProviderWithCover creates a SeriesProvider row for seriesID with
+// the given provider identity, display name, and cover_url — the fixture
+// both CoverCandidates' source half (Feature 2) and SetCover's "source"
+// branch need.
+func seedSeriesProviderWithCover(ctx context.Context, t *testing.T, db *ent.Client, seriesID uuid.UUID, provider, providerName, coverURL string) uuid.UUID {
+	t.Helper()
+	p := db.SeriesProvider.Create().
+		SetSeriesID(seriesID).
+		SetProvider(provider).
+		SetProviderName(providerName).
+		SetCoverURL(coverURL).
+		SetImportance(1).
+		SaveX(ctx)
+	return p.ID
+}

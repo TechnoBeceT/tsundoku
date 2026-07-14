@@ -55,6 +55,12 @@ var ErrSeriesNotFound = errors.New("series not found")
 // caller supplied a bad provider key, not a missing resource).
 var ErrProviderNotFound = errors.New("metadata provider not found")
 
+// ErrSourceCoverFetcherNotConfigured is returned by SetCover when kind=="source"
+// but no SourceCoverFetcher was attached via WithSourceCoverFetcher — e.g. a
+// test-built Service via plain NewService, or a wiring gap. A clear error
+// beats a nil-pointer panic on the very first source-cover pick.
+var ErrSourceCoverFetcherNotConfigured = errors.New("metadatasvc: no source cover fetcher configured")
+
 // defaultHTTPTimeout bounds a single cover-image fetch performed by
 // saveCoverFromURL. A cover is one image, not a paginated API call, so a
 // generous-but-bounded client-wide timeout (rather than a per-request
@@ -74,6 +80,11 @@ type Service struct {
 	registry *metadata.Registry
 	storage  string
 	http     *http.Client
+	// sourceCoverFetcher is the optional port SetCover uses to fetch a
+	// library SOURCE's own cover bytes (kind=="source"). Attached via
+	// WithSourceCoverFetcher; nil until then (see SourceCoverFetcher's doc
+	// comment for why the concrete adapter is NOT built in this package).
+	sourceCoverFetcher SourceCoverFetcher
 }
 
 // Option configures a Service at construction time. The only production use
@@ -90,6 +101,33 @@ type Option func(*Service)
 // NewService with no options and gets the guarded client automatically.
 func WithHTTPClient(c *http.Client) Option {
 	return func(s *Service) { s.http = c }
+}
+
+// SourceCoverFetcher is the narrow port SetCover uses to fetch a library
+// SOURCE's own cover bytes (SetCover kind=="source") — resolving the
+// SeriesProvider's stored cover_url (with the same series↔provider ownership
+// check the per-provider cover proxy route performs) and fetching those bytes
+// from Suwayomi. It is deliberately this narrow, mirroring
+// series.Service.CoverFetcher, for two reasons: it keeps metadatasvc's own
+// import surface exactly the one its package doc declares (metadata + ent +
+// disk + category — resolving a SeriesProvider's cover_url needs
+// internal/series, and fetching it needs internal/suwayomi, neither of which
+// this package imports), and it makes SetCover's source branch trivial to
+// fake in tests. The concrete adapter lives at the composition root
+// (cmd/tsundoku), wired via WithSourceCoverFetcher.
+type SourceCoverFetcher interface {
+	SourceCoverBytes(ctx context.Context, seriesID, providerID uuid.UUID) (data []byte, ext string, err error)
+}
+
+// WithSourceCoverFetcher attaches the port SetCover uses to fetch a library
+// source's own cover bytes, mirroring series.Service.WithCoverFetcher's
+// fluent shape so production wires it the same way. It is optional: a
+// Service built without one still serves metadata-provider cover picks; a
+// "source"-kind SetCover call returns ErrSourceCoverFetcherNotConfigured
+// instead of a nil-pointer panic.
+func (s *Service) WithSourceCoverFetcher(f SourceCoverFetcher) *Service {
+	s.sourceCoverFetcher = f
+	return s
 }
 
 // NewService builds the metadata-engine orchestration service. http defaults
@@ -239,18 +277,24 @@ func (s *Service) Identify(ctx context.Context, seriesID uuid.UUID, providerKey,
 	return s.persist(ctx, seriesID, merged, src, primary.CoverURL)
 }
 
-// CoverCandidates aggregates cover options from every metadata provider for
-// the series' own title — the gallery behind GET /api/series/:id/metadata/
-// covers. It reuses Registry.Search's existing fan-out (deterministic,
-// registry-order, per-provider-failure-skipped) rather than looping over
-// providers itself, so provider-fan-out logic has exactly one home.
+// CoverCandidates aggregates cover options from every metadata provider AND
+// the series' own library SOURCES for the series' own title — the gallery
+// behind GET /api/series/:id/metadata/covers. It reuses Registry.Search's
+// existing fan-out (deterministic, registry-order, per-provider-failure-
+// skipped) rather than looping over providers itself, so provider-fan-out
+// logic has exactly one home; the source half is appended from the already
+// eager-loaded SeriesProvider rows (sourceCoverCandidates) — zero extra
+// queries, zero source calls.
 //
 // DEFERRED (noted, not built here — see the C1 task report): MangaDex's
 // multi-cover gallery endpoint isn't reachable through the Provider
 // interface's Search/GetSeriesCover methods, so only ONE cover per MangaDex
 // search hit surfaces today.
 func (s *Service) CoverCandidates(ctx context.Context, seriesID uuid.UUID) ([]metadata.CoverCandidate, error) {
-	row, err := s.client.Series.Query().Where(entseries.IDEQ(seriesID)).Only(ctx)
+	row, err := s.client.Series.Query().
+		Where(entseries.IDEQ(seriesID)).
+		WithProviders().
+		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, ErrSeriesNotFound
@@ -263,7 +307,7 @@ func (s *Service) CoverCandidates(ctx context.Context, seriesID uuid.UUID) ([]me
 		return nil, fmt.Errorf("metadatasvc: search covers for series %s: %w", seriesID, err)
 	}
 
-	candidates := make([]metadata.CoverCandidate, 0, len(hits))
+	candidates := make([]metadata.CoverCandidate, 0, len(hits)+len(row.Edges.Providers))
 	for _, h := range hits {
 		if h.CoverURL == "" {
 			continue
@@ -275,15 +319,66 @@ func (s *Service) CoverCandidates(ctx context.Context, seriesID uuid.UUID) ([]me
 			Label:      h.Provider,
 		})
 	}
+	candidates = append(candidates, sourceCoverCandidates(seriesID, row.Edges.Providers)...)
 	return candidates, nil
 }
 
-// SetCover fetches coverURL's bytes, caches them via the Local Cover Cache,
-// and records cover_source = {kind, ref, coverURL} — the owner's explicit
-// cover pick, independent of metadata_source (QCAT-228: cover selection is
-// never coupled to the rich-metadata merge). Unlike persist's best-effort
+// sourceCoverCandidates appends one CoverCandidate per SeriesProvider that
+// carries its own cover_url — the series' own library sources (Comix,
+// WeebCentral, a disk-origin scanlator group, ...) — so the owner can pick a
+// source's poster alongside the metadata-provider gallery.
+//
+// CoverURL is the per-provider cover PROXY path
+// (/api/series/{id}/providers/{providerId}/cover — the same browser-loadable,
+// same-origin, authed route the metadata-source picker's thumbnails already
+// use, see handler/series.ProviderCover) — NEVER the raw
+// SeriesProvider.cover_url, which is Suwayomi's own server-relative thumbnail
+// path: the browser cannot load it directly (no auth forwarded, and Suwayomi
+// is often only reachable from the backend).
+func sourceCoverCandidates(seriesID uuid.UUID, providers []*ent.SeriesProvider) []metadata.CoverCandidate {
+	out := make([]metadata.CoverCandidate, 0, len(providers))
+	for _, p := range providers {
+		if p.CoverURL == "" {
+			continue
+		}
+		out = append(out, metadata.CoverCandidate{
+			SourceKind: "source",
+			SourceRef:  p.ID.String(),
+			CoverURL:   fmt.Sprintf("/api/series/%s/providers/%s/cover", seriesID, p.ID),
+			Label:      sourceProviderLabel(p),
+		})
+	}
+	return out
+}
+
+// sourceProviderLabel is the display label for a source cover candidate — the
+// source's human-readable provider_name, falling back to the raw provider
+// identity key when no name was captured. This duplicates
+// series.ProviderLabel's two-line fallback rather than importing
+// internal/series into a cover-candidate helper that otherwise needs none of
+// it (the same "trivial duplication beats a cross-package dependency" call
+// coverVersion makes below, for the identical reason: this package's declared
+// import surface is metadata + ent + disk + category).
+func sourceProviderLabel(p *ent.SeriesProvider) string {
+	if p.ProviderName != "" {
+		return p.ProviderName
+	}
+	return p.Provider
+}
+
+// SetCover records the owner's explicit cover pick — cover_source = {kind,
+// ref, coverURL} — independent of metadata_source (QCAT-228: cover selection
+// is never coupled to the rich-metadata merge). Unlike persist's best-effort
 // cover step, a fetch/cache failure here IS returned: the whole point of the
 // call is to change the cover, so the owner must see it fail.
+//
+// The bytes come from one of two places depending on kind: a "metadata"
+// candidate is fetched by an ordinary HTTP GET of coverURL (a public
+// provider/CDN URL — saveCoverFromURL); a "source" candidate's bytes live on
+// the Suwayomi server, not at coverURL (which is the browser-loadable PROXY
+// path CoverCandidates handed back — see sourceCoverCandidates), so it is
+// resolved + fetched through the SourceCoverFetcher port instead
+// (saveCoverFromSource).
 func (s *Service) SetCover(ctx context.Context, seriesID uuid.UUID, kind, ref, coverURL string) error {
 	row, err := s.client.Series.Query().
 		Where(entseries.IDEQ(seriesID)).
@@ -295,8 +390,12 @@ func (s *Service) SetCover(ctx context.Context, seriesID uuid.UUID, kind, ref, c
 		}
 		return fmt.Errorf("metadatasvc: load series %s: %w", seriesID, err)
 	}
+	categoryName := category.NameOf(row)
 
-	return s.saveCoverFromURL(ctx, row, category.NameOf(row), kind, ref, coverURL)
+	if kind == "source" {
+		return s.saveCoverFromSource(ctx, row, categoryName, ref, coverURL)
+	}
+	return s.saveCoverFromURL(ctx, row, categoryName, kind, ref, coverURL)
 }
 
 // persist writes the merged rich metadata (Description/Status/Genres/Tags/
@@ -358,12 +457,10 @@ func (s *Service) persist(
 	return nil
 }
 
-// saveCoverFromURL fetches coverURL's bytes, caches them via disk.SaveCover
-// (the same Local Cover Cache the M10 cover proxy + series.Service.CoverBytes
-// use), re-indexes Series.cover_file/cover_source_url/cover_version +
-// cover_source in one update, and mirrors the fresh row into the sidecar.
-// Returns any fetch/persist error — SetCover propagates it to the owner;
-// persist's identify callers treat it as best-effort and only log.
+// saveCoverFromURL fetches coverURL's bytes over plain HTTP (a metadata
+// provider's public CDN URL) and hands them to finalizeCover. Returns any
+// fetch/persist error — SetCover propagates it to the owner; persist's
+// identify callers treat it as best-effort and only log.
 func (s *Service) saveCoverFromURL(
 	ctx context.Context,
 	row *ent.Series,
@@ -373,7 +470,52 @@ func (s *Service) saveCoverFromURL(
 	if err != nil {
 		return err
 	}
+	return s.finalizeCover(ctx, row, categoryName, kind, ref, coverURL, data, ext)
+}
 
+// saveCoverFromSource resolves ref (a SeriesProvider UUID string) through the
+// attached SourceCoverFetcher and hands the fetched bytes to finalizeCover.
+// coverURL here is the browser-loadable proxy path CoverCandidates handed
+// back (see sourceCoverCandidates) — recorded as provenance, never fetched
+// directly (the real bytes live on the Suwayomi server, resolved by the
+// SourceCoverFetcher via the SeriesProvider's own cover_url).
+//
+// Returns ErrSourceCoverFetcherNotConfigured when no port is attached, an
+// invalid-UUID error when ref does not parse, or whatever the port itself
+// reports (e.g. series.ErrProviderNotInSeries when ref does not belong to
+// row's series).
+func (s *Service) saveCoverFromSource(
+	ctx context.Context,
+	row *ent.Series,
+	categoryName, ref, coverURL string,
+) error {
+	if s.sourceCoverFetcher == nil {
+		return fmt.Errorf("metadatasvc: set source cover for series %s: %w", row.ID, ErrSourceCoverFetcherNotConfigured)
+	}
+	providerID, err := uuid.Parse(ref)
+	if err != nil {
+		return fmt.Errorf("metadatasvc: invalid source provider id %q: %w", ref, err)
+	}
+
+	data, ext, err := s.sourceCoverFetcher.SourceCoverBytes(ctx, row.ID, providerID)
+	if err != nil {
+		return fmt.Errorf("metadatasvc: fetch source cover for series %s provider %s: %w", row.ID, providerID, err)
+	}
+	return s.finalizeCover(ctx, row, categoryName, "source", ref, coverURL, data, ext)
+}
+
+// finalizeCover is the shared tail of both cover-set paths: caches data via
+// disk.SaveCover (the same Local Cover Cache the M10 cover proxy +
+// series.Service.CoverBytes use), re-indexes Series.cover_file/
+// cover_source_url/cover_version + cover_source in one update, and mirrors
+// the fresh row into the sidecar.
+func (s *Service) finalizeCover(
+	ctx context.Context,
+	row *ent.Series,
+	categoryName, kind, ref, coverURL string,
+	data []byte,
+	ext string,
+) error {
 	filename, err := disk.SaveCover(disk.CoverRequest{
 		Storage:   s.storage,
 		Category:  categoryName,

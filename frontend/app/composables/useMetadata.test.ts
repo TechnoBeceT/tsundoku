@@ -60,8 +60,13 @@ vi.mock('~/utils/api/client', () => ({
           return Promise.resolve({ data: null, error: { message: 'covers failed' }, response: new Response(null, { status: 500 }) })
         }
         return Promise.resolve({
+          // Two hits from the SAME metadata provider ("anilist") — the real
+          // shape a multi-result provider search returns, and the exact case
+          // that used to collide on id (BUG-1: `${sourceKind}:${sourceRef}`
+          // alone gave both the identical id "metadata:anilist").
           data: [
             { sourceKind: 'metadata', sourceRef: 'anilist', coverUrl: 'https://x/anilist-cover.jpg', label: 'anilist' },
+            { sourceKind: 'metadata', sourceRef: 'anilist', coverUrl: 'https://x/anilist-cover-2.jpg', label: 'anilist' },
             { sourceKind: 'source', sourceRef: 'prov-1', coverUrl: 'https://x/source-cover.jpg', label: 'Asura Scans' },
           ],
           error: null,
@@ -174,10 +179,22 @@ describe('useMetadata', () => {
 
     expect(calls).toEqual([{ method: 'GET', path: '/api/series/{id}/metadata/covers', query: undefined }])
     expect(coverCandidates.value).toEqual([
-      { id: 'metadata:anilist', provider: 'AniList', coverUrl: 'https://x/anilist-cover.jpg', sourceKind: 'metadata', sourceRef: 'anilist' },
-      { id: 'source:prov-1', provider: 'Asura Scans', coverUrl: 'https://x/source-cover.jpg', sourceKind: 'source', sourceRef: 'prov-1' },
+      { id: 'metadata:anilist:https://x/anilist-cover.jpg', provider: 'AniList', coverUrl: 'https://x/anilist-cover.jpg', sourceKind: 'metadata', sourceRef: 'anilist' },
+      { id: 'metadata:anilist:https://x/anilist-cover-2.jpg', provider: 'AniList', coverUrl: 'https://x/anilist-cover-2.jpg', sourceKind: 'metadata', sourceRef: 'anilist' },
+      { id: 'source:prov-1:https://x/source-cover.jpg', provider: 'Asura Scans', coverUrl: 'https://x/source-cover.jpg', sourceKind: 'source', sourceRef: 'prov-1' },
     ])
     expect(coversError.value).toBeNull()
+  })
+
+  it('loadCovers() gives two covers from the SAME provider DIFFERENT ids (BUG-1 regression guard)', async () => {
+    const { coverCandidates, loadCovers } = useMetadata('series-1')
+
+    await loadCovers()
+
+    const anilistCandidates = coverCandidates.value.filter((c) => c.sourceKind === 'metadata' && c.sourceRef === 'anilist')
+    expect(anilistCandidates).toHaveLength(2)
+    const ids = anilistCandidates.map((c) => c.id)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
   it('loadCovers() failure clears coverCandidates and sets coversError', async () => {

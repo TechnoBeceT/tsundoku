@@ -501,20 +501,36 @@ export const metadataCandidates: MetadataCandidate[] = [
  * Several DIFFERENT covers for a single series across providers — the exact
  * spread the owner disambiguates by eye when choosing which poster to keep. The
  * cover is chosen INDEPENDENTLY of the metadata match (a per-field cover_source).
+ *
+ * DELIBERATELY includes TWO same-provider pairs — AniList (`anilist`) ×2 and
+ * MangaDex (`mangadex`) ×2 — with `id` built the SAME way
+ * `useMetadata.mapCoverCandidate` builds it in production
+ * (`${sourceKind}:${sourceRef}:${coverUrl}`), so this fixture is also the
+ * BUG-1 regression guard in Storybook: the old `${sourceKind}:${sourceRef}`
+ * scheme would have collapsed each pair onto one shared id, and
+ * `CoverPickerModal`'s `c.id === selectedId` single-select would have marked
+ * (and confirmed) BOTH tiles of a pair at once. With `coverUrl` in the id,
+ * clicking one tile of a pair here selects only that one.
  */
 export const coverCandidates: CoverCandidate[] = [
-  { id: 'anilist:cover', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist/400/600', sourceKind: 'metadata', sourceRef: 'anilist' },
-  { id: 'mal:cover', provider: 'MAL', coverUrl: 'https://picsum.photos/seed/cover-mal/400/600', sourceKind: 'metadata', sourceRef: 'mal' },
-  { id: 'mangadex:cover-1', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-1/400/600', sourceKind: 'metadata', sourceRef: 'mangadex' },
-  { id: 'mangadex:cover-2', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-2/400/600', sourceKind: 'metadata', sourceRef: 'mangadex' },
-  { id: 'mangaupdates:cover', provider: 'MangaUpdates', coverUrl: 'https://picsum.photos/seed/cover-mangaupdates/400/600', sourceKind: 'metadata', sourceRef: 'mangaupdates' },
-  { id: 'asura:cover', provider: 'Asura Scans', coverUrl: 'https://picsum.photos/seed/cover-asura/400/600', sourceKind: 'source', sourceRef: 'prov-2222' },
-  { id: 'anilist:cover-alt', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist-alt/400/600', sourceKind: 'metadata', sourceRef: 'anilist' },
-  { id: 'source:cover-empty', provider: 'Reaper Scans', coverUrl: '', sourceKind: 'source', sourceRef: 'prov-3333' },
+  { id: 'metadata:anilist:https://picsum.photos/seed/cover-anilist/400/600', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist/400/600', sourceKind: 'metadata', sourceRef: 'anilist' },
+  { id: 'metadata:mal:https://picsum.photos/seed/cover-mal/400/600', provider: 'MAL', coverUrl: 'https://picsum.photos/seed/cover-mal/400/600', sourceKind: 'metadata', sourceRef: 'mal' },
+  { id: 'metadata:mangadex:https://picsum.photos/seed/cover-mangadex-1/400/600', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-1/400/600', sourceKind: 'metadata', sourceRef: 'mangadex' },
+  { id: 'metadata:mangadex:https://picsum.photos/seed/cover-mangadex-2/400/600', provider: 'MangaDex', coverUrl: 'https://picsum.photos/seed/cover-mangadex-2/400/600', sourceKind: 'metadata', sourceRef: 'mangadex' },
+  { id: 'metadata:mangaupdates:https://picsum.photos/seed/cover-mangaupdates/400/600', provider: 'MangaUpdates', coverUrl: 'https://picsum.photos/seed/cover-mangaupdates/400/600', sourceKind: 'metadata', sourceRef: 'mangaupdates' },
+  { id: 'source:prov-2222:https://picsum.photos/seed/cover-asura/400/600', provider: 'Asura Scans', coverUrl: 'https://picsum.photos/seed/cover-asura/400/600', sourceKind: 'source', sourceRef: 'prov-2222' },
+  { id: 'metadata:anilist:https://picsum.photos/seed/cover-anilist-alt/400/600', provider: 'AniList', coverUrl: 'https://picsum.photos/seed/cover-anilist-alt/400/600', sourceKind: 'metadata', sourceRef: 'anilist' },
+  { id: 'source:prov-3333:', provider: 'Reaper Scans', coverUrl: '', sourceKind: 'source', sourceRef: 'prov-3333' },
 ]
 
-/** The cover the series currently uses (the "Current" marker + open preselection). */
-export const currentCoverId = 'mangadex:cover-1'
+/**
+ * The cover the series currently uses (the "Current" marker + open
+ * preselection) — the first MangaDex tile's id, matching the SAME scheme
+ * `series.coverSource` reconstructs on the real page (see `currentCoverId`
+ * in `pages/series/[id]/index.vue`). Proves the marker lands on exactly ONE
+ * of the two same-provider MangaDex tiles, not both.
+ */
+export const currentCoverId = 'metadata:mangadex:https://picsum.photos/seed/cover-mangadex-1/400/600'
 
 /**
  * A source with ONE genuine side-chapter (a `5.5` omake). `.5` is by far the most

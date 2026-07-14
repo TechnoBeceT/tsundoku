@@ -86,11 +86,8 @@ type testEnv struct {
 // refreshed SeriesDetailDTO), and a valid owner Bearer token.
 func newTestEnv(t *testing.T, fp *fakeProvider) *testEnv {
 	t.Helper()
-
 	client := testdb.New(t)
 	storage := t.TempDir()
-	authSvc := auth.NewService(testSecret)
-
 	registry := metadata.NewRegistry(fp)
 	// WithHTTPClient is the test seam (metadatasvc.NewService's doc comment):
 	// the PRODUCTION default client refuses to dial loopback addresses, which
@@ -98,6 +95,19 @@ func newTestEnv(t *testing.T, fp *fakeProvider) *testEnv {
 	// handler test in this file never reaches the network, so the plain
 	// client is harmless for them.
 	metaSvc := metadatasvc.NewService(client, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
+	return wireTestEnv(t, client, storage, metaSvc)
+}
+
+// wireTestEnv is the shared tail every constructor in this file uses (see
+// newTestEnv and metadatasvcNewServiceWithSourceCover's callers): it builds
+// the Echo app (routes behind RequireOwner) + a valid owner Bearer token
+// around an already-constructed metaSvc. Split out because the "source"-kind
+// SetCover tests must seed a SeriesProvider row (to know its generated UUID)
+// BEFORE the SourceCoverFetcher — and therefore metaSvc — can be built,
+// which newTestEnv's all-in-one shape doesn't allow for.
+func wireTestEnv(t *testing.T, client *ent.Client, storage string, metaSvc *metadatasvc.Service) *testEnv {
+	t.Helper()
+	authSvc := auth.NewService(testSecret)
 	seriesSvc := seriessvc.NewService(client, storage, 14)
 	h := handler.NewHandler(metaSvc, seriesSvc)
 
@@ -150,6 +160,39 @@ func withSeriesDir(t *testing.T, storage, title string) {
 	if err := os.MkdirAll(disk.SeriesDir(storage, "Manga", title), 0o750); err != nil {
 		t.Fatalf("mkdir series dir: %v", err)
 	}
+}
+
+// seedSeriesProviderWithCover creates a SeriesProvider row for seriesID with
+// a cover_url — the fixture the source-candidate/source-SetCover tests need.
+// Package-local copy of internal/metadatasvc's own test helper (black-box
+// test packages don't share unexported fixtures).
+func seedSeriesProviderWithCover(ctx context.Context, t *testing.T, db *ent.Client, seriesID uuid.UUID, provider, providerName, coverURL string) uuid.UUID {
+	t.Helper()
+	p := db.SeriesProvider.Create().
+		SetSeriesID(seriesID).
+		SetProvider(provider).
+		SetProviderName(providerName).
+		SetCoverURL(coverURL).
+		SetImportance(1).
+		SaveX(ctx)
+	return p.ID
+}
+
+// fakeSourceCoverFetcher is a minimal metadatasvc.SourceCoverFetcher double —
+// mirrors internal/metadatasvc's own package-local copy (test doubles are not
+// exported production code).
+type fakeSourceCoverFetcher struct {
+	seriesID   uuid.UUID
+	providerID uuid.UUID
+	data       []byte
+	ext        string
+}
+
+func (f *fakeSourceCoverFetcher) SourceCoverBytes(_ context.Context, seriesID, providerID uuid.UUID) ([]byte, string, error) {
+	if seriesID != f.seriesID || providerID != f.providerID {
+		return nil, "", errors.New("fakeSourceCoverFetcher: unexpected series/provider id")
+	}
+	return f.data, f.ext, nil
 }
 
 // TestAuthz_AllRoutesReject401 asserts every metadata route is behind
@@ -408,4 +451,128 @@ func TestSetCover_SeriesNotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// TestCovers_IncludesSourceCandidate is Feature 2's end-to-end proof at the
+// HTTP layer: the gallery includes the series' own library source alongside
+// the metadata-provider hit, with the proxy CoverURL (never the raw
+// Suwayomi-relative cover_url).
+func TestCovers_IncludesSourceCandidate(t *testing.T) {
+	ctx := context.Background()
+	fp := &fakeProvider{
+		key: "anilist",
+		searchResults: []metadata.SearchResult{
+			{Provider: "anilist", RemoteID: "42", Title: "Chainsaw Man", CoverURL: "https://img.test/42.jpg"},
+		},
+	}
+	env := newTestEnv(t, fp)
+	id := seedSeries(ctx, t, env.client, "Chainsaw Man", "chainsaw-man")
+	providerID := seedSeriesProviderWithCover(ctx, t, env.client, id, "7", "Comix", "/api/v1/manga/7/thumbnail")
+
+	rec := env.do(http.MethodGet, "/api/series/"+id.String()+"/metadata/covers", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var out []handler.CoverCandidateDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("len(out) = %d, want 2 (one metadata hit + one source): %+v", len(out), out)
+	}
+
+	var sourceCand *handler.CoverCandidateDTO
+	for i := range out {
+		if out[i].SourceKind == "source" {
+			sourceCand = &out[i]
+		}
+	}
+	if sourceCand == nil {
+		t.Fatalf("no source-kind candidate in %+v", out)
+	}
+	wantURL := "/api/series/" + id.String() + "/providers/" + providerID.String() + "/cover"
+	if sourceCand.SourceRef != providerID.String() || sourceCand.CoverURL != wantURL || sourceCand.Label != "Comix" {
+		t.Errorf("source candidate = %+v, want {source %s %s Comix}", sourceCand, providerID, wantURL)
+	}
+}
+
+// TestSetCover_Source is Feature 2's SetCover round-trip at the HTTP layer: a
+// "source"-kind pick (whose coverUrl is the same-origin proxy path, not an
+// absolute URL) is accepted by validation, resolved through the attached
+// SourceCoverFetcher, and the refreshed SeriesDetailDTO reflects the new
+// cover_source.
+func TestSetCover_Source(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	id := seedSeries(ctx, t, db, "Source Pick Series", "source-pick-series")
+	withSeriesDir(t, storage, "Source Pick Series")
+	providerID := seedSeriesProviderWithCover(ctx, t, db, id, "7", "Comix", "/api/v1/manga/7/thumbnail")
+
+	scf := &fakeSourceCoverFetcher{seriesID: id, providerID: providerID, data: []byte("src-bytes"), ext: "png"}
+	env := wireTestEnv(t, db, storage, metadatasvcNewServiceWithSourceCover(t, db, storage, scf))
+
+	coverURL := "/api/series/" + id.String() + "/providers/" + providerID.String() + "/cover"
+	body := `{"sourceKind":"source","sourceRef":"` + providerID.String() + `","coverUrl":"` + coverURL + `"}`
+	rec := env.do(http.MethodPost, "/api/series/"+id.String()+"/cover", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var out seriessvc.SeriesDetailDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.CoverSource == nil || out.CoverSource.Kind != "source" || out.CoverSource.Ref != providerID.String() {
+		t.Errorf("CoverSource = %+v, want {source %s ...}", out.CoverSource, providerID)
+	}
+}
+
+// TestSetCover_SourceCoverUrlNeedNotBeAbsolute confirms the validator no
+// longer rejects a "source"-kind body whose coverUrl is a same-origin path
+// (this was the gap that made Feature 2's proxy CoverURL unusable end-to-end:
+// a candidate's own coverUrl would always have failed the old
+// metadata-only absolute-http(s) rule).
+func TestSetCover_SourceCoverUrlNeedNotBeAbsolute(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	id := seedSeries(ctx, t, db, "Relative Cover Series", "relative-cover-series")
+	withSeriesDir(t, storage, "Relative Cover Series")
+	providerID := seedSeriesProviderWithCover(ctx, t, db, id, "7", "Comix", "/api/v1/manga/7/thumbnail")
+
+	scf := &fakeSourceCoverFetcher{seriesID: id, providerID: providerID, data: []byte("bytes"), ext: "jpg"}
+	env := wireTestEnv(t, db, storage, metadatasvcNewServiceWithSourceCover(t, db, storage, scf))
+
+	body := `{"sourceKind":"source","sourceRef":"` + providerID.String() + `","coverUrl":"/api/series/` + id.String() + `/providers/` + providerID.String() + `/cover"}`
+	rec := env.do(http.MethodPost, "/api/series/"+id.String()+"/cover", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (relative proxy path must pass validation for sourceKind=source); body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSetCover_SourceBlankCoverUrlRejected confirms an empty coverUrl is
+// still a 400 for sourceKind=="source" (only the absolute-http(s) shape
+// requirement is relaxed, not the "must be present" requirement).
+func TestSetCover_SourceBlankCoverUrlRejected(t *testing.T) {
+	env := newTestEnv(t, &fakeProvider{key: "anilist"})
+	id := uuid.New().String()
+
+	body := `{"sourceKind":"source","sourceRef":"` + uuid.New().String() + `","coverUrl":""}`
+	rec := env.do(http.MethodPost, "/api/series/"+id+"/cover", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// metadatasvcNewServiceWithSourceCover builds a metadatasvc.Service over an
+// already-seeded db/storage with scf attached — split out so both HTTP-level
+// source-cover tests share it without duplicating the WithHTTPClient +
+// WithSourceCoverFetcher construction.
+func metadatasvcNewServiceWithSourceCover(t *testing.T, db *ent.Client, storage string, scf metadatasvc.SourceCoverFetcher) *metadatasvc.Service {
+	t.Helper()
+	registry := metadata.NewRegistry()
+	return metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{})).
+		WithSourceCoverFetcher(scf)
 }

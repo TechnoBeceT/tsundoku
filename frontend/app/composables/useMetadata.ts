@@ -52,9 +52,24 @@ function mapMetadataCandidate(dto: MetadataSearchResultDTO): MetadataCandidate {
   }
 }
 
+/**
+ * Maps one backend CoverCandidateDTO to its screen shape.
+ *
+ * `id` MUST include `coverUrl` (not just `sourceKind:sourceRef`): a single
+ * metadata provider search can surface MULTIPLE covers (one per hit) that all
+ * share the same provider `sourceRef` — `sourceKind:sourceRef` alone would
+ * give every one of that provider's tiles the identical id, so
+ * `CoverPickerModal`'s `c.id === selectedId` single-select would mark (and
+ * confirm) ALL of them at once instead of just the clicked tile. `coverUrl`
+ * is otherwise unused as an identifier elsewhere, but each candidate's own
+ * cover image IS distinct by construction (that's the whole gallery), so
+ * appending it is the natural disambiguator — and it stays reconstructible
+ * from `series.coverSource.remoteUrl` (see `currentCoverId` on the series
+ * detail page), which round-trips the exact `coverUrl` a pick was made with.
+ */
 function mapCoverCandidate(dto: CoverCandidateDTO): CoverCandidate {
   return {
-    id: `${dto.sourceKind}:${dto.sourceRef}`,
+    id: `${dto.sourceKind}:${dto.sourceRef}:${dto.coverUrl}`,
     provider: dto.sourceKind === 'metadata' ? providerLabel(dto.label) : dto.label,
     coverUrl: dto.coverUrl,
     sourceKind: dto.sourceKind,

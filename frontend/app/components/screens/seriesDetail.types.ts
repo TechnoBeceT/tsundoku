@@ -257,7 +257,15 @@ export interface MetadataCandidate {
  * the parent owns the fetch.
  */
 export interface CoverCandidate {
-  /** Stable id for single-select (provider-scoped, e.g. `mangadex:cover-2`). */
+  /**
+   * Stable id for single-select — `${sourceKind}:${sourceRef}:${coverUrl}`.
+   * MUST include `coverUrl`: a metadata provider's search hit can surface
+   * several covers under the SAME `sourceRef` (one row per provider, many
+   * candidates), so `sourceKind:sourceRef` alone collides across all of
+   * them — every same-provider tile would carry the identical id and the
+   * gallery's `c.id === selectedId` single-select would light up (and pick)
+   * all of them at once instead of just the clicked tile.
+   */
   id: string
   /** The tracker / metadata-provider / source this cover came from (drives the label). */
   provider: string
