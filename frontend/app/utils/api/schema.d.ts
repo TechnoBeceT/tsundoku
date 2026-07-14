@@ -576,6 +576,40 @@ export interface paths {
         patch: operations["setSeriesMetadataSource"];
         trace?: never;
     };
+    "/api/series/{id}/reading-progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set series reading progress to chapter N
+         * @description QCAT-242 (owner-ratified 2026-07-14): the owner's "re-read from start"
+         *     or "jump to chapter N" action. Resets the series' LOCAL chapters
+         *     (chapter <= target marked read; chapter > target marked unread, with
+         *     lastReadPage/readAt cleared — an already-read chapter that stays <=
+         *     target keeps its original readAt) AND force-sets EVERY bound tracker
+         *     to the same target, TRUNCATED for integer trackers. `chapter: 0`
+         *     means re-read from scratch (every chapter unread). This is the ONE
+         *     sanctioned path that may deliberately LOWER a tracker's progress —
+         *     the never-regress push rule is bypassed here, because an explicit
+         *     owner reset is a different intent than an accidental stale push. When
+         *     the reset regresses a binding below a tracker-reported "completed"
+         *     status, that binding's status is also reopened to the tracker's
+         *     native "reading/current" status. Returns the full, refreshed series
+         *     detail so the chapter list and Trackers section both reflect the
+         *     reset without a refetch (§16).
+         */
+        post: operations["setSeriesReadingProgress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metadata/search": {
         parameters: {
             query?: never;
@@ -2477,6 +2511,14 @@ export interface components {
              *     yields 400.
              */
             providerId?: string | null;
+        };
+        SetReadingProgressRequest: {
+            /**
+             * @description Target chapter number (QCAT-242). Chapters numbered <= this value
+             *     are marked read; chapters numbered > this value are marked
+             *     unread. 0 means re-read from scratch (every chapter unread).
+             */
+            chapter: number;
         };
         AltTitle: {
             name: string;
@@ -4494,6 +4536,64 @@ export interface operations {
                 };
             };
             /** @description Malformed series id, malformed providerId UUID, or providerId does not belong to the series. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setSeriesReadingProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetReadingProgressRequest"];
+            };
+        };
+        responses: {
+            /** @description Reading progress reset. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /**
+             * @description Malformed series id, missing/negative chapter, or a genuine
+             *     tracker upstream failure force-setting one of the bound trackers
+             *     (the message names the real cause).
+             */
             400: {
                 headers: {
                     [name: string]: unknown;

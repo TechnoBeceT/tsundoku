@@ -78,6 +78,8 @@ import (
 //   - /api/series/:id/cover (POST)                  — owner's explicit cover pick (RequireOwner).
 //   - /api/series/:id/chapters/:chapterId/pages/:n — in-app reader CBZ page bytes (RequireOwner).
 //   - /api/chapters/:id/progress (PATCH)           — set chapter reading progress (RequireOwner).
+//   - /api/series/:id/reading-progress (POST)      — set series reading progress to chapter N: resets local
+//     chapters + force-sets every bound tracker (QCAT-242) (RequireOwner).
 //   - /api/categories (GET)                        — list categories with counts (RequireOwner).
 //   - /api/categories (POST)                       — create a category (RequireOwner).
 //   - /api/categories/:id (PATCH)                  — rename and/or reorder a category (RequireOwner).
@@ -189,8 +191,12 @@ func registerRoutes(
 	// handler/series.ViewSyncer's doc comment for why detail-open is ungated
 	// where the reading push is toggle-gated). trackerSyncSvc satisfies both
 	// hooks' narrow interfaces — one service, two independent trigger points.
+	// WithTrackerProgressSetter wires the QCAT-242 "set reading progress to N"
+	// tracker force-set (SetReadingProgress) — a THIRD, independent hook the
+	// same trackerSyncSvc instance also satisfies.
 	seriesH := seriesh.NewHandler(seriesSvc, trigger, suwayomiClient).
-		WithViewSyncer(trackerSyncSvc)
+		WithViewSyncer(trackerSyncSvc).
+		WithTrackerProgressSetter(trackerSyncSvc)
 	authed.GET("/series", seriesH.List)
 	authed.GET("/series/:id", seriesH.Detail)
 	authed.PATCH("/series/:id/category", seriesH.SetCategory)
@@ -208,6 +214,7 @@ func registerRoutes(
 	authed.PATCH("/series/:id/metadata-source", seriesH.SetMetadataSource)
 	authed.GET("/series/:id/chapters/:chapterId/pages/:n", seriesH.ChapterPage)
 	authed.PATCH("/chapters/:id/progress", seriesH.SetProgress)
+	authed.POST("/series/:id/reading-progress", seriesH.SetReadingProgress)
 	authed.GET("/health", seriesH.LibraryHealth)
 
 	// Phase-1 native metadata engine (spec/metadata-engine-phase1): cross-

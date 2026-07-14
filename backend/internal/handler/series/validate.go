@@ -247,6 +247,27 @@ func validateFractionalCleanup(req FractionalCleanupRequest) ([]uuid.UUID, error
 	return ids, nil
 }
 
+// SetReadingProgressRequest is the POST /api/series/{id}/reading-progress
+// request body (QCAT-242): the target chapter number to reset the series'
+// reading progress to. Chapter=0 means "re-read from scratch" (every chapter
+// unread) — a pointer field so an omitted body is distinguishable from that
+// explicit 0, mirroring validateProgress's own required-pointer shape.
+type SetReadingProgressRequest struct {
+	Chapter *float64 `json:"chapter"`
+}
+
+// validateSetReadingProgress requires chapter to be present and non-negative.
+// A missing field or a negative value yields a 400 echo.HTTPError.
+func validateSetReadingProgress(req SetReadingProgressRequest) (float64, error) {
+	if req.Chapter == nil {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "chapter is required")
+	}
+	if *req.Chapter < 0 {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "chapter must be >= 0")
+	}
+	return *req.Chapter, nil
+}
+
 // validateReorderProviders validates the PATCH body: at least one entry is
 // required and each id must parse as a valid UUID. The importance value is NOT
 // range-checked here — the service normalizes the submitted importances to a

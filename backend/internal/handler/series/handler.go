@@ -15,10 +15,11 @@ import (
 // Handler holds the dependencies for the library (series) HTTP handlers.
 // All business logic lives in the series.Service; the handler is thin.
 type Handler struct {
-	svc        *seriessvc.Service
-	trigger    func()
-	sw         suwayomi.Client
-	viewSyncer ViewSyncer
+	svc             *seriessvc.Service
+	trigger         func()
+	sw              suwayomi.Client
+	viewSyncer      ViewSyncer
+	trackerProgress TrackerProgressSetter
 }
 
 // NewHandler constructs a Handler bound to a series.Service, an auto-converge

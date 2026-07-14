@@ -1134,6 +1134,19 @@ components:
             to automatic resolution (highest-importance provider). A malformed UUID
             yields 400.
 
+    SetReadingProgressRequest:
+      type: object
+      required:
+        - chapter
+      properties:
+        chapter:
+          type: number
+          minimum: 0
+          description: |
+            Target chapter number (QCAT-242). Chapters numbered <= this value
+            are marked read; chapters numbered > this value are marked
+            unread. 0 means re-read from scratch (every chapter unread).
+
     AltTitle:
       type: object
       required: [name, type, lang]
@@ -3612,6 +3625,73 @@ paths:
                 $ref: "#/components/schemas/SeriesDetail"
         "400":
           description: Malformed series id, malformed providerId UUID, or providerId does not belong to the series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/reading-progress:
+    post:
+      operationId: setSeriesReadingProgress
+      summary: Set series reading progress to chapter N
+      description: |
+        QCAT-242 (owner-ratified 2026-07-14): the owner's "re-read from start"
+        or "jump to chapter N" action. Resets the series' LOCAL chapters
+        (chapter <= target marked read; chapter > target marked unread, with
+        lastReadPage/readAt cleared — an already-read chapter that stays <=
+        target keeps its original readAt) AND force-sets EVERY bound tracker
+        to the same target, TRUNCATED for integer trackers. `chapter: 0`
+        means re-read from scratch (every chapter unread). This is the ONE
+        sanctioned path that may deliberately LOWER a tracker's progress —
+        the never-regress push rule is bypassed here, because an explicit
+        owner reset is a different intent than an accidental stale push. When
+        the reset regresses a binding below a tracker-reported "completed"
+        status, that binding's status is also reopened to the tracker's
+        native "reading/current" status. Returns the full, refreshed series
+        detail so the chapter list and Trackers section both reflect the
+        reset without a refetch (§16).
+      tags:
+        - series
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetReadingProgressRequest"
+      responses:
+        "200":
+          description: Reading progress reset. Returns the updated series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: |
+            Malformed series id, missing/negative chapter, or a genuine
+            tracker upstream failure force-setting one of the bound trackers
+            (the message names the real cause).
           content:
             application/json:
               schema:
