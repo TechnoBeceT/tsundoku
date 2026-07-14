@@ -156,6 +156,25 @@ func listStatusLabel(listID int) string {
 	return listStatusLabels[listID]
 }
 
+// listIDForStatus maps a native MangaUpdates status label (a value in
+// listStatusLabels) back to its numeric list id — the reverse of
+// listStatusLabel. A blank or unrecognized status falls back to defaultListID
+// (Reading), so an ordinary progress push (which carries "reading" or "") is
+// unchanged; only a recognized label like "complete" retargets the write to
+// its own list (moving the series there). Labels are unique, so the linear
+// scan yields exactly one match.
+func listIDForStatus(status string) int {
+	if status == "" {
+		return defaultListID
+	}
+	for id, label := range listStatusLabels {
+		if label == status {
+			return id
+		}
+	}
+	return defaultListID
+}
+
 // toTrackSearchResult maps one MangaUpdates search hit's record to the
 // shared tracker.TrackSearchResult shape. MangaUpdates' search response
 // carries no chapter-count field, so TotalChapters is always 0 (unknown) —
