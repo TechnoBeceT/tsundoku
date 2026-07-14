@@ -113,6 +113,11 @@ func (c *Client) Name() string { return providerName }
 // NeedsOAuth reports true — AniList connects via an OAuth redirect.
 func (c *Client) NeedsOAuth() bool { return true }
 
+// SupportsPrivate reports true — AniList's MediaList entries carry a
+// `private` flag (see mediaListEntrySelection) this client already reads/
+// writes on every GetEntry/SaveEntry/UpdateEntry call.
+func (c *Client) SupportsPrivate() bool { return true }
+
 // AuthURL builds AniList's implicit-grant authorize URL. AniList's implicit
 // flow has no PKCE, so pkceVerifier is always "". AniList's real authorize
 // endpoint accepts ONLY client_id + response_type=token — confirmed against

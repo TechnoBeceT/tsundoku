@@ -50,10 +50,11 @@ type fakeConvergeTracker struct {
 	lastUpdateEntry  tracker.TrackEntry
 }
 
-func (f *fakeConvergeTracker) Key() string      { return "fake-converge" }
-func (f *fakeConvergeTracker) ID() int          { return f.id }
-func (f *fakeConvergeTracker) Name() string     { return "Fake Converge Tracker" }
-func (f *fakeConvergeTracker) NeedsOAuth() bool { return true }
+func (f *fakeConvergeTracker) Key() string           { return "fake-converge" }
+func (f *fakeConvergeTracker) ID() int               { return f.id }
+func (f *fakeConvergeTracker) Name() string          { return "Fake Converge Tracker" }
+func (f *fakeConvergeTracker) NeedsOAuth() bool      { return true }
+func (f *fakeConvergeTracker) SupportsPrivate() bool { return false }
 
 func (f *fakeConvergeTracker) AuthURL(state, _ string) (string, string, error) {
 	return "https://fake.test/authorize?state=" + state, "verifier-xyz", nil

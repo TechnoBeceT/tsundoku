@@ -29,6 +29,12 @@ type TrackerDTO struct {
 	// Username is the connected account's display username ("" when not
 	// logged in).
 	Username string `json:"username"`
+	// SupportsPrivate reports whether this tracker's entries can be marked
+	// private on the remote account (AniList, Kitsu — true; MAL,
+	// MangaUpdates — false, see tracker.Tracker.SupportsPrivate's own doc
+	// comment). Surfaces the capability so the frontend can hide/disable a
+	// "private" toggle for a tracker that would silently ignore it.
+	SupportsPrivate bool `json:"supportsPrivate"`
 }
 
 // toTrackerDTO maps one registered Tracker (+ its TrackerConnection row, nil
@@ -39,9 +45,10 @@ type TrackerDTO struct {
 // "always build all four trackers" doc comment).
 func toTrackerDTO(t tracker.Tracker, conn *ent.TrackerConnection) TrackerDTO {
 	dto := TrackerDTO{
-		ID:         t.ID(),
-		Name:       t.Name(),
-		NeedsOAuth: t.NeedsOAuth(),
+		ID:              t.ID(),
+		Name:            t.Name(),
+		NeedsOAuth:      t.NeedsOAuth(),
+		SupportsPrivate: t.SupportsPrivate(),
 	}
 	if conn != nil {
 		dto.IsLoggedIn = true
@@ -147,6 +154,19 @@ type TrackSearchResultDTO struct {
 	Status string `json:"status"`
 	// TotalChapters is the tracker's reported total; 0 = unknown/ongoing.
 	TotalChapters int `json:"totalChapters"`
+	// Type is the tracker's own publication-format label ("" when absent —
+	// see tracker.TrackSearchResult.Type's own doc comment).
+	Type string `json:"type"`
+	// StartDate is the tracker's reported publication-start year/date, kept
+	// as a plain string so every tracker's native granularity survives
+	// (see tracker.TrackSearchResult.StartDate's own doc comment).
+	StartDate string `json:"startDate"`
+	// Score is the catalog/community average rating, on the tracker's OWN
+	// native scale (never normalized here — see
+	// tracker.TrackSearchResult.Score's own doc comment). 0 = unknown.
+	Score float64 `json:"score"`
+	// Description is the tracker's own synopsis/summary text, verbatim.
+	Description string `json:"description"`
 }
 
 // toTrackSearchResultDTO maps one tracker.TrackSearchResult into its wire DTO.
@@ -158,6 +178,10 @@ func toTrackSearchResultDTO(r tracker.TrackSearchResult) TrackSearchResultDTO {
 		CoverURL:      r.CoverURL,
 		Status:        r.Status,
 		TotalChapters: r.TotalChapters,
+		Type:          r.Type,
+		StartDate:     r.StartDate,
+		Score:         r.Score,
+		Description:   r.Description,
 	}
 }
 

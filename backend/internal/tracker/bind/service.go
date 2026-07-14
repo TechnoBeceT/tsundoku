@@ -84,11 +84,19 @@ func NewService(client *ent.Client, registry *tracker.Registry, storage string) 
 // current full binding set is then mirrored into the series' sidecar
 // (best-effort; see the package doc comment).
 //
+// private is the owner's requested visibility for a FRESHLY-created remote
+// entry (the SaveEntry branch below) — it has no effect when the manga is
+// already on the account's list (GetEntry's existing entry's own private
+// flag wins; this call never overwrites it). A tracker with no such remote
+// concept (tracker.Tracker.SupportsPrivate() == false — MAL, MangaUpdates)
+// silently ignores it, mirroring how those trackers ignore
+// TrackEntry.Private everywhere else in this package.
+//
 // Returns ErrTrackerNotFound / ErrTrackerNotConnected / ErrSeriesNotFound
 // for their respective conditions; any other error is a genuine
 // upstream/persistence failure — a GetEntry/SaveEntry failure is NOT
 // best-effort here, since the owner explicitly asked to bind.
-func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, remoteID string) (*ent.TrackBinding, error) {
+func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, remoteID string, private bool) (*ent.TrackBinding, error) {
 	t, ok := s.registry.ByID(trackerID)
 	if !ok {
 		return nil, ErrTrackerNotFound
@@ -115,6 +123,7 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 		created, saveErr := t.SaveEntry(ctx, token, tracker.TrackEntry{
 			RemoteID: remoteID,
 			Status:   defaultBindStatus(trackerID),
+			Private:  private,
 		})
 		if saveErr != nil {
 			s.markExpiredOnTokenFailure(ctx, trackerID, saveErr)

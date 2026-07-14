@@ -44,8 +44,10 @@ const (
 	// searchFields / detailFields are MAL's `fields=` selections for the
 	// tracker surface — narrower than internal/metadata/mal's (this client
 	// only needs enough to build TrackSearchResult / TrackEntry, not the
-	// full rich-metadata record).
-	searchFields = "id,title,main_picture,num_chapters,status"
+	// full rich-metadata record). media_type/start_date/mean/synopsis are
+	// the Search-Enrichment additions (confirmed against Komikku's
+	// MyAnimeListApi.kt manga search `fields` selection).
+	searchFields = "id,title,main_picture,num_chapters,status,media_type,start_date,mean,synopsis"
 	detailFields = "id,title,num_chapters,my_list_status{status,score,num_chapters_read,start_date,finish_date}"
 
 	// defaultSearchLimit is used when a caller passes a non-positive limit
@@ -103,6 +105,11 @@ func (c *Client) Name() string { return providerName }
 
 // NeedsOAuth reports true — MAL connects via an OAuth redirect.
 func (c *Client) NeedsOAuth() bool { return true }
+
+// SupportsPrivate reports false — MAL's my_list_status has no `private`/
+// visibility concept at all; a Bind/UpdateTrack `private` request field is
+// harmlessly ignored for this tracker.
+func (c *Client) SupportsPrivate() bool { return false }
 
 // AuthURL builds MAL's auth-code authorize URL using PKCE-PLAIN: the
 // generated verifier is sent AS code_challenge verbatim (no

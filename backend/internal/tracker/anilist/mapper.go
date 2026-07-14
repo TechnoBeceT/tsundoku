@@ -29,6 +29,17 @@ type mediaSearchItem struct {
 	Status     string         `json:"status"`
 	Chapters   *int           `json:"chapters"`
 	SiteURL    string         `json:"siteUrl"`
+	// Format is AniList's MediaFormat enum (e.g. "MANGA", "NOVEL",
+	// "ONE_SHOT") — Search-Enrichment addition, see queries.go's
+	// searchQuery doc comment.
+	Format string `json:"format"`
+	// StartDate only carries Year on a search hit — see searchQuery.
+	StartDate fuzzyDate `json:"startDate"`
+	// AverageScore is AniList's RAW 0-100 community average; nil when
+	// AniList has no rating data yet for this manga.
+	AverageScore *int `json:"averageScore"`
+	// Description is plain text (the query requests asHtml:false).
+	Description string `json:"description"`
 }
 
 type searchPageData struct {
@@ -87,6 +98,14 @@ func toTrackSearchResult(m mediaSearchItem) tracker.TrackSearchResult {
 	if m.Chapters != nil {
 		total = *m.Chapters
 	}
+	score := 0.0
+	if m.AverageScore != nil {
+		score = float64(*m.AverageScore)
+	}
+	startDate := ""
+	if m.StartDate.Year != nil && *m.StartDate.Year != 0 {
+		startDate = strconv.Itoa(*m.StartDate.Year)
+	}
 	return tracker.TrackSearchResult{
 		RemoteID:      strconv.Itoa(m.ID),
 		Title:         bestTitle(m.Title),
@@ -94,6 +113,10 @@ func toTrackSearchResult(m mediaSearchItem) tracker.TrackSearchResult {
 		CoverURL:      m.CoverImage.Large,
 		Status:        m.Status,
 		TotalChapters: total,
+		Type:          m.Format,
+		StartDate:     startDate,
+		Score:         score,
+		Description:   m.Description,
 	}
 }
 

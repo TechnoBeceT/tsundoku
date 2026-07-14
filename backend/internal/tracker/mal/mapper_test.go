@@ -31,6 +31,24 @@ func TestToTrackSearchResult_MapsFields(t *testing.T) {
 	}
 }
 
+// TestToTrackSearchResult_MapsEnrichmentFields pins the Search-Enrichment
+// fields (Type/StartDate/Score/Description) MAL's search-hit → shared
+// TrackSearchResult mapping carries.
+func TestToTrackSearchResult_MapsEnrichmentFields(t *testing.T) {
+	n := mangaSearchNode{
+		ID:        887,
+		Title:     "Berserk",
+		MediaType: "manga",
+		StartDate: "1989-08-25",
+		Mean:      9.4,
+		Synopsis:  "A lone swordsman's tale.",
+	}
+	got := toTrackSearchResult(n)
+	if got.Type != "manga" || got.StartDate != "1989-08-25" || got.Score != 9.4 || got.Description != "A lone swordsman's tale." {
+		t.Fatalf("toTrackSearchResult enrichment fields = %+v", got)
+	}
+}
+
 // TestToTrackEntry_MapsFieldsAndDates pins the my_list_status → shared
 // TrackEntry mapping, including date parsing.
 func TestToTrackEntry_MapsFieldsAndDates(t *testing.T) {

@@ -82,7 +82,12 @@ type TokenSet struct {
 
 // TrackSearchResult is one tracker's search hit for a manga — the candidate
 // list an owner picks from when binding a series (internal/tracker/connect
-// and the bind service, slice 3b).
+// and the bind service, slice 3b). Type/StartDate/Score/Description are
+// BEST-EFFORT enrichment fields (Search-Enrichment slice): every client
+// populates whatever its own search response actually carries and leaves
+// the rest at its zero value — never fabricated, never normalized across
+// trackers (same "native vocabulary/scale" rule Status/TotalChapters
+// already follow, spec §2).
 type TrackSearchResult struct {
 	RemoteID string
 	Title    string
@@ -95,6 +100,31 @@ type TrackSearchResult struct {
 	// TotalChapters is the tracker's reported total chapter count; 0 =
 	// unknown/ongoing.
 	TotalChapters int
+	// Type is the tracker's own publication-format label for the result
+	// (e.g. AniList's "MANGA"/"NOVEL"/"ONE_SHOT" `format`, MAL's
+	// `media_type`, Kitsu's `subtype`). "" when the tracker's search
+	// response doesn't carry one (MangaUpdates' `type` when absent).
+	Type string
+	// StartDate is the tracker's reported publication-start year or date,
+	// kept as a plain STRING (not time.Time) so every tracker's native
+	// granularity survives without lossy reconstruction: AniList only gives
+	// a year (FuzzyDate.year, no month/day on a search hit), MAL/Kitsu give
+	// a full date, MangaUpdates gives a bare year string. "" when unknown.
+	StartDate string
+	// Score is the CATALOG/COMMUNITY average rating for the manga — NOT the
+	// caller's own entry score (that lives on TrackEntry.Score once bound).
+	// Native scale per tracker, never normalized here: AniList's
+	// `averageScore` is 0-100 (kept RAW, not divided to 0-10 — the FE labels
+	// this "community avg" precisely so a per-tracker scale is expected);
+	// MAL's `mean` and Kitsu's `averageRating` are already ~0-10/0-100
+	// respectively on their own native scales. 0 = unknown (MangaUpdates'
+	// search response carries no per-item community score this port reads).
+	Score float64
+	// Description is the tracker's own synopsis/summary text for the result
+	// (AniList's `description`, MAL's `synopsis`, Kitsu's `synopsis`,
+	// MangaUpdates' `description`), verbatim — no HTML stripping/decoding
+	// (display-layer concern, not this port's). "" when absent.
+	Description string
 }
 
 // TrackEntry is a tracker's reading-progress record for a bound series —
@@ -160,6 +190,18 @@ type Tracker interface {
 	// username/password or session login (Kitsu, MangaUpdates — both
 	// false; such a tracker instead implements CredentialLogin).
 	NeedsOAuth() bool
+	// SupportsPrivate reports whether this tracker's entries can be marked
+	// private on the remote account (AniList's MediaList `private` flag,
+	// Kitsu's library-entries `private` flag — both true) as opposed to a
+	// tracker with no such remote concept at all (MAL, MangaUpdates — both
+	// false; a Bind/UpdateTrack `private` request field is silently
+	// harmless-ignored for these, never an error — see bind.Service.Bind's
+	// own doc comment). A required capability query (every Tracker answers
+	// it, even when the answer is always false) rather than an optional
+	// type-asserted interface like ImplicitTokenExtractor/CredentialLogin —
+	// modeled on this same interface's NeedsOAuth, the existing
+	// required-boolean-capability precedent.
+	SupportsPrivate() bool
 
 	// AuthURL builds the provider's authorize URL for a fresh login. It
 	// returns the URL to send the owner's browser to, plus a PKCE code

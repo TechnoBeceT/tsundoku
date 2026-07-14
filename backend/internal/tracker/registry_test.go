@@ -19,10 +19,11 @@ type fakeTracker struct {
 	refreshFn func(ctx context.Context, refresh string) (tracker.TokenSet, error)
 }
 
-func (f *fakeTracker) Key() string      { return f.key }
-func (f *fakeTracker) ID() int          { return f.id }
-func (f *fakeTracker) Name() string     { return f.name }
-func (f *fakeTracker) NeedsOAuth() bool { return f.needsOAuth }
+func (f *fakeTracker) Key() string           { return f.key }
+func (f *fakeTracker) ID() int               { return f.id }
+func (f *fakeTracker) Name() string          { return f.name }
+func (f *fakeTracker) NeedsOAuth() bool      { return f.needsOAuth }
+func (f *fakeTracker) SupportsPrivate() bool { return false }
 func (f *fakeTracker) AuthURL(state, redirectURI string) (string, string, error) {
 	return "https://example.test/authorize?state=" + state, "", nil
 }

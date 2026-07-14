@@ -3029,6 +3029,13 @@ export interface components {
             isTokenExpired: boolean;
             /** @description The connected account's display username ("" when not logged in). */
             username: string;
+            /**
+             * @description Whether this tracker's entries can be marked private on the
+             *     remote account (true for AniList/Kitsu; false for MAL/
+             *     MangaUpdates, which have no such remote concept — a bind
+             *     `private` request field is silently ignored for them).
+             */
+            supportsPrivate: boolean;
         };
         /** @description A freshly built OAuth authorize URL for one tracker login attempt. */
         TrackerAuthURL: {
@@ -3052,8 +3059,12 @@ export interface components {
             password: string;
         };
         /**
-         * @description One tracker's search hit for a manga. status/totalChapters are the
-         *     tracker's OWN native vocabulary/scale — never normalized (spec §2).
+         * @description One tracker's search hit for a manga. status/totalChapters/type/score
+         *     are the tracker's OWN native vocabulary/scale — never normalized
+         *     (spec §2). type/startDate/score/description are BEST-EFFORT
+         *     enrichment fields: every tracker populates whatever its own search
+         *     response actually carries and leaves the rest at its zero value
+         *     ("" / 0), never fabricated.
          */
         TrackSearchResult: {
             /** @description The tracker's manga id. */
@@ -3065,6 +3076,27 @@ export interface components {
             status: string;
             /** @description The tracker's reported total chapter count; 0 = unknown/ongoing. */
             totalChapters: number;
+            /**
+             * @description The tracker's own publication-format label (e.g. AniList's
+             *     "MANGA"/"NOVEL"/"ONE_SHOT", MAL's media_type, Kitsu's subtype).
+             *     "" when the tracker's search response doesn't carry one.
+             */
+            type: string;
+            /**
+             * @description The tracker's reported publication-start year or date, kept as a
+             *     plain string so every tracker's native granularity survives
+             *     (AniList: year only; MAL/Kitsu: full date; MangaUpdates: bare
+             *     year). "" when unknown.
+             */
+            startDate: string;
+            /**
+             * @description The catalog/community average rating, on the tracker's OWN
+             *     native scale (e.g. AniList 0-100 raw, MAL/Kitsu already ~0-10/
+             *     0-100). NOT the caller's own entry score. 0 = unknown.
+             */
+            score: number;
+            /** @description The tracker's own synopsis/summary text, verbatim. "" when absent. */
+            description: string;
         };
         /**
          * @description A series↔tracker binding — the remote link and reading progress on
@@ -3113,6 +3145,15 @@ export interface components {
         BindRequest: {
             trackerId: number;
             remoteId: string;
+            /**
+             * @description Whether a FRESHLY-created remote entry (the manga wasn't already
+             *     on the account's list) should be marked private on trackers that
+             *     support it (see Tracker.supportsPrivate). Optional — absent
+             *     defaults to false. Silently ignored on a tracker that doesn't
+             *     support it, and has no effect when the manga was already tracked
+             *     (that entry's own private flag is left as-is).
+             */
+            private?: boolean;
         };
         /**
          * @description The owner's manual tracking-sheet edit (spec/trackers-sync-phase4 §2

@@ -89,21 +89,29 @@ func validateCredentialLogin(req CredentialLoginRequest) (username, password str
 
 // BindRequest is the POST /api/series/:id/tracking body — the owner's picked
 // tracker + remote entry (from the search results) to bind the series to.
+// Private is an optional pointer (nil defaults to false, mirroring
+// validateDeleteRemote's own "absent = the safe default" shape): whether the
+// newly-created remote entry should be marked private on trackers that
+// support it (tracker.Tracker.SupportsPrivate) — silently harmless-ignored
+// on a tracker that doesn't (MAL, MangaUpdates).
 type BindRequest struct {
 	TrackerID int    `json:"trackerId"`
 	RemoteID  string `json:"remoteId"`
+	Private   *bool  `json:"private"`
 }
 
 // validateBind requires a positive trackerId and a non-blank remoteId.
-func validateBind(req BindRequest) (trackerID int, remoteID string, err error) {
+// private resolves BindRequest.Private to a plain bool (nil → false).
+func validateBind(req BindRequest) (trackerID int, remoteID string, private bool, err error) {
 	if req.TrackerID <= 0 {
-		return 0, "", httperr.BadRequest("trackerId is required")
+		return 0, "", false, httperr.BadRequest("trackerId is required")
 	}
 	remoteID = strings.TrimSpace(req.RemoteID)
 	if remoteID == "" {
-		return 0, "", httperr.BadRequest("remoteId is required")
+		return 0, "", false, httperr.BadRequest("remoteId is required")
 	}
-	return req.TrackerID, remoteID, nil
+	private = req.Private != nil && *req.Private
+	return req.TrackerID, remoteID, private, nil
 }
 
 // validateDeleteRemote parses the optional ?deleteRemote query param for

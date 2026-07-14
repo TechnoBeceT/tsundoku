@@ -26,10 +26,11 @@ type fakeTracker struct {
 	refreshCalls int
 }
 
-func (f *fakeTracker) Key() string      { return "fake" }
-func (f *fakeTracker) ID() int          { return f.id }
-func (f *fakeTracker) Name() string     { return "Fake Tracker" }
-func (f *fakeTracker) NeedsOAuth() bool { return false }
+func (f *fakeTracker) Key() string           { return "fake" }
+func (f *fakeTracker) ID() int               { return f.id }
+func (f *fakeTracker) Name() string          { return "Fake Tracker" }
+func (f *fakeTracker) NeedsOAuth() bool      { return false }
+func (f *fakeTracker) SupportsPrivate() bool { return false }
 
 func (f *fakeTracker) AuthURL(string, string) (string, string, error) {
 	return "", "", tracker.ErrOAuthNotSupported

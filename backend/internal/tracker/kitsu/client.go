@@ -120,6 +120,11 @@ func (c *Client) Name() string { return providerName }
 // login (LoginCredentials), never an OAuth redirect.
 func (c *Client) NeedsOAuth() bool { return false }
 
+// SupportsPrivate reports true — Kitsu's library-entries carry a `private`
+// attribute (see libraryEntryAttrs) this client already reads/writes on
+// every GetEntry/SaveEntry/UpdateEntry call.
+func (c *Client) SupportsPrivate() bool { return true }
+
 // AuthURL always returns tracker.ErrOAuthNotSupported — Kitsu has no
 // authorize redirect; use LoginCredentials.
 func (c *Client) AuthURL(_, _ string) (string, string, error) {
@@ -165,10 +170,16 @@ func (c *Client) Refresh(ctx context.Context, refresh string) (tracker.TokenSet,
 // Search returns up to defaultSearchLimit Kitsu manga matches for a
 // free-text query, via GET /manga?filter[text]=. token is attached when
 // non-empty but is not required — Kitsu search works anonymously.
+// fields[manga] is explicit (rather than accepting Kitsu's full default
+// attribute bag) so the Search-Enrichment fields (subtype/startDate/
+// averageRating/synopsis, confirmed against Suwayomi-Server's/Komikku's own
+// KitsuApi.kt manga-search field selections) are requested by name in ONE
+// place alongside the fields this client already read.
 func (c *Client) Search(ctx context.Context, token, query string) ([]tracker.TrackSearchResult, error) {
 	reqURL := apiBaseURL + "/manga?" + url.Values{
-		"filter[text]": {query},
-		"page[limit]":  {strconv.Itoa(defaultSearchLimit)},
+		"filter[text]":  {query},
+		"page[limit]":   {strconv.Itoa(defaultSearchLimit)},
+		"fields[manga]": {"slug,canonicalTitle,status,chapterCount,posterImage,subtype,startDate,averageRating,synopsis"},
 	}.Encode()
 
 	var page mangaCollectionResponse

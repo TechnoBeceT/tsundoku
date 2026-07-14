@@ -53,6 +53,38 @@ func TestToTrackSearchResult_MapsFields(t *testing.T) {
 	}
 }
 
+// TestToTrackSearchResult_MapsEnrichmentFields pins the Search-Enrichment
+// fields (Type/StartDate/Score/Description) AniList's search-hit → shared
+// TrackSearchResult mapping carries, plus the nil-AverageScore/zero-year
+// degradation each falls back to.
+func TestToTrackSearchResult_MapsEnrichmentFields(t *testing.T) {
+	score := 87
+	m := mediaSearchItem{
+		ID:           12345,
+		Title:        titleData{English: "Solo Leveling"},
+		Format:       "MANGA",
+		StartDate:    fuzzyDate{Year: intPtr(2018)},
+		AverageScore: &score,
+		Description:  "A hunter's story.",
+	}
+	got := toTrackSearchResult(m)
+	if got.Type != "MANGA" || got.StartDate != "2018" || got.Score != 87 || got.Description != "A hunter's story." {
+		t.Fatalf("toTrackSearchResult enrichment fields = %+v", got)
+	}
+
+	// No rating data yet / no start-date year → both degrade to their zero
+	// value, never fabricated.
+	blank := mediaSearchItem{ID: 1}
+	got = toTrackSearchResult(blank)
+	if got.Score != 0 || got.StartDate != "" {
+		t.Fatalf("toTrackSearchResult with no score/date = %+v, want zero values", got)
+	}
+}
+
+// intPtr is a small test helper for *int fields (mediaSearchItem.Chapters,
+// fuzzyDate.Year/Month/Day, mediaSearchItem.AverageScore).
+func intPtr(v int) *int { return &v }
+
 // TestToTrackEntry_MapsFieldsAndDates pins the AniList MediaList entry →
 // shared TrackEntry mapping, including the FuzzyDate → time.Time
 // conversion.

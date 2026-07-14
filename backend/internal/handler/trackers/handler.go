@@ -275,13 +275,13 @@ func (h *Handler) CreateBinding(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return httperr.BadRequest("invalid request body")
 	}
-	trackerID, remoteID, err := validateBind(req)
+	trackerID, remoteID, private, err := validateBind(req)
 	if err != nil {
 		return err
 	}
 
 	ctx := c.Request().Context()
-	binding, err := h.bindSvc.Bind(ctx, seriesID, trackerID, remoteID)
+	binding, err := h.bindSvc.Bind(ctx, seriesID, trackerID, remoteID, private)
 	if err != nil {
 		return mapServiceError(err)
 	}

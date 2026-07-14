@@ -46,10 +46,11 @@ type fakeOAuthTracker struct {
 	searchFn      func(ctx context.Context, token, query string) ([]tracker.TrackSearchResult, error)
 }
 
-func (f *fakeOAuthTracker) Key() string      { return "fake-oauth" }
-func (f *fakeOAuthTracker) ID() int          { return f.id }
-func (f *fakeOAuthTracker) Name() string     { return "Fake OAuth Tracker" }
-func (f *fakeOAuthTracker) NeedsOAuth() bool { return true }
+func (f *fakeOAuthTracker) Key() string           { return "fake-oauth" }
+func (f *fakeOAuthTracker) ID() int               { return f.id }
+func (f *fakeOAuthTracker) Name() string          { return "Fake OAuth Tracker" }
+func (f *fakeOAuthTracker) NeedsOAuth() bool      { return true }
+func (f *fakeOAuthTracker) SupportsPrivate() bool { return false }
 
 func (f *fakeOAuthTracker) AuthURL(state, _ string) (string, string, error) {
 	return "https://fake.test/authorize?state=" + state, "verifier-xyz", nil
@@ -105,10 +106,11 @@ type fakeCredentialTracker struct {
 	id int
 }
 
-func (f *fakeCredentialTracker) Key() string      { return "fake-credential" }
-func (f *fakeCredentialTracker) ID() int          { return f.id }
-func (f *fakeCredentialTracker) Name() string     { return "Fake Credential Tracker" }
-func (f *fakeCredentialTracker) NeedsOAuth() bool { return false }
+func (f *fakeCredentialTracker) Key() string           { return "fake-credential" }
+func (f *fakeCredentialTracker) ID() int               { return f.id }
+func (f *fakeCredentialTracker) Name() string          { return "Fake Credential Tracker" }
+func (f *fakeCredentialTracker) NeedsOAuth() bool      { return false }
+func (f *fakeCredentialTracker) SupportsPrivate() bool { return false }
 func (f *fakeCredentialTracker) AuthURL(string, string) (string, string, error) {
 	return "", "", tracker.ErrOAuthNotSupported
 }
@@ -682,6 +684,45 @@ func assertCreatedBindingFields(t *testing.T, dto handler.TrackBindingDTO) {
 	if dto.RemoteID != "7224" || dto.Status != "current" || dto.LastChapterRead != 12 ||
 		dto.TotalChapters != 179 || dto.Score != 8 || dto.TrackerName != "Fake OAuth Tracker" {
 		t.Errorf("TrackBindingDTO = %+v", dto)
+	}
+}
+
+// TestCreateBinding_PrivateFlag asserts the request's optional `private`
+// field threads all the way through validateBind → bindSvc.Bind → the
+// fresh SaveEntry call on the not-yet-tracked path (GetEntry finds nothing,
+// so SaveEntry registers a brand new remote entry). Covers both an explicit
+// true and an absent (defaults false) body.
+func TestCreateBinding_PrivateFlag(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"explicit true", fmt.Sprintf(`{"trackerId":%d,"remoteId":"7225","private":true}`, oauthTrackerID), true},
+		{"absent defaults false", fmt.Sprintf(`{"trackerId":%d,"remoteId":"7226"}`, oauthTrackerID), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			env := newTestEnv(t, "https://tsundoku.example")
+			loginOAuth(t, env, oauthTrackerID)
+			id := seedSeries(ctx, t, env.client, "Private Flag "+tc.name, "private-flag-"+tc.name)
+
+			var capturedEntry tracker.TrackEntry
+			env.oauth.saveEntryFn = func(_ context.Context, _ string, entry tracker.TrackEntry) (tracker.TrackEntry, error) {
+				capturedEntry = entry
+				entry.LibraryID = "new-lib"
+				return entry, nil
+			}
+
+			rec := env.do(http.MethodPost, "/api/series/"+id.String()+"/tracking", tc.body)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+			}
+			if capturedEntry.Private != tc.want {
+				t.Errorf("SaveEntry entry.Private = %v, want %v", capturedEntry.Private, tc.want)
+			}
+		})
 	}
 }
 

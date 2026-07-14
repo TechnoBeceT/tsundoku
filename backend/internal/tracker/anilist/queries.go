@@ -12,7 +12,16 @@ package anilist
 // live once the owner has an account token to run them with.
 
 // searchQuery mirrors internal/metadata/anilist's search shape but adds
-// siteUrl (TrackSearchResult.URL — "View on AniList").
+// siteUrl (TrackSearchResult.URL — "View on AniList") plus the
+// Search-Enrichment fields (format/startDate/averageScore/description,
+// confirmed against Suwayomi-Server's AnilistApi.kt/Komikku's own
+// AnilistApi.kt search query): format is AniList's MediaFormat enum
+// ("MANGA"/"NOVEL"/"ONE_SHOT"/…), startDate only selects year (a search hit
+// never carries month/day precision on the reference clients either),
+// averageScore is AniList's RAW 0-100 community average (kept unscaled —
+// see tracker.TrackSearchResult.Score's own doc comment), description is
+// requested as plain text (asHtml:false) so this port never has to strip
+// AniList's default HTML wrapping.
 const searchQuery = `
 query ($search: String, $perPage: Int) {
   Page(perPage: $perPage) {
@@ -23,6 +32,10 @@ query ($search: String, $perPage: Int) {
       status
       chapters
       siteUrl
+      format
+      startDate { year }
+      averageScore
+      description(asHtml: false)
     }
   }
 }`

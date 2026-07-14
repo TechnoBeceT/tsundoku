@@ -1,6 +1,7 @@
 package kitsu
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/tracker"
@@ -26,6 +27,21 @@ type mangaSearchAttrs struct {
 	Status         string      `json:"status"`
 	ChapterCount   *int        `json:"chapterCount"`
 	PosterImage    posterImage `json:"posterImage"`
+	// Subtype is Kitsu's publication-format label (e.g. "manga", "manhwa",
+	// "manhua", "novel", "oneshot") — Search-Enrichment addition.
+	Subtype string `json:"subtype"`
+	// StartDate is Kitsu's "YYYY-MM-DD" publication-start date, kept RAW
+	// (mirrors internal/metadata/kitsu's own mangaAttrs.StartDate shape).
+	StartDate string `json:"startDate"`
+	// AverageRating is a "0".."100" STRING percentage (e.g. "85.07"), NOT a
+	// JSON number — the same Kitsu API quirk internal/metadata/kitsu's
+	// mangaAttrs.AverageRating documents (confirmed live there via
+	// TestShapeKitsu); this package re-declares its own copy rather than
+	// importing that one, per this file's own "deliberately redefined"
+	// convention for wire shapes (see mangaSearchAttrs' sibling types).
+	AverageRating string `json:"averageRating"`
+	// Synopsis is Kitsu's plain-text summary.
+	Synopsis string `json:"synopsis"`
 }
 
 // posterImage mirrors Kitsu's posterImage size-variant map; only "original"
@@ -164,7 +180,26 @@ func toTrackSearchResult(d mangaData) tracker.TrackSearchResult {
 		CoverURL:      d.Attributes.PosterImage.Original,
 		Status:        d.Attributes.Status,
 		TotalChapters: total,
+		Type:          d.Attributes.Subtype,
+		StartDate:     d.Attributes.StartDate,
+		Score:         parseAverageRating(d.Attributes.AverageRating),
+		Description:   d.Attributes.Synopsis,
 	}
+}
+
+// parseAverageRating converts Kitsu's averageRating — a "0".."100" STRING
+// percentage — into a float64 (mirrors internal/metadata/kitsu's own
+// parseScore). An empty or unparseable value yields 0 (unknown), never an
+// error — this is advisory display data, not a validated field.
+func parseAverageRating(raw string) float64 {
+	if raw == "" {
+		return 0
+	}
+	rating, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0
+	}
+	return rating
 }
 
 // toTrackEntry maps one Kitsu library-entries resource to the shared

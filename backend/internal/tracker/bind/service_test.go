@@ -29,6 +29,11 @@ import (
 // e.g. "GetEntry ran exactly once" or "Reconcile made zero tracker calls".
 type fakeTracker struct {
 	id int
+	// supportsPrivate controls SupportsPrivate()'s return — defaults to
+	// false (Go zero value) so existing tests unaware of the Search-
+	// Enrichment slice keep behaving as an AniList/Kitsu-style tracker
+	// would NOT unless a test opts in.
+	supportsPrivate bool
 
 	getEntryFn    func(ctx context.Context, token, remoteID string) (*tracker.TrackEntry, error)
 	saveEntryFn   func(ctx context.Context, token string, entry tracker.TrackEntry) (tracker.TrackEntry, error)
@@ -44,10 +49,11 @@ type fakeTracker struct {
 	lastSearchToken  string
 }
 
-func (f *fakeTracker) Key() string      { return "fake" }
-func (f *fakeTracker) ID() int          { return f.id }
-func (f *fakeTracker) Name() string     { return "Fake Tracker" }
-func (f *fakeTracker) NeedsOAuth() bool { return false }
+func (f *fakeTracker) Key() string           { return "fake" }
+func (f *fakeTracker) ID() int               { return f.id }
+func (f *fakeTracker) Name() string          { return "Fake Tracker" }
+func (f *fakeTracker) NeedsOAuth() bool      { return false }
+func (f *fakeTracker) SupportsPrivate() bool { return f.supportsPrivate }
 
 func (f *fakeTracker) AuthURL(string, string) (string, string, error) {
 	return "", "", tracker.ErrOAuthNotSupported
@@ -191,7 +197,7 @@ func TestBind_CreatesBindingAndWritesSidecar(t *testing.T) {
 	seedConnection(ctx, t, client, ft.id, "acct-token")
 	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
 
-	binding, err := svc.Bind(ctx, row.ID, ft.id, "remote-7224")
+	binding, err := svc.Bind(ctx, row.ID, ft.id, "remote-7224", false)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -258,7 +264,7 @@ func TestBind_RegistersFreshEntryWhenNotYetTracked(t *testing.T) {
 	seedConnection(ctx, t, client, ft.id, "acct-token")
 	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
 
-	binding, err := svc.Bind(ctx, row.ID, ft.id, "remote-1")
+	binding, err := svc.Bind(ctx, row.ID, ft.id, "remote-1", false)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -267,6 +273,58 @@ func TestBind_RegistersFreshEntryWhenNotYetTracked(t *testing.T) {
 	}
 	if binding.LibraryID != "new-lib" || binding.RemoteID != "remote-1" {
 		t.Fatalf("binding = %+v", binding)
+	}
+}
+
+// TestBind_RegistersFreshEntryWithPrivateFlag confirms Bind's fresh
+// SaveEntry call (the not-yet-tracked path) threads the owner's requested
+// private=true through onto the created remote entry — the Bind-Private
+// slice's own load-bearing proof. The already-tracked path (GetEntry finds
+// an existing entry) is NOT covered here: private has no effect there (see
+// Bind's own doc comment) — that entry's own private flag wins.
+func TestBind_RegistersFreshEntryWithPrivateFlag(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	row := seedBoundSeries(ctx, t, client, storage, "Private Bind")
+
+	ft := &fakeTracker{id: fakeTrackerID, supportsPrivate: true}
+	seedConnection(ctx, t, client, ft.id, "acct-token")
+	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
+
+	if _, err := svc.Bind(ctx, row.ID, ft.id, "remote-priv", true); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if ft.saveEntryCalls != 1 {
+		t.Fatalf("SaveEntry calls = %d, want 1", ft.saveEntryCalls)
+	}
+	if !ft.lastSaveEntry.Private {
+		t.Fatalf("SaveEntry entry.Private = false, want true")
+	}
+}
+
+// TestBind_RegistersFreshEntryWithoutPrivateFlag confirms Bind's fresh
+// SaveEntry call defaults to private=false when the owner didn't request it —
+// the counterpart to TestBind_RegistersFreshEntryWithPrivateFlag, pinning
+// that the flag is never fabricated.
+func TestBind_RegistersFreshEntryWithoutPrivateFlag(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	row := seedBoundSeries(ctx, t, client, storage, "Non-Private Bind")
+
+	ft := &fakeTracker{id: fakeTrackerID, supportsPrivate: true}
+	seedConnection(ctx, t, client, ft.id, "acct-token")
+	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
+
+	if _, err := svc.Bind(ctx, row.ID, ft.id, "remote-notpriv", false); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if ft.saveEntryCalls != 1 {
+		t.Fatalf("SaveEntry calls = %d, want 1", ft.saveEntryCalls)
+	}
+	if ft.lastSaveEntry.Private {
+		t.Fatalf("SaveEntry entry.Private = true, want false")
 	}
 }
 
@@ -298,7 +356,7 @@ func TestBind_RegistersFreshEntryWithDefaultStatus(t *testing.T) {
 			seedConnection(ctx, t, client, ft.id, "acct-token")
 			svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
 
-			if _, err := svc.Bind(ctx, row.ID, ft.id, "remote-1"); err != nil {
+			if _, err := svc.Bind(ctx, row.ID, ft.id, "remote-1", false); err != nil {
 				t.Fatalf("Bind: %v", err)
 			}
 			if ft.saveEntryCalls != 1 {
@@ -317,7 +375,7 @@ func TestBind_TrackerNotFound(t *testing.T) {
 	client := testdb.New(t)
 	svc := bind.NewService(client, tracker.NewRegistry(), t.TempDir())
 
-	if _, err := svc.Bind(context.Background(), uuid.New(), 9999, "r"); err != bind.ErrTrackerNotFound {
+	if _, err := svc.Bind(context.Background(), uuid.New(), 9999, "r", false); err != bind.ErrTrackerNotFound {
 		t.Fatalf("Bind: err = %v, want bind.ErrTrackerNotFound", err)
 	}
 }
@@ -333,7 +391,7 @@ func TestBind_TrackerNotConnected(t *testing.T) {
 	ft := &fakeTracker{id: fakeTrackerID}
 	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
 
-	if _, err := svc.Bind(ctx, row.ID, ft.id, "r"); err != bind.ErrTrackerNotConnected {
+	if _, err := svc.Bind(ctx, row.ID, ft.id, "r", false); err != bind.ErrTrackerNotConnected {
 		t.Fatalf("Bind: err = %v, want bind.ErrTrackerNotConnected", err)
 	}
 }
@@ -349,7 +407,7 @@ func TestBind_SeriesNotFound(t *testing.T) {
 	seedConnection(ctx, t, client, ft.id, "acct-token")
 	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
 
-	if _, err := svc.Bind(ctx, uuid.New(), ft.id, "r"); err != bind.ErrSeriesNotFound {
+	if _, err := svc.Bind(ctx, uuid.New(), ft.id, "r", false); err != bind.ErrSeriesNotFound {
 		t.Fatalf("Bind: err = %v, want bind.ErrSeriesNotFound", err)
 	}
 }
@@ -361,7 +419,7 @@ func bindOne(ctx context.Context, t *testing.T, client *ent.Client, storage stri
 	row := seedBoundSeries(ctx, t, client, storage, fmt.Sprintf("Series %s", remoteID))
 	seedConnection(ctx, t, client, ft.id, "acct-token")
 	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
-	binding, err := svc.Bind(ctx, row.ID, ft.id, remoteID)
+	binding, err := svc.Bind(ctx, row.ID, ft.id, remoteID, false)
 	if err != nil {
 		t.Fatalf("bindOne: Bind: %v", err)
 	}
@@ -683,7 +741,7 @@ func TestBind_SidecarRoundTripSurvivesDBWipe(t *testing.T) {
 	seedConnection(ctx, t, client, ft.id, "acct-token")
 	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
 
-	binding, err := svc.Bind(ctx, row.ID, ft.id, "remote-abc")
+	binding, err := svc.Bind(ctx, row.ID, ft.id, "remote-abc", false)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

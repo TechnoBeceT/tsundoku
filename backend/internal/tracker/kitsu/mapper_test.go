@@ -63,6 +63,42 @@ func TestToTrackSearchResult_NilChapterCount(t *testing.T) {
 	}
 }
 
+// TestToTrackSearchResult_MapsEnrichmentFields pins the Search-Enrichment
+// fields (Type/StartDate/Score/Description) Kitsu's search-hit → shared
+// TrackSearchResult mapping carries, including the "0".."100" string
+// averageRating → float64 parse.
+func TestToTrackSearchResult_MapsEnrichmentFields(t *testing.T) {
+	d := mangaData{
+		ID: "7224",
+		Attributes: mangaSearchAttrs{
+			CanonicalTitle: "Solo Leveling",
+			Subtype:        "manga",
+			StartDate:      "2018-03-04",
+			AverageRating:  "85.07",
+			Synopsis:       "A weak hunter grows stronger.",
+		},
+	}
+	got := toTrackSearchResult(d)
+	if got.Type != "manga" || got.StartDate != "2018-03-04" || got.Score != 85.07 ||
+		got.Description != "A weak hunter grows stronger." {
+		t.Fatalf("toTrackSearchResult enrichment fields = %+v", got)
+	}
+}
+
+// TestParseAverageRating covers the empty and unparseable degrade-to-zero
+// cases parseAverageRating's own doc comment describes.
+func TestParseAverageRating(t *testing.T) {
+	if got := parseAverageRating(""); got != 0 {
+		t.Fatalf("parseAverageRating(\"\") = %v, want 0", got)
+	}
+	if got := parseAverageRating("not-a-number"); got != 0 {
+		t.Fatalf("parseAverageRating(garbage) = %v, want 0", got)
+	}
+	if got := parseAverageRating("42.5"); got != 42.5 {
+		t.Fatalf("parseAverageRating(42.5) = %v, want 42.5", got)
+	}
+}
+
 // TestToTrackEntry_MapsFieldsAndDates pins the library-entry → shared
 // TrackEntry mapping, including RemoteID coming from the manga relationship
 // (not a caller-supplied fallback) and date parsing.

@@ -53,13 +53,26 @@ type searchCoverImageURL struct {
 }
 
 // searchRecord is the subset of a search hit's "record" object this package
-// reads.
+// reads. Type/Year/Description are the Search-Enrichment additions
+// (confirmed present on MangaUpdates' own search response's "record" object
+// via Komikku's MURecord.kt / Suwayomi-Server's MURecord.kt — no extra
+// request param needed, the fields already ride along). DELIBERATELY left
+// thinner than the other three trackers: the record also carries
+// `bayesian_rating`, a genuine community score, but neither reference
+// client maps it into a search-result score (Komikku's own MURecord.
+// toTrackSearch reads the field yet never assigns it to `score`) — this
+// port follows that same precedent rather than inventing a mapping neither
+// proven implementation trusts, so toTrackSearchResult leaves Score at its
+// zero value (unknown) for MangaUpdates.
 type searchRecord struct {
-	SeriesID int64            `json:"series_id"`
-	Title    string           `json:"title"`
-	URL      string           `json:"url"`
-	Image    searchCoverImage `json:"image"`
-	Status   string           `json:"status"`
+	SeriesID    int64            `json:"series_id"`
+	Title       string           `json:"title"`
+	URL         string           `json:"url"`
+	Image       searchCoverImage `json:"image"`
+	Status      string           `json:"status"`
+	Type        string           `json:"type"`
+	Year        string           `json:"year"`
+	Description string           `json:"description"`
 }
 
 // searchResultEntry is one hit in a search response — MangaUpdates nests
@@ -140,11 +153,14 @@ func listStatusLabel(listID int) string {
 // separate series-detail call this port does not make.
 func toTrackSearchResult(r searchRecord) tracker.TrackSearchResult {
 	return tracker.TrackSearchResult{
-		RemoteID: strconv.FormatInt(r.SeriesID, 10),
-		Title:    r.Title,
-		URL:      r.URL,
-		CoverURL: r.Image.URL.Original,
-		Status:   r.Status,
+		RemoteID:    strconv.FormatInt(r.SeriesID, 10),
+		Title:       r.Title,
+		URL:         r.URL,
+		CoverURL:    r.Image.URL.Original,
+		Status:      r.Status,
+		Type:        r.Type,
+		StartDate:   r.Year,
+		Description: r.Description,
 	}
 }
 

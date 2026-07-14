@@ -25,10 +25,11 @@ type fakeCodeTracker struct {
 	exchangeFn   func(ctx context.Context, code, verifier, redirectURI string) (tracker.TokenSet, error)
 }
 
-func (f *fakeCodeTracker) Key() string      { return "fake-code" }
-func (f *fakeCodeTracker) ID() int          { return f.id }
-func (f *fakeCodeTracker) Name() string     { return "Fake Code Tracker" }
-func (f *fakeCodeTracker) NeedsOAuth() bool { return true }
+func (f *fakeCodeTracker) Key() string           { return "fake-code" }
+func (f *fakeCodeTracker) ID() int               { return f.id }
+func (f *fakeCodeTracker) Name() string          { return "Fake Code Tracker" }
+func (f *fakeCodeTracker) NeedsOAuth() bool      { return true }
+func (f *fakeCodeTracker) SupportsPrivate() bool { return false }
 func (f *fakeCodeTracker) AuthURL(_, _ string) (string, string, error) {
 	verifier := f.authVerifier
 	if verifier == "" {
@@ -67,10 +68,11 @@ type fakeImplicitTracker struct {
 	id int
 }
 
-func (f *fakeImplicitTracker) Key() string      { return "fake-implicit" }
-func (f *fakeImplicitTracker) ID() int          { return f.id }
-func (f *fakeImplicitTracker) Name() string     { return "Fake Implicit Tracker" }
-func (f *fakeImplicitTracker) NeedsOAuth() bool { return true }
+func (f *fakeImplicitTracker) Key() string           { return "fake-implicit" }
+func (f *fakeImplicitTracker) ID() int               { return f.id }
+func (f *fakeImplicitTracker) Name() string          { return "Fake Implicit Tracker" }
+func (f *fakeImplicitTracker) NeedsOAuth() bool      { return true }
+func (f *fakeImplicitTracker) SupportsPrivate() bool { return true }
 func (f *fakeImplicitTracker) AuthURL(_, _ string) (string, string, error) {
 	return "https://fake.test/authorize", "", nil
 }
@@ -459,10 +461,11 @@ type fakeCredentialTracker struct {
 	loginFn func(ctx context.Context, username, password string) (tracker.TokenSet, error)
 }
 
-func (f *fakeCredentialTracker) Key() string      { return "fake-credential" }
-func (f *fakeCredentialTracker) ID() int          { return f.id }
-func (f *fakeCredentialTracker) Name() string     { return "Fake Credential Tracker" }
-func (f *fakeCredentialTracker) NeedsOAuth() bool { return false }
+func (f *fakeCredentialTracker) Key() string           { return "fake-credential" }
+func (f *fakeCredentialTracker) ID() int               { return f.id }
+func (f *fakeCredentialTracker) Name() string          { return "Fake Credential Tracker" }
+func (f *fakeCredentialTracker) NeedsOAuth() bool      { return false }
+func (f *fakeCredentialTracker) SupportsPrivate() bool { return false }
 func (f *fakeCredentialTracker) AuthURL(string, string) (string, string, error) {
 	return "", "", tracker.ErrOAuthNotSupported
 }

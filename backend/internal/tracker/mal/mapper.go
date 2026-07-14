@@ -26,6 +26,20 @@ type mangaSearchNode struct {
 	MainPicture mainPictureData `json:"main_picture"`
 	NumChapters int             `json:"num_chapters"`
 	Status      string          `json:"status"`
+	// MediaType is MAL's publication-format label (e.g. "manga",
+	// "one_shot", "manhwa") — Search-Enrichment addition.
+	MediaType string `json:"media_type"`
+	// StartDate is MAL's "YYYY-MM-DD" (sometimes "YYYY" or "YYYY-MM" —
+	// MAL allows partial precision) publication-start date, kept RAW (not
+	// parsed to time.Time — see tracker.TrackSearchResult.StartDate's own
+	// doc comment on why every tracker's native granularity is preserved).
+	StartDate string `json:"start_date"`
+	// Mean is MAL's 0-10 community average score; 0 when MAL has no rating
+	// data yet for this manga (MAL's own API omits the field entirely in
+	// that case, which decodes to the zero value here).
+	Mean float64 `json:"mean"`
+	// Synopsis is MAL's plain-text summary.
+	Synopsis string `json:"synopsis"`
 }
 
 type mangaSearchEntry struct {
@@ -72,6 +86,10 @@ func toTrackSearchResult(n mangaSearchNode) tracker.TrackSearchResult {
 		CoverURL:      n.MainPicture.Large,
 		Status:        n.Status,
 		TotalChapters: n.NumChapters,
+		Type:          n.MediaType,
+		StartDate:     n.StartDate,
+		Score:         n.Mean,
+		Description:   n.Synopsis,
 	}
 }
 

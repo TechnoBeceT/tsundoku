@@ -38,6 +38,31 @@ func TestToTrackSearchResult_MapsFields(t *testing.T) {
 	}
 }
 
+// TestToTrackSearchResult_MapsEnrichmentFields pins MangaUpdates' own
+// DELIBERATELY THIN Search-Enrichment subset (see searchRecord's own doc
+// comment): Type/StartDate(year)/Description DO map through (the record
+// carries them), but Score stays at its zero value — MangaUpdates' search
+// response carries a `bayesian_rating` community score, but neither
+// reference client (Komikku/Suwayomi-Server) trusts it as a search-result
+// score, and this port follows that same precedent rather than inventing a
+// mapping of its own.
+func TestToTrackSearchResult_MapsEnrichmentFields(t *testing.T) {
+	r := searchRecord{
+		SeriesID:    12345,
+		Title:       "Solo Leveling",
+		Type:        "Manhwa",
+		Year:        "2018",
+		Description: "A weak hunter grows stronger.",
+	}
+	got := toTrackSearchResult(r)
+	if got.Type != "Manhwa" || got.StartDate != "2018" || got.Description != "A weak hunter grows stronger." {
+		t.Fatalf("toTrackSearchResult enrichment fields = %+v", got)
+	}
+	if got.Score != 0 {
+		t.Fatalf("Score = %v, want 0 (MangaUpdates search-result score is deliberately left unmapped)", got.Score)
+	}
+}
+
 // TestToTrackEntry_MapsFields pins the list-series entry → shared
 // TrackEntry mapping, including RemoteID/Title coming from the entry's own
 // series object and Status resolving from list_id.

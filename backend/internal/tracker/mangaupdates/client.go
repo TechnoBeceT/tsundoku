@@ -93,6 +93,11 @@ func (c *Client) Name() string { return providerName }
 // redirect.
 func (c *Client) NeedsOAuth() bool { return false }
 
+// SupportsPrivate reports false — MangaUpdates' list-series model has no
+// `private`/visibility concept at all; a Bind/UpdateTrack `private` request
+// field is harmlessly ignored for this tracker.
+func (c *Client) SupportsPrivate() bool { return false }
+
 // AuthURL always returns tracker.ErrOAuthNotSupported — MangaUpdates has no
 // authorize redirect; use LoginCredentials.
 func (c *Client) AuthURL(_, _ string) (string, string, error) {
