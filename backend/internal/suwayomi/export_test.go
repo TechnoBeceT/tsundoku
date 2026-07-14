@@ -44,6 +44,12 @@ func KillProcess(pm *ProcessManager) {
 	}
 }
 
+// ValidateImagePage exposes the unexported validateImagePage guard so black-box
+// tests can pin the decode/content/empty checks with real image bytes.
+func ValidateImagePage(data []byte) error {
+	return validateImagePage(data)
+}
+
 // NewChapterCacheClock builds a ChapterCache with an injectable TTL provider AND
 // an injectable clock, so black-box tests can drive both TTL expiry and TTL hot
 // reload deterministically (advance now / mutate the provider instead of
