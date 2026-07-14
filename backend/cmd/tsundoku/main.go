@@ -142,6 +142,7 @@ func main() {
 	trackerRegistry := trackerproviders.NewRegistry(trackerproviders.Config{
 		AniListClientID: cfg.Tracker.AniListClientID,
 		MALClientID:     cfg.Tracker.MALClientID,
+		MALClientSecret: cfg.Tracker.MALClientSecret,
 	})
 	trackerConnectSvc := connect.NewService(entClient, trackerRegistry, cfg.Tracker.PublicURL)
 	trackerBindSvc := bind.NewService(entClient, trackerRegistry, cfg.Storage.Folder)

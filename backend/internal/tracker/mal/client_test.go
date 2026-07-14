@@ -24,7 +24,7 @@ import (
 // must be IGNORED (see the Client.AuthURL doc comment: correlation moved to
 // internal/tracker/connect's per-tracker pending stash).
 func TestAuthURL_PKCEPlainShape(t *testing.T) {
-	c := mal.New("test-client-id", nil)
+	c := mal.New("test-client-id", "", nil)
 
 	authURL, verifier, err := c.AuthURL("csrf-state-456", "https://tsundoku.example/auth/tracker/callback")
 	if err != nil {
@@ -89,7 +89,7 @@ func assertQueryParam(t *testing.T, q url.Values, key, want string) {
 // never reuse the same PKCE verifier — a shared verifier would let one
 // login's proof be replayed against another.
 func TestAuthURL_GeneratesFreshVerifierEachCall(t *testing.T) {
-	c := mal.New("test-client-id", nil)
+	c := mal.New("test-client-id", "", nil)
 	_, v1, err := c.AuthURL("state-a", "https://example.test/callback")
 	if err != nil {
 		t.Fatalf("AuthURL: %v", err)
@@ -106,7 +106,7 @@ func TestAuthURL_GeneratesFreshVerifierEachCall(t *testing.T) {
 // TestAuthURL_BlankClientID confirms AuthURL fails closed
 // (tracker.ErrClientIDNotConfigured) when this Client has no client id.
 func TestAuthURL_BlankClientID(t *testing.T) {
-	c := mal.New("", nil)
+	c := mal.New("", "", nil)
 	if _, _, err := c.AuthURL("state", "https://example.test/callback"); !errors.Is(err, tracker.ErrClientIDNotConfigured) {
 		t.Fatalf("AuthURL with blank client id: err = %v, want tracker.ErrClientIDNotConfigured", err)
 	}
@@ -156,7 +156,7 @@ func TestExchangeCode_RequestBodyShape(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := mal.New("test-client-id", newTestClient(t, srv))
+	c := mal.New("test-client-id", "", newTestClient(t, srv))
 	tok, err := c.ExchangeCode(context.Background(), "the-auth-code", "the-pkce-verifier", "https://tsundoku.example/auth/tracker/callback")
 	if err != nil {
 		t.Fatalf("ExchangeCode: %v", err)
@@ -206,7 +206,7 @@ func TestRefresh_RequestBodyShape(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := mal.New("test-client-id", newTestClient(t, srv))
+	c := mal.New("test-client-id", "", newTestClient(t, srv))
 	tok, err := c.Refresh(context.Background(), "old-refresh-token")
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
@@ -221,13 +221,86 @@ func TestRefresh_RequestBodyShape(t *testing.T) {
 	if tok.Access != "refreshed-access" {
 		t.Fatalf("TokenSet.Access = %q, want refreshed-access", tok.Access)
 	}
+	if gotForm.Has("client_secret") {
+		t.Fatalf("form leaked a client_secret field — this Client was built with an empty secret (public app)")
+	}
+}
+
+// TestClientSecret_SentOnlyWhenConfigured is the mission-required test for
+// the confidential-app fix: it drives BOTH ExchangeCode and Refresh against
+// a fake token server with a Client built WITH a client secret and a Client
+// built WITHOUT one, asserting the POSTed form carries client_secret in the
+// former case and has NO client_secret KEY AT ALL (not merely an empty
+// value) in the latter — a public/"other"-type MAL app must never send an
+// empty client_secret field, since that is a different request shape than
+// omitting it.
+func TestClientSecret_SentOnlyWhenConfigured(t *testing.T) {
+	tests := []struct {
+		name         string
+		clientSecret string
+		wantPresent  bool
+	}{
+		{name: "confidential app sends client_secret", clientSecret: "the-app-secret", wantPresent: true},
+		{name: "public app omits client_secret entirely", clientSecret: "", wantPresent: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+"/ExchangeCode", func(t *testing.T) {
+			var gotForm url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				gotForm, _ = url.ParseQuery(string(body))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"a","refresh_token":"r","expires_in":3600}`))
+			}))
+			defer srv.Close()
+
+			c := mal.New("cid", tt.clientSecret, newTestClient(t, srv))
+			if _, err := c.ExchangeCode(context.Background(), "code", "verifier", "https://example.test/cb"); err != nil {
+				t.Fatalf("ExchangeCode: %v", err)
+			}
+			assertClientSecretPresence(t, gotForm, tt.clientSecret, tt.wantPresent)
+		})
+
+		t.Run(tt.name+"/Refresh", func(t *testing.T) {
+			var gotForm url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				gotForm, _ = url.ParseQuery(string(body))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"a","refresh_token":"r","expires_in":3600}`))
+			}))
+			defer srv.Close()
+
+			c := mal.New("cid", tt.clientSecret, newTestClient(t, srv))
+			if _, err := c.Refresh(context.Background(), "old-refresh"); err != nil {
+				t.Fatalf("Refresh: %v", err)
+			}
+			assertClientSecretPresence(t, gotForm, tt.clientSecret, tt.wantPresent)
+		})
+	}
+}
+
+// assertClientSecretPresence fails the test unless gotForm's client_secret
+// KEY presence matches wantPresent exactly — Has(), not Get(), so an
+// accidentally-sent empty-value field would still fail this (the bug this
+// guards against is sending client_secret="" for a public app, not just a
+// wrong value).
+func assertClientSecretPresence(t *testing.T, gotForm url.Values, secret string, wantPresent bool) {
+	t.Helper()
+	if got := gotForm.Has("client_secret"); got != wantPresent {
+		t.Fatalf("form.Has(client_secret) = %v, want %v", got, wantPresent)
+	}
+	if wantPresent && gotForm.Get("client_secret") != secret {
+		t.Fatalf("form client_secret = %q, want %q", gotForm.Get("client_secret"), secret)
+	}
 }
 
 // TestRefresh_EmptyTokenIsErrNoRefresh confirms Refresh never issues a
 // network call for an empty refresh token — MAL always errors on that
 // anyway, but this fails fast and cleanly with the shared sentinel.
 func TestRefresh_EmptyTokenIsErrNoRefresh(t *testing.T) {
-	c := mal.New("test-client-id", nil)
+	c := mal.New("test-client-id", "", nil)
 	if _, err := c.Refresh(context.Background(), ""); !errors.Is(err, tracker.ErrNoRefresh) {
 		t.Fatalf("Refresh(\"\"): err = %v, want tracker.ErrNoRefresh", err)
 	}
@@ -247,7 +320,7 @@ func TestClient_Search_AttachesBearerAndParses(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := mal.New("cid", newTestClient(t, srv))
+	c := mal.New("cid", "", newTestClient(t, srv))
 	results, err := c.Search(context.Background(), "acct-token", "berserk")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -272,7 +345,7 @@ func TestClient_GetEntry_NotYetTracked(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := mal.New("cid", newTestClient(t, srv))
+	c := mal.New("cid", "", newTestClient(t, srv))
 	entry, err := c.GetEntry(context.Background(), "acct-token", "1")
 	if err != nil {
 		t.Fatalf("GetEntry: %v", err)
@@ -309,7 +382,7 @@ func TestClient_SaveEntry_SendsPUTAndParses(t *testing.T) {
 	srv := upsertTestServer(t, &lastMethod, &lastForm)
 	defer srv.Close()
 
-	c := mal.New("cid", newTestClient(t, srv))
+	c := mal.New("cid", "", newTestClient(t, srv))
 	saved, err := c.SaveEntry(context.Background(), "acct-token", tracker.TrackEntry{
 		RemoteID: "887", Status: "reading", Score: 7, Progress: 42,
 	})
@@ -336,7 +409,7 @@ func TestClient_UpdateEntry_SendsPUT(t *testing.T) {
 	srv := upsertTestServer(t, &lastMethod, &lastForm)
 	defer srv.Close()
 
-	c := mal.New("cid", newTestClient(t, srv))
+	c := mal.New("cid", "", newTestClient(t, srv))
 	entry := tracker.TrackEntry{RemoteID: "887", Status: "reading", Score: 7, Progress: 42}
 	if _, err := c.UpdateEntry(context.Background(), "acct-token", entry); err != nil {
 		t.Fatalf("UpdateEntry: %v", err)
@@ -353,7 +426,7 @@ func TestClient_DeleteEntry_SendsDELETE(t *testing.T) {
 	srv := upsertTestServer(t, &lastMethod, &lastForm)
 	defer srv.Close()
 
-	c := mal.New("cid", newTestClient(t, srv))
+	c := mal.New("cid", "", newTestClient(t, srv))
 	entry := tracker.TrackEntry{RemoteID: "887"}
 	if err := c.DeleteEntry(context.Background(), "acct-token", entry); err != nil {
 		t.Fatalf("DeleteEntry: %v", err)
@@ -367,7 +440,7 @@ func TestClient_DeleteEntry_SendsDELETE(t *testing.T) {
 // UpdateEntry refuse a blank RemoteID (MAL keys every write by manga id
 // alone — there is no separate list-entry id to fall back on).
 func TestClient_UpsertEntry_RequiresRemoteID(t *testing.T) {
-	c := mal.New("cid", nil)
+	c := mal.New("cid", "", nil)
 	if _, err := c.SaveEntry(context.Background(), "tok", tracker.TrackEntry{}); err == nil {
 		t.Fatalf("SaveEntry with blank RemoteID: want an error, got nil")
 	}
@@ -387,7 +460,7 @@ func TestClient_HTTPNon200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := mal.New("cid", newTestClient(t, srv))
+	c := mal.New("cid", "", newTestClient(t, srv))
 	if _, err := c.Search(context.Background(), "bad-token", "q"); err == nil {
 		t.Fatalf("Search against a 401: want an error, got nil")
 	}
@@ -402,7 +475,7 @@ func TestClient_TokenEndpointNon200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := mal.New("cid", newTestClient(t, srv))
+	c := mal.New("cid", "", newTestClient(t, srv))
 	if _, err := c.ExchangeCode(context.Background(), "code", "verifier", "https://example.test/cb"); err == nil {
 		t.Fatalf("ExchangeCode against a 400: want an error, got nil")
 	}
@@ -411,7 +484,7 @@ func TestClient_TokenEndpointNon200(t *testing.T) {
 // TestClient_IdentityGetters pins the fixed Key/ID/Name/NeedsOAuth this
 // Client reports in the tracker.Tracker contract.
 func TestClient_IdentityGetters(t *testing.T) {
-	c := mal.New("cid", nil)
+	c := mal.New("cid", "", nil)
 	if c.Key() != "mal" {
 		t.Fatalf("Key() = %q, want mal", c.Key())
 	}

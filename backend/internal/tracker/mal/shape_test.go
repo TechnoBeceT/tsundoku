@@ -38,7 +38,7 @@ func TestShapeTracker_MAL_AuthedOps(t *testing.T) {
 		t.Skip("TSUNDOKU_TRACKER_TEST_MAL_CLIENT_ID / TSUNDOKU_TRACKER_TEST_MAL_TOKEN not set — run this manually once a MAL account is connected")
 	}
 
-	c := mal.New(clientID, nil)
+	c := mal.New(clientID, "", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

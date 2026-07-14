@@ -22,6 +22,20 @@
 // clients, not a per-instance secret), so there is no config field for
 // them and no owner registration step. Kitsu DOES issue a refresh token
 // (unlike AniList's implicit grant), so Refresh is fully implemented.
+//
+// CONFIRMED from production: kitsu.app now sits behind Cloudflare bot
+// protection, and Go's default `net/http` User-Agent
+// ("Go-http-client/1.1") is an instant bot signature — every request
+// (including the token POST) came back a Cloudflare `403 "Just a
+// moment…"` challenge page instead of Kitsu's real JSON:API response. Every
+// outbound request this Client issues now carries a realistic browser
+// browserUserAgent header, which is enough to pass Cloudflare's cheap
+// User-Agent heuristic. This is BEST-EFFORT ONLY: if kitsu.app ever serves
+// a full managed JS challenge (which a plain header swap cannot solve),
+// requests will still 403 — the real fix at that point is routing Kitsu
+// through FlareSolverr (the same headless-browser challenge solver Suwayomi
+// already uses for anti-bot sources), which is a SEPARATE follow-up, not
+// built here.
 package kitsu
 
 import (
@@ -63,6 +77,13 @@ const (
 	defaultSearchLimit = 10
 	providerKey        = "kitsu"
 	providerName       = "Kitsu"
+
+	// browserUserAgent is set on EVERY outbound request this Client issues
+	// (the token POST and every JSON:API request) — see the package doc
+	// comment. A current desktop Chrome UA string is enough to clear
+	// Cloudflare's cheap User-Agent bot check; it is NOT a guarantee against
+	// a full JS challenge.
+	browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 
 // Client implements tracker.Tracker against Kitsu's public JSON:API.
@@ -270,6 +291,7 @@ func (c *Client) doToken(ctx context.Context, form url.Values) (tracker.TokenSet
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", browserUserAgent)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -305,6 +327,7 @@ func (c *Client) doGet(ctx context.Context, token, reqURL string, out any) error
 		return fmt.Errorf("kitsu: build request %s: %w", reqURL, err)
 	}
 	req.Header.Set("Accept", jsonAPIMediaType)
+	req.Header.Set("User-Agent", browserUserAgent)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -338,6 +361,7 @@ func (c *Client) doJSONAPI(ctx context.Context, token, method, reqURL string, bo
 		req.Header.Set("Content-Type", jsonAPIMediaType)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", browserUserAgent)
 	return c.doAndDecode(req, out)
 }
 

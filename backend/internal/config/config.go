@@ -423,6 +423,20 @@ type TrackerConfig struct {
 	// does not itself hit that collision, so a future rename can't
 	// silently reintroduce it.
 	MALClientID string `koanf:"malclientid"`
+	// MALClientSecret is MyAnimeList's registered app CLIENT SECRET for the
+	// tracker OAuth flow. Default "" — a blank secret means this is a
+	// PUBLIC/"other"-type MAL app (PKCE alone is sufficient; no secret is
+	// ever sent to the token endpoint, preserving the prior behavior).
+	// CONFIRMED-in-production: a CONFIDENTIAL MAL app (the common "web"
+	// registration type most owners create) rejects the token exchange with
+	// `401 invalid_client "Client authentication failed"` unless
+	// client_secret rides ALONG WITH PKCE — MAL's confidential-client check
+	// is independent of PKCE, so both are required together for that app
+	// type. internal/tracker/mal.Client sends client_secret ONLY when this
+	// is non-blank, so a public app's request shape is byte-for-byte
+	// unchanged. Set via TSUNDOKU_TRACKER_MALCLIENTSECRET. Explicit koanf
+	// tag for the same reason as MALClientID/AniListClientID above.
+	MALClientSecret string `koanf:"malclientsecret"`
 	// PublicURL is this instance's own public base URL — the redirect
 	// base every tracker's OAuth app must have "${PublicURL}/auth/tracker/
 	// callback" registered as its redirect_uri (spec §2 — direct instance
@@ -504,6 +518,7 @@ func defaults() map[string]any {
 		// ⇒ the whole subsystem is dormant (see TrackerConfig's doc comment).
 		"tracker.anilistclientid": "",
 		"tracker.malclientid":     "",
+		"tracker.malclientsecret": "",
 		"tracker.publicurl":       "",
 	}
 }

@@ -1234,18 +1234,19 @@ func TestTrackerConfig_DefaultsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Tracker.AniListClientID != "" || cfg.Tracker.MALClientID != "" || cfg.Tracker.PublicURL != "" {
+	if cfg.Tracker.AniListClientID != "" || cfg.Tracker.MALClientID != "" || cfg.Tracker.MALClientSecret != "" || cfg.Tracker.PublicURL != "" {
 		t.Fatalf("Tracker defaults = %+v, want all blank", cfg.Tracker)
 	}
 }
 
-// TestTrackerConfig_FromEnv confirms all three TSUNDOKU_TRACKER_* env vars
+// TestTrackerConfig_FromEnv confirms all four TSUNDOKU_TRACKER_* env vars
 // populate their respective fields.
 func TestTrackerConfig_FromEnv(t *testing.T) {
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
 	t.Setenv("TSUNDOKU_TRACKER_ANILISTCLIENTID", "anilist-cid")
 	t.Setenv("TSUNDOKU_TRACKER_MALCLIENTID", "mal-cid")
+	t.Setenv("TSUNDOKU_TRACKER_MALCLIENTSECRET", "mal-secret")
 	t.Setenv("TSUNDOKU_TRACKER_PUBLICURL", "https://tsundoku.example")
 
 	cfg, err := config.Load()
@@ -1257,6 +1258,9 @@ func TestTrackerConfig_FromEnv(t *testing.T) {
 	}
 	if cfg.Tracker.MALClientID != "mal-cid" {
 		t.Fatalf("Tracker.MALClientID = %q, want mal-cid", cfg.Tracker.MALClientID)
+	}
+	if cfg.Tracker.MALClientSecret != "mal-secret" {
+		t.Fatalf("Tracker.MALClientSecret = %q, want mal-secret", cfg.Tracker.MALClientSecret)
 	}
 	if cfg.Tracker.PublicURL != "https://tsundoku.example" {
 		t.Fatalf("Tracker.PublicURL = %q, want https://tsundoku.example", cfg.Tracker.PublicURL)

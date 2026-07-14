@@ -63,8 +63,9 @@ const (
 
 // Client implements tracker.Tracker against MyAnimeList's v2 REST API.
 type Client struct {
-	http     *http.Client
-	clientID string
+	http         *http.Client
+	clientID     string
+	clientSecret string
 }
 
 // compile-time assert: Client satisfies the tracker.Tracker contract.
@@ -74,16 +75,21 @@ var _ tracker.Tracker = (*Client)(nil)
 // (config-injected — see config.TrackerConfig.MALClientID; this package
 // never reads it from the environment or hardcodes it — it may be the same
 // app used by internal/metadata/mal, or a dedicated tracker app, per
-// spec §2). A nil httpClient gets a default *http.Client whose Transport is
+// spec §2). clientSecret is MAL's registered app client SECRET
+// (config.TrackerConfig.MALClientSecret) — a CONFIDENTIAL MAL app (the
+// common "web" registration type) requires it at the token endpoint EVEN
+// WITH PKCE; a PUBLIC/"other"-type app has none and this Client must then
+// send no client_secret at all (see doToken's callers). A nil httpClient
+// gets a default *http.Client whose Transport is
 // httpx.NewRateLimited(nil, requestsPerMinute).
-func New(clientID string, httpClient *http.Client) *Client {
+func New(clientID, clientSecret string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{
 			Timeout:   httpTimeout,
 			Transport: httpx.NewRateLimited(nil, requestsPerMinute),
 		}
 	}
-	return &Client{http: httpClient, clientID: clientID}
+	return &Client{http: httpClient, clientID: clientID, clientSecret: clientSecret}
 }
 
 // Key returns this tracker's stable string identity.
@@ -131,13 +137,14 @@ func (c *Client) AuthURL(_, _ string) (string, string, error) {
 // ExchangeCode POSTs the authorization code plus the PKCE verifier AuthURL
 // generated to MAL's token endpoint — PKCE-plain means code_verifier is
 // sent as the SAME raw string code_challenge carried, no transform. The
-// form carries ONLY client_id + code + code_verifier +
-// grant_type=authorization_code — confirmed against Suwayomi-Server's
+// form carries client_id + code + code_verifier + grant_type=
+// authorization_code — confirmed against Suwayomi-Server's
 // MyAnimeListApi.kt getAccessToken()/Komikku's own equivalent, neither of
-// which sends redirect_uri (MAL's token endpoint does not require it) or a
-// client secret (this is a public, self-hosted-app grant). redirectURI is
-// therefore UNUSED — kept only so Client still satisfies the shared
-// tracker.Tracker interface.
+// which sends redirect_uri (MAL's token endpoint does not require it) — PLUS
+// client_secret whenever c.clientSecret is non-blank (a CONFIDENTIAL MAL app
+// requires it even alongside PKCE; a public app sends none at all, so its
+// request shape is unchanged). redirectURI is therefore UNUSED — kept only
+// so Client still satisfies the shared tracker.Tracker interface.
 func (c *Client) ExchangeCode(ctx context.Context, code, pkceVerifier, _ string) (tracker.TokenSet, error) {
 	form := url.Values{
 		"client_id":     {c.clientID},
@@ -145,12 +152,15 @@ func (c *Client) ExchangeCode(ctx context.Context, code, pkceVerifier, _ string)
 		"code":          {code},
 		"code_verifier": {pkceVerifier},
 	}
+	c.addClientSecret(form)
 	return c.doToken(ctx, form)
 }
 
-// Refresh POSTs a refresh_token grant to MAL's token endpoint. Returns
-// tracker.ErrNoRefresh (without a network call) when refresh is empty —
-// never sends an obviously-invalid request.
+// Refresh POSTs a refresh_token grant to MAL's token endpoint — carrying
+// client_secret too whenever c.clientSecret is non-blank (see ExchangeCode's
+// doc comment; a confidential app's refresh grant needs it exactly like its
+// auth-code grant does). Returns tracker.ErrNoRefresh (without a network
+// call) when refresh is empty — never sends an obviously-invalid request.
 func (c *Client) Refresh(ctx context.Context, refresh string) (tracker.TokenSet, error) {
 	if refresh == "" {
 		return tracker.TokenSet{}, tracker.ErrNoRefresh
@@ -160,7 +170,20 @@ func (c *Client) Refresh(ctx context.Context, refresh string) (tracker.TokenSet,
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refresh},
 	}
+	c.addClientSecret(form)
 	return c.doToken(ctx, form)
+}
+
+// addClientSecret adds client_secret to form ONLY when this Client was
+// built with a non-blank clientSecret — a public/"other"-type MAL app must
+// never send an empty client_secret field (that is a different, and
+// possibly rejected, request shape than omitting the field entirely).
+// Shared by ExchangeCode and Refresh so the confidential-client behavior
+// lives in exactly one place.
+func (c *Client) addClientSecret(form url.Values) {
+	if c.clientSecret != "" {
+		form.Set("client_secret", c.clientSecret)
+	}
 }
 
 // Search returns up to defaultSearchLimit MAL manga matches for a free-text

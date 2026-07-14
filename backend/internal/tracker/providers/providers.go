@@ -33,6 +33,12 @@ import (
 type Config struct {
 	AniListClientID string
 	MALClientID     string
+	// MALClientSecret is MAL's registered app client secret
+	// (config.TrackerConfig.MALClientSecret) — blank leaves mal.Client
+	// sending none (a public/"other"-type app); non-blank is required for a
+	// CONFIDENTIAL MAL app's token exchange to succeed (see mal.New's doc
+	// comment).
+	MALClientSecret string
 	HTTPClient      *http.Client
 }
 
@@ -41,7 +47,7 @@ type Config struct {
 func NewRegistry(cfg Config) *tracker.Registry {
 	return tracker.NewRegistry(
 		anilist.New(cfg.AniListClientID, cfg.HTTPClient),
-		mal.New(cfg.MALClientID, cfg.HTTPClient),
+		mal.New(cfg.MALClientID, cfg.MALClientSecret, cfg.HTTPClient),
 		kitsu.New(cfg.HTTPClient),
 		mangaupdates.New(cfg.HTTPClient),
 	)

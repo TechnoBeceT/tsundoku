@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/tracker"
@@ -348,6 +349,76 @@ func TestClient_DeleteEntry_SendsDELETE(t *testing.T) {
 	}
 	if gotPath != "/api/edge/library-entries/999" {
 		t.Fatalf("DeleteEntry path = %q, want /api/edge/library-entries/999", gotPath)
+	}
+}
+
+// TestClient_UserAgent_SetOnEveryRequest is the mission-required test for
+// the Cloudflare fix: it drives the token POST (LoginCredentials), a plain
+// GET (Search), and a JSON:API mutation (SaveEntry, via the shared
+// kitsuAPIServer) and asserts EVERY one carries the real browser
+// browserUserAgent header — never Go's default "Go-http-client/1.1", which
+// is the exact signature that triggered kitsu.app's Cloudflare 403.
+func TestClient_UserAgent_SetOnEveryRequest(t *testing.T) {
+	t.Run("token endpoint (LoginCredentials)", func(t *testing.T) {
+		var gotUA string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotUA = r.Header.Get("User-Agent")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"a","refresh_token":"r","expires_in":3600}`))
+		}))
+		defer srv.Close()
+
+		c := kitsu.New(newTestClient(t, srv))
+		if _, err := c.LoginCredentials(context.Background(), "owner@example.test", "hunter2"); err != nil {
+			t.Fatalf("LoginCredentials: %v", err)
+		}
+		assertBrowserUserAgent(t, gotUA)
+	})
+
+	t.Run("JSON:API GET (Search)", func(t *testing.T) {
+		var gotUA string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotUA = r.Header.Get("User-Agent")
+			w.Header().Set("Content-Type", "application/vnd.api+json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}))
+		defer srv.Close()
+
+		c := kitsu.New(newTestClient(t, srv))
+		if _, err := c.Search(context.Background(), "", "solo leveling"); err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		assertBrowserUserAgent(t, gotUA)
+	})
+
+	t.Run("JSON:API mutation (SaveEntry)", func(t *testing.T) {
+		var gotUA string
+		srv := kitsuAPIServer(t, func(w http.ResponseWriter, r *http.Request) {
+			gotUA = r.Header.Get("User-Agent")
+			w.Header().Set("Content-Type", "application/vnd.api+json")
+			_, _ = w.Write([]byte(`{"data":{"id":"999","attributes":{"status":"current","progress":5},"relationships":{"manga":{"data":{"id":"7224","type":"manga"}}}}}`))
+		})
+		defer srv.Close()
+
+		c := kitsu.New(newTestClient(t, srv))
+		if _, err := c.SaveEntry(context.Background(), "acct-token", tracker.TrackEntry{RemoteID: "7224", Status: "current", Progress: 5}); err != nil {
+			t.Fatalf("SaveEntry: %v", err)
+		}
+		assertBrowserUserAgent(t, gotUA)
+	})
+}
+
+// assertBrowserUserAgent fails the test unless gotUA is the real browser
+// User-Agent Client sends, and explicitly confirms it is NOT Go's default
+// "Go-http-client/..." signature — the exact string that triggered
+// kitsu.app's Cloudflare 403 in production.
+func assertBrowserUserAgent(t *testing.T, gotUA string) {
+	t.Helper()
+	if strings.Contains(gotUA, "Go-http-client") {
+		t.Fatalf("User-Agent = %q, still carries Go's default bot signature", gotUA)
+	}
+	if !strings.Contains(gotUA, "Chrome") {
+		t.Fatalf("User-Agent = %q, want a browser UA containing \"Chrome\"", gotUA)
 	}
 }
 
