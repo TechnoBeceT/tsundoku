@@ -32,7 +32,11 @@ func Merge(in MergeInput) SeriesMetadata {
 		return strings.ToLower(strings.TrimSpace(at.Name))
 	})
 	authors := newCollector(func(a Author) string { return a.Name + "\x00" + a.Role })
-	links := newCollector(func(l Link) string { return l.Label })
+	// Keyed by Label+URL (not Label alone): two providers can legitimately share
+	// a label (e.g. both list an "AniList" link) while pointing at genuinely
+	// different URLs — keying on Label only silently dropped the second one.
+	// Mirrors the Authors dedup shape (composite key, first-seen wins).
+	links := newCollector(func(l Link) string { return l.Label + "\x00" + l.URL })
 
 	for _, key := range in.Order {
 		meta, ok := in.Metas[key]

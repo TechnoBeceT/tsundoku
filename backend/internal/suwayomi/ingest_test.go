@@ -19,6 +19,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
+	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -709,6 +710,108 @@ func TestIngest_AddSeries_SeriesProviderTitle(t *testing.T) {
 	// Only one SeriesProvider row must exist (idempotent upsert).
 	if n := len(client.SeriesProvider.Query().AllX(ctx)); n != 1 {
 		t.Errorf("SeriesProvider count: got %d, want 1", n)
+	}
+}
+
+// TestIngest_AddSeries_SeriesProviderURL verifies that upsertSeriesProvider
+// stores the source's canonical manga URL (MangaMeta's URL field) in
+// SeriesProvider.URL on BOTH the create and the update path. This is the
+// write side of the "Source links" bug: series.sourceLinks (internal/series/
+// dto.go) has always read SeriesProvider.URL, but nothing ever wrote it, so
+// source links never rendered. Covers both paths so a freshly-adopted series
+// gets its URL immediately and an already-adopted (pre-fix) row backfills it
+// on the next refresh sweep.
+func TestIngest_AddSeries_SeriesProviderURL(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID        = 88
+		canonicalTitle = "Solo Ascension"
+		sourceName     = "test-source"
+		sourceURL      = "https://example-source.test/manga/88"
+	)
+
+	sc := &ingestStubClient{
+		chapters:  makeChapters(1),
+		mangaMeta: suwayomi.Manga{Title: canonicalTitle, URL: sourceURL},
+	}
+	ing := suwayomi.NewIngest(sc, client)
+
+	// ── Create path: the URL must be stored on first AddSeries ───────────────
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle, ""); err != nil {
+		t.Fatalf("first AddSeries: %v", err)
+	}
+
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.URL != sourceURL {
+		t.Errorf("SeriesProvider.URL after create: got %q, want %q", sp.URL, sourceURL)
+	}
+
+	// ── Update path: a changed upstream URL must be refreshed on re-add ──────
+	updatedURL := "https://example-source.test/manga/88-relocated"
+	sc.mangaMeta = suwayomi.Manga{Title: canonicalTitle, URL: updatedURL}
+
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle, ""); err != nil {
+		t.Fatalf("second AddSeries: %v", err)
+	}
+
+	sp = client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.URL != updatedURL {
+		t.Errorf("SeriesProvider.URL after update: got %q, want %q", sp.URL, updatedURL)
+	}
+}
+
+// TestIngest_AddSeries_SourceLinkRendersEndToEnd is the end-to-end proof the
+// bug report asked for: ingest WRITES SeriesProvider.URL (this file) and
+// series.GetSeries's sourceLinks READS it (internal/series/dto.go) — before
+// this fix the write never happened, so a series adopted with a real source
+// URL still rendered zero "Source links" no matter how many times the DTO
+// layer was fixed. Uses the real series.Service (not a series-package unit
+// test) so the assertion exercises the actual write→read round-trip through
+// two packages, not two isolated halves.
+func TestIngest_AddSeries_SourceLinkRendersEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		mangaID        = 89
+		canonicalTitle = "Return of the Blossoming Blade"
+		sourceName     = "test-source"
+		providerName   = "Asura Scans"
+		sourceURL      = "https://asura.example/manga/blossoming-blade"
+	)
+
+	sc := &ingestStubClient{
+		chapters:  makeChapters(1),
+		mangaMeta: suwayomi.Manga{Title: canonicalTitle, URL: sourceURL},
+		sources:   []suwayomi.Source{{ID: sourceName, Name: providerName}},
+	}
+	ing := suwayomi.NewIngest(sc, client)
+
+	if _, err := ing.AddSeries(ctx, sourceName, mangaID, canonicalTitle, ""); err != nil {
+		t.Fatalf("AddSeries: %v", err)
+	}
+
+	s := client.Series.Query().OnlyX(ctx)
+
+	svc := series.NewService(client, t.TempDir(), 14)
+	detail, err := svc.GetSeries(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+
+	found := false
+	for _, l := range detail.Links {
+		if l.URL == sourceURL {
+			found = true
+			if l.Label != providerName {
+				t.Errorf("source link label: got %q, want %q", l.Label, providerName)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("GetSeries.Links: source link for %q not found, got %+v", sourceURL, detail.Links)
 	}
 }
 

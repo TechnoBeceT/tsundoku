@@ -308,14 +308,16 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 // (seriesID, "mangadex", "") and (seriesID, "mangadex", "Reset Scans") are
 // DISTINCT rows, each with its own independent ProviderChapter feed and
 // importance ranking. It fetches the source's own metadata via MangaMeta so
-// that each SeriesProvider row carries the title and cover URL as the source
-// knows them — independent of the canonical Series.title set by the caller. It
-// also resolves the source's human-readable display name (provider_name) so the
-// UI can show "WebToon" instead of the numeric source id stored in provider.
-// On find it refreshes suwayomi_id, title, provider_name, and cover_url in case
-// the manga (or the source name) was updated upstream — so a pre-existing row
-// backfills its provider_name on the next ingest/refresh. Returns the existing
-// or newly created row.
+// that each SeriesProvider row carries the title, cover URL, AND the
+// provider-canonical manga URL (meta.URL — the "Source links" the series-detail
+// card renders, see series.sourceLinks) as the source knows them — independent
+// of the canonical Series.title set by the caller. It also resolves the
+// source's human-readable display name (provider_name) so the UI can show
+// "WebToon" instead of the numeric source id stored in provider.
+// On find it refreshes suwayomi_id, title, provider_name, cover_url, and url in
+// case the manga (or the source name) was updated upstream — so a pre-existing
+// row backfills its url on the next refresh sweep even if it predates this
+// field being written. Returns the existing or newly created row.
 func (i *Ingest) upsertSeriesProvider(
 	ctx context.Context,
 	seriesID uuid.UUID,
@@ -372,7 +374,8 @@ func (i *Ingest) upsertSeriesProvider(
 			SetScanlator(scanlator).
 			SetSuwayomiID(suwayomiMangaID).
 			SetTitle(srcTitle).
-			SetCoverURL(cover)
+			SetCoverURL(cover).
+			SetURL(meta.URL)
 		// Only refresh provider_name when we actually resolved one — a transient
 		// Sources() failure yields "" and must not clobber a previously-stored
 		// good name (it would flicker back to the raw id until the next sweep).
@@ -395,6 +398,7 @@ func (i *Ingest) upsertSeriesProvider(
 		SetSuwayomiID(suwayomiMangaID).
 		SetTitle(srcTitle).
 		SetCoverURL(cover).
+		SetURL(meta.URL).
 		// importance=0 is the schema default; multi-source ranking is M3/M4.
 		Save(ctx)
 	if createErr != nil {

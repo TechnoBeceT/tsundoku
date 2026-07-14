@@ -142,7 +142,9 @@ func TestMerge_CollectionsUnionedAndDeduped(t *testing.T) {
 					{Name: "Dubu", Role: "ART"},
 				},
 				Links: []metadata.Link{
-					{Label: "AniList", URL: "https://anilist.co/DIFFERENT"}, // dup by Label, first wins
+					// Same Label as anilist's link above but a DIFFERENT URL — keyed by
+					// Label+URL, so this is NOT a dup and both survive.
+					{Label: "AniList", URL: "https://anilist.co/DIFFERENT"},
 					{Label: "MangaDex", URL: "https://mangadex.org/1"},
 				},
 			},
@@ -183,10 +185,47 @@ func TestMerge_CollectionsUnionedAndDeduped(t *testing.T) {
 
 	wantLinks := []metadata.Link{
 		{Label: "AniList", URL: "https://anilist.co/1"},
+		{Label: "AniList", URL: "https://anilist.co/DIFFERENT"},
 		{Label: "MangaDex", URL: "https://mangadex.org/1"},
 	}
 	if !reflect.DeepEqual(got.Links, wantLinks) {
 		t.Errorf("Links = %+v, want %+v", got.Links, wantLinks)
+	}
+}
+
+// TestMerge_LinksDedupedByLabelAndURL pins the Link dedup key: two links that
+// share a Label but point at DIFFERENT URLs must BOTH survive (a Label-only
+// key would silently drop the second one — the bug this test guards against),
+// while an EXACT (Label,URL) repeat across providers is still deduped,
+// first-seen wins.
+func TestMerge_LinksDedupedByLabelAndURL(t *testing.T) {
+	in := metadata.MergeInput{
+		Metas: map[string]metadata.SeriesMetadata{
+			"primary": {
+				Links: []metadata.Link{
+					{Label: "Read Online", URL: "https://asura.example/delta"},
+				},
+			},
+			"secondary": {
+				Links: []metadata.Link{
+					// Same Label, different URL — must NOT be dropped.
+					{Label: "Read Online", URL: "https://comix.example/delta"},
+					// Exact repeat of primary's link — must be deduped.
+					{Label: "Read Online", URL: "https://asura.example/delta"},
+				},
+			},
+		},
+		Order: []string{"primary", "secondary"},
+	}
+
+	got := metadata.Merge(in)
+
+	want := []metadata.Link{
+		{Label: "Read Online", URL: "https://asura.example/delta"},
+		{Label: "Read Online", URL: "https://comix.example/delta"},
+	}
+	if !reflect.DeepEqual(got.Links, want) {
+		t.Errorf("Links = %+v, want %+v", got.Links, want)
 	}
 }
 
