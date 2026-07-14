@@ -7,6 +7,7 @@ package trackers_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -101,9 +102,14 @@ var _ tracker.Tracker = (*fakeOAuthTracker)(nil)
 // fakeCredentialTracker is a Kitsu/MangaUpdates-shaped tracker.Tracker test
 // double: NeedsOAuth() is false, AuthURL/ExchangeCode always fail with
 // tracker.ErrOAuthNotSupported, and LoginCredentials succeeds
-// deterministically (implementing tracker.CredentialLogin).
+// deterministically (implementing tracker.CredentialLogin) unless
+// loginCredentialsFn is set — mirrors fakeOAuthTracker's configurable *Fn
+// pattern, needed to exercise a rejected-credentials tracker-call failure
+// (the Cloudflare-visibility 4xx fix) without a real MangaUpdates account.
 type fakeCredentialTracker struct {
 	id int
+
+	loginCredentialsFn func(ctx context.Context, username, password string) (tracker.TokenSet, error)
 }
 
 func (f *fakeCredentialTracker) Key() string           { return "fake-credential" }
@@ -120,7 +126,10 @@ func (f *fakeCredentialTracker) ExchangeCode(context.Context, string, string, st
 func (f *fakeCredentialTracker) Refresh(context.Context, string) (tracker.TokenSet, error) {
 	return tracker.TokenSet{}, tracker.ErrNoRefresh
 }
-func (f *fakeCredentialTracker) LoginCredentials(_ context.Context, username, _ string) (tracker.TokenSet, error) {
+func (f *fakeCredentialTracker) LoginCredentials(ctx context.Context, username, password string) (tracker.TokenSet, error) {
+	if f.loginCredentialsFn != nil {
+		return f.loginCredentialsFn(ctx, username, password)
+	}
 	return tracker.TokenSet{Access: "access-" + username}, nil
 }
 func (f *fakeCredentialTracker) Search(context.Context, string, string) ([]tracker.TrackSearchResult, error) {
@@ -488,6 +497,47 @@ func TestLoginCredentials_OAuthTrackerNotSupported(t *testing.T) {
 	}
 }
 
+// decodeErrorMessage decodes rec's {"message": "..."} error envelope
+// (middleware.ErrorResponse) and returns the message string — used instead
+// of a raw strings.Contains(rec.Body.String(), ...) check because a tracker
+// error message containing quotes (e.g. MangaUpdates' own
+// `"Method not allowed. Must be one of: OPTIONS"` text) is JSON-escaped in
+// the raw response body and would never raw-string-match its unescaped form.
+func decodeErrorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var out struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode error envelope: %v; body: %s", err, rec.Body.String())
+	}
+	return out.Message
+}
+
+// TestLoginCredentials_TrackerCallFailureIs4xxWithMessage asserts a
+// rejected-credentials failure from the tracker's OWN API (e.g. what a real
+// MangaUpdates 401/invalid_grant looks like) surfaces as a 4xx carrying the
+// tracker's real error text — NEVER a 502 — because this instance runs
+// behind Cloudflare, which replaces any origin 5xx body with its own
+// generic "Bad gateway" page and would hide the real reason from the owner.
+func TestLoginCredentials_TrackerCallFailureIs4xxWithMessage(t *testing.T) {
+	env := newTestEnv(t, "https://tsundoku.example")
+	wantMsg := `fake-credential: invalid_grant: bad username or password`
+	env.cred.loginCredentialsFn = func(context.Context, string, string) (tracker.TokenSet, error) {
+		return tracker.TokenSet{}, errors.New(wantMsg)
+	}
+
+	body := `{"username":"owner","password":"wrong"}`
+	rec := env.do(http.MethodPost, fmt.Sprintf("/api/trackers/%d/login/credentials", credentialTrackerID), body)
+
+	if rec.Code < 400 || rec.Code >= 500 {
+		t.Fatalf("status = %d, want a 4xx (never 502/500); body: %s", rec.Code, rec.Body.String())
+	}
+	if msg := decodeErrorMessage(t, rec); !strings.Contains(msg, wantMsg) {
+		t.Fatalf("message = %q, want it to contain the tracker's real error %q", msg, wantMsg)
+	}
+}
+
 // TestLogout_Success asserts a logout removes the connection and is
 // idempotent (a second logout is still a 204, never a 404).
 func TestLogout_Success(t *testing.T) {
@@ -783,6 +833,33 @@ func TestCreateBinding_SeriesNotFound(t *testing.T) {
 	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/tracking", body)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCreateBinding_TrackerCallFailureIs4xxWithMessage asserts a GetEntry
+// failure genuinely coming from the tracker's own API (e.g. what
+// MangaUpdates' real "returned HTTP 405: ..." looks like, the production
+// bug this fix set also corrects) surfaces as a 4xx carrying that real
+// message — never the 502 a bare httperr.Upstream would have produced,
+// which Cloudflare would have replaced with its own generic page.
+func TestCreateBinding_TrackerCallFailureIs4xxWithMessage(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t, "https://tsundoku.example")
+	loginOAuth(t, env, oauthTrackerID)
+	id := seedSeries(ctx, t, env.client, "Upstream Failure", "upstream-failure")
+	wantMsg := `fake-oauth: https://fake.test/v1/lists/series/7224 returned HTTP 405: "Method not allowed"`
+	env.oauth.getEntryFn = func(context.Context, string, string) (*tracker.TrackEntry, error) {
+		return nil, errors.New(wantMsg)
+	}
+
+	body := fmt.Sprintf(`{"trackerId":%d,"remoteId":"7224"}`, oauthTrackerID)
+	rec := env.do(http.MethodPost, "/api/series/"+id.String()+"/tracking", body)
+
+	if rec.Code < 400 || rec.Code >= 500 {
+		t.Fatalf("status = %d, want a 4xx (never 502/500); body: %s", rec.Code, rec.Body.String())
+	}
+	if msg := decodeErrorMessage(t, rec); !strings.Contains(msg, wantMsg) {
+		t.Fatalf("message = %q, want it to contain the tracker's real error %q", msg, wantMsg)
 	}
 }
 

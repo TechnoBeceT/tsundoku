@@ -58,6 +58,9 @@ func assertSSEHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
 	if rec.Header().Get("Connection") != "keep-alive" {
 		t.Errorf("Connection = %q, want keep-alive", rec.Header().Get("Connection"))
 	}
+	if rec.Header().Get("X-Accel-Buffering") != "no" {
+		t.Errorf("X-Accel-Buffering = %q, want no (tells nginx/Cloudflare-style proxies not to buffer the stream)", rec.Header().Get("X-Accel-Buffering"))
+	}
 }
 
 // assertSSEFrame checks that body contains a well-formed SSE frame for the

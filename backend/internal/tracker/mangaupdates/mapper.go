@@ -86,11 +86,17 @@ type searchResponse struct {
 	Results []searchResultEntry `json:"results"`
 }
 
-// muSeriesRef identifies a series within a list-series request/response —
-// on write only the id is needed; on read MangaUpdates also echoes title/
-// url.
+// muSeriesRef identifies a series within a list-series request/response.
+// The JSON key is "id" — NOT "series_id" (that key belongs to the
+// UNRELATED /v1/series/search "record" object, searchRecord below).
+// Confirmed against two independent, proven client ports of this same
+// lists API (Komikku's + Suwayomi-Server's own MUSeries.kt, both
+// `val id: Long? = null`) — this port previously tagged it "series_id",
+// which silently zeroed every RemoteID read back off GetEntry/SaveEntry/
+// UpdateEntry (the write still round-tripped via the caller's own input
+// fallback in finishUpsert, masking the bug there).
 type muSeriesRef struct {
-	ID    int64  `json:"series_id"`
+	ID    int64  `json:"id"`
 	Title string `json:"title,omitempty"`
 	URL   string `json:"url,omitempty"`
 }
@@ -104,26 +110,30 @@ type muStatus struct {
 }
 
 // listSeriesEntry is one MangaUpdates list-series resource, as returned by
-// GET /lists/{id}/series/{series_id} and echoed back by the add/update
-// endpoints.
+// GET /lists/series/{id} and echoed back by the add/update endpoints.
 type listSeriesEntry struct {
 	ListID int         `json:"list_id"`
 	Series muSeriesRef `json:"series"`
 	Status muStatus    `json:"status"`
 }
 
-// listSeriesWrite is the request-side shape POST /lists/{id}/series and
-// POST /lists/{id}/series/update expect — an array of these.
-type listSeriesWrite struct {
+// listSeriesAdd is the request-side shape POST /lists/series expects — an
+// array of these. Adding a series to a list carries NO status object (only
+// the target list); confirmed against the reference ports, whose
+// addSeriesToList never sends chapter progress on bind.
+type listSeriesAdd struct {
 	Series muSeriesRef `json:"series"`
-	Status muStatus    `json:"status"`
+	ListID int         `json:"list_id"`
 }
 
-// listSeriesDelete is the request-side shape
-// POST /lists/{id}/series/delete expects — an array of these (only the
-// series identity is needed to remove an entry).
-type listSeriesDelete struct {
+// listSeriesWrite is the request-side shape POST /lists/series/update
+// expects — an array of these. UNLIKE listSeriesAdd, an update names BOTH
+// the target list (list_id) AND the new progress (status.chapter) —
+// MangaUpdates has no separate "just update progress" call.
+type listSeriesWrite struct {
 	Series muSeriesRef `json:"series"`
+	ListID int         `json:"list_id"`
+	Status muStatus    `json:"status"`
 }
 
 // listStatusLabels names defaultListID's own list — currently the only one

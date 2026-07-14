@@ -24,8 +24,9 @@ var heartbeatInterval = 20 * time.Second
 //
 // The handler:
 //   - Sets Content-Type: text/event-stream, Cache-Control: no-cache,
-//     Connection: keep-alive so that browsers and proxies treat the response
-//     as a live stream.
+//     Connection: keep-alive, and X-Accel-Buffering: no so that browsers and
+//     reverse proxies (nginx/Cloudflare-style) treat the response as a live,
+//     unbuffered stream rather than holding frames until a buffer fills.
 //   - Subscribes to hub, then writes each received event as an SSE frame:
 //     "event: <type>\ndata: <json>\n\n", flushing after each frame.
 //   - Writes an idle keepalive (": ping\n\n", an SSE comment line) every
@@ -60,6 +61,13 @@ func ProgressHandler(hub *Hub) echo.HandlerFunc {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
+		// Tells nginx/Cloudflare-style reverse proxies not to buffer this
+		// response — a buffering proxy would hold every SSE frame until its
+		// own buffer fills (or the connection closes), defeating real-time
+		// delivery and starving the heartbeat's job of keeping the stream
+		// alive through the edge. Standard nginx `proxy_buffering off`
+		// convention; harmless (ignored) on a proxy that doesn't recognize it.
+		w.Header().Set("X-Accel-Buffering", "no")
 		// Disable buffering at the response writer level so frames are sent
 		// immediately. WriteHeader flushes headers to the client.
 		w.WriteHeader(http.StatusOK)

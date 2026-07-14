@@ -260,7 +260,7 @@ func (h *Handler) ListBindings(c echo.Context) error {
 // the reverse would cycle), so bind-then-converge is sequenced here.
 //
 // The bind call itself still HARD-fails the request on error, as before
-// (mapServiceError's existing 404/400/409/502 mapping is untouched). Once
+// (mapServiceError's existing 404/400/500 mapping is untouched). Once
 // Bind succeeds the binding row is durable; a SyncNow failure afterwards
 // (a transient tracker/DB error) must NOT undo that or 500 the whole
 // request — it is logged and the handler falls back to re-reading the
@@ -459,15 +459,26 @@ func (h *Handler) SyncTracking(c echo.Context) error {
 //     (connect.ErrCredentialLoginNotSupported, tracker.ErrOAuthNotSupported),
 //     or the connected account's token has expired and needs a fresh login
 //     (tracker.ErrTokenExpired).
-//   - 502 — anything else. Every remaining connect/bind/sync method wraps
-//     either a genuine tracker-client/network failure (ExchangeCode,
-//     GetEntry, SaveEntry, UpdateEntry, DeleteEntry, Search) or a DB write
-//     failure with fmt.Errorf, neither of which carries its own sentinel;
-//     since the dominant real failure mode of these tracker-calling methods
-//     is the upstream tracker being unreachable or rejecting the request,
-//     an unmatched error is surfaced as a 502 via the shared httperr.Upstream
-//     (mirrors the Suwayomi settings/extensions proxies: any unmatched
-//     client failure is a gateway error, never a false 200 or an opaque 500).
+//   - 4xx (400) — a genuine tracker-CALL failure: the connect/bind/sync
+//     method actually invoked the tracker's own API (ExchangeCode, GetEntry,
+//     SaveEntry, UpdateEntry, DeleteEntry, Search, LoginCredentials,
+//     TokenFromImplicit) and the tracker rejected it or was unreachable —
+//     marked with tracker.UpstreamError (see WrapUpstream) at every such call
+//     site in internal/tracker/{connect,bind,syncsvc}. This instance runs
+//     behind Cloudflare, which REPLACES any origin 5xx body with its own
+//     generic "Bad gateway" page — a bare 502 hid the tracker's real message
+//     (an OAuth "invalid_grant", MangaUpdates' "returned HTTP 405: ...", …)
+//     from the owner, who then had no way to self-diagnose a failed bind.
+//     A 4xx passes Cloudflare through untouched, so httperr.BadRequest
+//     carries the tracker's actual error text straight to the owner.
+//     httperr.Upstream (502) is deliberately NOT reused here — its
+//     documented behavior (the Suwayomi settings/extensions proxies) is
+//     untouched; trackers get their own mapping.
+//   - 500 — anything else (a DB read/write failure, or any other error a
+//     connect/bind/sync method didn't mark as an UpstreamError). Returned
+//     UNWRAPPED so the central error middleware renders the safe, opaque
+//     "internal server error" (never leaks DB detail to the client) while
+//     still logging the real cause server-side.
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, trackerconnect.ErrUnknownTracker),
@@ -489,6 +500,10 @@ func mapServiceError(err error) error {
 		errors.Is(err, tracker.ErrTokenExpired):
 		return httperr.BadRequest(err.Error())
 	default:
-		return httperr.Upstream(err)
+		var upErr *tracker.UpstreamError
+		if errors.As(err, &upErr) {
+			return httperr.BadRequest(err.Error())
+		}
+		return err
 	}
 }

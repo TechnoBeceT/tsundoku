@@ -117,7 +117,7 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 	entry, err := t.GetEntry(ctx, token, remoteID)
 	if err != nil {
 		s.markExpiredOnTokenFailure(ctx, trackerID, err)
-		return nil, fmt.Errorf("bind: fetch remote entry from %s: %w", t.Key(), err)
+		return nil, tracker.WrapUpstream(t.Key(), fmt.Errorf("bind: fetch remote entry from %s: %w", t.Key(), err))
 	}
 	if entry == nil {
 		created, saveErr := t.SaveEntry(ctx, token, tracker.TrackEntry{
@@ -127,7 +127,7 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 		})
 		if saveErr != nil {
 			s.markExpiredOnTokenFailure(ctx, trackerID, saveErr)
-			return nil, fmt.Errorf("bind: create remote entry on %s: %w", t.Key(), saveErr)
+			return nil, tracker.WrapUpstream(t.Key(), fmt.Errorf("bind: create remote entry on %s: %w", t.Key(), saveErr))
 		}
 		entry = &created
 	}
@@ -189,7 +189,7 @@ func (s *Service) deleteRemoteEntry(ctx context.Context, binding *ent.TrackBindi
 	}
 	entry := tracker.TrackEntry{RemoteID: binding.RemoteID, LibraryID: binding.LibraryID}
 	if err := t.DeleteEntry(ctx, token, entry); err != nil {
-		return fmt.Errorf("bind: delete remote entry on %s: %w", t.Key(), err)
+		return tracker.WrapUpstream(t.Key(), fmt.Errorf("bind: delete remote entry on %s: %w", t.Key(), err))
 	}
 	return nil
 }
@@ -225,7 +225,7 @@ func (s *Service) FetchTrack(ctx context.Context, recordID uuid.UUID) (*ent.Trac
 	entry, err := t.GetEntry(ctx, token, binding.RemoteID)
 	if err != nil {
 		s.markExpiredOnTokenFailure(ctx, binding.TrackerID, err)
-		return nil, fmt.Errorf("bind: fetch remote entry from %s: %w", t.Key(), err)
+		return nil, tracker.WrapUpstream(t.Key(), fmt.Errorf("bind: fetch remote entry from %s: %w", t.Key(), err))
 	}
 	if entry == nil {
 		return binding, nil
@@ -260,7 +260,7 @@ func (s *Service) SearchTracker(ctx context.Context, trackerID int, query string
 	results, err := t.Search(ctx, token, query)
 	if err != nil {
 		s.markExpiredOnTokenFailure(ctx, trackerID, err)
-		return nil, fmt.Errorf("bind: search %s: %w", t.Key(), err)
+		return nil, tracker.WrapUpstream(t.Key(), fmt.Errorf("bind: search %s: %w", t.Key(), err))
 	}
 	return results, nil
 }

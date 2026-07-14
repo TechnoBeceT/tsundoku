@@ -225,14 +225,22 @@ func (s *Service) exchangeToken(ctx context.Context, t tracker.Tracker, q url.Va
 		if accessToken == "" {
 			return tracker.TokenSet{}, ErrMissingToken
 		}
-		return impl.TokenFromImplicit(accessToken)
+		tok, err := impl.TokenFromImplicit(accessToken)
+		if err != nil {
+			return tracker.TokenSet{}, tracker.WrapUpstream(t.Key(), err)
+		}
+		return tok, nil
 	}
 
 	code := q.Get("code")
 	if code == "" {
 		return tracker.TokenSet{}, ErrMissingCode
 	}
-	return t.ExchangeCode(ctx, code, pending.PKCEVerifier, "")
+	tok, err := t.ExchangeCode(ctx, code, pending.PKCEVerifier, "")
+	if err != nil {
+		return tracker.TokenSet{}, tracker.WrapUpstream(t.Key(), err)
+	}
+	return tok, nil
 }
 
 // lookupAccountInfo best-effort captures the account's username/score
@@ -279,7 +287,7 @@ func (s *Service) LoginCredentials(ctx context.Context, trackerID int, username,
 
 	tok, err := cl.LoginCredentials(ctx, username, password)
 	if err != nil {
-		return fmt.Errorf("connect: %s credential login: %w", t.Key(), err)
+		return tracker.WrapUpstream(t.Key(), fmt.Errorf("connect: %s credential login: %w", t.Key(), err))
 	}
 
 	return s.upsertConnection(ctx, trackerID, tok, username, "")

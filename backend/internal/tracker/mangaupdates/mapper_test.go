@@ -98,10 +98,12 @@ func TestSearchResponse_JSONUnmarshal(t *testing.T) {
 	}
 }
 
-// TestListSeriesEntry_JSONUnmarshal exercises the GET
-// /lists/{id}/series/{series_id} wire shape.
+// TestListSeriesEntry_JSONUnmarshal exercises the GET /lists/series/{id}
+// wire shape — note the nested series object's key is "id", NOT
+// "series_id" (that key belongs only to the unrelated /series/search
+// response; see muSeriesRef's doc comment).
 func TestListSeriesEntry_JSONUnmarshal(t *testing.T) {
-	raw := []byte(`{"list_id":0,"series":{"series_id":12345,"title":"Solo Leveling","url":"https://www.mangaupdates.com/series/12345"},"status":{"volume":0,"chapter":42}}`)
+	raw := []byte(`{"list_id":0,"series":{"id":12345,"title":"Solo Leveling","url":"https://www.mangaupdates.com/series/12345"},"status":{"volume":0,"chapter":42}}`)
 	var e listSeriesEntry
 	if err := json.Unmarshal(raw, &e); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
