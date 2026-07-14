@@ -115,6 +115,14 @@ const (
 	// job.Intervals.TrackRetryInterval's doc comment). Read at use-time by
 	// job.Runner.StartTrackerRetry, so a change hot-reloads on the next pass.
 	KeyTrackRetryInterval = "jobs.track_retry_interval"
+	// KeyAutoUpdateTrack gates the reading-triggered tracker-sync push (bool,
+	// default true — spec/trackers-sync-phase4 §2 trigger (a)): when false,
+	// SetProgress marking a chapter read never fires a PushProgress call.
+	// Read at use-time by syncsvc.Service.PushProgress (via the
+	// AutoUpdateTracker port), so a change hot-reloads on the very next
+	// reader progress write — it does NOT gate manual "sync now"/tracking-
+	// sheet edits (those are explicit owner actions, never best-effort).
+	KeyAutoUpdateTrack = "trackers.auto_update_track"
 )
 
 // Defaults carries the config-resolved default for every tunable key. main
@@ -139,6 +147,7 @@ type Defaults struct {
 	SourcesMinRequestDelay  time.Duration
 	SuppressSplitParts      bool
 	TrackRetryInterval      time.Duration
+	AutoUpdateTrack         bool
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -175,6 +184,7 @@ var tunableOrder = []string{
 	KeySourcesMinRequestDelay,
 	KeySuppressSplitParts,
 	KeyTrackRetryInterval,
+	KeyAutoUpdateTrack,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -256,6 +266,10 @@ var tunables = map[string]tunable{
 	KeyTrackRetryInterval: durationTunable(
 		KeyTrackRetryInterval, "duration", 30*time.Second,
 		func(d Defaults) time.Duration { return d.TrackRetryInterval },
+	),
+	KeyAutoUpdateTrack: boolTunable(
+		KeyAutoUpdateTrack,
+		func(d Defaults) bool { return d.AutoUpdateTrack },
 	),
 }
 

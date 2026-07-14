@@ -34,6 +34,8 @@ type Static struct {
 	SuppressParts bool
 	// TrackRetryIv backs the TrackRetryInterval accessor.
 	TrackRetryIv time.Duration
+	// AutoUpdate backs the AutoUpdateTrack accessor.
+	AutoUpdate bool
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -86,3 +88,6 @@ func (s Static) SuppressSplitParts(context.Context) bool { return s.SuppressPart
 
 // TrackRetryInterval returns the fixed tracker-push retry-queue drain period.
 func (s Static) TrackRetryInterval(context.Context) time.Duration { return s.TrackRetryIv }
+
+// AutoUpdateTrack returns the fixed reading-triggered tracker-sync toggle.
+func (s Static) AutoUpdateTrack(context.Context) bool { return s.AutoUpdate }

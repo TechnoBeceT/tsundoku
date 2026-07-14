@@ -50,6 +50,12 @@ type Service struct {
 	// cover still serves, but a cold one reports ErrCoverFetchFailed.
 	sw CoverFetcher
 
+	// progressPusher fires the tracker-sync progress push after a reader
+	// marks a chapter read (see tracksync.go). Optional — attach it with
+	// WithProgressPusher; nil means SetProgress never fires a tracker push
+	// (every pre-existing series/reader test is unaffected).
+	progressPusher ProgressPusher
+
 	staleGrace func(ctx context.Context) int
 }
 

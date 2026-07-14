@@ -37,6 +37,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
+	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -124,6 +125,8 @@ import (
 //   - /api/series/:id/tracking (POST)              — bind a series to a tracker entry (RequireOwner).
 //   - /api/series/:id/tracking/:recordId (DELETE)  — unbind (?deleteRemote=) (RequireOwner).
 //   - /api/series/:id/tracking/:recordId/refresh (POST) — re-pull a binding's remote entry (RequireOwner).
+//   - /api/series/:id/tracking/:recordId/update (POST) — owner's manual tracking-sheet edit (RequireOwner).
+//   - /api/series/:id/tracking/sync (POST)         — pull + converge every binding for a series (RequireOwner).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
 func registerRoutes(
@@ -143,6 +146,7 @@ func registerRoutes(
 	trackerRegistry *tracker.Registry,
 	trackerConnectSvc *connect.Service,
 	trackerBindSvc *bind.Service,
+	trackerSyncSvc *syncsvc.Service,
 	trigger func(),
 ) {
 	// Infrastructure routes — no authentication required.
@@ -206,7 +210,12 @@ func registerRoutes(
 	// trackerBindSvc are built in main.go over the four native trackers
 	// (AniList, MAL, Kitsu, MangaUpdates); a blank client-id/public-URL
 	// leaves the affected OAuth path dormant rather than failing startup.
-	trackersH := trackersh.NewHandler(client, trackerRegistry, trackerConnectSvc, trackerBindSvc)
+	// trackerSyncSvc is the Phase-4c sync service (spec/trackers-sync-phase4)
+	// built over the SAME registry — it serves the owner's manual
+	// tracking-sheet edit + the pull-and-converge sync-now action, and is
+	// independently injected as the series.ProgressPusher (see main.go) so a
+	// reader-marked chapter also fires a background push.
+	trackersH := trackersh.NewHandler(client, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc)
 	authed.GET("/trackers", trackersH.List)
 	authed.GET("/trackers/:id/auth-url", trackersH.AuthURL)
 	authed.POST("/trackers/:id/login/oauth", trackersH.LoginOAuth)
@@ -217,6 +226,8 @@ func registerRoutes(
 	authed.POST("/series/:id/tracking", trackersH.CreateBinding)
 	authed.DELETE("/series/:id/tracking/:recordId", trackersH.DeleteBinding)
 	authed.POST("/series/:id/tracking/:recordId/refresh", trackersH.RefreshBinding)
+	authed.POST("/series/:id/tracking/:recordId/update", trackersH.UpdateTrack)
+	authed.POST("/series/:id/tracking/sync", trackersH.SyncTracking)
 
 	// Settings (runtime tunables) API. The service is built in main.go (it shares
 	// the Ent client + carries the config-resolved defaults) and threaded in here.

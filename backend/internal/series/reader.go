@@ -181,6 +181,19 @@ func (s *Service) SetProgress(ctx context.Context, chapterID uuid.UUID, lastRead
 		}
 		return ChapterProgressDTO{}, fmt.Errorf("series.SetProgress: update chapter %s: %w", chapterID, err)
 	}
+
+	// Reading-triggered tracker sync (spec/trackers-sync-phase4 §2 trigger
+	// (a)): fire ONLY when the chapter transitions TO read — un-marking a
+	// chapter has no "progress" to push, and re-saving lastReadPage alone
+	// (read already true) would just re-fire the same never-regress decision
+	// PushProgress already made idempotent, so gating here is purely to
+	// avoid a pointless detached goroutine on every scroll-position save.
+	// ch.Number is nillable (an orphan/disk-reconciled chapter can lack a
+	// parsed number) — a nil number has nothing syncable to push.
+	if read && ch.Number != nil {
+		s.firePushProgress(ctx, ch.SeriesID, *ch.Number)
+	}
+
 	return ChapterProgressDTO{
 		ID:           ch.ID.String(),
 		Read:         ch.Read,

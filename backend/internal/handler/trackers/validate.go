@@ -3,10 +3,12 @@ package trackers
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
+	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
 )
 
 // validateTrackerID parses the :id path param used by every /api/trackers/:id
@@ -116,4 +118,68 @@ func validateDeleteRemote(raw string) (bool, error) {
 	default:
 		return false, httperr.BadRequest("deleteRemote must be true or false")
 	}
+}
+
+// UpdateTrackRequest is the POST /api/series/:id/tracking/:recordId/update
+// body — the owner's manual tracking-sheet edit. Every field is an optional
+// pointer (mirrors suwayomi's partial UpdateRequest): a nil field means
+// "leave unchanged", so the request is a genuine partial update. Date
+// fields decode as RFC3339 timestamps (encoding/json's native *time.Time
+// support) — no custom parsing needed.
+type UpdateTrackRequest struct {
+	Status          *string    `json:"status"`
+	LastChapterRead *float64   `json:"lastChapterRead"`
+	Score           *float64   `json:"score"`
+	StartDate       *time.Time `json:"startDate"`
+	FinishDate      *time.Time `json:"finishDate"`
+	Private         *bool      `json:"private"`
+}
+
+// validateUpdateTrack fail-closes the request and maps it to a
+// syncsvc.UpdatePatch. Rules:
+//   - at least one field must be provided (an all-nil body → 400, mirrors
+//     suwayomi's validateUpdate empty-patch guard);
+//   - status, when set, must be non-blank (there is no "clear the status"
+//     concept — a tracker entry always carries one);
+//   - lastChapterRead / score, when set, must be non-negative.
+//
+// Per-field checks are split into updateTrackHasAnyField/
+// validateUpdateTrackFields so this stays under the fleet's per-function
+// cyclomatic-complexity budget.
+func validateUpdateTrack(req UpdateTrackRequest) (syncsvc.UpdatePatch, error) {
+	if !updateTrackHasAnyField(req) {
+		return syncsvc.UpdatePatch{}, httperr.BadRequest("at least one field must be provided")
+	}
+	if err := validateUpdateTrackFields(req); err != nil {
+		return syncsvc.UpdatePatch{}, err
+	}
+	return syncsvc.UpdatePatch{
+		Status:          req.Status,
+		LastChapterRead: req.LastChapterRead,
+		Score:           req.Score,
+		StartDate:       req.StartDate,
+		FinishDate:      req.FinishDate,
+		Private:         req.Private,
+	}, nil
+}
+
+// updateTrackHasAnyField reports whether at least one patch field is set.
+func updateTrackHasAnyField(req UpdateTrackRequest) bool {
+	return req.Status != nil || req.LastChapterRead != nil || req.Score != nil ||
+		req.StartDate != nil || req.FinishDate != nil || req.Private != nil
+}
+
+// validateUpdateTrackFields checks the constraints on the individual
+// set fields (status non-blank; lastChapterRead/score non-negative).
+func validateUpdateTrackFields(req UpdateTrackRequest) error {
+	if req.Status != nil && strings.TrimSpace(*req.Status) == "" {
+		return httperr.BadRequest("status must be non-empty when provided")
+	}
+	if req.LastChapterRead != nil && *req.LastChapterRead < 0 {
+		return httperr.BadRequest("lastChapterRead must be >= 0")
+	}
+	if req.Score != nil && *req.Score < 0 {
+		return httperr.BadRequest("score must be >= 0")
+	}
+	return nil
 }

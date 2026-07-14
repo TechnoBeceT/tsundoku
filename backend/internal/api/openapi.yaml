@@ -2194,6 +2194,36 @@ components:
         remoteId:
           type: string
 
+    UpdateTrackRequest:
+      type: object
+      description: |
+        The owner's manual tracking-sheet edit (spec/trackers-sync-phase4 §2
+        trigger (c)). Every field is optional — a field left out (or set to
+        null) is left unchanged on the binding; at least one field must be
+        present. Every patched field is pushed to the tracker's own account
+        before being persisted locally.
+      minProperties: 1
+      properties:
+        status:
+          type: string
+          description: The tracker's own native status vocabulary. Non-empty when provided.
+        lastChapterRead:
+          type: number
+          minimum: 0
+        score:
+          type: number
+          minimum: 0
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+        finishDate:
+          type: string
+          format: date-time
+          nullable: true
+        private:
+          type: boolean
+
 paths:
   /health:
     get:
@@ -6133,6 +6163,119 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: The tracker fetch-entry call failed upstream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/tracking/{recordId}/update:
+    post:
+      operationId: updateSeriesTracking
+      summary: Owner's manual tracking-sheet edit
+      description: |
+        Applies the owner's manual edit (spec/trackers-sync-phase4 §2
+        trigger (c)) to recordId's binding: every patched field is pushed to
+        the tracker's own account in one call, then persisted locally.
+        Unlike the reading-triggered push/sync paths, a failure here IS
+        returned to the caller — the owner explicitly asked for this edit.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: recordId
+          in: path
+          required: true
+          description: TrackBinding UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTrackRequest"
+      responses:
+        "200":
+          description: The updated TrackBinding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackBinding"
+        "400":
+          description: Missing/invalid request body, or the binding's tracker is not connected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No binding with the given recordId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The tracker update-entry call failed upstream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/tracking/sync:
+    post:
+      operationId: syncSeriesTracking
+      summary: Pull + converge every tracker binding for a series
+      description: |
+        Pulls every one of the series' TrackBinding entries from its
+        tracker's own account and converges local↔remote per the umbrella
+        spec §6 "conflict = MAX wins BOTH directions" rule. One binding's own
+        sync failure is logged and that binding's pre-sync row is kept
+        unchanged — it never aborts syncing the series' other bindings. An
+        unknown series id is not an error: zero bindings are found and an
+        empty list is returned.
+      tags:
+        - trackers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The series' refreshed binding set.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrackBinding"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Invalid series id.
           content:
             application/json:
               schema:

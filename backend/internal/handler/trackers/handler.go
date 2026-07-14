@@ -7,6 +7,11 @@
 // service, and render the DTO — the same bind→validate→service→DTO shape as
 // handler/metadata and handler/suwayomi.
 //
+// The Phase-4c SYNC surface (spec/trackers-sync-phase4 §4) — UpdateTrack
+// (the owner's manual tracking-sheet edit) and SyncTracking (pull + converge
+// a series' whole binding set) — is served the same way, over the
+// handler-local SyncService interface (satisfied by *syncsvc.Service).
+//
 // The Handler also holds the raw *ent.Client directly (like handler/owner)
 // for two READ-ONLY listings neither service exposes as a dedicated method:
 // GET /api/trackers needs every registered tracker's TrackerConnection row
@@ -16,9 +21,11 @@
 package trackers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -29,21 +36,37 @@ import (
 	"github.com/technobecet/tsundoku/internal/tracker"
 	trackerbind "github.com/technobecet/tsundoku/internal/tracker/bind"
 	trackerconnect "github.com/technobecet/tsundoku/internal/tracker/connect"
+	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
 )
 
-// Handler serves the tracker connect + bind HTTP endpoints.
+// SyncService is the Phase-4c tracker SYNC surface this handler depends on —
+// satisfied by *syncsvc.Service. Depending on this narrow interface (rather
+// than the concrete type) keeps UpdateTrack/SyncTracking testable with a
+// fake, the same discipline every other handler-local port in this codebase
+// follows (e.g. series.CoverFetcher).
+type SyncService interface {
+	// UpdateTrack applies the owner's manual tracking-sheet edit to
+	// recordID's binding — see syncsvc.Service.UpdateTrack's own doc comment.
+	UpdateTrack(ctx context.Context, recordID uuid.UUID, patch syncsvc.UpdatePatch) (*ent.TrackBinding, error)
+	// SyncNow pulls + converges every one of seriesID's bindings — see
+	// syncsvc.Service.SyncNow's own doc comment.
+	SyncNow(ctx context.Context, seriesID uuid.UUID) ([]*ent.TrackBinding, error)
+}
+
+// Handler serves the tracker connect + bind + sync HTTP endpoints.
 type Handler struct {
 	client     *ent.Client
 	registry   *tracker.Registry
 	connectSvc *trackerconnect.Service
 	bindSvc    *trackerbind.Service
+	syncSvc    SyncService
 }
 
 // NewHandler constructs a Handler bound to the Ent client, the tracker
-// registry, and the connect/bind services (both built over the SAME
+// registry, and the connect/bind/sync services (all built over the SAME
 // registry in main.go, so a tracker id resolves identically everywhere).
-func NewHandler(client *ent.Client, registry *tracker.Registry, connectSvc *trackerconnect.Service, bindSvc *trackerbind.Service) *Handler {
-	return &Handler{client: client, registry: registry, connectSvc: connectSvc, bindSvc: bindSvc}
+func NewHandler(client *ent.Client, registry *tracker.Registry, connectSvc *trackerconnect.Service, bindSvc *trackerbind.Service, syncSvc SyncService) *Handler {
+	return &Handler{client: client, registry: registry, connectSvc: connectSvc, bindSvc: bindSvc, syncSvc: syncSvc}
 }
 
 // List handles GET /api/trackers. It reports EVERY registered tracker
@@ -286,37 +309,96 @@ func (h *Handler) RefreshBinding(c echo.Context) error {
 	return c.JSON(http.StatusOK, toTrackBindingDTO(binding, h.registry))
 }
 
+// UpdateTrack handles POST /api/series/:id/tracking/:recordId/update — the
+// owner's manual tracking-sheet edit (syncsvc.Service.UpdateTrack). Unlike
+// the reading-triggered push/sync paths, this is an explicit owner action:
+// a failure is returned to the caller, never silently dropped (§16). Every
+// patched field is pushed to the tracker's own account before being
+// persisted locally; the response carries the refreshed TrackBindingDTO
+// (§16 round-trip).
+func (h *Handler) UpdateTrack(c echo.Context) error {
+	if _, err := validateUUID(c.Param("id"), "series id"); err != nil {
+		return err
+	}
+	recordID, err := validateUUID(c.Param("recordId"), "record id")
+	if err != nil {
+		return err
+	}
+	var req UpdateTrackRequest
+	if err := c.Bind(&req); err != nil {
+		return httperr.BadRequest("invalid request body")
+	}
+	patch, err := validateUpdateTrack(req)
+	if err != nil {
+		return err
+	}
+
+	binding, err := h.syncSvc.UpdateTrack(c.Request().Context(), recordID, patch)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, toTrackBindingDTO(binding, h.registry))
+}
+
+// SyncTracking handles POST /api/series/:id/tracking/sync — pulls EVERY one
+// of seriesID's TrackBinding entries from its tracker's own account and
+// converges local↔remote (syncsvc.Service.SyncNow; umbrella spec §6 "max
+// wins both directions"). A single binding's own sync failure is absorbed
+// by SyncNow itself (logged, that binding's pre-sync row is kept unchanged)
+// so this handler only ever surfaces a hard failure loading the series'
+// binding set. Returns the refreshed binding set (§16 round-trip); an
+// unknown seriesID is not an error — SyncNow simply finds zero bindings and
+// this returns 200 + [].
+func (h *Handler) SyncTracking(c echo.Context) error {
+	seriesID, err := validateUUID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+
+	bindings, err := h.syncSvc.SyncNow(c.Request().Context(), seriesID)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, toTrackBindingDTOs(bindings, h.registry))
+}
+
 // mapServiceError translates a connect/bind/tracker sentinel error into its
 // documented HTTP status:
 //   - 404 — the tracker id or series/binding record does not exist
 //     (connect.ErrUnknownTracker, bind.ErrTrackerNotFound,
-//     bind.ErrSeriesNotFound, bind.ErrBindingNotFound).
+//     bind.ErrSeriesNotFound, bind.ErrBindingNotFound, syncsvc.ErrTrackerNotFound,
+//     syncsvc.ErrBindingNotFound — syncsvc's sentinels deliberately mirror
+//     bind's own shape, see syncsvc's package doc comment).
 //   - 400 — the request cannot succeed as shaped: no connected account
-//     (bind.ErrTrackerNotConnected), a bad/expired/missing OAuth callback
-//     state (connect.ErrInvalidState/ErrMissingCode/ErrMissingToken), this
+//     (bind.ErrTrackerNotConnected, syncsvc.ErrTrackerNotConnected), a
+//     bad/expired/missing OAuth callback state
+//     (connect.ErrInvalidState/ErrMissingCode/ErrMissingToken), this
 //     instance isn't configured for OAuth yet
 //     (connect.ErrPublicURLNotConfigured, tracker.ErrClientIDNotConfigured),
 //     or the tracker doesn't support the flow being called
 //     (connect.ErrCredentialLoginNotSupported, tracker.ErrOAuthNotSupported),
 //     or the connected account's token has expired and needs a fresh login
 //     (tracker.ErrTokenExpired).
-//   - 502 — anything else. Every remaining connect/bind method wraps either
-//     a genuine tracker-client/network failure (ExchangeCode, GetEntry,
-//     SaveEntry, DeleteEntry, Search) or a DB write failure with fmt.Errorf,
-//     neither of which carries its own sentinel; since the dominant real
-//     failure mode of these tracker-calling methods is the upstream
-//     tracker being unreachable or rejecting the request, an unmatched
-//     error is surfaced as a 502 via the shared httperr.Upstream (mirrors
-//     the Suwayomi settings/extensions proxies: any unmatched client
-//     failure is a gateway error, never a false 200 or an opaque 500).
+//   - 502 — anything else. Every remaining connect/bind/sync method wraps
+//     either a genuine tracker-client/network failure (ExchangeCode,
+//     GetEntry, SaveEntry, UpdateEntry, DeleteEntry, Search) or a DB write
+//     failure with fmt.Errorf, neither of which carries its own sentinel;
+//     since the dominant real failure mode of these tracker-calling methods
+//     is the upstream tracker being unreachable or rejecting the request,
+//     an unmatched error is surfaced as a 502 via the shared httperr.Upstream
+//     (mirrors the Suwayomi settings/extensions proxies: any unmatched
+//     client failure is a gateway error, never a false 200 or an opaque 500).
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, trackerconnect.ErrUnknownTracker),
 		errors.Is(err, trackerbind.ErrTrackerNotFound),
 		errors.Is(err, trackerbind.ErrSeriesNotFound),
-		errors.Is(err, trackerbind.ErrBindingNotFound):
+		errors.Is(err, trackerbind.ErrBindingNotFound),
+		errors.Is(err, syncsvc.ErrTrackerNotFound),
+		errors.Is(err, syncsvc.ErrBindingNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	case errors.Is(err, trackerbind.ErrTrackerNotConnected),
+		errors.Is(err, syncsvc.ErrTrackerNotConnected),
 		errors.Is(err, trackerconnect.ErrInvalidState),
 		errors.Is(err, trackerconnect.ErrMissingCode),
 		errors.Is(err, trackerconnect.ErrMissingToken),

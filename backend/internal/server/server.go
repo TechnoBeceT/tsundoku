@@ -21,6 +21,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
+	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -54,7 +55,10 @@ import (
 // subsystem (spec/trackers-oauth-phase3): the composed registry of the four
 // native trackers plus the connect (per-account OAuth/credential login) and
 // bind (per-series search/bind/unbind/fetch) services over it, all built in
-// main.go over the SAME registry.
+// main.go over the SAME registry. syncSvc is the Phase-4c tracker sync
+// service (spec/trackers-sync-phase4) built over the same registry — it
+// serves the manual update/sync-now endpoints AND is injected as the
+// series.ProgressPusher so a reader-marked chapter fires a background push.
 func New(
 	cfg *config.Config,
 	client *entpkg.Client,
@@ -71,6 +75,7 @@ func New(
 	trackerRegistry *tracker.Registry,
 	trackerConnectSvc *connect.Service,
 	trackerBindSvc *bind.Service,
+	syncSvc *syncsvc.Service,
 	trigger func(),
 ) *echo.Echo {
 	e := echo.New()
@@ -94,6 +99,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trigger)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, trigger)
 	return e
 }

@@ -1819,6 +1819,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/tracking/{recordId}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Owner's manual tracking-sheet edit
+         * @description Applies the owner's manual edit (spec/trackers-sync-phase4 §2
+         *     trigger (c)) to recordId's binding: every patched field is pushed to
+         *     the tracker's own account in one call, then persisted locally.
+         *     Unlike the reading-triggered push/sync paths, a failure here IS
+         *     returned to the caller — the owner explicitly asked for this edit.
+         */
+        post: operations["updateSeriesTracking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/tracking/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pull + converge every tracker binding for a series
+         * @description Pulls every one of the series' TrackBinding entries from its
+         *     tracker's own account and converges local↔remote per the umbrella
+         *     spec §6 "conflict = MAX wins BOTH directions" rule. One binding's own
+         *     sync failure is logged and that binding's pre-sync row is kept
+         *     unchanged — it never aborts syncing the series' other bindings. An
+         *     unknown series id is not an error: zero bindings are found and an
+         *     empty list is returned.
+         */
+        post: operations["syncSeriesTracking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3039,6 +3089,24 @@ export interface components {
         BindRequest: {
             trackerId: number;
             remoteId: string;
+        };
+        /**
+         * @description The owner's manual tracking-sheet edit (spec/trackers-sync-phase4 §2
+         *     trigger (c)). Every field is optional — a field left out (or set to
+         *     null) is left unchanged on the binding; at least one field must be
+         *     present. Every patched field is pushed to the tracker's own account
+         *     before being persisted locally.
+         */
+        UpdateTrackRequest: {
+            /** @description The tracker's own native status vocabulary. Non-empty when provided. */
+            status?: string;
+            lastChapterRead?: number;
+            score?: number;
+            /** Format: date-time */
+            startDate?: string | null;
+            /** Format: date-time */
+            finishDate?: string | null;
+            private?: boolean;
         };
     };
     responses: never;
@@ -7036,6 +7104,112 @@ export interface operations {
             };
             /** @description The tracker fetch-entry call failed upstream. */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateSeriesTracking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+                /** @description TrackBinding UUID. */
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTrackRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated TrackBinding. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackBinding"];
+                };
+            };
+            /** @description Missing/invalid request body, or the binding's tracker is not connected. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No binding with the given recordId. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The tracker update-entry call failed upstream. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    syncSeriesTracking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The series' refreshed binding set. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackBinding"][];
+                };
+            };
+            /** @description Invalid series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

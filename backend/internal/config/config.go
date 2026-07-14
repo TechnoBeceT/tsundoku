@@ -317,6 +317,14 @@ type JobsConfig struct {
 	// the retry queue must keep draining). Set via
 	// TSUNDOKU_JOBS_TRACKRETRYINTERVAL.
 	TrackRetryInterval time.Duration
+
+	// AutoUpdateTrack gates the reading-triggered tracker-sync push (spec/
+	// trackers-sync-phase4 §2): when true (the default), marking a chapter
+	// read in the in-app reader fires a best-effort progress push to every
+	// bound tracker. This is the env-sourced DEFAULT the runtime settings
+	// overlay (trackers.auto_update_track) can override without a restart.
+	// Set via TSUNDOKU_JOBS_AUTOUPDATETRACK.
+	AutoUpdateTrack bool
 }
 
 // SourcesConfig holds the env-sourced DEFAULTS for the source-politeness
@@ -482,6 +490,7 @@ func defaults() map[string]any {
 		"jobs.chaptercachettl":        "1h",
 		"jobs.suppresssplitparts":     true,
 		"jobs.trackretryinterval":     "5m",
+		"jobs.autoupdatetrack":        true,
 		// Health — M7 source-health computation.
 		"health.stalegracedays": 14,
 		"storage.folder":        "/data/manga",
@@ -583,6 +592,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_JOBS_SEARCHCACHETTL            → jobs.searchcachettl
 //	TSUNDOKU_JOBS_CHAPTERCACHETTL           → jobs.chaptercachettl
 //	TSUNDOKU_JOBS_TRACKRETRYINTERVAL        → jobs.trackretryinterval
+//	TSUNDOKU_JOBS_AUTOUPDATETRACK           → jobs.autoupdatetrack
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //	TSUNDOKU_SOURCES_FAILURETHRESHOLD       → sources.failurethreshold
 //	TSUNDOKU_SOURCES_COOLDOWN               → sources.cooldown

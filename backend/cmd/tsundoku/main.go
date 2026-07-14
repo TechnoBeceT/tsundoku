@@ -56,6 +56,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
 	trackerproviders "github.com/technobecet/tsundoku/internal/tracker/providers"
+	"github.com/technobecet/tsundoku/internal/tracker/retry"
+	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -144,6 +146,16 @@ func main() {
 	trackerConnectSvc := connect.NewService(entClient, trackerRegistry, cfg.Tracker.PublicURL)
 	trackerBindSvc := bind.NewService(entClient, trackerRegistry, cfg.Storage.Folder)
 
+	// Phase-4c tracker SYNC subsystem (spec/trackers-sync-phase4): push/pull/
+	// update over the rule kernel (internal/tracker/sync) + the durable,
+	// coalescing retry queue (internal/tracker/retry) a failed push lands in.
+	// trackerBindSvc doubles as the SidecarSyncer (it already owns the
+	// TrackBinding↔sidecar mirror for Bind/Unbind/FetchTrack — see
+	// bind.Service.SyncSidecar's doc comment); settingsSvc doubles as the
+	// AutoUpdateTracker (trackers.auto_update_track, hot-reloadable).
+	trackerRetryQueue := retry.NewQueue(entClient)
+	syncSvc := syncsvc.NewService(entClient, trackerRegistry, trackerRetryQueue, trackerBindSvc, settingsSvc)
+
 	// Source-politeness gate: a per-physical-source circuit-breaker (persisted
 	// in SourceCircuitState) + in-memory politeness delay, shared by every
 	// background source-access path below (download, refresh, warm-up) so a
@@ -182,6 +194,13 @@ func main() {
 	}, settingsSvc, gateSvc)
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
+	// Tracker-push retry worker: independent of the Suwayomi engine (it only
+	// ever talks to the native trackers, never Suwayomi), so it starts
+	// immediately rather than waiting on startSuwayomiEngine's tickers —
+	// dormant-safe when no trackers are connected (RunOnce simply finds zero
+	// due rows every pass).
+	runner.StartTrackerRetry(ctx, trackerRetryQueue, syncSvc)
+
 	// Discovery sweep service (M5): re-fetches every monitored series' chapter
 	// list to find new releases. Its own ingest shares the same Ent client +
 	// Suwayomi client; NewIngest is a stateless constructor so a second instance
@@ -213,7 +232,7 @@ func main() {
 	// called when tsundoku owns the process.
 	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 
@@ -266,6 +285,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		SourcesMinRequestDelay:  cfg.Sources.MinRequestDelay,
 		SuppressSplitParts:      cfg.Jobs.SuppressSplitParts,
 		TrackRetryInterval:      cfg.Jobs.TrackRetryInterval,
+		AutoUpdateTrack:         cfg.Jobs.AutoUpdateTrack,
 	}
 }
 

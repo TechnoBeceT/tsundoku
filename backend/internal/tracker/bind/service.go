@@ -123,7 +123,7 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 		return nil, err
 	}
 
-	s.syncSidecarBestEffort(ctx, seriesID)
+	s.SyncSidecar(ctx, seriesID)
 	return binding, nil
 }
 
@@ -158,7 +158,7 @@ func (s *Service) Unbind(ctx context.Context, recordID uuid.UUID, deleteRemote b
 		return fmt.Errorf("bind: delete binding %s: %w", recordID, err)
 	}
 
-	s.syncSidecarBestEffort(ctx, binding.SeriesID)
+	s.SyncSidecar(ctx, binding.SeriesID)
 	return nil
 }
 
@@ -221,7 +221,7 @@ func (s *Service) FetchTrack(ctx context.Context, recordID uuid.UUID) (*ent.Trac
 		return nil, err
 	}
 
-	s.syncSidecarBestEffort(ctx, binding.SeriesID)
+	s.SyncSidecar(ctx, binding.SeriesID)
 	return updated, nil
 }
 
@@ -344,15 +344,22 @@ func remoteURLFor(trackerID int, remoteID string) string {
 	}
 }
 
-// syncSidecarBestEffort mirrors seriesID's CURRENT full set of TrackBinding
-// rows into its tsundoku.json sidecar (disk.WriteTrackBindings) — always a
-// full re-read-then-write of every binding, never a single-row patch, so an
+// SyncSidecar mirrors seriesID's CURRENT full set of TrackBinding rows into
+// its tsundoku.json sidecar (disk.WriteTrackBindings) — always a full
+// re-read-then-write of every binding, never a single-row patch, so an
 // Unbind's removed entry is correctly dropped from disk too. A series with
 // no folder yet (disk.ErrNoSeriesDir) is the expected common case, not a
 // fault — logged at Debug; any other disk error is logged at Warn, never
 // fatal to the caller (mirrors metadatasvc.writeSidecarBestEffort's same
 // non-fatal discipline for the SAME sidecar file).
-func (s *Service) syncSidecarBestEffort(ctx context.Context, seriesID uuid.UUID) {
+//
+// EXPORTED (not just this package's own Bind/Unbind/FetchTrack callers) so
+// internal/tracker/syncsvc's push/pull/update services can reuse the SAME
+// read-all-bindings-then-write-sidecar logic after their own mutations
+// instead of duplicating it (§2 DRY) — see syncsvc.SidecarSyncer, the narrow
+// port syncsvc depends on rather than importing this whole package's
+// concrete type.
+func (s *Service) SyncSidecar(ctx context.Context, seriesID uuid.UUID) {
 	row, err := s.client.Series.Query().Where(entseries.IDEQ(seriesID)).WithCategory().Only(ctx)
 	if err != nil {
 		slog.WarnContext(ctx, "bind: sidecar sync: load series failed", "series_id", seriesID, "err", err)

@@ -25,6 +25,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
+	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
 )
 
 const testSecret = "trackers-handler-test-secret"
@@ -145,6 +146,34 @@ const (
 	credentialTrackerID = 902
 )
 
+// fakeSyncService is a handler.SyncService test double for the Phase-4c
+// UpdateTrack/SyncTracking routes — it never touches a real tracker, the DB,
+// or the retry queue, keeping those two handlers' tests independent of the
+// full syncsvc wiring (retry.Queue + SidecarSyncer + AutoUpdateTracker) none
+// of the OTHER tracker-handler tests need. A nil *Fn defaults to a not-found
+// sentinel (UpdateTrack) / an empty list (SyncNow) so a test that forgets to
+// set it up fails loudly rather than silently succeeding.
+type fakeSyncService struct {
+	updateTrackFn func(ctx context.Context, recordID uuid.UUID, patch syncsvc.UpdatePatch) (*ent.TrackBinding, error)
+	syncNowFn     func(ctx context.Context, seriesID uuid.UUID) ([]*ent.TrackBinding, error)
+}
+
+func (f *fakeSyncService) UpdateTrack(ctx context.Context, recordID uuid.UUID, patch syncsvc.UpdatePatch) (*ent.TrackBinding, error) {
+	if f.updateTrackFn != nil {
+		return f.updateTrackFn(ctx, recordID, patch)
+	}
+	return nil, syncsvc.ErrBindingNotFound
+}
+
+func (f *fakeSyncService) SyncNow(ctx context.Context, seriesID uuid.UUID) ([]*ent.TrackBinding, error) {
+	if f.syncNowFn != nil {
+		return f.syncNowFn(ctx, seriesID)
+	}
+	return nil, nil
+}
+
+var _ handler.SyncService = (*fakeSyncService)(nil)
+
 // testEnv bundles the wired Echo app, the DB client, storage root, and a
 // valid owner token.
 type testEnv struct {
@@ -153,13 +182,14 @@ type testEnv struct {
 	token  string
 	oauth  *fakeOAuthTracker
 	cred   *fakeCredentialTracker
+	sync   *fakeSyncService
 }
 
 // newTestEnv stands up a fully-wired Echo: the tracker routes registered
 // behind RequireOwner, a connect.Service + bind.Service sharing ONE registry
 // over the two fake trackers (an OAuth one and a credential one — mirrors
-// the real AniList/MAL vs Kitsu/MangaUpdates split), and a valid owner
-// Bearer token.
+// the real AniList/MAL vs Kitsu/MangaUpdates split), a fake SyncService for
+// the Phase-4c update/sync-now routes, and a valid owner Bearer token.
 func newTestEnv(t *testing.T, publicURL string) *testEnv {
 	t.Helper()
 
@@ -172,7 +202,8 @@ func newTestEnv(t *testing.T, publicURL string) *testEnv {
 
 	connectSvc := connect.NewService(client, registry, publicURL)
 	bindSvc := bind.NewService(client, registry, t.TempDir())
-	h := handler.NewHandler(client, registry, connectSvc, bindSvc)
+	syncSvc := &fakeSyncService{}
+	h := handler.NewHandler(client, registry, connectSvc, bindSvc, syncSvc)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -187,12 +218,14 @@ func newTestEnv(t *testing.T, publicURL string) *testEnv {
 	authed.POST("/series/:id/tracking", h.CreateBinding)
 	authed.DELETE("/series/:id/tracking/:recordId", h.DeleteBinding)
 	authed.POST("/series/:id/tracking/:recordId/refresh", h.RefreshBinding)
+	authed.POST("/series/:id/tracking/:recordId/update", h.UpdateTrack)
+	authed.POST("/series/:id/tracking/sync", h.SyncTracking)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
 		t.Fatalf("Issue token: %v", err)
 	}
-	return &testEnv{e: e, client: client, token: token, oauth: oauthT, cred: credT}
+	return &testEnv{e: e, client: client, token: token, oauth: oauthT, cred: credT, sync: syncSvc}
 }
 
 func (env *testEnv) do(method, target, body string) *httptest.ResponseRecorder {
@@ -241,6 +274,8 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPost, "/api/series/" + seriesID + "/tracking"},
 		{http.MethodDelete, "/api/series/" + seriesID + "/tracking/" + recordID},
 		{http.MethodPost, "/api/series/" + seriesID + "/tracking/" + recordID + "/refresh"},
+		{http.MethodPost, "/api/series/" + seriesID + "/tracking/" + recordID + "/update"},
+		{http.MethodPost, "/api/series/" + seriesID + "/tracking/sync"},
 	}
 	for _, rt := range routes {
 		r := httptest.NewRequest(rt.method, rt.path, nil)
@@ -803,5 +838,141 @@ func TestRefreshBinding_BindingNotFound(t *testing.T) {
 	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/tracking/"+uuid.New().String()+"/refresh", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// assertUpdateTrackPatch fails the test unless patch carries exactly the
+// field values TestUpdateTrack_Success's request body set — extracted so
+// the driving test's fake stays under the fleet's per-function
+// cyclomatic-complexity budget (mirrors assertCreatedBindingFields above).
+func assertUpdateTrackPatch(t *testing.T, patch syncsvc.UpdatePatch) {
+	t.Helper()
+	if patch.Status == nil || *patch.Status != "completed" {
+		t.Errorf("patch.Status = %v, want *completed", patch.Status)
+	}
+	if patch.LastChapterRead == nil || *patch.LastChapterRead != 100 {
+		t.Errorf("patch.LastChapterRead = %v, want *100", patch.LastChapterRead)
+	}
+	if patch.Score == nil || *patch.Score != 9 {
+		t.Errorf("patch.Score = %v, want *9", patch.Score)
+	}
+	if patch.Private == nil || !*patch.Private {
+		t.Errorf("patch.Private = %v, want *true", patch.Private)
+	}
+}
+
+// TestUpdateTrack_Success asserts a manual tracking-sheet edit is routed to
+// the SyncService with the parsed patch and the refreshed TrackBindingDTO
+// carries the fields the fake returned.
+func TestUpdateTrack_Success(t *testing.T) {
+	env := newTestEnv(t, "https://tsundoku.example")
+	seriesID := uuid.New()
+	recordID := uuid.New()
+
+	env.sync.updateTrackFn = func(_ context.Context, gotID uuid.UUID, patch syncsvc.UpdatePatch) (*ent.TrackBinding, error) {
+		if gotID != recordID {
+			t.Errorf("recordID = %s, want %s", gotID, recordID)
+		}
+		assertUpdateTrackPatch(t, patch)
+		return &ent.TrackBinding{
+			ID:              recordID,
+			SeriesID:        seriesID,
+			TrackerID:       oauthTrackerID,
+			RemoteID:        "42",
+			Status:          "completed",
+			LastChapterRead: 100,
+			Score:           9,
+			Private:         true,
+		}, nil
+	}
+
+	body := `{"status":"completed","lastChapterRead":100,"score":9,"private":true}`
+	rec := env.do(http.MethodPost, "/api/series/"+seriesID.String()+"/tracking/"+recordID.String()+"/update", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var out handler.TrackBindingDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.ID != recordID.String() || out.Status != "completed" || out.LastChapterRead != 100 ||
+		out.Score != 9 || !out.Private || out.TrackerName != "Fake OAuth Tracker" {
+		t.Errorf("TrackBindingDTO = %+v", out)
+	}
+}
+
+// TestUpdateTrack_UnknownRecordId asserts a SyncService ErrBindingNotFound
+// maps to 404 (mirrors RefreshBinding's own not-found mapping).
+func TestUpdateTrack_UnknownRecordId(t *testing.T) {
+	env := newTestEnv(t, "https://tsundoku.example")
+	env.sync.updateTrackFn = func(context.Context, uuid.UUID, syncsvc.UpdatePatch) (*ent.TrackBinding, error) {
+		return nil, syncsvc.ErrBindingNotFound
+	}
+
+	body := `{"status":"completed"}`
+	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/tracking/"+uuid.New().String()+"/update", body)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateTrack_EmptyBody asserts an all-nil patch is a 400 before the
+// SyncService is ever called (the fake's zero-value updateTrackFn returns
+// ErrBindingNotFound, so a 400 here proves validation ran first).
+func TestUpdateTrack_EmptyBody(t *testing.T) {
+	env := newTestEnv(t, "https://tsundoku.example")
+
+	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/tracking/"+uuid.New().String()+"/update", `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateTrack_InvalidRecordId asserts a malformed recordId path segment
+// is a 400 before the body is even bound.
+func TestUpdateTrack_InvalidRecordId(t *testing.T) {
+	env := newTestEnv(t, "https://tsundoku.example")
+
+	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/tracking/not-a-uuid/update", `{"status":"completed"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSyncTracking_Success asserts the endpoint forwards seriesID to
+// SyncNow and renders the returned binding set.
+func TestSyncTracking_Success(t *testing.T) {
+	env := newTestEnv(t, "https://tsundoku.example")
+	seriesID := uuid.New()
+	b1 := &ent.TrackBinding{ID: uuid.New(), SeriesID: seriesID, TrackerID: oauthTrackerID, RemoteID: "1", Status: "current"}
+	b2 := &ent.TrackBinding{ID: uuid.New(), SeriesID: seriesID, TrackerID: credentialTrackerID, RemoteID: "2", Status: "completed"}
+	env.sync.syncNowFn = func(_ context.Context, gotID uuid.UUID) ([]*ent.TrackBinding, error) {
+		if gotID != seriesID {
+			t.Errorf("seriesID = %s, want %s", gotID, seriesID)
+		}
+		return []*ent.TrackBinding{b1, b2}, nil
+	}
+
+	rec := env.do(http.MethodPost, "/api/series/"+seriesID.String()+"/tracking/sync", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var out []handler.TrackBindingDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out) != 2 || out[0].ID != b1.ID.String() || out[1].ID != b2.ID.String() {
+		t.Fatalf("list = %+v, want the 2 fake bindings", out)
+	}
+}
+
+// TestSyncTracking_BadSeriesId asserts a malformed :id path segment is a 400
+// before the SyncService is ever called.
+func TestSyncTracking_BadSeriesId(t *testing.T) {
+	env := newTestEnv(t, "https://tsundoku.example")
+
+	rec := env.do(http.MethodPost, "/api/series/not-a-uuid/tracking/sync", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
 	}
 }

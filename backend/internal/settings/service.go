@@ -127,6 +127,14 @@ func (s *Service) TrackRetryInterval(ctx context.Context) time.Duration {
 	return s.resolveDuration(ctx, KeyTrackRetryInterval)
 }
 
+// AutoUpdateTrack reports whether the reading-triggered tracker-sync push is
+// currently enabled (DB override else default true). Read at use-time by
+// syncsvc.Service.PushProgress, so a toggle hot-reloads on the next reader
+// progress write.
+func (s *Service) AutoUpdateTrack(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeyAutoUpdateTrack)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {
