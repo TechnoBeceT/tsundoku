@@ -40,12 +40,15 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
 	"github.com/technobecet/tsundoku/internal/download"
+	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/metadata/providers"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
+	"github.com/technobecet/tsundoku/internal/notify"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/server"
@@ -65,6 +68,12 @@ import (
 // shutdownTimeout is the maximum time allowed for in-flight requests to complete
 // after the shutdown signal is received before the process exits forcefully.
 const shutdownTimeout = 15 * time.Second
+
+// vapidSubject is the VAPID "sub" claim sent with every Web Push — a contact URI
+// identifying this server to push services. Single-owner homelab: a fixed
+// project-scoped mailto is sufficient (push services only require a valid
+// mailto:/https: URI, not a reachable address).
+const vapidSubject = "mailto:tsundoku@localhost"
 
 func main() {
 	cfg, err := config.Load()
@@ -215,6 +224,13 @@ func main() {
 	}, settingsSvc, gateSvc)
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
+	// Web Push + new-chapter notifier (see buildNotifier). VAPID failure degrades
+	// gracefully — the notifier still broadcasts over SSE; only Web Push is off.
+	// The returned public key + subscription store are threaded into the push
+	// handler (server.New) so a browser can subscribe.
+	pushSubsSvc := push.NewService(entClient)
+	vapidPublic := buildNotifier(ctx, entClient, hub, settingsSvc, runner)
+
 	// Tracker-push retry worker: independent of the Suwayomi engine (it only
 	// ever talks to the native trackers, never Suwayomi), so it starts
 	// immediately rather than waiting on startSuwayomiEngine's tickers —
@@ -261,7 +277,7 @@ func main() {
 	// called when tsundoku owns the process.
 	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger)
 
 	addr := ":" + cfg.Server.Port
 
@@ -289,6 +305,28 @@ func main() {
 	if err := e.Shutdown(shutCtx); err != nil {
 		log.Printf("tsundoku: graceful shutdown: %v", err)
 	}
+}
+
+// buildNotifier wires the Web Push sender + new-chapter notifier into the runner
+// and returns the server's VAPID public key (for the push handler). EnsureVAPID
+// generates the key pair once (persisted); the sender fans notifications to every
+// subscription; the notifier pass runs at the end of each download cycle, gated
+// by the notifications.enabled tunable. BackfillArm arms every existing series
+// once + seeds the watermark to now so a caught-up library never re-announces its
+// back-catalogue. Every failure is logged and swallowed — a notifier/push problem
+// must never abort startup.
+func buildNotifier(ctx context.Context, entClient *ent.Client, hub *sse.Hub, settingsSvc *settings.Service, runner *job.Runner) string {
+	pub, priv, err := push.EnsureVAPID(ctx, entClient)
+	if err != nil {
+		slog.WarnContext(ctx, "push: VAPID key init failed; Web Push disabled", "err", err)
+	}
+	sender := push.NewSender(entClient, pub, priv, vapidSubject)
+	notifySvc := notify.NewService(entClient, hub, sender, settingsSvc)
+	runner.SetNotifier(notifySvc)
+	if err := notifySvc.BackfillArm(ctx); err != nil {
+		slog.WarnContext(ctx, "notify: backfill-arm failed", "err", err)
+	}
+	return pub
 }
 
 // defaultsFromConfig maps the env-resolved *config.Config into the settings
@@ -326,6 +364,9 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		FlareSolverrSessionName:      "",
 		FlareSolverrSessionTTL:       15,
 		FlareSolverrResponseFallback: false,
+		// NotificationsEnabled has no env var: new-chapter notifications are on by
+		// default (the owner disables via the Settings UI).
+		NotificationsEnabled: true,
 	}
 }
 

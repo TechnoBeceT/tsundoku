@@ -4,8 +4,17 @@ import type { NavItem } from '~/components/shell/types'
 const route = useRoute()
 
 // Live backend progress stream — connects once on mount, drives shell indicators.
+// (The app-global ChapterNotifier in app.vue owns the chapter.new in-app toast.)
 const { connect, unhealthyCount, syncing } = useProgressStream()
 onMounted(connect)
+
+// PWA install affordance — captures beforeinstallprompt (Android Chrome) and
+// shows the floating "Install app" button until installed.
+const { installable, promptInstall } = usePwaInstall()
+
+// Service-worker update prompt — the pwa plugin's watch() flips updateAvailable
+// when a new SW parks in waiting; the toast lets the owner reload into it.
+const { updateAvailable, applyUpdate } = useSwUpdate()
 
 // Nav items — keys match AppShell's internal references. The 'health' key is
 // hardcoded inside AppShell's attention-pill click handler, so it MUST be
@@ -92,5 +101,7 @@ function handleOpenAdopt(): void {
          total in their payload, so a reliable per-event count cannot be maintained here.
          Authoritative counts come from the Downloads screen (Milestone B). -->
     <slot />
+    <InstallButton :installable="installable" @install="promptInstall" />
+    <UpdateToast :update-available="updateAvailable" @reload="applyUpdate" />
   </AppShell>
 </template>

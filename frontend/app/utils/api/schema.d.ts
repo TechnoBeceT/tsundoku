@@ -1364,6 +1364,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/push/vapid-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the server's Web Push VAPID public key
+         * @description Returns the server's VAPID public key so a browser can create a Web Push
+         *     subscription (pushManager.subscribe applicationServerKey). Generated once
+         *     at boot and stable thereafter.
+         */
+        get: operations["getVapidKey"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register this device's Web Push subscription
+         * @description Upserts this device's Web Push subscription by endpoint (idempotent). The
+         *     notifier fans new-chapter notifications to every stored subscription.
+         */
+        post: operations["subscribePush"];
+        /**
+         * Remove this device's Web Push subscription
+         * @description Removes this device's Web Push subscription by endpoint. Removing an
+         *     unknown endpoint is a no-op (still 204).
+         */
+        delete: operations["unsubscribePush"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system": {
         parameters: {
             query?: never;
@@ -2719,6 +2767,97 @@ export interface components {
              * @example true
              */
             started: boolean;
+        };
+        VapidKey: {
+            /**
+             * @description The server's VAPID public key (base64url), passed to the browser's
+             *     pushManager.subscribe as its applicationServerKey. Empty only when
+             *     server-side VAPID init failed (Web Push then unavailable; the client
+             *     feature-detects and degrades to the in-app SSE toast).
+             * @example BEl0abc123-server-public-key
+             */
+            key: string;
+        };
+        /**
+         * @description A browser Web Push subscription, exactly the shape produced by
+         *     PushSubscription.toJSON(). Upserted by endpoint (idempotent).
+         */
+        PushSubscriptionRequest: {
+            /**
+             * Format: uri
+             * @description The push-service URL (the subscription's unique identity).
+             * @example https://fcm.googleapis.com/fcm/send/abc123
+             */
+            endpoint: string;
+            keys: {
+                /** @description The subscription's public encryption key (base64url). */
+                p256dh: string;
+                /** @description The subscription's auth secret (base64url). */
+                auth: string;
+            };
+        };
+        /** @description Identifies the device subscription to remove, by its endpoint. */
+        PushUnsubscribeRequest: {
+            /**
+             * Format: uri
+             * @description The push-service URL of the subscription to remove.
+             * @example https://fcm.googleapis.com/fcm/send/abc123
+             */
+            endpoint: string;
+        };
+        /**
+         * @description The data payload of the `chapter.new` SSE event (and the identical Web
+         *     Push payload) — emitted once per download cycle when one or more armed,
+         *     monitored, non-completed series gained new readable chapters. Pre-rendered
+         *     server-side so the service worker can showNotification straight from it.
+         */
+        ChapterNew: {
+            /** @description Per-series breakdown of the new readable chapters. */
+            groups: components["schemas"]["ChapterNewGroup"][];
+            /**
+             * @description Sum of all groups' counts.
+             * @example 4
+             */
+            total: number;
+            /**
+             * @description True when the notification collapsed to a cross-series digest (more
+             *     than the per-series threshold of distinct series). The client
+             *     deep-links to the library ("/") for a digest, else to groups[0].url.
+             * @example false
+             */
+            digest: boolean;
+            /**
+             * @description Pre-rendered notification title.
+             * @example Solo Leveling
+             */
+            title: string;
+            /**
+             * @description Pre-rendered notification body.
+             * @example 1 new chapter
+             */
+            body: string;
+        };
+        ChapterNewGroup: {
+            /**
+             * Format: uuid
+             * @description The series that gained new chapters.
+             */
+            seriesId: string;
+            /**
+             * @description The series' display title.
+             * @example Solo Leveling
+             */
+            title: string;
+            /**
+             * @description Number of new readable chapters in this cycle for the series.
+             * @example 1
+             */
+            count: number;
+            /**
+             * @description In-app deep-link to the series page.
+             * @example /series/6f1c2b3a-0000-0000-0000-000000000000
+             */
+            url: string;
         };
         /**
          * @description The FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of Suwayomi's
@@ -6118,6 +6257,115 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceWarmStarted"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getVapidKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The server VAPID public key. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VapidKey"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    subscribePush: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushSubscriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description The subscription was stored. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid subscription body. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    unsubscribePush: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushUnsubscribeRequest"];
+            };
+        };
+        responses: {
+            /** @description The subscription was removed (or was already absent). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid request body. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Missing or invalid Bearer token. */

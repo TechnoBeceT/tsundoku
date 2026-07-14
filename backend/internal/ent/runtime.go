@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/owner"
 	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
+	"github.com/technobecet/tsundoku/internal/ent/pushsubscription"
 	"github.com/technobecet/tsundoku/internal/ent/schema"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
@@ -212,6 +213,20 @@ func init() {
 	providerchapterDescID := providerchapterFields[0].Descriptor()
 	// providerchapter.DefaultID holds the default value on creation for the id field.
 	providerchapter.DefaultID = providerchapterDescID.Default.(func() uuid.UUID)
+	pushsubscriptionFields := schema.PushSubscription{}.Fields()
+	_ = pushsubscriptionFields
+	// pushsubscriptionDescCreatedAt is the schema descriptor for created_at field.
+	pushsubscriptionDescCreatedAt := pushsubscriptionFields[4].Descriptor()
+	// pushsubscription.DefaultCreatedAt holds the default value on creation for the created_at field.
+	pushsubscription.DefaultCreatedAt = pushsubscriptionDescCreatedAt.Default.(func() time.Time)
+	// pushsubscriptionDescFailureCount is the schema descriptor for failure_count field.
+	pushsubscriptionDescFailureCount := pushsubscriptionFields[6].Descriptor()
+	// pushsubscription.DefaultFailureCount holds the default value on creation for the failure_count field.
+	pushsubscription.DefaultFailureCount = pushsubscriptionDescFailureCount.Default.(int)
+	// pushsubscriptionDescID is the schema descriptor for id field.
+	pushsubscriptionDescID := pushsubscriptionFields[0].Descriptor()
+	// pushsubscription.DefaultID holds the default value on creation for the id field.
+	pushsubscription.DefaultID = pushsubscriptionDescID.Default.(func() uuid.UUID)
 	seriesFields := schema.Series{}.Fields()
 	_ = seriesFields
 	// seriesDescCoverURL is the schema descriptor for cover_url field.
@@ -238,28 +253,32 @@ func init() {
 	seriesDescCompleted := seriesFields[14].Descriptor()
 	// series.DefaultCompleted holds the default value on creation for the completed field.
 	series.DefaultCompleted = seriesDescCompleted.Default.(bool)
+	// seriesDescNotifyArmed is the schema descriptor for notify_armed field.
+	seriesDescNotifyArmed := seriesFields[15].Descriptor()
+	// series.DefaultNotifyArmed holds the default value on creation for the notify_armed field.
+	series.DefaultNotifyArmed = seriesDescNotifyArmed.Default.(bool)
 	// seriesDescMetadataLocked is the schema descriptor for metadata_locked field.
-	seriesDescMetadataLocked := seriesFields[17].Descriptor()
+	seriesDescMetadataLocked := seriesFields[18].Descriptor()
 	// series.DefaultMetadataLocked holds the default value on creation for the metadata_locked field.
 	series.DefaultMetadataLocked = seriesDescMetadataLocked.Default.(bool)
 	// seriesDescCoverFile is the schema descriptor for cover_file field.
-	seriesDescCoverFile := seriesFields[18].Descriptor()
+	seriesDescCoverFile := seriesFields[19].Descriptor()
 	// series.DefaultCoverFile holds the default value on creation for the cover_file field.
 	series.DefaultCoverFile = seriesDescCoverFile.Default.(string)
 	// seriesDescCoverSourceURL is the schema descriptor for cover_source_url field.
-	seriesDescCoverSourceURL := seriesFields[19].Descriptor()
+	seriesDescCoverSourceURL := seriesFields[20].Descriptor()
 	// series.DefaultCoverSourceURL holds the default value on creation for the cover_source_url field.
 	series.DefaultCoverSourceURL = seriesDescCoverSourceURL.Default.(string)
 	// seriesDescCoverVersion is the schema descriptor for cover_version field.
-	seriesDescCoverVersion := seriesFields[20].Descriptor()
+	seriesDescCoverVersion := seriesFields[21].Descriptor()
 	// series.DefaultCoverVersion holds the default value on creation for the cover_version field.
 	series.DefaultCoverVersion = seriesDescCoverVersion.Default.(string)
 	// seriesDescCreatedAt is the schema descriptor for created_at field.
-	seriesDescCreatedAt := seriesFields[22].Descriptor()
+	seriesDescCreatedAt := seriesFields[23].Descriptor()
 	// series.DefaultCreatedAt holds the default value on creation for the created_at field.
 	series.DefaultCreatedAt = seriesDescCreatedAt.Default.(func() time.Time)
 	// seriesDescUpdatedAt is the schema descriptor for updated_at field.
-	seriesDescUpdatedAt := seriesFields[23].Descriptor()
+	seriesDescUpdatedAt := seriesFields[24].Descriptor()
 	// series.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	series.DefaultUpdatedAt = seriesDescUpdatedAt.Default.(func() time.Time)
 	// series.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

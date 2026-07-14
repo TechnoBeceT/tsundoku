@@ -8,12 +8,14 @@ import ExtensionsPane from '../settings/ExtensionsPane.vue'
 import SourceMetricsPane from '../settings/SourceMetricsPane.vue'
 import SourcesSettingsPane from '../settings/SourcesSettingsPane.vue'
 import TrackersPane from '../settings/TrackersPane.vue'
+import NotificationsPane from '../settings/NotificationsPane.vue'
 import type {
   DurationValue,
   EngineInfo,
   Extension,
   FlareSolverrConfig,
   LibrarySettings,
+  NotificationPermissionState,
   Repo,
   ReorderDirection,
   RowActionState,
@@ -138,6 +140,18 @@ withDefaults(defineProps<{
   autoUpdateTrack?: boolean
   /** True while the auto-update-track toggle's own save is in flight. */
   autoUpdateTrackBusy?: boolean
+  /** This device's Web Push status (Notifications pane). */
+  notifState?: NotificationPermissionState
+  /** The server-side global notifications toggle (Notifications pane). */
+  notifGlobalEnabled?: boolean
+  /** True while the per-device enable/disable action is in flight. */
+  notifBusy?: boolean
+  /** A per-device notification action failure, surfaced inline. */
+  notifError?: string | null
+  /** True while the global notifications toggle save is in flight. */
+  notifGlobalBusy?: boolean
+  /** A global notifications toggle save failure, surfaced inline. */
+  notifGlobalError?: string | null
   /** When true, the whole screen renders as skeletons. */
   loading?: boolean
 }>(), {
@@ -171,6 +185,12 @@ withDefaults(defineProps<{
   trackersError: null,
   autoUpdateTrack: false,
   autoUpdateTrackBusy: false,
+  notifState: 'default',
+  notifGlobalEnabled: true,
+  notifBusy: false,
+  notifError: null,
+  notifGlobalBusy: false,
+  notifGlobalError: null,
   loading: false,
 })
 
@@ -227,6 +247,12 @@ const emit = defineEmits<{
   'toggle-auto-update-track': [value: boolean]
   /** The auto-identify toggle was flipped — carries the new value. */
   'toggle-auto-identify': [value: boolean]
+  /** Enable Web Push on this device (Notifications pane). */
+  'enable-notifications': []
+  /** Disable Web Push on this device (Notifications pane). */
+  'disable-notifications': []
+  /** The global notifications toggle was flipped — carries the new value. */
+  'set-notifications-global': [value: boolean]
 }>()
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
@@ -325,7 +351,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
         </div>
 
         <TrackersPane
-          v-else
+          v-else-if="activePane === 'trackers'"
           :trackers="trackers"
           :tracker-action="trackerAction"
           :misconfigured-ids="misconfiguredTrackerIds"
@@ -338,6 +364,19 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @login-credentials="emit('login-tracker-credentials', $event)"
           @logout="emit('logout-tracker', $event)"
           @toggle-auto-update-track="emit('toggle-auto-update-track', $event)"
+        />
+
+        <NotificationsPane
+          v-else-if="activePane === 'notifications'"
+          :state="notifState"
+          :global-enabled="notifGlobalEnabled"
+          :busy="notifBusy"
+          :error="notifError"
+          :global-busy="notifGlobalBusy"
+          :global-error="notifGlobalError"
+          @enable="emit('enable-notifications')"
+          @disable="emit('disable-notifications')"
+          @set-global="emit('set-notifications-global', $event)"
         />
       </div>
     </div>

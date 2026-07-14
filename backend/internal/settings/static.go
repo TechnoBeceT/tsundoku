@@ -46,6 +46,8 @@ type Static struct {
 	FlareSolverrSession     string
 	FlareSolverrTTLMinutes  int
 	FlareSolverrFallback    bool
+	// NotificationsOn backs the NotificationsEnabled accessor.
+	NotificationsOn bool
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -122,3 +124,6 @@ func (s Static) FlareSolverrSessionTTL(context.Context) int { return s.FlareSolv
 
 // FlareSolverrResponseFallback returns the fixed asResponseFallback mirror flag.
 func (s Static) FlareSolverrResponseFallback(context.Context) bool { return s.FlareSolverrFallback }
+
+// NotificationsEnabled returns the fixed new-chapter notifications toggle.
+func (s Static) NotificationsEnabled(context.Context) bool { return s.NotificationsOn }

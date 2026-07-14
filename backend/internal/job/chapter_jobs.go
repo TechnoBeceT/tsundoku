@@ -96,6 +96,21 @@ type Runner struct {
 	// dropped. Drained only by the Start loop, so all cycles run in one
 	// goroutine and never overlap.
 	trigger chan struct{}
+	// notifier runs the best-effort new-readable-chapter pass at the end of each
+	// download cycle (internal/notify). Optional (nil when unset) and held as a
+	// narrow interface so job never imports internal/notify. Set via SetNotifier.
+	notifier interface {
+		NotifyNewChapters(context.Context) error
+	}
+}
+
+// SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
+// nil (or never calling it) leaves the cycle notifier-free. The notifier is
+// best-effort — its error never affects RunDownloadCycle's result.
+func (r *Runner) SetNotifier(n interface {
+	NotifyNewChapters(context.Context) error
+}) {
+	r.notifier = n
 }
 
 // NewRunner creates a Runner that delegates to the given Dispatcher (which
@@ -180,6 +195,15 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 	if _, _, serr := r.dispatcher.DetectSupersededParts(ctx); serr != nil {
 		r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Upgraded: upgraded, Error: serr.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: DetectSupersededParts: %w", serr)
+	}
+
+	// Step 5: best-effort new-readable-chapter notification. It keys on
+	// first_downloaded_at (upgrade-safe) and never affects the cycle result — a
+	// notify failure is logged inside the pass and swallowed here.
+	if r.notifier != nil {
+		if nerr := r.notifier.NotifyNewChapters(ctx); nerr != nil {
+			slog.WarnContext(ctx, "job.Runner: notify pass error (ignored)", "err", nerr)
+		}
 	}
 
 	r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Upgraded: upgraded})

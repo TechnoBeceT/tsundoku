@@ -43,6 +43,8 @@ const (
 	FieldMonitored = "monitored"
 	// FieldCompleted holds the string denoting the completed field in the database.
 	FieldCompleted = "completed"
+	// FieldNotifyArmed holds the string denoting the notify_armed field in the database.
+	FieldNotifyArmed = "notify_armed"
 	// FieldMetadataProviderID holds the string denoting the metadata_provider_id field in the database.
 	FieldMetadataProviderID = "metadata_provider_id"
 	// FieldMetadataSource holds the string denoting the metadata_source field in the database.
@@ -118,6 +120,7 @@ var Columns = []string{
 	FieldCategoryID,
 	FieldMonitored,
 	FieldCompleted,
+	FieldNotifyArmed,
 	FieldMetadataProviderID,
 	FieldMetadataSource,
 	FieldMetadataLocked,
@@ -152,6 +155,8 @@ var (
 	DefaultMonitored bool
 	// DefaultCompleted holds the default value on creation for the "completed" field.
 	DefaultCompleted bool
+	// DefaultNotifyArmed holds the default value on creation for the "notify_armed" field.
+	DefaultNotifyArmed bool
 	// DefaultMetadataLocked holds the default value on creation for the "metadata_locked" field.
 	DefaultMetadataLocked bool
 	// DefaultCoverFile holds the default value on creation for the "cover_file" field.
@@ -221,6 +226,11 @@ func ByMonitored(opts ...sql.OrderTermOption) OrderOption {
 // ByCompleted orders the results by the completed field.
 func ByCompleted(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCompleted, opts...).ToFunc()
+}
+
+// ByNotifyArmed orders the results by the notify_armed field.
+func ByNotifyArmed(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNotifyArmed, opts...).ToFunc()
 }
 
 // ByMetadataProviderID orders the results by the metadata_provider_id field.

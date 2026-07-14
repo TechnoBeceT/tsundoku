@@ -12,7 +12,10 @@
  */
 
 /** The seven settings panes, selected from the sticky sidebar nav. */
-export type SettingsPane = 'library' | 'categories' | 'engine' | 'suwayomi' | 'extensions' | 'sources' | 'trackers'
+export type SettingsPane = 'library' | 'categories' | 'engine' | 'suwayomi' | 'extensions' | 'sources' | 'trackers' | 'notifications'
+
+/** NotificationPermission is this device's honest Web Push status (Notifications pane). */
+export type NotificationPermissionState = 'unsupported' | 'blocked' | 'granted' | 'default'
 
 /** Duration unit for the number+unit inputs (serialises to Go `2h`/`15m`/`30s`). */
 export type DurationUnit = 'h' | 'm' | 's'

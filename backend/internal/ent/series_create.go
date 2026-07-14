@@ -166,6 +166,20 @@ func (_c *SeriesCreate) SetNillableCompleted(v *bool) *SeriesCreate {
 	return _c
 }
 
+// SetNotifyArmed sets the "notify_armed" field.
+func (_c *SeriesCreate) SetNotifyArmed(v bool) *SeriesCreate {
+	_c.mutation.SetNotifyArmed(v)
+	return _c
+}
+
+// SetNillableNotifyArmed sets the "notify_armed" field if the given value is not nil.
+func (_c *SeriesCreate) SetNillableNotifyArmed(v *bool) *SeriesCreate {
+	if v != nil {
+		_c.SetNotifyArmed(*v)
+	}
+	return _c
+}
+
 // SetMetadataProviderID sets the "metadata_provider_id" field.
 func (_c *SeriesCreate) SetMetadataProviderID(v uuid.UUID) *SeriesCreate {
 	_c.mutation.SetMetadataProviderID(v)
@@ -399,6 +413,10 @@ func (_c *SeriesCreate) defaults() {
 		v := series.DefaultCompleted
 		_c.mutation.SetCompleted(v)
 	}
+	if _, ok := _c.mutation.NotifyArmed(); !ok {
+		v := series.DefaultNotifyArmed
+		_c.mutation.SetNotifyArmed(v)
+	}
 	if _, ok := _c.mutation.MetadataLocked(); !ok {
 		v := series.DefaultMetadataLocked
 		_c.mutation.SetMetadataLocked(v)
@@ -454,6 +472,9 @@ func (_c *SeriesCreate) check() error {
 	}
 	if _, ok := _c.mutation.Completed(); !ok {
 		return &ValidationError{Name: "completed", err: errors.New(`ent: missing required field "Series.completed"`)}
+	}
+	if _, ok := _c.mutation.NotifyArmed(); !ok {
+		return &ValidationError{Name: "notify_armed", err: errors.New(`ent: missing required field "Series.notify_armed"`)}
 	}
 	if _, ok := _c.mutation.MetadataLocked(); !ok {
 		return &ValidationError{Name: "metadata_locked", err: errors.New(`ent: missing required field "Series.metadata_locked"`)}
@@ -559,6 +580,10 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Completed(); ok {
 		_spec.SetField(series.FieldCompleted, field.TypeBool, value)
 		_node.Completed = value
+	}
+	if value, ok := _c.mutation.NotifyArmed(); ok {
+		_spec.SetField(series.FieldNotifyArmed, field.TypeBool, value)
+		_node.NotifyArmed = value
 	}
 	if value, ok := _c.mutation.MetadataProviderID(); ok {
 		_spec.SetField(series.FieldMetadataProviderID, field.TypeUUID, value)

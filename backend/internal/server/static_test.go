@@ -127,7 +127,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	// Same nil-client/panic-on-use discipline as the other stubs above — no
 	// route-level test in this file exercises the Phase-4c sync endpoints.
 	trackerSyncSvc := syncsvc.NewService(nil, trackerRegistry, retry.NewQueue(nil), trackerBindSvc, settingsSvc)
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, func() {}), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

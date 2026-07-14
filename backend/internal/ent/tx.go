@@ -28,6 +28,8 @@ type Tx struct {
 	PendingTrackPush *PendingTrackPushClient
 	// ProviderChapter is the client for interacting with the ProviderChapter builders.
 	ProviderChapter *ProviderChapterClient
+	// PushSubscription is the client for interacting with the PushSubscription builders.
+	PushSubscription *PushSubscriptionClient
 	// Series is the client for interacting with the Series builders.
 	Series *SeriesClient
 	// SeriesProvider is the client for interacting with the SeriesProvider builders.
@@ -185,6 +187,7 @@ func (tx *Tx) init() {
 	tx.Owner = NewOwnerClient(tx.config)
 	tx.PendingTrackPush = NewPendingTrackPushClient(tx.config)
 	tx.ProviderChapter = NewProviderChapterClient(tx.config)
+	tx.PushSubscription = NewPushSubscriptionClient(tx.config)
 	tx.Series = NewSeriesClient(tx.config)
 	tx.SeriesProvider = NewSeriesProviderClient(tx.config)
 	tx.Settings = NewSettingsClient(tx.config)

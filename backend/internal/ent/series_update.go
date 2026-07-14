@@ -264,6 +264,20 @@ func (_u *SeriesUpdate) SetNillableCompleted(v *bool) *SeriesUpdate {
 	return _u
 }
 
+// SetNotifyArmed sets the "notify_armed" field.
+func (_u *SeriesUpdate) SetNotifyArmed(v bool) *SeriesUpdate {
+	_u.mutation.SetNotifyArmed(v)
+	return _u
+}
+
+// SetNillableNotifyArmed sets the "notify_armed" field if the given value is not nil.
+func (_u *SeriesUpdate) SetNillableNotifyArmed(v *bool) *SeriesUpdate {
+	if v != nil {
+		_u.SetNotifyArmed(*v)
+	}
+	return _u
+}
+
 // SetMetadataProviderID sets the "metadata_provider_id" field.
 func (_u *SeriesUpdate) SetMetadataProviderID(v uuid.UUID) *SeriesUpdate {
 	_u.mutation.SetMetadataProviderID(v)
@@ -620,6 +634,9 @@ func (_u *SeriesUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Completed(); ok {
 		_spec.SetField(series.FieldCompleted, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.NotifyArmed(); ok {
+		_spec.SetField(series.FieldNotifyArmed, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.MetadataProviderID(); ok {
 		_spec.SetField(series.FieldMetadataProviderID, field.TypeUUID, value)
@@ -1067,6 +1084,20 @@ func (_u *SeriesUpdateOne) SetNillableCompleted(v *bool) *SeriesUpdateOne {
 	return _u
 }
 
+// SetNotifyArmed sets the "notify_armed" field.
+func (_u *SeriesUpdateOne) SetNotifyArmed(v bool) *SeriesUpdateOne {
+	_u.mutation.SetNotifyArmed(v)
+	return _u
+}
+
+// SetNillableNotifyArmed sets the "notify_armed" field if the given value is not nil.
+func (_u *SeriesUpdateOne) SetNillableNotifyArmed(v *bool) *SeriesUpdateOne {
+	if v != nil {
+		_u.SetNotifyArmed(*v)
+	}
+	return _u
+}
+
 // SetMetadataProviderID sets the "metadata_provider_id" field.
 func (_u *SeriesUpdateOne) SetMetadataProviderID(v uuid.UUID) *SeriesUpdateOne {
 	_u.mutation.SetMetadataProviderID(v)
@@ -1453,6 +1484,9 @@ func (_u *SeriesUpdateOne) sqlSave(ctx context.Context) (_node *Series, err erro
 	}
 	if value, ok := _u.mutation.Completed(); ok {
 		_spec.SetField(series.FieldCompleted, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.NotifyArmed(); ok {
+		_spec.SetField(series.FieldNotifyArmed, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.MetadataProviderID(); ok {
 		_spec.SetField(series.FieldMetadataProviderID, field.TypeUUID, value)

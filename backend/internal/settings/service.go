@@ -187,6 +187,14 @@ func (s *Service) FlareSolverrResponseFallback(ctx context.Context) bool {
 	return s.resolveBool(ctx, KeyFlareSolverrResponseFallback)
 }
 
+// NotificationsEnabled reports whether the global new-chapter notifications
+// toggle is currently on (DB override else default true). Read at use-time by
+// the internal/notify pass (via the Toggle port), so a change hot-reloads on the
+// next download cycle.
+func (s *Service) NotificationsEnabled(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeyNotificationsEnabled)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

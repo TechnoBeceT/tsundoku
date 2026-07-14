@@ -101,6 +101,11 @@ func Completed(v bool) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldCompleted, v))
 }
 
+// NotifyArmed applies equality check predicate on the "notify_armed" field. It's identical to NotifyArmedEQ.
+func NotifyArmed(v bool) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldNotifyArmed, v))
+}
+
 // MetadataProviderID applies equality check predicate on the "metadata_provider_id" field. It's identical to MetadataProviderIDEQ.
 func MetadataProviderID(v uuid.UUID) predicate.Series {
 	return predicate.Series(sql.FieldEQ(FieldMetadataProviderID, v))
@@ -599,6 +604,16 @@ func CompletedEQ(v bool) predicate.Series {
 // CompletedNEQ applies the NEQ predicate on the "completed" field.
 func CompletedNEQ(v bool) predicate.Series {
 	return predicate.Series(sql.FieldNEQ(FieldCompleted, v))
+}
+
+// NotifyArmedEQ applies the EQ predicate on the "notify_armed" field.
+func NotifyArmedEQ(v bool) predicate.Series {
+	return predicate.Series(sql.FieldEQ(FieldNotifyArmed, v))
+}
+
+// NotifyArmedNEQ applies the NEQ predicate on the "notify_armed" field.
+func NotifyArmedNEQ(v bool) predicate.Series {
+	return predicate.Series(sql.FieldNEQ(FieldNotifyArmed, v))
 }
 
 // MetadataProviderIDEQ applies the EQ predicate on the "metadata_provider_id" field.
