@@ -171,6 +171,12 @@ const (
 	// detected Cloudflare challenge) regardless of this flag's value — see
 	// internal/tracker/kitsu's Cloudflare-clearing transport doc comment.
 	KeyFlareSolverrResponseFallback = "flaresolverr.response_fallback"
+	// KeyNotificationsEnabled is the global new-chapter notifications toggle
+	// (bool, default true): when false the internal/notify pass skips entirely
+	// (no SSE chapter.new, no Web Push) without advancing its watermark, so
+	// re-enabling later never storms the owner. Read at use-time by the notifier
+	// (via the Toggle port), so a change hot-reloads on the next download cycle.
+	KeyNotificationsEnabled = "notifications.enabled"
 )
 
 // flareSolverrTimeoutMin/Max and flareSolverrSessionTTLMin/Max bound the two
@@ -218,6 +224,12 @@ type Defaults struct {
 	FlareSolverrSessionName      string
 	FlareSolverrSessionTTL       int
 	FlareSolverrResponseFallback bool
+	// NotificationsEnabled backs the global new-chapter notifications toggle
+	// (default true). Like the FlareSolverr defaults it has no env var — main
+	// injects a constant true via defaultsFromConfig — but it still flows through
+	// this single bridge so the settings layer never special-cases a default's
+	// origin.
+	NotificationsEnabled bool
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -262,6 +274,7 @@ var tunableOrder = []string{
 	KeyFlareSolverrSessionName,
 	KeyFlareSolverrSessionTTL,
 	KeyFlareSolverrResponseFallback,
+	KeyNotificationsEnabled,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -377,6 +390,10 @@ var tunables = map[string]tunable{
 	KeyFlareSolverrResponseFallback: boolTunable(
 		KeyFlareSolverrResponseFallback,
 		func(d Defaults) bool { return d.FlareSolverrResponseFallback },
+	),
+	KeyNotificationsEnabled: boolTunable(
+		KeyNotificationsEnabled,
+		func(d Defaults) bool { return d.NotificationsEnabled },
 	),
 }
 

@@ -38,6 +38,7 @@ func testDefaults() settings.Defaults {
 		FlareSolverrTimeout:     60,
 		FlareSolverrSessionName: "",
 		FlareSolverrSessionTTL:  15,
+		NotificationsEnabled:    true,
 	}
 }
 
@@ -240,8 +241,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 25 {
-		t.Fatalf("List len = %d, want 25", len(list))
+	if len(list) != 26 {
+		t.Fatalf("List len = %d, want 26", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -614,6 +615,28 @@ func TestSuppressSplitParts_DefaultAndOverride(t *testing.T) {
 		t.Fatal("after Set false, SuppressSplitParts = true, want false")
 	}
 	if err := svc.Set(ctx, settings.KeySuppressSplitParts, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
+	}
+}
+
+// TestNotificationsEnabled_DefaultAndOverride proves the notifications.enabled
+// tunable defaults to true, round-trips a false override, and rejects a
+// non-boolean value (fail-closed) — mirroring the other bool tunables.
+func TestNotificationsEnabled_DefaultAndOverride(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if !svc.NotificationsEnabled(ctx) {
+		t.Fatal("default NotificationsEnabled = false, want true")
+	}
+	if err := svc.Set(ctx, settings.KeyNotificationsEnabled, "false"); err != nil {
+		t.Fatalf("Set false: %v", err)
+	}
+	if svc.NotificationsEnabled(ctx) {
+		t.Fatal("after Set false, NotificationsEnabled = true, want false")
+	}
+	if err := svc.Set(ctx, settings.KeyNotificationsEnabled, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
 		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
 	}
 }
