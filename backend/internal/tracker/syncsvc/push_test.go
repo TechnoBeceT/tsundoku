@@ -139,17 +139,16 @@ func TestPushProgress_AutoCompleteOnlyWhenTotalKnown(t *testing.T) {
 		if err := svc.PushProgress(ctx, seriesID, 500); err != nil {
 			t.Fatalf("PushProgress: %v", err)
 		}
-		if ft.lastUpdateEntry.Status != "" || ft.lastUpdateEntry.FinishDate != nil {
-			t.Fatalf("entry = %+v, want no status/finishDate (total unknown)", ft.lastUpdateEntry)
-		}
-		fresh := reloadBinding(ctx, t, client, binding.ID)
-		if fresh.Status != "" || fresh.FinishDate != nil {
-			t.Fatalf("binding = %+v, want no auto-complete", fresh)
-		}
+		assertNoAutoComplete(t, ft.lastUpdateEntry, reloadBinding(ctx, t, client, binding.ID))
 	})
 
 	t.Run("reaching a known total auto-completes", func(t *testing.T) {
-		trackerID := fakeTrackerID + 1
+		// A REAL tracker id is required here (not a synthetic fakeTrackerID+1):
+		// completedStatus (status.go) deliberately maps only trackers with a
+		// known native "completed" vocabulary — a synthetic id would leave
+		// entry.Status unset even though the auto-complete FinishDate branch
+		// fired, which is exactly what made this subtest fail.
+		trackerID := tracker.IDAniList
 		seriesID := seedSeries(ctx, t, client, "Finished", "finished")
 		seedConnection(ctx, t, client, trackerID, "acct-token-2")
 		binding := seedBinding(ctx, t, client, seriesID, trackerID, "r5", 10, 20)
@@ -159,14 +158,34 @@ func TestPushProgress_AutoCompleteOnlyWhenTotalKnown(t *testing.T) {
 		if err := svc.PushProgress(ctx, seriesID, 20); err != nil {
 			t.Fatalf("PushProgress: %v", err)
 		}
-		if ft.lastUpdateEntry.Status != "COMPLETED" || ft.lastUpdateEntry.FinishDate == nil {
-			t.Fatalf("entry = %+v, want status=COMPLETED + a finishDate", ft.lastUpdateEntry)
-		}
-		fresh := reloadBinding(ctx, t, client, binding.ID)
-		if fresh.Status != "COMPLETED" || fresh.FinishDate == nil {
-			t.Fatalf("binding = %+v, want auto-completed", fresh)
-		}
+		assertAutoCompleted(t, ft.lastUpdateEntry, reloadBinding(ctx, t, client, binding.ID), "COMPLETED")
 	})
+}
+
+// assertNoAutoComplete fails t unless neither the just-pushed entry nor the
+// persisted binding show any auto-complete signal (native status or finish
+// date) — the total-unknown branch of the auto-complete rule.
+func assertNoAutoComplete(t *testing.T, pushed tracker.TrackEntry, persisted *ent.TrackBinding) {
+	t.Helper()
+	if pushed.Status != "" || pushed.FinishDate != nil {
+		t.Fatalf("entry = %+v, want no status/finishDate (total unknown)", pushed)
+	}
+	if persisted.Status != "" || persisted.FinishDate != nil {
+		t.Fatalf("binding = %+v, want no auto-complete", persisted)
+	}
+}
+
+// assertAutoCompleted fails t unless both the just-pushed entry and the
+// persisted binding show the auto-complete signal (wantStatus + a finish
+// date) — the known-total branch of the auto-complete rule.
+func assertAutoCompleted(t *testing.T, pushed tracker.TrackEntry, persisted *ent.TrackBinding, wantStatus string) {
+	t.Helper()
+	if pushed.Status != wantStatus || pushed.FinishDate == nil {
+		t.Fatalf("entry = %+v, want status=%s + a finishDate", pushed, wantStatus)
+	}
+	if persisted.Status != wantStatus || persisted.FinishDate == nil {
+		t.Fatalf("binding = %+v, want auto-completed", persisted)
+	}
 }
 
 // TestPushProgress_PerBindingIsolation confirms one binding's push failure

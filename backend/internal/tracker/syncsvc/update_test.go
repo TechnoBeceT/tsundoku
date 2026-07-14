@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
 )
 
@@ -45,11 +46,27 @@ func TestUpdateTrack_AppliesPatchToRemoteLocalAndSidecar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateTrack: %v", err)
 	}
+
+	assertUpdatedBinding(t, updated, finish)
+	assertPushedEntry(t, ft)
+	assertSidecarSynced(t, sidecar, seriesID)
+	assertPersistedBinding(ctx, t, client, binding.ID)
+}
+
+// assertUpdatedBinding fails t unless updated carries every field
+// TestUpdateTrack_AppliesPatchToRemoteLocalAndSidecar's patch set.
+func assertUpdatedBinding(t *testing.T, updated *ent.TrackBinding, finish time.Time) {
+	t.Helper()
 	if updated.Status != "COMPLETED" || updated.LastChapterRead != 42 || updated.Score != 9.5 ||
 		updated.FinishDate == nil || !updated.FinishDate.Equal(finish) || !updated.Private {
 		t.Fatalf("updated binding = %+v", updated)
 	}
+}
 
+// assertPushedEntry fails t unless ft received exactly one UpdateEntry call
+// carrying the patched fields.
+func assertPushedEntry(t *testing.T, ft *fakeTracker) {
+	t.Helper()
 	if ft.updateEntryCalls != 1 {
 		t.Fatalf("UpdateEntry calls = %d, want 1", ft.updateEntryCalls)
 	}
@@ -57,12 +74,22 @@ func TestUpdateTrack_AppliesPatchToRemoteLocalAndSidecar(t *testing.T) {
 		ft.lastUpdateEntry.Score != 9.5 || !ft.lastUpdateEntry.Private {
 		t.Fatalf("pushed entry = %+v", ft.lastUpdateEntry)
 	}
+}
 
-	if sidecar.calls != 1 || sidecar.lastSeriesID != seriesID {
+// assertSidecarSynced fails t unless sidecar was mirrored exactly once, for
+// wantSeriesID.
+func assertSidecarSynced(t *testing.T, sidecar *fakeSidecar, wantSeriesID uuid.UUID) {
+	t.Helper()
+	if sidecar.calls != 1 || sidecar.lastSeriesID != wantSeriesID {
 		t.Fatalf("sidecar sync calls = %d lastSeriesID = %v", sidecar.calls, sidecar.lastSeriesID)
 	}
+}
 
-	fresh := reloadBinding(ctx, t, client, binding.ID)
+// assertPersistedBinding fails t unless bindingID's row was durably
+// persisted with the patch's fields.
+func assertPersistedBinding(ctx context.Context, t *testing.T, client *ent.Client, bindingID uuid.UUID) {
+	t.Helper()
+	fresh := reloadBinding(ctx, t, client, bindingID)
 	if fresh.Status != "COMPLETED" || fresh.LastChapterRead != 42 {
 		t.Fatalf("persisted binding = %+v", fresh)
 	}

@@ -72,11 +72,27 @@ func (s *Service) syncOneBinding(ctx context.Context, b *ent.TrackBinding) (*ent
 	converged := kernel.Converge(b.LastChapterRead, remote.Progress)
 	truncated := float64(kernel.TruncateForInteger(converged))
 
-	upd := b.Update().
+	upd := applyRemoteFields(b.Update().
 		SetLastChapterRead(truncated).
 		SetTotalChapters(remote.TotalChapters).
 		SetScore(remote.Score).
-		SetPrivate(remote.Private)
+		SetPrivate(remote.Private), remote)
+
+	s.pushBack(ctx, t, token, b, truncated, remote)
+
+	updated, err := upd.Save(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("syncsvc: persist sync result for binding %s: %w", b.ID, err)
+	}
+	s.syncSidecar(ctx, updated.SeriesID)
+	return updated, nil
+}
+
+// applyRemoteFields sets the optional remote-only fields (native status,
+// remote-assigned library id, start/finish dates) on upd whenever the
+// fetched entry actually carries them — the SyncNow pull-direction mirror
+// of pushOne's applyPushEntryToUpdate.
+func applyRemoteFields(upd *ent.TrackBindingUpdateOne, remote *tracker.TrackEntry) *ent.TrackBindingUpdateOne {
 	if remote.Status != "" {
 		upd = upd.SetStatus(remote.Status)
 	}
@@ -89,30 +105,28 @@ func (s *Service) syncOneBinding(ctx context.Context, b *ent.TrackBinding) (*ent
 	if remote.FinishDate != nil {
 		upd = upd.SetFinishDate(*remote.FinishDate)
 	}
+	return upd
+}
 
-	// Local was strictly ahead of the just-fetched remote: push the converged
-	// value so the remote side genuinely catches up too (Converge only picks
-	// the TARGET both sides move to; NextPush is the reused decision for
-	// whether THIS side still needs to send it — see Converge's own doc
-	// comment). A push failure here does not fail the whole sync — the local
-	// row's convergence is still correct and durable; the retry queue carries
-	// the outstanding remote push.
-	if push, shouldPush := kernel.NextPush(truncated, remote.Progress); shouldPush {
-		entry := tracker.TrackEntry{RemoteID: b.RemoteID, LibraryID: b.LibraryID, Progress: push}
-		if _, pushErr := t.UpdateEntry(ctx, token, entry); pushErr != nil {
-			slog.WarnContext(ctx, "syncsvc: SyncNow: push-back failed, enqueueing for retry",
-				"track_binding_id", b.ID, "err", pushErr)
-			if enqErr := s.retryQueue.Enqueue(ctx, b.ID, push); enqErr != nil {
-				slog.WarnContext(ctx, "syncsvc: SyncNow: enqueue after push-back failure also failed",
-					"track_binding_id", b.ID, "err", enqErr)
-			}
+// pushBack sends the converged value back to t when the local side was
+// strictly ahead of the just-fetched remote (Converge only picks the TARGET
+// both sides move to; NextPush — reused verbatim from pushOne — is the
+// decision for whether THIS side still needs to send it). A push failure
+// here does not fail the whole sync — the local row's convergence is still
+// correct and durable; the failure is logged and the outstanding remote
+// push is enqueued to the retry queue.
+func (s *Service) pushBack(ctx context.Context, t tracker.Tracker, token string, b *ent.TrackBinding, truncated float64, remote *tracker.TrackEntry) {
+	push, shouldPush := kernel.NextPush(truncated, remote.Progress)
+	if !shouldPush {
+		return
+	}
+	entry := tracker.TrackEntry{RemoteID: b.RemoteID, LibraryID: b.LibraryID, Progress: push}
+	if _, pushErr := t.UpdateEntry(ctx, token, entry); pushErr != nil {
+		slog.WarnContext(ctx, "syncsvc: SyncNow: push-back failed, enqueueing for retry",
+			"track_binding_id", b.ID, "err", pushErr)
+		if enqErr := s.retryQueue.Enqueue(ctx, b.ID, push); enqErr != nil {
+			slog.WarnContext(ctx, "syncsvc: SyncNow: enqueue after push-back failure also failed",
+				"track_binding_id", b.ID, "err", enqErr)
 		}
 	}
-
-	updated, err := upd.Save(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("syncsvc: persist sync result for binding %s: %w", b.ID, err)
-	}
-	s.syncSidecar(ctx, updated.SeriesID)
-	return updated, nil
 }

@@ -68,7 +68,26 @@ func (s *Service) UpdateTrack(ctx context.Context, recordID uuid.UUID, patch Upd
 		FinishDate:    binding.FinishDate,
 		Private:       binding.Private,
 	}
-	upd := binding.Update()
+	upd := applyUpdatePatch(&entry, binding.Update(), patch)
+
+	if _, err := t.UpdateEntry(ctx, token, entry); err != nil {
+		return nil, fmt.Errorf("syncsvc: UpdateTrack: push edit to %s for binding %s: %w", t.Key(), recordID, err)
+	}
+
+	updated, err := upd.Save(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("syncsvc: UpdateTrack: persist binding %s: %w", recordID, err)
+	}
+
+	s.syncSidecar(ctx, updated.SeriesID)
+	return updated, nil
+}
+
+// applyUpdatePatch applies every non-nil field of patch to BOTH entry (the
+// TrackEntry UpdateTrack pushes to the tracker) and upd (the local
+// persistence builder), so the remote push and the local write can never
+// drift on which fields the owner's edit actually touched.
+func applyUpdatePatch(entry *tracker.TrackEntry, upd *ent.TrackBindingUpdateOne, patch UpdatePatch) *ent.TrackBindingUpdateOne {
 	if patch.Status != nil {
 		entry.Status = *patch.Status
 		upd = upd.SetStatus(*patch.Status)
@@ -93,16 +112,5 @@ func (s *Service) UpdateTrack(ctx context.Context, recordID uuid.UUID, patch Upd
 		entry.Private = *patch.Private
 		upd = upd.SetPrivate(*patch.Private)
 	}
-
-	if _, err := t.UpdateEntry(ctx, token, entry); err != nil {
-		return nil, fmt.Errorf("syncsvc: UpdateTrack: push edit to %s for binding %s: %w", t.Key(), recordID, err)
-	}
-
-	updated, err := upd.Save(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("syncsvc: UpdateTrack: persist binding %s: %w", recordID, err)
-	}
-
-	s.syncSidecar(ctx, updated.SeriesID)
-	return updated, nil
+	return upd
 }

@@ -98,8 +98,30 @@ func (s *Service) pushOne(ctx context.Context, binding *ent.TrackBinding, localF
 	// fractional push) keeps TrackBinding.last_chapter_read equal to what the
 	// remote entry actually now holds.
 	truncated := float64(kernel.TruncateForInteger(push))
+	entry := buildPushEntry(binding, truncated, time.Now().UTC())
 
-	now := time.Now().UTC()
+	if _, err := t.UpdateEntry(ctx, token, entry); err != nil {
+		return fmt.Errorf("syncsvc: push binding %s to %s: %w", binding.ID, t.Key(), err)
+	}
+
+	upd := applyPushEntryToUpdate(binding.Update().SetLastChapterRead(truncated), entry)
+	updated, err := upd.Save(ctx)
+	if err != nil {
+		return fmt.Errorf("syncsvc: persist push result for binding %s: %w", binding.ID, err)
+	}
+
+	s.syncSidecar(ctx, updated.SeriesID)
+	return nil
+}
+
+// buildPushEntry constructs the TrackEntry pushOne sends to the tracker for
+// binding, given the already-truncated progress value and "now". It makes
+// the two decisions pushOne needs before calling UpdateEntry: stamp a start
+// date on the binding's first-ever push, and (spec §2) auto-complete when
+// the tracker reported a non-zero total that truncated has now reached —
+// only then does it look up the tracker's own native completed-status
+// string via completedStatus.
+func buildPushEntry(binding *ent.TrackBinding, truncated float64, now time.Time) tracker.TrackEntry {
 	entry := tracker.TrackEntry{
 		RemoteID:  binding.RemoteID,
 		LibraryID: binding.LibraryID,
@@ -115,12 +137,14 @@ func (s *Service) pushOne(ctx context.Context, binding *ent.TrackBinding, localF
 			entry.Status = status
 		}
 	}
+	return entry
+}
 
-	if _, err := t.UpdateEntry(ctx, token, entry); err != nil {
-		return fmt.Errorf("syncsvc: push binding %s to %s: %w", binding.ID, t.Key(), err)
-	}
-
-	upd := binding.Update().SetLastChapterRead(truncated)
+// applyPushEntryToUpdate mirrors entry's StartDate/FinishDate/Status onto
+// upd (the local persistence builder) so the just-pushed remote entry and
+// the locally persisted binding can never drift on which optional fields
+// changed.
+func applyPushEntryToUpdate(upd *ent.TrackBindingUpdateOne, entry tracker.TrackEntry) *ent.TrackBindingUpdateOne {
 	if entry.StartDate != nil {
 		upd = upd.SetStartDate(*entry.StartDate)
 	}
@@ -130,11 +154,5 @@ func (s *Service) pushOne(ctx context.Context, binding *ent.TrackBinding, localF
 	if entry.Status != "" {
 		upd = upd.SetStatus(entry.Status)
 	}
-	updated, err := upd.Save(ctx)
-	if err != nil {
-		return fmt.Errorf("syncsvc: persist push result for binding %s: %w", binding.ID, err)
-	}
-
-	s.syncSidecar(ctx, updated.SeriesID)
-	return nil
+	return upd
 }
