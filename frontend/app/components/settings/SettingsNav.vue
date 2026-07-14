@@ -29,6 +29,7 @@ const panes: { key: SettingsPane, label: string }[] = [
   { key: 'extensions', label: 'Sources & Extensions' },
   { key: 'sources', label: 'Sources' },
   { key: 'trackers', label: 'Trackers' },
+  { key: 'notifications', label: 'Notifications' },
 ]
 </script>
 

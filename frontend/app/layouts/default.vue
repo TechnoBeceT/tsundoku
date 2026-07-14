@@ -4,8 +4,47 @@ import type { NavItem } from '~/components/shell/types'
 const route = useRoute()
 
 // Live backend progress stream — connects once on mount, drives shell indicators.
-const { connect, unhealthyCount, syncing } = useProgressStream()
+const { connect, unhealthyCount, syncing, on } = useProgressStream()
 onMounted(connect)
+
+/**
+ * In-app new-chapter toast (chapter.new SSE). Shown ONLY while the tab is
+ * visible — when it is hidden/closed the service worker's Web Push handler shows
+ * the OS notification instead, so the owner never gets both. Tapping the toast
+ * deep-links to the series (or the library for a digest); it also auto-dismisses.
+ */
+interface ChapterNewGroup { seriesId: string, title: string, count: number, url: string }
+interface ChapterNewPayload { groups: ChapterNewGroup[], total: number, digest: boolean, title: string, body: string }
+
+const chapterToast = ref<{ title: string, body: string, url: string } | null>(null)
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+
+function dismissToast(): void {
+  chapterToast.value = null
+  if (toastTimer) { clearTimeout(toastTimer); toastTimer = null }
+}
+
+function openToast(): void {
+  const url = chapterToast.value?.url ?? '/'
+  dismissToast()
+  void navigateTo(url)
+}
+
+let unsubscribeChapterNew: (() => void) | null = null
+onMounted(() => {
+  unsubscribeChapterNew = on('chapter.new', (data) => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+    const p = data as ChapterNewPayload
+    const url = p.digest ? '/' : (p.groups?.[0]?.url ?? '/')
+    chapterToast.value = { title: p.title, body: p.body, url }
+    if (toastTimer) clearTimeout(toastTimer)
+    toastTimer = setTimeout(dismissToast, 6000)
+  })
+})
+onUnmounted(() => {
+  unsubscribeChapterNew?.()
+  if (toastTimer) clearTimeout(toastTimer)
+})
 
 // Nav items — keys match AppShell's internal references. The 'health' key is
 // hardcoded inside AppShell's attention-pill click handler, so it MUST be
@@ -92,5 +131,12 @@ function handleOpenAdopt(): void {
          total in their payload, so a reliable per-event count cannot be maintained here.
          Authoritative counts come from the Downloads screen (Milestone B). -->
     <slot />
+    <ChapterToast
+      v-if="chapterToast"
+      :title="chapterToast.title"
+      :body="chapterToast.body"
+      @open="openToast"
+      @dismiss="dismissToast"
+    />
   </AppShell>
 </template>

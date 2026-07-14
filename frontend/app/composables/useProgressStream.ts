@@ -15,6 +15,11 @@ import { ref } from 'vue'
  *   cycle.start    | cycle.done
  *   refresh.start  | refresh.done
  *   health.summary  → payload { unhealthy: number }
+ *   chapter.new     → payload { groups:[{seriesId,title,count,url}], total, digest,
+ *     title, body } — one or more armed monitored series gained new readable
+ *     chapters this cycle. Forwarded raw via `on()`; the default layout renders it
+ *     as an in-app toast (only when the tab is visible — the service worker's Web
+ *     Push handler shows the OS notification when it is not).
  *   scan.start | scan.progress | scan.done — the Library-Import scan (see
  *     useScanLibrary): scan.start carries no payload; scan.progress carries
  *     { processed, total, path }; scan.done is TERMINAL and carries either
@@ -60,6 +65,7 @@ const NAMED_EVENTS = [
   'refresh.done',
   'health.summary',
   'extensions.checked',
+  'chapter.new',
   'scan.start',
   'scan.progress',
   'scan.done',

@@ -207,6 +207,18 @@ const {
   logout: logoutTracker,
 } = useTrackers()
 
+const {
+  state: notifState,
+  globalEnabled: notifGlobalEnabled,
+  busy: notifBusy,
+  error: notifError,
+  globalBusy: notifGlobalBusy,
+  globalError: notifGlobalError,
+  enable: enableNotifications,
+  disable: disableNotifications,
+  setGlobal: setNotificationsGlobal,
+} = useNotifications()
+
 /** { busyId, error } shape TrackersPane expects, derived from useTrackers' own refs. */
 const trackerAction = computed(() => ({ busyId: trackerBusyId.value, error: trackerActionError.value ?? undefined }))
 const misconfiguredTrackerIds = computed(() => [...misconfiguredTrackers.value])
@@ -335,6 +347,12 @@ const loading = computed(
       :trackers-error="trackersError"
       :auto-update-track="autoUpdateTrack"
       :auto-update-track-busy="autoUpdateTrackBusy"
+      :notif-state="notifState"
+      :notif-global-enabled="notifGlobalEnabled"
+      :notif-busy="notifBusy"
+      :notif-error="notifError"
+      :notif-global-busy="notifGlobalBusy"
+      :notif-global-error="notifGlobalError"
       :loading="loading"
       @set-pane="setPane"
       @save-library="saveLibrary"
@@ -362,6 +380,9 @@ const loading = computed(
       @login-tracker-credentials="onLoginTrackerCredentials"
       @logout-tracker="logoutTracker"
       @toggle-auto-update-track="saveAutoUpdateTrack"
+      @enable-notifications="enableNotifications"
+      @disable-notifications="disableNotifications"
+      @set-notifications-global="setNotificationsGlobal"
     />
   </div>
 </template>
