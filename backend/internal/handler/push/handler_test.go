@@ -22,10 +22,9 @@ import (
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 )
 
-const (
-	testSecret   = "push-handler-test-secret"
-	testVAPIDKey = "BEl0test-public-key"
-)
+const testSecret = "push-handler-test-secret" //nolint:gosec // test fixture, not a real credential
+
+const testVAPIDKey = "BEl0test-public-key"
 
 type testEnv struct {
 	e      *echo.Echo
