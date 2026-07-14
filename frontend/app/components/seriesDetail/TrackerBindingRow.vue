@@ -162,7 +162,7 @@ function submitEdit(): void {
           <TrackerIcon :tracker-id="binding.trackerId" :size="14" />
           {{ binding.trackerName }}
         </p>
-        <p class="track-bound__title">{{ binding.title }}</p>
+        <p v-if="binding.title" class="track-bound__title">{{ binding.title }}</p>
         <p class="track-bound__meta">
           {{ binding.status }} · {{ progressLabel }}
           <span v-if="binding.score > 0"> · Score {{ binding.score }}</span>

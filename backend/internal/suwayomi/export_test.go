@@ -7,6 +7,7 @@ package suwayomi
 
 import (
 	"context"
+	"io"
 	"os/exec"
 	"time"
 
@@ -42,6 +43,18 @@ func KillProcess(pm *ProcessManager) {
 	if pm.cmd != nil && pm.cmd.Process != nil {
 		_ = pm.cmd.Process.Kill()
 	}
+}
+
+// ValidateImagePage exposes the unexported validateImagePage guard so black-box
+// tests can pin the decode/content/empty/oversize checks with real image bytes.
+func ValidateImagePage(data []byte) error {
+	return validateImagePage(data)
+}
+
+// ReadAllLimited exposes the unexported body-size-capped reader so a black-box test
+// can pin the over-cap rejection without allocating a 64MB payload.
+func ReadAllLimited(r io.Reader, limit int64) ([]byte, error) {
+	return readAllLimited(r, limit)
 }
 
 // NewChapterCacheClock builds a ChapterCache with an injectable TTL provider AND

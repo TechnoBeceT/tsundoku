@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
-import { userEvent, within } from 'storybook/test'
+import { expect, userEvent, within } from 'storybook/test'
 import { INITIAL_VIEWPORTS } from 'storybook/viewport'
 import TrackersSection from './TrackersSection.vue'
 import { trackBindingKitsu, trackBindings, trackSearchResults } from '../../fixtures/seriesDetail'
@@ -40,6 +40,7 @@ const meta = {
   parameters: { layout: 'padded' },
   args: {
     bindings: trackBindings,
+    seriesTitle: 'Solo Leveling',
     trackers,
     pending: false,
     searchResults: [],
@@ -116,6 +117,21 @@ export const PrivateSupported: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(await canvas.findByRole('button', { name: /Kitsu/ }))
+  },
+}
+
+/**
+ * SearchPrefilled (bug: tracker search must open PRE-FILLED with the series
+ * title, like the metadata search) — expanding a tracker's Add-tracking row
+ * seeds the search box with `seriesTitle` (still editable), so the owner
+ * doesn't retype it. Asserts the input carries the title after expanding.
+ */
+export const SearchPrefilled: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByRole('button', { name: /Kitsu/ }))
+    const input = await canvas.findByPlaceholderText('Search Kitsu…')
+    await expect(input).toHaveValue('Solo Leveling')
   },
 }
 

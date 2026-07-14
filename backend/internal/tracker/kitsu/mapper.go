@@ -115,17 +115,38 @@ type libraryEntryData struct {
 	Relationships libraryEntryRelationships `json:"relationships"`
 }
 
+// includedManga is one JSON:API "manga" resource returned in the top-level
+// `included` array when a library-entries request carries `?include=manga` —
+// this port reads only its canonicalTitle (to populate TrackEntry.Title with
+// Kitsu's OWN title, since a library-entry itself carries only a manga
+// relationship REFERENCE, not the manga's attributes).
+type includedManga struct {
+	ID         string             `json:"id"`
+	Type       string             `json:"type"`
+	Attributes includedMangaAttrs `json:"attributes"`
+}
+
+// includedMangaAttrs is the sliver of an included manga's attribute bag this
+// port reads — only the canonicalTitle, for TrackEntry.Title.
+type includedMangaAttrs struct {
+	CanonicalTitle string `json:"canonicalTitle"`
+}
+
 // libraryEntryCollectionResponse is the envelope
 // `GET /library-entries?...` wraps its (0 or 1, filtered to one manga) page
-// in.
+// in. Included carries the bound manga resource (via `?include=manga`) so the
+// entry's title can be resolved.
 type libraryEntryCollectionResponse struct {
-	Data []libraryEntryData `json:"data"`
+	Data     []libraryEntryData `json:"data"`
+	Included []includedManga    `json:"included"`
 }
 
 // libraryEntryResponse is the envelope a single POST/PATCH library-entries
-// call returns.
+// call returns. Included carries the bound manga resource (via
+// `?include=manga`) so the entry's title can be resolved.
 type libraryEntryResponse struct {
-	Data libraryEntryData `json:"data"`
+	Data     libraryEntryData `json:"data"`
+	Included []includedManga  `json:"included"`
 }
 
 // libraryEntryWriteRelationships is the request-side relationships shape a
@@ -207,7 +228,7 @@ func parseAverageRating(raw string) float64 {
 // relationship (always requested — see the client's field selections),
 // never a caller-supplied fallback, so the result is self-consistent even
 // for an UpdateEntry-by-library-id caller.
-func toTrackEntry(d libraryEntryData) tracker.TrackEntry {
+func toTrackEntry(d libraryEntryData, included []includedManga) tracker.TrackEntry {
 	score := 0.0
 	if d.Attributes.RatingTwenty != nil {
 		score = float64(*d.Attributes.RatingTwenty)
@@ -215,6 +236,7 @@ func toTrackEntry(d libraryEntryData) tracker.TrackEntry {
 	return tracker.TrackEntry{
 		RemoteID:   d.Relationships.Manga.Data.ID,
 		LibraryID:  d.ID,
+		Title:      titleFromIncluded(included, d.Relationships.Manga.Data.ID),
 		Status:     d.Attributes.Status,
 		Score:      score,
 		Progress:   float64(d.Attributes.Progress),
@@ -222,6 +244,22 @@ func toTrackEntry(d libraryEntryData) tracker.TrackEntry {
 		StartDate:  parseKitsuDate(d.Attributes.StartedAt),
 		FinishDate: parseKitsuDate(d.Attributes.FinishedAt),
 	}
+}
+
+// titleFromIncluded resolves the bound manga's canonicalTitle from a JSON:API
+// `included` array (populated when the request carries `?include=manga`),
+// matching on the entry's manga-relationship id. "" when the manga isn't
+// included (an older cached response, or a request that didn't ask for it) —
+// TrackEntry.Title degrades to empty rather than erroring, and the binding
+// keeps whatever title it already had (bind/upsertBinding never clobbers a
+// non-empty title with "").
+func titleFromIncluded(included []includedManga, mangaID string) string {
+	for _, m := range included {
+		if m.Type == "manga" && m.ID == mangaID {
+			return m.Attributes.CanonicalTitle
+		}
+	}
+	return ""
 }
 
 // buildLibraryEntryRequest builds the POST/PATCH /library-entries request

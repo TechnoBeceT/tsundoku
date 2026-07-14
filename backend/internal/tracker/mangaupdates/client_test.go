@@ -287,6 +287,33 @@ func TestClient_UpdateEntry_RequestBodyShape(t *testing.T) {
 	}
 }
 
+// TestClient_UpdateEntry_CompletedStatusTargetsCompleteList pins the BUG-4
+// completion path: an UpdateEntry whose Status is MangaUpdates' native
+// "complete" label targets the Complete list (list_id 2) — MangaUpdates has no
+// status STRING, so completing an entry means moving it to that list. This is
+// what lets syncsvc.CompleteSeries genuinely complete a MangaUpdates entry (a
+// tracker that never reports a total and so can't auto-complete on its own).
+func TestClient_UpdateEntry_CompletedStatusTargetsCompleteList(t *testing.T) {
+	var gotBody []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"list_id":2,"series":{"id":12345},"status":{"chapter":83}}]`))
+	}))
+	defer srv.Close()
+
+	c := mangaupdates.New(newTestClient(t, srv))
+	if _, err := c.UpdateEntry(context.Background(), "acct-token", tracker.TrackEntry{RemoteID: "12345", Progress: 83, Status: "complete"}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+	if len(gotBody) != 1 {
+		t.Fatalf("UpdateEntry body = %+v, want one entry", gotBody)
+	}
+	if listID, ok := gotBody[0]["list_id"].(float64); !ok || int64(listID) != 2 {
+		t.Fatalf("UpdateEntry body[0].list_id = %v, want 2 (the Complete list)", gotBody[0]["list_id"])
+	}
+}
+
 // TestClient_DeleteEntry_RequestBodyShape pins the delete endpoint — no
 // list-id URL segment — and the body: a BARE JSON array of series ids, not
 // an array of {series:{id}} objects (mirrors the reference ports'

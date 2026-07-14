@@ -256,6 +256,14 @@ func (c *Client) SaveEntry(ctx context.Context, token string, entry tracker.Trac
 // updateSeriesListItem). MangaUpdates has no separate list-entry id
 // (unlike AniList's LibraryID) — every write is keyed by the series id
 // alone, same as MAL.
+//
+// The target list_id is derived from entry.Status via listIDForStatus:
+// MangaUpdates has no status STRING — a series' status IS which numbered list
+// it belongs to — so a "complete" status moves it to the Complete list (2),
+// which is how cross-tracker completion propagation (syncsvc.CompleteSeries)
+// actually completes a MangaUpdates entry. A blank/"reading"/unknown status
+// falls back to the Reading list (defaultListID), the pre-existing behaviour
+// for an ordinary progress push, unchanged.
 func (c *Client) UpdateEntry(ctx context.Context, token string, entry tracker.TrackEntry) (tracker.TrackEntry, error) {
 	seriesID, err := parseSeriesID(entry.RemoteID)
 	if err != nil {
@@ -264,7 +272,7 @@ func (c *Client) UpdateEntry(ctx context.Context, token string, entry tracker.Tr
 
 	body, err := json.Marshal([]listSeriesWrite{{
 		Series: muSeriesRef{ID: seriesID},
-		ListID: defaultListID,
+		ListID: listIDForStatus(entry.Status),
 		Status: muStatus{Chapter: int(entry.Progress)},
 	}})
 	if err != nil {

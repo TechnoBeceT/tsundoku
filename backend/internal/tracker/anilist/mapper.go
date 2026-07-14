@@ -66,15 +66,23 @@ type fuzzyDate struct {
 	Day   *int `json:"day"`
 }
 
+// mediaListMedia is the bound media sub-object selected on a MediaList entry
+// (mediaListEntrySelection's `media { title }`) — carries AniList's OWN title
+// variants for the manga so TrackEntry.Title can be populated per-tracker.
+type mediaListMedia struct {
+	Title titleData `json:"title"`
+}
+
 type mediaListEntry struct {
-	ID          int       `json:"id"`
-	MediaID     int       `json:"mediaId"`
-	Status      string    `json:"status"`
-	Score       float64   `json:"score"`
-	Progress    int       `json:"progress"`
-	Private     bool      `json:"private"`
-	StartedAt   fuzzyDate `json:"startedAt"`
-	CompletedAt fuzzyDate `json:"completedAt"`
+	ID          int            `json:"id"`
+	MediaID     int            `json:"mediaId"`
+	Status      string         `json:"status"`
+	Score       float64        `json:"score"`
+	Progress    int            `json:"progress"`
+	Private     bool           `json:"private"`
+	StartedAt   fuzzyDate      `json:"startedAt"`
+	CompletedAt fuzzyDate      `json:"completedAt"`
+	Media       mediaListMedia `json:"media"`
 }
 
 type getEntryData struct {
@@ -142,6 +150,7 @@ func toTrackEntry(e *mediaListEntry) tracker.TrackEntry {
 	return tracker.TrackEntry{
 		RemoteID:   strconv.Itoa(e.MediaID),
 		LibraryID:  strconv.Itoa(e.ID),
+		Title:      bestTitle(e.Media.Title),
 		Status:     e.Status,
 		Score:      e.Score,
 		Progress:   float64(e.Progress),

@@ -59,8 +59,8 @@ func TestToTrackEntry_MapsFieldsAndDates(t *testing.T) {
 		StartDate:       "2024-03-15",
 		FinishDate:      "",
 	}
-	got := toTrackEntry("887", s, 364)
-	if got.RemoteID != "887" || got.Status != "reading" || got.Score != 8 || got.Progress != 42 || got.TotalChapters != 364 {
+	got := toTrackEntry("887", "Berserk", s, 364)
+	if got.RemoteID != "887" || got.Title != "Berserk" || got.Status != "reading" || got.Score != 8 || got.Progress != 42 || got.TotalChapters != 364 {
 		t.Fatalf("toTrackEntry mismatch: %+v", got)
 	}
 	if got.StartDate == nil || !got.StartDate.Equal(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)) {
@@ -120,8 +120,8 @@ func TestMangaDetail_JSONUnmarshal(t *testing.T) {
 	if d.MyListStatus == nil {
 		t.Fatal("MyListStatus not parsed")
 	}
-	entry := toTrackEntry("887", d.MyListStatus, d.NumChapters)
-	if entry.Status != "reading" || entry.Score != 7 || entry.Progress != 364 || entry.TotalChapters != 0 {
+	entry := toTrackEntry("887", d.Title, d.MyListStatus, d.NumChapters)
+	if entry.Title != "Berserk" || entry.Status != "reading" || entry.Score != 7 || entry.Progress != 364 || entry.TotalChapters != 0 {
 		t.Fatalf("toTrackEntry(from JSON) mismatch: %+v", entry)
 	}
 }
@@ -148,7 +148,7 @@ func TestToTrackEntry_TotalChaptersPopulatedFromDetail(t *testing.T) {
 	if err := json.Unmarshal(raw, &d); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	entry := toTrackEntry("887", d.MyListStatus, d.NumChapters)
+	entry := toTrackEntry("887", d.Title, d.MyListStatus, d.NumChapters)
 	if entry.TotalChapters != 380 {
 		t.Fatalf("entry.TotalChapters = %d, want 380 (from the detail's num_chapters)", entry.TotalChapters)
 	}

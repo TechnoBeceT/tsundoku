@@ -122,11 +122,12 @@ func makeRef(suwayomiID int) fetcher.FetchRef {
 func TestFetcher_HappyPath(t *testing.T) {
 	t.Parallel()
 
+	jpg, png, wbp := validJPEG(t), validPNG(t), validWebP(t)
 	urls := []string{"http://sw/page/0", "http://sw/page/1", "http://sw/page/2"}
 	data := map[string]stubPage{
-		"http://sw/page/0": {data: []byte{0xAA, 0xBB}, ext: "jpg"},
-		"http://sw/page/1": {data: []byte{0xCC, 0xDD}, ext: "png"},
-		"http://sw/page/2": {data: []byte{0xEE, 0xFF}, ext: "webp"},
+		"http://sw/page/0": {data: jpg, ext: "jpg"},
+		"http://sw/page/1": {data: png, ext: "png"},
+		"http://sw/page/2": {data: wbp, ext: "webp"},
 	}
 	client := &stubClient{pages: urls, pageData: data}
 
@@ -143,9 +144,9 @@ func TestFetcher_HappyPath(t *testing.T) {
 	}
 
 	want := []fetcher.PageImage{
-		{Data: []byte{0xAA, 0xBB}, Ext: "jpg"},
-		{Data: []byte{0xCC, 0xDD}, Ext: "png"},
-		{Data: []byte{0xEE, 0xFF}, Ext: "webp"},
+		{Data: jpg, Ext: "jpg"},
+		{Data: png, Ext: "png"},
+		{Data: wbp, Ext: "webp"},
 	}
 	for i, w := range want {
 		got := got.Pages[i]
@@ -153,7 +154,7 @@ func TestFetcher_HappyPath(t *testing.T) {
 			t.Errorf("Pages[%d].Ext: got %q, want %q", i, got.Ext, w.Ext)
 		}
 		if string(got.Data) != string(w.Data) {
-			t.Errorf("Pages[%d].Data: got %v, want %v", i, got.Data, w.Data)
+			t.Errorf("Pages[%d].Data: mismatch", i)
 		}
 	}
 }
@@ -166,9 +167,9 @@ func TestFetcher_EmitsPerPageProgress(t *testing.T) {
 
 	urls := []string{"http://sw/page/0", "http://sw/page/1", "http://sw/page/2"}
 	data := map[string]stubPage{
-		"http://sw/page/0": {data: []byte{0x01}, ext: "jpg"},
-		"http://sw/page/1": {data: []byte{0x02}, ext: "png"},
-		"http://sw/page/2": {data: []byte{0x03}, ext: "webp"},
+		"http://sw/page/0": {data: validJPEG(t), ext: "jpg"},
+		"http://sw/page/1": {data: validPNG(t), ext: "png"},
+		"http://sw/page/2": {data: validWebP(t), ext: "webp"},
 	}
 	client := &stubClient{pages: urls, pageData: data}
 
@@ -198,9 +199,9 @@ func TestFetcher_EmitsPerPageProgress(t *testing.T) {
 	}
 }
 
-// TestFetcher_EmptyPageListEmitsNoProgress verifies that a zero-page chapter emits
-// ZERO progress calls (and returns PageCount:0, nil) — so no divide-by-zero can
-// reach a downstream consumer.
+// TestFetcher_EmptyPageListEmitsNoProgress verifies that a zero-page chapter (G4)
+// fails WITHOUT emitting any progress and without downloading any page — the guard
+// fires before the page loop, so the progress sink is never touched.
 func TestFetcher_EmptyPageListEmitsNoProgress(t *testing.T) {
 	t.Parallel()
 
@@ -210,12 +211,9 @@ func TestFetcher_EmptyPageListEmitsNoProgress(t *testing.T) {
 	ctx := fetcher.WithProgress(context.Background(), func(int, int) { called = true })
 
 	f := suwayomi.NewFetcher(client)
-	got, err := f.Fetch(ctx, makeRef(0))
-	if err != nil {
-		t.Fatalf("Fetch on empty page list: unexpected error: %v", err)
-	}
-	if got.PageCount != 0 {
-		t.Errorf("PageCount: got %d, want 0", got.PageCount)
+	_, err := f.Fetch(ctx, makeRef(0))
+	if !errors.Is(err, suwayomi.ErrNoPages) {
+		t.Fatalf("Fetch on empty page list: err %v, want ErrNoPages", err)
 	}
 	if called {
 		t.Error("progress sink must not be called for a zero-page chapter")
@@ -249,7 +247,9 @@ func TestFetcher_PageBytesError(t *testing.T) {
 	urls := []string{"http://sw/page/0", "http://sw/page/1", "http://sw/page/2"}
 	sentinel := errors.New("suwayomi: page fetch failed")
 	data := map[string]stubPage{
-		"http://sw/page/0": {data: []byte{0x01}, ext: "jpg"},
+		// Page 0 is a VALID image so the loop reaches page 1, where the fetch error
+		// under test occurs (a broken page 0 would fail validation first).
+		"http://sw/page/0": {data: validJPEG(t), ext: "jpg"},
 	}
 	pageBytesErr := map[string]error{
 		"http://sw/page/1": sentinel, // fails on the second page (k=1)
@@ -267,10 +267,9 @@ func TestFetcher_PageBytesError(t *testing.T) {
 	}
 }
 
-// TestFetcher_EmptyPageList verifies that Fetch on a chapter with zero pages
-// returns an empty ChapterPages (PageCount==0, Pages==nil-or-empty) with a nil
-// error. Zero pages is treated as a valid (if unusual) server response — the
-// caller decides whether to retry or skip.
+// TestFetcher_EmptyPageList verifies that Fetch on a chapter with zero pages (G4)
+// FAILS with ErrNoPages and returns the zero ChapterPages — a zero-page source
+// response must retry / fall through, never render a "downloaded" empty CBZ.
 func TestFetcher_EmptyPageList(t *testing.T) {
 	t.Parallel()
 
@@ -278,14 +277,48 @@ func TestFetcher_EmptyPageList(t *testing.T) {
 
 	f := suwayomi.NewFetcher(client)
 	got, err := f.Fetch(context.Background(), makeRef(0))
-	if err != nil {
-		t.Fatalf("Fetch on empty page list: unexpected error: %v", err)
+	if !errors.Is(err, suwayomi.ErrNoPages) {
+		t.Fatalf("Fetch on empty page list: err %v, want ErrNoPages", err)
 	}
-	if got.PageCount != 0 {
-		t.Errorf("PageCount: got %d, want 0", got.PageCount)
+	if got.PageCount != 0 || len(got.Pages) != 0 {
+		t.Errorf("ChapterPages on error must be zero value, got %+v", got)
 	}
-	if len(got.Pages) != 0 {
-		t.Errorf("len(Pages): got %d, want 0", len(got.Pages))
+}
+
+// TestFetcher_BrokenPageFailsWholeChapter is the core reliability guarantee: a
+// multi-page chapter where a MIDDLE page is broken (truncated, HTML-as-200, or a
+// 0-byte body) fails the WHOLE fetch with ErrBrokenPage and returns the zero
+// ChapterPages — no partial slice, so the dispatcher never renders a CBZ with a
+// missing panel. Each broken shape is exercised with real valid pages around it.
+func TestFetcher_BrokenPageFailsWholeChapter(t *testing.T) {
+	t.Parallel()
+
+	broken := map[string][]byte{
+		"truncated jpeg": truncatedJPEG(t),
+		"html as 200":    htmlPage(),
+		"empty body":     {},
+	}
+	for name, badPage := range broken {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			urls := []string{"http://sw/page/0", "http://sw/page/1", "http://sw/page/2"}
+			data := map[string]stubPage{
+				"http://sw/page/0": {data: validJPEG(t), ext: "jpg"},
+				"http://sw/page/1": {data: badPage, ext: "jpg"}, // the broken middle page
+				"http://sw/page/2": {data: validPNG(t), ext: "png"},
+			}
+			client := &stubClient{pages: urls, pageData: data}
+
+			f := suwayomi.NewFetcher(client)
+			got, err := f.Fetch(context.Background(), makeRef(11))
+			if !errors.Is(err, suwayomi.ErrBrokenPage) {
+				t.Fatalf("err %v, want to wrap ErrBrokenPage", err)
+			}
+			if got.PageCount != 0 || len(got.Pages) != 0 {
+				t.Errorf("broken page must yield zero ChapterPages, got %+v", got)
+			}
+		})
 	}
 }
 
@@ -327,10 +360,13 @@ func TestFetcher_CancelledContextMidLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// midLoopCancelClient cancels the context after the first PageBytes call so
-	// the ctx.Err() check at the top of the next loop iteration catches it.
+	// the ctx.Err() check at the top of the next loop iteration catches it. The
+	// first page must be a VALID image so it passes validation and the loop reaches
+	// the next iteration's ctx check (which is the path under test).
 	client := &midLoopCancelClient{
 		pages:  []string{"http://sw/page/0", "http://sw/page/1", "http://sw/page/2"},
 		cancel: cancel,
+		data:   validJPEG(t),
 	}
 
 	f := suwayomi.NewFetcher(client)
@@ -348,6 +384,7 @@ func TestFetcher_CancelledContextMidLoop(t *testing.T) {
 type midLoopCancelClient struct {
 	pages  []string
 	cancel context.CancelFunc
+	data   []byte
 	calls  int
 }
 
@@ -362,7 +399,7 @@ func (m *midLoopCancelClient) PageBytes(_ context.Context, _ string) ([]byte, st
 		// check inside the loop will catch it.
 		m.cancel()
 	}
-	return []byte{0xFF}, "jpg", nil
+	return m.data, "jpg", nil
 }
 
 func (m *midLoopCancelClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {

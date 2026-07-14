@@ -732,6 +732,28 @@ func (c *httpClient) ChapterPages(ctx context.Context, chapterID int) ([]string,
 
 // --- PageBytes ---------------------------------------------------------------
 
+// maxPageBytes bounds how many bytes PageBytes will read from a single page/cover
+// response. A real manga page or cover is at most a few MB; 64MB is a generous cap
+// that never clips a legitimate image but stops a hostile or misbehaving source
+// from streaming an unbounded body into memory (the read-side companion to the
+// decode-time pixel cap in imagevalidate.go).
+const maxPageBytes = 64 << 20 // 64 MiB
+
+// readAllLimited reads from r up to limit bytes and errors if the body would exceed
+// it. It reads limit+1 bytes via io.LimitReader so an over-cap body is detected
+// (io.LimitReader alone silently truncates, which would let a clipped image through)
+// while never buffering more than limit+1 bytes.
+func readAllLimited(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("suwayomi: page body exceeds %d bytes", limit)
+	}
+	return data, nil
+}
+
 // contentTypeToExt maps MIME types returned by http.DetectContentType (or the
 // response Content-Type header) to bare extensions without a leading dot.
 // This matches the M1 convention in fetcher.PageImage.Ext and disk.CreateCBZ.
@@ -774,10 +796,11 @@ func (c *httpClient) PageBytes(ctx context.Context, pageURL string) ([]byte, str
 		return nil, "", fmt.Errorf("suwayomi: page HTTP %d for %s", resp.StatusCode, fullURL)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := readAllLimited(resp.Body, maxPageBytes)
 	if err != nil {
-		// Defensive path: reachable only on OS-level read failure (connection
-		// reset mid-stream); not reproducible in httptest without custom bodies.
+		// Reachable on an OS-level read failure (connection reset mid-stream) or an
+		// over-cap body (readAllLimited); neither is reproducible in httptest without
+		// custom bodies.
 		return nil, "", fmt.Errorf("suwayomi: read page body: %w", err)
 	}
 

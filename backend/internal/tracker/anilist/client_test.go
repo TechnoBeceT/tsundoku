@@ -225,8 +225,8 @@ func TestClient_Search_AttachesTokenAndParses(t *testing.T) {
 	}
 }
 
-// TestClient_GetEntry_NotYetTracked confirms a null MediaList (the account
-// has not tracked this manga) maps to (nil, nil), not an error.
+// TestClient_GetEntry_NotYetTracked confirms a 200 null MediaList (AniList's
+// documented "no entry" encoding) maps to (nil, nil), not an error.
 func TestClient_GetEntry_NotYetTracked(t *testing.T) {
 	srv := newGraphQLTestServer(t, nil, func(t *testing.T, env gqlEnvelope) string {
 		switch {
@@ -248,6 +248,96 @@ func TestClient_GetEntry_NotYetTracked(t *testing.T) {
 	}
 	if entry != nil {
 		t.Fatalf("GetEntry = %+v, want nil (not yet tracked)", entry)
+	}
+}
+
+// TestClient_GetEntry_NotYetTracked404 pins the PRODUCTION not-tracked shape
+// (the bug this fixes): AniList answers a MediaList the account has not added
+// with HTTP 404 + {"errors":[{"message":"Not Found","status":404}],
+// "data":{"MediaList":null}} — NOT the 200+null the previous test used, which
+// is exactly why the 404-aborts-Bind bug shipped unnoticed. GetEntry must read
+// that shape as (nil, nil) so Bind proceeds to SaveEntry (create) rather than
+// failing. The Viewer lookup still succeeds with a normal 200 first.
+func TestClient_GetEntry_NotYetTracked404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var env gqlEnvelope
+		if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(env.Query, "Viewer"):
+			_, _ = w.Write([]byte(`{"data":{"Viewer":{"id":9,"name":"owner","mediaListOptions":{"scoreFormat":"POINT_100"}}}}`))
+		case strings.Contains(env.Query, "MediaList(userId"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"errors":[{"message":"Not Found","status":404}],"data":{"MediaList":null}}`))
+		default:
+			t.Fatalf("unexpected query: %s", env.Query)
+		}
+	}))
+	defer srv.Close()
+
+	c := anilist.New("cid", newTestClient(t, srv))
+	entry, err := c.GetEntry(context.Background(), "acct-token", "42")
+	if err != nil {
+		t.Fatalf("GetEntry against the real 404 not-tracked shape: want (nil, nil), got err %v", err)
+	}
+	if entry != nil {
+		t.Fatalf("GetEntry = %+v, want nil (a 404 + data.MediaList:null is 'not tracked', not an error)", entry)
+	}
+}
+
+// TestClient_GetEntry_Real404IsStillAnError confirms the not-tracked carve-out
+// is NARROW: a genuine 404 whose body is NOT the data-present-MediaList-null
+// shape (here a bare error with no `data` key) is still surfaced as an error,
+// never silently swallowed as "not tracked".
+func TestClient_GetEntry_Real404IsStillAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var env gqlEnvelope
+		if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(env.Query, "Viewer") {
+			_, _ = w.Write([]byte(`{"data":{"Viewer":{"id":9,"name":"owner","mediaListOptions":{"scoreFormat":"POINT_100"}}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errors":[{"message":"Not Found"}]}`))
+	}))
+	defer srv.Close()
+
+	c := anilist.New("cid", newTestClient(t, srv))
+	if _, err := c.GetEntry(context.Background(), "acct-token", "42"); err == nil {
+		t.Fatalf("GetEntry against a real 404 (no data key): want an error, got nil")
+	}
+}
+
+// TestClient_GetEntry_MapsMediaTitle confirms a tracked MediaList entry maps
+// its bound media's own title (the `media { title }` selection) onto
+// TrackEntry.Title — AniList's OWN title for the manga, which the binding row
+// displays and which differs from the other trackers' titles.
+func TestClient_GetEntry_MapsMediaTitle(t *testing.T) {
+	srv := newGraphQLTestServer(t, nil, func(t *testing.T, env gqlEnvelope) string {
+		switch {
+		case strings.Contains(env.Query, "Viewer"):
+			return `{"Viewer":{"id":9,"name":"owner","mediaListOptions":{"scoreFormat":"POINT_100"}}}`
+		case strings.Contains(env.Query, "MediaList(userId"):
+			return `{"MediaList":{"id":100,"mediaId":42,"status":"CURRENT","score":0,"progress":5,"private":false,"startedAt":{},"completedAt":{},"media":{"title":{"romaji":"Kanojo","english":"Girlfriend","native":"彼女"}}}}`
+		default:
+			t.Fatalf("unexpected query: %s", env.Query)
+			return "{}"
+		}
+	})
+	defer srv.Close()
+
+	c := anilist.New("cid", newTestClient(t, srv))
+	entry, err := c.GetEntry(context.Background(), "acct-token", "42")
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if entry == nil || entry.Title != "Girlfriend" {
+		t.Fatalf("GetEntry Title = %+v, want the media's English title \"Girlfriend\"", entry)
 	}
 }
 

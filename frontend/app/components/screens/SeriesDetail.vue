@@ -287,6 +287,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 
       <TrackersSection
         :bindings="trackBindings"
+        :series-title="series.title"
         :trackers="trackers"
         :pending="trackBindingsPending"
         :error="trackBindingsError"

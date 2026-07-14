@@ -106,9 +106,16 @@ func toTrackSearchResult(n mangaSearchNode) tracker.TrackSearchResult {
 // leaving it unset here was a Phase-3a gap (fixed in 3b): GetEntry's own
 // manga-detail response always carries num_chapters, so there was no
 // excuse for not threading it through.
-func toTrackEntry(remoteID string, s *myListStatus, totalChapters int) tracker.TrackEntry {
+// title is passed explicitly (like remoteID/totalChapters) because MAL's PUT
+// .../my_list_status response carries ONLY the my_list_status fields — no
+// manga title of its own — so upsertEntry threads through the caller's own
+// entry.Title, while GetEntry (whose manga-detail response DOES carry a title,
+// detailFields includes it) passes the freshly-fetched detail.Title. This is
+// TrackEntry.Title = MAL's OWN title for the manga, stored on the binding row.
+func toTrackEntry(remoteID, title string, s *myListStatus, totalChapters int) tracker.TrackEntry {
 	return tracker.TrackEntry{
 		RemoteID:      remoteID,
+		Title:         title,
 		Status:        s.Status,
 		Score:         float64(s.Score),
 		Progress:      float64(s.NumChaptersRead),
