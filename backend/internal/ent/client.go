@@ -22,6 +22,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
+	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
@@ -51,6 +52,8 @@ type Client struct {
 	LatestSeries *LatestSeriesClient
 	// Owner is the client for interacting with the Owner builders.
 	Owner *OwnerClient
+	// PendingTrackPush is the client for interacting with the PendingTrackPush builders.
+	PendingTrackPush *PendingTrackPushClient
 	// ProviderChapter is the client for interacting with the ProviderChapter builders.
 	ProviderChapter *ProviderChapterClient
 	// Series is the client for interacting with the Series builders.
@@ -88,6 +91,7 @@ func (c *Client) init() {
 	c.ImportEntry = NewImportEntryClient(c.config)
 	c.LatestSeries = NewLatestSeriesClient(c.config)
 	c.Owner = NewOwnerClient(c.config)
+	c.PendingTrackPush = NewPendingTrackPushClient(c.config)
 	c.ProviderChapter = NewProviderChapterClient(c.config)
 	c.Series = NewSeriesClient(c.config)
 	c.SeriesProvider = NewSeriesProviderClient(c.config)
@@ -196,6 +200,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		ImportEntry:        NewImportEntryClient(cfg),
 		LatestSeries:       NewLatestSeriesClient(cfg),
 		Owner:              NewOwnerClient(cfg),
+		PendingTrackPush:   NewPendingTrackPushClient(cfg),
 		ProviderChapter:    NewProviderChapterClient(cfg),
 		Series:             NewSeriesClient(cfg),
 		SeriesProvider:     NewSeriesProviderClient(cfg),
@@ -231,6 +236,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		ImportEntry:        NewImportEntryClient(cfg),
 		LatestSeries:       NewLatestSeriesClient(cfg),
 		Owner:              NewOwnerClient(cfg),
+		PendingTrackPush:   NewPendingTrackPushClient(cfg),
 		ProviderChapter:    NewProviderChapterClient(cfg),
 		Series:             NewSeriesClient(cfg),
 		SeriesProvider:     NewSeriesProviderClient(cfg),
@@ -271,7 +277,7 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
-		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings,
+		c.PendingTrackPush, c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SuwayomiSyncState,
 		c.TrackBinding, c.TrackerConnection,
 	} {
@@ -284,7 +290,7 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
-		c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings,
+		c.PendingTrackPush, c.ProviderChapter, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SuwayomiSyncState,
 		c.TrackBinding, c.TrackerConnection,
 	} {
@@ -307,6 +313,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.LatestSeries.mutate(ctx, m)
 	case *OwnerMutation:
 		return c.Owner.mutate(ctx, m)
+	case *PendingTrackPushMutation:
+		return c.PendingTrackPush.mutate(ctx, m)
 	case *ProviderChapterMutation:
 		return c.ProviderChapter.mutate(ctx, m)
 	case *SeriesMutation:
@@ -1175,6 +1183,139 @@ func (c *OwnerClient) mutate(ctx context.Context, m *OwnerMutation) (Value, erro
 		return (&OwnerDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown Owner mutation op: %q", m.Op())
+	}
+}
+
+// PendingTrackPushClient is a client for the PendingTrackPush schema.
+type PendingTrackPushClient struct {
+	config
+}
+
+// NewPendingTrackPushClient returns a client for the PendingTrackPush from the given config.
+func NewPendingTrackPushClient(c config) *PendingTrackPushClient {
+	return &PendingTrackPushClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `pendingtrackpush.Hooks(f(g(h())))`.
+func (c *PendingTrackPushClient) Use(hooks ...Hook) {
+	c.hooks.PendingTrackPush = append(c.hooks.PendingTrackPush, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `pendingtrackpush.Intercept(f(g(h())))`.
+func (c *PendingTrackPushClient) Intercept(interceptors ...Interceptor) {
+	c.inters.PendingTrackPush = append(c.inters.PendingTrackPush, interceptors...)
+}
+
+// Create returns a builder for creating a PendingTrackPush entity.
+func (c *PendingTrackPushClient) Create() *PendingTrackPushCreate {
+	mutation := newPendingTrackPushMutation(c.config, OpCreate)
+	return &PendingTrackPushCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of PendingTrackPush entities.
+func (c *PendingTrackPushClient) CreateBulk(builders ...*PendingTrackPushCreate) *PendingTrackPushCreateBulk {
+	return &PendingTrackPushCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *PendingTrackPushClient) MapCreateBulk(slice any, setFunc func(*PendingTrackPushCreate, int)) *PendingTrackPushCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &PendingTrackPushCreateBulk{err: fmt.Errorf("calling to PendingTrackPushClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*PendingTrackPushCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &PendingTrackPushCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for PendingTrackPush.
+func (c *PendingTrackPushClient) Update() *PendingTrackPushUpdate {
+	mutation := newPendingTrackPushMutation(c.config, OpUpdate)
+	return &PendingTrackPushUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *PendingTrackPushClient) UpdateOne(_m *PendingTrackPush) *PendingTrackPushUpdateOne {
+	mutation := newPendingTrackPushMutation(c.config, OpUpdateOne, withPendingTrackPush(_m))
+	return &PendingTrackPushUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *PendingTrackPushClient) UpdateOneID(id uuid.UUID) *PendingTrackPushUpdateOne {
+	mutation := newPendingTrackPushMutation(c.config, OpUpdateOne, withPendingTrackPushID(id))
+	return &PendingTrackPushUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for PendingTrackPush.
+func (c *PendingTrackPushClient) Delete() *PendingTrackPushDelete {
+	mutation := newPendingTrackPushMutation(c.config, OpDelete)
+	return &PendingTrackPushDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *PendingTrackPushClient) DeleteOne(_m *PendingTrackPush) *PendingTrackPushDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *PendingTrackPushClient) DeleteOneID(id uuid.UUID) *PendingTrackPushDeleteOne {
+	builder := c.Delete().Where(pendingtrackpush.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &PendingTrackPushDeleteOne{builder}
+}
+
+// Query returns a query builder for PendingTrackPush.
+func (c *PendingTrackPushClient) Query() *PendingTrackPushQuery {
+	return &PendingTrackPushQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypePendingTrackPush},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a PendingTrackPush entity by its id.
+func (c *PendingTrackPushClient) Get(ctx context.Context, id uuid.UUID) (*PendingTrackPush, error) {
+	return c.Query().Where(pendingtrackpush.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *PendingTrackPushClient) GetX(ctx context.Context, id uuid.UUID) *PendingTrackPush {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *PendingTrackPushClient) Hooks() []Hook {
+	return c.hooks.PendingTrackPush
+}
+
+// Interceptors returns the client interceptors.
+func (c *PendingTrackPushClient) Interceptors() []Interceptor {
+	return c.inters.PendingTrackPush
+}
+
+func (c *PendingTrackPushClient) mutate(ctx context.Context, m *PendingTrackPushMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&PendingTrackPushCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&PendingTrackPushUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&PendingTrackPushUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&PendingTrackPushDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown PendingTrackPush mutation op: %q", m.Op())
 	}
 }
 
@@ -2687,14 +2828,15 @@ func (c *TrackerConnectionClient) mutate(ctx context.Context, m *TrackerConnecti
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner, ProviderChapter,
-		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
-		SourceMetric, SuwayomiSyncState, TrackBinding, TrackerConnection []ent.Hook
+		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner,
+		PendingTrackPush, ProviderChapter, Series, SeriesProvider, Settings,
+		SourceCircuitState, SourceEvent, SourceMetric, SuwayomiSyncState, TrackBinding,
+		TrackerConnection []ent.Hook
 	}
 	inters struct {
-		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner, ProviderChapter,
-		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
-		SourceMetric, SuwayomiSyncState, TrackBinding,
+		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner,
+		PendingTrackPush, ProviderChapter, Series, SeriesProvider, Settings,
+		SourceCircuitState, SourceEvent, SourceMetric, SuwayomiSyncState, TrackBinding,
 		TrackerConnection []ent.Interceptor
 	}
 )

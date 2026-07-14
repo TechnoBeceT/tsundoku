@@ -139,6 +139,23 @@ var (
 		Columns:    OwnersColumns,
 		PrimaryKey: []*schema.Column{OwnersColumns[0]},
 	}
+	// PendingTrackPushesColumns holds the columns for the "pending_track_pushes" table.
+	PendingTrackPushesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "track_binding_id", Type: field.TypeUUID, Unique: true},
+		{Name: "chapter", Type: field.TypeFloat64},
+		{Name: "attempts", Type: field.TypeInt, Default: 0},
+		{Name: "next_attempt_at", Type: field.TypeTime, Nullable: true},
+		{Name: "last_error", Type: field.TypeString, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// PendingTrackPushesTable holds the schema information for the "pending_track_pushes" table.
+	PendingTrackPushesTable = &schema.Table{
+		Name:       "pending_track_pushes",
+		Columns:    PendingTrackPushesColumns,
+		PrimaryKey: []*schema.Column{PendingTrackPushesColumns[0]},
+	}
 	// ProviderChaptersColumns holds the columns for the "provider_chapters" table.
 	ProviderChaptersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -429,6 +446,7 @@ var (
 		ImportEntriesTable,
 		LatestSeriesTable,
 		OwnersTable,
+		PendingTrackPushesTable,
 		ProviderChaptersTable,
 		SeriesTable,
 		SeriesProvidersTable,

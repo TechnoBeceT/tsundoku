@@ -308,6 +308,15 @@ type JobsConfig struct {
 	// SuppressSplitParts enables fractional-part suppression (skip N.1..N.x when
 	// the whole N is downloaded). Set via TSUNDOKU_JOBS_SUPPRESSSPLITPARTS.
 	SuppressSplitParts bool
+
+	// TrackRetryInterval is the tick period for the tracker-push retry-queue
+	// drain job (internal/tracker/retry + job.Runner.StartTrackerRetry).
+	// Default 5m. This is the env-sourced DEFAULT the runtime settings overlay
+	// (jobs.track_retry_interval) can override without a restart; always-on
+	// (no 0-disables sentinel, unlike WarmupInterval/ExtensionCheckInterval —
+	// the retry queue must keep draining). Set via
+	// TSUNDOKU_JOBS_TRACKRETRYINTERVAL.
+	TrackRetryInterval time.Duration
 }
 
 // SourcesConfig holds the env-sourced DEFAULTS for the source-politeness
@@ -472,6 +481,7 @@ func defaults() map[string]any {
 		"jobs.searchcachettl":         "1h",
 		"jobs.chaptercachettl":        "1h",
 		"jobs.suppresssplitparts":     true,
+		"jobs.trackretryinterval":     "5m",
 		// Health — M7 source-health computation.
 		"health.stalegracedays": 14,
 		"storage.folder":        "/data/manga",
@@ -572,6 +582,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS     → jobs.warmupslowthresholdms
 //	TSUNDOKU_JOBS_SEARCHCACHETTL            → jobs.searchcachettl
 //	TSUNDOKU_JOBS_CHAPTERCACHETTL           → jobs.chaptercachettl
+//	TSUNDOKU_JOBS_TRACKRETRYINTERVAL        → jobs.trackretryinterval
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //	TSUNDOKU_SOURCES_FAILURETHRESHOLD       → sources.failurethreshold
 //	TSUNDOKU_SOURCES_COOLDOWN               → sources.cooldown

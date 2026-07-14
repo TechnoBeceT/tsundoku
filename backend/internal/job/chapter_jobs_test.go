@@ -495,6 +495,13 @@ func (c *countingIntervals) WarmupInterval(context.Context) time.Duration {
 	return 0
 }
 
+// TrackRetryInterval returns a fixed interval (unused by these tests but
+// required to satisfy job.Intervals after the tracker-retry interface
+// widening).
+func (c *countingIntervals) TrackRetryInterval(context.Context) time.Duration {
+	return time.Minute
+}
+
 // setDownload mutates the download interval the next read will observe.
 func (c *countingIntervals) setDownload(d time.Duration) {
 	c.mu.Lock()

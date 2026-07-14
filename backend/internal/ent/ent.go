@@ -18,6 +18,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
+	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
@@ -94,6 +95,7 @@ func checkColumn(t, c string) error {
 			importentry.Table:        importentry.ValidColumn,
 			latestseries.Table:       latestseries.ValidColumn,
 			owner.Table:              owner.ValidColumn,
+			pendingtrackpush.Table:   pendingtrackpush.ValidColumn,
 			providerchapter.Table:    providerchapter.ValidColumn,
 			series.Table:             series.ValidColumn,
 			seriesprovider.Table:     seriesprovider.ValidColumn,

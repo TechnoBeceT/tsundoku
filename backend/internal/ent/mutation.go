@@ -18,6 +18,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
+	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/series"
@@ -47,6 +48,7 @@ const (
 	TypeImportEntry        = "ImportEntry"
 	TypeLatestSeries       = "LatestSeries"
 	TypeOwner              = "Owner"
+	TypePendingTrackPush   = "PendingTrackPush"
 	TypeProviderChapter    = "ProviderChapter"
 	TypeSeries             = "Series"
 	TypeSeriesProvider     = "SeriesProvider"
@@ -4674,6 +4676,753 @@ func (m *OwnerMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *OwnerMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown Owner edge %s", name)
+}
+
+// PendingTrackPushMutation represents an operation that mutates the PendingTrackPush nodes in the graph.
+type PendingTrackPushMutation struct {
+	config
+	op               Op
+	typ              string
+	id               *uuid.UUID
+	track_binding_id *uuid.UUID
+	chapter          *float64
+	addchapter       *float64
+	attempts         *int
+	addattempts      *int
+	next_attempt_at  *time.Time
+	last_error       *string
+	created_at       *time.Time
+	updated_at       *time.Time
+	clearedFields    map[string]struct{}
+	done             bool
+	oldValue         func(context.Context) (*PendingTrackPush, error)
+	predicates       []predicate.PendingTrackPush
+}
+
+var _ ent.Mutation = (*PendingTrackPushMutation)(nil)
+
+// pendingtrackpushOption allows management of the mutation configuration using functional options.
+type pendingtrackpushOption func(*PendingTrackPushMutation)
+
+// newPendingTrackPushMutation creates new mutation for the PendingTrackPush entity.
+func newPendingTrackPushMutation(c config, op Op, opts ...pendingtrackpushOption) *PendingTrackPushMutation {
+	m := &PendingTrackPushMutation{
+		config:        c,
+		op:            op,
+		typ:           TypePendingTrackPush,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withPendingTrackPushID sets the ID field of the mutation.
+func withPendingTrackPushID(id uuid.UUID) pendingtrackpushOption {
+	return func(m *PendingTrackPushMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *PendingTrackPush
+		)
+		m.oldValue = func(ctx context.Context) (*PendingTrackPush, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().PendingTrackPush.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withPendingTrackPush sets the old PendingTrackPush of the mutation.
+func withPendingTrackPush(node *PendingTrackPush) pendingtrackpushOption {
+	return func(m *PendingTrackPushMutation) {
+		m.oldValue = func(context.Context) (*PendingTrackPush, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m PendingTrackPushMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m PendingTrackPushMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of PendingTrackPush entities.
+func (m *PendingTrackPushMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *PendingTrackPushMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *PendingTrackPushMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().PendingTrackPush.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetTrackBindingID sets the "track_binding_id" field.
+func (m *PendingTrackPushMutation) SetTrackBindingID(u uuid.UUID) {
+	m.track_binding_id = &u
+}
+
+// TrackBindingID returns the value of the "track_binding_id" field in the mutation.
+func (m *PendingTrackPushMutation) TrackBindingID() (r uuid.UUID, exists bool) {
+	v := m.track_binding_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTrackBindingID returns the old "track_binding_id" field's value of the PendingTrackPush entity.
+// If the PendingTrackPush object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingTrackPushMutation) OldTrackBindingID(ctx context.Context) (v uuid.UUID, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTrackBindingID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTrackBindingID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTrackBindingID: %w", err)
+	}
+	return oldValue.TrackBindingID, nil
+}
+
+// ResetTrackBindingID resets all changes to the "track_binding_id" field.
+func (m *PendingTrackPushMutation) ResetTrackBindingID() {
+	m.track_binding_id = nil
+}
+
+// SetChapter sets the "chapter" field.
+func (m *PendingTrackPushMutation) SetChapter(f float64) {
+	m.chapter = &f
+	m.addchapter = nil
+}
+
+// Chapter returns the value of the "chapter" field in the mutation.
+func (m *PendingTrackPushMutation) Chapter() (r float64, exists bool) {
+	v := m.chapter
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChapter returns the old "chapter" field's value of the PendingTrackPush entity.
+// If the PendingTrackPush object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingTrackPushMutation) OldChapter(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChapter is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChapter requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChapter: %w", err)
+	}
+	return oldValue.Chapter, nil
+}
+
+// AddChapter adds f to the "chapter" field.
+func (m *PendingTrackPushMutation) AddChapter(f float64) {
+	if m.addchapter != nil {
+		*m.addchapter += f
+	} else {
+		m.addchapter = &f
+	}
+}
+
+// AddedChapter returns the value that was added to the "chapter" field in this mutation.
+func (m *PendingTrackPushMutation) AddedChapter() (r float64, exists bool) {
+	v := m.addchapter
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetChapter resets all changes to the "chapter" field.
+func (m *PendingTrackPushMutation) ResetChapter() {
+	m.chapter = nil
+	m.addchapter = nil
+}
+
+// SetAttempts sets the "attempts" field.
+func (m *PendingTrackPushMutation) SetAttempts(i int) {
+	m.attempts = &i
+	m.addattempts = nil
+}
+
+// Attempts returns the value of the "attempts" field in the mutation.
+func (m *PendingTrackPushMutation) Attempts() (r int, exists bool) {
+	v := m.attempts
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAttempts returns the old "attempts" field's value of the PendingTrackPush entity.
+// If the PendingTrackPush object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingTrackPushMutation) OldAttempts(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAttempts is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAttempts requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAttempts: %w", err)
+	}
+	return oldValue.Attempts, nil
+}
+
+// AddAttempts adds i to the "attempts" field.
+func (m *PendingTrackPushMutation) AddAttempts(i int) {
+	if m.addattempts != nil {
+		*m.addattempts += i
+	} else {
+		m.addattempts = &i
+	}
+}
+
+// AddedAttempts returns the value that was added to the "attempts" field in this mutation.
+func (m *PendingTrackPushMutation) AddedAttempts() (r int, exists bool) {
+	v := m.addattempts
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAttempts resets all changes to the "attempts" field.
+func (m *PendingTrackPushMutation) ResetAttempts() {
+	m.attempts = nil
+	m.addattempts = nil
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (m *PendingTrackPushMutation) SetNextAttemptAt(t time.Time) {
+	m.next_attempt_at = &t
+}
+
+// NextAttemptAt returns the value of the "next_attempt_at" field in the mutation.
+func (m *PendingTrackPushMutation) NextAttemptAt() (r time.Time, exists bool) {
+	v := m.next_attempt_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNextAttemptAt returns the old "next_attempt_at" field's value of the PendingTrackPush entity.
+// If the PendingTrackPush object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingTrackPushMutation) OldNextAttemptAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNextAttemptAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNextAttemptAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNextAttemptAt: %w", err)
+	}
+	return oldValue.NextAttemptAt, nil
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (m *PendingTrackPushMutation) ClearNextAttemptAt() {
+	m.next_attempt_at = nil
+	m.clearedFields[pendingtrackpush.FieldNextAttemptAt] = struct{}{}
+}
+
+// NextAttemptAtCleared returns if the "next_attempt_at" field was cleared in this mutation.
+func (m *PendingTrackPushMutation) NextAttemptAtCleared() bool {
+	_, ok := m.clearedFields[pendingtrackpush.FieldNextAttemptAt]
+	return ok
+}
+
+// ResetNextAttemptAt resets all changes to the "next_attempt_at" field.
+func (m *PendingTrackPushMutation) ResetNextAttemptAt() {
+	m.next_attempt_at = nil
+	delete(m.clearedFields, pendingtrackpush.FieldNextAttemptAt)
+}
+
+// SetLastError sets the "last_error" field.
+func (m *PendingTrackPushMutation) SetLastError(s string) {
+	m.last_error = &s
+}
+
+// LastError returns the value of the "last_error" field in the mutation.
+func (m *PendingTrackPushMutation) LastError() (r string, exists bool) {
+	v := m.last_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastError returns the old "last_error" field's value of the PendingTrackPush entity.
+// If the PendingTrackPush object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingTrackPushMutation) OldLastError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastError: %w", err)
+	}
+	return oldValue.LastError, nil
+}
+
+// ResetLastError resets all changes to the "last_error" field.
+func (m *PendingTrackPushMutation) ResetLastError() {
+	m.last_error = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *PendingTrackPushMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *PendingTrackPushMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the PendingTrackPush entity.
+// If the PendingTrackPush object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingTrackPushMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *PendingTrackPushMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *PendingTrackPushMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *PendingTrackPushMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the PendingTrackPush entity.
+// If the PendingTrackPush object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingTrackPushMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *PendingTrackPushMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the PendingTrackPushMutation builder.
+func (m *PendingTrackPushMutation) Where(ps ...predicate.PendingTrackPush) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the PendingTrackPushMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *PendingTrackPushMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.PendingTrackPush, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *PendingTrackPushMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *PendingTrackPushMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (PendingTrackPush).
+func (m *PendingTrackPushMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *PendingTrackPushMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.track_binding_id != nil {
+		fields = append(fields, pendingtrackpush.FieldTrackBindingID)
+	}
+	if m.chapter != nil {
+		fields = append(fields, pendingtrackpush.FieldChapter)
+	}
+	if m.attempts != nil {
+		fields = append(fields, pendingtrackpush.FieldAttempts)
+	}
+	if m.next_attempt_at != nil {
+		fields = append(fields, pendingtrackpush.FieldNextAttemptAt)
+	}
+	if m.last_error != nil {
+		fields = append(fields, pendingtrackpush.FieldLastError)
+	}
+	if m.created_at != nil {
+		fields = append(fields, pendingtrackpush.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, pendingtrackpush.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *PendingTrackPushMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case pendingtrackpush.FieldTrackBindingID:
+		return m.TrackBindingID()
+	case pendingtrackpush.FieldChapter:
+		return m.Chapter()
+	case pendingtrackpush.FieldAttempts:
+		return m.Attempts()
+	case pendingtrackpush.FieldNextAttemptAt:
+		return m.NextAttemptAt()
+	case pendingtrackpush.FieldLastError:
+		return m.LastError()
+	case pendingtrackpush.FieldCreatedAt:
+		return m.CreatedAt()
+	case pendingtrackpush.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *PendingTrackPushMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case pendingtrackpush.FieldTrackBindingID:
+		return m.OldTrackBindingID(ctx)
+	case pendingtrackpush.FieldChapter:
+		return m.OldChapter(ctx)
+	case pendingtrackpush.FieldAttempts:
+		return m.OldAttempts(ctx)
+	case pendingtrackpush.FieldNextAttemptAt:
+		return m.OldNextAttemptAt(ctx)
+	case pendingtrackpush.FieldLastError:
+		return m.OldLastError(ctx)
+	case pendingtrackpush.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case pendingtrackpush.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown PendingTrackPush field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *PendingTrackPushMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case pendingtrackpush.FieldTrackBindingID:
+		v, ok := value.(uuid.UUID)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTrackBindingID(v)
+		return nil
+	case pendingtrackpush.FieldChapter:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChapter(v)
+		return nil
+	case pendingtrackpush.FieldAttempts:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAttempts(v)
+		return nil
+	case pendingtrackpush.FieldNextAttemptAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNextAttemptAt(v)
+		return nil
+	case pendingtrackpush.FieldLastError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastError(v)
+		return nil
+	case pendingtrackpush.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case pendingtrackpush.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown PendingTrackPush field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *PendingTrackPushMutation) AddedFields() []string {
+	var fields []string
+	if m.addchapter != nil {
+		fields = append(fields, pendingtrackpush.FieldChapter)
+	}
+	if m.addattempts != nil {
+		fields = append(fields, pendingtrackpush.FieldAttempts)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *PendingTrackPushMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case pendingtrackpush.FieldChapter:
+		return m.AddedChapter()
+	case pendingtrackpush.FieldAttempts:
+		return m.AddedAttempts()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *PendingTrackPushMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case pendingtrackpush.FieldChapter:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddChapter(v)
+		return nil
+	case pendingtrackpush.FieldAttempts:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAttempts(v)
+		return nil
+	}
+	return fmt.Errorf("unknown PendingTrackPush numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *PendingTrackPushMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(pendingtrackpush.FieldNextAttemptAt) {
+		fields = append(fields, pendingtrackpush.FieldNextAttemptAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *PendingTrackPushMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *PendingTrackPushMutation) ClearField(name string) error {
+	switch name {
+	case pendingtrackpush.FieldNextAttemptAt:
+		m.ClearNextAttemptAt()
+		return nil
+	}
+	return fmt.Errorf("unknown PendingTrackPush nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *PendingTrackPushMutation) ResetField(name string) error {
+	switch name {
+	case pendingtrackpush.FieldTrackBindingID:
+		m.ResetTrackBindingID()
+		return nil
+	case pendingtrackpush.FieldChapter:
+		m.ResetChapter()
+		return nil
+	case pendingtrackpush.FieldAttempts:
+		m.ResetAttempts()
+		return nil
+	case pendingtrackpush.FieldNextAttemptAt:
+		m.ResetNextAttemptAt()
+		return nil
+	case pendingtrackpush.FieldLastError:
+		m.ResetLastError()
+		return nil
+	case pendingtrackpush.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case pendingtrackpush.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown PendingTrackPush field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *PendingTrackPushMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *PendingTrackPushMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *PendingTrackPushMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *PendingTrackPushMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *PendingTrackPushMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *PendingTrackPushMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *PendingTrackPushMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown PendingTrackPush unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *PendingTrackPushMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown PendingTrackPush edge %s", name)
 }
 
 // ProviderChapterMutation represents an operation that mutates the ProviderChapter nodes in the graph.

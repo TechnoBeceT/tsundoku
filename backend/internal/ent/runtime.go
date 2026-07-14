@@ -12,6 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
+	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/schema"
 	"github.com/technobecet/tsundoku/internal/ent/series"
@@ -161,6 +162,30 @@ func init() {
 	ownerDescID := ownerFields[0].Descriptor()
 	// owner.DefaultID holds the default value on creation for the id field.
 	owner.DefaultID = ownerDescID.Default.(func() uuid.UUID)
+	pendingtrackpushFields := schema.PendingTrackPush{}.Fields()
+	_ = pendingtrackpushFields
+	// pendingtrackpushDescAttempts is the schema descriptor for attempts field.
+	pendingtrackpushDescAttempts := pendingtrackpushFields[3].Descriptor()
+	// pendingtrackpush.DefaultAttempts holds the default value on creation for the attempts field.
+	pendingtrackpush.DefaultAttempts = pendingtrackpushDescAttempts.Default.(int)
+	// pendingtrackpushDescLastError is the schema descriptor for last_error field.
+	pendingtrackpushDescLastError := pendingtrackpushFields[5].Descriptor()
+	// pendingtrackpush.DefaultLastError holds the default value on creation for the last_error field.
+	pendingtrackpush.DefaultLastError = pendingtrackpushDescLastError.Default.(string)
+	// pendingtrackpushDescCreatedAt is the schema descriptor for created_at field.
+	pendingtrackpushDescCreatedAt := pendingtrackpushFields[6].Descriptor()
+	// pendingtrackpush.DefaultCreatedAt holds the default value on creation for the created_at field.
+	pendingtrackpush.DefaultCreatedAt = pendingtrackpushDescCreatedAt.Default.(func() time.Time)
+	// pendingtrackpushDescUpdatedAt is the schema descriptor for updated_at field.
+	pendingtrackpushDescUpdatedAt := pendingtrackpushFields[7].Descriptor()
+	// pendingtrackpush.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	pendingtrackpush.DefaultUpdatedAt = pendingtrackpushDescUpdatedAt.Default.(func() time.Time)
+	// pendingtrackpush.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	pendingtrackpush.UpdateDefaultUpdatedAt = pendingtrackpushDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// pendingtrackpushDescID is the schema descriptor for id field.
+	pendingtrackpushDescID := pendingtrackpushFields[0].Descriptor()
+	// pendingtrackpush.DefaultID holds the default value on creation for the id field.
+	pendingtrackpush.DefaultID = pendingtrackpushDescID.Default.(func() uuid.UUID)
 	providerchapterFields := schema.ProviderChapter{}.Fields()
 	_ = providerchapterFields
 	// providerchapterDescName is the schema descriptor for name field.

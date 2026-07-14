@@ -32,6 +32,8 @@ type Static struct {
 	SourcesMinDelay      time.Duration
 	// SuppressParts backs the SuppressSplitParts accessor.
 	SuppressParts bool
+	// TrackRetryIv backs the TrackRetryInterval accessor.
+	TrackRetryIv time.Duration
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -81,3 +83,6 @@ func (s Static) SourcesMinRequestDelay(context.Context) time.Duration { return s
 
 // SuppressSplitParts returns the fixed fractional-part-suppression flag.
 func (s Static) SuppressSplitParts(context.Context) bool { return s.SuppressParts }
+
+// TrackRetryInterval returns the fixed tracker-push retry-queue drain period.
+func (s Static) TrackRetryInterval(context.Context) time.Duration { return s.TrackRetryIv }

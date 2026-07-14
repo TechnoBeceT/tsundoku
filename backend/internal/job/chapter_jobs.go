@@ -75,6 +75,12 @@ type Intervals interface {
 	// 0 = disabled (same idle-and-re-read hot-reload semantics as
 	// ExtensionCheckInterval).
 	WarmupInterval(ctx context.Context) time.Duration
+	// TrackRetryInterval is the period between tracker-push retry-queue drain
+	// passes (see StartTrackerRetry / internal/tracker/retry). Always-on (no
+	// disable sentinel, unlike WarmupInterval/ExtensionCheckInterval) — the
+	// retry queue must keep draining so a failed push is never abandoned
+	// beyond its own attempt cap.
+	TrackRetryInterval(ctx context.Context) time.Duration
 }
 
 // Runner orchestrates the chapter download/upgrade cycle, the discovery refresh

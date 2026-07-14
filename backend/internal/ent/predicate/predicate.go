@@ -24,6 +24,9 @@ type LatestSeries func(*sql.Selector)
 // Owner is the predicate function for owner builders.
 type Owner func(*sql.Selector)
 
+// PendingTrackPush is the predicate function for pendingtrackpush builders.
+type PendingTrackPush func(*sql.Selector)
+
 // ProviderChapter is the predicate function for providerchapter builders.
 type ProviderChapter func(*sql.Selector)
 

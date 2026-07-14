@@ -24,6 +24,8 @@ type Tx struct {
 	LatestSeries *LatestSeriesClient
 	// Owner is the client for interacting with the Owner builders.
 	Owner *OwnerClient
+	// PendingTrackPush is the client for interacting with the PendingTrackPush builders.
+	PendingTrackPush *PendingTrackPushClient
 	// ProviderChapter is the client for interacting with the ProviderChapter builders.
 	ProviderChapter *ProviderChapterClient
 	// Series is the client for interacting with the Series builders.
@@ -181,6 +183,7 @@ func (tx *Tx) init() {
 	tx.ImportEntry = NewImportEntryClient(tx.config)
 	tx.LatestSeries = NewLatestSeriesClient(tx.config)
 	tx.Owner = NewOwnerClient(tx.config)
+	tx.PendingTrackPush = NewPendingTrackPushClient(tx.config)
 	tx.ProviderChapter = NewProviderChapterClient(tx.config)
 	tx.Series = NewSeriesClient(tx.config)
 	tx.SeriesProvider = NewSeriesProviderClient(tx.config)

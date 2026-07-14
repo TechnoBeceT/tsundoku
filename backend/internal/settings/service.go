@@ -120,6 +120,13 @@ func (s *Service) SuppressSplitParts(ctx context.Context) bool {
 	return s.resolveBool(ctx, KeySuppressSplitParts)
 }
 
+// TrackRetryInterval is the tracker-push retry-queue drain period (DB
+// override else default). Read at use-time by job.Runner.StartTrackerRetry,
+// so a change hot-reloads on the next pass.
+func (s *Service) TrackRetryInterval(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeyTrackRetryInterval)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

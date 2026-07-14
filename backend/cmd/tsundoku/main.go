@@ -265,6 +265,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		SourcesCooldown:         cfg.Sources.Cooldown,
 		SourcesMinRequestDelay:  cfg.Sources.MinRequestDelay,
 		SuppressSplitParts:      cfg.Jobs.SuppressSplitParts,
+		TrackRetryInterval:      cfg.Jobs.TrackRetryInterval,
 	}
 }
 

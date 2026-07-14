@@ -31,6 +31,7 @@ func testDefaults() settings.Defaults {
 		SourcesCooldown:         30 * time.Minute,
 		SourcesMinRequestDelay:  500 * time.Millisecond,
 		SuppressSplitParts:      true,
+		TrackRetryInterval:      5 * time.Minute,
 	}
 }
 
@@ -61,6 +62,28 @@ func TestAccessorsReturnDefaultsWhenNoRow(t *testing.T) {
 	}
 	if got := svc.StaleGraceDays(ctx); got != 14 {
 		t.Errorf("StaleGraceDays default = %d, want 14", got)
+	}
+	if got := svc.TrackRetryInterval(ctx); got != 5*time.Minute {
+		t.Errorf("TrackRetryInterval default = %v, want 5m", got)
+	}
+}
+
+// TestSetThenResolveTrackRetryInterval proves a Set override on the new
+// tracker-retry tunable round-trips through its typed accessor, mirroring
+// TestSetThenResolveDuration for the other duration tunables.
+func TestSetThenResolveTrackRetryInterval(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if err := svc.Set(ctx, settings.KeyTrackRetryInterval, "2m"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got := svc.TrackRetryInterval(ctx); got != 2*time.Minute {
+		t.Errorf("after Set, TrackRetryInterval = %v, want 2m", got)
+	}
+	if err := svc.Set(ctx, settings.KeyTrackRetryInterval, "10s"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Errorf("Set(10s) below the 30s floor: err = %v, want ErrInvalidSetting", err)
 	}
 }
 
@@ -211,8 +234,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 16 {
-		t.Fatalf("List len = %d, want 16", len(list))
+	if len(list) != 17 {
+		t.Fatalf("List len = %d, want 17", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {

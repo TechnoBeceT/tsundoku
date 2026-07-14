@@ -81,6 +81,18 @@ func (f OwnerFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OwnerMutation", m)
 }
 
+// The PendingTrackPushFunc type is an adapter to allow the use of ordinary
+// function as PendingTrackPush mutator.
+type PendingTrackPushFunc func(context.Context, *ent.PendingTrackPushMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f PendingTrackPushFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.PendingTrackPushMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PendingTrackPushMutation", m)
+}
+
 // The ProviderChapterFunc type is an adapter to allow the use of ordinary
 // function as ProviderChapter mutator.
 type ProviderChapterFunc func(context.Context, *ent.ProviderChapterMutation) (ent.Value, error)

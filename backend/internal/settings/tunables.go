@@ -110,6 +110,11 @@ const (
 	KeySourcesMinRequestDelay = "sources.min_request_delay"
 	// KeySuppressSplitParts toggles fractional-part suppression.
 	KeySuppressSplitParts = "jobs.suppress_split_parts"
+	// KeyTrackRetryInterval is the tracker-push retry-queue drain period
+	// (duration, >= 30s — always-on, no disabled sentinel: see
+	// job.Intervals.TrackRetryInterval's doc comment). Read at use-time by
+	// job.Runner.StartTrackerRetry, so a change hot-reloads on the next pass.
+	KeyTrackRetryInterval = "jobs.track_retry_interval"
 )
 
 // Defaults carries the config-resolved default for every tunable key. main
@@ -133,6 +138,7 @@ type Defaults struct {
 	SourcesCooldown         time.Duration
 	SourcesMinRequestDelay  time.Duration
 	SuppressSplitParts      bool
+	TrackRetryInterval      time.Duration
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -168,6 +174,7 @@ var tunableOrder = []string{
 	KeySourcesCooldown,
 	KeySourcesMinRequestDelay,
 	KeySuppressSplitParts,
+	KeyTrackRetryInterval,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -245,6 +252,10 @@ var tunables = map[string]tunable{
 	KeySuppressSplitParts: boolTunable(
 		KeySuppressSplitParts,
 		func(d Defaults) bool { return d.SuppressSplitParts },
+	),
+	KeyTrackRetryInterval: durationTunable(
+		KeyTrackRetryInterval, "duration", 30*time.Second,
+		func(d Defaults) time.Duration { return d.TrackRetryInterval },
 	),
 }
 

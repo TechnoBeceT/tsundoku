@@ -811,6 +811,37 @@ func TestJobsWarmupEnvOverride(t *testing.T) {
 	}
 }
 
+// TestJobsTrackRetryIntervalDefault confirms the tracker-push retry-queue
+// drain interval defaults to 5m when its env var is unset.
+func TestJobsTrackRetryIntervalDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.TrackRetryInterval != 5*time.Minute {
+		t.Errorf("Jobs.TrackRetryInterval default = %v, want 5m", cfg.Jobs.TrackRetryInterval)
+	}
+}
+
+// TestJobsTrackRetryIntervalEnvOverride confirms the env var overrides the
+// tracker-push retry-queue drain interval default.
+func TestJobsTrackRetryIntervalEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_JOBS_TRACKRETRYINTERVAL", "10m")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.TrackRetryInterval != 10*time.Minute {
+		t.Errorf("Jobs.TrackRetryInterval = %v, want 10m", cfg.Jobs.TrackRetryInterval)
+	}
+}
+
 // TestJobsCacheTTLDefaults confirms the interactive-cache TTL fields default to
 // 1h when their env vars are unset.
 func TestJobsCacheTTLDefaults(t *testing.T) {
