@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/technobecet/tsundoku/internal/ent"
 	entsettings "github.com/technobecet/tsundoku/internal/ent/settings"
 )
@@ -13,6 +15,12 @@ import (
 func SetWatermarkForTest(ctx context.Context, client *ent.Client, t time.Time) error {
 	s := &Service{client: client}
 	return s.writeWatermark(ctx, t)
+}
+
+// PersistForTest exposes the atomic arming+watermark commit so a test can prove
+// a partial failure rolls BOTH back (test-only).
+func (s *Service) PersistForTest(ctx context.Context, toArm []uuid.UUID, watermark time.Time) error {
+	return s.persist(ctx, toArm, watermark)
 }
 
 // GetWatermarkForTest reads the raw persisted watermark (test-only). present is

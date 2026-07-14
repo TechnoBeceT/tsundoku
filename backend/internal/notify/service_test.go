@@ -307,6 +307,74 @@ func TestNotify_ToggleOff(t *testing.T) {
 	}
 }
 
+// TestBackfillArm_OneTimeAcrossBoots: BackfillArm arms the existing library once
+// on the first boot, but a SECOND boot must NOT arm a series adopted afterwards
+// that is still mid-backlog — otherwise a routine restart would storm the owner
+// with that fresh adopt's remaining backlog (the adopt-storm decision #6 guards).
+func TestBackfillArm_OneTimeAcrossBoots(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc := notify.NewService(client, &fakeHub{}, &fakePusher{}, fakeToggle{on: true})
+
+	// First boot: an existing (caught-up) library series is armed.
+	existing := makeSeries(ctx, t, client, "existing", false, true, false)
+	if err := svc.BackfillArm(ctx); err != nil {
+		t.Fatalf("first BackfillArm: %v", err)
+	}
+	if !client.Series.GetX(ctx, existing.ID).NotifyArmed {
+		t.Fatalf("first boot must arm the existing library")
+	}
+
+	// A series adopted AFTER the first boot, still draining its backlog (unarmed).
+	fresh := makeSeries(ctx, t, client, "fresh-adopt", false, true, false)
+
+	// Second boot (routine restart): the fresh mid-backlog series must stay unarmed.
+	if err := svc.BackfillArm(ctx); err != nil {
+		t.Fatalf("second BackfillArm: %v", err)
+	}
+	if client.Series.GetX(ctx, fresh.ID).NotifyArmed {
+		t.Fatalf("second boot must NOT re-arm a mid-backlog series")
+	}
+}
+
+// TestNotify_PersistAtomicRollback: the arming writes and the watermark advance
+// are one transaction — if any write fails, BOTH roll back, so a just-armed
+// series' suppressed backlog is never left armed with a stale watermark (which
+// would re-fire next pass).
+func TestNotify_PersistAtomicRollback(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc := notify.NewService(client, &fakeHub{}, &fakePusher{}, fakeToggle{on: true})
+
+	base := time.Now().UTC().Truncate(time.Second)
+	t0 := base.Add(-time.Hour)
+	t1 := base
+	if err := notify.SetWatermarkForTest(ctx, client, t0); err != nil {
+		t.Fatalf("set watermark: %v", err)
+	}
+	real := makeSeries(ctx, t, client, "atomic", false, true, false)
+	bogus := uuid.New() // no such series → its arm write fails inside the tx
+
+	// real is armed FIRST inside the tx, then the bogus id fails → the whole tx
+	// (arming + watermark) rolls back.
+	if err := svc.PersistForTest(ctx, []uuid.UUID{real.ID, bogus}, t1); err == nil {
+		t.Fatalf("expected persist to fail on the bogus series id")
+	}
+
+	if client.Series.GetX(ctx, real.ID).NotifyArmed {
+		t.Fatalf("arming must roll back on a failed persist (atomicity)")
+	}
+	got, present, err := notify.GetWatermarkForTest(ctx, client)
+	if err != nil || !present {
+		t.Fatalf("watermark read: %v present=%v", err, present)
+	}
+	if !got.Equal(t0) {
+		t.Fatalf("watermark must be unchanged after rollback: got %v want %v", got, t0)
+	}
+}
+
 // TestNotify_CompletedAndUnmonitoredExcluded: completed and unmonitored series
 // are outside the notify scope entirely.
 func TestNotify_CompletedAndUnmonitoredExcluded(t *testing.T) {

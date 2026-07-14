@@ -43,6 +43,12 @@ import (
 // settings.Service).
 const watermarkKey = "internal.notify.last_notified_at"
 
+// backfillDoneKey is the one-time marker that records BackfillArm has already
+// run. Once set, later boots NEVER re-run the arm-everything backfill — re-arming
+// on a routine restart would defeat the adopt-storm suppression for a series
+// still draining its backlog at restart time.
+const backfillDoneKey = "internal.notify.backfill_done"
+
 // Pusher dispatches a rendered notification to every Web Push subscription. It
 // is best-effort (returns nothing): a push failure must never affect the notify
 // pass. Defined here (not imported from internal/push) so notify has no
@@ -83,8 +89,12 @@ func NewService(client *ent.Client, hub Broadcaster, pusher Pusher, toggle Toggl
 // failure is logged and swallowed, and it always returns nil so the download
 // cycle is never broken. See the package doc for the trigger + arming discipline.
 func (s *Service) NotifyNewChapters(ctx context.Context) error {
-	// Toggle off: skip entirely WITHOUT touching the watermark, so re-enabling
-	// later does not storm the owner with everything downloaded while it was off.
+	// Toggle off: skip entirely WITHOUT advancing the watermark. Nothing is lost —
+	// when the owner re-enables, every chapter downloaded during the off window is
+	// still > the (unadvanced) watermark, so an armed series' accumulated new
+	// chapters surface then as ONE (digest-collapsed) notification rather than
+	// being silently swallowed. This is deliberate: turning notifications off must
+	// not lose the news, only defer it into a single catch-up on re-enable.
 	if !s.toggle.NotificationsEnabled(ctx) {
 		return nil
 	}
@@ -117,16 +127,22 @@ func (s *Service) NotifyNewChapters(ctx context.Context) error {
 	}
 
 	maxSeen, bySeries := s.partition(chapters, watermark)
-	groups := s.armAndCollect(ctx, bySeries)
+	groups, toArm := s.plan(ctx, bySeries)
+
+	// Persist the just-armed series AND the advanced watermark in ONE transaction
+	// BEFORE dispatching. Atomicity is load-bearing: if these were separate writes
+	// and the watermark write failed (or the process died between them), a
+	// just-armed series' suppressed backlog would be re-selected next pass and
+	// storm the owner. On a persist failure we advance nothing and dispatch
+	// nothing, so the pass retries cleanly next cycle. A dispatch AFTER the commit
+	// can at worst LOSE a notification (best-effort) — it can never double-fire.
+	if err := s.persist(ctx, toArm, maxSeen); err != nil {
+		slog.WarnContext(ctx, "notify: persist arming+watermark failed, skipping dispatch", "err", err)
+		return nil
+	}
 
 	if len(groups) > 0 {
 		s.dispatch(ctx, groups)
-	}
-
-	// ALWAYS advance the watermark past everything seen this cycle — including
-	// suppressed/just-armed series — so a backlog never re-surfaces on a later pass.
-	if err := s.writeWatermark(ctx, maxSeen); err != nil {
-		slog.WarnContext(ctx, "notify: persist watermark failed", "err", err)
 	}
 	return nil
 }
@@ -161,14 +177,18 @@ func (s *Service) partition(chapters []*ent.Chapter, watermark time.Time) (maxSe
 	return maxSeen, bySeries
 }
 
-// armAndCollect applies the caught-up arming guard per series and returns the
-// notification groups for the series that actually fire this cycle:
-//   - armed series → included (they fire).
-//   - unarmed but now caught-up (no wanted/downloading chapters left) → armed
-//     for NEXT time, but SUPPRESSED this cycle (kills the fresh-adopt backlog).
+// plan applies the caught-up arming guard per series and DECIDES (without
+// writing) which series fire this cycle and which are to be armed:
+//   - armed series → included in groups (they fire).
+//   - unarmed but now caught-up (no wanted/downloading chapters left) → returned
+//     in toArm so persist arms them for NEXT time, but SUPPRESSED this cycle
+//     (kills the fresh-adopt backlog).
 //   - unarmed and still not caught-up → neither armed nor fired.
-func (s *Service) armAndCollect(ctx context.Context, bySeries map[uuid.UUID]*seriesGroup) []NewChapterGroup {
-	groups := make([]NewChapterGroup, 0, len(bySeries))
+//
+// The writes are deferred to persist so the arming + watermark advance land in
+// one transaction (never one without the other).
+func (s *Service) plan(ctx context.Context, bySeries map[uuid.UUID]*seriesGroup) (groups []NewChapterGroup, toArm []uuid.UUID) {
+	groups = make([]NewChapterGroup, 0, len(bySeries))
 	for sid, g := range bySeries {
 		if g.series.NotifyArmed {
 			groups = append(groups, NewChapterGroup{
@@ -180,18 +200,47 @@ func (s *Service) armAndCollect(ctx context.Context, bySeries map[uuid.UUID]*ser
 			continue
 		}
 		if s.caughtUp(ctx, sid) {
-			// Arm for next time; suppress this (arming) cycle's backlog tail.
-			if err := s.client.Series.UpdateOneID(sid).SetNotifyArmed(true).Exec(ctx); err != nil {
-				slog.WarnContext(ctx, "notify: arm series failed", "series", sid, "err", err)
-			}
+			toArm = append(toArm, sid)
 		}
 	}
-	return groups
+	return groups, toArm
+}
+
+// persist commits the arming writes AND the advanced watermark in a SINGLE
+// transaction, so the two can never diverge (see NotifyNewChapters for why the
+// atomicity is load-bearing against the adopt-storm). Any failure rolls the whole
+// thing back — neither the arm flags nor the watermark move.
+func (s *Service) persist(ctx context.Context, toArm []uuid.UUID, watermark time.Time) error {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	for _, sid := range toArm {
+		if uErr := tx.Series.UpdateOneID(sid).SetNotifyArmed(true).Exec(ctx); uErr != nil {
+			_ = tx.Rollback()
+			return uErr
+		}
+	}
+	if wErr := upsertSettingTx(ctx, tx, watermarkKey, watermark.UTC().Format(time.RFC3339Nano)); wErr != nil {
+		_ = tx.Rollback()
+		return wErr
+	}
+	return tx.Commit()
 }
 
 // caughtUp reports whether a series has NO chapters still in flight (wanted or
 // downloading) — i.e. its backlog has drained. A read error fails closed
 // (treated as not caught-up) so a transient DB hiccup never arms a series early.
+//
+// KNOWN LIMITATION (documented, deferred — owner's-call item from review): a
+// chapter stuck permanently `wanted` because NO provider feed carries its
+// chapter_key (a sourceless gap) keeps a post-launch series from ever becoming
+// caught up, so it never arms and never notifies. Fixing it means ignoring
+// wanted chapters with no live candidate, which requires the per-chapter
+// ProviderChapter/candidate machinery (internal/chapter) and its own edge cases;
+// deferred here to keep the notifier's dependency surface minimal. The common
+// case — every wanted chapter has a source and eventually downloads — arms
+// correctly. Revisit if sourceless-gap series prove common in practice.
 func (s *Service) caughtUp(ctx context.Context, sid uuid.UUID) bool {
 	n, err := s.client.Chapter.Query().
 		Where(
@@ -225,23 +274,55 @@ func (s *Service) dispatch(ctx context.Context, groups []NewChapterGroup) {
 	s.pusher.Push(ctx, payload)
 }
 
-// BackfillArm arms every existing series once (idempotent) and seeds the
-// watermark to now if it is unset. Run once at boot so a caught-up library does
-// not re-announce its entire back-catalogue the first time the notifier runs,
-// yet still fires for the next genuinely-new chapter.
+// BackfillArm arms every existing series ONCE, EVER, and seeds the watermark to
+// now if it is unset. It is guarded by a persisted one-time marker
+// (backfillDoneKey): after the first successful run, every later boot is a no-op.
+//
+// The one-time guard is load-bearing (not just an optimisation): running it on
+// every boot would arm a series that was freshly adopted since the last boot and
+// is STILL draining its backlog, so its remaining backlog would storm the owner —
+// the exact adopt-storm the caught-up arming guard exists to suppress. Existing
+// series present at first-ever boot are a caught-up library, so arming them once
+// is correct (they never re-announce their back-catalogue); series adopted later
+// must go through the normal caught-up-then-arm path, never the backfill.
 func (s *Service) BackfillArm(ctx context.Context) error {
-	if _, err := s.client.Series.Update().
+	done, err := s.backfillDone(ctx)
+	if err != nil {
+		return err
+	}
+	if done {
+		return nil // already run on a prior boot; never re-arm
+	}
+
+	if _, uErr := s.client.Series.Update().
 		Where(entseries.NotifyArmedEQ(false)).
 		SetNotifyArmed(true).
-		Save(ctx); err != nil {
-		return err
+		Save(ctx); uErr != nil {
+		return uErr
 	}
-	if _, err := s.client.Settings.Query().Where(entsettings.KeyEQ(watermarkKey)).Only(ctx); ent.IsNotFound(err) {
-		return s.writeWatermark(ctx, time.Now())
-	} else if err != nil {
-		return err
+	// Seed the watermark to now if unset (fresh deploy) so an existing library's
+	// thousands of already-readable chapters never all fire at once.
+	if _, qErr := s.client.Settings.Query().Where(entsettings.KeyEQ(watermarkKey)).Only(ctx); ent.IsNotFound(qErr) {
+		if wErr := s.writeWatermark(ctx, time.Now()); wErr != nil {
+			return wErr
+		}
+	} else if qErr != nil {
+		return qErr
 	}
-	return nil
+	// Record that the backfill has run so later boots skip it.
+	return s.upsertSetting(ctx, backfillDoneKey, "true")
+}
+
+// backfillDone reports whether BackfillArm has already run on a prior boot.
+func (s *Service) backfillDone(ctx context.Context) (bool, error) {
+	row, err := s.client.Settings.Query().Where(entsettings.KeyEQ(backfillDoneKey)).Only(ctx)
+	if ent.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return row.Value == "true", nil
 }
 
 // readWatermark reads the persisted last-notified timestamp. When the row is
@@ -274,13 +355,32 @@ func (s *Service) readWatermark(ctx context.Context) (time.Time, error) {
 // writeWatermark upserts the last-notified timestamp (RFC3339Nano) via direct
 // ent — NEVER through settings.Service, which only knows the public allowlist.
 func (s *Service) writeWatermark(ctx context.Context, t time.Time) error {
-	value := t.UTC().Format(time.RFC3339Nano)
-	existing, err := s.client.Settings.Query().Where(entsettings.KeyEQ(watermarkKey)).Only(ctx)
+	return s.upsertSetting(ctx, watermarkKey, t.UTC().Format(time.RFC3339Nano))
+}
+
+// upsertSetting writes an internal.* Settings key=value via direct ent (create
+// the first time, update thereafter). The key column is unique, so the
+// find-then-write pattern is used.
+func (s *Service) upsertSetting(ctx context.Context, key, value string) error {
+	existing, err := s.client.Settings.Query().Where(entsettings.KeyEQ(key)).Only(ctx)
 	if ent.IsNotFound(err) {
-		return s.client.Settings.Create().SetKey(watermarkKey).SetValue(value).Exec(ctx)
+		return s.client.Settings.Create().SetKey(key).SetValue(value).Exec(ctx)
 	}
 	if err != nil {
 		return err
 	}
 	return s.client.Settings.UpdateOneID(existing.ID).SetValue(value).Exec(ctx)
+}
+
+// upsertSettingTx is upsertSetting inside an open transaction (used by persist so
+// the watermark advance shares one commit with the arming writes).
+func upsertSettingTx(ctx context.Context, tx *ent.Tx, key, value string) error {
+	existing, err := tx.Settings.Query().Where(entsettings.KeyEQ(key)).Only(ctx)
+	if ent.IsNotFound(err) {
+		return tx.Settings.Create().SetKey(key).SetValue(value).Exec(ctx)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Settings.UpdateOneID(existing.ID).SetValue(value).Exec(ctx)
 }
