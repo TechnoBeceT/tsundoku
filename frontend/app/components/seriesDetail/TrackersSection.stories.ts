@@ -17,6 +17,11 @@ import type { TrackerStatus } from '../screens/settings.types'
  *
  * Every required prop is driven via args/fixtures. Flip the theme toolbar to
  * confirm both dark and light.
+ *
+ * Every bound row and every "Add tracking" row renders its `TrackerIcon`
+ * brand logo for free — `Default`/`Bound` already show AniList + MAL bound
+ * and Kitsu + MangaUpdates offered to add, so all four brand logos are
+ * visible without a dedicated icon-only story.
  */
 
 // Two bound (AniList, MAL) + two connected-and-UNBOUND: Kitsu (supportsPrivate)

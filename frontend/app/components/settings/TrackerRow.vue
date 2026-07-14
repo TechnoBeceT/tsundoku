@@ -4,11 +4,14 @@ import AppButton from '../ui/AppButton.vue'
 import LockedRow from '../ui/LockedRow.vue'
 import Tag from '../ui/Tag.vue'
 import TextField from '../ui/TextField.vue'
+import TrackerIcon from '../ui/TrackerIcon.vue'
 import type { TrackerStatus } from '../screens/settings.types'
 
 /**
  * TrackerRow — one tracker's connect card on the Settings → Trackers pane.
- * Three mutually-exclusive shapes, picked by `tracker`'s own state:
+ * The head row always shows the tracker's brand logo (`TrackerIcon`, QCAT-237
+ * reuse — the same atom `TrackerBindingRow`/`TrackersSection` use) beside its
+ * name. Three mutually-exclusive shapes, picked by `tracker`'s own state:
  *   - Connected (`isLoggedIn`): username + a status Tag (Connected / Token
  *     expired) + a "Disconnect" button.
  *   - Disconnected + `needsOAuth` (AniList/MAL): a "Connect" button that the
@@ -71,6 +74,7 @@ function submitLogin(): void {
 <template>
   <div class="tracker-row" :class="{ 'tracker-row--busy': busy }">
     <div class="tracker-row__head">
+      <TrackerIcon :tracker-id="tracker.id" />
       <span class="tracker-row__name">{{ tracker.name }}</span>
       <Tag v-if="tracker.isLoggedIn && tracker.isTokenExpired" tone="warn">Token expired</Tag>
       <Tag v-else-if="tracker.isLoggedIn" tone="success">Connected</Tag>

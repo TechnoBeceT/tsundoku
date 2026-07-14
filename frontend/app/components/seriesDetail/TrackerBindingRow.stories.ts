@@ -12,6 +12,11 @@ import type { TrackBinding } from '../screens/seriesDetail.types'
  * `ScoreFormat*` stories wrap the component in a tiny local-`ref` render —
  * click the pencil icon to open the form live, mirroring how the section
  * itself will drive it.
+ *
+ * Every story renders the row's `TrackerIcon` brand logo beside the tracker
+ * name for free (no extra states needed) — `Default` uses the AniList
+ * fixture, `CompletedPrivate` the MAL fixture, `ScoreFormatKitsu` the Kitsu
+ * fixture, so all three brand logos are already visible across this file.
  */
 const meta = {
   title: 'SeriesDetail/TrackerBindingRow',

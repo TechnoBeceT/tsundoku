@@ -8,6 +8,7 @@ import IconButton from '../ui/IconButton.vue'
 import SearchInput from '../ui/SearchInput.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
+import TrackerIcon from '../ui/TrackerIcon.vue'
 import TrackerBindingRow from './TrackerBindingRow.vue'
 import TrackerSearchResultCard from './TrackerSearchResultCard.vue'
 import type { TrackBinding, TrackSearchResult, UpdateTrackPatch } from '../screens/seriesDetail.types'
@@ -22,10 +23,12 @@ import type { TrackerStatus } from '../screens/settings.types'
  *
  * QCAT-237 reuse: composes `SurfaceCard` (shell) + `TrackerBindingRow` (one
  * per bound tracker, itself built from `AppButton`/`IconButton`/
- * `ScoreSelector`/`TextField`/`Toggle` — extracted from the retired
- * `TrackingDialog`, not rewritten) + `TrackerSearchResultCard` (one per
- * search hit, built from `CoverImage`/`AppButton`) + `SearchInput`/
- * `IconButton`/`EmptyState`/`ErrorBanner`/`FormError`/`Skeleton` for the rest.
+ * `ScoreSelector`/`TextField`/`Toggle`/`TrackerIcon` — extracted from the
+ * retired `TrackingDialog`, not rewritten) + `TrackerSearchResultCard` (one
+ * per search hit, built from `CoverImage`/`AppButton`) + `SearchInput`/
+ * `IconButton`/`EmptyState`/`ErrorBanner`/`FormError`/`Skeleton`/`TrackerIcon`
+ * (each "Add tracking" row's brand logo, same atom as `TrackerBindingRow`
+ * and the Settings `TrackerRow`) for the rest.
  *
  * Two sections:
  *   - Bound trackers: each binding's remote title/status/progress/score via
@@ -268,7 +271,10 @@ function onBind(remoteId: string): void {
             :aria-expanded="expandedTrackerId === t.id"
             @click="toggleAddTracker(t.id)"
           >
-            <span class="add-row__name">{{ t.name }}</span>
+            <span class="add-row__name">
+              <TrackerIcon :tracker-id="t.id" :size="16" />
+              {{ t.name }}
+            </span>
             <Icon :name="expandedTrackerId === t.id ? 'lucide:chevron-up' : 'lucide:chevron-down'" width="16" height="16" />
           </button>
 
@@ -373,6 +379,9 @@ function onBind(remoteId: string): void {
 }
 
 .add-row__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: var(--weight-semibold);
   font-size: 13.5px;
 }

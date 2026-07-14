@@ -6,6 +6,7 @@ import IconButton from '../ui/IconButton.vue'
 import ScoreSelector from '../ui/ScoreSelector.vue'
 import TextField from '../ui/TextField.vue'
 import Toggle from '../ui/Toggle.vue'
+import TrackerIcon from '../ui/TrackerIcon.vue'
 import type { TrackBinding, UpdateTrackPatch } from '../screens/seriesDetail.types'
 import { scoreSelectorFormat, scoreToDisplay, scoreToNative } from '../../utils/scoreFormat'
 
@@ -13,10 +14,11 @@ import { scoreSelectorFormat, scoreToDisplay, scoreToNative } from '../../utils/
  * TrackerBindingRow — one bound tracker's row + its inline manual-edit form,
  * extracted from the retired `TrackingDialog` (QCAT-234) so the Series-Detail
  * Trackers section can compose it directly (QCAT-237 — reuse, don't rewrite).
- * Shows the binding's remote title + `status · progress · Score · Private`
- * summary, an Edit/Refresh/Unbind action row, and — when `editing` — the
- * status/last-chapter-read/score/dates/private form (`ScoreSelector`/
- * `Toggle`/`TextField`, exactly as the dialog rendered them).
+ * Shows the tracker's brand logo (`TrackerIcon`) + the binding's remote title
+ * + `status · progress · Score · Private` summary, an Edit/Refresh/Unbind
+ * action row, and — when `editing` — the status/last-chapter-read/score/
+ * dates/private form (`ScoreSelector`/`Toggle`/`TextField`, exactly as the
+ * dialog rendered them).
  *
  * Presentation-only + parent-owned open/close: `editing` is driven by the
  * PARENT (TrackersSection), which enforces "at most one row open at a time"
@@ -143,7 +145,10 @@ function submitEdit(): void {
   <div class="track-bound__group">
     <div class="track-bound__row">
       <div class="track-bound__body">
-        <p class="track-bound__tracker">{{ binding.trackerName }}</p>
+        <p class="track-bound__tracker">
+          <TrackerIcon :tracker-id="binding.trackerId" :size="14" />
+          {{ binding.trackerName }}
+        </p>
         <p class="track-bound__title">{{ binding.title }}</p>
         <p class="track-bound__meta">
           {{ binding.status }} · {{ progressLabel }}
@@ -237,6 +242,9 @@ function submitEdit(): void {
 }
 
 .track-bound__tracker {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   margin: 0;
   font-size: var(--text-xs);
   font-weight: var(--weight-extrabold);
