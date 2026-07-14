@@ -6,5 +6,8 @@
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>
+    <!-- App-global in-app new-chapter toast — active under every layout (incl.
+         the reader's bare layout), unlike a layout-scoped handler. -->
+    <ChapterNotifier />
   </div>
 </template>
