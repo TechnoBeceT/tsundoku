@@ -171,8 +171,14 @@ func registerRoutes(
 	// WithCoverFetcher lets the series cover endpoint fall back to Suwayomi when a
 	// series' cover is not yet cached in its library folder (it caches it there on
 	// that first fetch, and never pings the source for it again).
+	// WithProgressPusher wires the reading-triggered tracker push: marking a
+	// chapter read in the reader (series.SetProgress) fires a detached,
+	// best-effort syncsvc push, gated by the auto_update_track setting. This is
+	// the "live on read" half of the trigger model (QCAT-234); the detail-open
+	// reconcile below is the other. trackerSyncSvc satisfies both hooks.
 	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays).
-		WithCoverFetcher(suwayomiClient)
+		WithCoverFetcher(suwayomiClient).
+		WithProgressPusher(trackerSyncSvc)
 	// WithViewSyncer wires the detail-open tracker reconcile: opening a series'
 	// detail page fires a detached, best-effort syncsvc.Service.SyncOnView IN
 	// ADDITION to the existing reading-triggered push (series.ProgressPusher —
