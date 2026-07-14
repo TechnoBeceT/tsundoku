@@ -784,7 +784,7 @@ func TestFlareSolverrURLValidation(t *testing.T) {
 		wantErr bool
 	}{
 		{"blank clears", "", false},
-		{"valid http", "http://10.0.1.17:8191", false},
+		{"valid http", "http://flaresolverr:8191", false},
 		{"valid https", "https://flaresolverr.example.com", false},
 		{"relative path rejected", "/flaresolverr", true},
 		{"non-http scheme rejected", "ftp://flaresolverr:8191", true},

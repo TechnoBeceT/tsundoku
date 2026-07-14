@@ -85,7 +85,7 @@ type solveResponse struct {
 	Solution solveSolution `json:"solution"`
 }
 
-// Solve asks FlareSolverr (at endpoint, e.g. "http://10.0.1.17:8191" — the
+// Solve asks FlareSolverr (at endpoint, e.g. "http://flaresolverr:8191" — the
 // trailing "/v1" is appended automatically if absent) to fetch targetURL
 // through its managed browser and clear any Cloudflare challenge in the way.
 // sessionName, when non-empty, reuses a named FlareSolverr browser session

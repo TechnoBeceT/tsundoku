@@ -84,7 +84,7 @@ describe('useFlareSolverrSettings', () => {
 
     await save({
       enabled: false,
-      url: 'http://10.0.1.17:8191',
+      url: 'http://flaresolverr:8191',
       timeout: { value: 45, unit: 's' },
       session: 'other',
       sessionTtl: { value: 1, unit: 'h' },
@@ -94,7 +94,7 @@ describe('useFlareSolverrSettings', () => {
     expect(patchPath).toBe('/api/flaresolverr/settings')
     expect(patchBody).toEqual({
       enabled: false,
-      url: 'http://10.0.1.17:8191',
+      url: 'http://flaresolverr:8191',
       timeout: 45,
       sessionName: 'other',
       sessionTtl: 60,

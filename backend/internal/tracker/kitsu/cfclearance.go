@@ -36,7 +36,7 @@ type FlareSolverrConfig struct {
 	// Enabled gates the whole transport: false ⇒ passthrough (no FlareSolverr
 	// use, no challenge detection overhead beyond the initial request).
 	Enabled bool
-	// URL is the FlareSolverr endpoint (e.g. http://10.0.1.17:8191). A blank
+	// URL is the FlareSolverr endpoint (e.g. http://flaresolverr:8191). A blank
 	// URL disables the transport regardless of Enabled — there is nothing to
 	// solve against.
 	URL string

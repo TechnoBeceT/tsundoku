@@ -125,7 +125,7 @@ func TestGet_Unauthorized(t *testing.T) {
 // carrying the full post-save state.
 func TestUpdate_OK(t *testing.T) {
 	env := newTestEnv(t)
-	body := `{"enabled":true,"url":"http://10.0.1.17:8191","timeout":90,"sessionName":"tsundoku","sessionTtl":30,"asResponseFallback":true}`
+	body := `{"enabled":true,"url":"http://flaresolverr:8191","timeout":90,"sessionName":"tsundoku","sessionTtl":30,"asResponseFallback":true}`
 	rec := env.do(http.MethodPatch, "/api/flaresolverr/settings", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Update: want 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -154,7 +154,7 @@ func TestUpdate_OK(t *testing.T) {
 // cyclomatic complexity low).
 func assertFullySubmittedValues(t *testing.T, got handler.SettingsDTO) {
 	t.Helper()
-	if !got.Enabled || got.URL != "http://10.0.1.17:8191" || got.Timeout != 90 ||
+	if !got.Enabled || got.URL != "http://flaresolverr:8191" || got.Timeout != 90 ||
 		got.SessionName != "tsundoku" || got.SessionTTL != 30 || !got.AsResponseFallback {
 		t.Fatalf("Update response = %+v, want the full submitted values", got)
 	}
@@ -171,7 +171,7 @@ func assertMirrorPatch(t *testing.T, fake *fakeSuwayomiClient) {
 	if p.FlareSolverrEnabled == nil || !*p.FlareSolverrEnabled {
 		t.Error("mirror patch FlareSolverrEnabled missing/false")
 	}
-	if p.FlareSolverrURL == nil || *p.FlareSolverrURL != "http://10.0.1.17:8191" {
+	if p.FlareSolverrURL == nil || *p.FlareSolverrURL != "http://flaresolverr:8191" {
 		t.Error("mirror patch FlareSolverrURL missing/mismatched")
 	}
 	if p.FlareSolverrSessionName == nil || *p.FlareSolverrSessionName != "tsundoku" {
