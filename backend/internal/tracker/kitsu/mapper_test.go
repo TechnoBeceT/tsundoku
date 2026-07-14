@@ -119,15 +119,22 @@ func TestToTrackEntry_MapsFieldsAndDates(t *testing.T) {
 	}
 	included := []includedManga{{ID: "7224", Type: "manga", Attributes: includedMangaAttrs{CanonicalTitle: "Berserk"}}}
 	got := toTrackEntry(d, included)
-	if got.RemoteID != "7224" || got.LibraryID != "999" || got.Title != "Berserk" || got.Status != "current" ||
-		got.Progress != 42 || got.Score != 16 || !got.Private {
-		t.Fatalf("toTrackEntry mismatch: %+v", got)
-	}
+	assertScalarFields(t, got)
 	if got.StartDate == nil || !got.StartDate.Equal(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("toTrackEntry.StartDate = %v, want 2024-03-15", got.StartDate)
 	}
 	if got.FinishDate != nil {
 		t.Fatalf("toTrackEntry.FinishDate = %v, want nil (empty finishedAt)", got.FinishDate)
+	}
+}
+
+// assertScalarFields checks the non-date fields of the mapped entry — extracted
+// so the driving test stays under the fleet's per-function complexity budget.
+func assertScalarFields(t *testing.T, got tracker.TrackEntry) {
+	t.Helper()
+	if got.RemoteID != "7224" || got.LibraryID != "999" || got.Title != "Berserk" || got.Status != "current" ||
+		got.Progress != 42 || got.Score != 16 || !got.Private {
+		t.Fatalf("toTrackEntry mismatch: %+v", got)
 	}
 }
 
