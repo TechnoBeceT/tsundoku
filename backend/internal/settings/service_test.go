@@ -234,8 +234,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 17 {
-		t.Fatalf("List len = %d, want 17", len(list))
+	if len(list) != 18 {
+		t.Fatalf("List len = %d, want 18", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
