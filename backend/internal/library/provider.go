@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -13,17 +14,31 @@ import (
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
-// AddProvider attaches a Suwayomi source to an EXISTING series, upgrade-aware.
+// parseSourceID parses the wire-form (stringified) engine-host source id back
+// to the numeric id ingest.Ingest expects. Shared by AddProvider and
+// attachRealSource (match_disk_provider.go) — the ONE place a malformed
+// source string is translated to a caller-facing error, wrapped by the
+// caller with ErrSourceNotFound (a source id that doesn't even parse can
+// never resolve to a real source, so it is treated the same as "not found").
+func parseSourceID(source string) (int64, error) {
+	id, err := strconv.ParseInt(source, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid source id %q: %w", source, err)
+	}
+	return id, nil
+}
+
+// AddProvider attaches an engine-host source to an EXISTING series, upgrade-aware.
 //
 // Algorithm:
 //  1. Load the series by id — ErrSeriesNotFound if it does not exist.
 //  2. Reject if a SeriesProvider with provider==source AND the same scanlator
 //     is already attached — ErrProviderAlreadyPresent (the same source MAY be
-//     attached again under a DIFFERENT scanlator; see suwayomi.Ingest.AddSeries).
-//  3. Call s.ingest.AddSeries(ctx, source, mangaID, ser.Title, scanlator):
+//     attached again under a DIFFERENT scanlator; see ingest.Ingest.AddSeries).
+//  3. Call s.ingest.AddSeries(ctx, source, url, ser.Title, scanlator):
 //     AddSeries find-or-creates a Series by slug(title), so passing the
 //     EXISTING series' canonical title attaches the new source to THIS series
-//     and ingests its chapter feed (new chapters land as wanted). A Suwayomi
+//     and ingests its chapter feed (new chapters land as wanted). An engine-host
 //     fetch failure is wrapped as ErrSourceNotFound.
 //  4. Set importance on the just-created SeriesProvider(seriesID, source,
 //     scanlator) — matched by the full triple (same fix as
@@ -45,7 +60,11 @@ import (
 //     download.DetectUpgrades on the next cycle and re-downloaded from it.
 //  7. Call s.trigger() (if non-nil) to converge immediately, then return the
 //     refreshed series.SeriesDetailDTO (§16 round-trip).
-func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source string, mangaID, importance int, scanlator string) (series.SeriesDetailDTO, error) {
+//
+// source is the engine-host source ID, stringified (parsed to int64 before
+// the ingest call); url is the source-relative manga URL (P2 Suwayomi-removal,
+// slice 3b — this replaces the retired mangaID int parameter).
+func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source string, url string, importance int, scanlator string) (series.SeriesDetailDTO, error) {
 	// WithCategory so a merge-at-attach fold (mergeDiskIntoLive → relabelOverlap)
 	// can resolve the on-disk series folder <storage>/<Category>/<Title>/.
 	ser, err := s.db.Series.Query().
@@ -69,7 +88,11 @@ func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source st
 		return series.SeriesDetailDTO{}, ErrProviderAlreadyPresent
 	}
 
-	if _, err := s.ingest.AddSeries(ctx, source, mangaID, ser.Title, scanlator); err != nil {
+	sourceID, err := parseSourceID(source)
+	if err != nil {
+		return series.SeriesDetailDTO{}, errors.Join(ErrSourceNotFound, err)
+	}
+	if _, err := s.ingest.AddSeries(ctx, sourceID, url, ser.Title, scanlator); err != nil {
 		return series.SeriesDetailDTO{}, errors.Join(ErrSourceNotFound, err)
 	}
 

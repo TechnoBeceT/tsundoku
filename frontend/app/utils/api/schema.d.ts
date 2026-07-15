@@ -836,9 +836,13 @@ export interface paths {
         /**
          * Preview a manga's chapter list
          * @description Triggers a live chapter-list fetch from the source and returns a lightweight
-         *     preview as []ChapterInspect. This contacts the upstream provider and
-         *     populates Suwayomi's internal chapter cache — use before adopting to
-         *     confirm the chapter count.
+         *     preview as []ChapterInspect. This contacts the upstream provider — use
+         *     before adopting to confirm the chapter count.
+         *
+         *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
+         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     path is kept for route-shape compatibility but is IGNORED. A request
+         *     with no `url` gets 400.
          */
         get: operations["inspectChapters"];
         put?: never;
@@ -858,13 +862,18 @@ export interface paths {
         };
         /**
          * On-demand rich manga details
-         * @description FORCES Suwayomi to fetch full metadata (author/artist/genre/description)
-         *     for this manga from its upstream source, then returns the enriched
-         *     candidate in the same shape as Search/Browse. Suwayomi's Search/Browse
-         *     results are lightweight (title/cover/url only) — call this once per
-         *     manga a Discover card is hovered to fill in the rich fields; never for
-         *     every row of a search/browse page (each call is a real request to the
-         *     source).
+         * @description FORCES the engine host to fetch full metadata (author/artist/genre/
+         *     description) for this manga from its upstream source, then returns
+         *     the enriched candidate in the same shape as Search/Browse. Search/
+         *     Browse results are lightweight (title/cover/url only) — call this
+         *     once per manga a Discover card is hovered to fill in the rich fields;
+         *     never for every row of a search/browse page (each call is a real
+         *     request to the source).
+         *
+         *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
+         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     path is kept for route-shape compatibility but is IGNORED. A request
+         *     with no `url` gets 400.
          */
         get: operations["getMangaDetails"];
         put?: never;
@@ -887,6 +896,11 @@ export interface paths {
          * @description Fetches the live chapter feed for this source-manga and groups it by scanlator,
          *     returning per-group counts and display ranges — powers the adopt UI's auto-split
          *     of a source into per-scanlator rows, each adoptable with its own importance.
+         *
+         *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
+         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     path is kept for route-shape compatibility but is IGNORED. A request
+         *     with no `url` gets 400.
          */
         get: operations["getSourceBreakdown"];
         put?: never;
@@ -2501,9 +2515,8 @@ export interface components {
             /** @description Provider-canonical URL for this manga (powers the "View on source" link); empty string when not provided. */
             url: string;
             /**
-             * @description Tsundoku's own cover-proxy path ("/api/sources/{source}/manga/{mangaId}/cover"),
-             *     never Suwayomi's raw thumbnail URL. Empty string when the source provided no
-             *     thumbnail at all.
+             * @description The engine host's own resolved cover image URL, used verbatim (directly
+             *     fetchable). Empty string when the source provided no thumbnail at all.
              */
             thumbnailUrl: string;
             /** @description Manga's writing credit; empty string when not provided. */
@@ -2539,10 +2552,12 @@ export interface components {
             scanlator: string;
         };
         AdoptProvider: {
-            /** @description Suwayomi source ID (e.g. "mangadex"). */
+            /** @description Engine-host source ID, stringified (e.g. "2"). */
             source: string;
-            /** @description Suwayomi-internal manga identifier within the source. */
+            /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
+            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            url?: string;
             /** @description Provider rank for this series (higher = preferred). */
             importance: number;
             /**
@@ -3209,16 +3224,18 @@ export interface components {
             alreadyInDb: boolean;
         };
         /**
-         * @description Identifies one Suwayomi source+manga+scanlator to attach to a series.
+         * @description Identifies one engine-host source+manga+scanlator to attach to a series.
          *     Carries no importance — the batch attach (library.AddProviders)
          *     assigns importances itself, each strictly below the series' existing
          *     providers (decision E), in list order.
          */
         ProviderRef: {
-            /** @description Suwayomi source ID the chosen candidate came from. */
+            /** @description Engine-host source ID, stringified, the chosen candidate came from. */
             source: string;
-            /** @description Suwayomi-internal manga identifier within that source. */
+            /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
+            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            url?: string;
             /**
              * @description Selects which scanlation group's chapters this provider tracks; omit or send ""
              *     for "all chapters from this source". The same source may be attached again
@@ -3278,12 +3295,14 @@ export interface components {
             /** @description The sources to attach, best-first. */
             providers: components["schemas"]["ProviderRef"][];
         };
-        /** @description Attaches an additional Suwayomi source to an existing series. */
+        /** @description Attaches an additional engine-host source to an existing series; also reused by the Match-disk-provider endpoint (attaches a real source to an unlinked disk-origin provider group). */
         AddProviderRequest: {
-            /** @description Suwayomi source ID the chosen candidate came from. */
+            /** @description Engine-host source ID, stringified, the chosen candidate came from. */
             source: string;
-            /** @description Suwayomi-internal manga identifier within that source. */
+            /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
+            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            url?: string;
             /** @description Provider importance to assign (higher number = higher priority). */
             importance: number;
             /**
@@ -5366,12 +5385,15 @@ export interface operations {
     };
     inspectChapters: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                url?: string;
+            };
             header?: never;
             path: {
-                /** @description Suwayomi source ID. */
+                /** @description Engine-host source ID, stringified. */
                 sourceId: string;
-                /** @description Suwayomi-internal manga identifier (integer). */
+                /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use the url query param instead. */
                 mangaId: number;
             };
             cookie?: never;
@@ -5387,7 +5409,7 @@ export interface operations {
                     "application/json": components["schemas"]["ChapterInspect"][];
                 };
             };
-            /** @description Non-integer mangaId. */
+            /** @description Missing url. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5409,12 +5431,15 @@ export interface operations {
     };
     getMangaDetails: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                url?: string;
+            };
             header?: never;
             path: {
-                /** @description Suwayomi source ID. */
+                /** @description Engine-host source ID, stringified. */
                 sourceId: string;
-                /** @description Suwayomi-internal manga identifier (integer). */
+                /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use the url query param instead. */
                 mangaId: number;
             };
             cookie?: never;
@@ -5430,7 +5455,7 @@ export interface operations {
                     "application/json": components["schemas"]["SearchCandidate"];
                 };
             };
-            /** @description Non-integer mangaId. */
+            /** @description Missing url. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5457,7 +5482,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Suwayomi failed to fetch the manga details. */
+            /** @description The engine host failed to fetch the manga details. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -5470,12 +5495,15 @@ export interface operations {
     };
     getSourceBreakdown: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                url?: string;
+            };
             header?: never;
             path: {
-                /** @description Suwayomi source ID. */
+                /** @description Engine-host source ID, stringified. */
                 sourceId: string;
-                /** @description Suwayomi-internal manga identifier (integer). */
+                /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use the url query param instead. */
                 mangaId: number;
             };
             cookie?: never;
@@ -5491,7 +5519,7 @@ export interface operations {
                     "application/json": components["schemas"]["SourceBreakdown"];
                 };
             };
-            /** @description Non-integer mangaId. */
+            /** @description Missing url. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5518,7 +5546,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Suwayomi failed to fetch the chapter feed. */
+            /** @description The engine host failed to fetch the chapter feed. */
             502: {
                 headers: {
                     [name: string]: unknown;

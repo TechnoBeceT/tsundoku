@@ -1,6 +1,6 @@
 // Package imports_test — unit tests for Service (Sources, Search, InspectChapters, Adopt).
 //
-// Task 3 tests use an in-process fakeClient; no Suwayomi process, no network, no DB.
+// Task 3 tests use an in-process fakeClient; no engine-host process, no network, no DB.
 // Task 4 Adopt tests additionally require testdb (ephemeral Postgres via Docker).
 package imports_test
 
@@ -18,57 +18,67 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/imports"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/metrics"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // --- fake client -------------------------------------------------------------
 
-// fakeClient implements suwayomi.Client with canned per-source responses.
+// fakeClient implements sourceengine.Client with canned per-source responses.
 // Methods unused by Service return nil, nil.
 //
-// For Adopt tests (Task 4) the client dispatches FetchChapters by mangaID:
-//   - chaptersPerManga maps mangaID → chapters to return.
-//   - chapterErrs maps mangaID → error to return (takes priority).
+// For Adopt tests (Task 4) the client dispatches Chapters by manga URL:
+//   - chaptersByURL maps url → chapters to return.
+//   - chapterErrsByURL maps url → error to return (takes priority).
 //
 // The original flat chapters/chaptersErr fields remain for Task 3 compatibility;
-// if chaptersPerManga is non-nil it takes priority over the flat fields.
+// if chaptersByURL is non-nil it takes priority over the flat fields.
 type fakeClient struct {
 	// sources is the slice returned by Sources.
-	sources []suwayomi.Source
+	sources []sourceengine.Source
 	// sourcesErr is the error returned by Sources (nil = success).
 	sourcesErr error
 	// searchResults maps sourceID → results returned by Search.
-	searchResults map[string][]suwayomi.Manga
+	searchResults map[int64]sourceengine.SearchResult
 	// searchErrs maps sourceID → error returned by Search (nil = success).
-	searchErrs map[string]error
-	// chapters is the slice returned by FetchChapters (Task 3 flat path).
-	chapters []suwayomi.Chapter
-	// chaptersErr is the error returned by FetchChapters (Task 3 flat path).
-	chaptersErr error
-	// chaptersPerManga maps mangaID → chapters (Task 4 per-manga path).
-	// Non-nil activates the per-manga dispatch.
-	chaptersPerManga map[int][]suwayomi.Chapter
-	// chapterErrs maps mangaID → error (Task 4 per-manga error injection).
-	chapterErrs map[int]error
-	// browseResults maps BrowseType → result returned by Browse.
-	browseResults map[suwayomi.BrowseType]suwayomi.BrowseResult
-	// browseErr is the error returned by Browse (nil = success).
+	searchErrs map[int64]error
+	// popularResults maps sourceID → result returned by Popular.
+	popularResults map[int64]sourceengine.SearchResult
+	// latestResults maps sourceID → result returned by Latest.
+	latestResults map[int64]sourceengine.SearchResult
+	// browseErr is the error returned by Popular/Latest (nil = success).
 	browseErr error
-	// detailsPerManga maps mangaID → the Manga returned by FetchMangaDetails.
-	detailsPerManga map[int]suwayomi.Manga
-	// detailsErr is the error returned by FetchMangaDetails (nil = success).
+	// chapters is the slice returned by Chapters (Task 3 flat path).
+	chapters []sourceengine.Chapter
+	// chaptersErr is the error returned by Chapters (Task 3 flat path).
+	chaptersErr error
+	// chaptersByURL maps manga url → chapters (Task 4 per-manga path).
+	// Non-nil activates the per-manga dispatch.
+	chaptersByURL map[string][]sourceengine.Chapter
+	// chapterErrsByURL maps manga url → error (Task 4 per-manga error injection).
+	chapterErrsByURL map[string]error
+	// detailsByURL maps manga url → the MangaDetails returned by MangaDetails.
+	detailsByURL map[string]sourceengine.MangaDetails
+	// detailsErr is the error returned by MangaDetails (nil = success).
 	detailsErr error
 }
 
-func (f *fakeClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
+// Compile-time assertion: fakeClient must satisfy sourceengine.Client.
+var _ sourceengine.Client = (*fakeClient)(nil)
+
+func (f *fakeClient) Health(_ context.Context) (sourceengine.Health, error) {
+	return sourceengine.Health{}, nil
+}
+
+func (f *fakeClient) Sources(_ context.Context) ([]sourceengine.Source, error) {
 	return f.sources, f.sourcesErr
 }
 
-func (f *fakeClient) Search(_ context.Context, sourceID, _ string) ([]suwayomi.Manga, error) {
+func (f *fakeClient) Search(_ context.Context, sourceID int64, _ string, _ int) (sourceengine.SearchResult, error) {
 	if f.searchErrs != nil {
 		if err, ok := f.searchErrs[sourceID]; ok {
-			return nil, err
+			return sourceengine.SearchResult{}, err
 		}
 	}
 	if f.searchResults != nil {
@@ -76,88 +86,93 @@ func (f *fakeClient) Search(_ context.Context, sourceID, _ string) ([]suwayomi.M
 			return res, nil
 		}
 	}
-	return nil, nil
+	return sourceengine.SearchResult{}, nil
 }
 
-func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+func (f *fakeClient) Popular(_ context.Context, sourceID int64, _ int) (sourceengine.SearchResult, error) {
+	if f.browseErr != nil {
+		return sourceengine.SearchResult{}, f.browseErr
+	}
+	if f.popularResults != nil {
+		return f.popularResults[sourceID], nil
+	}
+	return sourceengine.SearchResult{}, nil
+}
+
+func (f *fakeClient) Latest(_ context.Context, sourceID int64, _ int) (sourceengine.SearchResult, error) {
+	if f.browseErr != nil {
+		return sourceengine.SearchResult{}, f.browseErr
+	}
+	if f.latestResults != nil {
+		return f.latestResults[sourceID], nil
+	}
+	return sourceengine.SearchResult{}, nil
+}
+
+func (f *fakeClient) MangaDetails(_ context.Context, _ int64, url string) (sourceengine.MangaDetails, error) {
+	if f.detailsErr != nil {
+		return sourceengine.MangaDetails{}, f.detailsErr
+	}
+	if f.detailsByURL != nil {
+		return f.detailsByURL[url], nil
+	}
+	return sourceengine.MangaDetails{}, nil
+}
+
+func (f *fakeClient) Chapters(_ context.Context, _ int64, url string) ([]sourceengine.Chapter, error) {
 	// Per-manga dispatch (Task 4): error first, then chapters.
-	if f.chapterErrs != nil {
-		if err, ok := f.chapterErrs[mangaID]; ok {
+	if f.chapterErrsByURL != nil {
+		if err, ok := f.chapterErrsByURL[url]; ok {
 			return nil, err
 		}
 	}
-	if f.chaptersPerManga != nil {
-		return f.chaptersPerManga[mangaID], nil
+	if f.chaptersByURL != nil {
+		return f.chaptersByURL[url], nil
 	}
 	// Flat fallback (Task 3).
 	return f.chapters, f.chaptersErr
 }
 
-func (f *fakeClient) Browse(_ context.Context, _ string, t suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
-	if f.browseErr != nil {
-		return suwayomi.BrowseResult{}, f.browseErr
-	}
-	if f.browseResults != nil {
-		return f.browseResults[t], nil
-	}
-	return suwayomi.BrowseResult{}, nil
-}
-
 // Remaining Client methods are unused by Service; return nil, nil.
-func (f *fakeClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
+func (f *fakeClient) Pages(_ context.Context, _ int64, _ string) ([]sourceengine.Page, error) {
 	return nil, nil
 }
-func (f *fakeClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (f *fakeClient) FetchMangaDetails(_ context.Context, mangaID int) (suwayomi.Manga, error) {
-	if f.detailsErr != nil {
-		return suwayomi.Manga{}, f.detailsErr
-	}
-	if f.detailsPerManga != nil {
-		return f.detailsPerManga[mangaID], nil
-	}
-	return suwayomi.Manga{}, nil
-}
-func (f *fakeClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
-	return nil, nil
-}
-func (f *fakeClient) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
+func (f *fakeClient) Image(_ context.Context, _ int64, _, _ string) ([]byte, string, error) {
 	return nil, "", nil
 }
-func (f *fakeClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
-	return suwayomi.SuwayomiSettings{}, nil
-}
-func (f *fakeClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
-	return nil
-}
-func (f *fakeClient) Extensions(_ context.Context) ([]suwayomi.Extension, error) { return nil, nil }
-func (f *fakeClient) SetExtensionState(_ context.Context, _ string, _ suwayomi.ExtensionAction) error {
-	return nil
-}
-func (f *fakeClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
+func (f *fakeClient) Preferences(_ context.Context, _ int64) ([]sourceengine.Preference, error) {
 	return nil, nil
 }
-func (f *fakeClient) ExtensionRepos(_ context.Context) ([]string, error)    { return nil, nil }
-func (f *fakeClient) SetExtensionRepos(_ context.Context, _ []string) error { return nil }
-func (f *fakeClient) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
+func (f *fakeClient) SetPreferences(_ context.Context, _ int64, _ map[string]any) ([]sourceengine.Preference, error) {
 	return nil, nil
 }
-func (f *fakeClient) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+func (f *fakeClient) Extensions(_ context.Context) ([]sourceengine.Extension, error) {
 	return nil, nil
 }
-func (f *fakeClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
+func (f *fakeClient) InstallExtension(_ context.Context, _, _ string) ([]sourceengine.Extension, error) {
 	return nil, nil
 }
-func (f *fakeClient) SetSourceEnabled(_ context.Context, _ string, _ bool) error { return nil }
+func (f *fakeClient) RefreshExtensions(_ context.Context) ([]sourceengine.Extension, error) {
+	return nil, nil
+}
+func (f *fakeClient) UpdateExtension(_ context.Context, _ string) ([]sourceengine.Extension, error) {
+	return nil, nil
+}
+func (f *fakeClient) UninstallExtension(_ context.Context, _ string) ([]sourceengine.Extension, error) {
+	return nil, nil
+}
+func (f *fakeClient) Repos(_ context.Context) ([]string, error) { return nil, nil }
+func (f *fakeClient) SetRepos(_ context.Context, _ []string) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeClient) SetFlareSolverr(_ context.Context, _ sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
+	return sourceengine.FlareSolverrConfig{}, nil
+}
+func (f *fakeClient) SetSocks(_ context.Context, _ sourceengine.SocksPatch) (sourceengine.SocksConfig, error) {
+	return sourceengine.SocksConfig{}, nil
+}
 
 // --- helpers -----------------------------------------------------------------
-
-// ptrStr returns a pointer to s.
-func ptrStr(s string) *string { return &s }
-
-// ptrF64 returns a pointer to v.
-func ptrF64(v float64) *float64 { return &v }
 
 // testSearchTimeout is a generous overall-search deadline used by tests that are
 // not exercising the deadline behaviour itself — long enough never to fire for
@@ -170,21 +185,18 @@ func newService(fc *fakeClient) *imports.Service {
 	return imports.NewService(fc, nil, nil, "", testSearchTimeout, nil)
 }
 
-// makeAdoptChapters builds n stub suwayomi.Chapter values anchored to a base ID
-// so that distinct mangaIDs get non-overlapping suwayomi chapter IDs. Each
-// chapter has a sequential chapter number so that NormalizeChapterKey produces
-// distinct, deterministic keys.
-func makeAdoptChapters(baseID, n int) []suwayomi.Chapter {
-	chs := make([]suwayomi.Chapter, n)
+// makeAdoptChapters builds n stub sourceengine.Chapter values, numbered 1..n,
+// with URLs derived from urlPrefix so that distinct providers in the same test
+// get non-overlapping per-chapter URLs. Each chapter's sequential number gives
+// NormalizeChapterKey distinct, deterministic keys.
+func makeAdoptChapters(urlPrefix string, n int) []sourceengine.Chapter {
+	chs := make([]sourceengine.Chapter, n)
 	for i := range n {
 		num := float64(i + 1)
-		numCopy := num
-		chs[i] = suwayomi.Chapter{
-			ID:     baseID + i,
-			Index:  i,
+		chs[i] = sourceengine.Chapter{
 			Name:   fmt.Sprintf("Chapter %.0f", num),
-			Number: &numCopy,
-			URL:    fmt.Sprintf("https://test/ch/%d", i+1),
+			Number: num,
+			URL:    fmt.Sprintf("%s/ch/%d", urlPrefix, i+1),
 		}
 	}
 	return chs
@@ -240,14 +252,14 @@ func TestSearch_RecordsMetricsBatch(t *testing.T) {
 
 	boom := errors.New("cloudflare challenge timed out")
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "ok-src", Name: "OK", Lang: "en"},
-			{ID: "bad-src", Name: "Bad", Lang: "en"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "OK", Lang: "en"},
+			{ID: 2, Name: "Bad", Lang: "en"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"ok-src": {{ID: 1, Title: "Manga"}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Manga"}}},
 		},
-		searchErrs: map[string]error{"bad-src": boom},
+		searchErrs: map[int64]error{2: boom},
 	}
 	rec := &captureRecorder{}
 	svc := imports.NewService(fc, nil, nil, "", testSearchTimeout, rec)
@@ -267,11 +279,11 @@ func TestSearch_RecordsMetricsBatch(t *testing.T) {
 	if len(byID) != 2 {
 		t.Fatalf("batch has %d distinct sources, want 2", len(byID))
 	}
-	if byID["ok-src"].Err != nil {
-		t.Errorf("ok-src sample Err = %v, want nil", byID["ok-src"].Err)
+	if byID["1"].Err != nil {
+		t.Errorf("source 1 sample Err = %v, want nil", byID["1"].Err)
 	}
-	if !errors.Is(byID["bad-src"].Err, boom) {
-		t.Errorf("bad-src sample Err = %v, want the source failure", byID["bad-src"].Err)
+	if !errors.Is(byID["2"].Err, boom) {
+		t.Errorf("source 2 sample Err = %v, want the source failure", byID["2"].Err)
 	}
 }
 
@@ -282,9 +294,9 @@ func TestService_Sources(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
-			{ID: "src-b", Name: "Beta Source", Lang: "ko"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Alpha Source", Lang: "en"},
+			{ID: 2, Name: "Beta Source", Lang: "ko"},
 		},
 	}
 	svc := newService(fc)
@@ -296,49 +308,11 @@ func TestService_Sources(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("Sources: got %d DTOs, want 2", len(got))
 	}
-	if got[0].ID != "src-a" || got[0].Name != "Alpha Source" || got[0].Lang != "en" {
-		t.Errorf("Sources[0]: got %+v, want {src-a Alpha Source en}", got[0])
+	if got[0].ID != "1" || got[0].Name != "Alpha Source" || got[0].Lang != "en" {
+		t.Errorf("Sources[0]: got %+v, want {1 Alpha Source en}", got[0])
 	}
-	if got[1].ID != "src-b" || got[1].Name != "Beta Source" || got[1].Lang != "ko" {
-		t.Errorf("Sources[1]: got %+v, want {src-b Beta Source ko}", got[1])
-	}
-}
-
-// TestService_Sources_ExcludesLocalSource verifies that Suwayomi's built-in
-// Local source (id suwayomi.LocalSourceID, lang "localsourcelang") is dropped
-// from the returned list — it is a Suwayomi-internal on-disk source, not a
-// real content source, and should never populate the Discover/Search source
-// pickers (F1). A source matching either signal (id or lang, case-insensitive)
-// is excluded; real sources are kept untouched.
-func TestService_Sources_ExcludesLocalSource(t *testing.T) {
-	t.Parallel()
-
-	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: suwayomi.LocalSourceID, Name: "Local source", Lang: "localsourcelang"},
-			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
-			// A source that only matches on the lang signal (id changed, lang
-			// unchanged) must still be excluded — the defensive secondary match.
-			{ID: "999", Name: "Local source", Lang: "LOCALSOURCELANG"},
-			{ID: "src-b", Name: "Beta Source", Lang: "ko"},
-		},
-	}
-	svc := newService(fc)
-
-	got, err := svc.Sources(context.Background())
-	if err != nil {
-		t.Fatalf("Sources: unexpected error: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("Sources: got %d DTOs, want 2 (local source excluded): %+v", len(got), got)
-	}
-	for _, dto := range got {
-		if dto.ID == suwayomi.LocalSourceID || strings.EqualFold(dto.Lang, "localsourcelang") {
-			t.Errorf("Sources: local source leaked into result: %+v", dto)
-		}
-	}
-	if got[0].ID != "src-a" || got[1].ID != "src-b" {
-		t.Errorf("Sources: got %+v, want [src-a, src-b]", got)
+	if got[1].ID != "2" || got[1].Name != "Beta Source" || got[1].Lang != "ko" {
+		t.Errorf("Sources[1]: got %+v, want {2 Beta Source ko}", got[1])
 	}
 }
 
@@ -356,33 +330,6 @@ func TestService_Sources_Error(t *testing.T) {
 	}
 }
 
-// TestService_Sources_ExcludesDisabledSource verifies that a source the owner
-// has disabled via the per-language toggle (suwayomi.Source.Disabled) is
-// excluded from the Discover/Search source list, decluttering the picker,
-// while an enabled source (the Go zero value) is kept.
-func TestService_Sources_ExcludesDisabledSource(t *testing.T) {
-	t.Parallel()
-
-	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
-			{ID: "src-b", Name: "Beta Source", Lang: "ko", Disabled: true},
-		},
-	}
-	svc := newService(fc)
-
-	got, err := svc.Sources(context.Background())
-	if err != nil {
-		t.Fatalf("Sources: unexpected error: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("Sources: got %d DTOs, want 1 (disabled source excluded): %+v", len(got), got)
-	}
-	if got[0].ID != "src-a" {
-		t.Errorf("Sources: got %+v, want only src-a", got)
-	}
-}
-
 // TestService_Sources_ExcludesInfinityScans verifies that InfinityScans — a
 // known-broken source whose captcha is broken (hitting it wastes requests and
 // risks IP-blocks) — is excluded from the Discover/Search source list, matched
@@ -391,10 +338,10 @@ func TestService_Sources_ExcludesInfinityScans(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "src-a", Name: "InfinityScans", Lang: "en"},
-			{ID: "src-b", Name: "infinityscans", Lang: "en"},
-			{ID: "src-c", Name: "MangaDex", Lang: "en"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "InfinityScans", Lang: "en"},
+			{ID: 2, Name: "infinityscans", Lang: "en"},
+			{ID: 3, Name: "MangaDex", Lang: "en"},
 		},
 	}
 	svc := newService(fc)
@@ -406,8 +353,8 @@ func TestService_Sources_ExcludesInfinityScans(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("Sources: got %d DTOs, want 1 (InfinityScans excluded regardless of case): %+v", len(got), got)
 	}
-	if got[0].ID != "src-c" {
-		t.Errorf("Sources: got %+v, want only src-c (MangaDex)", got)
+	if got[0].ID != "3" {
+		t.Errorf("Sources: got %+v, want only source 3 (MangaDex)", got)
 	}
 }
 
@@ -419,13 +366,13 @@ func TestService_Search_AllSources(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "a", Name: "A Source", Lang: "en"},
-			{ID: "b", Name: "B Source", Lang: "ko"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "A Source", Lang: "en"},
+			{ID: 2, Name: "B Source", Lang: "ko"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"a": {{ID: 1, Title: "Solo Leveling", ThumbnailURL: ptrStr("http://thumb/1")}},
-			"b": {{ID: 2, Title: "Solo Leveling", ThumbnailURL: ptrStr("http://thumb/2")}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Solo Leveling", ThumbnailURL: "http://thumb/1"}}},
+			2: {Manga: []sourceengine.MangaEntry{{Title: "Solo Leveling", ThumbnailURL: "http://thumb/2"}}},
 		},
 	}
 	svc := newService(fc)
@@ -443,36 +390,36 @@ func TestService_Search_AllSources(t *testing.T) {
 	}
 }
 
-// TestService_Search_FilterSources verifies that Search(query, []string{"a"})
-// only queries source "a", not "b".
+// TestService_Search_FilterSources verifies that Search(query, []string{"1"})
+// only queries source "1", not "2".
 func TestService_Search_FilterSources(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "a", Name: "A Source", Lang: "en"},
-			{ID: "b", Name: "B Source", Lang: "ko"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "A Source", Lang: "en"},
+			{ID: 2, Name: "B Source", Lang: "ko"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"a": {{ID: 1, Title: "Tower of God"}},
-			"b": {{ID: 2, Title: "Tower of God"}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Tower of God"}}},
+			2: {Manga: []sourceengine.MangaEntry{{Title: "Tower of God"}}},
 		},
 	}
 	svc := newService(fc)
 
-	got, err := svc.Search(context.Background(), "Tower of God", []string{"a"})
+	got, err := svc.Search(context.Background(), "Tower of God", []string{"1"})
 	if err != nil {
 		t.Fatalf("Search: unexpected error: %v", err)
 	}
-	// Only source "a" queried → only 1 candidate.
+	// Only source "1" queried → only 1 candidate.
 	if len(got) != 1 {
 		t.Fatalf("Search: got %d groups, want 1", len(got))
 	}
 	if len(got[0].Candidates) != 1 {
 		t.Fatalf("Search group[0]: got %d candidates, want 1", len(got[0].Candidates))
 	}
-	if got[0].Candidates[0].Source != "a" {
-		t.Errorf("Candidate.Source: got %q, want %q", got[0].Candidates[0].Source, "a")
+	if got[0].Candidates[0].Source != "1" {
+		t.Errorf("Candidate.Source: got %q, want %q", got[0].Candidates[0].Source, "1")
 	}
 	// SourceName and Lang must be propagated from the resolved source, not left zero.
 	if got[0].Candidates[0].SourceName != "A Source" {
@@ -483,61 +430,6 @@ func TestService_Search_FilterSources(t *testing.T) {
 	}
 }
 
-// TestService_Search_ExcludesDisabledSource verifies that Search(query, nil)
-// (the "fan out to all sources" path) never queries a source the owner has
-// disabled — resolveSources applies the same Disabled filter Sources() does.
-func TestService_Search_ExcludesDisabledSource(t *testing.T) {
-	t.Parallel()
-
-	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "a", Name: "A Source", Lang: "en"},
-			{ID: "b", Name: "B Source", Lang: "ko", Disabled: true},
-		},
-		searchResults: map[string][]suwayomi.Manga{
-			"a": {{ID: 1, Title: "Tower of God"}},
-			"b": {{ID: 2, Title: "Tower of God"}},
-		},
-	}
-	svc := newService(fc)
-
-	got, err := svc.Search(context.Background(), "Tower of God", nil)
-	if err != nil {
-		t.Fatalf("Search: unexpected error: %v", err)
-	}
-	if len(got) != 1 || len(got[0].Candidates) != 1 {
-		t.Fatalf("Search: got %+v, want exactly 1 candidate (disabled source b never fanned out)", got)
-	}
-	if got[0].Candidates[0].Source != "a" {
-		t.Errorf("Candidate.Source: got %q, want %q (disabled source b must be excluded)", got[0].Candidates[0].Source, "a")
-	}
-}
-
-// TestService_Search_ExplicitDisabledSourceIDExcluded verifies that even an
-// EXPLICIT sourceIDs filter naming a disabled source is not fanned out —
-// disabling wins over an explicit (stale/hand-crafted) request.
-func TestService_Search_ExplicitDisabledSourceIDExcluded(t *testing.T) {
-	t.Parallel()
-
-	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "a", Name: "A Source", Lang: "en", Disabled: true},
-		},
-		searchResults: map[string][]suwayomi.Manga{
-			"a": {{ID: 1, Title: "Tower of God"}},
-		},
-	}
-	svc := newService(fc)
-
-	got, err := svc.Search(context.Background(), "Tower of God", []string{"a"})
-	if err != nil {
-		t.Fatalf("Search: unexpected error: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("Search: got %+v, want no groups (the only requested source is disabled)", got)
-	}
-}
-
 // TestService_Search_UnknownSourceID verifies that passing a sourceID that does
 // not match any client source silently produces an empty, non-nil result —
 // resolveSources filters unknown IDs out, so the fan-out has nothing to query.
@@ -545,11 +437,11 @@ func TestService_Search_UnknownSourceID(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "real-src", Name: "Real Source", Lang: "en"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Real Source", Lang: "en"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"real-src": {{ID: 1, Title: "Some Manga"}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Some Manga"}}},
 		},
 	}
 	svc := newService(fc)
@@ -572,13 +464,13 @@ func TestService_Search_Grouping(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "src1", Name: "Source One", Lang: "en"},
-			{ID: "src2", Name: "Source Two", Lang: "ko"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Source One", Lang: "en"},
+			{ID: 2, Name: "Source Two", Lang: "ko"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"src1": {{ID: 10, Title: "Demon Slayer", ThumbnailURL: ptrStr("http://t/1")}},
-			"src2": {{ID: 20, Title: "Demon Slayer", ThumbnailURL: ptrStr("http://t/2")}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Demon Slayer", ThumbnailURL: "http://t/1"}}},
+			2: {Manga: []sourceengine.MangaEntry{{Title: "Demon Slayer", ThumbnailURL: "http://t/2"}}},
 		},
 	}
 	svc := newService(fc)
@@ -599,7 +491,7 @@ func TestService_Search_Grouping(t *testing.T) {
 	for _, c := range g.Candidates {
 		sources[c.Source] = true
 	}
-	if !sources["src1"] || !sources["src2"] {
+	if !sources["1"] || !sources["2"] {
 		t.Errorf("Grouping: candidates must carry original source IDs, got %v", sources)
 	}
 }
@@ -610,15 +502,15 @@ func TestService_Search_SourceError(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "ok", Name: "OK Source", Lang: "en"},
-			{ID: "bad", Name: "Bad Source", Lang: "ko"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "OK Source", Lang: "en"},
+			{ID: 2, Name: "Bad Source", Lang: "ko"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"ok": {{ID: 1, Title: "Naruto"}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Naruto"}}},
 		},
-		searchErrs: map[string]error{
-			"bad": errors.New("source unreachable"),
+		searchErrs: map[int64]error{
+			2: errors.New("source unreachable"),
 		},
 	}
 	svc := newService(fc)
@@ -639,20 +531,20 @@ func TestService_Search_SourceError(t *testing.T) {
 
 // blockingFakeClient wraps fakeClient and makes Search for one source (blockID)
 // hang until its context is cancelled, modelling a Cloudflare-protected source
-// that stalls on an anti-bot challenge (a real Suwayomi HTTP call respects ctx,
-// returning as soon as the deadline fires). Every other source delegates to the
-// embedded fakeClient and returns immediately.
+// that stalls on an anti-bot challenge (a real engine-host HTTP call respects
+// ctx, returning as soon as the deadline fires). Every other source delegates
+// to the embedded fakeClient and returns immediately.
 type blockingFakeClient struct {
 	*fakeClient
-	blockID string
+	blockID int64
 }
 
-func (b *blockingFakeClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
+func (b *blockingFakeClient) Search(ctx context.Context, sourceID int64, query string, page int) (sourceengine.SearchResult, error) {
 	if sourceID == b.blockID {
 		<-ctx.Done() // hang until the overall Search deadline cancels ctx
-		return nil, ctx.Err()
+		return sourceengine.SearchResult{}, ctx.Err()
 	}
-	return b.fakeClient.Search(ctx, sourceID, query)
+	return b.fakeClient.Search(ctx, sourceID, query, page)
 }
 
 // TestService_Search_PartialResultsOnDeadline proves the CDN-timeout fix: when a
@@ -663,16 +555,16 @@ func TestService_Search_PartialResultsOnDeadline(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "fast", Name: "Fast Source", Lang: "en"},
-			{ID: "slow", Name: "Slow Source", Lang: "en"}, // hangs until the deadline
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Fast Source", Lang: "en"},
+			{ID: 2, Name: "Slow Source", Lang: "en"}, // hangs until the deadline
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"fast": {{ID: 1, Title: "Naruto"}},
-			// "slow" never returns a result — its goroutine blocks on ctx.
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Naruto"}}},
+			// source 2 never returns a result — its goroutine blocks on ctx.
 		},
 	}
-	client := &blockingFakeClient{fakeClient: fc, blockID: "slow"}
+	client := &blockingFakeClient{fakeClient: fc, blockID: 2}
 	// Short overall deadline so the hung source is dropped quickly.
 	svc := imports.NewService(client, nil, nil, "", 200*time.Millisecond, nil)
 
@@ -695,11 +587,11 @@ func TestService_Search_PartialResultsOnDeadline(t *testing.T) {
 			titles[c.Title] = c.Source
 		}
 	}
-	if src, ok := titles["Naruto"]; !ok || src != "fast" {
-		t.Errorf("expected fast source's %q present (source=fast), got titles=%v", "Naruto", titles)
+	if src, ok := titles["Naruto"]; !ok || src != "1" {
+		t.Errorf("expected fast source's %q present (source=1), got titles=%v", "Naruto", titles)
 	}
 	for _, src := range titles {
-		if src == "slow" {
+		if src == "2" {
 			t.Errorf("slow (hung) source must be absent from partial results, got %v", titles)
 		}
 	}
@@ -712,11 +604,11 @@ func TestService_Search_BlankQuery(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "a", Name: "A", Lang: "en"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "A", Lang: "en"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"a": {{ID: 1, Title: "My Hero Academia"}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "My Hero Academia"}}},
 		},
 	}
 	svc := newService(fc)
@@ -731,17 +623,17 @@ func TestService_Search_BlankQuery(t *testing.T) {
 	}
 }
 
-// TestService_Search_ThumbnailNil verifies that a nil ThumbnailURL on a
-// suwayomi.Manga maps to empty string "" in the SearchCandidateDTO.
+// TestService_Search_ThumbnailNil verifies that an omitted ThumbnailURL on a
+// sourceengine.MangaEntry maps to empty string "" in the SearchCandidateDTO.
 func TestService_Search_ThumbnailNil(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "a", Name: "A", Lang: "en"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "A", Lang: "en"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"a": {{ID: 1, Title: "One Piece", ThumbnailURL: nil}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "One Piece"}}}, // ThumbnailURL omitted
 		},
 	}
 	svc := newService(fc)
@@ -754,23 +646,24 @@ func TestService_Search_ThumbnailNil(t *testing.T) {
 		t.Fatal("Search: expected at least one group with one candidate")
 	}
 	if got[0].Candidates[0].ThumbnailURL != "" {
-		t.Errorf("ThumbnailURL: got %q, want empty string for nil thumbnail", got[0].Candidates[0].ThumbnailURL)
+		t.Errorf("ThumbnailURL: got %q, want empty string for omitted thumbnail", got[0].Candidates[0].ThumbnailURL)
 	}
 }
 
 // TestService_Search_CandidateFields verifies that SearchCandidateDTO carries
 // correct Source, SourceName, Lang, MangaID, Title, and ThumbnailURL fields.
-// ThumbnailURL must be Tsundoku's OWN cover-proxy path, not Suwayomi's raw
-// thumbnail URL (B2 fix — the raw value 404s against Tsundoku's own origin).
+// MangaID is always 0 (the url-addressed engine host assigns no per-manga id).
+// ThumbnailURL is the engine host's raw, directly-fetchable value verbatim —
+// no Tsundoku-side cover-proxy indirection (P2 Suwayomi-removal).
 func TestService_Search_CandidateFields(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "s1", Name: "Source One", Lang: "en"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Source One", Lang: "en"},
 		},
-		searchResults: map[string][]suwayomi.Manga{
-			"s1": {{ID: 42, Title: "Attack on Titan", ThumbnailURL: ptrStr("http://thumb.test/img.jpg")}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Attack on Titan", ThumbnailURL: "http://thumb.test/img.jpg"}}},
 		},
 	}
 	svc := newService(fc)
@@ -783,8 +676,8 @@ func TestService_Search_CandidateFields(t *testing.T) {
 		t.Fatal("expected at least one group and candidate")
 	}
 	c := got[0].Candidates[0]
-	if c.Source != "s1" {
-		t.Errorf("Candidate.Source: got %q, want %q", c.Source, "s1")
+	if c.Source != "1" {
+		t.Errorf("Candidate.Source: got %q, want %q", c.Source, "1")
 	}
 	if c.SourceName != "Source One" {
 		t.Errorf("Candidate.SourceName: got %q, want %q", c.SourceName, "Source One")
@@ -792,120 +685,35 @@ func TestService_Search_CandidateFields(t *testing.T) {
 	if c.Lang != "en" {
 		t.Errorf("Candidate.Lang: got %q, want %q", c.Lang, "en")
 	}
-	if c.MangaID != 42 {
-		t.Errorf("Candidate.MangaID: got %d, want %d", c.MangaID, 42)
+	if c.MangaID != 0 {
+		t.Errorf("Candidate.MangaID: got %d, want 0 (url-addressed engine host assigns no manga id)", c.MangaID)
 	}
 	if c.Title != "Attack on Titan" {
 		t.Errorf("Candidate.Title: got %q, want %q", c.Title, "Attack on Titan")
 	}
-	const wantProxyPath = "/api/sources/s1/manga/42/cover"
-	if c.ThumbnailURL != wantProxyPath {
-		t.Errorf("Candidate.ThumbnailURL: got %q, want %q (Tsundoku cover-proxy path, not the raw Suwayomi URL)", c.ThumbnailURL, wantProxyPath)
-	}
-}
-
-// TestService_Search_MetadataFields verifies that author/artist/genres/
-// description propagate from suwayomi.Manga onto the SearchCandidateDTO (M4).
-func TestService_Search_MetadataFields(t *testing.T) {
-	t.Parallel()
-
-	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "s1", Name: "Source One", Lang: "en"},
-		},
-		searchResults: map[string][]suwayomi.Manga{
-			"s1": {{
-				ID:          42,
-				Title:       "Vinland Saga",
-				Author:      ptrStr("Makoto Yukimura"),
-				Artist:      ptrStr("Makoto Yukimura"),
-				Description: ptrStr("A Viking's saga."),
-				Genre:       []string{"Action", "Historical"},
-			}},
-		},
-	}
-	svc := newService(fc)
-
-	got, err := svc.Search(context.Background(), "Vinland Saga", nil)
-	if err != nil {
-		t.Fatalf("Search: unexpected error: %v", err)
-	}
-	if len(got) == 0 || len(got[0].Candidates) == 0 {
-		t.Fatal("expected at least one group and candidate")
-	}
-	c := got[0].Candidates[0]
-	if c.Author != "Makoto Yukimura" {
-		t.Errorf("Candidate.Author: got %q, want %q", c.Author, "Makoto Yukimura")
-	}
-	if c.Artist != "Makoto Yukimura" {
-		t.Errorf("Candidate.Artist: got %q, want %q", c.Artist, "Makoto Yukimura")
-	}
-	if c.Description != "A Viking's saga." {
-		t.Errorf("Candidate.Description: got %q, want %q", c.Description, "A Viking's saga.")
-	}
-	if len(c.Genres) != 2 || c.Genres[0] != "Action" || c.Genres[1] != "Historical" {
-		t.Errorf("Candidate.Genres: got %v, want [Action Historical]", c.Genres)
-	}
-}
-
-// TestService_Search_MetadataFieldsNil verifies that nil author/artist/genre/
-// description map to "" / a non-nil empty slice — never a nil-pointer panic
-// and never a "null" genres array on the wire.
-func TestService_Search_MetadataFieldsNil(t *testing.T) {
-	t.Parallel()
-
-	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "s1", Name: "Source One", Lang: "en"},
-		},
-		searchResults: map[string][]suwayomi.Manga{
-			"s1": {{ID: 1, Title: "No Metadata"}},
-		},
-	}
-	svc := newService(fc)
-
-	got, err := svc.Search(context.Background(), "No Metadata", nil)
-	if err != nil {
-		t.Fatalf("Search: unexpected error: %v", err)
-	}
-	if len(got) == 0 || len(got[0].Candidates) == 0 {
-		t.Fatal("expected at least one group and candidate")
-	}
-	c := got[0].Candidates[0]
-	if c.Author != "" {
-		t.Errorf("Candidate.Author: got %q, want empty", c.Author)
-	}
-	if c.Artist != "" {
-		t.Errorf("Candidate.Artist: got %q, want empty", c.Artist)
-	}
-	if c.Description != "" {
-		t.Errorf("Candidate.Description: got %q, want empty", c.Description)
-	}
-	if c.Genres == nil {
-		t.Error("Candidate.Genres: got nil, want non-nil empty slice (JSON must be [] not null)")
-	}
-	if len(c.Genres) != 0 {
-		t.Errorf("Candidate.Genres: got %v, want empty", c.Genres)
+	const wantThumbnail = "http://thumb.test/img.jpg"
+	if c.ThumbnailURL != wantThumbnail {
+		t.Errorf("Candidate.ThumbnailURL: got %q, want %q (raw engine-host thumbnail URL, no proxy indirection)", c.ThumbnailURL, wantThumbnail)
 	}
 }
 
 // --- InspectChapters tests ---------------------------------------------------
 
-// TestService_InspectChapters verifies that InspectChapters maps FetchChapters
-// to []ChapterInspectDTO with the correct number and name.
+// TestService_InspectChapters verifies that InspectChapters maps Chapters to
+// []ChapterInspectDTO with the correct number and name.
 func TestService_InspectChapters(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		chapters: []suwayomi.Chapter{
-			{ID: 1, Name: "Chapter 1", Number: ptrF64(1.0)},
-			{ID: 2, Name: "Chapter 2", Number: ptrF64(2.0)},
-			{ID: 3, Name: "Special", Number: nil},
+		chapters: []sourceengine.Chapter{
+			{URL: "/ch/1", Name: "Chapter 1", Number: 1.0},
+			{URL: "/ch/2", Name: "Chapter 2", Number: 2.0},
+			{URL: "/ch/3", Name: "Special", Number: -1}, // engine host's "unparsed" sentinel
 		},
 	}
 	svc := newService(fc)
 
-	got, err := svc.InspectChapters(context.Background(), "src", 7)
+	got, err := svc.InspectChapters(context.Background(), "1", "/manga/7")
 	if err != nil {
 		t.Fatalf("InspectChapters: unexpected error: %v", err)
 	}
@@ -926,7 +734,7 @@ func TestService_InspectChapters(t *testing.T) {
 		t.Errorf("InspectChapters[1].Number: got %v, want 2.0", got[1].Number)
 	}
 
-	// Chapter 3 — nil number
+	// Chapter 3 — unparsed number
 	if got[2].Number != nil {
 		t.Errorf("InspectChapters[2].Number: got %v, want nil", got[2].Number)
 	}
@@ -935,16 +743,16 @@ func TestService_InspectChapters(t *testing.T) {
 	}
 }
 
-// TestService_InspectChapters_Error verifies that a FetchChapters error is
+// TestService_InspectChapters_Error verifies that a Chapters error is
 // propagated to the caller.
 func TestService_InspectChapters_Error(t *testing.T) {
 	t.Parallel()
 
-	sentinel := errors.New("suwayomi: manga not found")
+	sentinel := errors.New("sourceengine: manga not found")
 	fc := &fakeClient{chaptersErr: sentinel}
 	svc := newService(fc)
 
-	_, err := svc.InspectChapters(context.Background(), "src", 99)
+	_, err := svc.InspectChapters(context.Background(), "1", "/manga/99")
 	if !errors.Is(err, sentinel) {
 		t.Errorf("InspectChapters error: got %v, want to wrap %v", err, sentinel)
 	}
@@ -959,14 +767,14 @@ func TestService_Browse_Popular(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Alpha Source", Lang: "en"},
 		},
-		browseResults: map[suwayomi.BrowseType]suwayomi.BrowseResult{
-			suwayomi.BrowsePopular: {
-				Mangas: []suwayomi.Manga{
-					{ID: 1, Title: "Solo Leveling", URL: "/manga/1", ThumbnailURL: ptrStr("http://t/1")},
-					{ID: 2, Title: "Omniscient Reader", URL: "/manga/2", ThumbnailURL: nil},
+		popularResults: map[int64]sourceengine.SearchResult{
+			1: {
+				Manga: []sourceengine.MangaEntry{
+					{Title: "Solo Leveling", URL: "/manga/1", ThumbnailURL: "http://t/1"},
+					{Title: "Omniscient Reader", URL: "/manga/2"}, // ThumbnailURL omitted
 				},
 				HasNextPage: true,
 			},
@@ -974,7 +782,7 @@ func TestService_Browse_Popular(t *testing.T) {
 	}
 	svc := newService(fc)
 
-	got, err := svc.Browse(context.Background(), "src-a", suwayomi.BrowsePopular, 1)
+	got, err := svc.Browse(context.Background(), "1", imports.BrowsePopular, 1)
 	if err != nil {
 		t.Fatalf("Browse: unexpected error: %v", err)
 	}
@@ -988,17 +796,16 @@ func TestService_Browse_Popular(t *testing.T) {
 		t.Errorf("Browse: Page = %d, want 1", got.Page)
 	}
 	c0 := got.Manga[0]
-	assertCandidateTags(t, c0, "src-a", "Alpha Source", "en")
+	assertCandidateTags(t, c0, "1", "Alpha Source", "en")
 	if c0.URL != "/manga/1" {
 		t.Errorf("Browse candidate[0].URL: got %q, want /manga/1", c0.URL)
 	}
-	// ThumbnailURL must be Tsundoku's own cover-proxy path, not Suwayomi's raw
-	// thumbnail URL (B2 fix).
-	const wantProxyPath = "/api/sources/src-a/manga/1/cover"
-	if c0.ThumbnailURL != wantProxyPath {
-		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want %q", c0.ThumbnailURL, wantProxyPath)
+	// ThumbnailURL is the raw engine-host value verbatim.
+	const wantThumbnail = "http://t/1"
+	if c0.ThumbnailURL != wantThumbnail {
+		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want %q", c0.ThumbnailURL, wantThumbnail)
 	}
-	// Nil thumbnail → empty string (no proxy path minted with nothing to fetch).
+	// Omitted thumbnail → empty string.
 	if got.Manga[1].ThumbnailURL != "" {
 		t.Errorf("Browse candidate[1].ThumbnailURL: got %q, want empty", got.Manga[1].ThumbnailURL)
 	}
@@ -1025,19 +832,19 @@ func TestService_Browse_Latest(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "src-b", Name: "Beta Source", Lang: "ko"},
+		sources: []sourceengine.Source{
+			{ID: 2, Name: "Beta Source", Lang: "ko"},
 		},
-		browseResults: map[suwayomi.BrowseType]suwayomi.BrowseResult{
-			suwayomi.BrowseLatest: {
-				Mangas:      []suwayomi.Manga{{ID: 9, Title: "Tower of God", URL: "/manga/9"}},
+		latestResults: map[int64]sourceengine.SearchResult{
+			2: {
+				Manga:       []sourceengine.MangaEntry{{Title: "Tower of God", URL: "/manga/9"}},
 				HasNextPage: false,
 			},
 		},
 	}
 	svc := newService(fc)
 
-	got, err := svc.Browse(context.Background(), "src-b", suwayomi.BrowseLatest, 3)
+	got, err := svc.Browse(context.Background(), "2", imports.BrowseLatest, 3)
 	if err != nil {
 		t.Fatalf("Browse latest: unexpected error: %v", err)
 	}
@@ -1058,30 +865,30 @@ func TestService_Browse_UnknownSource(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{{ID: "real", Name: "Real", Lang: "en"}},
+		sources: []sourceengine.Source{{ID: 99, Name: "Real", Lang: "en"}},
 	}
 	svc := newService(fc)
 
-	_, err := svc.Browse(context.Background(), "ghost", suwayomi.BrowsePopular, 1)
+	_, err := svc.Browse(context.Background(), "ghost", imports.BrowsePopular, 1)
 	if !errors.Is(err, imports.ErrSourceNotFound) {
 		t.Errorf("Browse unknown source: err = %v, want ErrSourceNotFound", err)
 	}
 }
 
-// TestService_Browse_UpstreamError verifies that a client.Browse failure
-// propagates verbatim — browse is single-source, so a failure is the whole
-// request (no partial-results carve-out).
+// TestService_Browse_UpstreamError verifies that a client Popular/Latest
+// failure propagates verbatim — browse is single-source, so a failure is the
+// whole request (no partial-results carve-out).
 func TestService_Browse_UpstreamError(t *testing.T) {
 	t.Parallel()
 
-	sentinel := errors.New("suwayomi: source offline")
+	sentinel := errors.New("sourceengine: source offline")
 	fc := &fakeClient{
-		sources:   []suwayomi.Source{{ID: "src-a", Name: "Alpha", Lang: "en"}},
+		sources:   []sourceengine.Source{{ID: 1, Name: "Alpha", Lang: "en"}},
 		browseErr: sentinel,
 	}
 	svc := newService(fc)
 
-	_, err := svc.Browse(context.Background(), "src-a", suwayomi.BrowsePopular, 1)
+	_, err := svc.Browse(context.Background(), "1", imports.BrowsePopular, 1)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("Browse upstream error: err = %v, want to wrap %v", err, sentinel)
 	}
@@ -1096,7 +903,10 @@ func TestService_Browse_SourcesError(t *testing.T) {
 	fc := &fakeClient{sourcesErr: sentinel}
 	svc := newService(fc)
 
-	_, err := svc.Browse(context.Background(), "any", suwayomi.BrowsePopular, 1)
+	// A numeric sourceID is required to reach the client.Sources call inside
+	// resolveSource — a non-numeric id short-circuits to ErrSourceNotFound
+	// before Sources is ever consulted.
+	_, err := svc.Browse(context.Background(), "1", imports.BrowsePopular, 1)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("Browse sources error: err = %v, want to wrap %v", err, sentinel)
 	}
@@ -1105,34 +915,33 @@ func TestService_Browse_SourcesError(t *testing.T) {
 // --- MangaDetails --------------------------------------------------------------
 
 // TestService_MangaDetails_OK verifies MangaDetails resolves the source (for
-// its Name/Lang tags), calls client.FetchMangaDetails, and maps the enriched
-// Manga through the SAME newCandidate/newSearchCandidateDTO mappers Search and
-// Browse use — so the returned author/artist/description/genres round-trip
-// exactly as they would from those endpoints.
+// its Name/Lang tags), calls client.MangaDetails, and maps the enriched
+// details through the SAME newCandidateFromDetails/newSearchCandidateDTO
+// mappers Search and Browse use — so the returned author/artist/description/
+// genres round-trip exactly as they would from those endpoints.
 func TestService_MangaDetails_OK(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{{ID: "src-a", Name: "Alpha Source", Lang: "en"}},
-		detailsPerManga: map[int]suwayomi.Manga{
-			1: {
-				ID:          1,
-				Title:       "Solo Leveling",
+		sources: []sourceengine.Source{{ID: 1, Name: "Alpha Source", Lang: "en"}},
+		detailsByURL: map[string]sourceengine.MangaDetails{
+			"/manga/1": {
 				URL:         "/manga/1",
-				Author:      ptrStr("Chugong"),
-				Artist:      ptrStr("Jang Sung-rak"),
-				Description: ptrStr("A weak hunter gains power."),
-				Genre:       []string{"Action", "Fantasy"},
+				Title:       "Solo Leveling",
+				Author:      "Chugong",
+				Artist:      "Jang Sung-rak",
+				Description: "A weak hunter gains power.",
+				Genres:      []string{"Action", "Fantasy"},
 			},
 		},
 	}
 	svc := newService(fc)
 
-	got, err := svc.MangaDetails(context.Background(), "src-a", 1)
+	got, err := svc.MangaDetails(context.Background(), "1", "/manga/1")
 	if err != nil {
 		t.Fatalf("MangaDetails: unexpected error: %v", err)
 	}
-	assertCandidateTags(t, got, "src-a", "Alpha Source", "en")
+	assertCandidateTags(t, got, "1", "Alpha Source", "en")
 	if got.Author != "Chugong" {
 		t.Errorf("MangaDetails: Author = %q, want %q", got.Author, "Chugong")
 	}
@@ -1152,28 +961,28 @@ func TestService_MangaDetails_OK(t *testing.T) {
 func TestService_MangaDetails_UnknownSource(t *testing.T) {
 	t.Parallel()
 
-	fc := &fakeClient{sources: []suwayomi.Source{{ID: "real", Name: "Real", Lang: "en"}}}
+	fc := &fakeClient{sources: []sourceengine.Source{{ID: 99, Name: "Real", Lang: "en"}}}
 	svc := newService(fc)
 
-	_, err := svc.MangaDetails(context.Background(), "ghost", 1)
+	_, err := svc.MangaDetails(context.Background(), "ghost", "/manga/1")
 	if !errors.Is(err, imports.ErrSourceNotFound) {
 		t.Errorf("MangaDetails unknown source: err = %v, want ErrSourceNotFound", err)
 	}
 }
 
-// TestService_MangaDetails_UpstreamError verifies a client.FetchMangaDetails
+// TestService_MangaDetails_UpstreamError verifies a client.MangaDetails
 // failure propagates verbatim (the handler maps it to 502).
 func TestService_MangaDetails_UpstreamError(t *testing.T) {
 	t.Parallel()
 
-	sentinel := errors.New("suwayomi: source unreachable")
+	sentinel := errors.New("sourceengine: source unreachable")
 	fc := &fakeClient{
-		sources:    []suwayomi.Source{{ID: "src-a", Name: "Alpha", Lang: "en"}},
+		sources:    []sourceengine.Source{{ID: 1, Name: "Alpha", Lang: "en"}},
 		detailsErr: sentinel,
 	}
 	svc := newService(fc)
 
-	_, err := svc.MangaDetails(context.Background(), "src-a", 1)
+	_, err := svc.MangaDetails(context.Background(), "1", "/manga/1")
 	if !errors.Is(err, sentinel) {
 		t.Errorf("MangaDetails upstream error: err = %v, want to wrap %v", err, sentinel)
 	}
@@ -1190,22 +999,23 @@ func TestService_MangaDetails_UpstreamError(t *testing.T) {
 func TestService_SourceBreakdown_GroupsByScanlator(t *testing.T) {
 	t.Parallel()
 
+	const url = "/manga/1"
 	fc := &fakeClient{
-		sources: []suwayomi.Source{{ID: "src-a", Name: "Alpha Source", Lang: "en"}},
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			1: {
-				{ID: 1, Number: ptrF64(1), Scanlator: "Alpha Scans"},
-				{ID: 2, Number: ptrF64(2), Scanlator: "Alpha Scans"},
-				{ID: 3, Number: ptrF64(3), Scanlator: "Alpha Scans"},
-				{ID: 4, Number: ptrF64(1), Scanlator: "Beta Scans"},
-				{ID: 5, Number: ptrF64(2), Scanlator: "Beta Scans"},
-				{ID: 6, Number: ptrF64(1), Scanlator: ""}, // untagged → source name
+		sources: []sourceengine.Source{{ID: 1, Name: "Alpha Source", Lang: "en"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			url: {
+				{URL: "/ch/1", Number: 1, Scanlator: "Alpha Scans"},
+				{URL: "/ch/2", Number: 2, Scanlator: "Alpha Scans"},
+				{URL: "/ch/3", Number: 3, Scanlator: "Alpha Scans"},
+				{URL: "/ch/4", Number: 1, Scanlator: "Beta Scans"},
+				{URL: "/ch/5", Number: 2, Scanlator: "Beta Scans"},
+				{URL: "/ch/6", Number: 1, Scanlator: ""}, // untagged → source name
 			},
 		},
 	}
 	svc := newService(fc)
 
-	got, err := svc.SourceBreakdown(context.Background(), "src-a", 1)
+	got, err := svc.SourceBreakdown(context.Background(), "1", url)
 	if err != nil {
 		t.Fatalf("SourceBreakdown: unexpected error: %v", err)
 	}
@@ -1234,18 +1044,19 @@ func TestService_SourceBreakdown_GroupsByScanlator(t *testing.T) {
 func TestService_SourceBreakdown_SortTiesByName(t *testing.T) {
 	t.Parallel()
 
+	const url = "/manga/1"
 	fc := &fakeClient{
-		sources: []suwayomi.Source{{ID: "src-a", Name: "Alpha Source", Lang: "en"}},
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			1: {
-				{ID: 1, Number: ptrF64(1), Scanlator: "Zeta Scans"},
-				{ID: 2, Number: ptrF64(1), Scanlator: "Alpha Scans"},
+		sources: []sourceengine.Source{{ID: 1, Name: "Alpha Source", Lang: "en"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			url: {
+				{URL: "/ch/1", Number: 1, Scanlator: "Zeta Scans"},
+				{URL: "/ch/2", Number: 1, Scanlator: "Alpha Scans"},
 			},
 		},
 	}
 	svc := newService(fc)
 
-	got, err := svc.SourceBreakdown(context.Background(), "src-a", 1)
+	got, err := svc.SourceBreakdown(context.Background(), "1", url)
 	if err != nil {
 		t.Fatalf("SourceBreakdown: unexpected error: %v", err)
 	}
@@ -1263,73 +1074,31 @@ func TestService_SourceBreakdown_SortTiesByName(t *testing.T) {
 func TestService_SourceBreakdown_UnknownSource(t *testing.T) {
 	t.Parallel()
 
-	fc := &fakeClient{sources: []suwayomi.Source{{ID: "real", Name: "Real", Lang: "en"}}}
+	fc := &fakeClient{sources: []sourceengine.Source{{ID: 99, Name: "Real", Lang: "en"}}}
 	svc := newService(fc)
 
-	_, err := svc.SourceBreakdown(context.Background(), "ghost", 1)
+	_, err := svc.SourceBreakdown(context.Background(), "ghost", "/manga/1")
 	if !errors.Is(err, imports.ErrSourceNotFound) {
 		t.Errorf("SourceBreakdown unknown source: err = %v, want ErrSourceNotFound", err)
 	}
 }
 
-// TestService_SourceBreakdown_UpstreamError verifies a client.FetchChapters
+// TestService_SourceBreakdown_UpstreamError verifies a client.Chapters
 // failure propagates verbatim (the handler maps it to 502).
 func TestService_SourceBreakdown_UpstreamError(t *testing.T) {
 	t.Parallel()
 
-	sentinel := errors.New("suwayomi: source unreachable")
+	sentinel := errors.New("sourceengine: source unreachable")
+	const url = "/manga/1"
 	fc := &fakeClient{
-		sources:     []suwayomi.Source{{ID: "src-a", Name: "Alpha", Lang: "en"}},
-		chapterErrs: map[int]error{1: sentinel},
+		sources:          []sourceengine.Source{{ID: 1, Name: "Alpha", Lang: "en"}},
+		chapterErrsByURL: map[string]error{url: sentinel},
 	}
 	svc := newService(fc)
 
-	_, err := svc.SourceBreakdown(context.Background(), "src-a", 1)
+	_, err := svc.SourceBreakdown(context.Background(), "1", url)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("SourceBreakdown upstream error: err = %v, want to wrap %v", err, sentinel)
-	}
-}
-
-// TestService_Search_ExcludesLocalSource verifies the F1 Local-source exclusion
-// extends from Sources() to the Search fan-out itself (N1): an unscoped search
-// (nil sourceIDs, the FE's default) must never query Suwayomi's built-in Local
-// source, and naming its id explicitly must not resurrect it either — a client
-// cannot search Local by id any more than by leaving the filter empty.
-func TestService_Search_ExcludesLocalSource(t *testing.T) {
-	t.Parallel()
-
-	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: suwayomi.LocalSourceID, Name: "Local source", Lang: suwayomi.LocalSourceLang},
-			{ID: "src-a", Name: "Alpha Source", Lang: "en"},
-		},
-		searchResults: map[string][]suwayomi.Manga{
-			suwayomi.LocalSourceID: {{ID: 1, Title: "Should Not Appear"}},
-			"src-a":                {{ID: 2, Title: "Solo Leveling"}},
-		},
-	}
-	svc := newService(fc)
-
-	// Unscoped search (empty filter) must not fan out to Local.
-	got, err := svc.Search(context.Background(), "anything", nil)
-	if err != nil {
-		t.Fatalf("Search: unexpected error: %v", err)
-	}
-	for _, g := range got {
-		for _, c := range g.Candidates {
-			if c.Source == suwayomi.LocalSourceID {
-				t.Errorf("Search: Local source candidate leaked into unscoped results: %+v", c)
-			}
-		}
-	}
-
-	// Explicitly naming Local's id must also be excluded (empty result).
-	got2, err := svc.Search(context.Background(), "anything", []string{suwayomi.LocalSourceID})
-	if err != nil {
-		t.Fatalf("Search explicit local id: unexpected error: %v", err)
-	}
-	if len(got2) != 0 {
-		t.Errorf("Search explicit local id: got %d groups, want 0 (Local must never be queryable by id)", len(got2))
 	}
 }
 
@@ -1339,9 +1108,9 @@ func TestService_Search_URLPopulated(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
-		sources: []suwayomi.Source{{ID: "s1", Name: "Source One", Lang: "en"}},
-		searchResults: map[string][]suwayomi.Manga{
-			"s1": {{ID: 42, Title: "Attack on Titan", URL: "/manga/42"}},
+		sources: []sourceengine.Source{{ID: 1, Name: "Source One", Lang: "en"}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Attack on Titan", URL: "/manga/42"}}},
 		},
 	}
 	svc := newService(fc)
@@ -1365,8 +1134,8 @@ func TestService_Search_URLPopulated(t *testing.T) {
 func newServiceDB(t *testing.T, fc *fakeClient) *imports.Service {
 	t.Helper()
 	db := testdb.New(t)
-	ingest := suwayomi.NewIngest(fc, db)
-	return imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
+	ingestSvc := ingest.NewIngest(fc, db)
+	return imports.NewService(fc, ingestSvc, db, "", testSearchTimeout, nil)
 }
 
 // assertAdoptSeries verifies that exactly one Series exists with the expected
@@ -1421,38 +1190,38 @@ func assertAdoptChapters(t *testing.T, ctx context.Context, db *ent.Client, want
 }
 
 // TestService_Adopt_TwoProviders verifies the canonical Adopt case: two
-// providers with DIFFERENT per-source titles ("Solo Leveling" / "Solo Leveling
-// (Official)") are adopted under one canonical title "Solo Leveling" → exactly
-// ONE Series row (slug = disk.Slugify("Solo Leveling")), TWO SeriesProvider rows
-// with correct importances, and chapters in state wanted.
+// providers with DIFFERENT per-source titles (resolved via MangaDetails) are
+// adopted under one canonical title "Solo Leveling" → exactly ONE Series row
+// (slug = disk.Slugify("Solo Leveling")), TWO SeriesProvider rows with correct
+// importances, and chapters in state wanted.
 func TestService_Adopt_TwoProviders(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 
 	const (
 		canonicalTitle = "Solo Leveling"
-		srcA           = "mangadex"
-		mangaIDA       = 101
+		srcA           = "1"
+		urlA           = "/manga/101"
 		impA           = 10 // higher importance → ranked first
-		srcB           = "toonily"
-		mangaIDB       = 202
+		srcB           = "2"
+		urlB           = "/manga/202"
 		impB           = 5
 	)
 
 	fc := &fakeClient{
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			mangaIDA: makeAdoptChapters(1000, 2),
-			mangaIDB: makeAdoptChapters(2000, 3),
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			urlA: makeAdoptChapters(urlA, 2),
+			urlB: makeAdoptChapters(urlB, 3),
 		},
 	}
-	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
+	ingestSvc := ingest.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingestSvc, db, "", testSearchTimeout, nil)
 
 	id, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title: canonicalTitle,
 		Providers: []imports.AdoptProvider{
-			{Source: srcA, MangaID: mangaIDA, Importance: impA},
-			{Source: srcB, MangaID: mangaIDB, Importance: impB},
+			{Source: srcA, URL: urlA, Importance: impA},
+			{Source: srcB, URL: urlB, Importance: impB},
 		},
 	})
 	if err != nil {
@@ -1479,15 +1248,15 @@ func TestService_Adopt_SameSourceDifferentScanlators(t *testing.T) {
 
 	const (
 		canonicalTitle = "Comix Series"
-		src            = "comix"
-		mangaID        = 555
+		src            = "1"
+		url            = "/manga/555"
 		scanA          = "Alpha Scans"
 		impA           = 5
 		scanB          = "Beta Scans"
 		impB           = 3
 	)
 
-	chapsA := makeAdoptChapters(1000, 2) // numbers 1, 2
+	chapsA := makeAdoptChapters(url, 2) // numbers 1, 2
 	for i := range chapsA {
 		chapsA[i].Scanlator = scanA
 	}
@@ -1495,25 +1264,29 @@ func TestService_Adopt_SameSourceDifferentScanlators(t *testing.T) {
 	// 5 distinct chapter_keys (Chapter identity is per-series, not per-
 	// provider — overlapping numbers here would dedupe and defeat the count
 	// assertion below).
-	chapsB := makeAdoptChapters(2000, 3)
+	chapsB := makeAdoptChapters(url, 3)
 	for i := range chapsB {
-		*chapsB[i].Number += 2
+		chapsB[i].Number += 2
 		chapsB[i].Scanlator = scanB
 	}
 
 	fc := &fakeClient{
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			mangaID: append(append([]suwayomi.Chapter{}, chapsA...), chapsB...),
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			// Both AdoptProviders name the SAME source+url, so both AddSeries
+			// calls fetch this SAME combined (unfiltered) list — mirroring
+			// production's single upstream feed for one source-manga, split
+			// downstream by each provider's own scanlator filter.
+			url: append(append([]sourceengine.Chapter{}, chapsA...), chapsB...),
 		},
 	}
-	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
+	ingestSvc := ingest.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingestSvc, db, "", testSearchTimeout, nil)
 
 	id, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title: canonicalTitle,
 		Providers: []imports.AdoptProvider{
-			{Source: src, MangaID: mangaID, Importance: impA, Scanlator: scanA},
-			{Source: src, MangaID: mangaID, Importance: impB, Scanlator: scanB},
+			{Source: src, URL: url, Importance: impA, Scanlator: scanA},
+			{Source: src, URL: url, Importance: impB, Scanlator: scanB},
 		},
 	})
 	if err != nil {
@@ -1541,7 +1314,7 @@ func TestService_Adopt_SameSourceDifferentScanlators(t *testing.T) {
 	}
 
 	// Chapters from both scanlators ingested (2 + 3 = 5), each filtered into
-	// its own provider's feed by suwayomi.Ingest's scanlator filter.
+	// its own provider's feed by ingest.Ingest's scanlator filter.
 	assertAdoptChapters(t, ctx, db, 5)
 }
 
@@ -1553,24 +1326,23 @@ func TestService_Adopt_Idempotent(t *testing.T) {
 
 	const (
 		canonicalTitle = "Tower of God"
-		srcA           = "webtoons"
-		mangaIDA       = 301
+		srcA           = "1"
+		urlA           = "/manga/301"
 		impA           = 10
 	)
 
-	chapA := makeAdoptChapters(3000, 2)
 	fc := &fakeClient{
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			mangaIDA: chapA,
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			urlA: makeAdoptChapters(urlA, 2),
 		},
 	}
-	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
+	ingestSvc := ingest.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingestSvc, db, "", testSearchTimeout, nil)
 
 	req := imports.AdoptRequest{
 		Title: canonicalTitle,
 		Providers: []imports.AdoptProvider{
-			{Source: srcA, MangaID: mangaIDA, Importance: impA},
+			{Source: srcA, URL: urlA, Importance: impA},
 		},
 	}
 
@@ -1608,29 +1380,27 @@ func TestService_Adopt_AttachToExisting(t *testing.T) {
 
 	const (
 		canonicalTitle = "Vinland Saga"
-		srcA           = "mangaplus"
-		mangaIDA       = 401
+		srcA           = "1"
+		urlA           = "/manga/401"
 		impA           = 10
-		srcB           = "mangasee"
-		mangaIDB       = 402
+		srcB           = "2"
+		urlB           = "/manga/402"
 		impB           = 5
 	)
 
-	chapA := makeAdoptChapters(4000, 2)
-	chapB := makeAdoptChapters(5000, 1)
 	fc := &fakeClient{
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			mangaIDA: chapA,
-			mangaIDB: chapB,
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			urlA: makeAdoptChapters(urlA, 2),
+			urlB: makeAdoptChapters(urlB, 1),
 		},
 	}
-	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
+	ingestSvc := ingest.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingestSvc, db, "", testSearchTimeout, nil)
 
 	// First adopt: one provider.
 	if _, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title:     canonicalTitle,
-		Providers: []imports.AdoptProvider{{Source: srcA, MangaID: mangaIDA, Importance: impA}},
+		Providers: []imports.AdoptProvider{{Source: srcA, URL: urlA, Importance: impA}},
 	}); err != nil {
 		t.Fatalf("first Adopt: %v", err)
 	}
@@ -1643,7 +1413,7 @@ func TestService_Adopt_AttachToExisting(t *testing.T) {
 	// Second adopt: new provider for the same series.
 	if _, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title:     canonicalTitle,
-		Providers: []imports.AdoptProvider{{Source: srcB, MangaID: mangaIDB, Importance: impB}},
+		Providers: []imports.AdoptProvider{{Source: srcB, URL: urlB, Importance: impB}},
 	}); err != nil {
 		t.Fatalf("second Adopt (attach): %v", err)
 	}
@@ -1675,59 +1445,43 @@ func TestService_Adopt_AttachToExisting(t *testing.T) {
 func TestService_Adopt_Category(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("set_category", func(t *testing.T) {
-		db := testdb.New(t)
-		fc := &fakeClient{
-			chaptersPerManga: map[int][]suwayomi.Chapter{
-				501: makeAdoptChapters(6000, 1),
-			},
-		}
-		ingest := suwayomi.NewIngest(fc, db)
-		svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
+	cases := []struct {
+		name     string
+		url      string
+		source   string
+		title    string
+		category string // request Category ("" ⇒ keep the default)
+		wantCat  string // expected Series category name after adopt
+	}{
+		{name: "set_category", url: "/manga/501", source: "1", title: "Berserk", category: "Manga", wantCat: "Manga"},
+		{name: "default_category", url: "/manga/502", source: "2", title: "Naruto", category: "", wantCat: "Other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testdb.New(t)
+			fc := &fakeClient{
+				chaptersByURL: map[string][]sourceengine.Chapter{
+					tc.url: makeAdoptChapters(tc.url, 1),
+				},
+			}
+			ingestSvc := ingest.NewIngest(fc, db)
+			svc := imports.NewService(fc, ingestSvc, db, "", testSearchTimeout, nil)
 
-		_, err := svc.Adopt(ctx, imports.AdoptRequest{
-			Title:    "Berserk",
-			Category: "Manga",
-			Providers: []imports.AdoptProvider{
-				{Source: "mangadex", MangaID: 501, Importance: 1},
-			},
+			_, err := svc.Adopt(ctx, imports.AdoptRequest{
+				Title:     tc.title,
+				Category:  tc.category,
+				Providers: []imports.AdoptProvider{{Source: tc.source, URL: tc.url, Importance: 1}},
+			})
+			if err != nil {
+				t.Fatalf("Adopt: %v", err)
+			}
+
+			s := db.Series.Query().OnlyX(ctx)
+			if name := s.QueryCategory().OnlyX(ctx).Name; name != tc.wantCat {
+				t.Errorf("Series category: got %q, want %q", name, tc.wantCat)
+			}
 		})
-		if err != nil {
-			t.Fatalf("Adopt with category: %v", err)
-		}
-
-		s := db.Series.Query().OnlyX(ctx)
-		if name := s.QueryCategory().OnlyX(ctx).Name; name != "Manga" {
-			t.Errorf("Series category: got %q, want Manga", name)
-		}
-	})
-
-	t.Run("default_category", func(t *testing.T) {
-		db := testdb.New(t)
-		fc := &fakeClient{
-			chaptersPerManga: map[int][]suwayomi.Chapter{
-				502: makeAdoptChapters(7000, 1),
-			},
-		}
-		ingest := suwayomi.NewIngest(fc, db)
-		svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
-
-		_, err := svc.Adopt(ctx, imports.AdoptRequest{
-			Title:    "Naruto",
-			Category: "", // omitted — should default to Other
-			Providers: []imports.AdoptProvider{
-				{Source: "mangasee", MangaID: 502, Importance: 1},
-			},
-		})
-		if err != nil {
-			t.Fatalf("Adopt without category: %v", err)
-		}
-
-		s := db.Series.Query().OnlyX(ctx)
-		if name := s.QueryCategory().OnlyX(ctx).Name; name != "Other" {
-			t.Errorf("Series category: got %q, want Other", name)
-		}
-	})
+	}
 }
 
 // TestService_Adopt_NoSilentPartial verifies §16: when one provider's AddSeries
@@ -1739,31 +1493,31 @@ func TestService_Adopt_NoSilentPartial(t *testing.T) {
 
 	const (
 		canonicalTitle = "Demon Slayer"
-		srcOK          = "mangadex"
-		mangaIDOK      = 601
+		srcOK          = "1"
+		urlOK          = "/manga/601"
 		impOK          = 10
-		srcFail        = "toonily"
-		mangaIDFail    = 602
+		srcFail        = "2"
+		urlFail        = "/manga/602"
 		impFail        = 5
 	)
 
-	injectErr := errors.New("suwayomi: source unavailable")
+	injectErr := errors.New("sourceengine: source unavailable")
 	fc := &fakeClient{
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			mangaIDOK: makeAdoptChapters(8000, 2),
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			urlOK: makeAdoptChapters(urlOK, 2),
 		},
-		chapterErrs: map[int]error{
-			mangaIDFail: injectErr,
+		chapterErrsByURL: map[string]error{
+			urlFail: injectErr,
 		},
 	}
-	ingest := suwayomi.NewIngest(fc, db)
-	svc := imports.NewService(fc, ingest, db, "", testSearchTimeout, nil)
+	ingestSvc := ingest.NewIngest(fc, db)
+	svc := imports.NewService(fc, ingestSvc, db, "", testSearchTimeout, nil)
 
 	req := imports.AdoptRequest{
 		Title: canonicalTitle,
 		Providers: []imports.AdoptProvider{
-			{Source: srcOK, MangaID: mangaIDOK, Importance: impOK},
-			{Source: srcFail, MangaID: mangaIDFail, Importance: impFail},
+			{Source: srcOK, URL: urlOK, Importance: impOK},
+			{Source: srcFail, URL: urlFail, Importance: impFail},
 		},
 	}
 
@@ -1795,9 +1549,10 @@ func TestService_Adopt_NoSilentPartial(t *testing.T) {
 func TestService_Adopt_InvalidCategory(t *testing.T) {
 	ctx := context.Background()
 
+	const url = "/manga/701"
 	fc := &fakeClient{
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			701: makeAdoptChapters(9000, 1),
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			url: makeAdoptChapters(url, 1),
 		},
 	}
 	svc := newServiceDB(t, fc)
@@ -1808,7 +1563,7 @@ func TestService_Adopt_InvalidCategory(t *testing.T) {
 		// becomes a folder name), not "not in a fixed enum".
 		Category: "bad/name",
 		Providers: []imports.AdoptProvider{
-			{Source: "mangadex", MangaID: 701, Importance: 1},
+			{Source: "1", URL: url, Importance: 1},
 		},
 	})
 	if err == nil {

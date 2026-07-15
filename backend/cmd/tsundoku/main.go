@@ -203,14 +203,15 @@ func main() {
 
 	// Shared chapter-fetch cache: memoizes the raw all-scanlators chapter list per
 	// source-manga so the INTERACTIVE coverage→configure→adopt discovery flow stops
-	// re-triggering a live source FetchChapters for the same manga (anti-ban
+	// re-triggering a live source Chapters fetch for the same manga (anti-ban
 	// de-amplification). ONE instance is shared across the registerRoutes
 	// ingest/imports service so those fetches collapse. Its TTL is read PER-Get from
 	// the settings overlay (jobs.chapter_cache_ttl, hot reload); 0 disables it live.
 	// The refresh sweep deliberately does NOT route through this cache (it fetches
 	// fresh via FetchChaptersUncached), so this TTL can be long without staling-out
-	// discovery.
-	chapterCache := suwayomi.NewChapterCache(func(ctx context.Context) time.Duration {
+	// discovery. P2 Suwayomi-removal (slice 3b): this is now the engine-agnostic
+	// internal/ingest.ChapterCache (imports/library no longer talk to Suwayomi).
+	chapterCache := ingest.NewChapterCache(func(ctx context.Context) time.Duration {
 		return settingsSvc.ChapterCacheTTL(ctx)
 	})
 
@@ -304,7 +305,7 @@ func main() {
 	// once the engine is reachable — see startSuwayomiEngine.
 	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc, entClient, apkStore)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, engineClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore)
 
 	addr := ":" + cfg.Server.Port
 

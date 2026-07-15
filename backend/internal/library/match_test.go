@@ -7,9 +7,9 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/imports"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // TestMatchCandidates_ReturnsSearchGroups proves the happy path: a staged
@@ -22,9 +22,9 @@ func TestMatchCandidates_ReturnsSearchGroups(t *testing.T) {
 	ctx := context.Background()
 
 	fake := newFakeClientWithSearch(t, "My Series") // Search returns 1 manga titled "My Series"
-	ingest := suwayomi.NewIngest(fake, client)
-	importsSvc := imports.NewService(fake, ingest, client, storage, 30*time.Second, nil)
-	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage, sse.NewHub())
+	ingestSvc := ingest.NewIngest(fake, client)
+	importsSvc := imports.NewService(fake, ingestSvc, client, storage, 30*time.Second, nil)
+	svc := library.NewService(client, ingestSvc, importsSvc, nil, func() {}, storage, sse.NewHub())
 
 	found, err := svc.Scan(ctx)
 	if err != nil {
@@ -52,10 +52,10 @@ func TestMatchCandidates_SourcesFilterReachesSearch(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 
-	fake := newFakeClientWithSearch(t, "My Series") // one source "weeb", one candidate
-	ingest := suwayomi.NewIngest(fake, client)
-	importsSvc := imports.NewService(fake, ingest, client, storage, 30*time.Second, nil)
-	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage, sse.NewHub())
+	fake := newFakeClientWithSearch(t, "My Series") // one source (id 1), one candidate
+	ingestSvc := ingest.NewIngest(fake, client)
+	importsSvc := imports.NewService(fake, ingestSvc, client, storage, 30*time.Second, nil)
+	svc := library.NewService(client, ingestSvc, importsSvc, nil, func() {}, storage, sse.NewHub())
 
 	found, err := svc.Scan(ctx)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestMatchCandidates_SourcesFilterReachesSearch(t *testing.T) {
 	}
 
 	// The real source id passes the filter → candidates come back.
-	withReal, err := svc.MatchCandidates(ctx, found[0].Path, []string{"weeb"})
+	withReal, err := svc.MatchCandidates(ctx, found[0].Path, []string{"1"})
 	if err != nil {
 		t.Fatalf("match (real source): %v", err)
 	}
@@ -90,9 +90,9 @@ func TestMatchCandidates_UnknownPathReturnsErrEntryNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	fake := newFakeClientWithSearch(t, "My Series")
-	ingest := suwayomi.NewIngest(fake, client)
-	importsSvc := imports.NewService(fake, ingest, client, storage, 30*time.Second, nil)
-	svc := library.NewService(client, ingest, importsSvc, nil, func() {}, storage, sse.NewHub())
+	ingestSvc := ingest.NewIngest(fake, client)
+	importsSvc := imports.NewService(fake, ingestSvc, client, storage, 30*time.Second, nil)
+	svc := library.NewService(client, ingestSvc, importsSvc, nil, func() {}, storage, sse.NewHub())
 
 	if _, err := svc.MatchCandidates(ctx, "/nonexistent/path", nil); err != library.ErrEntryNotFound {
 		t.Fatalf("err = %v, want ErrEntryNotFound", err)

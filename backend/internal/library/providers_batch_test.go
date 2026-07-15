@@ -11,10 +11,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // newAddProvidersSvc mirrors TestAddProvider_AttachesSourceAndFlagsUpgrade's
@@ -35,9 +35,9 @@ func newAddProvidersSvc(t *testing.T) (*library.Service, *ent.Client, context.Co
 	importOneFromFacts(t, client, facts)
 
 	fake := newFakeClientWithFeed(t)
-	ingest := suwayomi.NewIngest(fake, client)
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 	return svc, client, ctx
 }
 
@@ -59,8 +59,8 @@ func TestAddProviders_AttachesBelowExisting(t *testing.T) {
 	}
 
 	refs := []library.ProviderRef{
-		{Source: "weebA", MangaID: 91, Scanlator: ""},
-		{Source: "weebB", MangaID: 92, Scanlator: ""},
+		{Source: "1", URL: "/manga/91", Scanlator: ""},
+		{Source: "2", URL: "/manga/92", Scanlator: ""},
 	}
 	dto, err := svc.AddProviders(ctx, ser.ID, refs)
 	if err != nil {
@@ -73,16 +73,16 @@ func TestAddProviders_AttachesBelowExisting(t *testing.T) {
 	// New sources: non-negative, below the renumbered disk provider, in list order.
 	// The disk provider was renumbered up (1 → 30) so the batch could stay
 	// non-negative below it; it must still rank ABOVE every new source.
-	assertProviderImportanceDB(t, ctx, client, ser.ID, "weebA", 20)
-	assertProviderImportanceDB(t, ctx, client, ser.ID, "weebB", 10)
+	assertProviderImportanceDB(t, ctx, client, ser.ID, "1", 20)
+	assertProviderImportanceDB(t, ctx, client, ser.ID, "2", 10)
 	assertProviderImportanceDB(t, ctx, client, ser.ID, "mangadex", 30)
 
 	found := make(map[string]int, len(dto.Providers))
 	for _, p := range dto.Providers {
 		found[p.Provider] = p.Importance
 	}
-	if found["weebA"] != 20 || found["weebB"] != 10 {
-		t.Errorf("DTO importances = weebA:%d weebB:%d, want 20/10", found["weebA"], found["weebB"])
+	if found["1"] != 20 || found["2"] != 10 {
+		t.Errorf("DTO importances = weebA:%d weebB:%d, want 20/10", found["1"], found["2"])
 	}
 }
 
@@ -114,7 +114,7 @@ func TestAddProviders_EmptyRefs(t *testing.T) {
 func TestAddProviders_UnknownSeries(t *testing.T) {
 	svc, _, ctx := newAddProvidersSvc(t)
 
-	refs := []library.ProviderRef{{Source: "weebA", MangaID: 91, Scanlator: ""}}
+	refs := []library.ProviderRef{{Source: "1", URL: "/manga/91", Scanlator: ""}}
 	if _, err := svc.AddProviders(ctx, uuid.New(), refs); !errors.Is(err, library.ErrSeriesNotFound) {
 		t.Fatalf("want ErrSeriesNotFound, got %v", err)
 	}
@@ -129,20 +129,20 @@ func TestAddProviders_DuplicateReportsAttachedSoFar(t *testing.T) {
 	ser := client.Series.Query().OnlyX(ctx)
 
 	refs := []library.ProviderRef{
-		{Source: "weebA", MangaID: 91, Scanlator: ""},
-		{Source: "weebA", MangaID: 91, Scanlator: ""}, // duplicates the first ref
+		{Source: "1", URL: "/manga/91", Scanlator: ""},
+		{Source: "1", URL: "/manga/91", Scanlator: ""}, // duplicates the first ref
 	}
 	_, err := svc.AddProviders(ctx, ser.ID, refs)
 	if !errors.Is(err, library.ErrProviderAlreadyPresent) {
 		t.Fatalf("want error wrapping ErrProviderAlreadyPresent, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "weebA") {
-		t.Errorf("error message %q does not name the attached-so-far source weebA", err.Error())
+	if !strings.Contains(err.Error(), "attaching [1]") {
+		t.Errorf("error message %q does not name the attached-so-far source 1", err.Error())
 	}
 
 	// The first ref's attach was NOT rolled back.
 	exists := client.SeriesProvider.Query().
-		Where(seriesprovider.SeriesID(ser.ID), seriesprovider.Provider("weebA"), seriesprovider.Scanlator("")).
+		Where(seriesprovider.SeriesID(ser.ID), seriesprovider.Provider("1"), seriesprovider.Scanlator("")).
 		ExistX(ctx)
 	if !exists {
 		t.Error("weebA should remain attached after the batch's second ref fails")

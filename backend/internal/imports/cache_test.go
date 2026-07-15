@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/imports"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/ingest"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // constTTL wraps a fixed duration in the per-Get TTL-provider closure the search
@@ -21,53 +22,53 @@ func constTTL(d time.Duration) func(context.Context) time.Duration {
 }
 
 // countingClient wraps a fakeClient and counts Search (per source) and
-// FetchChapters (per manga) calls so a test can prove a cache hit did ZERO
+// Chapters (per manga url) calls so a test can prove a cache hit did ZERO
 // upstream work.
 type countingClient struct {
 	*fakeClient
 	mu          sync.Mutex
-	searchCalls map[string]int
-	fetchCalls  map[int]int
+	searchCalls map[int64]int
+	fetchCalls  map[string]int
 }
 
 func newCountingClient(fc *fakeClient) *countingClient {
-	return &countingClient{fakeClient: fc, searchCalls: map[string]int{}, fetchCalls: map[int]int{}}
+	return &countingClient{fakeClient: fc, searchCalls: map[int64]int{}, fetchCalls: map[string]int{}}
 }
 
-func (c *countingClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
+func (c *countingClient) Search(ctx context.Context, sourceID int64, query string, page int) (sourceengine.SearchResult, error) {
 	c.mu.Lock()
 	c.searchCalls[sourceID]++
 	c.mu.Unlock()
-	return c.fakeClient.Search(ctx, sourceID, query)
+	return c.fakeClient.Search(ctx, sourceID, query, page)
 }
 
-func (c *countingClient) FetchChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+func (c *countingClient) Chapters(ctx context.Context, sourceID int64, url string) ([]sourceengine.Chapter, error) {
 	c.mu.Lock()
-	c.fetchCalls[mangaID]++
+	c.fetchCalls[url]++
 	c.mu.Unlock()
-	return c.fakeClient.FetchChapters(ctx, mangaID)
+	return c.fakeClient.Chapters(ctx, sourceID, url)
 }
 
-func (c *countingClient) searchCount(sourceID string) int {
+func (c *countingClient) searchCount(sourceID int64) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.searchCalls[sourceID]
 }
 
-func (c *countingClient) fetchCount(mangaID int) int {
+func (c *countingClient) fetchCount(url string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.fetchCalls[mangaID]
+	return c.fetchCalls[url]
 }
 
 // twoSourceClient builds a counting client over two sources each returning one
 // result — the fan-out surface for the search-cache tests.
 func twoSourceClient() *countingClient {
 	return newCountingClient(&fakeClient{
-		sources: []suwayomi.Source{{ID: "s1", Name: "S1"}, {ID: "s2", Name: "S2"}},
-		searchResults: map[string][]suwayomi.Manga{
-			"s1": {{ID: 1, Title: "Alpha"}},
-			"s2": {{ID: 2, Title: "Beta"}},
+		sources: []sourceengine.Source{{ID: 1, Name: "S1"}, {ID: 2, Name: "S2"}},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Alpha"}}},
+			2: {Manga: []sourceengine.MangaEntry{{Title: "Beta"}}},
 		},
 	})
 }
@@ -86,7 +87,7 @@ func TestSearch_CacheHitSkipsFanout(t *testing.T) {
 	if _, err := svc.Search(ctx, "naruto", nil); err != nil {
 		t.Fatalf("second Search: %v", err)
 	}
-	if a, b := cc.searchCount("s1"), cc.searchCount("s2"); a != 1 || b != 1 {
+	if a, b := cc.searchCount(1), cc.searchCount(2); a != 1 || b != 1 {
 		t.Fatalf("Search fan-out counts s1=%d s2=%d, want 1/1 (2nd search must hit cache)", a, b)
 	}
 }
@@ -111,11 +112,11 @@ func TestSearch_CancelledParentNotCached(t *testing.T) {
 	// The cancelled fan-out may have raced a source or two before dropping, so
 	// snapshot the counts and require the NEXT live search to add exactly one
 	// fan-out per source — proving it was a cache MISS (nothing was poisoned).
-	before1, before2 := cc.searchCount("s1"), cc.searchCount("s2")
+	before1, before2 := cc.searchCount(1), cc.searchCount(2)
 	if _, err := svc.Search(context.Background(), "naruto", nil); err != nil {
 		t.Fatalf("live Search after cancelled one: %v", err)
 	}
-	if a, b := cc.searchCount("s1"), cc.searchCount("s2"); a != before1+1 || b != before2+1 {
+	if a, b := cc.searchCount(1), cc.searchCount(2); a != before1+1 || b != before2+1 {
 		t.Fatalf("live search fanned out s1 +%d s2 +%d, want +1/+1 (cancelled search must not have cached)", a-before1, b-before2)
 	}
 }
@@ -129,13 +130,13 @@ func TestSearch_CacheKeyNormalisation(t *testing.T) {
 	svc := imports.NewService(cc, nil, nil, "", testSearchTimeout, nil)
 	imports.SetSearchCacheForTest(svc, constTTL(2*time.Minute), time.Now)
 
-	if _, err := svc.Search(ctx, "naruto", []string{"s1", "s2"}); err != nil {
+	if _, err := svc.Search(ctx, "naruto", []string{"1", "2"}); err != nil {
 		t.Fatalf("first Search: %v", err)
 	}
-	if _, err := svc.Search(ctx, "  Naruto ", []string{"s2", "s1"}); err != nil {
+	if _, err := svc.Search(ctx, "  Naruto ", []string{"2", "1"}); err != nil {
 		t.Fatalf("second Search: %v", err)
 	}
-	if a := cc.searchCount("s1"); a != 1 {
+	if a := cc.searchCount(1); a != 1 {
 		t.Fatalf("s1 searched %d times, want 1 (normalised key must match)", a)
 	}
 }
@@ -153,17 +154,17 @@ func TestSearch_CacheMissOnDifferentKey(t *testing.T) {
 	if _, err := svc.Search(ctx, "a", nil); err != nil {
 		t.Fatalf("Search all: %v", err)
 	}
-	if _, err := svc.Search(ctx, "a", []string{"s1"}); err != nil {
+	if _, err := svc.Search(ctx, "a", []string{"1"}); err != nil {
 		t.Fatalf("Search subset: %v", err)
 	}
-	if a := cc.searchCount("s1"); a != 2 {
+	if a := cc.searchCount(1); a != 2 {
 		t.Fatalf("s1 searched %d times, want 2 (different source-set is a miss)", a)
 	}
 	// A different query is also a miss.
 	if _, err := svc.Search(ctx, "b", nil); err != nil {
 		t.Fatalf("Search b: %v", err)
 	}
-	if a := cc.searchCount("s1"); a != 3 {
+	if a := cc.searchCount(1); a != 3 {
 		t.Fatalf("s1 searched %d times, want 3 (different query is a miss)", a)
 	}
 }
@@ -185,7 +186,7 @@ func TestSearch_CacheExpiryRefetches(t *testing.T) {
 	if _, err := svc.Search(ctx, "q", nil); err != nil {
 		t.Fatalf("second Search: %v", err)
 	}
-	if a := cc.searchCount("s1"); a != 2 {
+	if a := cc.searchCount(1); a != 2 {
 		t.Fatalf("s1 searched %d times, want 2 (expired entry must refetch)", a)
 	}
 }
@@ -205,7 +206,7 @@ func TestSearch_ZeroTTLDisablesCache(t *testing.T) {
 	if _, err := svc.Search(ctx, "naruto", nil); err != nil {
 		t.Fatalf("second Search: %v", err)
 	}
-	if a := cc.searchCount("s1"); a != 2 {
+	if a := cc.searchCount(1); a != 2 {
 		t.Fatalf("s1 searched %d times, want 2 (0 TTL disables the cache)", a)
 	}
 }
@@ -229,7 +230,7 @@ func TestSearch_TTLHotReload(t *testing.T) {
 	if _, err := svc.Search(ctx, "q", nil); err != nil {
 		t.Fatalf("second Search: %v", err)
 	}
-	if a := cc.searchCount("s1"); a != 1 {
+	if a := cc.searchCount(1); a != 1 {
 		t.Fatalf("s1 searched %d times, want 1 (30m < 1h TTL is a hit)", a)
 	}
 	// Shrink the TTL below the entry's 30m age WITHOUT moving the clock ⇒ the next
@@ -238,36 +239,37 @@ func TestSearch_TTLHotReload(t *testing.T) {
 	if _, err := svc.Search(ctx, "q", nil); err != nil {
 		t.Fatalf("third Search: %v", err)
 	}
-	if a := cc.searchCount("s1"); a != 2 {
+	if a := cc.searchCount(1); a != 2 {
 		t.Fatalf("s1 searched %d times, want 2 (shrunk TTL must expire the entry)", a)
 	}
 }
 
 // TestDiscovery_ChapterCacheSharedAcrossPaths proves Task C2 at the imports layer:
 // SourceBreakdown and InspectChapters for the same (source, manga) share ONE
-// cached FetchChapters — the coverage→inspect part of the coverage→adopt flow
+// cached Chapters call — the coverage→inspect part of the coverage→adopt flow
 // fetches upstream once.
 func TestDiscovery_ChapterCacheSharedAcrossPaths(t *testing.T) {
 	ctx := context.Background()
+	const url = "/manga/9"
 	cc := newCountingClient(&fakeClient{
-		sources: []suwayomi.Source{{ID: "s1", Name: "S1"}},
-		chaptersPerManga: map[int][]suwayomi.Chapter{
-			9: {{ID: 1, Number: ptrF64(1), Scanlator: "X"}},
+		sources: []sourceengine.Source{{ID: 1, Name: "S1"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			url: {{URL: "/ch/1", Number: 1, Scanlator: "X"}},
 		},
 	})
 	svc := imports.NewService(cc, nil, nil, "", testSearchTimeout, nil)
-	imports.SetChapterCacheForTest(svc, suwayomi.NewChapterCacheConst(time.Minute))
+	imports.SetChapterCacheForTest(svc, ingest.NewChapterCacheConst(time.Minute))
 
-	if _, err := svc.SourceBreakdown(ctx, "s1", 9); err != nil {
+	if _, err := svc.SourceBreakdown(ctx, "1", url); err != nil {
 		t.Fatalf("SourceBreakdown 1: %v", err)
 	}
-	if _, err := svc.SourceBreakdown(ctx, "s1", 9); err != nil {
+	if _, err := svc.SourceBreakdown(ctx, "1", url); err != nil {
 		t.Fatalf("SourceBreakdown 2: %v", err)
 	}
-	if _, err := svc.InspectChapters(ctx, "s1", 9); err != nil {
+	if _, err := svc.InspectChapters(ctx, "1", url); err != nil {
 		t.Fatalf("InspectChapters: %v", err)
 	}
-	if got := cc.fetchCount(9); got != 1 {
-		t.Fatalf("FetchChapters called %d times for manga 9, want 1 (coverage+inspect share cache)", got)
+	if got := cc.fetchCount(url); got != 1 {
+		t.Fatalf("Chapters called %d times for %q, want 1 (coverage+inspect share cache)", got, url)
 	}
 }

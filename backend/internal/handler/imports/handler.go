@@ -66,19 +66,21 @@ func (h *Handler) Search(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// InspectChapters handles GET /api/sources/:sourceId/manga/:mangaId/chapters.
+// InspectChapters handles GET /api/sources/:sourceId/manga/:mangaId/chapters?url=.
 //
-// It parses :mangaId as an integer (non-integer → 400) and returns the live
-// chapter list as []ChapterInspectDTO. :sourceId is passed to the service for
-// routing context (currently unused by the service implementation).
+// P2 Suwayomi-removal (slice 3b): the backend is URL-addressed — it requires a
+// REQUIRED ?url query param (the source-relative manga URL) and returns the
+// live chapter list as []ChapterInspectDTO. :mangaId stays in the route (FE
+// compat) but is bound/ignored; a request that only sends :mangaId (the
+// not-yet-updated frontend) gets a clean 400 until slice 3b-FE sends ?url=.
 func (h *Handler) InspectChapters(c echo.Context) error {
-	mangaID, err := parseMangaID(c.Param("mangaId"))
+	sourceID := c.Param("sourceId")
+	url, err := parseChapterURL(c.QueryParam("url"))
 	if err != nil {
 		return err
 	}
-	sourceID := c.Param("sourceId")
 
-	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, mangaID)
+	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, url)
 	if err != nil {
 		return err
 	}
@@ -112,26 +114,29 @@ func (h *Handler) Browse(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// Details handles GET /api/sources/:sourceId/manga/:mangaId/details.
+// Details handles GET /api/sources/:sourceId/manga/:mangaId/details?url=.
 //
 // It FORCES a live details fetch from the upstream source (via
-// imports.Service.MangaDetails → suwayomi.Client.FetchMangaDetails) and
+// imports.Service.MangaDetails → sourceengine.Client.MangaDetails) and
 // returns the enriched candidate as a SearchCandidateDTO — the same shape
 // Search/Browse return, so the frontend Discover hover preview can merge it
 // straight into an already-rendered candidate. Call this ON DEMAND for one
 // hovered manga at a time; never for every row of a search/browse page.
 //
-// An unknown :sourceId maps to 404 (mirrors Browse); any other failure is a
-// genuine upstream Suwayomi problem and maps to 502 (mirrors the cover-proxy
-// error mapping in cover.go), so a source outage never surfaces as a false 200.
+// P2 Suwayomi-removal (slice 3b): requires a REQUIRED ?url query param (see
+// InspectChapters's doc comment for the same :mangaId-kept-but-ignored /
+// ?url=-required transition). An unknown :sourceId maps to 404 (mirrors
+// Browse); any other failure is a genuine upstream source problem and maps to
+// 502 (mirrors the cover-proxy error mapping in cover.go), so a source outage
+// never surfaces as a false 200.
 func (h *Handler) Details(c echo.Context) error {
 	sourceID := c.Param("sourceId")
-	mangaID, err := parseMangaID(c.Param("mangaId"))
+	url, err := parseChapterURL(c.QueryParam("url"))
 	if err != nil {
 		return err
 	}
 
-	out, err := h.svc.MangaDetails(c.Request().Context(), sourceID, mangaID)
+	out, err := h.svc.MangaDetails(c.Request().Context(), sourceID, url)
 	if err != nil {
 		if errors.Is(err, imports.ErrSourceNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")
@@ -141,22 +146,25 @@ func (h *Handler) Details(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// Breakdown handles GET /api/sources/:sourceId/manga/:mangaId/breakdown.
+// Breakdown handles GET /api/sources/:sourceId/manga/:mangaId/breakdown?url=.
 //
-// It fetches the live chapter feed for (sourceId, mangaId) and groups it by
+// It fetches the live chapter feed for (sourceId, url) and groups it by
 // scanlator, returning a SourceBreakdownDTO so the adopt UI can auto-split a
-// source into per-scanlator rows with counts + display ranges. An unknown
-// :sourceId maps to 404 (mirrors Details); any other failure is a genuine
-// upstream Suwayomi problem and maps to 502 via the shared httperr.Upstream
-// (mirrors Details), so a source outage never surfaces as a false 200.
+// source into per-scanlator rows with counts + display ranges.
+//
+// P2 Suwayomi-removal (slice 3b): requires a REQUIRED ?url query param (see
+// InspectChapters's doc comment for the transition). An unknown :sourceId maps
+// to 404 (mirrors Details); any other failure is a genuine upstream source
+// problem and maps to 502 via the shared httperr.Upstream (mirrors Details),
+// so a source outage never surfaces as a false 200.
 func (h *Handler) Breakdown(c echo.Context) error {
 	sourceID := c.Param("sourceId")
-	mangaID, err := parseMangaID(c.Param("mangaId"))
+	url, err := parseChapterURL(c.QueryParam("url"))
 	if err != nil {
 		return err
 	}
 
-	out, err := h.svc.SourceBreakdown(c.Request().Context(), sourceID, mangaID)
+	out, err := h.svc.SourceBreakdown(c.Request().Context(), sourceID, url)
 	if err != nil {
 		if errors.Is(err, imports.ErrSourceNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")
@@ -196,6 +204,7 @@ func (h *Handler) Adopt(c echo.Context) error {
 		providers[i] = imports.AdoptProvider{
 			Source:     p.Source,
 			MangaID:    p.MangaID,
+			URL:        p.URL,
 			Importance: p.Importance,
 			Scanlator:  p.Scanlator,
 		}

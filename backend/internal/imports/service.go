@@ -1,14 +1,23 @@
 // Package imports — import-workflow service.
 //
 // This file implements Service, which is the domain layer for the manga import
-// workflow: discovering available Suwayomi sources, searching across them, and
-// previewing a manga's chapter list before adopting it into the Tsundoku
+// workflow: discovering available engine-host sources, searching across them,
+// and previewing a manga's chapter list before adopting it into the Tsundoku
 // library.
 //
 // Service is intentionally thin: it delegates source enumeration and search to
-// suwayomi.Client, grouping to groupCandidates (match.go), and chapter preview
-// to suwayomi.Client.FetchChapters. The ingest, db, and storage fields are
-// declared now for Task 4 (adopt) but not used here.
+// sourceengine.Client, grouping to groupCandidates (match.go), and chapter
+// preview to sourceengine.Client.Chapters. The ingest, db, and storage fields
+// are declared now for Task 4 (adopt) but not used here.
+//
+// P2 Suwayomi-removal (slice 3b): this package was repointed off
+// internal/suwayomi onto the URL-addressed internal/sourceengine.Client +
+// internal/ingest.Ingest — it MUST NOT import internal/suwayomi (that
+// dependency is exactly what this migration removes; cover/warmup/enginetopo
+// and the other not-yet-repointed handlers keep their own suwayomi.Client).
+// Every source is now identified by its STABLE numeric id (stringified onto
+// the wire, e.g. SourceDTO.ID == "2") and every manga/chapter by a
+// source-relative URL rather than a Suwayomi-internal manga id.
 package imports
 
 import (
@@ -17,6 +26,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,9 +39,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // searchConcurrency is the maximum number of sources queried in parallel during
@@ -44,29 +55,35 @@ const searchConcurrency = 8
 // client disconnect that would otherwise cancel the request context.
 const recordTimeout = 10 * time.Second
 
+// searchFanoutPage is the page ALWAYS requested for each per-source Search
+// fan-out call (sourceengine.Client.Search is paginated; the multi-source
+// picker has no paging UI of its own — it always wants page 1, mirroring the
+// pre-P2 Suwayomi client's single-page Search).
+const searchFanoutPage = 1
+
 // ErrSourceNotFound is returned by Browse when the requested sourceID is not in
 // the live source list (client.Sources). The HTTP handler maps it to 404.
 var ErrSourceNotFound = errors.New("source not found")
 
-// Service provides the import workflow over a Suwayomi backend: source
+// Service provides the import workflow over the engine-host backend: source
 // discovery, multi-source search with fuzzy grouping, and chapter inspection.
 //
 // Fields ingest, db, and storage are unused in Task 3 but declared here so
 // Task 4 can extend this struct without changing the constructor signature.
 type Service struct {
-	client        suwayomi.Client
-	ingest        *suwayomi.Ingest
+	client        sourceengine.Client
+	ingest        *ingest.Ingest
 	db            *ent.Client
 	storage       string
 	searchTimeout time.Duration
 	recorder      metrics.Recorder
 
-	// chapterCache memoizes the raw client.FetchChapters result so coverage
+	// chapterCache memoizes the raw client.Chapters result so coverage
 	// (SourceBreakdown) / InspectChapters / Adopt fetch a source-manga ONCE (Task
-	// C2). It is the SAME instance the adopt-side suwayomi.Ingest holds, so a
+	// C2). It is the SAME instance the adopt-side ingest.Ingest holds, so a
 	// coverage→configure→adopt session collapses onto a single upstream fetch. Nil
 	// ⇒ no chapter caching (each call hits upstream — the plain NewService case).
-	chapterCache *suwayomi.ChapterCache
+	chapterCache *ingest.ChapterCache
 	// searchCache memoizes Search fan-out results (Task C1). Nil ⇒ no search
 	// caching (every Search fans out — the plain NewService case).
 	searchCache *searchCache
@@ -78,7 +95,7 @@ type Service struct {
 	autoIdentifier AutoIdentifier
 }
 
-// NewService constructs a Service backed by the given Suwayomi client.
+// NewService constructs a Service backed by the given engine-host client.
 //
 // searchTimeout is the OVERALL deadline for one interactive Search fan-out (see
 // Search) — it bounds the response below a CDN edge timeout and yields partial
@@ -86,16 +103,16 @@ type Service struct {
 // config (cfg.Suwayomi.SearchTimeout) and is DISTINCT from the per-request HTTP
 // client timeout, which downloads keep generous.
 //
-// ingest, db, and storage back the adopt/import workflow and may be nil/empty
+// ingestSvc, db, and storage back the adopt/import workflow and may be nil/empty
 // for callers that only use the read-only discovery paths.
 //
 // recorder receives one batch of per-source search timings after each Search
 // fan-out (see Search); it is best-effort and may be nil (recording is then
 // skipped) for callers/tests that do not exercise metrics.
-func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client, storage string, searchTimeout time.Duration, recorder metrics.Recorder) *Service {
+func NewService(client sourceengine.Client, ingestSvc *ingest.Ingest, db *ent.Client, storage string, searchTimeout time.Duration, recorder metrics.Recorder) *Service {
 	return &Service{
 		client:        client,
-		ingest:        ingest,
+		ingest:        ingestSvc,
 		db:            db,
 		storage:       storage,
 		searchTimeout: searchTimeout,
@@ -104,38 +121,32 @@ func NewService(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client,
 }
 
 // NewServiceWithCaches is NewService plus the anti-ban de-amplification caches:
-// chapterCache (SHARED with the adopt-side suwayomi.Ingest so coverage→adopt
+// chapterCache (SHARED with the adopt-side ingest.Ingest so coverage→adopt
 // fetches a source-manga once — Task C2) and an internally-built search-result
 // cache (Task C1). It is the production constructor (server.registerRoutes); the
 // plain NewService (no caches) is kept so the many read-only/test call sites need
 // no change. chapterCache may be nil (chapter caching then disabled). searchTTL
 // supplies the search cache's lifetime PER-Get (jobs.search_cache_ttl, hot
 // reload); a searchTTL returning 0 or less disables the search cache at runtime.
-func NewServiceWithCaches(client suwayomi.Client, ingest *suwayomi.Ingest, db *ent.Client, storage string, searchTimeout time.Duration, recorder metrics.Recorder, chapterCache *suwayomi.ChapterCache, searchTTL func(context.Context) time.Duration) *Service {
-	s := NewService(client, ingest, db, storage, searchTimeout, recorder)
+func NewServiceWithCaches(client sourceengine.Client, ingestSvc *ingest.Ingest, db *ent.Client, storage string, searchTimeout time.Duration, recorder metrics.Recorder, chapterCache *ingest.ChapterCache, searchTTL func(context.Context) time.Duration) *Service {
+	s := NewService(client, ingestSvc, db, storage, searchTimeout, recorder)
 	s.chapterCache = chapterCache
 	s.searchCache = newSearchCache(searchTTL)
 	return s
 }
 
-// Sources returns all Suwayomi sources as SourceDTOs, excluding Suwayomi's
-// built-in Local source (see isLocalSource) AND any source the owner has
-// disabled (see isDisabledSource) — the per-language enable/disable toggle
-// exposed via the extension "Configure" dialog. The Local source indexes
-// files from Suwayomi's own on-disk localSourcePath rather than a real online
-// provider, and its lang tag renders as the raw "LOCALSOURCELANG" string in
-// the UI — it should never appear in the Discover picker or the Search
-// "Limit to" filters (F1).
-//
-// Disabling only declutters these pickers; it does not affect a series
-// already adopted from the disabled source (refresh.RefreshAll iterates
-// SeriesProvider rows, not this list) and does not block a direct-by-id
-// request (resolveSource/Browse, and Adopt/AddProvider's ingest calls, all
-// bypass this filtered list — see resolveSources below for the equivalent
-// Search/Browse-fan-out filter).
-//
-// client.Sources already selects each source's `meta` inline (see
-// suwayomi/source_meta.go), so this filter costs no extra round trip.
+// sourceIDString renders an engine-host numeric source id as the wire/DTO
+// string form (e.g. 2 -> "2") — the ONE place that formatting happens, mirrored
+// by internal/ingest.providerKey so a SeriesProvider.provider column and this
+// package's DTOs always agree on shape.
+func sourceIDString(id int64) string {
+	return strconv.FormatInt(id, 10)
+}
+
+// Sources returns all engine-host sources as SourceDTOs, excluding any
+// known-broken source (see isBrokenSource). Unlike the pre-P2 Suwayomi client,
+// the engine host has no built-in "Local" source and no per-language
+// enable/disable toggle to filter on — see excludedFromPicker's doc comment.
 func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 	srcs, err := s.client.Sources(ctx)
 	if err != nil {
@@ -146,25 +157,9 @@ func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 		if excludedFromPicker(src) {
 			continue
 		}
-		out = append(out, SourceDTO{ID: src.ID, Name: src.Name, Lang: src.Lang})
+		out = append(out, SourceDTO{ID: sourceIDString(src.ID), Name: src.Name, Lang: src.Lang})
 	}
 	return out, nil
-}
-
-// isLocalSource reports whether src is Suwayomi's built-in Local source. The
-// primary signal is the fixed id (suwayomi.LocalSourceID); the lang tag
-// (case-insensitive "localsourcelang") is checked too as a defensive
-// secondary signal, since it is the more stable identifier — if Suwayomi ever
-// changes the id, matching on lang still catches it.
-func isLocalSource(src suwayomi.Source) bool {
-	return src.ID == suwayomi.LocalSourceID || strings.EqualFold(src.Lang, suwayomi.LocalSourceLang)
-}
-
-// isDisabledSource reports whether the owner has disabled src via the
-// per-language enable/disable toggle (suwayomi.Source.Disabled, resolved from
-// the source's isEnabled meta key — see suwayomi/source_meta.go).
-func isDisabledSource(src suwayomi.Source) bool {
-	return src.Disabled
 }
 
 // isBrokenSource reports whether src is a known-broken source Tsundoku must never
@@ -172,105 +167,86 @@ func isDisabledSource(src suwayomi.Source) bool {
 // requests + risks IP-blocks). Matched by NAME (case-insensitive). REMOVE this
 // predicate (and its entry in excludedFromPicker) once the source's captcha works
 // again.
-func isBrokenSource(src suwayomi.Source) bool {
+func isBrokenSource(src sourceengine.Source) bool {
 	return strings.EqualFold(src.Name, "InfinityScans")
 }
 
 // excludedFromPicker reports whether src must never appear in a Discover/
-// Search/Browse source picker: Suwayomi's built-in Local source (F1), a
-// source the owner has disabled, or a known-broken source (isBrokenSource).
-// Shared by Sources() and resolveSources() so the exclusion rules can never
-// drift apart.
-func excludedFromPicker(src suwayomi.Source) bool {
-	return isLocalSource(src) || isDisabledSource(src) || isBrokenSource(src)
-}
-
-// EnabledOnlineSources returns every Suwayomi source eligible for the warm-up
-// pass: all installed sources MINUS the built-in Local source and any source the
-// owner has disabled — the SAME exclusion rule Search's fan-out applies
-// (excludedFromPicker). It is exported so the warm-up job (internal/warmup) warms
-// exactly the source set Search hits, without duplicating the exclusion logic
-// (§2 DRY). client is the live Suwayomi client (client.Sources already inlines
-// each source's meta, so the disabled check costs no extra round trip).
-func EnabledOnlineSources(ctx context.Context, client suwayomi.Client) ([]suwayomi.Source, error) {
-	all, err := client.Sources(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]suwayomi.Source, 0, len(all))
-	for _, src := range all {
-		if excludedFromPicker(src) {
-			continue
-		}
-		out = append(out, src)
-	}
-	return out, nil
-}
-
-// searchOneSource performs a single-source search against the Suwayomi client
-// and maps the results to Candidates. A nil error and nil slice is returned
-// when the source fails — the caller logs the failure and skips the source so
-// that partial results from healthy sources still reach the user.
-func (s *Service) searchOneSource(ctx context.Context, src suwayomi.Source, query string) ([]Candidate, error) {
-	results, err := s.client.Search(ctx, src.ID, query)
-	if err != nil {
-		return nil, err
-	}
-
-	// Map Manga results to Candidates tagged with source metadata.
-	out := make([]Candidate, 0, len(results))
-	for _, m := range results {
-		out = append(out, newCandidate(src, m))
-	}
-	return out, nil
-}
-
-// newCandidate maps one suwayomi.Manga to a Candidate tagged with its source's
-// ID/name/lang. Shared by the Search fan-out (searchOneSource) and the
-// single-source Browse path so the Manga→Candidate mapping lives in exactly
-// one place.
+// Search/Browse source picker: currently only a known-broken source
+// (isBrokenSource).
 //
-// ThumbnailURL is NOT Suwayomi's own thumbnailUrl forwarded verbatim (B2 fix):
-// that value is Suwayomi-relative and 404s when rendered against Tsundoku's
-// own origin. Instead it is Tsundoku's own cover-proxy path, resolved by
-// thumbnailProxyPath.
-func newCandidate(src suwayomi.Source, m suwayomi.Manga) Candidate {
+// 🔴 KNOWN GAP (P2 Suwayomi-removal, tracked for a follow-up slice): the
+// pre-migration suwayomi.Client modeled TWO extra exclusions this function no
+// longer applies — Suwayomi's built-in "Local" source (a fixed id/lang pair)
+// and a per-language owner-disable toggle (Source.Disabled, resolved from a
+// GraphQL sourceMeta "isEnabled" key). internal/sourceengine.Source carries
+// neither concept today (no Local source, no per-source enable/disable flag),
+// so both exclusions are DROPPED here, not reimplemented — reinstate them once
+// the engine host exposes an equivalent. internal/warmup keeps its OWN copy of
+// the pre-migration exclusion logic (it stays on suwayomi.Client — see
+// warmup/sources.go), so this is not a regression for the warm-up job.
+func excludedFromPicker(src sourceengine.Source) bool {
+	return isBrokenSource(src)
+}
+
+// searchOneSource performs a single-source search against the engine-host
+// client and maps the results to Candidates. A nil error and nil slice is
+// returned when the source fails — the caller logs the failure and skips the
+// source so that partial results from healthy sources still reach the user.
+func (s *Service) searchOneSource(ctx context.Context, src sourceengine.Source, query string) ([]Candidate, error) {
+	res, err := s.client.Search(ctx, src.ID, query, searchFanoutPage)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]Candidate, 0, len(res.Manga))
+	for _, m := range res.Manga {
+		out = append(out, newCandidateFromEntry(src, m))
+	}
+	return out, nil
+}
+
+// newCandidateFromEntry maps one sourceengine.MangaEntry (a Search/Browse
+// listing hit — LIGHTWEIGHT, no author/artist/description/genres) to a
+// Candidate tagged with its source's ID/name/lang. Shared by the Search
+// fan-out (searchOneSource) and Browse so the mapping lives in exactly one
+// place. MangaID is always 0: the url-addressed engine host assigns no
+// per-manga id (see AdoptProvider's doc comment for why the field is kept on
+// the wire regardless). ThumbnailURL is used VERBATIM from the engine host —
+// unlike the retired Suwayomi client, the engine host resolves a real,
+// directly-fetchable cover URL itself, so no Tsundoku-side proxy indirection
+// is needed here.
+func newCandidateFromEntry(src sourceengine.Source, m sourceengine.MangaEntry) Candidate {
 	return Candidate{
-		Source:       src.ID,
+		Source:       sourceIDString(src.ID),
 		SourceName:   src.Name,
 		Lang:         src.Lang,
-		MangaID:      m.ID,
+		MangaID:      0,
 		Title:        m.Title,
 		URL:          m.URL,
-		ThumbnailURL: thumbnailProxyPath(src.ID, m),
-		Author:       strOrEmpty(m.Author),
-		Artist:       strOrEmpty(m.Artist),
-		Description:  strOrEmpty(m.Description),
-		Genres:       nonNilStrings(m.Genre),
+		ThumbnailURL: m.ThumbnailURL,
+		Genres:       []string{},
 	}
 }
 
-// thumbnailProxyPath returns the Tsundoku-relative cover-proxy path for m
-// within sourceID ("/api/sources/{sourceID}/manga/{mangaId}/cover"), or "" when
-// the source provided no thumbnail at all (m.ThumbnailURL nil/empty) — the FE
-// renders its initial-letter placeholder in that case. The proxy path always
-// targets the SAME Suwayomi REST endpoint (/api/v1/manga/{id}/thumbnail;
-// see handler/imports.MangaCover) regardless of what Suwayomi's own
-// thumbnailUrl string said — only its presence/absence matters here.
-func thumbnailProxyPath(sourceID string, m suwayomi.Manga) string {
-	if m.ThumbnailURL == nil || *m.ThumbnailURL == "" {
-		return ""
+// newCandidateFromDetails maps one sourceengine.MangaDetails (a FORCED
+// details fetch — see MangaDetails below) to a Candidate carrying the full
+// enriched metadata. Mirrors newCandidateFromEntry's source tagging + MangaID
+// convention; unlike it, author/artist/description/genres are populated.
+func newCandidateFromDetails(src sourceengine.Source, m sourceengine.MangaDetails) Candidate {
+	return Candidate{
+		Source:       sourceIDString(src.ID),
+		SourceName:   src.Name,
+		Lang:         src.Lang,
+		MangaID:      0,
+		Title:        m.Title,
+		URL:          m.URL,
+		ThumbnailURL: m.ThumbnailURL,
+		Author:       m.Author,
+		Artist:       m.Artist,
+		Description:  m.Description,
+		Genres:       nonNilStrings(m.Genres),
 	}
-	return fmt.Sprintf("/api/sources/%s/manga/%d/cover", sourceID, m.ID)
-}
-
-// strOrEmpty dereferences an optional Suwayomi metadata string, returning ""
-// when nil rather than panicking or leaking a pointer into the DTO layer.
-func strOrEmpty(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }
 
 // nonNilStrings returns in unchanged when non-nil, else an empty (non-nil)
@@ -381,7 +357,7 @@ func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []
 
 			mu.Lock()
 			samples = append(samples, metrics.Sample{
-				SourceID: src.ID, SourceName: src.Name, Latency: latency, Err: err,
+				SourceID: sourceIDString(src.ID), SourceName: src.Name, Latency: latency, Err: err,
 			})
 			if err == nil {
 				candidates = append(candidates, local...)
@@ -456,19 +432,14 @@ func (s *Service) recordSamples(ctx context.Context, samples []metrics.Sample) {
 	}()
 }
 
-// resolveSources returns the source list to query, always excluding Suwayomi's
-// built-in Local source (see isLocalSource — the same F1 exclusion Sources()
-// applies) AND any source the owner has disabled (see isDisabledSource,
-// mirroring Sources()'s filter) — a disabled source is never fanned out to by
-// Search, even when the caller names it explicitly in sourceIDs (the picker
-// that supplies sourceIDs is itself built from the filtered Sources() list, so
-// this only matters for a stale/hand-crafted request). When sourceIDs is
-// non-nil and non-empty, it returns only those sources from the client whose
-// IDs are in the set; otherwise it returns all (non-Local, enabled) client
-// sources. Naming Local's id explicitly does not resurrect it (N1) — a client
-// cannot search it by id any more than by leaving the filter empty; the same
-// reasoning applies to a disabled source's id.
-func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suwayomi.Source, error) {
+// resolveSources returns the source list to query: every engine-host source
+// (see excludedFromPicker), narrowed to sourceIDs when it is non-nil/non-empty.
+// When sourceIDs is non-nil and non-empty, it returns only those sources from
+// the client whose stringified IDs are in the set; otherwise it returns all
+// (non-excluded) client sources. Unknown IDs are silently dropped (the caller's
+// picker is itself built from the filtered Sources() list, so this only matters
+// for a stale/hand-crafted request).
+func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]sourceengine.Source, error) {
 	all, err := s.client.Sources(ctx)
 	if err != nil {
 		return nil, err
@@ -478,9 +449,9 @@ func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]suw
 	// O(1)-lookup allowlist built once, up front.
 	want := sourceIDSet(sourceIDs)
 
-	out := make([]suwayomi.Source, 0, len(all))
+	out := make([]sourceengine.Source, 0, len(all))
 	for _, src := range all {
-		if excludedFromPicker(src) || !want.matches(src.ID) {
+		if excludedFromPicker(src) || !want.matches(sourceIDString(src.ID)) {
 			continue
 		}
 		out = append(out, src)
@@ -519,71 +490,107 @@ func (want sourceIDFilter) matches(id string) bool {
 //
 // It first resolves sourceID against the live source list (to obtain the
 // source's Name/Lang for tagging candidates); an unknown sourceID yields
-// ErrSourceNotFound (→ 404). A client.Browse failure is returned verbatim — the
+// ErrSourceNotFound (→ 404). A client failure is returned verbatim — the
 // request is single-source, so a source/upstream failure IS the whole request
 // (no partial-results carve-out like Search). page is 1-based.
-func (s *Service) Browse(ctx context.Context, sourceID string, t suwayomi.BrowseType, page int) (BrowseResultDTO, error) {
+func (s *Service) Browse(ctx context.Context, sourceID string, t BrowseType, page int) (BrowseResultDTO, error) {
 	src, err := s.resolveSource(ctx, sourceID)
 	if err != nil {
 		return BrowseResultDTO{}, err
 	}
 
-	res, err := s.client.Browse(ctx, sourceID, t, page)
+	res, err := s.browseSource(ctx, src.ID, t, page)
 	if err != nil {
 		return BrowseResultDTO{}, err
 	}
 
-	manga := make([]SearchCandidateDTO, len(res.Mangas))
-	for i, m := range res.Mangas {
-		manga[i] = newSearchCandidateDTO(newCandidate(src, m))
+	manga := make([]SearchCandidateDTO, len(res.Manga))
+	for i, m := range res.Manga {
+		manga[i] = newSearchCandidateDTO(newCandidateFromEntry(src, m))
 	}
 	return BrowseResultDTO{Manga: manga, HasNextPage: res.HasNextPage, Page: page}, nil
 }
 
-// resolveSource returns the single source whose ID equals sourceID from the live
-// client source list, or ErrSourceNotFound when absent. Browse needs the
-// resolved source's Name/Lang to tag its candidates.
-func (s *Service) resolveSource(ctx context.Context, sourceID string) (suwayomi.Source, error) {
+// browseSource dispatches t to sourceengine.Client's Popular or Latest call —
+// the engine host splits what the retired suwayomi.Client modeled as one
+// Browse(type) method into two separate methods.
+func (s *Service) browseSource(ctx context.Context, sourceID int64, t BrowseType, page int) (sourceengine.SearchResult, error) {
+	if t == BrowseLatest {
+		return s.client.Latest(ctx, sourceID, page)
+	}
+	return s.client.Popular(ctx, sourceID, page)
+}
+
+// resolveSource returns the single source whose stringified ID equals sourceID
+// from the live client source list, or ErrSourceNotFound when absent (including
+// when sourceID does not even parse as a numeric engine-host id). Browse needs
+// the resolved source's Name/Lang to tag its candidates.
+func (s *Service) resolveSource(ctx context.Context, sourceID string) (sourceengine.Source, error) {
+	id, err := strconv.ParseInt(sourceID, 10, 64)
+	if err != nil {
+		return sourceengine.Source{}, ErrSourceNotFound
+	}
 	all, err := s.client.Sources(ctx)
 	if err != nil {
-		return suwayomi.Source{}, err
+		return sourceengine.Source{}, err
 	}
 	for _, src := range all {
-		if src.ID == sourceID {
+		if src.ID == id {
 			return src, nil
 		}
 	}
-	return suwayomi.Source{}, ErrSourceNotFound
+	return sourceengine.Source{}, ErrSourceNotFound
 }
 
-// fetchChapters returns the raw, unfiltered chapter list for (sourceID, mangaID)
+// fetchChapters returns the raw, unfiltered chapter list for (sourceID, url)
 // through the shared chapter cache (Task C2) when one is wired, else straight
 // from the client. It is the single point the read-only discovery paths
 // (SourceBreakdown, InspectChapters) fetch chapters, so they share their result
-// with each other AND with the adopt-side suwayomi.Ingest (same cache instance)
-// — a coverage→configure→adopt session triggers ONE upstream FetchChapters.
-func (s *Service) fetchChapters(ctx context.Context, sourceID string, mangaID int) ([]suwayomi.Chapter, error) {
-	fetch := func() ([]suwayomi.Chapter, error) {
-		return s.client.FetchChapters(ctx, mangaID)
+// with each other AND with the adopt-side ingest.Ingest (same cache instance)
+// — a coverage→configure→adopt session triggers ONE upstream Chapters call.
+// sourceID is parsed to the engine host's numeric id; an unparseable value
+// yields a wrapped error (the route only loosely validates :sourceId).
+func (s *Service) fetchChapters(ctx context.Context, sourceID string, url string) ([]sourceengine.Chapter, error) {
+	id, err := strconv.ParseInt(sourceID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("imports: invalid source id %q: %w", sourceID, err)
+	}
+	fetch := func() ([]sourceengine.Chapter, error) {
+		return s.client.Chapters(ctx, id, url)
 	}
 	if s.chapterCache == nil {
 		return fetch()
 	}
-	return s.chapterCache.Get(ctx, sourceID, mangaID, fetch)
+	return s.chapterCache.Get(ctx, id, url, fetch)
 }
 
-// InspectChapters fetches the live chapter list for mangaID from sourceID and
-// returns a lightweight preview as []ChapterInspectDTO.
+// chapterNumber returns a pointer to ch.Number, or nil when the engine host's
+// "could not parse a chapter number" sentinel is set. sourceengine.Chapter.Number
+// is a non-nullable float64 (unlike the retired suwayomi client's *float64), but
+// the underlying source library still uses ITS OWN sentinel, a negative value,
+// for "no number" (mirrors internal/ingest.hasParsedNumber's identical
+// treatment of the same wire shape; duplicated here as a one-line helper rather
+// than exported from internal/ingest, which this package must not reach into
+// for internals).
+func chapterNumber(ch sourceengine.Chapter) *float64 {
+	if ch.Number < 0 {
+		return nil
+	}
+	n := ch.Number
+	return &n
+}
+
+// InspectChapters fetches the live chapter list for the manga at url on
+// sourceID and returns a lightweight preview as []ChapterInspectDTO.
 //
-// NOTE: On a cache MISS this fetches via the FetchChapters Suwayomi mutation —
-// which contacts the upstream source and populates Suwayomi's internal chapter
-// cache — giving the user an up-to-date chapter count before adopting. Within the
-// short chapter-cache TTL (Task C2) a repeat call for the same source-manga reuses
-// the memoized list and makes NO upstream request (an anti-ban de-amplification;
-// the count is at most a few minutes stale). For already-cached data use
-// suwayomi.Client.MangaChapters instead.
-func (s *Service) InspectChapters(ctx context.Context, sourceID string, mangaID int) ([]ChapterInspectDTO, error) {
-	chapters, err := s.fetchChapters(ctx, sourceID, mangaID)
+// NOTE: On a cache MISS this fetches via sourceengine.Client.Chapters — which
+// contacts the upstream source — giving the user an up-to-date chapter count
+// before adopting. Within the short chapter-cache TTL (Task C2) a repeat call
+// for the same source-manga reuses the memoized list and makes NO upstream
+// request (an anti-ban de-amplification; the count is at most a few minutes
+// stale).
+func (s *Service) InspectChapters(ctx context.Context, sourceID string, url string) ([]ChapterInspectDTO, error) {
+	chapters, err := s.fetchChapters(ctx, sourceID, url)
 	if err != nil {
 		return nil, err
 	}
@@ -591,7 +598,7 @@ func (s *Service) InspectChapters(ctx context.Context, sourceID string, mangaID 
 	out := make([]ChapterInspectDTO, len(chapters))
 	for i, ch := range chapters {
 		out[i] = ChapterInspectDTO{
-			Number:    ch.Number,
+			Number:    chapterNumber(ch),
 			Name:      ch.Name,
 			Scanlator: ch.Scanlator,
 		}
@@ -607,20 +614,20 @@ func (s *Service) InspectChapters(ctx context.Context, sourceID string, mangaID 
 // untagged, and the untagged ones are attributed to the source itself).
 //
 // Ranges reuses the shared coverage helper (chapterrange.FormatChapterRanges) — the
-// run-collapsing walk is never duplicated. Only chapters with a non-nil
-// Number contribute to a group's Ranges/Count coverage input; Total counts
-// every chapter regardless.
+// run-collapsing walk is never duplicated. Only chapters with a parsed Number
+// (see chapterNumber) contribute to a group's Ranges/Count coverage input;
+// Total counts every chapter regardless.
 //
 // An unknown sourceID yields ErrSourceNotFound (→ 404, mirrors Browse/
-// MangaDetails); a client.FetchChapters failure is returned verbatim (the
+// MangaDetails); a client.Chapters failure is returned verbatim (the
 // caller maps it to a 502, mirroring Details' upstream mapping).
-func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, mangaID int) (SourceBreakdownDTO, error) {
+func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url string) (SourceBreakdownDTO, error) {
 	src, err := s.resolveSource(ctx, sourceID)
 	if err != nil {
 		return SourceBreakdownDTO{}, err
 	}
 
-	chapters, err := s.fetchChapters(ctx, sourceID, mangaID)
+	chapters, err := s.fetchChapters(ctx, sourceID, url)
 	if err != nil {
 		return SourceBreakdownDTO{}, err
 	}
@@ -643,8 +650,8 @@ func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, mangaID 
 			order = append(order, key)
 		}
 		g.count++
-		if ch.Number != nil {
-			g.numbers = append(g.numbers, *ch.Number)
+		if n := chapterNumber(ch); n != nil {
+			g.numbers = append(g.numbers, *n)
 		}
 	}
 
@@ -667,30 +674,30 @@ func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, mangaID 
 	return SourceBreakdownDTO{Total: len(chapters), Scanlators: scanlators}, nil
 }
 
-// MangaDetails FORCES a live details fetch for (sourceID, mangaID) via
-// suwayomi.Client.FetchMangaDetails and returns the enriched candidate as a
+// MangaDetails FORCES a live details fetch for the manga at url on sourceID
+// via sourceengine.Client.MangaDetails and returns the enriched candidate as a
 // SearchCandidateDTO — the SAME shape Search/Browse return, so the caller (the
 // Discover hover preview) can merge the response straight into an existing
 // candidate. sourceID resolves the source's Name/Lang (reusing resolveSource,
 // the same helper Browse uses); an unknown sourceID yields ErrSourceNotFound
-// (→ 404). A client.FetchMangaDetails failure is returned verbatim — the
-// caller maps it to a 502 (this is a genuine upstream/source fetch, not a
-// Tsundoku validation problem).
+// (→ 404). A client.MangaDetails failure is returned verbatim — the caller
+// maps it to a 502 (this is a genuine upstream/source fetch, not a Tsundoku
+// validation problem).
 //
 // This is deliberately on-demand, single-manga only: calling it once per
 // Search/Browse result would multiply upstream requests by the page size.
-func (s *Service) MangaDetails(ctx context.Context, sourceID string, mangaID int) (SearchCandidateDTO, error) {
+func (s *Service) MangaDetails(ctx context.Context, sourceID string, url string) (SearchCandidateDTO, error) {
 	src, err := s.resolveSource(ctx, sourceID)
 	if err != nil {
 		return SearchCandidateDTO{}, err
 	}
 
-	m, err := s.client.FetchMangaDetails(ctx, mangaID)
+	m, err := s.client.MangaDetails(ctx, src.ID, url)
 	if err != nil {
 		return SearchCandidateDTO{}, err
 	}
 
-	return newSearchCandidateDTO(newCandidate(src, m)), nil
+	return newSearchCandidateDTO(newCandidateFromDetails(src, m)), nil
 }
 
 // Adopt groups one or more (source, manga) candidates under a single canonical
@@ -777,10 +784,14 @@ func validateCategory(cat string) error {
 func (s *Service) ingestProviders(ctx context.Context, req AdoptRequest) error {
 	attached := make([]string, 0, len(req.Providers))
 	for _, p := range req.Providers {
+		sourceID, err := strconv.ParseInt(p.Source, 10, 64)
+		if err != nil {
+			return fmt.Errorf("imports.Adopt: invalid source %q: %w", p.Source, err)
+		}
 		// p.Scanlator selects which scanlation group's chapters this provider
 		// tracks; "" means "all chapters from this source" (see
-		// suwayomi.Ingest.AddSeries).
-		if _, err := s.ingest.AddSeries(ctx, p.Source, p.MangaID, req.Title, p.Scanlator); err != nil {
+		// ingest.Ingest.AddSeries).
+		if _, err := s.ingest.AddSeries(ctx, sourceID, p.URL, req.Title, p.Scanlator); err != nil {
 			if len(attached) > 0 {
 				return fmt.Errorf(
 					"imports.Adopt: provider %q failed (providers already attached: %s): %w",
@@ -812,7 +823,7 @@ func (s *Service) loadSeriesBySlug(ctx context.Context, title string) (*ent.Seri
 
 // setImportances updates the Importance field on each SeriesProvider identified
 // by (seriesID, provider, scanlator) — a SeriesProvider row's identity is the
-// full triple (see suwayomi.Ingest.upsertSeriesProvider), so matching on
+// full triple (see ingest.Ingest.upsertSeriesProvider), so matching on
 // provider alone would be WRONG once two scanlator rows share the same
 // provider name: e.g. adopting the same source under two scanlators with
 // different importances would otherwise both resolve to whichever row

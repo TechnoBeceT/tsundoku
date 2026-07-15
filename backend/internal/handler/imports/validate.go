@@ -12,16 +12,24 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/technobecet/tsundoku/internal/category"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/imports"
 )
 
 // adoptProviderRequest is the per-provider element within AdoptRequestBody. It
 // mirrors imports.AdoptProvider with JSON tags for camelCase wire format.
+//
+// MangaID + URL (P2 Suwayomi-removal, slice 3b): MangaID is KEPT, additive
+// only, so the not-yet-updated frontend still typechecks; the backend reads
+// URL (the source-relative manga URL the engine host addresses this manga
+// by) instead.
 type adoptProviderRequest struct {
-	// Source is the Suwayomi source ID.
+	// Source is the engine-host source ID, stringified.
 	Source string `json:"source"`
-	// MangaID is the Suwayomi manga identifier within Source.
+	// MangaID is UNUSED by the backend — retained for FE wire compatibility
+	// only (prefer URL).
 	MangaID int `json:"mangaId"`
+	// URL is the source-relative manga URL.
+	URL string `json:"url"`
 	// Importance is the provider rank (higher = preferred); must be >= 0.
 	Importance int `json:"importance"`
 	// Scanlator selects which scanlation group's chapters this provider
@@ -50,15 +58,15 @@ func parseQuery(raw string) (string, error) {
 	return q, nil
 }
 
-// parseBrowseType maps the ?type query parameter to a suwayomi.BrowseType.
+// parseBrowseType maps the ?type query parameter to an imports.BrowseType.
 // "popular" → POPULAR, "latest" → LATEST; any other value (including empty)
 // yields a 400 echo.HTTPError — type is a required closed enum.
-func parseBrowseType(raw string) (suwayomi.BrowseType, error) {
+func parseBrowseType(raw string) (imports.BrowseType, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "popular":
-		return suwayomi.BrowsePopular, nil
+		return imports.BrowsePopular, nil
 	case "latest":
-		return suwayomi.BrowseLatest, nil
+		return imports.BrowseLatest, nil
 	default:
 		return "", echo.NewHTTPError(http.StatusBadRequest, "type is required and must be one of: popular, latest")
 	}
@@ -93,10 +101,28 @@ func parseMangaID(raw string) (int, error) {
 	return v, nil
 }
 
+// parseChapterURL validates a REQUIRED ?url query param used by the
+// preview endpoints that now dispatch through the URL-addressed backend
+// (InspectChapters/Details/Breakdown — P2 Suwayomi-removal, slice 3b). The
+// :mangaId path segment is kept (route unchanged, for FE compat) but is no
+// longer parsed/validated here — it is bound and ignored (see each handler's
+// doc comment). This transition is deliberately RUNTIME-broken against the
+// not-yet-updated frontend (which sends no ?url=) until slice 3b-FE lands;
+// a missing url is a clean 400 rather than a silent wrong-manga fetch.
+func parseChapterURL(raw string) (string, error) {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return "", echo.NewHTTPError(http.StatusBadRequest, "url is required")
+	}
+	return u, nil
+}
+
 // validateAdoptBody validates the parsed AdoptRequestBody:
 //   - title must be non-blank.
 //   - providers must have >= 1 entry.
 //   - each provider's importance must be >= 0.
+//   - each provider's url must be non-blank (P2 Suwayomi-removal — the
+//     backend is URL-addressed; see adoptProviderRequest's doc comment).
 //   - each (source, scanlator) pair must be distinct across providers (a
 //     series may carry at most one provider per (source, scanlator) —
 //     duplicates would silently collapse onto a single SeriesProvider row).
@@ -116,6 +142,9 @@ func validateAdoptBody(req adoptRequestBody) error {
 	for _, p := range req.Providers {
 		if p.Importance < 0 {
 			return echo.NewHTTPError(http.StatusBadRequest, "provider importance must be >= 0")
+		}
+		if strings.TrimSpace(p.URL) == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "provider url is required")
 		}
 		key := p.Source + "\x00" + p.Scanlator
 		if seen[key] {

@@ -11,12 +11,14 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -73,11 +75,12 @@ func New(
 	hub *sse.Hub,
 	ownerH *owner.Handler,
 	suwayomiClient suwayomi.Client,
+	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
 	warmupSvc *warmup.Service,
 	gate *sourcegate.Service,
-	chapterCache *suwayomi.ChapterCache,
+	chapterCache *ingest.ChapterCache,
 	metaSvc *metadatasvc.Service,
 	trackerRegistry *tracker.Registry,
 	trackerConnectSvc *connect.Service,
@@ -109,6 +112,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, engineClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore)
 	return e
 }

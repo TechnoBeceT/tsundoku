@@ -127,7 +127,7 @@ func (h *Handler) Import(c echo.Context) error {
 
 	refs := make([]library.ProviderRef, len(body.Matches))
 	for i, m := range body.Matches {
-		refs[i] = library.ProviderRef{Source: m.Source, MangaID: m.MangaID, Scanlator: m.Scanlator}
+		refs[i] = library.ProviderRef{Source: m.Source, MangaID: m.MangaID, URL: m.URL, Scanlator: m.Scanlator}
 	}
 
 	out, err := h.svc.Import(c.Request().Context(), body.Path, refs)
@@ -188,9 +188,10 @@ func (h *Handler) Batch(c echo.Context) error {
 
 // AddProvider handles POST /api/series/:id/providers.
 //
-// It attaches an additional Suwayomi source {source, mangaId, importance} to
+// It attaches an additional engine-host source {source, url, importance} to
 // an EXISTING series (upgrade-aware — see library.Service.AddProvider) and
-// returns the refreshed series.SeriesDetailDTO.
+// returns the refreshed series.SeriesDetailDTO. mangaId is bound but unused
+// (kept for FE wire compatibility — see addProviderBody's doc comment).
 func (h *Handler) AddProvider(c echo.Context) error {
 	id, err := validateID(c.Param("id"))
 	if err != nil {
@@ -204,7 +205,7 @@ func (h *Handler) AddProvider(c echo.Context) error {
 		return err
 	}
 
-	out, err := h.svc.AddProvider(c.Request().Context(), id, body.Source, body.MangaID, body.Importance, body.Scanlator)
+	out, err := h.svc.AddProvider(c.Request().Context(), id, body.Source, body.URL, body.Importance, body.Scanlator)
 	if err != nil {
 		return mapServiceError(err)
 	}
@@ -234,7 +235,7 @@ func (h *Handler) AddProviders(c echo.Context) error {
 
 	refs := make([]library.ProviderRef, len(body.Providers))
 	for i, p := range body.Providers {
-		refs[i] = library.ProviderRef{Source: p.Source, MangaID: p.MangaID, Scanlator: p.Scanlator}
+		refs[i] = library.ProviderRef{Source: p.Source, MangaID: p.MangaID, URL: p.URL, Scanlator: p.Scanlator}
 	}
 
 	out, err := h.svc.AddProviders(c.Request().Context(), id, refs)
@@ -248,9 +249,10 @@ func (h *Handler) AddProviders(c echo.Context) error {
 //
 // It attributes a series' EXISTING on-disk chapters — currently satisfied by
 // the unlinked disk-origin provider at :providerId (see ProviderDTO.Linked)
-// — to a real Suwayomi source {source, mangaId, scanlator, importance}
+// — to a real engine-host source {source, url, scanlator, importance}
 // WITHOUT re-downloading them (see library.Service.MatchDiskProvider). Returns
-// the refreshed series.SeriesDetailDTO (§16).
+// the refreshed series.SeriesDetailDTO (§16). mangaId is bound but unused
+// (kept for FE wire compatibility).
 func (h *Handler) MatchDiskProvider(c echo.Context) error {
 	id, err := validateID(c.Param("id"))
 	if err != nil {
@@ -268,7 +270,7 @@ func (h *Handler) MatchDiskProvider(c echo.Context) error {
 		return err
 	}
 
-	out, err := h.svc.MatchDiskProvider(c.Request().Context(), id, providerID, body.Source, body.MangaID, body.Scanlator, body.Importance)
+	out, err := h.svc.MatchDiskProvider(c.Request().Context(), id, providerID, body.Source, body.URL, body.Scanlator, body.Importance)
 	if err != nil {
 		return mapServiceError(err)
 	}

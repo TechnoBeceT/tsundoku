@@ -17,6 +17,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/tracker"
@@ -93,6 +94,72 @@ func (nullSuwayomiClient) SetSourceEnabled(_ context.Context, _ string, _ bool) 
 	panic("nullSuwayomiClient.SetSourceEnabled called in test")
 }
 
+// nullEngineClient is a stub sourceengine.Client used by route-level tests
+// that do not exercise any imports/library paths; it panics if any method is
+// called so accidental invocations are immediately obvious in test output.
+type nullEngineClient struct{}
+
+func (nullEngineClient) Health(_ context.Context) (sourceengine.Health, error) {
+	panic("nullEngineClient.Health called in test")
+}
+func (nullEngineClient) Search(_ context.Context, _ int64, _ string, _ int) (sourceengine.SearchResult, error) {
+	panic("nullEngineClient.Search called in test")
+}
+func (nullEngineClient) Popular(_ context.Context, _ int64, _ int) (sourceengine.SearchResult, error) {
+	panic("nullEngineClient.Popular called in test")
+}
+func (nullEngineClient) Latest(_ context.Context, _ int64, _ int) (sourceengine.SearchResult, error) {
+	panic("nullEngineClient.Latest called in test")
+}
+func (nullEngineClient) MangaDetails(_ context.Context, _ int64, _ string) (sourceengine.MangaDetails, error) {
+	panic("nullEngineClient.MangaDetails called in test")
+}
+func (nullEngineClient) Chapters(_ context.Context, _ int64, _ string) ([]sourceengine.Chapter, error) {
+	panic("nullEngineClient.Chapters called in test")
+}
+func (nullEngineClient) Pages(_ context.Context, _ int64, _ string) ([]sourceengine.Page, error) {
+	panic("nullEngineClient.Pages called in test")
+}
+func (nullEngineClient) Image(_ context.Context, _ int64, _, _ string) ([]byte, string, error) {
+	panic("nullEngineClient.Image called in test")
+}
+func (nullEngineClient) Sources(_ context.Context) ([]sourceengine.Source, error) {
+	panic("nullEngineClient.Sources called in test")
+}
+func (nullEngineClient) Preferences(_ context.Context, _ int64) ([]sourceengine.Preference, error) {
+	panic("nullEngineClient.Preferences called in test")
+}
+func (nullEngineClient) SetPreferences(_ context.Context, _ int64, _ map[string]any) ([]sourceengine.Preference, error) {
+	panic("nullEngineClient.SetPreferences called in test")
+}
+func (nullEngineClient) Extensions(_ context.Context) ([]sourceengine.Extension, error) {
+	panic("nullEngineClient.Extensions called in test")
+}
+func (nullEngineClient) InstallExtension(_ context.Context, _, _ string) ([]sourceengine.Extension, error) {
+	panic("nullEngineClient.InstallExtension called in test")
+}
+func (nullEngineClient) RefreshExtensions(_ context.Context) ([]sourceengine.Extension, error) {
+	panic("nullEngineClient.RefreshExtensions called in test")
+}
+func (nullEngineClient) UpdateExtension(_ context.Context, _ string) ([]sourceengine.Extension, error) {
+	panic("nullEngineClient.UpdateExtension called in test")
+}
+func (nullEngineClient) UninstallExtension(_ context.Context, _ string) ([]sourceengine.Extension, error) {
+	panic("nullEngineClient.UninstallExtension called in test")
+}
+func (nullEngineClient) Repos(_ context.Context) ([]string, error) {
+	panic("nullEngineClient.Repos called in test")
+}
+func (nullEngineClient) SetRepos(_ context.Context, _ []string) ([]string, error) {
+	panic("nullEngineClient.SetRepos called in test")
+}
+func (nullEngineClient) SetFlareSolverr(_ context.Context, _ sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
+	panic("nullEngineClient.SetFlareSolverr called in test")
+}
+func (nullEngineClient) SetSocks(_ context.Context, _ sourceengine.SocksPatch) (sourceengine.SocksConfig, error) {
+	panic("nullEngineClient.SetSocks called in test")
+}
+
 // newTestServer builds a server.New instance with stub dependencies and no
 // real DB, suitable for route-level unit tests that do not touch the database.
 func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
@@ -127,7 +194,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	// Same nil-client/panic-on-use discipline as the other stubs above — no
 	// route-level test in this file exercises the Phase-4c sync endpoints.
 	trackerSyncSvc := syncsvc.NewService(nil, trackerRegistry, retry.NewQueue(nil), trackerBindSvc, settingsSvc)
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, nullEngineClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

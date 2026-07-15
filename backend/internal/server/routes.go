@@ -29,6 +29,7 @@ import (
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	trackersh "github.com/technobecet/tsundoku/internal/handler/trackers"
 	"github.com/technobecet/tsundoku/internal/imports"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
@@ -37,6 +38,7 @@ import (
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -152,11 +154,12 @@ func registerRoutes(
 	hub *sse.Hub,
 	ownerH *owner.Handler,
 	suwayomiClient suwayomi.Client,
+	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
 	warmupSvc *warmup.Service,
 	gate *sourcegate.Service,
-	chapterCache *suwayomi.ChapterCache,
+	chapterCache *ingest.ChapterCache,
 	metaSvc *metadatasvc.Service,
 	trackerRegistry *tracker.Registry,
 	trackerConnectSvc *connect.Service,
@@ -356,16 +359,20 @@ func registerRoutes(
 	authed.POST("/downloads/run", downloadsH.Run)
 
 	// Imports (discovery + adoption) API. The ingest is built here so it shares
-	// the same Ent client as the rest of the application; a single suwayomiClient
-	// value is threaded in from main.
+	// the same Ent client as the rest of the application. P2 Suwayomi-removal
+	// (slice 3b): imports + library now share the engine-agnostic
+	// internal/ingest.Ingest, targeting engineClient (internal/sourceengine) —
+	// neither package imports internal/suwayomi any more; suwayomiClient is
+	// threaded in ONLY for the not-yet-repointed handler/imports cover proxy
+	// (MangaCover) and every other still-suwayomi consumer below.
 	// Anti-ban de-amplification: the ingest routes its adopt/attach fetch through
 	// the shared source-politeness gate (Task B) and the shared chapter cache
 	// (Task C2 — the SAME instance the imports coverage paths use, so a
 	// coverage→configure→adopt session fetches a source-manga once). imports uses
 	// NewServiceWithCaches so its coverage + Search paths are cached too (C1/C2).
-	ingest := suwayomi.NewIngestWithGate(suwayomiClient, client, chapterCache, gate)
+	ingestSvc := ingest.NewIngestWithGate(engineClient, client, chapterCache, gate)
 	importsSvc := imports.NewServiceWithCaches(
-		suwayomiClient, ingest, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout, metricsSvc, chapterCache,
+		engineClient, ingestSvc, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout, metricsSvc, chapterCache,
 		// Search-cache TTL read per Get from the settings overlay (jobs.search_cache_ttl,
 		// hot reload); 0 disables the search cache at runtime.
 		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
@@ -384,7 +391,7 @@ func registerRoutes(
 	// SAME ingest/importsSvc/seriesSvc instances constructed above — no double
 	// construction — plus the shared trigger, storage root, and SSE hub (the
 	// async scan streams scan.start/scan.progress/scan.done over it).
-	librarySvc := library.NewService(client, ingest, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub).
+	librarySvc := library.NewService(client, ingestSvc, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub).
 		WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
 	libraryH := libraryh.NewHandler(librarySvc)
 	authed.POST("/library/scan", libraryH.Scan)

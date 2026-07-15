@@ -54,8 +54,8 @@ type relabeledChapter struct {
 // rename-then-compensate pattern — disk ops cannot live inside a DB tx):
 //  1. Load the series and the target disk provider; reject a provider that is
 //     already linked (suwayomi_id != 0) with ErrNotADiskProvider.
-//  2. Attach the real source via suwayomi.Ingest.AddSeries (idempotent) and
-//     set its importance. A Suwayomi fetch failure is wrapped as
+//  2. Attach the real source via ingest.Ingest.AddSeries (idempotent) and
+//     set its importance. An engine-host fetch failure is wrapped as
 //     ErrSourceNotFound (mirrors AddProvider). If a later step fails, this
 //     newly-attached SeriesProvider is deliberately left in place — an orphan
 //     real provider is harmless and reconcile-consistent (documented, not
@@ -81,7 +81,7 @@ type relabeledChapter struct {
 //     non-nil error from MatchDiskProvider always means NO net change.
 //  5. Trigger an immediate download-cycle convergence (parity with
 //     Adopt/AddProvider) and return the refreshed SeriesDetailDTO (§16).
-func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderID uuid.UUID, source string, mangaID int, scanlator string, importance int) (series.SeriesDetailDTO, error) {
+func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderID uuid.UUID, source string, url string, scanlator string, importance int) (series.SeriesDetailDTO, error) {
 	row, err := s.db.Series.Query().
 		Where(entseries.IDEQ(seriesID)).
 		WithCategory().
@@ -106,7 +106,7 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 		return series.SeriesDetailDTO{}, ErrNotADiskProvider
 	}
 
-	newSP, err := s.attachRealSource(ctx, seriesID, row.Title, source, mangaID, scanlator)
+	newSP, err := s.attachRealSource(ctx, seriesID, row.Title, source, url, scanlator)
 	if err != nil {
 		return series.SeriesDetailDTO{}, err
 	}
@@ -201,8 +201,8 @@ func (s *Service) restoreImportance(ctx context.Context, providerID uuid.UUID, o
 	}
 }
 
-// attachRealSource ingests the chosen Suwayomi source (idempotent — a repeat
-// call is a no-op per suwayomi.Ingest.AddSeries) and returns the resolved
+// attachRealSource ingests the chosen engine-host source (idempotent — a repeat
+// call is a no-op per ingest.Ingest.AddSeries) and returns the resolved
 // SeriesProvider row PARKED at importance 0 — deliberately NOT the owner's
 // target importance.
 //
@@ -224,8 +224,12 @@ func (s *Service) restoreImportance(ctx context.Context, providerID uuid.UUID, o
 // default); the explicit SetImportance(0) additionally covers the rare case
 // where the chosen source was ALREADY attached at a higher importance, so the
 // disk window is safe there too.
-func (s *Service) attachRealSource(ctx context.Context, seriesID uuid.UUID, seriesTitle, source string, mangaID int, scanlator string) (*ent.SeriesProvider, error) {
-	if _, err := s.ingest.AddSeries(ctx, source, mangaID, seriesTitle, scanlator); err != nil {
+func (s *Service) attachRealSource(ctx context.Context, seriesID uuid.UUID, seriesTitle, source string, url string, scanlator string) (*ent.SeriesProvider, error) {
+	sourceID, err := parseSourceID(source)
+	if err != nil {
+		return nil, errors.Join(ErrSourceNotFound, err)
+	}
+	if _, err := s.ingest.AddSeries(ctx, sourceID, url, seriesTitle, scanlator); err != nil {
 		return nil, errors.Join(ErrSourceNotFound, err)
 	}
 

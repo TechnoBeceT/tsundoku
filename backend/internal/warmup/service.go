@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -59,10 +58,10 @@ func NewService(client suwayomi.Client, m *metrics.Service, slow SlowThreshold, 
 
 // WarmAll warms EVERY enabled online source (the seed pass). It uses the SAME
 // source set Search fans out to — all sources minus Suwayomi's built-in Local
-// source and any the owner disabled (imports.EnabledOnlineSources, §2 DRY).
+// source and any the owner disabled (enabledOnlineSources, sources.go).
 // Returns the number of sources warmed successfully.
 func (s *Service) WarmAll(ctx context.Context) (int, error) {
-	sources, err := imports.EnabledOnlineSources(ctx, s.client)
+	sources, err := enabledOnlineSources(ctx, s.client)
 	if err != nil {
 		return 0, err
 	}
@@ -80,7 +79,7 @@ func (s *Service) WarmAll(ctx context.Context) (int, error) {
 // once so every source is judged against the same clock. Returns the number of
 // sources warmed successfully.
 func (s *Service) WarmSlow(ctx context.Context) (int, error) {
-	sources, err := imports.EnabledOnlineSources(ctx, s.client)
+	sources, err := enabledOnlineSources(ctx, s.client)
 	if err != nil {
 		return 0, err
 	}

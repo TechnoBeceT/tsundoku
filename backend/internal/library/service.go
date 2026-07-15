@@ -6,9 +6,9 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/imports"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // Sentinel errors returned by AddProvider (provider.go) and MatchDiskProvider
@@ -37,10 +37,10 @@ const (
 
 // Service implements the on-disk library-import workflow: scanning storage,
 // staging found series into ImportEntry rows, and (in later tasks) matching
-// + importing them against a Suwayomi source without re-downloading.
+// + importing them against an engine-host source without re-downloading.
 type Service struct {
 	db      *ent.Client
-	ingest  *suwayomi.Ingest
+	ingest  *ingest.Ingest
 	imports *imports.Service
 	series  *series.Service
 	trigger func()
@@ -65,6 +65,6 @@ type Service struct {
 // hub is required — even the synchronous Scan path broadcasts scan.progress
 // (see scan.go), so callers that don't care about the SSE stream should still
 // pass a live *sse.Hub (broadcasting to zero subscribers is a harmless no-op).
-func NewService(db *ent.Client, ingest *suwayomi.Ingest, importsSvc *imports.Service, seriesSvc *series.Service, trigger func(), storage string, hub *sse.Hub) *Service {
-	return &Service{db: db, ingest: ingest, imports: importsSvc, series: seriesSvc, trigger: trigger, storage: storage, hub: hub}
+func NewService(db *ent.Client, ingestSvc *ingest.Ingest, importsSvc *imports.Service, seriesSvc *series.Service, trigger func(), storage string, hub *sse.Hub) *Service {
+	return &Service{db: db, ingest: ingestSvc, imports: importsSvc, series: seriesSvc, trigger: trigger, storage: storage, hub: hub}
 }
