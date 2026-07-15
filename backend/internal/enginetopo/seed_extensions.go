@@ -517,31 +517,63 @@ func fetchIndex(httpGet func(url string) (*http.Response, error), repoURL string
 	return entries, nil
 }
 
-// indexURLFor builds a repo's index.min.json URL. A repo URL that already points
-// at a .json document is used verbatim; otherwise "index.min.json" is appended.
-// Mirrors engine-host ExtensionManager.indexUrlFor.
+// repoBaseURL normalises a stored repo URL to its base DIRECTORY — the parent the
+// index + apk paths hang off — regardless of whether Suwayomi stored the bare repo
+// directory or a URL pointing straight at the repo's INDEX FILE.
+//
+// Suwayomi stores whatever repo URL the owner (or a default) configured, and the
+// real-world value points at the index file, e.g.
+//
+//	https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb
+//
+// The base directory of that is ".../repo" — NOT the whole URL. The rule: trim a
+// trailing "/", then if the LAST path segment looks like a Mihon index file (ends
+// in ".json" or ".pb", case-insensitive — covers index.min.json, index.json, and
+// the newer protobuf index.pb) strip that segment and return the parent directory;
+// otherwise the URL is already a base directory and is returned unchanged. A last
+// segment with no such extension (a bare ".../repo") is never stripped, so a
+// directory URL is preserved.
+//
+// This is the fix for the prod 404: the old code special-cased only a ".json"
+// suffix, so a ".pb" index URL was treated as a directory and got "/index.min.json"
+// appended onto the FILE name, producing ".../repo/index.pb/index.min.json" → 404
+// for every extension. Deriving the base first makes both the index and apk URLs
+// correct for either stored shape.
+//
+// NOTE: engine-host's ExtensionManager (the Kotlin Phase-2 side this Go path
+// mirrors) carries the SAME index-file-vs-directory bug and needs the same fix —
+// its indexUrlFor/repoBaseFor only special-case ".json" too.
+func repoBaseURL(repoURL string) string {
+	trimmed := strings.TrimRight(repoURL, "/")
+	slash := strings.LastIndex(trimmed, "/")
+	if slash < 0 {
+		return trimmed
+	}
+	last := strings.ToLower(trimmed[slash+1:])
+	if strings.HasSuffix(last, ".json") || strings.HasSuffix(last, ".pb") {
+		return trimmed[:slash]
+	}
+	return trimmed
+}
+
+// indexURLFor builds a repo's index.min.json URL from its base directory, so an
+// index-FILE repo URL (index.pb / index.min.json / index.json) and a bare repo
+// directory both resolve to "<base>/index.min.json". Mirrors engine-host
+// ExtensionManager.indexUrlFor (see repoBaseURL's NOTE — the engine-host side needs
+// the same fix).
 func indexURLFor(repoURL string) string {
-	if strings.HasSuffix(repoURL, ".json") {
-		return repoURL
-	}
-	return strings.TrimRight(repoURL, "/") + "/index.min.json"
+	return repoBaseURL(repoURL) + "/index.min.json"
 }
 
-// repoBaseFor resolves the base URL an APK is relative to: the directory holding
-// a .json index, or the trimmed repo root otherwise. Mirrors engine-host
-// ExtensionManager.repoBaseFor.
+// repoBaseFor resolves the base URL an APK is relative to — the repo's base
+// directory (see repoBaseURL). Mirrors engine-host ExtensionManager.repoBaseFor.
 func repoBaseFor(repoURL string) string {
-	if strings.HasSuffix(repoURL, ".json") {
-		if i := strings.LastIndex(repoURL, "/"); i >= 0 {
-			return repoURL[:i]
-		}
-		return repoURL
-	}
-	return strings.TrimRight(repoURL, "/")
+	return repoBaseURL(repoURL)
 }
 
-// apkURLFor builds an extension's .apk download URL: "<repoBase>/apk/<apk>".
-// Mirrors engine-host ExtensionManager.apkUrlFor.
+// apkURLFor builds an extension's .apk download URL: "<repoBase>/apk/<apk>",
+// yielding ".../repo/apk/<file>" for both a bare-directory and an index-file repo
+// URL. Mirrors engine-host ExtensionManager.apkUrlFor.
 func apkURLFor(repoURL, apk string) string {
 	return repoBaseFor(repoURL) + "/apk/" + apk
 }
