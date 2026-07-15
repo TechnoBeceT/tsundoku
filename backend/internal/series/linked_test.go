@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
@@ -85,5 +86,26 @@ func TestProviderDTO_LinkedAndChapterCount(t *testing.T) {
 	}
 	if !real.HasFeed {
 		t.Errorf("real provider HasFeed = false, want true (has a ProviderChapter feed row)")
+	}
+}
+
+// TestProviderSourceID proves the numeric-id parse the cover-fetch chain
+// relies on: a live provider's Provider ("42") resolves to (42, true); a
+// disk-origin provider's Provider (a display name) resolves to (0, false);
+// surrounding whitespace is trimmed before parsing, mirroring IsLinkedProvider.
+func TestProviderSourceID(t *testing.T) {
+	live := &ent.SeriesProvider{Provider: "42"}
+	if id, ok := series.ProviderSourceID(live); !ok || id != 42 {
+		t.Errorf("ProviderSourceID(%q) = (%d, %v), want (42, true)", live.Provider, id, ok)
+	}
+
+	padded := &ent.SeriesProvider{Provider: "  7  "}
+	if id, ok := series.ProviderSourceID(padded); !ok || id != 7 {
+		t.Errorf("ProviderSourceID(%q) = (%d, %v), want (7, true)", padded.Provider, id, ok)
+	}
+
+	diskOrigin := &ent.SeriesProvider{Provider: "Asura Scans"}
+	if id, ok := series.ProviderSourceID(diskOrigin); ok || id != 0 {
+		t.Errorf("ProviderSourceID(%q) = (%d, %v), want (0, false)", diskOrigin.Provider, id, ok)
 	}
 }

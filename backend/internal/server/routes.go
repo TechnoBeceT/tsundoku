@@ -189,16 +189,17 @@ func registerRoutes(
 	// so the recategorize path can move folders on disk in lockstep with the DB.
 	// seriesSvc is shared: reused by both the series handler and the imports
 	// handler (to render SeriesDetailDTO after Adopt).
-	// WithCoverFetcher lets the series cover endpoint fall back to Suwayomi when a
-	// series' cover is not yet cached in its library folder (it caches it there on
-	// that first fetch, and never pings the source for it again).
+	// WithCoverFetcher lets the series cover endpoint fall back to the engine
+	// host (P2 slice 4: repointed off suwayomiClient) when a series' cover is
+	// not yet cached in its library folder (it caches it there on that first
+	// fetch, and never pings the source for it again).
 	// WithProgressPusher wires the reading-triggered tracker push: marking a
 	// chapter read in the reader (series.SetProgress) fires a detached,
 	// best-effort syncsvc push, gated by the auto_update_track setting. This is
 	// the "live on read" half of the trigger model (QCAT-234); the detail-open
 	// reconcile below is the other. trackerSyncSvc satisfies both hooks.
 	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays).
-		WithCoverFetcher(suwayomiClient).
+		WithCoverFetcher(engineClient).
 		WithProgressPusher(trackerSyncSvc)
 	// WithViewSyncer wires the detail-open tracker reconcile: opening a series'
 	// detail page fires a detached, best-effort syncsvc.Service.SyncOnView IN
@@ -210,7 +211,7 @@ func registerRoutes(
 	// WithTrackerProgressSetter wires the QCAT-242 "set reading progress to N"
 	// tracker force-set (SetReadingProgress) — a THIRD, independent hook the
 	// same trackerSyncSvc instance also satisfies.
-	seriesH := seriesh.NewHandler(seriesSvc, trigger, suwayomiClient).
+	seriesH := seriesh.NewHandler(seriesSvc, trigger, engineClient).
 		WithViewSyncer(trackerSyncSvc).
 		WithTrackerProgressSetter(trackerSyncSvc)
 	authed.GET("/series", seriesH.List)

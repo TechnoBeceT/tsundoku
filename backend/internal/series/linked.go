@@ -29,6 +29,19 @@ import (
 // Both `series` and `library` need this predicate (`library` already imports
 // `series`, never the reverse), so it lives here rather than in `library`.
 func IsLinkedProvider(p *ent.SeriesProvider) bool {
-	_, err := strconv.ParseInt(strings.TrimSpace(p.Provider), 10, 64)
-	return err == nil
+	_, ok := ProviderSourceID(p)
+	return ok
+}
+
+// ProviderSourceID parses p.Provider as the engine-host's numeric source id —
+// the SAME parse IsLinkedProvider performs (they share this one implementation,
+// §2 DRY), but returning the parsed value for callers that need the id itself,
+// not just the linked/disk-origin bool. The cover-fetch chain (series/cover.go,
+// series.Service.ProviderCoverURL) uses this to resolve which engine source to
+// call sourceengine.Client.Image against: a disk-origin provider (Provider is a
+// display NAME) has no engine source at all, so ok is false and the caller
+// falls back to its existing cold-fetch-failed handling.
+func ProviderSourceID(p *ent.SeriesProvider) (int64, bool) {
+	id, err := strconv.ParseInt(strings.TrimSpace(p.Provider), 10, 64)
+	return id, err == nil
 }

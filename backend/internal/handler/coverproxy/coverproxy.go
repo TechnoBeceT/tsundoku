@@ -1,9 +1,13 @@
-// Package coverproxy holds the shared cover-image-streaming helper used by
+// Package coverproxy holds the shared cover-image-streaming helpers used by
 // every authed cover-proxy endpoint: the series cover, the per-provider cover
 // (both in handler/series), and the Discover/Search source-manga cover
-// (handler/imports). All three need the identical fetch-bytes-from-Suwayomi →
-// write-binary-blob → map-failure-to-502 behavior, so it lives here once
-// instead of being copy-pasted into each handler package (§2 DRY).
+// (handler/imports). Two variants exist because two clients are in play during
+// the P2 Suwayomi-removal migration: Stream (suwayomi.Client, still used by
+// handler/imports' MangaCover and handler/extensions' icon proxy — out of
+// scope for this slice) and StreamEngine (sourceengine.Client, used by
+// handler/series' repointed cover proxy). Both fetch-bytes →
+// write-binary-blob → map-failure-to-502, so each shape lives here once
+// instead of being copy-pasted into every handler package (§2 DRY).
 package coverproxy
 
 import (
@@ -11,6 +15,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -21,6 +26,23 @@ import (
 // error, never a false 200.
 func Stream(c echo.Context, sw suwayomi.Client, coverURL string) error {
 	data, ext, err := sw.PageBytes(c.Request().Context(), coverURL)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "cover fetch failed")
+	}
+	return c.Blob(http.StatusOK, MimeForExt(ext), data)
+}
+
+// StreamEngine fetches coverURL from the engine host via
+// engine.Image(ctx, sourceID, "", coverURL) — pageURL is deliberately EMPTY
+// and the cover URL goes in the imageURL slot (see internal/series/cover.go's
+// fetchAndCacheCover doc comment for why: HttpSource.getImage uses
+// page.imageUrl directly and skips getImageUrl, which throws for most
+// sources) — and writes the bytes as a binary blob HTTP response, mirroring
+// Stream's shape for the sourceengine-backed callers. A fetch failure yields
+// 502 Bad Gateway — the upstream is a separate service, so its failure is a
+// gateway error, never a false 200.
+func StreamEngine(c echo.Context, engine sourceengine.Client, sourceID int64, coverURL string) error {
+	data, ext, err := engine.Image(c.Request().Context(), sourceID, "", coverURL)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadGateway, "cover fetch failed")
 	}

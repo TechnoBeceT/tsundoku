@@ -95,6 +95,54 @@ func TestWithImage_KeyedBySourceAndPageURL(t *testing.T) {
 	}
 }
 
+// TestWithCoverImage_KeyedBySourceAndImageURL proves a cover fetch (pageURL
+// empty, the address in imageURL — the series/cover.go shape) resolves the
+// WithCoverImage-configured entry by (sourceID, imageURL), never the
+// WithImage-configured (pageURL-keyed) map.
+func TestWithCoverImage_KeyedBySourceAndImageURL(t *testing.T) {
+	c := fake.New(fake.WithCoverImage(7, "https://source.example/covers/1.jpg", []byte{4, 5, 6}, "image/png"))
+
+	data, ct, err := c.Image(context.Background(), 7, "", "https://source.example/covers/1.jpg")
+	if err != nil {
+		t.Fatalf("Image: %v", err)
+	}
+	if string(data) != "\x04\x05\x06" || ct != "image/png" {
+		t.Errorf("Image = %v %q, want [4 5 6] image/png", data, ct)
+	}
+}
+
+// TestWithCoverImage_DoesNotCollideWithWithImage proves the two maps are
+// genuinely separate keyspaces: seeding a page-keyed entry for the SAME
+// sourceID under the empty pageURL a cover always uses does not leak into a
+// cover fetch, and a cover-keyed entry does not leak into a page fetch that
+// happens to reuse the same URL string as its pageURL.
+func TestWithCoverImage_DoesNotCollideWithWithImage(t *testing.T) {
+	const sourceID int64 = 3
+	const url = "https://source.example/shared-url"
+	c := fake.New(
+		fake.WithImage(sourceID, url, []byte("PAGE"), "image/jpeg"),
+		fake.WithCoverImage(sourceID, url, []byte("COVER"), "image/png"),
+	)
+
+	// Cover shape: pageURL="", the URL in imageURL.
+	coverData, coverCT, err := c.Image(context.Background(), sourceID, "", url)
+	if err != nil {
+		t.Fatalf("Image (cover): %v", err)
+	}
+	if string(coverData) != "COVER" || coverCT != "image/png" {
+		t.Errorf("Image (cover) = %q %q, want COVER image/png", coverData, coverCT)
+	}
+
+	// Page shape: pageURL=url, imageURL irrelevant.
+	pageData, pageCT, err := c.Image(context.Background(), sourceID, url, "")
+	if err != nil {
+		t.Fatalf("Image (page): %v", err)
+	}
+	if string(pageData) != "PAGE" || pageCT != "image/jpeg" {
+		t.Errorf("Image (page) = %q %q, want PAGE image/jpeg", pageData, pageCT)
+	}
+}
+
 // TestWithPreferences_And_SetPreferences proves SetPreferences applies
 // changes by Key and returns the updated list, leaving the seeded slice
 // untouched (the fake must not alias the caller's backing array).

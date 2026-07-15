@@ -10,12 +10,13 @@ import (
 // TestDetailFeedCountAndRangesMakeNoSourceCalls is the load-bearing proof of the
 // provider-feed-count feature: a source's chapter OFFERING (feedCount +
 // feedRanges) is served from the ProviderChapter rows we ALREADY store, so
-// GET /api/series/:id must make ZERO calls to Suwayomi / the source.
+// GET /api/series/:id must make ZERO calls to the engine host / the source.
 //
 // Before this feature the owner had to click "Show coverage", which fired a LIVE
 // per-source breakdown fetch to see a number we already held in the DB — a
-// needless source ping (ban risk). The assertion below (env.sw.calls == 0 on a
-// counting fake client) is what keeps that regression from coming back.
+// needless source ping (ban risk). The assertion below (env.sw.CallCount("Image")
+// == 0 — Image is the ONLY sourceengine.Client method handler/series ever calls,
+// via the cover proxy) is what keeps that regression from coming back.
 //
 // It also asserts the JSON shape end-to-end: the gapped feed 1,2,3,5 renders as
 // "1-3, 5", and a provider whose feed is empty reports 0 / "".
@@ -43,16 +44,13 @@ func TestDetailFeedCountAndRangesMakeNoSourceCalls(t *testing.T) {
 			SetSeriesProviderID(fed.ID).SetChapterKey(key.key).SetNumber(num).SaveX(ctx)
 	}
 
-	// Reset the counter: only the detail request under test may contribute.
-	env.sw.calls = 0
-
 	rec := env.do(http.MethodGet, "/api/series/"+s.ID.String(), "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/series/:id = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
 
-	if env.sw.calls != 0 {
-		t.Errorf("GET /api/series/:id made %d Suwayomi call(s), want 0 — the provider feed must come from OUR DB, never a source ping", env.sw.calls)
+	if got := env.sw.CallCount("Image"); got != 0 {
+		t.Errorf("GET /api/series/:id made %d engine call(s), want 0 — the provider feed must come from OUR DB, never a source ping", got)
 	}
 
 	var body struct {

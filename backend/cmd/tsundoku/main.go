@@ -215,9 +215,12 @@ func main() {
 		return settingsSvc.ChapterCacheTTL(ctx)
 	})
 
-	// Build the Suwayomi HTTP client now — every consumer OTHER than the
-	// download dispatcher (ingest/imports/refresh/warmup/cover/handlers) still
-	// targets Suwayomi and is repointed in a later Suwayomi-removal slice.
+	// Build the Suwayomi HTTP client now — the suwayomi-settings/extensions/
+	// flaresolverr proxy handlers (and enginetopo) still target Suwayomi
+	// directly and are repointed in a later Suwayomi-removal slice. P2 slice 4
+	// repointed the cover-fetch chain (series/handler/series cover proxy,
+	// cmd/tsundoku.sourceCoverAdapter) and the warm-up job onto engineClient
+	// below — they no longer use suwayomiClient.
 	httpc := &http.Client{Timeout: cfg.Suwayomi.HTTPTimeout}
 	suwayomiClient := suwayomi.NewClient(cfg.Suwayomi, httpc)
 
@@ -236,10 +239,10 @@ func main() {
 	apkStore := apkcache.New(filepath.Join(cfg.Suwayomi.RuntimeDir, "apkcache"))
 
 	// Anti-bot session warm-up job: keeps slow (Cloudflare-protected) sources
-	// warm with a cheap Browse call so interactive search stays fast. Works in
-	// BOTH embedded + external modes — it only needs the Suwayomi client (which
-	// targets BaseURL() either way) and the metrics store.
-	warmupSvc := warmup.NewService(suwayomiClient, metricsSvc, settingsSvc, gateSvc)
+	// warm with a cheap Popular call so interactive search stays fast. Works in
+	// BOTH embedded + external modes — it only needs the engine-host client
+	// (P2 slice 4: repointed off suwayomiClient) and the metrics store.
+	warmupSvc := warmup.NewService(engineClient, metricsSvc, settingsSvc, gateSvc)
 
 	dispatcher := download.New(entClient, engineFetcher, hub, download.Config{
 		Storage: cfg.Storage.Folder,
@@ -290,12 +293,13 @@ func main() {
 	healthSvc := series.NewServiceWithStaleGrace(entClient, cfg.Storage.Folder, settingsSvc.StaleGraceDays)
 
 	// Wire the metadata engine's "set a library source's own cover" pick
-	// (metadatasvc.Service.SetCover, kind=="source"): it needs the real
-	// Suwayomi client (only just built above) plus the series domain's own
-	// provider-cover resolution, so this can't be attached at metaSvc's own
-	// construction site earlier in this function — see sourceCoverAdapter's
-	// doc comment for why the adapter itself lives outside internal/metadatasvc.
-	metaSvc = metaSvc.WithSourceCoverFetcher(sourceCoverAdapter{series: healthSvc, sw: suwayomiClient})
+	// (metadatasvc.Service.SetCover, kind=="source"): it needs the engine-host
+	// client (P2 slice 4: repointed off suwayomiClient) plus the series
+	// domain's own provider-cover resolution, so this can't be attached at
+	// metaSvc's own construction site earlier in this function — see
+	// sourceCoverAdapter's doc comment for why the adapter itself lives
+	// outside internal/metadatasvc.
+	metaSvc = metaSvc.WithSourceCoverFetcher(sourceCoverAdapter{series: healthSvc, sw: engineClient})
 
 	// Start the Suwayomi engine. pm is the embedded process manager (nil in
 	// external mode) — the shutdown path guards on pm != nil so Stop() is only

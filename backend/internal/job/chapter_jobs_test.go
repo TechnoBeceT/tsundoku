@@ -795,24 +795,24 @@ func TestStartRefresh_BroadcastsHealthSummary(t *testing.T) {
 	}
 }
 
-// warmupFake is a suwayomi.Client double for the warm-up seed-at-boot test. It
-// returns one enabled online source and counts + signals every Browse call (the
-// actual warm), so the test can prove the seed pass fires PROMPTLY after
-// StartWarmup rather than only after the first interval elapses. It embeds the
-// Client interface so any unrelated method is a nil-panic (StartWarmup's warm
-// path only calls Sources + Browse).
+// warmupFake is a sourceengine.Client double for the warm-up seed-at-boot
+// test. It returns one enabled online source and counts + signals every
+// Popular call (the actual warm), so the test can prove the seed pass fires
+// PROMPTLY after StartWarmup rather than only after the first interval
+// elapses. It embeds the Client interface so any unrelated method is a
+// nil-panic (StartWarmup's warm path only calls Sources + Popular).
 type warmupFake struct {
-	suwayomi.Client
+	sourceengine.Client
 	mu      sync.Mutex
 	browses int
 	fired   chan struct{}
 }
 
-func (f *warmupFake) Sources(context.Context) ([]suwayomi.Source, error) {
-	return []suwayomi.Source{{ID: "warm-1", Name: "Warm One", Lang: "en"}}, nil
+func (f *warmupFake) Sources(context.Context) ([]sourceengine.Source, error) {
+	return []sourceengine.Source{{ID: 1, Name: "Warm One", Lang: "en"}}, nil
 }
 
-func (f *warmupFake) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
+func (f *warmupFake) Popular(context.Context, int64, int) (sourceengine.SearchResult, error) {
 	f.mu.Lock()
 	first := f.browses == 0
 	f.browses++
@@ -820,7 +820,7 @@ func (f *warmupFake) Browse(context.Context, string, suwayomi.BrowseType, int) (
 	if first {
 		close(f.fired) // signal the first (seed) warm exactly once
 	}
-	return suwayomi.BrowseResult{}, nil
+	return sourceengine.SearchResult{}, nil
 }
 
 // TestRunner_StartWarmup_SeedsAtBoot proves StartWarmup runs the seed (WarmAll)

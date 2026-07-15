@@ -180,7 +180,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 
 	settingsSvc := settings.NewService(nil, settings.Defaults{})
 	metricsSvc := metrics.NewService(nil)
-	warmupSvc := warmup.NewService(nullSuwayomiClient{}, metricsSvc, settingsSvc, nil)
+	warmupSvc := warmup.NewService(nullEngineClient{}, metricsSvc, settingsSvc, nil)
 	// No metadata providers wired for these route-level tests — an empty
 	// registry never fires an outbound call, matching the nil-DB/panic-on-use
 	// discipline the other stubs above follow.

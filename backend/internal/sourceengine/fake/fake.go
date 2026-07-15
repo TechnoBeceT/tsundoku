@@ -41,6 +41,7 @@ type Client struct {
 	chapters      map[contentKey][]sourceengine.Chapter
 	pages         map[contentKey][]sourceengine.Page
 	images        map[contentKey]imageEntry
+	coverImages   map[contentKey]imageEntry
 	extensions    []sourceengine.Extension
 	preferences   map[int64][]sourceengine.Preference
 	repos         []string
@@ -62,6 +63,7 @@ func New(opts ...Option) *Client {
 		chapters:      map[contentKey][]sourceengine.Chapter{},
 		pages:         map[contentKey][]sourceengine.Page{},
 		images:        map[contentKey]imageEntry{},
+		coverImages:   map[contentKey]imageEntry{},
 		preferences:   map[int64][]sourceengine.Preference{},
 		errors:        map[string]error{},
 		calls:         map[string]int{},
@@ -107,6 +109,22 @@ func WithPages(sourceID int64, chapterURL string, pages []sourceengine.Page) Opt
 func WithImage(sourceID int64, pageURL string, data []byte, contentType string) Option {
 	return func(c *Client) {
 		c.images[contentKey{sourceID, pageURL}] = imageEntry{data: data, contentType: contentType}
+	}
+}
+
+// WithCoverImage seeds the raw bytes + content type returned for a COVER
+// fetch: Image called with pageURL="" and the cover's own address in
+// imageURL (the series/cover.go + handler/coverproxy.StreamEngine shape —
+// pageURL is deliberately empty for a cover, so the real engine host's
+// HttpSource.getImage uses imageURL directly). It is keyed on (sourceID,
+// imageURL) rather than (sourceID, pageURL): every cover fetch shares the same
+// empty pageURL, so re-using WithImage's key would collide every cover under
+// one contentKey{sourceID, ""} regardless of which cover was actually asked
+// for. WithImage (the page path, pageURL non-empty) is unaffected — Image
+// dispatches to this map only when pageURL=="".
+func WithCoverImage(sourceID int64, imageURL string, data []byte, contentType string) Option {
+	return func(c *Client) {
+		c.coverImages[contentKey{sourceID, imageURL}] = imageEntry{data: data, contentType: contentType}
 	}
 }
 
@@ -237,15 +255,24 @@ func (c *Client) Pages(_ context.Context, sourceID int64, chapterURL string) ([]
 	return c.pages[contentKey{sourceID, chapterURL}], nil
 }
 
-// Image returns the WithImage-configured bytes + content type for
-// (sourceID, pageURL); imageURL is ignored (see WithImage's doc comment).
-func (c *Client) Image(_ context.Context, sourceID int64, pageURL, _ string) ([]byte, string, error) {
+// Image returns the configured bytes + content type for one of two shapes,
+// mirrored on pageURL: a PAGE fetch (pageURL non-empty) returns the
+// WithImage-configured entry for (sourceID, pageURL), imageURL ignored (see
+// WithImage's doc comment); a COVER fetch (pageURL=="", the shape
+// series/cover.go and handler/coverproxy.StreamEngine use) returns the
+// WithCoverImage-configured entry for (sourceID, imageURL) instead — see
+// WithCoverImage's doc comment for why the two need separate keys.
+func (c *Client) Image(_ context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
 	c.record("Image")
 	if err := c.errFor("Image"); err != nil {
 		return nil, "", err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if pageURL == "" {
+		entry := c.coverImages[contentKey{sourceID, imageURL}]
+		return entry.data, entry.contentType, nil
+	}
 	entry := c.images[contentKey{sourceID, pageURL}]
 	return entry.data, entry.contentType, nil
 }

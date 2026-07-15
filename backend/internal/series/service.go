@@ -1079,29 +1079,40 @@ func (s *Service) CoverURL(ctx context.Context, id uuid.UUID) (string, error) {
 	return meta.CoverURL, nil
 }
 
-// ProviderCoverURL returns the stored Suwayomi-relative cover_url for the
-// given SeriesProvider. Returns ErrSeriesNotFound when the series is unknown,
-// ErrProviderNotInSeries when providerID does not belong to the series, and
-// ErrNoCover when the provider has no stored cover_url.
-func (s *Service) ProviderCoverURL(ctx context.Context, id, providerID uuid.UUID) (string, error) {
+// ProviderCoverURL returns the stored cover_url for the given SeriesProvider
+// AND the numeric engine source id (ProviderSourceID) to fetch it from — the
+// per-provider cover proxy (handler/series.ProviderCover) needs both to call
+// sourceengine.Client.Image(ctx, sourceID, "", coverURL). Returns
+// ErrSeriesNotFound when the series is unknown, ErrProviderNotInSeries when
+// providerID does not belong to the series, ErrNoCover when the provider has
+// no stored cover_url, and ErrCoverFetchFailed when the provider is
+// disk-origin (Provider is a display NAME, not a numeric engine source id) —
+// there is no source to fetch from, the same failure mode a live fetch error
+// produces.
+func (s *Service) ProviderCoverURL(ctx context.Context, id, providerID uuid.UUID) (coverURL string, sourceID int64, err error) {
 	exists, err := s.client.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
 	if err != nil {
-		return "", fmt.Errorf("series.ProviderCoverURL: check series %s: %w", id, err)
+		return "", 0, fmt.Errorf("series.ProviderCoverURL: check series %s: %w", id, err)
 	}
 	if !exists {
-		return "", ErrSeriesNotFound
+		return "", 0, ErrSeriesNotFound
 	}
 	p, err := s.client.SeriesProvider.Query().
 		Where(entseriesprovider.IDEQ(providerID), entseriesprovider.SeriesID(id)).
 		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return "", ErrProviderNotInSeries
+			return "", 0, ErrProviderNotInSeries
 		}
-		return "", fmt.Errorf("series.ProviderCoverURL: load provider %s: %w", providerID, err)
+		return "", 0, fmt.Errorf("series.ProviderCoverURL: load provider %s: %w", providerID, err)
 	}
 	if p.CoverURL == "" {
-		return "", ErrNoCover
+		return "", 0, ErrNoCover
 	}
-	return p.CoverURL, nil
+	sid, ok := ProviderSourceID(p)
+	if !ok {
+		return "", 0, fmt.Errorf("%w: series %s: provider %s is disk-origin, no engine source to fetch its cover from",
+			ErrCoverFetchFailed, id, p.ID)
+	}
+	return p.CoverURL, sid, nil
 }

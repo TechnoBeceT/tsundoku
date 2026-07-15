@@ -9,7 +9,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/category"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // Handler holds the dependencies for the library (series) HTTP handlers.
@@ -17,16 +17,17 @@ import (
 type Handler struct {
 	svc             *seriessvc.Service
 	trigger         func()
-	sw              suwayomi.Client
+	sw              sourceengine.Client
 	viewSyncer      ViewSyncer
 	trackerProgress TrackerProgressSetter
 }
 
 // NewHandler constructs a Handler bound to a series.Service, an auto-converge
 // trigger (called after a successful provider re-rank to re-evaluate upgrades
-// immediately — M5; other routes do not use it), and a suwayomi.Client (used
-// by the cover proxy endpoints to fetch cover images from Suwayomi).
-func NewHandler(svc *seriessvc.Service, trigger func(), sw suwayomi.Client) *Handler {
+// immediately — M5; other routes do not use it), and a sourceengine.Client
+// (used by the per-provider cover proxy endpoint to fetch cover images from
+// the engine host — see ProviderCover).
+func NewHandler(svc *seriessvc.Service, trigger func(), sw sourceengine.Client) *Handler {
 	return &Handler{svc: svc, trigger: trigger, sw: sw}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 	"github.com/technobecet/tsundoku/internal/tracker"
 )
 
@@ -67,7 +68,7 @@ func newReadingProgressEnv(t *testing.T) *readingProgressEnv {
 	authSvc := auth.NewService(testSecret)
 	svc := seriessvc.NewService(client, storage, 14)
 	ft := &fakeTrackerProgressSetter{}
-	h := handler.NewHandler(svc, func() {}, &fakeSuwayomiClient{}).WithTrackerProgressSetter(ft)
+	h := handler.NewHandler(svc, func() {}, sourceenginefake.New()).WithTrackerProgressSetter(ft)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
