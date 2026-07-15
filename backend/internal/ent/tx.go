@@ -18,6 +18,10 @@ type Tx struct {
 	Chapter *ChapterClient
 	// EtagCache is the client for interacting with the EtagCache builders.
 	EtagCache *EtagCacheClient
+	// HarvestedExtension is the client for interacting with the HarvestedExtension builders.
+	HarvestedExtension *HarvestedExtensionClient
+	// HarvestedRepo is the client for interacting with the HarvestedRepo builders.
+	HarvestedRepo *HarvestedRepoClient
 	// ImportEntry is the client for interacting with the ImportEntry builders.
 	ImportEntry *ImportEntryClient
 	// LatestSeries is the client for interacting with the LatestSeries builders.
@@ -42,6 +46,8 @@ type Tx struct {
 	SourceEvent *SourceEventClient
 	// SourceMetric is the client for interacting with the SourceMetric builders.
 	SourceMetric *SourceMetricClient
+	// SourcePreference is the client for interacting with the SourcePreference builders.
+	SourcePreference *SourcePreferenceClient
 	// SuwayomiSyncState is the client for interacting with the SuwayomiSyncState builders.
 	SuwayomiSyncState *SuwayomiSyncStateClient
 	// TrackBinding is the client for interacting with the TrackBinding builders.
@@ -182,6 +188,8 @@ func (tx *Tx) init() {
 	tx.Category = NewCategoryClient(tx.config)
 	tx.Chapter = NewChapterClient(tx.config)
 	tx.EtagCache = NewEtagCacheClient(tx.config)
+	tx.HarvestedExtension = NewHarvestedExtensionClient(tx.config)
+	tx.HarvestedRepo = NewHarvestedRepoClient(tx.config)
 	tx.ImportEntry = NewImportEntryClient(tx.config)
 	tx.LatestSeries = NewLatestSeriesClient(tx.config)
 	tx.Owner = NewOwnerClient(tx.config)
@@ -194,6 +202,7 @@ func (tx *Tx) init() {
 	tx.SourceCircuitState = NewSourceCircuitStateClient(tx.config)
 	tx.SourceEvent = NewSourceEventClient(tx.config)
 	tx.SourceMetric = NewSourceMetricClient(tx.config)
+	tx.SourcePreference = NewSourcePreferenceClient(tx.config)
 	tx.SuwayomiSyncState = NewSuwayomiSyncStateClient(tx.config)
 	tx.TrackBinding = NewTrackBindingClient(tx.config)
 	tx.TrackerConnection = NewTrackerConnectionClient(tx.config)

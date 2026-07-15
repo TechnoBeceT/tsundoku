@@ -19,6 +19,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
+	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
+	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
@@ -31,6 +33,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
+	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -47,6 +50,10 @@ type Client struct {
 	Chapter *ChapterClient
 	// EtagCache is the client for interacting with the EtagCache builders.
 	EtagCache *EtagCacheClient
+	// HarvestedExtension is the client for interacting with the HarvestedExtension builders.
+	HarvestedExtension *HarvestedExtensionClient
+	// HarvestedRepo is the client for interacting with the HarvestedRepo builders.
+	HarvestedRepo *HarvestedRepoClient
 	// ImportEntry is the client for interacting with the ImportEntry builders.
 	ImportEntry *ImportEntryClient
 	// LatestSeries is the client for interacting with the LatestSeries builders.
@@ -71,6 +78,8 @@ type Client struct {
 	SourceEvent *SourceEventClient
 	// SourceMetric is the client for interacting with the SourceMetric builders.
 	SourceMetric *SourceMetricClient
+	// SourcePreference is the client for interacting with the SourcePreference builders.
+	SourcePreference *SourcePreferenceClient
 	// SuwayomiSyncState is the client for interacting with the SuwayomiSyncState builders.
 	SuwayomiSyncState *SuwayomiSyncStateClient
 	// TrackBinding is the client for interacting with the TrackBinding builders.
@@ -91,6 +100,8 @@ func (c *Client) init() {
 	c.Category = NewCategoryClient(c.config)
 	c.Chapter = NewChapterClient(c.config)
 	c.EtagCache = NewEtagCacheClient(c.config)
+	c.HarvestedExtension = NewHarvestedExtensionClient(c.config)
+	c.HarvestedRepo = NewHarvestedRepoClient(c.config)
 	c.ImportEntry = NewImportEntryClient(c.config)
 	c.LatestSeries = NewLatestSeriesClient(c.config)
 	c.Owner = NewOwnerClient(c.config)
@@ -103,6 +114,7 @@ func (c *Client) init() {
 	c.SourceCircuitState = NewSourceCircuitStateClient(c.config)
 	c.SourceEvent = NewSourceEventClient(c.config)
 	c.SourceMetric = NewSourceMetricClient(c.config)
+	c.SourcePreference = NewSourcePreferenceClient(c.config)
 	c.SuwayomiSyncState = NewSuwayomiSyncStateClient(c.config)
 	c.TrackBinding = NewTrackBindingClient(c.config)
 	c.TrackerConnection = NewTrackerConnectionClient(c.config)
@@ -201,6 +213,8 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		Category:           NewCategoryClient(cfg),
 		Chapter:            NewChapterClient(cfg),
 		EtagCache:          NewEtagCacheClient(cfg),
+		HarvestedExtension: NewHarvestedExtensionClient(cfg),
+		HarvestedRepo:      NewHarvestedRepoClient(cfg),
 		ImportEntry:        NewImportEntryClient(cfg),
 		LatestSeries:       NewLatestSeriesClient(cfg),
 		Owner:              NewOwnerClient(cfg),
@@ -213,6 +227,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		SourceCircuitState: NewSourceCircuitStateClient(cfg),
 		SourceEvent:        NewSourceEventClient(cfg),
 		SourceMetric:       NewSourceMetricClient(cfg),
+		SourcePreference:   NewSourcePreferenceClient(cfg),
 		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
 		TrackBinding:       NewTrackBindingClient(cfg),
 		TrackerConnection:  NewTrackerConnectionClient(cfg),
@@ -238,6 +253,8 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		Category:           NewCategoryClient(cfg),
 		Chapter:            NewChapterClient(cfg),
 		EtagCache:          NewEtagCacheClient(cfg),
+		HarvestedExtension: NewHarvestedExtensionClient(cfg),
+		HarvestedRepo:      NewHarvestedRepoClient(cfg),
 		ImportEntry:        NewImportEntryClient(cfg),
 		LatestSeries:       NewLatestSeriesClient(cfg),
 		Owner:              NewOwnerClient(cfg),
@@ -250,6 +267,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		SourceCircuitState: NewSourceCircuitStateClient(cfg),
 		SourceEvent:        NewSourceEventClient(cfg),
 		SourceMetric:       NewSourceMetricClient(cfg),
+		SourcePreference:   NewSourcePreferenceClient(cfg),
 		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
 		TrackBinding:       NewTrackBindingClient(cfg),
 		TrackerConnection:  NewTrackerConnectionClient(cfg),
@@ -282,10 +300,11 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
-		c.PendingTrackPush, c.ProviderChapter, c.PushSubscription, c.Series,
-		c.SeriesProvider, c.Settings, c.SourceCircuitState, c.SourceEvent,
-		c.SourceMetric, c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
+		c.Category, c.Chapter, c.EtagCache, c.HarvestedExtension, c.HarvestedRepo,
+		c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush, c.ProviderChapter,
+		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourcePreference,
+		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Use(hooks...)
 	}
@@ -295,10 +314,11 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Category, c.Chapter, c.EtagCache, c.ImportEntry, c.LatestSeries, c.Owner,
-		c.PendingTrackPush, c.ProviderChapter, c.PushSubscription, c.Series,
-		c.SeriesProvider, c.Settings, c.SourceCircuitState, c.SourceEvent,
-		c.SourceMetric, c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
+		c.Category, c.Chapter, c.EtagCache, c.HarvestedExtension, c.HarvestedRepo,
+		c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush, c.ProviderChapter,
+		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourcePreference,
+		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -313,6 +333,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Chapter.mutate(ctx, m)
 	case *EtagCacheMutation:
 		return c.EtagCache.mutate(ctx, m)
+	case *HarvestedExtensionMutation:
+		return c.HarvestedExtension.mutate(ctx, m)
+	case *HarvestedRepoMutation:
+		return c.HarvestedRepo.mutate(ctx, m)
 	case *ImportEntryMutation:
 		return c.ImportEntry.mutate(ctx, m)
 	case *LatestSeriesMutation:
@@ -337,6 +361,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SourceEvent.mutate(ctx, m)
 	case *SourceMetricMutation:
 		return c.SourceMetric.mutate(ctx, m)
+	case *SourcePreferenceMutation:
+		return c.SourcePreference.mutate(ctx, m)
 	case *SuwayomiSyncStateMutation:
 		return c.SuwayomiSyncState.mutate(ctx, m)
 	case *TrackBindingMutation:
@@ -792,6 +818,272 @@ func (c *EtagCacheClient) mutate(ctx context.Context, m *EtagCacheMutation) (Val
 		return (&EtagCacheDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown EtagCache mutation op: %q", m.Op())
+	}
+}
+
+// HarvestedExtensionClient is a client for the HarvestedExtension schema.
+type HarvestedExtensionClient struct {
+	config
+}
+
+// NewHarvestedExtensionClient returns a client for the HarvestedExtension from the given config.
+func NewHarvestedExtensionClient(c config) *HarvestedExtensionClient {
+	return &HarvestedExtensionClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `harvestedextension.Hooks(f(g(h())))`.
+func (c *HarvestedExtensionClient) Use(hooks ...Hook) {
+	c.hooks.HarvestedExtension = append(c.hooks.HarvestedExtension, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `harvestedextension.Intercept(f(g(h())))`.
+func (c *HarvestedExtensionClient) Intercept(interceptors ...Interceptor) {
+	c.inters.HarvestedExtension = append(c.inters.HarvestedExtension, interceptors...)
+}
+
+// Create returns a builder for creating a HarvestedExtension entity.
+func (c *HarvestedExtensionClient) Create() *HarvestedExtensionCreate {
+	mutation := newHarvestedExtensionMutation(c.config, OpCreate)
+	return &HarvestedExtensionCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of HarvestedExtension entities.
+func (c *HarvestedExtensionClient) CreateBulk(builders ...*HarvestedExtensionCreate) *HarvestedExtensionCreateBulk {
+	return &HarvestedExtensionCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *HarvestedExtensionClient) MapCreateBulk(slice any, setFunc func(*HarvestedExtensionCreate, int)) *HarvestedExtensionCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &HarvestedExtensionCreateBulk{err: fmt.Errorf("calling to HarvestedExtensionClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*HarvestedExtensionCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &HarvestedExtensionCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for HarvestedExtension.
+func (c *HarvestedExtensionClient) Update() *HarvestedExtensionUpdate {
+	mutation := newHarvestedExtensionMutation(c.config, OpUpdate)
+	return &HarvestedExtensionUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *HarvestedExtensionClient) UpdateOne(_m *HarvestedExtension) *HarvestedExtensionUpdateOne {
+	mutation := newHarvestedExtensionMutation(c.config, OpUpdateOne, withHarvestedExtension(_m))
+	return &HarvestedExtensionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *HarvestedExtensionClient) UpdateOneID(id uuid.UUID) *HarvestedExtensionUpdateOne {
+	mutation := newHarvestedExtensionMutation(c.config, OpUpdateOne, withHarvestedExtensionID(id))
+	return &HarvestedExtensionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for HarvestedExtension.
+func (c *HarvestedExtensionClient) Delete() *HarvestedExtensionDelete {
+	mutation := newHarvestedExtensionMutation(c.config, OpDelete)
+	return &HarvestedExtensionDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *HarvestedExtensionClient) DeleteOne(_m *HarvestedExtension) *HarvestedExtensionDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *HarvestedExtensionClient) DeleteOneID(id uuid.UUID) *HarvestedExtensionDeleteOne {
+	builder := c.Delete().Where(harvestedextension.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &HarvestedExtensionDeleteOne{builder}
+}
+
+// Query returns a query builder for HarvestedExtension.
+func (c *HarvestedExtensionClient) Query() *HarvestedExtensionQuery {
+	return &HarvestedExtensionQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeHarvestedExtension},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a HarvestedExtension entity by its id.
+func (c *HarvestedExtensionClient) Get(ctx context.Context, id uuid.UUID) (*HarvestedExtension, error) {
+	return c.Query().Where(harvestedextension.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *HarvestedExtensionClient) GetX(ctx context.Context, id uuid.UUID) *HarvestedExtension {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *HarvestedExtensionClient) Hooks() []Hook {
+	return c.hooks.HarvestedExtension
+}
+
+// Interceptors returns the client interceptors.
+func (c *HarvestedExtensionClient) Interceptors() []Interceptor {
+	return c.inters.HarvestedExtension
+}
+
+func (c *HarvestedExtensionClient) mutate(ctx context.Context, m *HarvestedExtensionMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&HarvestedExtensionCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&HarvestedExtensionUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&HarvestedExtensionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&HarvestedExtensionDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown HarvestedExtension mutation op: %q", m.Op())
+	}
+}
+
+// HarvestedRepoClient is a client for the HarvestedRepo schema.
+type HarvestedRepoClient struct {
+	config
+}
+
+// NewHarvestedRepoClient returns a client for the HarvestedRepo from the given config.
+func NewHarvestedRepoClient(c config) *HarvestedRepoClient {
+	return &HarvestedRepoClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `harvestedrepo.Hooks(f(g(h())))`.
+func (c *HarvestedRepoClient) Use(hooks ...Hook) {
+	c.hooks.HarvestedRepo = append(c.hooks.HarvestedRepo, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `harvestedrepo.Intercept(f(g(h())))`.
+func (c *HarvestedRepoClient) Intercept(interceptors ...Interceptor) {
+	c.inters.HarvestedRepo = append(c.inters.HarvestedRepo, interceptors...)
+}
+
+// Create returns a builder for creating a HarvestedRepo entity.
+func (c *HarvestedRepoClient) Create() *HarvestedRepoCreate {
+	mutation := newHarvestedRepoMutation(c.config, OpCreate)
+	return &HarvestedRepoCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of HarvestedRepo entities.
+func (c *HarvestedRepoClient) CreateBulk(builders ...*HarvestedRepoCreate) *HarvestedRepoCreateBulk {
+	return &HarvestedRepoCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *HarvestedRepoClient) MapCreateBulk(slice any, setFunc func(*HarvestedRepoCreate, int)) *HarvestedRepoCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &HarvestedRepoCreateBulk{err: fmt.Errorf("calling to HarvestedRepoClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*HarvestedRepoCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &HarvestedRepoCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for HarvestedRepo.
+func (c *HarvestedRepoClient) Update() *HarvestedRepoUpdate {
+	mutation := newHarvestedRepoMutation(c.config, OpUpdate)
+	return &HarvestedRepoUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *HarvestedRepoClient) UpdateOne(_m *HarvestedRepo) *HarvestedRepoUpdateOne {
+	mutation := newHarvestedRepoMutation(c.config, OpUpdateOne, withHarvestedRepo(_m))
+	return &HarvestedRepoUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *HarvestedRepoClient) UpdateOneID(id uuid.UUID) *HarvestedRepoUpdateOne {
+	mutation := newHarvestedRepoMutation(c.config, OpUpdateOne, withHarvestedRepoID(id))
+	return &HarvestedRepoUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for HarvestedRepo.
+func (c *HarvestedRepoClient) Delete() *HarvestedRepoDelete {
+	mutation := newHarvestedRepoMutation(c.config, OpDelete)
+	return &HarvestedRepoDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *HarvestedRepoClient) DeleteOne(_m *HarvestedRepo) *HarvestedRepoDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *HarvestedRepoClient) DeleteOneID(id uuid.UUID) *HarvestedRepoDeleteOne {
+	builder := c.Delete().Where(harvestedrepo.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &HarvestedRepoDeleteOne{builder}
+}
+
+// Query returns a query builder for HarvestedRepo.
+func (c *HarvestedRepoClient) Query() *HarvestedRepoQuery {
+	return &HarvestedRepoQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeHarvestedRepo},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a HarvestedRepo entity by its id.
+func (c *HarvestedRepoClient) Get(ctx context.Context, id uuid.UUID) (*HarvestedRepo, error) {
+	return c.Query().Where(harvestedrepo.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *HarvestedRepoClient) GetX(ctx context.Context, id uuid.UUID) *HarvestedRepo {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *HarvestedRepoClient) Hooks() []Hook {
+	return c.hooks.HarvestedRepo
+}
+
+// Interceptors returns the client interceptors.
+func (c *HarvestedRepoClient) Interceptors() []Interceptor {
+	return c.inters.HarvestedRepo
+}
+
+func (c *HarvestedRepoClient) mutate(ctx context.Context, m *HarvestedRepoMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&HarvestedRepoCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&HarvestedRepoUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&HarvestedRepoUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&HarvestedRepoDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown HarvestedRepo mutation op: %q", m.Op())
 	}
 }
 
@@ -2535,6 +2827,139 @@ func (c *SourceMetricClient) mutate(ctx context.Context, m *SourceMetricMutation
 	}
 }
 
+// SourcePreferenceClient is a client for the SourcePreference schema.
+type SourcePreferenceClient struct {
+	config
+}
+
+// NewSourcePreferenceClient returns a client for the SourcePreference from the given config.
+func NewSourcePreferenceClient(c config) *SourcePreferenceClient {
+	return &SourcePreferenceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourcepreference.Hooks(f(g(h())))`.
+func (c *SourcePreferenceClient) Use(hooks ...Hook) {
+	c.hooks.SourcePreference = append(c.hooks.SourcePreference, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourcepreference.Intercept(f(g(h())))`.
+func (c *SourcePreferenceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourcePreference = append(c.inters.SourcePreference, interceptors...)
+}
+
+// Create returns a builder for creating a SourcePreference entity.
+func (c *SourcePreferenceClient) Create() *SourcePreferenceCreate {
+	mutation := newSourcePreferenceMutation(c.config, OpCreate)
+	return &SourcePreferenceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourcePreference entities.
+func (c *SourcePreferenceClient) CreateBulk(builders ...*SourcePreferenceCreate) *SourcePreferenceCreateBulk {
+	return &SourcePreferenceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourcePreferenceClient) MapCreateBulk(slice any, setFunc func(*SourcePreferenceCreate, int)) *SourcePreferenceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourcePreferenceCreateBulk{err: fmt.Errorf("calling to SourcePreferenceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourcePreferenceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourcePreferenceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourcePreference.
+func (c *SourcePreferenceClient) Update() *SourcePreferenceUpdate {
+	mutation := newSourcePreferenceMutation(c.config, OpUpdate)
+	return &SourcePreferenceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourcePreferenceClient) UpdateOne(_m *SourcePreference) *SourcePreferenceUpdateOne {
+	mutation := newSourcePreferenceMutation(c.config, OpUpdateOne, withSourcePreference(_m))
+	return &SourcePreferenceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourcePreferenceClient) UpdateOneID(id uuid.UUID) *SourcePreferenceUpdateOne {
+	mutation := newSourcePreferenceMutation(c.config, OpUpdateOne, withSourcePreferenceID(id))
+	return &SourcePreferenceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourcePreference.
+func (c *SourcePreferenceClient) Delete() *SourcePreferenceDelete {
+	mutation := newSourcePreferenceMutation(c.config, OpDelete)
+	return &SourcePreferenceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourcePreferenceClient) DeleteOne(_m *SourcePreference) *SourcePreferenceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourcePreferenceClient) DeleteOneID(id uuid.UUID) *SourcePreferenceDeleteOne {
+	builder := c.Delete().Where(sourcepreference.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourcePreferenceDeleteOne{builder}
+}
+
+// Query returns a query builder for SourcePreference.
+func (c *SourcePreferenceClient) Query() *SourcePreferenceQuery {
+	return &SourcePreferenceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourcePreference},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourcePreference entity by its id.
+func (c *SourcePreferenceClient) Get(ctx context.Context, id uuid.UUID) (*SourcePreference, error) {
+	return c.Query().Where(sourcepreference.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourcePreferenceClient) GetX(ctx context.Context, id uuid.UUID) *SourcePreference {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourcePreferenceClient) Hooks() []Hook {
+	return c.hooks.SourcePreference
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourcePreferenceClient) Interceptors() []Interceptor {
+	return c.inters.SourcePreference
+}
+
+func (c *SourcePreferenceClient) mutate(ctx context.Context, m *SourcePreferenceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourcePreferenceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourcePreferenceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourcePreferenceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourcePreferenceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourcePreference mutation op: %q", m.Op())
+	}
+}
+
 // SuwayomiSyncStateClient is a client for the SuwayomiSyncState schema.
 type SuwayomiSyncStateClient struct {
 	config
@@ -2969,15 +3394,17 @@ func (c *TrackerConnectionClient) mutate(ctx context.Context, m *TrackerConnecti
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner,
-		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
-		Settings, SourceCircuitState, SourceEvent, SourceMetric, SuwayomiSyncState,
-		TrackBinding, TrackerConnection []ent.Hook
+		Category, Chapter, EtagCache, HarvestedExtension, HarvestedRepo, ImportEntry,
+		LatestSeries, Owner, PendingTrackPush, ProviderChapter, PushSubscription,
+		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
+		SourceMetric, SourcePreference, SuwayomiSyncState, TrackBinding,
+		TrackerConnection []ent.Hook
 	}
 	inters struct {
-		Category, Chapter, EtagCache, ImportEntry, LatestSeries, Owner,
-		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
-		Settings, SourceCircuitState, SourceEvent, SourceMetric, SuwayomiSyncState,
-		TrackBinding, TrackerConnection []ent.Interceptor
+		Category, Chapter, EtagCache, HarvestedExtension, HarvestedRepo, ImportEntry,
+		LatestSeries, Owner, PendingTrackPush, ProviderChapter, PushSubscription,
+		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
+		SourceMetric, SourcePreference, SuwayomiSyncState, TrackBinding,
+		TrackerConnection []ent.Interceptor
 	}
 )
