@@ -111,14 +111,17 @@ RUN chmod +x /app/entrypoint.sh
 
 # Container defaults. The engine-host owns its extension working-set (installed
 # APKs + prefs) on the /config volume; KCEF is enabled (off-screen). The Go server
-# runs in EXTERNAL Suwayomi mode so it never tries to spawn the removed embedded
-# Suwayomi (the Go<->host repoint is P2 — see engine-host/RPC-CONTRACT.md).
+# is a PURE CLIENT of the engine-host over localhost (P2 repoint complete — Suwayomi
+# is gone): the entrypoint starts the host on TSUNDOKU_ENGINE_PORT (7777) and the Go
+# server connects to it via TSUNDOKU_ENGINE_URL. TSUNDOKU_ENGINE_RUNTIMEDIR roots the
+# Go-side extension-.apk byte cache on the persistent /config volume.
 ENV TSUNDOKU_STORAGE_FOLDER=/series \
     TSUNDOKU_ENGINE_DATA=/config/engine \
     TSUNDOKU_ENGINE_PORT=7777 \
     TSUNDOKU_ENGINE_KCEF=true \
     ENGINE_KCEF_BUNDLE=/app/kcef-runtime/bin/kcef \
-    TSUNDOKU_SUWAYOMI_EXTERNALURL=http://127.0.0.1:7777
+    TSUNDOKU_ENGINE_URL=http://localhost:7777 \
+    TSUNDOKU_ENGINE_RUNTIMEDIR=/config/engine-cache
 
 # 9833 = Tsundoku HTTP (API + SPA); 7777 = engine-host RPC (internal).
 EXPOSE 9833

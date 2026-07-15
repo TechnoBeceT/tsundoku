@@ -1,7 +1,11 @@
 # docker-compose.yml — self-hosted Tsundoku stack.
 #
 # Two services:
-#   tsundoku — the all-in-one image (Go API + Nuxt SPA + embedded Suwayomi/Java)
+#   tsundoku — the all-in-one image (Go API + Nuxt SPA + the bundled engine-host:
+#              a JVM extension-host that loads Mihon extensions + Chromium/KCEF for
+#              WebView sources). The engine-host is baked into the image at build
+#              time and started by the entrypoint on localhost:7777; the Go server
+#              is a pure client of it. (Suwayomi has been fully removed.)
 #   postgres — the PostgreSQL database Tsundoku stores its library metadata in
 #
 # Quick start:
@@ -10,11 +14,13 @@
 #   3. Open http://<host>:9833
 #
 # Data persists in two bind mounts next to this file:
-#   ./config -> app + embedded-Suwayomi runtime data (the downloaded JAR, H2 DB)
+#   ./config -> app + engine-host data (installed extension APKs, per-source prefs,
+#               bundled KCEF/Chromium) + the Go-side extension-.apk byte cache
 #   ./series -> the manga library (CBZ + ComicInfo.xml, ready for Komga)
 #
-# First boot needs outbound internet: embedded Suwayomi downloads its engine
-# JAR from GitHub on first start (then caches it under ./config).
+# First boot needs outbound internet: the engine-host installs the required Mihon
+# extensions from the configured repos (reconcile-on-boot provisions them from the
+# Tsundoku DB), then caches them under ./config.
 
 services:
   tsundoku:
@@ -47,25 +53,17 @@ services:
       TSUNDOKU_DATABASE_NAME: tsundoku
       TSUNDOKU_DATABASE_SSLMODE: disable
 
-      # --- Suwayomi download engine -------------------------------------
-      # EMBEDDED mode (default): this image bundles Java and runs Suwayomi
-      # itself. Leaving TSUNDOKU_SUWAYOMI_EXTERNALURL blank keeps embedded mode;
-      # set it (e.g. "http://suwayomi:4567") to instead point at a standalone
-      # Suwayomi container — the version/Java knobs below then do nothing.
-      # TSUNDOKU_SUWAYOMI_EXTERNALURL: ""
-      #
-      # Which Suwayomi-Server release the embedded engine provisions. On first
-      # boot it downloads that JAR from GitHub into /config/suwayomi (cached
-      # across restarts). Bump this value + restart to move to a new release —
-      # no image rebuild needed.
-      TSUNDOKU_SUWAYOMI_VERSION: "v2.2.2100"
-      #
-      # Other embedded knobs (optional; defaults are sensible for this image):
-      #   TSUNDOKU_SUWAYOMI_RUNTIMEDIR: "/config/suwayomi"  # JAR + Suwayomi data (image default)
-      #   TSUNDOKU_SUWAYOMI_JAVAPATH: "java"                # image ships Java 21
-      #   TSUNDOKU_SUWAYOMI_STARTTIMEOUT: "2m"              # soft warn threshold on slow first boot
-      #   TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT: "10m"          # JAR download timeout
-      #   TSUNDOKU_SUWAYOMI_DOWNLOADURLTEMPLATE: "https://github.com/Suwayomi/Suwayomi-Server/releases/download/%s/Suwayomi-Server-%s.jar"
+      # --- Engine-host (the source engine) ------------------------------
+      # The engine-host is bundled in the image and started by the entrypoint on
+      # localhost:7777; the Go server connects to it at TSUNDOKU_ENGINE_URL
+      # (default http://localhost:7777 — no need to set it here). On boot,
+      # reconcile provisions the engine-host from the Tsundoku DB (installs the
+      # required extensions from their repos, pushes source prefs + FlareSolverr/
+      # SOCKS config), so an updated deployment brings the existing library back
+      # up with no manual step. Optional knobs (defaults are sensible):
+      #   TSUNDOKU_ENGINE_HTTPTIMEOUT: "3m"     # per-request deadline to the engine-host
+      #   TSUNDOKU_ENGINE_SEARCHTIMEOUT: "85s"  # overall deadline for one multi-source search fan-out
+      #   TSUNDOKU_ENGINE_RUNTIMEDIR: "/config/engine-cache"  # Go-side extension-.apk byte cache (image default)
     volumes:
       - ./config:/config
       - ./series:/series

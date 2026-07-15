@@ -2,16 +2,16 @@
 # entrypoint.sh — start the engine-host + the Tsundoku Go server as an
 # unprivileged PUID/PGID user.
 #
-# P1 (Suwayomi removed): this image runs the JVM extension-host (engine-host) as
-# the source engine and the Go server alongside it. The engine-host uses OFF-SCREEN
-# KCEF (Chromium) for WebView sources, so there is NO Xvfb / no X DISPLAY — the old
-# embedded-Suwayomi X11 dance is gone.
+# Suwayomi is gone (P1+P2 complete): this image runs the JVM extension-host
+# (engine-host) as the source engine and the Go server alongside it. The
+# engine-host uses OFF-SCREEN KCEF (Chromium) for WebView sources, so there is
+# NO Xvfb / no X DISPLAY — the old embedded-Suwayomi X11 dance is gone.
 #
-# SUPERVISION: THIS ENTRYPOINT supervises the engine-host in P1 — a background loop
-# restarts it if it dies while the container runs (the Go server does NOT own the
-# host process: it runs in EXTERNAL Suwayomi mode and owns no child). Having the Go
-# ProcessManager own the host in embedded mode is P2 (the Go<->host RPC repoint).
-# The Go server is the foreground process; when it exits the container stops.
+# SUPERVISION: this entrypoint owns the engine-host process — a background loop
+# restarts it if it dies while the container runs. The Go server does NOT own
+# the host process: it is a pure HTTP client that connects to it over
+# localhost:7777 via TSUNDOKU_ENGINE_URL (see internal/sourceengine). The Go
+# server is the foreground process; when it exits the container stops.
 #
 # "$@" is forwarded to the Go binary.
 set -e
