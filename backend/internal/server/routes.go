@@ -25,7 +25,6 @@ import (
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
 	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
-	suwayomih "github.com/technobecet/tsundoku/internal/handler/suwayomi"
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	trackersh "github.com/technobecet/tsundoku/internal/handler/trackers"
 	"github.com/technobecet/tsundoku/internal/imports"
@@ -101,8 +100,6 @@ import (
 //   - /api/push/subscriptions (POST)               — upsert this device's Web Push subscription (RequireOwner).
 //   - /api/push/subscriptions (DELETE)             — remove this device's Web Push subscription (RequireOwner).
 //   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
-//   - /api/suwayomi/settings (GET)                  — read Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
-//   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/flaresolverr/settings (GET)              — read Tsundoku-owned FlareSolverr settings (RequireOwner).
 //   - /api/flaresolverr/settings (PATCH)            — partial-update + best-effort mirror to Suwayomi (RequireOwner).
 //   - /api/suwayomi/extensions (GET)                — list Suwayomi extensions (RequireOwner).
@@ -299,22 +296,14 @@ func registerRoutes(
 	systemH := systemh.NewHandler(cfg)
 	authed.GET("/system", systemH.Get)
 
-	// Suwayomi server-settings proxy (FlareSolverr + SOCKS). The handler holds
-	// the Suwayomi client directly and proxies its server-global settings; no
-	// Tsundoku state is involved.
-	// settingsSvc is passed as the durable ConfigWriter so a PATCH captures the
-	// owner's just-applied FlareSolverr/SOCKS values into Tsundoku's settings
-	// overlay (best-effort write-through — the opposite of the boot seed's
-	// gap-fill: an explicit owner edit overwrites).
-	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient, settingsSvc)
-	authed.GET("/suwayomi/settings", suwayomiSettingsH.Get)
-	authed.PATCH("/suwayomi/settings", suwayomiSettingsH.Update)
-
 	// Tsundoku-owned FlareSolverr settings (QCAT-238): a runtime setting on
-	// settingsSvc, NOT read from Suwayomi. PATCH best-effort mirrors down to
-	// Suwayomi's own settings via the same suwayomiClient the proxy above
-	// uses, so the two never fall out of sync while Suwayomi still exists.
-	flareSolverrH := flaresolverrh.NewHandler(settingsSvc, suwayomiClient)
+	// settingsSvc, NOT read from Suwayomi/the engine. PATCH best-effort mirrors
+	// down to the engine host via engineClient.SetFlareSolverr (P2 slice 6: the
+	// obsolete Suwayomi settings-proxy this used to mirror through is deleted —
+	// the engine host has no readable config, so its GET half was already
+	// impossible; SOCKS runtime-push stays deferred to reconcile-on-boot, a
+	// later slice).
+	flareSolverrH := flaresolverrh.NewHandler(settingsSvc, engineClient)
 	authed.GET("/flaresolverr/settings", flareSolverrH.Get)
 	authed.PATCH("/flaresolverr/settings", flareSolverrH.Update)
 

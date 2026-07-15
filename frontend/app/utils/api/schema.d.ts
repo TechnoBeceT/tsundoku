@@ -1477,37 +1477,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/suwayomi/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Read Suwayomi FlareSolverr/SOCKS settings
-         * @description Returns the FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of the
-         *     active Suwayomi's server-global settings. A pure passthrough — Tsundoku
-         *     stores none of these values. An upstream Suwayomi failure is a 502.
-         */
-        get: operations["getSuwayomiSettings"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Suwayomi FlareSolverr/SOCKS settings
-         * @description Applies a PARTIAL update of the FlareSolverr + SOCKS subset: only the
-         *     provided fields are sent to Suwayomi, so no unset setting is clobbered.
-         *     The settings are RE-READ after the write and returned so the caller sees
-         *     the persisted values without a refetch (§16). A validation failure
-         *     (bad SOCKS version/port, malformed URL, empty body) is a 400; an upstream
-         *     Suwayomi failure is a 502.
-         */
-        patch: operations["updateSuwayomiSettings"];
-        trace?: never;
-    };
     "/api/flaresolverr/settings": {
         parameters: {
             query?: never;
@@ -1519,9 +1488,9 @@ export interface paths {
          * Read Tsundoku-owned FlareSolverr settings
          * @description Returns Tsundoku's OWN FlareSolverr (Cloudflare-bypass) settings — a
          *     runtime setting on Tsundoku's settings overlay (QCAT-238), NOT read
-         *     from Suwayomi and NOT an env var. Reuses the same shape as the
-         *     Suwayomi-proxy FlareSolverr group so a client can rebind from one
-         *     endpoint to the other with no field changes.
+         *     from the download engine and NOT an env var. Reuses the same shape as
+         *     the retired Suwayomi settings-proxy's FlareSolverr group so a client
+         *     can rebind from one endpoint to the other with no field changes.
          */
         get: operations["getFlareSolverrSettings"];
         put?: never;
@@ -1534,10 +1503,9 @@ export interface paths {
          * @description Applies a PARTIAL update to Tsundoku's own FlareSolverr settings
          *     (only the provided fields change; an empty body is a 400). On
          *     success, the full resulting state is ALSO best-effort mirrored down
-         *     to Suwayomi's own settings (via the same Suwayomi settings proxy) so
-         *     Suwayomi's source-scraping stays in sync while Suwayomi still
-         *     exists — a Suwayomi-down mirror failure is logged and NEVER fails
-         *     this request, since the Tsundoku save already persisted. The
+         *     to the engine host's own FlareSolverr config so its source-scraping
+         *     stays in sync — an engine-down mirror failure is logged and NEVER
+         *     fails this request, since the Tsundoku save already persisted. The
          *     settings are RE-READ after the write and returned so the caller sees
          *     the persisted values without a refetch (§16).
          */
@@ -2895,15 +2863,6 @@ export interface components {
              */
             url: string;
         };
-        /**
-         * @description The FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of Suwayomi's
-         *     server-global settings, proxied verbatim from the active Suwayomi (embed
-         *     or external). Tsundoku stores none of these values.
-         */
-        SuwayomiSettings: {
-            flareSolverr: components["schemas"]["FlareSolverrSettings"];
-            socksProxy: components["schemas"]["SocksProxySettings"];
-        };
         FlareSolverrSettings: {
             /** @description Toggles the FlareSolverr Cloudflare-bypass proxy. */
             enabled: boolean;
@@ -2927,37 +2886,6 @@ export interface components {
             /** @description Use FlareSolverr only as a fallback for blocked requests. */
             asResponseFallback: boolean;
         };
-        SocksProxySettings: {
-            /** @description Toggles routing source traffic through the SOCKS proxy. */
-            enabled: boolean;
-            /**
-             * @description SOCKS protocol version (4 or 5).
-             * @example 5
-             * @enum {integer}
-             */
-            version: 4 | 5;
-            /** @description Proxy hostname or IP. */
-            host: string;
-            /**
-             * @description Proxy port (numeric string; Suwayomi types it as a String).
-             * @example 1080
-             */
-            port: string;
-            /** @description Optional proxy username. */
-            username: string;
-            /** @description Optional proxy password. */
-            password: string;
-        };
-        /**
-         * @description A PARTIAL update of the FlareSolverr + SOCKS subset. Both groups and every
-         *     field within them are optional: an omitted group or field is left
-         *     untouched, so no unset setting is clobbered. At least one field must be
-         *     present (an empty body is a 400).
-         */
-        SuwayomiSettingsUpdate: {
-            flareSolverr?: components["schemas"]["FlareSolverrUpdate"];
-            socksProxy?: components["schemas"]["SocksProxyUpdate"];
-        };
         /** @description Partial FlareSolverr group; omitted fields are untouched. */
         FlareSolverrUpdate: {
             enabled?: boolean;
@@ -2969,20 +2897,6 @@ export interface components {
             /** @description Session TTL in minutes (non-negative). */
             sessionTtl?: number;
             asResponseFallback?: boolean;
-        };
-        /** @description Partial SOCKS-proxy group; omitted fields are untouched. */
-        SocksProxyUpdate: {
-            enabled?: boolean;
-            /**
-             * @description SOCKS protocol version (4 or 5).
-             * @enum {integer}
-             */
-            version?: 4 | 5;
-            host?: string;
-            /** @description Numeric string in 1..65535. */
-            port?: string;
-            username?: string;
-            password?: string;
         };
         /**
          * @description An extension (a Tachiyomi/Mihon source plugin), proxied verbatim from
@@ -6490,95 +6404,6 @@ export interface operations {
             };
         };
     };
-    getSuwayomiSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The current FlareSolverr + SOCKS settings. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuwayomiSettings"];
-                };
-            };
-            /** @description Missing or invalid Bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Suwayomi was unreachable or returned a GraphQL error. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    updateSuwayomiSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SuwayomiSettingsUpdate"];
-            };
-        };
-        responses: {
-            /** @description Settings updated. Returns the refreshed FlareSolverr + SOCKS settings. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuwayomiSettings"];
-                };
-            };
-            /** @description A validation failure (bad SOCKS version/port, malformed URL, or empty body). */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Missing or invalid Bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Suwayomi was unreachable or returned a GraphQL error. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     getFlareSolverrSettings: {
         parameters: {
             query?: never;
@@ -6621,7 +6446,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Settings updated (and best-effort mirrored to Suwayomi). Returns the refreshed FlareSolverr settings. */
+            /** @description Settings updated (and best-effort mirrored to the engine host). Returns the refreshed FlareSolverr settings. */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -1,8 +1,8 @@
 // Package flaresolverr_test exercises the Tsundoku-owned FlareSolverr settings
 // HTTP handlers end-to-end through a real Echo instance (with RequireOwner +
 // the central error middleware wired) against an ephemeral PostgreSQL
-// instance (testdb, for the real settings.Service) and a fake suwayomi.Client
-// (the best-effort mirror target). Tests require Docker.
+// instance (testdb, for the real settings.Service) and a fake
+// sourceengine.Client (the best-effort mirror target). Tests require Docker.
 package flaresolverr_test
 
 import (
@@ -22,31 +22,31 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	settingssvc "github.com/technobecet/tsundoku/internal/settings"
-	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 const testSecret = "flaresolverr-handler-test-secret" //nolint:gosec // test fixture, not a real credential
 
-// fakeSuwayomiClient is a suwayomi.Client double: only SetServerSettings is
+// fakeEngineClient is a sourceengine.Client double: only SetFlareSolverr is
 // overridden (the mirror target); every other method would panic if called,
-// which these handlers never do. It captures the last patch it received so
+// which this handler never does. It captures the last patch it received so
 // tests can assert the mirror carries the freshly-saved Tsundoku state.
-type fakeSuwayomiClient struct {
-	suwayomicli.Client
+type fakeEngineClient struct {
+	sourceengine.Client
 	setErr    error
 	setCalled bool
-	lastPatch suwayomicli.SuwayomiSettingsPatch
+	lastPatch sourceengine.FlareSolverrPatch
 }
 
-func (f *fakeSuwayomiClient) SetServerSettings(_ context.Context, patch suwayomicli.SuwayomiSettingsPatch) error {
+func (f *fakeEngineClient) SetFlareSolverr(_ context.Context, patch sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
 	f.setCalled = true
 	f.lastPatch = patch
-	return f.setErr
+	return sourceengine.FlareSolverrConfig{}, f.setErr
 }
 
 type testEnv struct {
 	e     *echo.Echo
-	fake  *fakeSuwayomiClient
+	fake  *fakeEngineClient
 	token string
 }
 
@@ -54,7 +54,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
-	fake := &fakeSuwayomiClient{}
+	fake := &fakeEngineClient{}
 	h := handler.NewHandler(settingssvc.NewService(client, settingssvc.Defaults{FlareSolverrTimeout: 60, FlareSolverrSessionTTL: 15}), fake)
 
 	e := echo.New()
@@ -121,7 +121,7 @@ func TestGet_Unauthorized(t *testing.T) {
 }
 
 // TestUpdate_OK proves a valid partial update persists (§16 round-trip: the
-// response AND a re-GET both reflect it) and attempts the Suwayomi mirror
+// response AND a re-GET both reflect it) and attempts the engine mirror
 // carrying the full post-save state.
 func TestUpdate_OK(t *testing.T) {
 	env := newTestEnv(t)
@@ -160,31 +160,31 @@ func assertFullySubmittedValues(t *testing.T, got handler.SettingsDTO) {
 	}
 }
 
-// assertMirrorPatch checks the Suwayomi mirror was attempted with the full
+// assertMirrorPatch checks the engine mirror was attempted with the full
 // resulting (post-save) state.
-func assertMirrorPatch(t *testing.T, fake *fakeSuwayomiClient) {
+func assertMirrorPatch(t *testing.T, fake *fakeEngineClient) {
 	t.Helper()
 	if !fake.setCalled {
-		t.Fatal("SetServerSettings was not called — the Suwayomi mirror never fired")
+		t.Fatal("SetFlareSolverr was not called — the engine mirror never fired")
 	}
 	p := fake.lastPatch
-	if p.FlareSolverrEnabled == nil || !*p.FlareSolverrEnabled {
-		t.Error("mirror patch FlareSolverrEnabled missing/false")
+	if p.Enabled == nil || !*p.Enabled {
+		t.Error("mirror patch Enabled missing/false")
 	}
-	if p.FlareSolverrURL == nil || *p.FlareSolverrURL != "http://flaresolverr:8191" {
-		t.Error("mirror patch FlareSolverrURL missing/mismatched")
+	if p.URL == nil || *p.URL != "http://flaresolverr:8191" {
+		t.Error("mirror patch URL missing/mismatched")
 	}
-	if p.FlareSolverrSessionName == nil || *p.FlareSolverrSessionName != "tsundoku" {
-		t.Error("mirror patch FlareSolverrSessionName missing/mismatched")
+	if p.Session == nil || *p.Session != "tsundoku" {
+		t.Error("mirror patch Session missing/mismatched")
 	}
 }
 
-// TestUpdate_MirrorFailureStillSaves proves a Suwayomi-mirror failure is
+// TestUpdate_MirrorFailureStillSaves proves an engine-mirror failure is
 // swallowed: the Tsundoku save already succeeded, so the request still
 // returns 200 with the persisted Tsundoku values.
 func TestUpdate_MirrorFailureStillSaves(t *testing.T) {
 	env := newTestEnv(t)
-	env.fake.setErr = errors.New("suwayomi: connection refused")
+	env.fake.setErr = errors.New("engine: connection refused")
 
 	rec := env.do(http.MethodPatch, "/api/flaresolverr/settings", `{"enabled":true}`)
 	if rec.Code != http.StatusOK {
@@ -198,7 +198,7 @@ func TestUpdate_MirrorFailureStillSaves(t *testing.T) {
 		t.Error("Update response Enabled = false, want true (Tsundoku save must persist despite mirror failure)")
 	}
 	if !env.fake.setCalled {
-		t.Fatal("SetServerSettings was not attempted")
+		t.Fatal("SetFlareSolverr was not attempted")
 	}
 
 	// Persistence survives the mirror failure too.
@@ -219,12 +219,12 @@ func TestUpdate_EmptyBody(t *testing.T) {
 		t.Fatalf("Update empty body: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	if env.fake.setCalled {
-		t.Error("SetServerSettings must not be attempted when the Tsundoku save was rejected")
+		t.Error("SetFlareSolverr must not be attempted when the Tsundoku save was rejected")
 	}
 }
 
 // TestUpdate_InvalidURL proves a malformed URL is rejected 400 and never
-// reaches the Suwayomi mirror.
+// reaches the engine mirror.
 func TestUpdate_InvalidURL(t *testing.T) {
 	env := newTestEnv(t)
 	rec := env.do(http.MethodPatch, "/api/flaresolverr/settings", `{"url":"not-a-url"}`)
@@ -232,7 +232,7 @@ func TestUpdate_InvalidURL(t *testing.T) {
 		t.Fatalf("Update bad url: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	if env.fake.setCalled {
-		t.Error("SetServerSettings must not be attempted when the Tsundoku save was rejected")
+		t.Error("SetFlareSolverr must not be attempted when the Tsundoku save was rejected")
 	}
 }
 

@@ -2,15 +2,18 @@
 // boot-time capture passes (SeedExtensions, SeedSourcePreferences — see
 // RunSeed), their DB->engine inverse (Reconcile — the recovery core for a
 // wiped/swapped/rebuilt engine), a live best-effort write-through
-// (OnExtensionInstalled/OnExtensionUninstalled/OnReposSet,
-// WriteThroughEngineConfig), and a read-only status snapshot (TopologyStatus).
-// These are one-shot/owner-triggered maintenance passes, as opposed to the
-// recurring per-cycle work in internal/refresh/internal/download.
+// (OnExtensionInstalled/OnExtensionUninstalled/OnReposSet), and a read-only
+// status snapshot (TopologyStatus). These are one-shot/owner-triggered
+// maintenance passes, as opposed to the recurring per-cycle work in
+// internal/refresh/internal/download.
 //
 // (QCAT-253, P2 Suwayomi-removal slice 5): the extension/repo/preference
 // passes target internal/sourceengine (the engine-host client). The
 // SeriesProvider.url backfill and the engine-config gap-fill seed are
-// RETIRED — see RunSeed's doc comment.
+// RETIRED — see RunSeed's doc comment. (P2 slice 6): the FlareSolverr/SOCKS
+// config write-through (formerly WriteThroughEngineConfig) is RETIRED
+// alongside handler/suwayomi — this package now imports ZERO
+// internal/suwayomi.
 package enginetopo
 
 import (

@@ -7,10 +7,10 @@ import (
 )
 
 // SettingsDTO is the JSON shape returned by GET/PATCH /api/flaresolverr/settings.
-// Field names deliberately MIRROR the existing Suwayomi-proxy FlareSolverr
-// group (handler/suwayomi's FlareSolverrDTO) — same shape, same OpenAPI
-// schema (FlareSolverrSettings) — so the frontend card that used to bind to
-// the proxy can rebind here with only its data-layer composable changing.
+// Field names deliberately MIRROR the retired Suwayomi settings-proxy's
+// FlareSolverr group — same shape, same OpenAPI schema (FlareSolverrSettings)
+// — so the frontend card that used to bind to the proxy can rebind here with
+// only its data-layer composable changing.
 type SettingsDTO struct {
 	// Enabled toggles Tsundoku's own use of FlareSolverr.
 	Enabled bool `json:"enabled"`

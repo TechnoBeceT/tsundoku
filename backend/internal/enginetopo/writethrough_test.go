@@ -10,52 +10,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entharvestedextension "github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	entharvestedrepo "github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
-	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
-
-// capturingWriter is a settings.SettingsStore-shaped test double that records
-// the KeyValue batches it was asked to persist (ACCUMULATED across calls,
-// because WriteThroughEngineConfig writes FlareSolverr and SOCKS as two
-// separate batches), instead of touching a real DB.
-//
-// `owned` models the keys Tsundoku already has an explicit Settings row for:
-// every key written via SetMany is added to it, so a re-write inside one test
-// sees the previously-written keys as owned — WriteThroughEngineConfig is
-// UNCONDITIONAL (unlike the retired boot-seed gap-fill), so this is here only
-// to prove it overwrites already-owned keys, not to gate anything.
-type capturingWriter struct {
-	got   []settings.KeyValue
-	calls int
-	err   error
-	errOn int             // when >0, fail SetMany only on the errOn-th call (1-based)
-	owned map[string]bool // keys Tsundoku already owns (have an explicit row)
-}
-
-func (w *capturingWriter) SetMany(_ context.Context, updates []settings.KeyValue) error {
-	w.calls++
-	if w.err != nil && (w.errOn == 0 || w.errOn == w.calls) {
-		return w.err
-	}
-	if w.owned == nil {
-		w.owned = make(map[string]bool)
-	}
-	for _, kv := range updates {
-		w.owned[kv.Key] = true
-	}
-	w.got = append(w.got, updates...)
-	return nil
-}
-
-func (w *capturingWriter) value(key string) (string, bool) {
-	for _, kv := range w.got {
-		if kv.Key == key {
-			return kv.Value, true
-		}
-	}
-	return "", false
-}
 
 // TestOnExtensionInstalled proves the live write-through captures a just-installed
 // extension into the durable store: the HarvestedExtension row exists and the
@@ -160,96 +116,6 @@ func assertRepoSet(t *testing.T, db *ent.Client, want []string) {
 	for _, w := range want {
 		if !got[w] {
 			t.Errorf("repo %q missing from set %v, want present", w, rows)
-		}
-	}
-}
-
-// TestWriteThroughEngineConfig_UnconditionalWithSocks proves the config
-// write-through is an UNCONDITIONAL capture (a plain SetMany, NOT gap-fill): even
-// keys Tsundoku already owns are overwritten, both FlareSolverr and SOCKS keys are
-// written when SOCKS is on, and the SOCKS username/password are NEVER written (not
-// tunables — mirrors the seed's omission).
-func TestWriteThroughEngineConfig_UnconditionalWithSocks(t *testing.T) {
-	ctx := context.Background()
-	// Mark every FlareSolverr key as already-owned: a gap-fill would skip them, so
-	// seeing them written proves the write-through is unconditional.
-	w := &capturingWriter{owned: map[string]bool{
-		settings.KeyFlareSolverrEnabled:          true,
-		settings.KeyFlareSolverrURL:              true,
-		settings.KeyFlareSolverrTimeout:          true,
-		settings.KeyFlareSolverrSessionName:      true,
-		settings.KeyFlareSolverrSessionTTL:       true,
-		settings.KeyFlareSolverrResponseFallback: true,
-	}}
-
-	const secretUser = "proxyuser"
-	const secretPass = "proxypass"
-	live := suwayomi.SuwayomiSettings{
-		FlareSolverrEnabled: true,
-		FlareSolverrURL:     "http://flaresolverr.internal:8191",
-		FlareSolverrTimeout: 90,
-		SocksProxyEnabled:   true,
-		SocksProxyVersion:   5,
-		SocksProxyHost:      "socks.internal",
-		SocksProxyPort:      "1080",
-		SocksProxyUsername:  secretUser,
-		SocksProxyPassword:  secretPass,
-	}
-
-	enginetopo.WriteThroughEngineConfig(ctx, w, live)
-
-	// FlareSolverr + SOCKS keys were all captured despite being "owned".
-	for _, tc := range []struct{ key, want string }{
-		{settings.KeyFlareSolverrURL, "http://flaresolverr.internal:8191"},
-		{settings.KeyFlareSolverrEnabled, "true"},
-		{settings.KeyEngineSocksEnabled, "true"},
-		{settings.KeyEngineSocksHost, "socks.internal"},
-		{settings.KeyEngineSocksPort, "1080"},
-		{settings.KeyEngineSocksVersion, "5"},
-	} {
-		got, ok := w.value(tc.key)
-		if !ok {
-			t.Errorf("key %q not written, want captured unconditionally", tc.key)
-			continue
-		}
-		if got != tc.want {
-			t.Errorf("key %q = %q, want %q", tc.key, got, tc.want)
-		}
-	}
-
-	// The SOCKS credentials must never appear in ANY written value.
-	for _, kv := range w.got {
-		if kv.Value == secretUser || kv.Value == secretPass {
-			t.Errorf("SOCKS credential leaked into settings write under key %q", kv.Key)
-		}
-	}
-}
-
-// TestWriteThroughEngineConfig_SocksOffSkipsSocks proves that when SOCKS is off
-// (disabled or blank port) only the FlareSolverr batch is written — the SOCKS keys
-// are skipped entirely (nothing configured to capture).
-func TestWriteThroughEngineConfig_SocksOffSkipsSocks(t *testing.T) {
-	ctx := context.Background()
-	w := &capturingWriter{}
-
-	enginetopo.WriteThroughEngineConfig(ctx, w, suwayomi.SuwayomiSettings{
-		FlareSolverrEnabled: true,
-		FlareSolverrURL:     "http://fs.example:8191",
-		SocksProxyEnabled:   false, // stock Suwayomi: SOCKS off
-		SocksProxyPort:      "",
-	})
-
-	if _, ok := w.value(settings.KeyFlareSolverrURL); !ok {
-		t.Error("FlareSolverr URL not captured, want written")
-	}
-	for _, k := range []string{
-		settings.KeyEngineSocksEnabled,
-		settings.KeyEngineSocksHost,
-		settings.KeyEngineSocksPort,
-		settings.KeyEngineSocksVersion,
-	} {
-		if _, ok := w.value(k); ok {
-			t.Errorf("SOCKS key %q written, want skipped (SOCKS off)", k)
 		}
 	}
 }
