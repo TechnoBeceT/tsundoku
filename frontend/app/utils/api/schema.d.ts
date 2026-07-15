@@ -911,30 +911,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sources/{sourceId}/manga/{mangaId}/cover": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Source-manga cover image
-         * @description Streams a Discover/Search candidate's cover image, proxied from Suwayomi's
-         *     own REST thumbnail endpoint. The image is returned as a binary blob. Returns
-         *     502 when Suwayomi fails to fetch it. This is a same-origin, authed proxy —
-         *     it exists because a source's raw GraphQL thumbnailUrl is Suwayomi-relative
-         *     and 404s if rendered directly against Tsundoku's own origin.
-         */
-        get: operations["getMangaCover"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -5401,58 +5377,6 @@ export interface operations {
                 };
             };
             /** @description The engine host failed to fetch the chapter feed. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getMangaCover: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Suwayomi source ID (accepted for route symmetry; not used to resolve the thumbnail). */
-                sourceId: string;
-                /** @description Suwayomi-internal manga identifier (integer). */
-                mangaId: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The cover image bytes. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "image/*": string;
-                };
-            };
-            /** @description Non-integer mangaId. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Missing or invalid Bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Suwayomi failed to fetch the cover image. */
             502: {
                 headers: {
                     [name: string]: unknown;

@@ -40,7 +40,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
@@ -62,7 +61,6 @@ import (
 //   - /api/search                                  — multi-source manga search (RequireOwner).
 //   - /api/sources/:sourceId/browse                — per-source Popular/Latest catalog browse (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/chapters — chapter preview (RequireOwner).
-//   - /api/sources/:sourceId/manga/:mangaId/cover    — source-manga cover proxy (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/details  — on-demand rich manga details (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/breakdown — per-scanlator chapter coverage breakdown (RequireOwner).
 //   - /api/series (GET)                            — library list (RequireOwner).
@@ -150,7 +148,6 @@ func registerRoutes(
 	authSvc *auth.Service,
 	hub *sse.Hub,
 	ownerH *owner.Handler,
-	suwayomiClient suwayomi.Client,
 	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
@@ -354,9 +351,8 @@ func registerRoutes(
 	// the same Ent client as the rest of the application. P2 Suwayomi-removal
 	// (slice 3b): imports + library now share the engine-agnostic
 	// internal/ingest.Ingest, targeting engineClient (internal/sourceengine) —
-	// neither package imports internal/suwayomi any more; suwayomiClient is
-	// threaded in ONLY for the not-yet-repointed handler/imports cover proxy
-	// (MangaCover) and every other still-suwayomi consumer below.
+	// neither package imports internal/suwayomi any more (slice 8 deleted the
+	// package entirely).
 	// Anti-ban de-amplification: the ingest routes its adopt/attach fetch through
 	// the shared source-politeness gate (Task B) and the shared chapter cache
 	// (Task C2 — the SAME instance the imports coverage paths use, so a
@@ -364,17 +360,16 @@ func registerRoutes(
 	// NewServiceWithCaches so its coverage + Search paths are cached too (C1/C2).
 	ingestSvc := ingest.NewIngestWithGate(engineClient, client, chapterCache, gate)
 	importsSvc := imports.NewServiceWithCaches(
-		engineClient, ingestSvc, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout, metricsSvc, chapterCache,
+		engineClient, ingestSvc, client, cfg.Storage.Folder, cfg.Engine.SearchTimeout, metricsSvc, chapterCache,
 		// Search-cache TTL read per Get from the settings overlay (jobs.search_cache_ttl,
 		// hot reload); 0 disables the search cache at runtime.
 		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
 	).WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
-	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, suwayomiClient)
+	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)
-	authed.GET("/sources/:sourceId/manga/:mangaId/cover", importsH.MangaCover)
 	authed.GET("/sources/:sourceId/manga/:mangaId/details", importsH.Details)
 	authed.GET("/sources/:sourceId/manga/:mangaId/breakdown", importsH.Breakdown)
 	authed.POST("/series", importsH.Adopt)
@@ -399,7 +394,7 @@ func registerRoutes(
 	authed.POST("/library/dedup-providers", libraryH.DedupAllProviders)
 
 	// Engine-topology endpoints. apkStore is the SHARED apk byte cache constructed
-	// once in main.go (rooted under the Suwayomi runtime dir) and also handed to
+	// once in main.go (rooted under the engine runtime dir) and also handed to
 	// the boot-time topology seed goroutine — construct-once, so the seed writes
 	// to and this handler serves from the same bytes.
 	//   - The owner-facing GET /api/engine/topology-status readout (IN the OpenAPI

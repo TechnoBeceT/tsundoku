@@ -21,7 +21,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
@@ -42,9 +41,6 @@ import (
 // The central ErrorHandler (mw.ErrorHandler) is wired as Echo's HTTPErrorHandler
 // so that every returned error — from handlers, middleware, or Recover — is
 // rendered as a JSON ErrorResponse matching the OpenAPI contract.
-//
-// suwayomiClient is the typed Suwayomi interface used by the imports handler and
-// the ingest service. It is constructed in main.go before server.New is called.
 //
 // trigger is the runner's auto-converge hook (bound to runner.Trigger in main.go).
 // It is called by Adopt and ReorderProviders on success to kick an immediate
@@ -74,7 +70,6 @@ func New(
 	authSvc *auth.Service,
 	hub *sse.Hub,
 	ownerH *owner.Handler,
-	suwayomiClient suwayomi.Client,
 	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
@@ -112,6 +107,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, engineClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore)
 	return e
 }

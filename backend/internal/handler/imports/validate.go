@@ -86,21 +86,6 @@ func parseBrowsePage(raw string) (int, error) {
 	return v, nil
 }
 
-// parseMangaID parses the :mangaId path parameter as a positive integer. A
-// non-integer value, or an integer < 1, yields a 400 echo.HTTPError — without
-// this guard a value like 0 or -1 parsed cleanly but surfaced downstream as a
-// raw Suwayomi 502 instead of a clean validation error.
-func parseMangaID(raw string) (int, error) {
-	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "mangaId must be an integer")
-	}
-	if v < 1 {
-		return 0, echo.NewHTTPError(http.StatusBadRequest, "mangaId must be a positive integer")
-	}
-	return v, nil
-}
-
 // parseChapterURL validates a REQUIRED ?url query param used by the
 // preview endpoints that now dispatch through the URL-addressed backend
 // (InspectChapters/Details/Breakdown — P2 Suwayomi-removal, slice 3b). The

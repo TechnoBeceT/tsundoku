@@ -19,7 +19,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
@@ -27,72 +26,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
-
-// nullSuwayomiClient is a stub suwayomi.Client used by route-level tests that
-// do not exercise any imports paths; it panics if any method is called so
-// accidental invocations are immediately obvious in test output.
-type nullSuwayomiClient struct{}
-
-func (nullSuwayomiClient) Sources(_ context.Context) ([]suwayomi.Source, error) {
-	panic("nullSuwayomiClient.Sources called in test")
-}
-func (nullSuwayomiClient) Search(_ context.Context, _, _ string) ([]suwayomi.Manga, error) {
-	panic("nullSuwayomiClient.Search called in test")
-}
-func (nullSuwayomiClient) Browse(_ context.Context, _ string, _ suwayomi.BrowseType, _ int) (suwayomi.BrowseResult, error) {
-	panic("nullSuwayomiClient.Browse called in test")
-}
-func (nullSuwayomiClient) FetchChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
-	panic("nullSuwayomiClient.FetchChapters called in test")
-}
-func (nullSuwayomiClient) MangaChapters(_ context.Context, _ int) ([]suwayomi.Chapter, error) {
-	panic("nullSuwayomiClient.MangaChapters called in test")
-}
-func (nullSuwayomiClient) MangaMeta(_ context.Context, _ int) (suwayomi.Manga, error) {
-	panic("nullSuwayomiClient.MangaMeta called in test")
-}
-func (nullSuwayomiClient) FetchMangaDetails(_ context.Context, _ int) (suwayomi.Manga, error) {
-	panic("nullSuwayomiClient.FetchMangaDetails called in test")
-}
-func (nullSuwayomiClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
-	panic("nullSuwayomiClient.ChapterPages called in test")
-}
-func (nullSuwayomiClient) PageBytes(_ context.Context, _ string) ([]byte, string, error) {
-	panic("nullSuwayomiClient.PageBytes called in test")
-}
-func (nullSuwayomiClient) ServerSettings(_ context.Context) (suwayomi.SuwayomiSettings, error) {
-	panic("nullSuwayomiClient.ServerSettings called in test")
-}
-func (nullSuwayomiClient) SetServerSettings(_ context.Context, _ suwayomi.SuwayomiSettingsPatch) error {
-	panic("nullSuwayomiClient.SetServerSettings called in test")
-}
-func (nullSuwayomiClient) Extensions(_ context.Context) ([]suwayomi.Extension, error) {
-	panic("nullSuwayomiClient.Extensions called in test")
-}
-func (nullSuwayomiClient) SetExtensionState(_ context.Context, _ string, _ suwayomi.ExtensionAction) error {
-	panic("nullSuwayomiClient.SetExtensionState called in test")
-}
-func (nullSuwayomiClient) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
-	panic("nullSuwayomiClient.FetchExtensions called in test")
-}
-func (nullSuwayomiClient) ExtensionRepos(_ context.Context) ([]string, error) {
-	panic("nullSuwayomiClient.ExtensionRepos called in test")
-}
-func (nullSuwayomiClient) SetExtensionRepos(_ context.Context, _ []string) error {
-	panic("nullSuwayomiClient.SetExtensionRepos called in test")
-}
-func (nullSuwayomiClient) SourcePreferences(_ context.Context, _ string) ([]suwayomi.SourcePreference, error) {
-	panic("nullSuwayomiClient.SourcePreferences called in test")
-}
-func (nullSuwayomiClient) SetSourcePreference(_ context.Context, _ string, _ int, _ suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
-	panic("nullSuwayomiClient.SetSourcePreference called in test")
-}
-func (nullSuwayomiClient) ExtensionSources(_ context.Context, _ string) ([]suwayomi.Source, error) {
-	panic("nullSuwayomiClient.ExtensionSources called in test")
-}
-func (nullSuwayomiClient) SetSourceEnabled(_ context.Context, _ string, _ bool) error {
-	panic("nullSuwayomiClient.SetSourceEnabled called in test")
-}
 
 // nullEngineClient is a stub sourceengine.Client used by route-level tests
 // that do not exercise any imports/library paths; it panics if any method is
@@ -194,7 +127,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	// Same nil-client/panic-on-use discipline as the other stubs above — no
 	// route-level test in this file exercises the Phase-4c sync endpoints.
 	trackerSyncSvc := syncsvc.NewService(nil, trackerRegistry, retry.NewQueue(nil), trackerBindSvc, settingsSvc)
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullSuwayomiClient{}, nullEngineClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullEngineClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

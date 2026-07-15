@@ -1,13 +1,10 @@
-// Package coverproxy holds the shared cover-image-streaming helpers used by
+// Package coverproxy holds the shared cover-image-streaming helper used by
 // every authed cover-proxy endpoint: the series cover, the per-provider cover
 // (both in handler/series), and the Discover/Search source-manga cover
-// (handler/imports). Two variants exist because two clients are in play during
-// the P2 Suwayomi-removal migration: Stream (suwayomi.Client, still used by
-// handler/imports' MangaCover and handler/extensions' icon proxy — out of
-// scope for this slice) and StreamEngine (sourceengine.Client, used by
-// handler/series' repointed cover proxy). Both fetch-bytes →
-// write-binary-blob → map-failure-to-502, so each shape lives here once
-// instead of being copy-pasted into every handler package (§2 DRY).
+// (handler/imports). StreamEngine (sourceengine.Client, the sole surviving
+// engine client since the P2 Suwayomi-removal migration) does
+// fetch-bytes → write-binary-blob → map-failure-to-502, so that shape lives
+// here once instead of being copy-pasted into every handler package (§2 DRY).
 package coverproxy
 
 import (
@@ -16,21 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/sourceengine"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
-
-// Stream fetches coverURL from Suwayomi via sw.PageBytes and writes the bytes
-// as a binary blob HTTP response, with a MIME type resolved from the bare file
-// extension PageBytes reports. A Suwayomi fetch failure yields a 502 Bad
-// Gateway — the upstream is a separate service, so its failure is a gateway
-// error, never a false 200.
-func Stream(c echo.Context, sw suwayomi.Client, coverURL string) error {
-	data, ext, err := sw.PageBytes(c.Request().Context(), coverURL)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadGateway, "cover fetch failed")
-	}
-	return c.Blob(http.StatusOK, MimeForExt(ext), data)
-}
 
 // StreamEngine fetches coverURL from the engine host via
 // engine.Image(ctx, sourceID, "", coverURL) — pageURL is deliberately EMPTY

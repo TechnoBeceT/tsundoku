@@ -25,16 +25,12 @@ import (
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 const testSecret = "imports-handler-test-secret"
 
 // fakeEngineClient is a local in-test implementation of sourceengine.Client —
-// it backs the imports.Service (via ingest.NewIngest) in every handler test
-// except MangaCover, which still goes through suwayomi.Client (see
-// fakeSuwayomiClient below; MangaCover was deliberately left on Suwayomi by
-// this P2 migration slice).
+// it backs the imports.Service (via ingest.NewIngest) in every handler test.
 //
 // Results/errors are keyed by whatever addressing the real client uses:
 // sources by their numeric ID, chapters/details by the source-relative manga
@@ -180,71 +176,6 @@ func (f *fakeEngineClient) SetSocks(context.Context, sourceengine.SocksPatch) (s
 	return sourceengine.SocksConfig{}, nil
 }
 
-// fakeSuwayomiClient is a minimal suwayomi.Client stub used ONLY for the
-// Handler's `sw` field, which backs MangaCover — the one route deliberately
-// left on Suwayomi by this migration slice (it proxies Suwayomi's own REST
-// thumbnail endpoint). Every method besides PageBytes returns a zero value;
-// none of these handler tests exercise them.
-type fakeSuwayomiClient struct {
-	// pageBytes, when set, is called by PageBytes instead of the default
-	// zero-value stub (exercised by the MangaCover tests).
-	pageBytes func(ctx context.Context, url string) ([]byte, string, error)
-}
-
-func (f *fakeSuwayomiClient) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
-func (f *fakeSuwayomiClient) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
-	return suwayomi.BrowseResult{}, nil
-}
-func (f *fakeSuwayomiClient) FetchChapters(context.Context, int) ([]suwayomi.Chapter, error) {
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) MangaChapters(context.Context, int) ([]suwayomi.Chapter, error) {
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) ChapterPages(context.Context, int) ([]string, error) { return nil, nil }
-func (f *fakeSuwayomiClient) MangaMeta(context.Context, int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (f *fakeSuwayomiClient) FetchMangaDetails(context.Context, int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (f *fakeSuwayomiClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
-	if f.pageBytes != nil {
-		return f.pageBytes(ctx, pageURL)
-	}
-	return nil, "", nil
-}
-func (f *fakeSuwayomiClient) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {
-	return suwayomi.SuwayomiSettings{}, nil
-}
-func (f *fakeSuwayomiClient) SetServerSettings(context.Context, suwayomi.SuwayomiSettingsPatch) error {
-	return nil
-}
-func (f *fakeSuwayomiClient) Extensions(context.Context) ([]suwayomi.Extension, error) {
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) SetExtensionState(context.Context, string, suwayomi.ExtensionAction) error {
-	return nil
-}
-func (f *fakeSuwayomiClient) FetchExtensions(context.Context) ([]suwayomi.Extension, error) {
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) ExtensionRepos(context.Context) ([]string, error)  { return nil, nil }
-func (f *fakeSuwayomiClient) SetExtensionRepos(context.Context, []string) error { return nil }
-func (f *fakeSuwayomiClient) SourcePreferences(context.Context, string) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) SetSourcePreference(context.Context, string, int, suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) ExtensionSources(context.Context, string) ([]suwayomi.Source, error) {
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) SetSourceEnabled(context.Context, string, bool) error { return nil }
-
 // makeChapters builds n stub chapters anchored under urlPrefix, numbered 1..n.
 func makeChapters(urlPrefix string, n int) []sourceengine.Chapter {
 	chs := make([]sourceengine.Chapter, n)
@@ -266,11 +197,10 @@ type testEnv struct {
 	triggered *int
 }
 
-// newTestEnvWithSW wires a full Echo with the imports routes behind
-// RequireOwner, backing imports.Service with fc (sourceengine.Client) and the
-// Handler's cover-proxy `sw` field with sw (suwayomi.Client). The
-// series.Service is backed by a real testdb (needed for Adopt round-trips).
-func newTestEnvWithSW(t *testing.T, fc *fakeEngineClient, sw *fakeSuwayomiClient) *testEnv {
+// newTestEnv wires a full Echo with the imports routes behind RequireOwner,
+// backing imports.Service with fc (sourceengine.Client). The series.Service is
+// backed by a real testdb (needed for Adopt round-trips).
+func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 	t.Helper()
 
 	db := testdb.New(t)
@@ -281,7 +211,7 @@ func newTestEnvWithSW(t *testing.T, fc *fakeEngineClient, sw *fakeSuwayomiClient
 	seriesSvc := seriessvc.NewService(db, "", 14)
 
 	triggered := new(int)
-	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ }, sw)
+	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ })
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -290,7 +220,6 @@ func newTestEnvWithSW(t *testing.T, fc *fakeEngineClient, sw *fakeSuwayomiClient
 	authed.GET("/search", h.Search)
 	authed.GET("/sources/:sourceId/browse", h.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", h.InspectChapters)
-	authed.GET("/sources/:sourceId/manga/:mangaId/cover", h.MangaCover)
 	authed.GET("/sources/:sourceId/manga/:mangaId/details", h.Details)
 	authed.GET("/sources/:sourceId/manga/:mangaId/breakdown", h.Breakdown)
 	authed.POST("/series", h.Adopt)
@@ -301,13 +230,6 @@ func newTestEnvWithSW(t *testing.T, fc *fakeEngineClient, sw *fakeSuwayomiClient
 	}
 
 	return &testEnv{e: e, token: token, client: fc, triggered: triggered}
-}
-
-// newTestEnv is newTestEnvWithSW with a default (unconfigured) suwayomi fake —
-// the shape every test EXCEPT the MangaCover ones needs.
-func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
-	t.Helper()
-	return newTestEnvWithSW(t, fc, &fakeSuwayomiClient{})
 }
 
 // do issues an authenticated request.
@@ -895,91 +817,6 @@ func TestBreakdown_MissingURL_400(t *testing.T) {
 	rec := env.do(http.MethodGet, "/api/sources/src/manga/notanint/breakdown", "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Breakdown missing url: want 400, got %d", rec.Code)
-	}
-}
-
-// --- GET /api/sources/:sourceId/manga/:mangaId/cover (B2) ----------------------
-//
-// MangaCover is the ONE route deliberately left on suwayomi.Client by this P2
-// migration slice (it proxies Suwayomi's own REST thumbnail endpoint by
-// mangaId — a concept the engine host does not have). Its :mangaId validation
-// (parseMangaID) is UNCHANGED, so these tests are unaffected by the
-// sourceengine migration beyond the fake-client restructuring.
-
-func TestMangaCover_Unauth(t *testing.T) {
-	env := newTestEnv(t, &fakeEngineClient{})
-	rec := env.doUnauth(http.MethodGet, "/api/sources/1/manga/12/cover")
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("MangaCover unauth: want 401, got %d", rec.Code)
-	}
-}
-
-// TestMangaCover_OK verifies the handler streams the bytes PageBytes returns,
-// with a Content-Type resolved from the reported extension, and that it calls
-// PageBytes with Suwayomi's own REST thumbnail path (not whatever GraphQL
-// thumbnailUrl string a source happened to report).
-func TestMangaCover_OK(t *testing.T) {
-	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47}
-	var gotURL string
-	sw := &fakeSuwayomiClient{
-		pageBytes: func(_ context.Context, url string) ([]byte, string, error) {
-			gotURL = url
-			return pngBytes, "png", nil
-		},
-	}
-	env := newTestEnvWithSW(t, &fakeEngineClient{}, sw)
-	rec := env.do(http.MethodGet, "/api/sources/1/manga/12/cover", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("MangaCover OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
-		t.Errorf("MangaCover OK: Content-Type want image/png, got %q", ct)
-	}
-	if rec.Body.String() != string(pngBytes) {
-		t.Errorf("MangaCover OK: body mismatch")
-	}
-	if gotURL != "/api/v1/manga/12/thumbnail" {
-		t.Errorf("MangaCover OK: PageBytes called with %q, want /api/v1/manga/12/thumbnail", gotURL)
-	}
-}
-
-// TestMangaCover_PageBytesFail_502 asserts a Suwayomi fetch failure yields 502,
-// mirroring the series/provider cover proxies.
-func TestMangaCover_PageBytesFail_502(t *testing.T) {
-	sw := &fakeSuwayomiClient{
-		pageBytes: func(_ context.Context, _ string) ([]byte, string, error) {
-			return nil, "", errors.New("suwayomi down")
-		},
-	}
-	env := newTestEnvWithSW(t, &fakeEngineClient{}, sw)
-	rec := env.do(http.MethodGet, "/api/sources/1/manga/12/cover", "")
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("MangaCover PageBytesFail: want 502, got %d (%s)", rec.Code, rec.Body.String())
-	}
-}
-
-// TestMangaCover_NonIntMangaID_400 asserts a non-integer :mangaId yields 400
-// (parseMangaID is shared with InspectChapters).
-func TestMangaCover_NonIntMangaID_400(t *testing.T) {
-	env := newTestEnv(t, &fakeEngineClient{})
-	rec := env.do(http.MethodGet, "/api/sources/1/manga/notanint/cover", "")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("MangaCover non-int: want 400, got %d", rec.Code)
-	}
-}
-
-// TestMangaCover_NonPositiveMangaID_400 asserts a zero or negative :mangaId is a
-// clean 400 (parseMangaID's doc says "positive integer" but had no guard, so a
-// value like 0 or -1 previously sailed through to a raw Suwayomi 502 instead).
-func TestMangaCover_NonPositiveMangaID_400(t *testing.T) {
-	for _, mangaID := range []string{"0", "-1"} {
-		t.Run(mangaID, func(t *testing.T) {
-			env := newTestEnv(t, &fakeEngineClient{})
-			rec := env.do(http.MethodGet, "/api/sources/1/manga/"+mangaID+"/cover", "")
-			if rec.Code != http.StatusBadRequest {
-				t.Fatalf("MangaCover mangaId=%s: want 400, got %d (%s)", mangaID, rec.Code, rec.Body.String())
-			}
-		})
 	}
 }
 

@@ -29,7 +29,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	enginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -666,38 +665,10 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 	}
 }
 
-// extCheckFake is a suwayomi.Client double used exclusively by
-// TestRunner_StartExtensionCheck_FetchesAndBroadcasts. It embeds the Client
-// interface (nil — any method other than FetchExtensions would panic, but
-// StartExtensionCheck only calls FetchExtensions) and overrides FetchExtensions
-// to return a deterministic extension list and count its calls.
-type extCheckFake struct {
-	suwayomi.Client
-	mu    sync.Mutex
-	calls int
-}
-
-func (f *extCheckFake) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
-	f.mu.Lock()
-	f.calls++
-	f.mu.Unlock()
-	return []suwayomi.Extension{
-		{HasUpdate: true},
-		{HasUpdate: true},
-		{HasUpdate: false},
-	}, nil
-}
-
-func (f *extCheckFake) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.calls
-}
-
 // TestRunner_StartExtensionCheck_FetchesAndBroadcasts verifies that
-// StartExtensionCheck calls FetchExtensions and broadcasts an extensions.checked
-// SSE event with updatesAvailable equal to the count of extensions whose
-// HasUpdate field is true.
+// StartExtensionCheck calls RefreshExtensions and broadcasts an
+// extensions.checked SSE event with updatesAvailable equal to the count of
+// extensions whose HasUpdate field is true.
 func TestRunner_StartExtensionCheck_FetchesAndBroadcasts(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -708,13 +679,17 @@ func TestRunner_StartExtensionCheck_FetchesAndBroadcasts(t *testing.T) {
 	events, unsub := hub.Subscribe()
 	defer unsub()
 
-	swFake := &extCheckFake{}
+	engineFake := enginefake.New(enginefake.WithExtensions([]sourceengine.Extension{
+		{HasUpdate: true},
+		{HasUpdate: true},
+		{HasUpdate: false},
+	}))
 
 	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
 	// Short ExtCheck so the job fires quickly in the test.
 	r := job.NewRunner(d, client, hub, storage, settings.Static{ExtCheck: 20 * time.Millisecond})
 
-	r.StartExtensionCheck(ctx, swFake)
+	r.StartExtensionCheck(ctx, engineFake)
 
 	// Wait for the extensions.checked SSE event and verify its payload.
 	deadline := time.After(3 * time.Second)
@@ -734,12 +709,12 @@ func TestRunner_StartExtensionCheck_FetchesAndBroadcasts(t *testing.T) {
 			if p.UpdatesAvailable != 2 {
 				t.Fatalf("updatesAvailable = %d, want 2", p.UpdatesAvailable)
 			}
-			if swFake.callCount() == 0 {
-				t.Error("FetchExtensions was never called")
+			if engineFake.CallCount("RefreshExtensions") == 0 {
+				t.Error("RefreshExtensions was never called")
 			}
 			return
 		case <-deadline:
-			t.Fatalf("timed out waiting for extensions.checked; FetchExtensions called %d time(s)", swFake.callCount())
+			t.Fatalf("timed out waiting for extensions.checked; RefreshExtensions called %d time(s)", engineFake.CallCount("RefreshExtensions"))
 		}
 	}
 }

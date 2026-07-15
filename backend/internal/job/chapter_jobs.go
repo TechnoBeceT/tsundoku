@@ -33,8 +33,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/refresh"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -119,7 +119,7 @@ func (r *Runner) SetNotifier(n interface {
 // The Dispatcher must be constructed by the caller with the appropriate
 // ChapterFetcher:
 //   - Tests: use fetcher/fake.New().
-//   - Production (M2+): use suwayomi.NewFetcher (already wired in main.go).
+//   - Production: use sourceengine.NewFetcher (already wired in main.go).
 //
 // NewRunner does not start any background goroutines; call Start to begin
 // periodic download cycles. intervals supplies the runtime-tunable ticker
@@ -384,13 +384,13 @@ func (r *Runner) broadcastHealthSummary(unhealthy int) {
 }
 
 // StartExtensionCheck launches a background goroutine that periodically refreshes
-// the Suwayomi extension catalog so available updates surface without a manual
-// refresh. An interval of 0 disables the job — the goroutine idles for a fixed
-// fallback period and then re-reads the setting, enabling hot-reload (setting a
-// non-zero interval at runtime resumes the job without a restart). Mirrors
+// the engine-host's extension catalog so available updates surface without a
+// manual refresh. An interval of 0 disables the job — the goroutine idles for a
+// fixed fallback period and then re-reads the setting, enabling hot-reload (setting
+// a non-zero interval at runtime resumes the job without a restart). Mirrors
 // StartRefresh's dynamic-timer (re-reads the interval at the top of each pass).
 // Returns immediately.
-func (r *Runner) StartExtensionCheck(ctx context.Context, sw suwayomi.Client) {
+func (r *Runner) StartExtensionCheck(ctx context.Context, engine sourceengine.Client) {
 	go func() {
 		const disabledRecheck = time.Hour
 		for {
@@ -409,17 +409,18 @@ func (r *Runner) StartExtensionCheck(ctx context.Context, sw suwayomi.Client) {
 				if iv <= 0 {
 					continue // still disabled; re-read interval on the next pass
 				}
-				r.runExtensionCheck(ctx, sw)
+				r.runExtensionCheck(ctx, engine)
 			}
 		}
 	}()
 }
 
-// runExtensionCheck calls FetchExtensions and broadcasts an extensions.checked SSE
-// event with the count of extensions that have updates available. A FetchExtensions
-// error is logged and the broadcast is skipped for that cycle.
-func (r *Runner) runExtensionCheck(ctx context.Context, sw suwayomi.Client) {
-	exts, err := sw.FetchExtensions(ctx)
+// runExtensionCheck calls RefreshExtensions (the engine host's refresh-from-repos)
+// and broadcasts an extensions.checked SSE event with the count of extensions that
+// have updates available. A RefreshExtensions error is logged and the broadcast is
+// skipped for that cycle.
+func (r *Runner) runExtensionCheck(ctx context.Context, engine sourceengine.Client) {
+	exts, err := engine.RefreshExtensions(ctx)
 	if err != nil {
 		slog.WarnContext(ctx, "job.Runner: extension check failed", "err", err)
 		return

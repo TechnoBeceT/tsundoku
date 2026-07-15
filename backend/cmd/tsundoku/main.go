@@ -12,18 +12,13 @@
 //  6. owner.NewHandler — assembles the claim/login handler.
 //  7. download.New + job.NewRunner — assembles the dispatcher and chapter job runner.
 //     The dispatcher's ChapterFetcher is the engine-host client (internal/
-//     sourceengine, Suwayomi-removal P2 slice 2) — every OTHER consumer
-//     (ingest/imports/refresh/warmup/cover/handlers) still targets Suwayomi
-//     and is repointed in a later slice.
-//  8. Suwayomi engine, branched on cfg.Suwayomi.IsExternal():
-//     - EXTERNAL mode (TSUNDOKU_SUWAYOMI_EXTERNALURL set): no ProcessManager is
-//     constructed; the download + refresh tickers start immediately against
-//     the external HTTP target. An unreachable server degrades gracefully.
-//     - EMBEDDED mode (default): a background goroutine provisions the Suwayomi
-//     JAR, starts the process, then starts the tickers. If provisioning or
-//     launch fails, the error is logged and the goroutine exits cleanly — the
-//     HTTP server keeps serving the API and reconcile; downloads simply will
-//     not run until Suwayomi is available.
+//     sourceengine). Every other consumer (ingest/imports/refresh/warmup/
+//     cover/handlers) targets the same engine-host client — the Suwayomi-removal
+//     P2 migration is complete; internal/suwayomi no longer exists.
+//  8. startEngine starts the download + refresh + extension-check + warm-up
+//     tickers and launches the one-shot engine-topology boot pass. The engine
+//     host itself is launched by the container entrypoint (outside Tsundoku),
+//     not by this process — there is no embedded process manager.
 //  9. server.New — wires middleware + routes, returns a ready Echo instance.
 //  10. Graceful shutdown on SIGINT / SIGTERM with a 15-second drain timeout.
 package main
@@ -63,7 +58,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
 	"github.com/technobecet/tsundoku/internal/tracker/kitsu"
@@ -108,10 +102,9 @@ func main() {
 	// chapters in a process-owned state (downloading/upgrading) that the
 	// dispatcher's WantedChapters never selects and SetState can't reach — they
 	// would otherwise be stuck forever. Run this exactly once, before any
-	// download/refresh ticker starts (both embed and external Suwayomi modes go
-	// through startSuwayomiEngine below), so it can never race a live cycle.
-	// Non-fatal: a failed sweep is logged and startup continues — the API must
-	// keep serving even if this best-effort recovery step fails.
+	// download/refresh ticker starts (startEngine below), so it can never race
+	// a live cycle. Non-fatal: a failed sweep is logged and startup continues —
+	// the API must keep serving even if this best-effort recovery step fails.
 	if result, err := chapter.ResetOrphanedChapters(ctx, entClient); err != nil {
 		slog.Error("startup: reset orphaned chapters failed", "error", err)
 	} else {
@@ -215,33 +208,23 @@ func main() {
 		return settingsSvc.ChapterCacheTTL(ctx)
 	})
 
-	// Build the Suwayomi HTTP client now — the suwayomi-settings/extensions/
-	// flaresolverr proxy handlers (and enginetopo) still target Suwayomi
-	// directly and are repointed in a later Suwayomi-removal slice. P2 slice 4
-	// repointed the cover-fetch chain (series/handler/series cover proxy,
-	// cmd/tsundoku.sourceCoverAdapter) and the warm-up job onto engineClient
-	// below — they no longer use suwayomiClient.
-	httpc := &http.Client{Timeout: cfg.Suwayomi.HTTPTimeout}
-	suwayomiClient := suwayomi.NewClient(cfg.Suwayomi, httpc)
-
-	// Build the engine-host client + ChapterFetcher — these are just typed
-	// values and do not require the engine host to be running yet. This is
-	// the first real use of internal/sourceengine (Suwayomi-removal P2 slice
-	// 2): the download dispatcher's fetcher now targets the engine-host
-	// instead of Suwayomi.
+	// Build the shared HTTP client + the engine-host client + ChapterFetcher.
+	// The Suwayomi-removal P2 migration is complete: every consumer
+	// (download/ingest/imports/refresh/warmup/cover/handlers) targets the
+	// engine-host client — internal/suwayomi no longer exists.
+	httpc := &http.Client{Timeout: cfg.Engine.HTTPTimeout}
 	engineClient := sourceengine.New(cfg.Engine.URL, httpc)
 	engineFetcher := sourceengine.NewFetcher(engineClient)
 
-	// Shared extension-.apk byte cache (rooted under the Suwayomi runtime dir).
+	// Shared extension-.apk byte cache (rooted under the engine runtime dir).
 	// Constructed ONCE here and handed to BOTH the boot-time engine-topology seed
 	// (which caches extension apks into it) and server.New's engine handler (which
 	// serves those bytes back for offline recovery) — construct-once, one store.
-	apkStore := apkcache.New(filepath.Join(cfg.Suwayomi.RuntimeDir, "apkcache"))
+	apkStore := apkcache.New(filepath.Join(cfg.Engine.RuntimeDir, "apkcache"))
 
 	// Anti-bot session warm-up job: keeps slow (Cloudflare-protected) sources
-	// warm with a cheap Popular call so interactive search stays fast. Works in
-	// BOTH embedded + external modes — it only needs the engine-host client
-	// (P2 slice 4: repointed off suwayomiClient) and the metrics store.
+	// warm with a cheap Popular call so interactive search stays fast. It only
+	// needs the engine-host client and the metrics store.
 	warmupSvc := warmup.NewService(engineClient, metricsSvc, settingsSvc, gateSvc)
 
 	dispatcher := download.New(entClient, engineFetcher, hub, download.Config{
@@ -256,19 +239,18 @@ func main() {
 	pushSubsSvc := push.NewService(entClient)
 	vapidPublic := buildNotifier(ctx, entClient, hub, settingsSvc, runner)
 
-	// Tracker-push retry worker: independent of the Suwayomi engine (it only
-	// ever talks to the native trackers, never Suwayomi), so it starts
-	// immediately rather than waiting on startSuwayomiEngine's tickers —
-	// dormant-safe when no trackers are connected (RunOnce simply finds zero
-	// due rows every pass).
+	// Tracker-push retry worker: independent of the engine host (it only ever
+	// talks to the native trackers, never the engine host), so it starts
+	// immediately rather than waiting on startEngine's tickers — dormant-safe
+	// when no trackers are connected (RunOnce simply finds zero due rows every
+	// pass).
 	runner.StartTrackerRetry(ctx, trackerRetryQueue, syncSvc)
 
 	// Discovery sweep service (M5): re-fetches every monitored series' chapter
-	// list to find new releases. Suwayomi-removal P2 slice 3a: refresh's ingest
-	// is now the engine-agnostic internal/ingest.Ingest, targeting the
-	// engine-host client built above — refresh no longer talks to Suwayomi at
-	// all. It gets its OWN PRIVATE ChapterCache (not the suwayomi one shared by
-	// registerRoutes' ingest/imports wiring): refresh fetches via
+	// list to find new releases. Refresh's ingest is the engine-agnostic
+	// internal/ingest.Ingest, targeting the engine-host client built above. It
+	// gets its OWN PRIVATE ChapterCache (not the one shared by registerRoutes'
+	// ingest/imports wiring): refresh fetches via
 	// FetchChaptersUncached (fresh every sweep, so a long interactive-cache TTL
 	// can never stale-out discovery) + ingests via AddSeriesWithChapters (never
 	// the gated/cached AddSeries), so it never actually reads this cache — a
@@ -289,27 +271,26 @@ func main() {
 	// UnhealthyCount function to StartRefresh. A second stateless instance is
 	// safe — it shares no mutable state with the one constructed by
 	// registerRoutes; this follows the M5 precedent for a second
-	// suwayomi.NewIngest.
+	// ingest.NewIngestWithGate.
 	healthSvc := series.NewServiceWithStaleGrace(entClient, cfg.Storage.Folder, settingsSvc.StaleGraceDays)
 
 	// Wire the metadata engine's "set a library source's own cover" pick
 	// (metadatasvc.Service.SetCover, kind=="source"): it needs the engine-host
-	// client (P2 slice 4: repointed off suwayomiClient) plus the series
-	// domain's own provider-cover resolution, so this can't be attached at
-	// metaSvc's own construction site earlier in this function — see
-	// sourceCoverAdapter's doc comment for why the adapter itself lives
-	// outside internal/metadatasvc.
+	// client plus the series domain's own provider-cover resolution, so this
+	// can't be attached at metaSvc's own construction site earlier in this
+	// function — see sourceCoverAdapter's doc comment for why the adapter
+	// itself lives outside internal/metadatasvc.
 	metaSvc = metaSvc.WithSourceCoverFetcher(sourceCoverAdapter{series: healthSvc, sw: engineClient})
 
-	// Start the Suwayomi engine. pm is the embedded process manager (nil in
-	// external mode) — the shutdown path guards on pm != nil so Stop() is only
-	// called when tsundoku owns the process. This also launches the one-shot
-	// engine-topology seed (BackfillProviderURLs → SeedExtensions →
-	// SeedSourcePreferences → SeedEngineConfig) in a detached background goroutine
-	// once the engine is reachable — see startSuwayomiEngine.
-	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, engineClient, warmupSvc, entClient, apkStore)
+	// Start the download + refresh + extension-check + warm-up tickers. This
+	// also launches the one-shot engine-topology seed (BackfillProviderURLs →
+	// SeedExtensions → SeedSourcePreferences → SeedEngineConfig) in a detached
+	// background goroutine — see startEngine. The engine host itself is
+	// launched by the container entrypoint, not this process, so there is no
+	// process manager to start or stop here.
+	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, engineClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore)
 
 	addr := ":" + cfg.Server.Port
 
@@ -325,12 +306,6 @@ func main() {
 	// Block until a shutdown signal arrives.
 	<-ctx.Done()
 	log.Println("tsundoku: shutdown signal received — draining requests")
-
-	// Stop the embedded Suwayomi process before draining HTTP. pm is nil in
-	// external mode (tsundoku owns no process), so guard the call.
-	if pm != nil {
-		pm.Stop()
-	}
 
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
@@ -410,87 +385,50 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 	}
 }
 
-// startSuwayomiEngine starts the download + refresh tickers under the configured
-// Suwayomi lifecycle mode and returns the embedded process manager (nil in
-// external mode). In EXTERNAL mode (cfg.Suwayomi.IsExternal()) a standalone
-// Suwayomi is assumed already running at BaseURL(): no process is owned and the
-// tickers start immediately — an unreachable server degrades gracefully (per-
-// cycle errors are logged, downloads just don't progress). In EMBEDDED mode the
-// Suwayomi JAR is provisioned + launched in a background goroutine so the HTTP
-// server stays available during JVM startup; the tickers start once the process
-// is ready, and a launch failure is logged without taking the API down.
-// The returned *ProcessManager is nil in external mode, so callers must guard
-// Stop() with a nil check.
+// startEngine starts the download + refresh + extension-check + warm-up
+// tickers against the engine host at cfg.Engine.URL. Unlike the retired
+// embedded-Suwayomi lifecycle, Tsundoku launches NO process of its own — the
+// engine host (the Kotlin/Mihon container) is started by the container
+// entrypoint, outside this binary — so the tickers start immediately; an
+// unreachable engine degrades gracefully (per-cycle errors are logged,
+// downloads just don't progress until it comes up).
 //
-// In BOTH modes, once the engine is reachable it also launches the one-shot
-// engine-topology reconcile + seed (enginetopo.Reconcile then
-// enginetopo.RunSeed) in a detached, non-blocking background goroutine — see
-// startEngineTopo. Neither can ever delay the HTTP server or the tickers (it
-// is a fire-and-forget goroutine, reachability-gated, panic-safe, and
-// idempotent).
-func startSuwayomiEngine(
+// It also launches the one-shot engine-topology reconcile + seed
+// (enginetopo.Reconcile then enginetopo.RunSeed) in a detached, non-blocking
+// background goroutine — see startEngineTopo. This can never delay the HTTP
+// server or the tickers (it is a fire-and-forget goroutine, reachability-
+// gated, panic-safe, and idempotent).
+func startEngine(
 	ctx context.Context,
-	cfg *config.Config,
 	settingsSvc *settings.Service,
 	runner *job.Runner,
 	refreshSvc *refresh.Service,
 	unhealthyCount func(context.Context) (int, error),
-	swClient suwayomi.Client,
 	engineClient sourceengine.Client,
 	warmupSvc *warmup.Service,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
-) *suwayomi.ProcessManager {
-	startTickers := func() {
-		// Log the currently-resolved cadence (the loops re-read it each cycle, so
-		// these are the values in force right now, not a fixed schedule).
-		slog.Info("tsundoku: starting download + refresh + extension-check + warm-up tickers",
-			"download_interval", settingsSvc.DownloadInterval(ctx),
-			"refresh_interval", settingsSvc.RefreshInterval(ctx),
-			"extension_check_interval", settingsSvc.ExtensionCheckInterval(ctx),
-			"warmup_interval", settingsSvc.WarmupInterval(ctx),
-		)
-		runner.Start(ctx)
-		runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
-		runner.StartExtensionCheck(ctx, swClient)
-		runner.StartWarmup(ctx, warmupSvc)
-		startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc)
-	}
-
-	if cfg.Suwayomi.IsExternal() {
-		slog.Info("tsundoku: using external Suwayomi", "url", cfg.Suwayomi.BaseURL())
-		startTickers()
-		return nil
-	}
-
-	pm := suwayomi.NewProcessManager(cfg.Suwayomi)
-	go func() {
-		slog.Info("tsundoku: starting embedded Suwayomi")
-		if err := pm.Start(ctx); err != nil {
-			// Suwayomi failed to start (no JVM, bad JAR, provisioning network
-			// error, etc.). Log and exit the goroutine — the API keeps serving;
-			// downloads won't proceed until the process is available. A context
-			// cancellation during startup is expected (ctx.Err()), not alarming.
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				slog.Info("tsundoku: Suwayomi start cancelled", "reason", err)
-			} else {
-				slog.Error("tsundoku: Suwayomi failed to start — downloads disabled", "err", err)
-			}
-			return
-		}
-		slog.Info("tsundoku: embedded Suwayomi ready")
-		startTickers()
-	}()
-	return pm
+) {
+	// Log the currently-resolved cadence (the loops re-read it each cycle, so
+	// these are the values in force right now, not a fixed schedule).
+	slog.Info("tsundoku: starting download + refresh + extension-check + warm-up tickers",
+		"download_interval", settingsSvc.DownloadInterval(ctx),
+		"refresh_interval", settingsSvc.RefreshInterval(ctx),
+		"extension_check_interval", settingsSvc.ExtensionCheckInterval(ctx),
+		"warmup_interval", settingsSvc.WarmupInterval(ctx),
+	)
+	runner.Start(ctx)
+	runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
+	runner.StartExtensionCheck(ctx, engineClient)
+	runner.StartWarmup(ctx, warmupSvc)
+	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc)
 }
 
 // startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
 // (enginetopo.Reconcile, DB->engine PROVISION) then SEED (enginetopo.RunSeed,
 // engine->DB CAPTURE) — in that order, in a single detached, non-blocking
-// background goroutine. It is called from startTickers, so it runs at the
-// same "engine is now reachable" point the recurring tickers do — after
-// pm.Start in embedded mode, immediately in external mode. http.Get is the
-// production repo-index/apk fetcher.
+// background goroutine. It is called from startEngine, immediately after the
+// recurring tickers start. http.Get is the production repo-index/apk fetcher.
 //
 // ORDER MATTERS: Reconcile runs FIRST because it is what makes a freshly-
 // started/wiped/swapped engine-host USABLE — it installs the library's
