@@ -3,15 +3,18 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/downloads"
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	categoryh "github.com/technobecet/tsundoku/internal/handler/category"
 	downloadsh "github.com/technobecet/tsundoku/internal/handler/downloads"
+	engineh "github.com/technobecet/tsundoku/internal/handler/engine"
 	extensionsh "github.com/technobecet/tsundoku/internal/handler/extensions"
 	flaresolverrh "github.com/technobecet/tsundoku/internal/handler/flaresolverr"
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
@@ -137,6 +140,8 @@ import (
 //   - /api/series/:id/tracking/:recordId/refresh (POST) — re-pull a binding's remote entry (RequireOwner).
 //   - /api/series/:id/tracking/:recordId/update (POST) — owner's manual tracking-sheet edit (RequireOwner).
 //   - /api/series/:id/tracking/sync (POST)         — pull + converge every binding for a series (RequireOwner).
+//   - /api/engine/topology-status (GET)          — read-only captured-engine-topology status (RequireOwner).
+//   - /internal/extensions/apk/:pkg/:file (GET) — cached extension .apk bytes for engine recovery; :file = "<pkg>-<version>.apk" (RequireOwner; NOT in the OpenAPI spec).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
 func registerRoutes(
@@ -160,6 +165,7 @@ func registerRoutes(
 	pushSubsSvc *pushsvc.Service,
 	vapidPublicKey string,
 	trigger func(),
+	apkStore *apkcache.Store,
 ) {
 	// Infrastructure routes — no authentication required.
 	e.GET("/health", HealthCheck)
@@ -292,7 +298,11 @@ func registerRoutes(
 	// Suwayomi server-settings proxy (FlareSolverr + SOCKS). The handler holds
 	// the Suwayomi client directly and proxies its server-global settings; no
 	// Tsundoku state is involved.
-	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient)
+	// settingsSvc is passed as the durable ConfigWriter so a PATCH captures the
+	// owner's just-applied FlareSolverr/SOCKS values into Tsundoku's settings
+	// overlay (best-effort write-through — the opposite of the boot seed's
+	// gap-fill: an explicit owner edit overwrites).
+	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient, settingsSvc)
 	authed.GET("/suwayomi/settings", suwayomiSettingsH.Get)
 	authed.PATCH("/suwayomi/settings", suwayomiSettingsH.Update)
 
@@ -307,7 +317,12 @@ func registerRoutes(
 	// Suwayomi extension (Sources & Extensions) management. Like the settings
 	// proxy, the handler holds the Suwayomi client directly and proxies its
 	// extension GraphQL surface; no Tsundoku state is involved.
-	extensionsH := extensionsh.NewHandler(suwayomiClient)
+	// db/cache/http.Get are the durable engine-topology store: an install/update/
+	// uninstall or repo change is written through to the HarvestedExtension/
+	// HarvestedRepo rows + the shared apk cache immediately (best-effort), so the
+	// store never lags a live owner change. apkStore is the SAME cache the boot
+	// seed writes and the /internal apk-serving route reads.
+	extensionsH := extensionsh.NewHandler(suwayomiClient, client, apkStore, http.Get)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
@@ -383,6 +398,25 @@ func registerRoutes(
 	authed.POST("/series/:id/providers/:providerId/match", libraryH.MatchDiskProvider)
 	authed.POST("/series/:id/providers/dedup", libraryH.DedupProviders)
 	authed.POST("/library/dedup-providers", libraryH.DedupAllProviders)
+
+	// Engine-topology endpoints. apkStore is the SHARED apk byte cache constructed
+	// once in main.go (rooted under the Suwayomi runtime dir) and also handed to
+	// the boot-time topology seed goroutine — construct-once, so the seed writes
+	// to and this handler serves from the same bytes.
+	//   - The owner-facing GET /api/engine/topology-status readout (IN the OpenAPI
+	//     spec) reports how much engine topology Tsundoku has captured, from DB
+	//     counts alone (no engine call). It reuses the same authed group as the
+	//     rest of the owner API.
+	//   - The /internal apk-serving route (NOT in the OpenAPI spec) lets a future
+	//     engine-recovery/reconcile pass re-install extensions from Tsundoku's own
+	//     APK byte cache even when the upstream repo is offline, via an apkUrl whose
+	//     last segment is the collision-free filename "<pkg>-<version>.apk" (the
+	//     engine-host loader names the installed file from it); the handler parses
+	//     (pkg, version) back out.
+	engineH := engineh.NewHandler(apkStore, client)
+	authed.GET("/engine/topology-status", engineH.TopologyStatus)
+	internalAPI := e.Group("/internal", mw.RequireOwner(authSvc, cfg.Auth.CookieSecure))
+	internalAPI.GET("/extensions/apk/:pkg/:file", engineH.ServeAPK)
 
 	// SPA static serving + unknown-route handling (registered last).
 	registerStaticSPA(e)

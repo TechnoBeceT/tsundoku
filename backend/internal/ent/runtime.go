@@ -9,6 +9,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
+	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
+	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
@@ -22,6 +24,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
+	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -109,6 +112,58 @@ func init() {
 	etagcacheDescID := etagcacheFields[0].Descriptor()
 	// etagcache.DefaultID holds the default value on creation for the id field.
 	etagcache.DefaultID = etagcacheDescID.Default.(func() uuid.UUID)
+	harvestedextensionFields := schema.HarvestedExtension{}.Fields()
+	_ = harvestedextensionFields
+	// harvestedextensionDescRepoURL is the schema descriptor for repo_url field.
+	harvestedextensionDescRepoURL := harvestedextensionFields[2].Descriptor()
+	// harvestedextension.DefaultRepoURL holds the default value on creation for the repo_url field.
+	harvestedextension.DefaultRepoURL = harvestedextensionDescRepoURL.Default.(string)
+	// harvestedextensionDescVersionCode is the schema descriptor for version_code field.
+	harvestedextensionDescVersionCode := harvestedextensionFields[3].Descriptor()
+	// harvestedextension.DefaultVersionCode holds the default value on creation for the version_code field.
+	harvestedextension.DefaultVersionCode = harvestedextensionDescVersionCode.Default.(int)
+	// harvestedextensionDescInstalledVersionCode is the schema descriptor for installed_version_code field.
+	harvestedextensionDescInstalledVersionCode := harvestedextensionFields[4].Descriptor()
+	// harvestedextension.DefaultInstalledVersionCode holds the default value on creation for the installed_version_code field.
+	harvestedextension.DefaultInstalledVersionCode = harvestedextensionDescInstalledVersionCode.Default.(int)
+	// harvestedextensionDescVersionName is the schema descriptor for version_name field.
+	harvestedextensionDescVersionName := harvestedextensionFields[5].Descriptor()
+	// harvestedextension.DefaultVersionName holds the default value on creation for the version_name field.
+	harvestedextension.DefaultVersionName = harvestedextensionDescVersionName.Default.(string)
+	// harvestedextensionDescApkSha256 is the schema descriptor for apk_sha256 field.
+	harvestedextensionDescApkSha256 := harvestedextensionFields[7].Descriptor()
+	// harvestedextension.DefaultApkSha256 holds the default value on creation for the apk_sha256 field.
+	harvestedextension.DefaultApkSha256 = harvestedextensionDescApkSha256.Default.(string)
+	// harvestedextensionDescApkCached is the schema descriptor for apk_cached field.
+	harvestedextensionDescApkCached := harvestedextensionFields[8].Descriptor()
+	// harvestedextension.DefaultApkCached holds the default value on creation for the apk_cached field.
+	harvestedextension.DefaultApkCached = harvestedextensionDescApkCached.Default.(bool)
+	// harvestedextensionDescUpdatedAt is the schema descriptor for updated_at field.
+	harvestedextensionDescUpdatedAt := harvestedextensionFields[9].Descriptor()
+	// harvestedextension.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	harvestedextension.DefaultUpdatedAt = harvestedextensionDescUpdatedAt.Default.(func() time.Time)
+	// harvestedextension.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	harvestedextension.UpdateDefaultUpdatedAt = harvestedextensionDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// harvestedextensionDescID is the schema descriptor for id field.
+	harvestedextensionDescID := harvestedextensionFields[0].Descriptor()
+	// harvestedextension.DefaultID holds the default value on creation for the id field.
+	harvestedextension.DefaultID = harvestedextensionDescID.Default.(func() uuid.UUID)
+	harvestedrepoFields := schema.HarvestedRepo{}.Fields()
+	_ = harvestedrepoFields
+	// harvestedrepoDescCreatedAt is the schema descriptor for created_at field.
+	harvestedrepoDescCreatedAt := harvestedrepoFields[2].Descriptor()
+	// harvestedrepo.DefaultCreatedAt holds the default value on creation for the created_at field.
+	harvestedrepo.DefaultCreatedAt = harvestedrepoDescCreatedAt.Default.(func() time.Time)
+	// harvestedrepoDescUpdatedAt is the schema descriptor for updated_at field.
+	harvestedrepoDescUpdatedAt := harvestedrepoFields[3].Descriptor()
+	// harvestedrepo.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	harvestedrepo.DefaultUpdatedAt = harvestedrepoDescUpdatedAt.Default.(func() time.Time)
+	// harvestedrepo.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	harvestedrepo.UpdateDefaultUpdatedAt = harvestedrepoDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// harvestedrepoDescID is the schema descriptor for id field.
+	harvestedrepoDescID := harvestedrepoFields[0].Descriptor()
+	// harvestedrepo.DefaultID holds the default value on creation for the id field.
+	harvestedrepo.DefaultID = harvestedrepoDescID.Default.(func() uuid.UUID)
 	importentryFields := schema.ImportEntry{}.Fields()
 	_ = importentryFields
 	// importentryDescTitle is the schema descriptor for title field.
@@ -437,6 +492,30 @@ func init() {
 	sourcemetricDescID := sourcemetricFields[0].Descriptor()
 	// sourcemetric.DefaultID holds the default value on creation for the id field.
 	sourcemetric.DefaultID = sourcemetricDescID.Default.(func() uuid.UUID)
+	sourcepreferenceFields := schema.SourcePreference{}.Fields()
+	_ = sourcepreferenceFields
+	// sourcepreferenceDescValue is the schema descriptor for value field.
+	sourcepreferenceDescValue := sourcepreferenceFields[3].Descriptor()
+	// sourcepreference.DefaultValue holds the default value on creation for the value field.
+	sourcepreference.DefaultValue = sourcepreferenceDescValue.Default.(string)
+	// sourcepreferenceDescValueType is the schema descriptor for value_type field.
+	sourcepreferenceDescValueType := sourcepreferenceFields[4].Descriptor()
+	// sourcepreference.DefaultValueType holds the default value on creation for the value_type field.
+	sourcepreference.DefaultValueType = sourcepreferenceDescValueType.Default.(string)
+	// sourcepreferenceDescCreatedAt is the schema descriptor for created_at field.
+	sourcepreferenceDescCreatedAt := sourcepreferenceFields[5].Descriptor()
+	// sourcepreference.DefaultCreatedAt holds the default value on creation for the created_at field.
+	sourcepreference.DefaultCreatedAt = sourcepreferenceDescCreatedAt.Default.(func() time.Time)
+	// sourcepreferenceDescUpdatedAt is the schema descriptor for updated_at field.
+	sourcepreferenceDescUpdatedAt := sourcepreferenceFields[6].Descriptor()
+	// sourcepreference.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourcepreference.DefaultUpdatedAt = sourcepreferenceDescUpdatedAt.Default.(func() time.Time)
+	// sourcepreference.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourcepreference.UpdateDefaultUpdatedAt = sourcepreferenceDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourcepreferenceDescID is the schema descriptor for id field.
+	sourcepreferenceDescID := sourcepreferenceFields[0].Descriptor()
+	// sourcepreference.DefaultID holds the default value on creation for the id field.
+	sourcepreference.DefaultID = sourcepreferenceDescID.Default.(func() uuid.UUID)
 	suwayomisyncstateFields := schema.SuwayomiSyncState{}.Fields()
 	_ = suwayomisyncstateFields
 	// suwayomisyncstateDescLastError is the schema descriptor for last_error field.

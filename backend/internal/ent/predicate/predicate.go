@@ -15,6 +15,12 @@ type Chapter func(*sql.Selector)
 // EtagCache is the predicate function for etagcache builders.
 type EtagCache func(*sql.Selector)
 
+// HarvestedExtension is the predicate function for harvestedextension builders.
+type HarvestedExtension func(*sql.Selector)
+
+// HarvestedRepo is the predicate function for harvestedrepo builders.
+type HarvestedRepo func(*sql.Selector)
+
 // ImportEntry is the predicate function for importentry builders.
 type ImportEntry func(*sql.Selector)
 
@@ -50,6 +56,9 @@ type SourceEvent func(*sql.Selector)
 
 // SourceMetric is the predicate function for sourcemetric builders.
 type SourceMetric func(*sql.Selector)
+
+// SourcePreference is the predicate function for sourcepreference builders.
+type SourcePreference func(*sql.Selector)
 
 // SuwayomiSyncState is the predicate function for suwayomisyncstate builders.
 type SuwayomiSyncState func(*sql.Selector)

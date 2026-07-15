@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -40,6 +41,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
 	"github.com/technobecet/tsundoku/internal/download"
+	"github.com/technobecet/tsundoku/internal/enginetopo"
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/job"
@@ -213,6 +216,12 @@ func main() {
 	suwayomiClient := suwayomi.NewClient(cfg.Suwayomi, httpc)
 	suwayomiFetcher := suwayomi.NewFetcher(suwayomiClient)
 
+	// Shared extension-.apk byte cache (rooted under the Suwayomi runtime dir).
+	// Constructed ONCE here and handed to BOTH the boot-time engine-topology seed
+	// (which caches extension apks into it) and server.New's engine handler (which
+	// serves those bytes back for offline recovery) — construct-once, one store.
+	apkStore := apkcache.New(filepath.Join(cfg.Suwayomi.RuntimeDir, "apkcache"))
+
 	// Anti-bot session warm-up job: keeps slow (Cloudflare-protected) sources
 	// warm with a cheap Browse call so interactive search stays fast. Works in
 	// BOTH embedded + external modes — it only needs the Suwayomi client (which
@@ -274,10 +283,13 @@ func main() {
 
 	// Start the Suwayomi engine. pm is the embedded process manager (nil in
 	// external mode) — the shutdown path guards on pm != nil so Stop() is only
-	// called when tsundoku owns the process.
-	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc)
+	// called when tsundoku owns the process. This also launches the one-shot
+	// engine-topology seed (BackfillProviderURLs → SeedExtensions →
+	// SeedSourcePreferences → SeedEngineConfig) in a detached background goroutine
+	// once the engine is reachable — see startSuwayomiEngine.
+	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc, entClient, apkStore)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore)
 
 	addr := ":" + cfg.Server.Port
 
@@ -367,6 +379,14 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		// NotificationsEnabled has no env var: new-chapter notifications are on by
 		// default (the owner disables via the Settings UI).
 		NotificationsEnabled: true,
+		// EngineSocksEnabled..EngineSocksVersion mirror the FlareSolverr group:
+		// fixed factory defaults, no env var — enginetopo.SeedEngineConfig
+		// overwrites them from the live engine's own SOCKS settings on its
+		// one-shot seed pass, and the owner can further edit via the Settings UI.
+		EngineSocksEnabled: false,
+		EngineSocksHost:    "",
+		EngineSocksPort:    1080,
+		EngineSocksVersion: 5,
 	}
 }
 
@@ -381,6 +401,12 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 // is ready, and a launch failure is logged without taking the API down.
 // The returned *ProcessManager is nil in external mode, so callers must guard
 // Stop() with a nil check.
+//
+// In BOTH modes, once the engine is reachable it also launches the one-shot
+// engine-topology seed (enginetopo.RunSeed) in a detached, non-blocking
+// background goroutine — see startEngineTopoSeed. The seed can never delay the
+// HTTP server or the tickers (it is a fire-and-forget goroutine, reachability-
+// gated, panic-safe, and idempotent).
 func startSuwayomiEngine(
 	ctx context.Context,
 	cfg *config.Config,
@@ -390,6 +416,8 @@ func startSuwayomiEngine(
 	unhealthyCount func(context.Context) (int, error),
 	swClient suwayomi.Client,
 	warmupSvc *warmup.Service,
+	entClient *ent.Client,
+	apkStore *apkcache.Store,
 ) *suwayomi.ProcessManager {
 	startTickers := func() {
 		// Log the currently-resolved cadence (the loops re-read it each cycle, so
@@ -404,6 +432,7 @@ func startSuwayomiEngine(
 		runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 		runner.StartExtensionCheck(ctx, swClient)
 		runner.StartWarmup(ctx, warmupSvc)
+		startEngineTopoSeed(ctx, swClient, entClient, apkStore, settingsSvc)
 	}
 
 	if cfg.Suwayomi.IsExternal() {
@@ -431,4 +460,29 @@ func startSuwayomiEngine(
 		startTickers()
 	}()
 	return pm
+}
+
+// startEngineTopoSeed launches the one-shot engine-topology seed
+// (enginetopo.RunSeed) in a detached, non-blocking background goroutine. It is
+// called from startTickers, so it runs at the same "engine is now reachable"
+// point the recurring tickers do — after pm.Start in embedded mode, immediately
+// in external mode. RunSeed owns the safety guarantees (reachability probe,
+// per-pass fault isolation, panic recovery, idempotency); this wrapper only
+// detaches it onto a goroutine so a slow or failing seed can never delay boot.
+// http.Get is the production repo-index/apk fetcher; settingsSvc satisfies the
+// SettingsStore the engine-config seed gap-fills through.
+func startEngineTopoSeed(
+	ctx context.Context,
+	swClient suwayomi.Client,
+	entClient *ent.Client,
+	apkStore *apkcache.Store,
+	settingsSvc *settings.Service,
+) {
+	go enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
+		Client:   swClient,
+		DB:       entClient,
+		Cache:    apkStore,
+		Settings: settingsSvc,
+		HTTPGet:  http.Get,
+	})
 }

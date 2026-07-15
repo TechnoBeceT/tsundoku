@@ -177,6 +177,25 @@ const (
 	// re-enabling later never storms the owner. Read at use-time by the notifier
 	// (via the Toggle port), so a change hot-reloads on the next download cycle.
 	KeyNotificationsEnabled = "notifications.enabled"
+	// KeyEngineSocksEnabled toggles routing the engine's source traffic through
+	// a SOCKS proxy (bool, default false). Like the flaresolverr.* group this is
+	// TSUNDOKU-OWNED config seeded FROM the engine's own SOCKS settings
+	// (enginetopo.SeedEngineConfig) and mirrored back the same way the
+	// FlareSolverr group is (QCAT-238's pattern, applied to SOCKS) — NOT read
+	// from an env var.
+	KeyEngineSocksEnabled = "engine.socks_enabled"
+	// KeyEngineSocksHost is the SOCKS proxy hostname or IP (free-form string,
+	// default "").
+	KeyEngineSocksHost = "engine.socks_host"
+	// KeyEngineSocksPort is the SOCKS proxy port (int, 1..65535, default 1080 —
+	// the IANA-registered SOCKS port). Suwayomi types this as a String on its
+	// own wire (see suwayomi.SuwayomiSettings.SocksProxyPort's doc comment);
+	// Tsundoku's own copy is validated as a numeric int like every other
+	// bounded int tunable.
+	KeyEngineSocksPort = "engine.socks_port"
+	// KeyEngineSocksVersion is the SOCKS protocol version (int, MUST be 4 or 5
+	// — not a contiguous range, unlike every other int tunable — default 5).
+	KeyEngineSocksVersion = "engine.socks_version"
 )
 
 // flareSolverrTimeoutMin/Max and flareSolverrSessionTTLMin/Max bound the two
@@ -187,6 +206,15 @@ const (
 	flareSolverrSessionTTLMin = 0
 	flareSolverrSessionTTLMax = 1440
 )
+
+// engineSocksPortMin/Max bound the SOCKS proxy port tunable; engineSocksVersions
+// is the closed set of valid SOCKS protocol versions.
+const (
+	engineSocksPortMin = 1
+	engineSocksPortMax = 65535
+)
+
+var engineSocksVersions = []int{4, 5}
 
 // Defaults carries the config-resolved default for every tunable key. main
 // builds it from *config.Config (see settings wiring in cmd/tsundoku) and injects
@@ -230,6 +258,15 @@ type Defaults struct {
 	// this single bridge so the settings layer never special-cases a default's
 	// origin.
 	NotificationsEnabled bool
+	// EngineSocksEnabled..EngineSocksVersion back the engine.socks_* tunables
+	// (SOCKS-proxy subset of the engine's server settings). Like the
+	// FlareSolverr defaults these have no env var — main injects fixed factory
+	// defaults via defaultsFromConfig, overridden in practice by
+	// enginetopo.SeedEngineConfig's one-shot seed from the live engine.
+	EngineSocksEnabled bool
+	EngineSocksHost    string
+	EngineSocksPort    int
+	EngineSocksVersion int
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -275,6 +312,10 @@ var tunableOrder = []string{
 	KeyFlareSolverrSessionTTL,
 	KeyFlareSolverrResponseFallback,
 	KeyNotificationsEnabled,
+	KeyEngineSocksEnabled,
+	KeyEngineSocksHost,
+	KeyEngineSocksPort,
+	KeyEngineSocksVersion,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -395,6 +436,24 @@ var tunables = map[string]tunable{
 		KeyNotificationsEnabled,
 		func(d Defaults) bool { return d.NotificationsEnabled },
 	),
+	// The engine SOCKS-proxy group (mirrors the FlareSolverr group's pattern —
+	// see the KeyEngineSocks* doc comments above).
+	KeyEngineSocksEnabled: boolTunable(
+		KeyEngineSocksEnabled,
+		func(d Defaults) bool { return d.EngineSocksEnabled },
+	),
+	KeyEngineSocksHost: stringTunable(
+		KeyEngineSocksHost, "text",
+		func(d Defaults) string { return d.EngineSocksHost },
+	),
+	KeyEngineSocksPort: intTunable(
+		KeyEngineSocksPort, "port", engineSocksPortMin, engineSocksPortMax,
+		func(d Defaults) int { return d.EngineSocksPort },
+	),
+	KeyEngineSocksVersion: intEnumTunable(
+		KeyEngineSocksVersion, "version", engineSocksVersions,
+		func(d Defaults) int { return d.EngineSocksVersion },
+	),
 }
 
 // durationTunable builds a duration-typed tunable that rejects values below min
@@ -460,6 +519,30 @@ func intTunable(key, unit string, lo, hi int, def func(Defaults) int) tunable {
 				return "", fmt.Errorf("%w: %s must be in [%d, %d] (got %d)", ErrInvalidSetting, key, lo, hi, n)
 			}
 			return strconv.Itoa(n), nil
+		},
+		def: func(d Defaults) string { return strconv.Itoa(def(d)) },
+	}
+}
+
+// intEnumTunable builds an int-typed tunable that accepts only one of a fixed
+// set of allowed values — unlike intTunable's contiguous [lo,hi] range. Used
+// for the SOCKS proxy version, which is valid only as 4 or 5.
+func intEnumTunable(key, unit string, allowed []int, def func(Defaults) int) tunable {
+	return tunable{
+		key:  key,
+		typ:  TypeInt,
+		unit: unit,
+		validate: func(raw string) (string, error) {
+			n, err := strconv.Atoi(strings.TrimSpace(raw))
+			if err != nil {
+				return "", fmt.Errorf("%w: %s %q is not a valid integer", ErrInvalidSetting, key, raw)
+			}
+			for _, a := range allowed {
+				if n == a {
+					return strconv.Itoa(n), nil
+				}
+			}
+			return "", fmt.Errorf("%w: %s must be one of %v (got %d)", ErrInvalidSetting, key, allowed, n)
 		},
 		def: func(d Defaults) string { return strconv.Itoa(def(d)) },
 	}

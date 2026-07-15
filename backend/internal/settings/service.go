@@ -195,6 +195,28 @@ func (s *Service) NotificationsEnabled(ctx context.Context) bool {
 	return s.resolveBool(ctx, KeyNotificationsEnabled)
 }
 
+// EngineSocksEnabled reports whether the engine's SOCKS proxy is currently
+// enabled (DB override else default false).
+func (s *Service) EngineSocksEnabled(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeyEngineSocksEnabled)
+}
+
+// EngineSocksHost is the SOCKS proxy hostname or IP (DB override else default "").
+func (s *Service) EngineSocksHost(ctx context.Context) string {
+	return s.resolve(ctx, KeyEngineSocksHost)
+}
+
+// EngineSocksPort is the SOCKS proxy port (DB override else default 1080).
+func (s *Service) EngineSocksPort(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyEngineSocksPort)
+}
+
+// EngineSocksVersion is the SOCKS protocol version, 4 or 5 (DB override else
+// default 5).
+func (s *Service) EngineSocksVersion(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyEngineSocksVersion)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {
@@ -210,6 +232,31 @@ func (s *Service) List(ctx context.Context) []SettingDTO {
 		})
 	}
 	return out
+}
+
+// ExistingKeys reports which of the given tunable keys already have an explicit
+// row in the Settings table — i.e. the keys Tsundoku currently OWNS an override
+// for. A key ABSENT from the returned set has no row: it is unset and still
+// resolves to its injected default (the IsNotFound branch of resolve), so it is
+// a "gap" a one-time seed may fill without clobbering an owner edit. It reads the
+// key column only (one narrow IN query), mirroring seed-side query style; an
+// empty keys slice short-circuits with no query.
+func (s *Service) ExistingKeys(ctx context.Context, keys []string) (map[string]bool, error) {
+	present := make(map[string]bool, len(keys))
+	if len(keys) == 0 {
+		return present, nil
+	}
+	rows, err := s.client.Settings.Query().
+		Where(entsettings.KeyIn(keys...)).
+		Select(entsettings.FieldKey).
+		Strings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("settings.ExistingKeys: query keys: %w", err)
+	}
+	for _, k := range rows {
+		present[k] = true
+	}
+	return present, nil
 }
 
 // Set validates and upserts a single tunable. Unknown key → ErrUnknownSetting;
