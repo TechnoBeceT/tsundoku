@@ -28,9 +28,12 @@ package suwayomi_test
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -919,6 +922,220 @@ func TestShape10_ChapterScanlator(t *testing.T) {
 	if len(cached) > 0 {
 		t.Logf("scanlator on cached[0] = %q", cached[0].Scanlator)
 	}
+}
+
+// TestShape11_SourcePreferences is a discovery-first probe run AHEAD of a
+// planned client method for reading a source's per-source LOGIN preferences
+// (username/password/base-url/quality fields exposed by aggregator sources).
+// It independently re-confirms — via live GraphQL introspection, not just a
+// round-trip read — the three things that planned method must trust:
+//
+//  1. The Preference UNION's member type names. __type(name:"Preference")
+//     .possibleTypes is asked directly (the schema's own source of truth),
+//     rather than assuming the five names already hard-coded in
+//     source_preferences.go's PreferenceType constants are still correct.
+//  2. currentValue is the wire field carrying the PERSISTED value — proven
+//     both by a live SourcePreferences() read (which decodes into exactly a
+//     {key, type, currentValue}-shaped SourcePreference) and by introspecting
+//     EditTextPreference's field list for that name.
+//  3. A PASSWORD-style EditText preference (the shape a source login field
+//     uses) is NEVER masked: introspecting EditTextPreference's field set
+//     proves the type carries no isPassword/masked/secure/inputType field at
+//     all — there is nowhere in the schema for Suwayomi to even RECORD that a
+//     preference is a password field, so currentValue is unconditionally the
+//     plain persisted string for every EditTextPreference, credential or not.
+//
+// This does not duplicate TestShape8_SourcePreferences (the merge gate for
+// the already-shipped source_preferences.go client, which proves the
+// read/write ROUND TRIP): TestShape8's Tier 2 write-flip only ever exercises a
+// boolean (Switch/CheckBox) preference, so the password/EditText masking
+// question was never actually probed live. This test closes that gap at the
+// SCHEMA level — a definitive answer that holds regardless of which
+// extension's login field is inspected, since it examines the TYPE, not one
+// specific source's data.
+func TestShape11_SourcePreferences(t *testing.T) {
+	inst := testharness.Shared(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client := inst.Client()
+
+	// --- (a) live read decodes into the {key, type, currentValue} shape ------
+	prefs, err := client.SourcePreferences(ctx, suwayomi.LocalSourceID)
+	if err != nil {
+		t.Fatalf("SourcePreferences (union read shape): %v\n(check: is `source(id){preferences{…}}` still correct?)", err)
+	}
+	t.Logf("CONFIRMED: SourcePreferences decoded %d preference(s) on the Local source", len(prefs))
+	for _, p := range prefs {
+		t.Logf("  key=%q type=%s currentValue(bool)=%v currentValue(string)=%v",
+			p.Key, p.Type, p.CurrentBool, p.CurrentString)
+	}
+
+	// --- (b) introspect the Preference union's member type names -------------
+	memberTypes := introspectPossibleTypes(t, ctx, inst.BaseURL(), "Preference")
+	wantMembers := []string{
+		"CheckBoxPreference", "SwitchPreference", "EditTextPreference",
+		"ListPreference", "MultiSelectListPreference",
+	}
+	for _, want := range wantMembers {
+		if !containsStr(memberTypes, want) {
+			t.Errorf("Preference union missing expected member type %q; got %v", want, memberTypes)
+		}
+	}
+	t.Logf("CONFIRMED: Preference union member types = %v", memberTypes)
+
+	// --- (c) introspect EditTextPreference: currentValue exists, no masking --
+	assertEditTextPreferenceShape(t, ctx, inst.BaseURL())
+}
+
+// assertEditTextPreferenceShape introspects EditTextPreference's field set and
+// asserts (1) currentValue is present — the field the planned client method
+// will read a login value from — and (2) NO masking-flavoured field name is
+// present, which is the live proof that a password-style login preference is
+// never masked at the schema level (there is nothing to hold a mask flag).
+// Extracted from TestShape11 to keep that test's cyclomatic complexity low.
+func assertEditTextPreferenceShape(t *testing.T, ctx context.Context, baseURL string) {
+	t.Helper()
+
+	fields := introspectFieldNames(t, ctx, baseURL, "EditTextPreference")
+	t.Logf("CONFIRMED: EditTextPreference fields = %v", fields)
+
+	if !containsStr(fields, "currentValue") {
+		t.Fatalf("EditTextPreference has no currentValue field — the assumed current-value field name is wrong")
+	}
+
+	// Candidate names a masking/secure-input flag would plausibly use. None of
+	// these should exist; if one ever appears, the planned client method must
+	// be updated to honour it before exposing password fields verbatim.
+	maskingCandidates := []string{"isPassword", "password", "masked", "isMasked", "secure", "inputType", "obscured"}
+	for _, candidate := range maskingCandidates {
+		if containsStr(fields, candidate) {
+			t.Errorf("EditTextPreference unexpectedly carries a masking-flavoured field %q — "+
+				"a password preference may be maskable; the planned reader must respect it, not assume plaintext", candidate)
+		}
+	}
+	t.Logf("CONFIRMED: EditTextPreference carries NO password/masking field — currentValue is " +
+		"always the plain persisted string, so a source login/password field returns UNMASKED")
+}
+
+// introspectionQuery is a generic GraphQL __type introspection document. It
+// asks the SERVER directly for a named type's union membership and field
+// list — the schema's own source of truth, independent of any assumption
+// baked into the Go client's hand-written selections.
+const introspectionQuery = `
+query Introspect($name: String!) {
+  __type(name: $name) {
+    name
+    kind
+    possibleTypes { name }
+    fields { name }
+  }
+}`
+
+// introspectionResult is the decode target for introspectionQuery.
+type introspectionResult struct {
+	Type struct {
+		Name          string `json:"name"`
+		Kind          string `json:"kind"`
+		PossibleTypes []struct {
+			Name string `json:"name"`
+		} `json:"possibleTypes"`
+		Fields []struct {
+			Name string `json:"name"`
+		} `json:"fields"`
+	} `json:"__type"`
+}
+
+// rawIntrospect POSTs the introspectionQuery for typeName directly to
+// baseURL+"/api/graphql" and decodes its data field. It bypasses the Go
+// Client entirely on purpose: introspection is a one-off discovery tool for
+// THIS probe, not a runtime capability any production code needs, so it gets
+// no Client method of its own (mirrors doGraphQL's request shape in
+// client.go without duplicating any exported surface).
+func rawIntrospect(t *testing.T, ctx context.Context, baseURL, typeName string) introspectionResult {
+	t.Helper()
+
+	reqBody, err := json.Marshal(map[string]any{
+		"query":     introspectionQuery,
+		"variables": map[string]any{"name": typeName},
+	})
+	if err != nil {
+		t.Fatalf("marshal introspection request for %q: %v", typeName, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/graphql", bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("build introspection request for %q: %v", typeName, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("introspection request for %q: %v", typeName, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("introspection HTTP %d for %q: %s", resp.StatusCode, typeName, strings.TrimSpace(string(b)))
+	}
+
+	var envelope struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode introspection envelope for %q: %v", typeName, err)
+	}
+	if len(envelope.Errors) > 0 {
+		msgs := make([]string, len(envelope.Errors))
+		for i, e := range envelope.Errors {
+			msgs[i] = e.Message
+		}
+		t.Fatalf("introspection GraphQL errors for %q: %s", typeName, strings.Join(msgs, "; "))
+	}
+
+	var result introspectionResult
+	if err := json.Unmarshal(envelope.Data, &result); err != nil {
+		t.Fatalf("decode introspection data for %q: %v", typeName, err)
+	}
+	return result
+}
+
+// introspectPossibleTypes returns the possibleTypes name list for a GraphQL
+// union/interface type (e.g. "Preference"), via a live __type query.
+func introspectPossibleTypes(t *testing.T, ctx context.Context, baseURL, typeName string) []string {
+	t.Helper()
+	result := rawIntrospect(t, ctx, baseURL, typeName)
+	out := make([]string, len(result.Type.PossibleTypes))
+	for i, p := range result.Type.PossibleTypes {
+		out[i] = p.Name
+	}
+	return out
+}
+
+// introspectFieldNames returns the field-name list for a GraphQL object type
+// (e.g. "EditTextPreference"), via the same live __type query.
+func introspectFieldNames(t *testing.T, ctx context.Context, baseURL, typeName string) []string {
+	t.Helper()
+	result := rawIntrospect(t, ctx, baseURL, typeName)
+	out := make([]string, len(result.Type.Fields))
+	for i, f := range result.Type.Fields {
+		out[i] = f.Name
+	}
+	return out
+}
+
+// containsStr reports whether s is present in list.
+func containsStr(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // TestE2E_AddSeriesDispatchDownload is the Milestone 2 end-to-end proof:
