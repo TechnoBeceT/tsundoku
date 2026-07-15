@@ -131,6 +131,159 @@ func TestGetSeriesCompletedProvidersReportOK(t *testing.T) {
 	}
 }
 
+// fakeSourceLister is a canned series.SourceLister for the availability tests.
+// It returns its fields verbatim so a test can drive the "loaded, id absent"
+// success path (ok=true) and both fail-safe paths (ok=false / err).
+type fakeSourceLister struct {
+	loaded map[int64]struct{}
+	ok     bool
+	err    error
+}
+
+func (f fakeSourceLister) LoadedSourceIDs(context.Context) (map[int64]struct{}, bool, error) {
+	return f.loaded, f.ok, f.err
+}
+
+// seedUnavailableFixture builds one multi-source series carrying:
+//   - a LIVE provider (suwayomi_id 777, provider "777") whose source is NOT in
+//     the engine's loaded set (its extension was uninstalled), and
+//   - a disk-origin provider (suwayomi_id 0) that is likewise absent from the
+//     loaded set but must NEVER be flagged unavailable (it was never an engine
+//     source).
+//
+// Both carry a recent leading-edge feed so neither is stale/erroring on its own
+// — the only unhealthy signal in play is the missing extension. Returns the
+// series id.
+func seedUnavailableFixture(t *testing.T, ctx context.Context, db *ent.Client) string {
+	t.Helper()
+	recent := time.Now().UTC().AddDate(0, 0, -1)
+
+	s := db.Series.Create().SetTitle("Gone Extension").SetSlug("gone-extension").SaveX(ctx)
+	live := db.SeriesProvider.Create().
+		SetSeriesID(s.ID).SetProvider("777").SetSuwayomiID(777).SetImportance(20).SaveX(ctx)
+	dsk := db.SeriesProvider.Create().
+		SetSeriesID(s.ID).SetProvider("legacy-group").SetImportance(10).SaveX(ctx) // suwayomi_id defaults 0
+
+	db.Chapter.Create().SetSeriesID(s.ID).SetChapterKey("c1").SetNumber(1).SetState("downloaded").SaveX(ctx)
+	db.ProviderChapter.Create().SetSeriesProviderID(live.ID).SetChapterKey("c1").SetNumber(1).SetProviderUploadDate(recent).SaveX(ctx)
+	db.ProviderChapter.Create().SetSeriesProviderID(dsk.ID).SetChapterKey("c1").SetNumber(1).SetProviderUploadDate(recent).SaveX(ctx)
+
+	return s.ID.String()
+}
+
+// TestGetSeriesFlagsUnavailableSource proves the detail endpoint flags a live
+// provider whose source is no longer loaded as "unavailable", while a
+// disk-origin provider absent from the same loaded set stays "ok" (it was never
+// an engine source). Non-vacuous: drop the SuwayomiID==0 guard and the
+// disk-origin provider would flip to unavailable too.
+func TestGetSeriesFlagsUnavailableSource(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	seriesID := seedUnavailableFixture(t, ctx, db)
+
+	// Loaded set is empty ⇒ source 777 is absent (extension uninstalled).
+	svc := series.NewService(db, t.TempDir(), 14).
+		WithSourceLister(fakeSourceLister{loaded: map[int64]struct{}{}, ok: true})
+
+	got, err := svc.GetSeries(ctx, uuid.MustParse(seriesID))
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	var sawUnavailable, sawOK bool
+	for _, p := range got.Providers {
+		switch {
+		case p.Provider == "777":
+			if p.Health != series.HealthUnavailable {
+				t.Errorf("live provider Health = %q, want %q", p.Health, series.HealthUnavailable)
+			}
+			sawUnavailable = true
+		default: // disk-origin provider
+			if p.Health != series.HealthOK {
+				t.Errorf("disk-origin provider Health = %q, want %q (never an engine source)", p.Health, series.HealthOK)
+			}
+			sawOK = true
+		}
+	}
+	if !sawUnavailable || !sawOK {
+		t.Fatalf("expected one unavailable live + one ok disk provider, got %+v", got.Providers)
+	}
+}
+
+// TestGetSeriesFailSafeWhenListerCannotLoad proves the fail-safe contract: when
+// the lister cannot determine the loaded set (ok=false OR an error), NO provider
+// is flagged unavailable — a transient engine hiccup must never flip the library
+// to "unavailable". Also covers the no-lister default. Non-vacuous: make
+// loadedSources treat ok=false as "loaded empty" and each sub-case would report
+// unavailable.
+func TestGetSeriesFailSafeWhenListerCannotLoad(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	seriesID := seedUnavailableFixture(t, ctx, db)
+	id := uuid.MustParse(seriesID)
+
+	cases := []struct {
+		name string
+		svc  *series.Service
+	}{
+		{"no lister attached", series.NewService(db, t.TempDir(), 14)},
+		{"lister reports ok=false", series.NewService(db, t.TempDir(), 14).
+			WithSourceLister(fakeSourceLister{ok: false})},
+		{"lister errors", series.NewService(db, t.TempDir(), 14).
+			WithSourceLister(fakeSourceLister{err: context.DeadlineExceeded})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.svc.GetSeries(ctx, id)
+			if err != nil {
+				t.Fatalf("GetSeries: %v", err)
+			}
+			for _, p := range got.Providers {
+				if p.Health == series.HealthUnavailable {
+					t.Errorf("provider %s flagged unavailable, want fail-safe (no flag)", p.Provider)
+				}
+			}
+		})
+	}
+}
+
+// TestUnhealthyCountIncludesUnavailable proves an unavailable-only series (no
+// stale/erroring source, just a missing extension) counts as unhealthy and is
+// returned by the library scan. Non-vacuous: drop HealthUnavailable from
+// sickSources' condition and both assertions fall to 0.
+func TestUnhealthyCountIncludesUnavailable(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	seriesID := seedUnavailableFixture(t, ctx, db)
+
+	svc := series.NewService(db, t.TempDir(), 14).
+		WithSourceLister(fakeSourceLister{loaded: map[int64]struct{}{}, ok: true})
+
+	n, err := svc.UnhealthyCount(ctx)
+	if err != nil {
+		t.Fatalf("UnhealthyCount: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("UnhealthyCount = %d, want 1 (unavailable series counts)", n)
+	}
+
+	res, err := svc.LibraryHealth(ctx)
+	if err != nil {
+		t.Fatalf("LibraryHealth: %v", err)
+	}
+	if len(res.Series) != 1 || res.Series[0].ID != seriesID {
+		t.Fatalf("LibraryHealth = %+v, want the one unavailable series %s", res.Series, seriesID)
+	}
+	var sawUnavailable bool
+	for _, p := range res.Series[0].Sources {
+		if p.Health == series.HealthUnavailable {
+			sawUnavailable = true
+		}
+	}
+	if !sawUnavailable {
+		t.Fatalf("scanned series lists no unavailable source: %+v", res.Series[0].Sources)
+	}
+}
+
 func TestGetSeriesEnrichesProviderHealth(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)

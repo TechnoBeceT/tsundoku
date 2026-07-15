@@ -8,8 +8,8 @@ import type { SeriesHealth } from './libraryHealth.types'
 
 /**
  * LibraryHealth — the "what needs attention" screen. Renders ONLY the sick
- * series the backend returns (those with ≥1 stale/erroring source; completed
- * series are healthy and never appear) as a grid of SickSeriesCards.
+ * series the backend returns (those with ≥1 stale/erroring/unavailable source;
+ * completed series are healthy and never appear) as a grid of SickSeriesCards.
  *
  * Presentation only: every series arrives via props and both actions are
  * emitted — no fetching, routing, or stores. An empty `series` array is the
@@ -48,7 +48,7 @@ const skeletons = Array.from({ length: 3 }, (_, i) => i)
     <!-- Intro + rescan action -->
     <div class="health__head">
       <p class="health__intro">
-        Series with at least one stale or erroring source. Completed series are treated as healthy and excluded.
+        Series with at least one stale, erroring, or unavailable source. Completed series are treated as healthy and excluded.
       </p>
       <AppButton variant="mini" :loading="refreshing" @click="emit('refresh')">
         <template #icon>

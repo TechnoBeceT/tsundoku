@@ -194,9 +194,13 @@ func registerRoutes(
 	// best-effort syncsvc push, gated by the auto_update_track setting. This is
 	// the "live on read" half of the trigger model (QCAT-234); the detail-open
 	// reconcile below is the other. trackerSyncSvc satisfies both hooks.
+	// WithSourceLister lets the health scan flag a provider whose Suwayomi
+	// extension was uninstalled (its source id no longer loaded in the engine)
+	// as "unavailable" — best-effort, fail-safe if the engine can't be reached.
 	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays).
 		WithCoverFetcher(suwayomiClient).
-		WithProgressPusher(trackerSyncSvc)
+		WithProgressPusher(trackerSyncSvc).
+		WithSourceLister(suwayomi.NewSourceLister(suwayomiClient))
 	// WithViewSyncer wires the detail-open tracker reconcile: opening a series'
 	// detail page fires a detached, best-effort syncsvc.Service.SyncOnView IN
 	// ADDITION to the existing reading-triggered push (series.ProgressPusher —

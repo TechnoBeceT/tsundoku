@@ -386,8 +386,12 @@ components:
           description: Priority/quality rank — higher is preferred.
         health:
           type: string
-          enum: [ok, stale, erroring]
-          description: Computed source health within this series.
+          enum: [ok, stale, erroring, unavailable]
+          description: >-
+            Computed source health within this series. `unavailable` means the
+            source's Suwayomi extension is no longer loaded in the engine (it was
+            uninstalled/removed) — reinstall the extension or remove the source.
+            It dominates `erroring`/`stale` (there is nothing to fetch from).
         chaptersBehind:
           type: integer
           description: How many of the series' chapters this source lacks (informational).
@@ -4595,7 +4599,7 @@ paths:
     get:
       operationId: getLibraryHealth
       summary: Library source-health scan
-      description: Returns every series that has at least one stale or erroring source.
+      description: Returns every series that has at least one stale, erroring, or unavailable source.
       tags:
         - series
       security:

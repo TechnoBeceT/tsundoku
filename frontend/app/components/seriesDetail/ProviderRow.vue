@@ -175,6 +175,12 @@ const rel = (iso: string | null): string => {
         <HealthBadge :health="provider.health" />
         <span v-if="provider.chaptersBehind > 0" class="source__behind">{{ provider.chaptersBehind }} behind</span>
       </div>
+      <!-- Actionable hint for a source whose extension is gone: the badge alone
+           doesn't say WHAT to do, and this was invisible before (a source showed
+           "Healthy · supplies 0" while its extension was uninstalled). -->
+      <div v-if="provider.health === 'unavailable'" class="source__unavailable-note">
+        Extension not installed — reinstall or remove.
+      </div>
       <div class="source__times">
         <span>Synced {{ rel(provider.lastSyncedAt) }}</span>
         <span>Newest {{ rel(provider.newestChapterAt) }}</span>
@@ -351,6 +357,15 @@ const rel = (iso: string | null): string => {
   font-size: 11.5px;
   line-height: 1.4;
   color: var(--muted);
+}
+
+/* The "extension gone" hint — tinted with the unavailable health token so it
+   reads as the same "needs action" state as its badge. */
+.source__unavailable-note {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--sd-hl-unavailable-fg);
 }
 
 .source__actions {

@@ -271,7 +271,12 @@ func main() {
 	// safe — it shares no mutable state with the one constructed by
 	// registerRoutes; this follows the M5 precedent for a second
 	// suwayomi.NewIngest.
-	healthSvc := series.NewServiceWithStaleGrace(entClient, cfg.Storage.Folder, settingsSvc.StaleGraceDays)
+	// WithSourceLister lets UnhealthyCount count providers whose Suwayomi
+	// extension was uninstalled (source id no longer loaded) as unhealthy —
+	// best-effort, fail-safe when the engine is unreachable (mirrors the routes'
+	// seriesSvc wiring so both scans see the same availability truth).
+	healthSvc := series.NewServiceWithStaleGrace(entClient, cfg.Storage.Folder, settingsSvc.StaleGraceDays).
+		WithSourceLister(suwayomi.NewSourceLister(suwayomiClient))
 
 	// Wire the metadata engine's "set a library source's own cover" pick
 	// (metadatasvc.Service.SetCover, kind=="source"): it needs the real

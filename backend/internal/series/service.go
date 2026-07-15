@@ -56,6 +56,12 @@ type Service struct {
 	// (every pre-existing series/reader test is unaffected).
 	progressPusher ProgressPusher
 
+	// sourceLister reports the engine's currently-loaded source ids so the
+	// health scan can flag a provider whose extension was uninstalled as
+	// HealthUnavailable (see sourcelister.go). Optional — attach it with
+	// WithSourceLister; nil means no source is ever flagged unavailable.
+	sourceLister SourceLister
+
 	staleGrace func(ctx context.Context) int
 }
 
@@ -505,12 +511,14 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	now := time.Now().UTC()
-	grace := s.staleGrace(ctx) // read at use-time (hot-reloadable)
+	grace := s.staleGrace(ctx)             // read at use-time (hot-reloadable)
+	loaded, active := s.loadedSources(ctx) // one engine call for the whole detail (fail-safe)
 	chapterCounts := providerChapterCounts(row)
 	providers := make([]ProviderDTO, len(row.Edges.Providers))
 	for i, p := range row.Edges.Providers {
 		isMetaSrc := metaProv != nil && p.ID == metaProv.ID
-		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, now, grace), row.ID, isMetaSrc, chapterCounts[p.ID])
+		unavailable := active && providerSourceUnavailable(p, loaded)
+		providers[i] = newProviderDTO(p, s.providerHealth(p, keys, maxNumber, multi, row.Completed, unavailable, now, grace), row.ID, isMetaSrc, chapterCounts[p.ID])
 	}
 
 	return SeriesDetailDTO{
@@ -559,9 +567,12 @@ func seriesHealthInputs(row *ent.Series) (keys map[string]struct{}, maxNumber *f
 
 // providerHealth computes one provider's health within an already-loaded series.
 // completed is the series' completed flag — when true the source is reported ok
-// (excluded from staleness/erroring). grace is the resolved (hot-reloadable)
-// stale-grace, passed in by the caller after one s.staleGrace(ctx) read.
-func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}, maxNumber *float64, multi bool, completed bool, now time.Time, grace int) ProviderHealth {
+// (excluded from staleness/erroring). unavailable is true when this live
+// provider's source is no longer loaded in the engine (its extension was
+// uninstalled) — resolved once per scan by the caller. grace is the resolved
+// (hot-reloadable) stale-grace, passed in by the caller after one
+// s.staleGrace(ctx) read.
+func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}, maxNumber *float64, multi, completed, unavailable bool, now time.Time, grace int) ProviderHealth {
 	return ComputeProviderHealth(ProviderHealthInput{
 		SyncState:         p.Edges.SyncState,
 		ProviderChapters:  p.Edges.ProviderChapters,
@@ -569,6 +580,7 @@ func (s *Service) providerHealth(p *ent.SeriesProvider, keys map[string]struct{}
 		SeriesMaxNumber:   maxNumber,
 		MultiSource:       multi,
 		Completed:         completed,
+		SourceUnavailable: unavailable,
 	}, now, grace)
 }
 
@@ -588,17 +600,20 @@ func (s *Service) loadSeriesWithHealthData(ctx context.Context) ([]*ent.Series, 
 	return rows, nil
 }
 
-// sickSources returns the providers of one loaded series whose health is stale
-// or erroring (empty if the series is fully healthy). grace is the resolved
-// stale-grace, read once by the caller (LibraryHealth / UnhealthyCount).
-func (s *Service) sickSources(row *ent.Series, now time.Time, grace int) []ProviderDTO {
+// sickSources returns the providers of one loaded series whose health is stale,
+// erroring, or unavailable (empty if the series is fully healthy). grace is the
+// resolved stale-grace, read once by the caller. loaded/active are the resolved
+// engine-source set (active=false ⇒ nothing flagged unavailable — fail-safe),
+// also resolved once per scan by the caller (LibraryHealth / UnhealthyCount).
+func (s *Service) sickSources(row *ent.Series, now time.Time, grace int, loaded map[int64]struct{}, active bool) []ProviderDTO {
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	metaProv := MetadataProvider(row)
 	chapterCounts := providerChapterCounts(row)
 	var sick []ProviderDTO
 	for _, p := range row.Edges.Providers {
-		h := s.providerHealth(p, keys, maxNumber, multi, row.Completed, now, grace)
-		if h.Status == HealthStale || h.Status == HealthErroring {
+		unavailable := active && providerSourceUnavailable(p, loaded)
+		h := s.providerHealth(p, keys, maxNumber, multi, row.Completed, unavailable, now, grace)
+		if h.Status == HealthStale || h.Status == HealthErroring || h.Status == HealthUnavailable {
 			isMetaSrc := metaProv != nil && p.ID == metaProv.ID
 			sick = append(sick, newProviderDTO(p, h, row.ID, isMetaSrc, chapterCounts[p.ID]))
 		}
@@ -606,18 +621,20 @@ func (s *Service) sickSources(row *ent.Series, now time.Time, grace int) []Provi
 	return sick
 }
 
-// LibraryHealth returns only the series that have at least one stale or
-// erroring source, each with its sick sources listed.
+// LibraryHealth returns only the series that have at least one stale, erroring,
+// or unavailable source, each with its sick sources listed. The engine's
+// loaded-source set is resolved ONCE for the whole scan (no N+1).
 func (s *Service) LibraryHealth(ctx context.Context) (LibraryHealthDTO, error) {
 	rows, err := s.loadSeriesWithHealthData(ctx)
 	if err != nil {
 		return LibraryHealthDTO{}, err
 	}
 	now := time.Now().UTC()
-	grace := s.staleGrace(ctx) // read once at use-time (hot-reloadable)
+	grace := s.staleGrace(ctx)             // read once at use-time (hot-reloadable)
+	loaded, active := s.loadedSources(ctx) // one engine call for the whole scan (fail-safe)
 	out := LibraryHealthDTO{Series: []SeriesHealthDTO{}}
 	for _, row := range rows {
-		if sick := s.sickSources(row, now, grace); len(sick) > 0 {
+		if sick := s.sickSources(row, now, grace, loaded, active); len(sick) > 0 {
 			out.Series = append(out.Series, SeriesHealthDTO{
 				ID: row.ID.String(), Title: row.Title, Slug: row.Slug, Sources: sick,
 			})
@@ -626,18 +643,20 @@ func (s *Service) LibraryHealth(ctx context.Context) (LibraryHealthDTO, error) {
 	return out, nil
 }
 
-// UnhealthyCount is the number of series with at least one stale/erroring
-// source — the cheap figure behind the health.summary SSE.
+// UnhealthyCount is the number of series with at least one stale/erroring/
+// unavailable source — the cheap figure behind the health.summary SSE. The
+// engine's loaded-source set is resolved ONCE for the whole scan (no N+1).
 func (s *Service) UnhealthyCount(ctx context.Context) (int, error) {
 	rows, err := s.loadSeriesWithHealthData(ctx)
 	if err != nil {
 		return 0, err
 	}
 	now := time.Now().UTC()
-	grace := s.staleGrace(ctx) // read once at use-time (hot-reloadable)
+	grace := s.staleGrace(ctx)             // read once at use-time (hot-reloadable)
+	loaded, active := s.loadedSources(ctx) // one engine call for the whole scan (fail-safe)
 	n := 0
 	for _, row := range rows {
-		if len(s.sickSources(row, now, grace)) > 0 {
+		if len(s.sickSources(row, now, grace, loaded, active)) > 0 {
 			n++
 		}
 	}

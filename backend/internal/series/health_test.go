@@ -120,6 +120,31 @@ func TestComputeProviderHealth(t *testing.T) {
 			wantStatus: series.HealthOK,
 			wantBehind: 1,
 		},
+		{
+			name: "unavailable: source no longer loaded in engine",
+			in: series.ProviderHealthInput{
+				SourceUnavailable: true,
+				ProviderChapters:  []*ent.ProviderChapter{{ChapterKey: "k1", Number: f64(1), ProviderUploadDate: tp(recent)}},
+				SeriesChapterKeys: keys("k1", "k2"),
+				SeriesMaxNumber:   f64(2),
+				MultiSource:       true,
+			},
+			wantStatus: series.HealthUnavailable,
+			wantBehind: 1,
+		},
+		{
+			name: "unavailable beats erroring and stale (missing extension dominates)",
+			in: series.ProviderHealthInput{
+				SourceUnavailable: true,
+				SyncState:         &ent.SuwayomiSyncState{LastError: "boom"},
+				ProviderChapters:  []*ent.ProviderChapter{{ChapterKey: "k1", Number: f64(1), ProviderUploadDate: tp(old)}},
+				SeriesChapterKeys: keys("k1", "k2"),
+				SeriesMaxNumber:   f64(2),
+				MultiSource:       true,
+			},
+			wantStatus: series.HealthUnavailable,
+			wantBehind: 1,
+		},
 	}
 
 	for _, tc := range cases {
@@ -153,6 +178,24 @@ func TestComputeProviderHealth_CompletedForcesOK(t *testing.T) {
 	}
 	if got.LastError != "source offline" {
 		t.Errorf("LastError = %q, want it still surfaced for display", got.LastError)
+	}
+}
+
+// TestComputeProviderHealth_CompletedBeatsUnavailable proves the completed
+// short-circuit outranks even a missing extension: a finished series with a
+// removed source is not "broken". Non-vacuous: drop the Completed short-circuit
+// and this fails with Status == "unavailable".
+func TestComputeProviderHealth_CompletedBeatsUnavailable(t *testing.T) {
+	now := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
+	in := series.ProviderHealthInput{
+		Completed:         true,
+		SourceUnavailable: true,
+	}
+
+	got := series.ComputeProviderHealth(in, now, 14)
+
+	if got.Status != series.HealthOK {
+		t.Fatalf("Status = %q, want %q (completed must win over unavailable)", got.Status, series.HealthOK)
 	}
 }
 
