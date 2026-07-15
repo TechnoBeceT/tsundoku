@@ -33,7 +33,9 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	authSvc := auth.NewService(testSecret)
 	cache := apkcache.New(t.TempDir())
-	h := handler.NewHandler(cache)
+	// db is nil: the apk-serving route never reads it (only TopologyStatus does),
+	// so these apk tests need no DB.
+	h := handler.NewHandler(cache, nil)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler

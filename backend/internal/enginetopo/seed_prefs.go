@@ -46,6 +46,16 @@ type PreferenceSeedResult struct {
 // success, matching the never-auto-delete/upsert-only conventions the rest
 // of the ingest engine follows (see BackfillProviderURLs).
 //
+// ASYMMETRY vs SeedEngineConfig (deliberate — do NOT convert this to gap-fill):
+// SeedEngineConfig gap-fills because config is TSUNDOKU-OWNED (capture once, then
+// Tsundoku is authoritative — see its doc comment). Source preferences are the
+// opposite: in Phase-1 the ENGINE is their only editor (there is no Tsundoku-side
+// pref-editing path), so this pass CAPTURES-LATEST — re-reading the engine's
+// current values every boot keeps the durable mirror fresh. Freezing the
+// first-seen value (gap-fill) would let the mirror go stale the moment the owner
+// edits a preference in the engine. (This becomes reconcile-aware in Phase-2,
+// once Tsundoku can edit preferences too.)
+//
 // SECURITY: a source preference can hold a secret (e.g. a login-gated
 // source's plaintext password — Suwayomi has no password masking on the
 // wire, confirmed live). Values are stored VERBATIM into the .Sensitive()

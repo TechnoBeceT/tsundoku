@@ -28,6 +28,10 @@ type fakeClient struct {
 	urls map[int]string
 	errs map[int]error
 
+	// panicOn, when it contains a manga id, makes MangaMeta PANIC for that id —
+	// the seam that exercises BackfillProviderURLs's per-worker panic recovery.
+	panicOn map[int]bool
+
 	mu    sync.Mutex
 	calls map[int]int
 
@@ -41,6 +45,11 @@ type fakeClient struct {
 	// seed_config_test.go).
 	serverSettings    suwayomi.SuwayomiSettings
 	serverSettingsErr error
+
+	// sourcesErr, when non-nil, makes Sources fail — used by runner_test.go to
+	// drive RunSeed's engine-unreachable skip path (Sources is its reachability
+	// probe).
+	sourcesErr error
 }
 
 func (f *fakeClient) MangaMeta(_ context.Context, mangaID int) (suwayomi.Manga, error) {
@@ -50,6 +59,11 @@ func (f *fakeClient) MangaMeta(_ context.Context, mangaID int) (suwayomi.Manga, 
 	}
 	f.calls[mangaID]++
 	f.mu.Unlock()
+	// Panic AFTER releasing the lock so the recovered worker never leaves f.mu
+	// held (which would deadlock the sibling workers).
+	if f.panicOn[mangaID] {
+		panic("enginetopo test: simulated MangaMeta panic")
+	}
 	if err, ok := f.errs[mangaID]; ok {
 		return suwayomi.Manga{}, err
 	}
@@ -70,7 +84,9 @@ func (f *fakeClient) prefsCallCount(sourceID string) int {
 	return f.prefsCalls[sourceID]
 }
 
-func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
+func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) {
+	return nil, f.sourcesErr
+}
 func (f *fakeClient) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
 	return nil, nil
 }
@@ -222,6 +238,46 @@ func TestBackfillProviderURLs_PerRowFailureSkipsButContinues(t *testing.T) {
 	}
 	if got := client.SeriesProvider.GetX(ctx, sp3.ID); got.URL == "" {
 		t.Error("sp3 URL still empty, want filled")
+	}
+}
+
+// TestBackfillProviderURLs_WorkerPanicIsRecovered proves the per-worker panic
+// guard: when MangaMeta PANICS for one row, BackfillProviderURLs does not crash
+// (errgroup would otherwise let the panic escape RunSeed's recover and take the
+// process down), counts the panicking row in `remaining`, and still fills the
+// healthy sibling rows.
+func TestBackfillProviderURLs_WorkerPanicIsRecovered(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	sp1 := seedProvider(ctx, t, client, "Solo Leveling", "mangadex", 401)
+	seedProvider(ctx, t, client, "Panic Manga", "comix", 402)
+	sp3 := seedProvider(ctx, t, client, "The Beginning After The End", "webtoon", 403)
+
+	fc := &fakeClient{
+		urls: map[int]string{
+			401: "https://mangadex.test/manga/solo-leveling",
+			403: "https://webtoon.test/manga/tbate",
+		},
+		panicOn: map[int]bool{402: true},
+	}
+
+	// Must return normally — no panic escapes to the caller.
+	filled, remaining, err := enginetopo.BackfillProviderURLs(ctx, fc, client)
+	if err != nil {
+		t.Fatalf("BackfillProviderURLs: %v", err)
+	}
+	if filled != 2 {
+		t.Errorf("filled = %d, want 2 (the two non-panicking rows)", filled)
+	}
+	if remaining != 1 {
+		t.Errorf("remaining = %d, want 1 (the panicking row counts as a failed row)", remaining)
+	}
+	if got := client.SeriesProvider.GetX(ctx, sp1.ID); got.URL == "" {
+		t.Error("sp1 URL empty, want filled despite a sibling worker panic")
+	}
+	if got := client.SeriesProvider.GetX(ctx, sp3.ID); got.URL == "" {
+		t.Error("sp3 URL empty, want filled despite a sibling worker panic")
 	}
 }
 

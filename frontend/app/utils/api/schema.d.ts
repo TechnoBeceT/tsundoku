@@ -1412,6 +1412,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/engine/topology-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read-only captured engine-topology status
+         * @description Returns a read-only snapshot of how much of the engine topology Tsundoku
+         *     has captured into its own durable store — harvested extension repos,
+         *     extensions and how many have their .apk bytes cached for offline recovery,
+         *     the library's live-source universe and how many sources have their
+         *     preferences captured, and how many SeriesProvider urls are resolved vs.
+         *     still fillable. Every number is computed from DB counts alone (no engine
+         *     call), so a fresh install with nothing adopted is a valid all-zero 200,
+         *     not an error. `gaps` carries human-readable notes naming what is still
+         *     outstanding (empty when nothing is).
+         */
+        get: operations["getEngineTopologyStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system": {
         parameters: {
             query?: never;
@@ -2641,6 +2669,63 @@ export interface components {
             title: string;
             slug: string;
             sources: components["schemas"]["Provider"][];
+        };
+        /**
+         * @description Read-only snapshot of how much engine topology Tsundoku has captured into
+         *     its own durable store, computed from DB counts alone (no engine call). The
+         *     observable counterpart of the one-shot boot-time seed passes.
+         */
+        EngineTopologyStatus: {
+            /**
+             * @description Number of harvested extension-repository URLs.
+             * @example 3
+             */
+            repos: number;
+            extensions: {
+                /**
+                 * @description Number of harvested extensions.
+                 * @example 12
+                 */
+                total: number;
+                /**
+                 * @description How many of those extensions have their .apk bytes cached locally for offline recovery.
+                 * @example 9
+                 */
+                cached: number;
+            };
+            sources: {
+                /**
+                 * @description The library's live-source universe (distinct numeric SeriesProvider providers).
+                 * @example 8
+                 */
+                total: number;
+                /**
+                 * @description How many of those sources have at least one captured preference.
+                 * @example 5
+                 */
+                prefsCaptured: number;
+            };
+            urls: {
+                /**
+                 * @description SeriesProvider rows whose url is resolved.
+                 * @example 40
+                 */
+                filled: number;
+                /**
+                 * @description Live SeriesProvider rows still missing a url (the backfill's remaining candidate set).
+                 * @example 12
+                 */
+                remaining: number;
+            };
+            /**
+             * @description Human-readable notes naming what is still outstanding (e.g.
+             *     "3 extensions not cached"). Empty when nothing is outstanding.
+             * @example [
+             *       "3 extensions not cached",
+             *       "12 provider urls unresolved"
+             *     ]
+             */
+            gaps: string[];
         };
         System: {
             /**
@@ -6366,6 +6451,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getEngineTopologyStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The captured engine-topology status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineTopologyStatus"];
                 };
             };
             /** @description Missing or invalid Bearer token. */

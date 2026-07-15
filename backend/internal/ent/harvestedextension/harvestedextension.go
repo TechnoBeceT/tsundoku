@@ -20,6 +20,8 @@ const (
 	FieldRepoURL = "repo_url"
 	// FieldVersionCode holds the string denoting the version_code field in the database.
 	FieldVersionCode = "version_code"
+	// FieldInstalledVersionCode holds the string denoting the installed_version_code field in the database.
+	FieldInstalledVersionCode = "installed_version_code"
 	// FieldVersionName holds the string denoting the version_name field in the database.
 	FieldVersionName = "version_name"
 	// FieldSourceIds holds the string denoting the source_ids field in the database.
@@ -40,6 +42,7 @@ var Columns = []string{
 	FieldPkgName,
 	FieldRepoURL,
 	FieldVersionCode,
+	FieldInstalledVersionCode,
 	FieldVersionName,
 	FieldSourceIds,
 	FieldApkSha256,
@@ -62,6 +65,8 @@ var (
 	DefaultRepoURL string
 	// DefaultVersionCode holds the default value on creation for the "version_code" field.
 	DefaultVersionCode int
+	// DefaultInstalledVersionCode holds the default value on creation for the "installed_version_code" field.
+	DefaultInstalledVersionCode int
 	// DefaultVersionName holds the default value on creation for the "version_name" field.
 	DefaultVersionName string
 	// DefaultApkSha256 holds the default value on creation for the "apk_sha256" field.
@@ -97,6 +102,11 @@ func ByRepoURL(opts ...sql.OrderTermOption) OrderOption {
 // ByVersionCode orders the results by the version_code field.
 func ByVersionCode(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldVersionCode, opts...).ToFunc()
+}
+
+// ByInstalledVersionCode orders the results by the installed_version_code field.
+func ByInstalledVersionCode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldInstalledVersionCode, opts...).ToFunc()
 }
 
 // ByVersionName orders the results by the version_name field.

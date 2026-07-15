@@ -3,6 +3,7 @@ package enginetopo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -138,7 +139,7 @@ func seedOneExtension(
 		return false, err
 	}
 
-	sha, err := downloadAndCache(cache, httpGet, apkURL, ext.PkgName, indexVersion)
+	sha, err := downloadAndCache(cache, httpGet, apkURL, ext.PkgName, indexVersion, maxAPKBytes)
 	if err != nil {
 		return false, err
 	}
@@ -149,13 +150,14 @@ func seedOneExtension(
 	}
 
 	row := extensionRow{
-		pkgName:     ext.PkgName,
-		repoURL:     ext.Repo,
-		versionCode: indexVersion,
-		versionName: ext.VersionName,
-		sourceIDs:   sourceIDs(sources),
-		apkSHA256:   sha,
-		apkCached:   true,
+		pkgName:              ext.PkgName,
+		repoURL:              ext.Repo,
+		versionCode:          indexVersion,
+		installedVersionCode: ext.VersionCode,
+		versionName:          ext.VersionName,
+		sourceIDs:            sourceIDs(sources),
+		apkSHA256:            sha,
+		apkCached:            true,
 	}
 	if err := upsertExtension(ctx, db, row); err != nil {
 		return false, fmt.Errorf("persist harvested extension: %w", err)
@@ -163,14 +165,54 @@ func seedOneExtension(
 	return true, nil
 }
 
+// maxAPKBytes is the ceiling on how many bytes a single extension .apk download
+// may stream into the cache. 256 MiB is orders of magnitude above any real
+// manga-source extension apk (they are a few MiB) — a pure safety ceiling against
+// a hostile or broken repo streaming unbounded bytes and filling the cache volume,
+// NOT a size any legitimate apk approaches.
+const maxAPKBytes = 256 << 20
+
+// errAPKTooLarge is returned by a cappedReader once the wrapped stream exceeds
+// its byte cap. Surfacing it lets cache.Put fail cleanly (dropping its temp file)
+// so the extension is recorded as an uncached gap.
+var errAPKTooLarge = errors.New("enginetopo: apk exceeds maximum allowed size")
+
+// cappedReader wraps an io.Reader and returns errAPKTooLarge as soon as more than
+// max bytes have been read through it. It exists BECAUSE a bare io.LimitReader is
+// wrong here: LimitReader SILENTLY stops at the cap, which would make cache.Put
+// commit a TRUNCATED apk (with the wrong sha256) as a SUCCESS — worse than the
+// unbounded read it guards against. Erroring instead makes the truncation a clean
+// failure the caller records as a gap.
+type cappedReader struct {
+	r    io.Reader
+	max  int64
+	read int64
+}
+
+// Read reads from the wrapped reader, failing with errAPKTooLarge the instant the
+// cumulative bytes read would exceed max (a stream one byte over the cap is
+// rejected, never truncated-and-accepted).
+func (c *cappedReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += int64(n)
+	if c.read > c.max {
+		return n, errAPKTooLarge
+	}
+	return n, err
+}
+
 // downloadAndCache fetches the .apk at apkURL and streams it into the cache
 // under (pkgName, version), returning the sha256 the cache computed. A non-200
-// status is an error.
+// status is an error. The body is streamed through a cappedReader bounded at
+// maxBytes, so a hostile/broken repo streaming unbounded bytes fails cleanly (no
+// partial apk is cached — cache.Put drops its temp file on the read error) rather
+// than filling the cache volume.
 func downloadAndCache(
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
 	apkURL, pkgName string,
 	version int,
+	maxBytes int64,
 ) (string, error) {
 	resp, err := httpGet(apkURL)
 	if err != nil {
@@ -180,19 +222,38 @@ func downloadAndCache(
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download apk %q: status %d", apkURL, resp.StatusCode)
 	}
-	sha, _, err := cache.Put(pkgName, version, resp.Body)
+	sha, _, err := cache.Put(pkgName, version, &cappedReader{r: resp.Body, max: maxBytes})
 	if err != nil {
 		return "", fmt.Errorf("cache apk: %w", err)
 	}
 	return sha, nil
 }
 
-// isAlreadyCached reports whether ext is already stored with apk_cached=true AND
-// its cache FILE is actually present — the idempotency guard that makes a re-run
-// a no-op. The file check is load-bearing: the DB row lives in Postgres but the
-// bytes live on the engine volume, so a row alone must never be trusted (a
-// recreated volume would leave a "cached" row 404ing at recovery time). When the
-// file is absent the extension is re-downloaded even though the row claims cached.
+// isAlreadyCached reports whether ext is already stored with apk_cached=true, its
+// cache FILE is present, AND the INSTALLED version is unchanged since those bytes
+// were cached — the idempotency guard that makes a re-run a no-op.
+//
+// The file check is load-bearing: the DB row lives in Postgres but the bytes live
+// on the engine volume, so a row alone must never be trusted (a recreated volume
+// would leave a "cached" row 404ing at recovery time). When the file is absent the
+// extension is re-downloaded even though the row claims cached.
+//
+// The version check keys off the INSTALLED version, not the index version. The two
+// axes are distinct: version_code is the repo-INDEX version of the cached bytes,
+// while installed_version_code is what the engine had INSTALLED when they were
+// cached. We skip only when the installed version is unchanged
+// (existing.InstalledVersionCode == ext.VersionCode); on ANY installed-version
+// change — up (owner upgraded) OR down (owner sideloaded a build the repo later
+// rolled back below) — we re-resolve + re-download, which restores
+// installed_version_code == ext.VersionCode, so the very next boot skips again.
+//
+// Equality, NOT the old `ext.VersionCode <= existing.VersionCode`: that compared
+// two different axes (installed vs index), so an installed version that
+// PERSISTENTLY EXCEEDED the index version was `<=`-false on every boot and
+// re-downloaded from the upstream repo forever — an unbounded-in-time refetch loop
+// and an anti-ban hazard. Keying on installed-version equality re-caches exactly
+// once per installed-version change and never loops, regardless of whether the
+// repo index leads or lags the installed version.
 func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store, ext suwayomi.Extension) (bool, error) {
 	existing, err := db.HarvestedExtension.Query().
 		Where(entharvestedextension.PkgName(ext.PkgName)).
@@ -203,7 +264,9 @@ func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store,
 	if err != nil {
 		return false, fmt.Errorf("query harvested extension: %w", err)
 	}
-	return existing.ApkCached && cache.Exists(ext.PkgName, existing.VersionCode), nil
+	return existing.ApkCached &&
+		cache.Exists(ext.PkgName, existing.VersionCode) &&
+		existing.InstalledVersionCode == ext.VersionCode, nil
 }
 
 // sourceIDs converts the Suwayomi sources an extension provides into the int64
@@ -224,13 +287,17 @@ func sourceIDs(sources []suwayomi.Source) []int64 {
 // extensionRow is the flat set of fields written to a HarvestedExtension row,
 // keeping upsertExtension's signature small and self-documenting.
 type extensionRow struct {
-	pkgName     string
-	repoURL     string
+	pkgName string
+	repoURL string
+	// versionCode is the repo-INDEX version describing the cached apk bytes.
 	versionCode int
-	versionName string
-	sourceIDs   []int64
-	apkSHA256   string
-	apkCached   bool
+	// installedVersionCode is the engine-INSTALLED version at cache time — the
+	// change-detector isAlreadyCached compares against to decide a re-cache.
+	installedVersionCode int
+	versionName          string
+	sourceIDs            []int64
+	apkSHA256            string
+	apkCached            bool
 }
 
 // upsertExtension find-or-creates a HarvestedExtension by pkg_name (its stable
@@ -247,6 +314,7 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 			SetPkgName(row.pkgName).
 			SetRepoURL(row.repoURL).
 			SetVersionCode(row.versionCode).
+			SetInstalledVersionCode(row.installedVersionCode).
 			SetVersionName(row.versionName).
 			SetSourceIds(row.sourceIDs).
 			SetApkSha256(row.apkSHA256).
@@ -259,6 +327,7 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 	return db.HarvestedExtension.UpdateOne(existing).
 		SetRepoURL(row.repoURL).
 		SetVersionCode(row.versionCode).
+		SetInstalledVersionCode(row.installedVersionCode).
 		SetVersionName(row.versionName).
 		SetSourceIds(row.sourceIDs).
 		SetApkSha256(row.apkSHA256).
@@ -272,11 +341,12 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 // must not abort because it could not persist a gap marker).
 func recordGap(ctx context.Context, db *ent.Client, ext suwayomi.Extension) {
 	row := extensionRow{
-		pkgName:     ext.PkgName,
-		repoURL:     ext.Repo,
-		versionCode: ext.VersionCode,
-		versionName: ext.VersionName,
-		apkCached:   false,
+		pkgName:              ext.PkgName,
+		repoURL:              ext.Repo,
+		versionCode:          ext.VersionCode,
+		installedVersionCode: ext.VersionCode,
+		versionName:          ext.VersionName,
+		apkCached:            false,
 	}
 	if err := upsertExtension(ctx, db, row); err != nil {
 		slog.WarnContext(ctx, "enginetopo: failed to record extension gap",

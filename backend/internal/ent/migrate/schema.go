@@ -93,6 +93,7 @@ var (
 		{Name: "pkg_name", Type: field.TypeString, Unique: true},
 		{Name: "repo_url", Type: field.TypeString, Default: ""},
 		{Name: "version_code", Type: field.TypeInt, Default: 0},
+		{Name: "installed_version_code", Type: field.TypeInt, Default: 0},
 		{Name: "version_name", Type: field.TypeString, Default: ""},
 		{Name: "source_ids", Type: field.TypeJSON, Nullable: true},
 		{Name: "apk_sha256", Type: field.TypeString, Default: ""},

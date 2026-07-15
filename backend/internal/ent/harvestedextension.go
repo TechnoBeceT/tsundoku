@@ -25,6 +25,8 @@ type HarvestedExtension struct {
 	RepoURL string `json:"repo_url,omitempty"`
 	// VersionCode holds the value of the "version_code" field.
 	VersionCode int `json:"version_code,omitempty"`
+	// InstalledVersionCode holds the value of the "installed_version_code" field.
+	InstalledVersionCode int `json:"installed_version_code,omitempty"`
 	// VersionName holds the value of the "version_name" field.
 	VersionName string `json:"version_name,omitempty"`
 	// SourceIds holds the value of the "source_ids" field.
@@ -47,7 +49,7 @@ func (*HarvestedExtension) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case harvestedextension.FieldApkCached:
 			values[i] = new(sql.NullBool)
-		case harvestedextension.FieldVersionCode:
+		case harvestedextension.FieldVersionCode, harvestedextension.FieldInstalledVersionCode:
 			values[i] = new(sql.NullInt64)
 		case harvestedextension.FieldPkgName, harvestedextension.FieldRepoURL, harvestedextension.FieldVersionName, harvestedextension.FieldApkSha256:
 			values[i] = new(sql.NullString)
@@ -93,6 +95,12 @@ func (_m *HarvestedExtension) assignValues(columns []string, values []any) error
 				return fmt.Errorf("unexpected type %T for field version_code", values[i])
 			} else if value.Valid {
 				_m.VersionCode = int(value.Int64)
+			}
+		case harvestedextension.FieldInstalledVersionCode:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field installed_version_code", values[i])
+			} else if value.Valid {
+				_m.InstalledVersionCode = int(value.Int64)
 			}
 		case harvestedextension.FieldVersionName:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -170,6 +178,9 @@ func (_m *HarvestedExtension) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("version_code=")
 	builder.WriteString(fmt.Sprintf("%v", _m.VersionCode))
+	builder.WriteString(", ")
+	builder.WriteString("installed_version_code=")
+	builder.WriteString(fmt.Sprintf("%v", _m.InstalledVersionCode))
 	builder.WriteString(", ")
 	builder.WriteString("version_name=")
 	builder.WriteString(_m.VersionName)

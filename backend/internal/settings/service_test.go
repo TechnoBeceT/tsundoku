@@ -962,3 +962,48 @@ func TestEngineSocksVersionMustBe4Or5(t *testing.T) {
 		t.Fatalf("Set version=5: %v", err)
 	}
 }
+
+// TestExistingKeys proves the gap-detection reader: it returns exactly the
+// queried keys that already have an explicit Settings row (owned by Tsundoku),
+// omits keys that are still unset (resolving to their default), never reports a
+// key that was not asked about, and short-circuits an empty query.
+func TestExistingKeys(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	// Give two keys explicit rows; a third is left unset.
+	if err := svc.Set(ctx, settings.KeyFlareSolverrURL, "http://fs.example:8191"); err != nil {
+		t.Fatalf("Set url: %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyFlareSolverrTimeout, "90"); err != nil {
+		t.Fatalf("Set timeout: %v", err)
+	}
+
+	got, err := svc.ExistingKeys(ctx, []string{
+		settings.KeyFlareSolverrURL,
+		settings.KeyFlareSolverrTimeout,
+		settings.KeyFlareSolverrEnabled, // unset → must be absent
+	})
+	if err != nil {
+		t.Fatalf("ExistingKeys: %v", err)
+	}
+	if !got[settings.KeyFlareSolverrURL] {
+		t.Error("KeyFlareSolverrURL missing from ExistingKeys, want present (it has a row)")
+	}
+	if !got[settings.KeyFlareSolverrTimeout] {
+		t.Error("KeyFlareSolverrTimeout missing from ExistingKeys, want present (it has a row)")
+	}
+	if got[settings.KeyFlareSolverrEnabled] {
+		t.Error("KeyFlareSolverrEnabled present in ExistingKeys, want absent (it has no row)")
+	}
+
+	// An empty query short-circuits to an empty, non-nil set with no error.
+	empty, err := svc.ExistingKeys(ctx, nil)
+	if err != nil {
+		t.Fatalf("ExistingKeys(nil): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("ExistingKeys(nil) = %v, want empty", empty)
+	}
+}

@@ -11,23 +11,45 @@ import (
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
-// capturingWriter is a settings.SettingsWriter test double that records the
+// capturingWriter is a settings.SettingsStore test double that records the
 // KeyValue batches it was asked to persist (ACCUMULATED across calls, because
-// SeedEngineConfig now writes FlareSolverr and SOCKS as two separate batches),
-// instead of touching a real DB — the mapping logic (ServerSettings → keys) is
-// what these tests exercise; the real-Service round-trip is covered by the
-// testdb-backed tests below.
+// SeedEngineConfig writes FlareSolverr and SOCKS as two separate batches),
+// instead of touching a real DB — the mapping + gap-fill logic (ServerSettings →
+// keys, skipping already-owned keys) is what these tests exercise; the
+// real-Service round-trip is covered by the testdb-backed tests below.
+//
+// `owned` models the keys Tsundoku already has an explicit Settings row for: it
+// seeds ExistingKeys, and every key written via SetMany is added to it, so a
+// re-seed inside one test sees the previously-written keys as owned (mirroring
+// the real store's gap-fill semantics).
 type capturingWriter struct {
 	got   []settings.KeyValue
 	calls int
 	err   error
-	errOn int // when >0, fail SetMany only on the errOn-th call (1-based)
+	errOn int             // when >0, fail SetMany only on the errOn-th call (1-based)
+	owned map[string]bool // keys Tsundoku already owns (have an explicit row)
+}
+
+func (w *capturingWriter) ExistingKeys(_ context.Context, keys []string) (map[string]bool, error) {
+	present := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if w.owned[k] {
+			present[k] = true
+		}
+	}
+	return present, nil
 }
 
 func (w *capturingWriter) SetMany(_ context.Context, updates []settings.KeyValue) error {
 	w.calls++
 	if w.err != nil && (w.errOn == 0 || w.errOn == w.calls) {
 		return w.err
+	}
+	if w.owned == nil {
+		w.owned = make(map[string]bool)
+	}
+	for _, kv := range updates {
+		w.owned[kv.Key] = true
 	}
 	w.got = append(w.got, updates...)
 	return nil
@@ -254,5 +276,123 @@ func TestSeedEngineConfig_SkipsSocksWhenEnabledButBlankPort(t *testing.T) {
 	}
 	if svc.EngineSocksEnabled(ctx) {
 		t.Error("EngineSocksEnabled seeded despite a blank port, want default false")
+	}
+}
+
+// TestSeedEngineConfig_AllKeysOwnedWritesNothing is the gap-fill proof for the
+// FULLY-owned case: when every candidate key already has a Settings row (Tsundoku
+// owns them all), a re-seed writes NOTHING — SetMany is never called — so a
+// restart can never revert an owner's config to the engine's (possibly stale)
+// values.
+func TestSeedEngineConfig_AllKeysOwnedWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	fc := &fakeClient{serverSettings: suwayomi.SuwayomiSettings{
+		FlareSolverrEnabled: true,
+		FlareSolverrURL:     "http://engine.internal:8191",
+		FlareSolverrTimeout: 90,
+		SocksProxyEnabled:   true,
+		SocksProxyPort:      "1080",
+		SocksProxyVersion:   5,
+	}}
+	// Every candidate key already owned by Tsundoku.
+	w := &capturingWriter{owned: map[string]bool{
+		settings.KeyFlareSolverrEnabled:          true,
+		settings.KeyFlareSolverrURL:              true,
+		settings.KeyFlareSolverrTimeout:          true,
+		settings.KeyFlareSolverrSessionName:      true,
+		settings.KeyFlareSolverrSessionTTL:       true,
+		settings.KeyFlareSolverrResponseFallback: true,
+		settings.KeyEngineSocksEnabled:           true,
+		settings.KeyEngineSocksHost:              true,
+		settings.KeyEngineSocksPort:              true,
+		settings.KeyEngineSocksVersion:           true,
+	}}
+
+	if err := enginetopo.SeedEngineConfig(ctx, fc, w); err != nil {
+		t.Fatalf("SeedEngineConfig: %v", err)
+	}
+	if w.calls != 0 {
+		t.Errorf("SetMany called %d times, want 0 (every key already owned → no write)", w.calls)
+	}
+	if len(w.got) != 0 {
+		t.Errorf("wrote %d keys, want 0 (gap-fill must skip owned keys)", len(w.got))
+	}
+}
+
+// TestSeedEngineConfig_PartialWritesOnlyGaps is the gap-fill proof for the MIXED
+// case: keys Tsundoku already owns are left untouched, while the still-unset keys
+// are filled from the engine values in the same pass.
+func TestSeedEngineConfig_PartialWritesOnlyGaps(t *testing.T) {
+	ctx := context.Background()
+	fc := &fakeClient{serverSettings: suwayomi.SuwayomiSettings{
+		FlareSolverrEnabled:     true,
+		FlareSolverrURL:         "http://engine.internal:8191",
+		FlareSolverrTimeout:     90,
+		FlareSolverrSessionName: "engine",
+		FlareSolverrSessionTTL:  30,
+		// SOCKS off — its gap batch is skipped entirely (unchanged behaviour).
+		SocksProxyEnabled: false,
+		SocksProxyPort:    "",
+	}}
+	// Owner already owns the URL + the enabled toggle; the rest are gaps.
+	w := &capturingWriter{owned: map[string]bool{
+		settings.KeyFlareSolverrURL:     true,
+		settings.KeyFlareSolverrEnabled: true,
+	}}
+
+	if err := enginetopo.SeedEngineConfig(ctx, fc, w); err != nil {
+		t.Fatalf("SeedEngineConfig: %v", err)
+	}
+
+	// Owned keys were NOT written (never reverted to the engine value).
+	if _, ok := w.value(settings.KeyFlareSolverrURL); ok {
+		t.Error("owned KeyFlareSolverrURL was written, want skipped")
+	}
+	if _, ok := w.value(settings.KeyFlareSolverrEnabled); ok {
+		t.Error("owned KeyFlareSolverrEnabled was written, want skipped")
+	}
+	// Gap keys were filled from the engine values.
+	if got, ok := w.value(settings.KeyFlareSolverrTimeout); !ok || got != "90" {
+		t.Errorf("KeyFlareSolverrTimeout = %q (present=%v), want \"90\" filled as a gap", got, ok)
+	}
+	if got, ok := w.value(settings.KeyFlareSolverrSessionName); !ok || got != "engine" {
+		t.Errorf("KeyFlareSolverrSessionName = %q (present=%v), want \"engine\" filled as a gap", got, ok)
+	}
+}
+
+// TestSeedEngineConfig_ReSeedDoesNotOverwriteOwnedKey is the end-to-end gap-fill
+// proof against the REAL settings.Service (testdb): an owner edit to a
+// flaresolverr.* key survives a subsequent seed carrying a different engine
+// value — the exact silent-revert the fix prevents. (The still-unset sibling
+// keys ARE gap-filled in the same pass, which is correct per-key gap-fill.)
+func TestSeedEngineConfig_ReSeedDoesNotOverwriteOwnedKey(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc := settings.NewService(client, engineTopoDefaults())
+
+	// The owner has set FlareSolverr URL to their own endpoint.
+	if err := svc.Set(ctx, settings.KeyFlareSolverrURL, "http://owner.example:8191"); err != nil {
+		t.Fatalf("owner Set: %v", err)
+	}
+
+	// A seed then runs carrying a DIFFERENT (stale) engine URL.
+	fc := &fakeClient{serverSettings: suwayomi.SuwayomiSettings{
+		FlareSolverrEnabled:    true,
+		FlareSolverrURL:        "http://stale-engine.internal:8191",
+		FlareSolverrTimeout:    60,
+		FlareSolverrSessionTTL: 15,
+	}}
+	if err := enginetopo.SeedEngineConfig(ctx, fc, svc); err != nil {
+		t.Fatalf("SeedEngineConfig: %v", err)
+	}
+
+	// The owned key is preserved — never reverted to the engine value.
+	if got := svc.FlareSolverrURL(ctx); got != "http://owner.example:8191" {
+		t.Errorf("FlareSolverrURL = %q, want the owner's value preserved (gap-fill must not overwrite)", got)
+	}
+	// The unset sibling WAS gap-filled from the engine, proving per-key (not
+	// all-or-nothing) gap-fill.
+	if !svc.FlareSolverrEnabled(ctx) {
+		t.Error("FlareSolverrEnabled not gap-filled (was unset, engine reported true)")
 	}
 }

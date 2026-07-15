@@ -35,6 +35,11 @@ func (HarvestedExtension) Fields() []ent.Field {
 		// version_code is the extension's numeric version (monotonic; used to detect
 		// an available update).
 		field.Int("version_code").Default(0),
+		// installed_version_code is the engine-INSTALLED version code at the time
+		// these bytes were cached — the change-detector for re-caching. Distinct
+		// from version_code, which is the repo-index version describing the cached
+		// apk bytes.
+		field.Int("installed_version_code").Default(0),
 		// version_name is the extension's human-readable version string.
 		field.String("version_name").Default(""),
 		// source_ids are the Suwayomi source ids this extension provides (one

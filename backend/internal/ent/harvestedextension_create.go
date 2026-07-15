@@ -55,6 +55,20 @@ func (_c *HarvestedExtensionCreate) SetNillableVersionCode(v *int) *HarvestedExt
 	return _c
 }
 
+// SetInstalledVersionCode sets the "installed_version_code" field.
+func (_c *HarvestedExtensionCreate) SetInstalledVersionCode(v int) *HarvestedExtensionCreate {
+	_c.mutation.SetInstalledVersionCode(v)
+	return _c
+}
+
+// SetNillableInstalledVersionCode sets the "installed_version_code" field if the given value is not nil.
+func (_c *HarvestedExtensionCreate) SetNillableInstalledVersionCode(v *int) *HarvestedExtensionCreate {
+	if v != nil {
+		_c.SetInstalledVersionCode(*v)
+	}
+	return _c
+}
+
 // SetVersionName sets the "version_name" field.
 func (_c *HarvestedExtensionCreate) SetVersionName(v string) *HarvestedExtensionCreate {
 	_c.mutation.SetVersionName(v)
@@ -174,6 +188,10 @@ func (_c *HarvestedExtensionCreate) defaults() {
 		v := harvestedextension.DefaultVersionCode
 		_c.mutation.SetVersionCode(v)
 	}
+	if _, ok := _c.mutation.InstalledVersionCode(); !ok {
+		v := harvestedextension.DefaultInstalledVersionCode
+		_c.mutation.SetInstalledVersionCode(v)
+	}
 	if _, ok := _c.mutation.VersionName(); !ok {
 		v := harvestedextension.DefaultVersionName
 		_c.mutation.SetVersionName(v)
@@ -206,6 +224,9 @@ func (_c *HarvestedExtensionCreate) check() error {
 	}
 	if _, ok := _c.mutation.VersionCode(); !ok {
 		return &ValidationError{Name: "version_code", err: errors.New(`ent: missing required field "HarvestedExtension.version_code"`)}
+	}
+	if _, ok := _c.mutation.InstalledVersionCode(); !ok {
+		return &ValidationError{Name: "installed_version_code", err: errors.New(`ent: missing required field "HarvestedExtension.installed_version_code"`)}
 	}
 	if _, ok := _c.mutation.VersionName(); !ok {
 		return &ValidationError{Name: "version_name", err: errors.New(`ent: missing required field "HarvestedExtension.version_name"`)}
@@ -265,6 +286,10 @@ func (_c *HarvestedExtensionCreate) createSpec() (*HarvestedExtension, *sqlgraph
 	if value, ok := _c.mutation.VersionCode(); ok {
 		_spec.SetField(harvestedextension.FieldVersionCode, field.TypeInt, value)
 		_node.VersionCode = value
+	}
+	if value, ok := _c.mutation.InstalledVersionCode(); ok {
+		_spec.SetField(harvestedextension.FieldInstalledVersionCode, field.TypeInt, value)
+		_node.InstalledVersionCode = value
 	}
 	if value, ok := _c.mutation.VersionName(); ok {
 		_spec.SetField(harvestedextension.FieldVersionName, field.TypeString, value)

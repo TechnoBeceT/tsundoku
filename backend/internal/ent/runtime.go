@@ -122,20 +122,24 @@ func init() {
 	harvestedextensionDescVersionCode := harvestedextensionFields[3].Descriptor()
 	// harvestedextension.DefaultVersionCode holds the default value on creation for the version_code field.
 	harvestedextension.DefaultVersionCode = harvestedextensionDescVersionCode.Default.(int)
+	// harvestedextensionDescInstalledVersionCode is the schema descriptor for installed_version_code field.
+	harvestedextensionDescInstalledVersionCode := harvestedextensionFields[4].Descriptor()
+	// harvestedextension.DefaultInstalledVersionCode holds the default value on creation for the installed_version_code field.
+	harvestedextension.DefaultInstalledVersionCode = harvestedextensionDescInstalledVersionCode.Default.(int)
 	// harvestedextensionDescVersionName is the schema descriptor for version_name field.
-	harvestedextensionDescVersionName := harvestedextensionFields[4].Descriptor()
+	harvestedextensionDescVersionName := harvestedextensionFields[5].Descriptor()
 	// harvestedextension.DefaultVersionName holds the default value on creation for the version_name field.
 	harvestedextension.DefaultVersionName = harvestedextensionDescVersionName.Default.(string)
 	// harvestedextensionDescApkSha256 is the schema descriptor for apk_sha256 field.
-	harvestedextensionDescApkSha256 := harvestedextensionFields[6].Descriptor()
+	harvestedextensionDescApkSha256 := harvestedextensionFields[7].Descriptor()
 	// harvestedextension.DefaultApkSha256 holds the default value on creation for the apk_sha256 field.
 	harvestedextension.DefaultApkSha256 = harvestedextensionDescApkSha256.Default.(string)
 	// harvestedextensionDescApkCached is the schema descriptor for apk_cached field.
-	harvestedextensionDescApkCached := harvestedextensionFields[7].Descriptor()
+	harvestedextensionDescApkCached := harvestedextensionFields[8].Descriptor()
 	// harvestedextension.DefaultApkCached holds the default value on creation for the apk_cached field.
 	harvestedextension.DefaultApkCached = harvestedextensionDescApkCached.Default.(bool)
 	// harvestedextensionDescUpdatedAt is the schema descriptor for updated_at field.
-	harvestedextensionDescUpdatedAt := harvestedextensionFields[8].Descriptor()
+	harvestedextensionDescUpdatedAt := harvestedextensionFields[9].Descriptor()
 	// harvestedextension.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	harvestedextension.DefaultUpdatedAt = harvestedextensionDescUpdatedAt.Default.(func() time.Time)
 	// harvestedextension.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
