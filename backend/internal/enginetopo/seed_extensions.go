@@ -150,13 +150,14 @@ func seedOneExtension(
 	}
 
 	row := extensionRow{
-		pkgName:     ext.PkgName,
-		repoURL:     ext.Repo,
-		versionCode: indexVersion,
-		versionName: ext.VersionName,
-		sourceIDs:   sourceIDs(sources),
-		apkSHA256:   sha,
-		apkCached:   true,
+		pkgName:              ext.PkgName,
+		repoURL:              ext.Repo,
+		versionCode:          indexVersion,
+		installedVersionCode: ext.VersionCode,
+		versionName:          ext.VersionName,
+		sourceIDs:            sourceIDs(sources),
+		apkSHA256:            sha,
+		apkCached:            true,
 	}
 	if err := upsertExtension(ctx, db, row); err != nil {
 		return false, fmt.Errorf("persist harvested extension: %w", err)
@@ -229,23 +230,30 @@ func downloadAndCache(
 }
 
 // isAlreadyCached reports whether ext is already stored with apk_cached=true, its
-// cache FILE is present, AND the cached version is still current — the idempotency
-// guard that makes a re-run a no-op.
+// cache FILE is present, AND the INSTALLED version is unchanged since those bytes
+// were cached — the idempotency guard that makes a re-run a no-op.
 //
 // The file check is load-bearing: the DB row lives in Postgres but the bytes live
 // on the engine volume, so a row alone must never be trusted (a recreated volume
 // would leave a "cached" row 404ing at recovery time). When the file is absent the
 // extension is re-downloaded even though the row claims cached.
 //
-// The version check re-caches after the owner upgrades an extension: the stored
-// version_code is the INDEX version that was cached; when the currently-installed
-// version has OVERTAKEN it (ext.VersionCode > existing.VersionCode) the cached
-// bytes are stale, so we re-resolve + re-download. This is MONOTONIC and cannot
-// loop — a re-cache stores the new (>= installed) index version, so the condition
-// is false again next boot. The comparison is `<=`, deliberately NOT `!=`: the
-// installed version legitimately LAGS the cached index version right after a seed
-// (the index advertises the latest known-good build, ahead of what is installed),
-// and `!=` would re-download that unchanged extension on every boot.
+// The version check keys off the INSTALLED version, not the index version. The two
+// axes are distinct: version_code is the repo-INDEX version of the cached bytes,
+// while installed_version_code is what the engine had INSTALLED when they were
+// cached. We skip only when the installed version is unchanged
+// (existing.InstalledVersionCode == ext.VersionCode); on ANY installed-version
+// change — up (owner upgraded) OR down (owner sideloaded a build the repo later
+// rolled back below) — we re-resolve + re-download, which restores
+// installed_version_code == ext.VersionCode, so the very next boot skips again.
+//
+// Equality, NOT the old `ext.VersionCode <= existing.VersionCode`: that compared
+// two different axes (installed vs index), so an installed version that
+// PERSISTENTLY EXCEEDED the index version was `<=`-false on every boot and
+// re-downloaded from the upstream repo forever — an unbounded-in-time refetch loop
+// and an anti-ban hazard. Keying on installed-version equality re-caches exactly
+// once per installed-version change and never loops, regardless of whether the
+// repo index leads or lags the installed version.
 func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store, ext suwayomi.Extension) (bool, error) {
 	existing, err := db.HarvestedExtension.Query().
 		Where(entharvestedextension.PkgName(ext.PkgName)).
@@ -258,7 +266,7 @@ func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store,
 	}
 	return existing.ApkCached &&
 		cache.Exists(ext.PkgName, existing.VersionCode) &&
-		ext.VersionCode <= existing.VersionCode, nil
+		existing.InstalledVersionCode == ext.VersionCode, nil
 }
 
 // sourceIDs converts the Suwayomi sources an extension provides into the int64
@@ -279,13 +287,17 @@ func sourceIDs(sources []suwayomi.Source) []int64 {
 // extensionRow is the flat set of fields written to a HarvestedExtension row,
 // keeping upsertExtension's signature small and self-documenting.
 type extensionRow struct {
-	pkgName     string
-	repoURL     string
+	pkgName string
+	repoURL string
+	// versionCode is the repo-INDEX version describing the cached apk bytes.
 	versionCode int
-	versionName string
-	sourceIDs   []int64
-	apkSHA256   string
-	apkCached   bool
+	// installedVersionCode is the engine-INSTALLED version at cache time — the
+	// change-detector isAlreadyCached compares against to decide a re-cache.
+	installedVersionCode int
+	versionName          string
+	sourceIDs            []int64
+	apkSHA256            string
+	apkCached            bool
 }
 
 // upsertExtension find-or-creates a HarvestedExtension by pkg_name (its stable
@@ -302,6 +314,7 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 			SetPkgName(row.pkgName).
 			SetRepoURL(row.repoURL).
 			SetVersionCode(row.versionCode).
+			SetInstalledVersionCode(row.installedVersionCode).
 			SetVersionName(row.versionName).
 			SetSourceIds(row.sourceIDs).
 			SetApkSha256(row.apkSHA256).
@@ -314,6 +327,7 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 	return db.HarvestedExtension.UpdateOne(existing).
 		SetRepoURL(row.repoURL).
 		SetVersionCode(row.versionCode).
+		SetInstalledVersionCode(row.installedVersionCode).
 		SetVersionName(row.versionName).
 		SetSourceIds(row.sourceIDs).
 		SetApkSha256(row.apkSHA256).
@@ -327,11 +341,12 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 // must not abort because it could not persist a gap marker).
 func recordGap(ctx context.Context, db *ent.Client, ext suwayomi.Extension) {
 	row := extensionRow{
-		pkgName:     ext.PkgName,
-		repoURL:     ext.Repo,
-		versionCode: ext.VersionCode,
-		versionName: ext.VersionName,
-		apkCached:   false,
+		pkgName:              ext.PkgName,
+		repoURL:              ext.Repo,
+		versionCode:          ext.VersionCode,
+		installedVersionCode: ext.VersionCode,
+		versionName:          ext.VersionName,
+		apkCached:            false,
 	}
 	if err := upsertExtension(ctx, db, row); err != nil {
 		slog.WarnContext(ctx, "enginetopo: failed to record extension gap",

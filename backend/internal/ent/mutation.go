@@ -2932,23 +2932,25 @@ func (m *EtagCacheMutation) ResetEdge(name string) error {
 // HarvestedExtensionMutation represents an operation that mutates the HarvestedExtension nodes in the graph.
 type HarvestedExtensionMutation struct {
 	config
-	op               Op
-	typ              string
-	id               *uuid.UUID
-	pkg_name         *string
-	repo_url         *string
-	version_code     *int
-	addversion_code  *int
-	version_name     *string
-	source_ids       *[]int64
-	appendsource_ids []int64
-	apk_sha256       *string
-	apk_cached       *bool
-	updated_at       *time.Time
-	clearedFields    map[string]struct{}
-	done             bool
-	oldValue         func(context.Context) (*HarvestedExtension, error)
-	predicates       []predicate.HarvestedExtension
+	op                        Op
+	typ                       string
+	id                        *uuid.UUID
+	pkg_name                  *string
+	repo_url                  *string
+	version_code              *int
+	addversion_code           *int
+	installed_version_code    *int
+	addinstalled_version_code *int
+	version_name              *string
+	source_ids                *[]int64
+	appendsource_ids          []int64
+	apk_sha256                *string
+	apk_cached                *bool
+	updated_at                *time.Time
+	clearedFields             map[string]struct{}
+	done                      bool
+	oldValue                  func(context.Context) (*HarvestedExtension, error)
+	predicates                []predicate.HarvestedExtension
 }
 
 var _ ent.Mutation = (*HarvestedExtensionMutation)(nil)
@@ -3181,6 +3183,62 @@ func (m *HarvestedExtensionMutation) AddedVersionCode() (r int, exists bool) {
 func (m *HarvestedExtensionMutation) ResetVersionCode() {
 	m.version_code = nil
 	m.addversion_code = nil
+}
+
+// SetInstalledVersionCode sets the "installed_version_code" field.
+func (m *HarvestedExtensionMutation) SetInstalledVersionCode(i int) {
+	m.installed_version_code = &i
+	m.addinstalled_version_code = nil
+}
+
+// InstalledVersionCode returns the value of the "installed_version_code" field in the mutation.
+func (m *HarvestedExtensionMutation) InstalledVersionCode() (r int, exists bool) {
+	v := m.installed_version_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInstalledVersionCode returns the old "installed_version_code" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldInstalledVersionCode(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInstalledVersionCode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInstalledVersionCode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInstalledVersionCode: %w", err)
+	}
+	return oldValue.InstalledVersionCode, nil
+}
+
+// AddInstalledVersionCode adds i to the "installed_version_code" field.
+func (m *HarvestedExtensionMutation) AddInstalledVersionCode(i int) {
+	if m.addinstalled_version_code != nil {
+		*m.addinstalled_version_code += i
+	} else {
+		m.addinstalled_version_code = &i
+	}
+}
+
+// AddedInstalledVersionCode returns the value that was added to the "installed_version_code" field in this mutation.
+func (m *HarvestedExtensionMutation) AddedInstalledVersionCode() (r int, exists bool) {
+	v := m.addinstalled_version_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetInstalledVersionCode resets all changes to the "installed_version_code" field.
+func (m *HarvestedExtensionMutation) ResetInstalledVersionCode() {
+	m.installed_version_code = nil
+	m.addinstalled_version_code = nil
 }
 
 // SetVersionName sets the "version_name" field.
@@ -3426,7 +3484,7 @@ func (m *HarvestedExtensionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *HarvestedExtensionMutation) Fields() []string {
-	fields := make([]string, 0, 8)
+	fields := make([]string, 0, 9)
 	if m.pkg_name != nil {
 		fields = append(fields, harvestedextension.FieldPkgName)
 	}
@@ -3435,6 +3493,9 @@ func (m *HarvestedExtensionMutation) Fields() []string {
 	}
 	if m.version_code != nil {
 		fields = append(fields, harvestedextension.FieldVersionCode)
+	}
+	if m.installed_version_code != nil {
+		fields = append(fields, harvestedextension.FieldInstalledVersionCode)
 	}
 	if m.version_name != nil {
 		fields = append(fields, harvestedextension.FieldVersionName)
@@ -3465,6 +3526,8 @@ func (m *HarvestedExtensionMutation) Field(name string) (ent.Value, bool) {
 		return m.RepoURL()
 	case harvestedextension.FieldVersionCode:
 		return m.VersionCode()
+	case harvestedextension.FieldInstalledVersionCode:
+		return m.InstalledVersionCode()
 	case harvestedextension.FieldVersionName:
 		return m.VersionName()
 	case harvestedextension.FieldSourceIds:
@@ -3490,6 +3553,8 @@ func (m *HarvestedExtensionMutation) OldField(ctx context.Context, name string) 
 		return m.OldRepoURL(ctx)
 	case harvestedextension.FieldVersionCode:
 		return m.OldVersionCode(ctx)
+	case harvestedextension.FieldInstalledVersionCode:
+		return m.OldInstalledVersionCode(ctx)
 	case harvestedextension.FieldVersionName:
 		return m.OldVersionName(ctx)
 	case harvestedextension.FieldSourceIds:
@@ -3529,6 +3594,13 @@ func (m *HarvestedExtensionMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetVersionCode(v)
+		return nil
+	case harvestedextension.FieldInstalledVersionCode:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInstalledVersionCode(v)
 		return nil
 	case harvestedextension.FieldVersionName:
 		v, ok := value.(string)
@@ -3576,6 +3648,9 @@ func (m *HarvestedExtensionMutation) AddedFields() []string {
 	if m.addversion_code != nil {
 		fields = append(fields, harvestedextension.FieldVersionCode)
 	}
+	if m.addinstalled_version_code != nil {
+		fields = append(fields, harvestedextension.FieldInstalledVersionCode)
+	}
 	return fields
 }
 
@@ -3586,6 +3661,8 @@ func (m *HarvestedExtensionMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case harvestedextension.FieldVersionCode:
 		return m.AddedVersionCode()
+	case harvestedextension.FieldInstalledVersionCode:
+		return m.AddedInstalledVersionCode()
 	}
 	return nil, false
 }
@@ -3601,6 +3678,13 @@ func (m *HarvestedExtensionMutation) AddField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddVersionCode(v)
+		return nil
+	case harvestedextension.FieldInstalledVersionCode:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddInstalledVersionCode(v)
 		return nil
 	}
 	return fmt.Errorf("unknown HarvestedExtension numeric field %s", name)
@@ -3646,6 +3730,9 @@ func (m *HarvestedExtensionMutation) ResetField(name string) error {
 		return nil
 	case harvestedextension.FieldVersionCode:
 		m.ResetVersionCode()
+		return nil
+	case harvestedextension.FieldInstalledVersionCode:
+		m.ResetInstalledVersionCode()
 		return nil
 	case harvestedextension.FieldVersionName:
 		m.ResetVersionName()

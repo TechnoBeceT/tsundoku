@@ -70,6 +70,11 @@ func VersionCode(v int) predicate.HarvestedExtension {
 	return predicate.HarvestedExtension(sql.FieldEQ(FieldVersionCode, v))
 }
 
+// InstalledVersionCode applies equality check predicate on the "installed_version_code" field. It's identical to InstalledVersionCodeEQ.
+func InstalledVersionCode(v int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldEQ(FieldInstalledVersionCode, v))
+}
+
 // VersionName applies equality check predicate on the "version_name" field. It's identical to VersionNameEQ.
 func VersionName(v string) predicate.HarvestedExtension {
 	return predicate.HarvestedExtension(sql.FieldEQ(FieldVersionName, v))
@@ -258,6 +263,46 @@ func VersionCodeLT(v int) predicate.HarvestedExtension {
 // VersionCodeLTE applies the LTE predicate on the "version_code" field.
 func VersionCodeLTE(v int) predicate.HarvestedExtension {
 	return predicate.HarvestedExtension(sql.FieldLTE(FieldVersionCode, v))
+}
+
+// InstalledVersionCodeEQ applies the EQ predicate on the "installed_version_code" field.
+func InstalledVersionCodeEQ(v int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldEQ(FieldInstalledVersionCode, v))
+}
+
+// InstalledVersionCodeNEQ applies the NEQ predicate on the "installed_version_code" field.
+func InstalledVersionCodeNEQ(v int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldNEQ(FieldInstalledVersionCode, v))
+}
+
+// InstalledVersionCodeIn applies the In predicate on the "installed_version_code" field.
+func InstalledVersionCodeIn(vs ...int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldIn(FieldInstalledVersionCode, vs...))
+}
+
+// InstalledVersionCodeNotIn applies the NotIn predicate on the "installed_version_code" field.
+func InstalledVersionCodeNotIn(vs ...int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldNotIn(FieldInstalledVersionCode, vs...))
+}
+
+// InstalledVersionCodeGT applies the GT predicate on the "installed_version_code" field.
+func InstalledVersionCodeGT(v int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldGT(FieldInstalledVersionCode, v))
+}
+
+// InstalledVersionCodeGTE applies the GTE predicate on the "installed_version_code" field.
+func InstalledVersionCodeGTE(v int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldGTE(FieldInstalledVersionCode, v))
+}
+
+// InstalledVersionCodeLT applies the LT predicate on the "installed_version_code" field.
+func InstalledVersionCodeLT(v int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldLT(FieldInstalledVersionCode, v))
+}
+
+// InstalledVersionCodeLTE applies the LTE predicate on the "installed_version_code" field.
+func InstalledVersionCodeLTE(v int) predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldLTE(FieldInstalledVersionCode, v))
 }
 
 // VersionNameEQ applies the EQ predicate on the "version_name" field.

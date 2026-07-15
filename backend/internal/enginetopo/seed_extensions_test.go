@@ -376,10 +376,9 @@ func TestSeedExtensions_ReDownloadsWhenFileMissing(t *testing.T) {
 }
 
 // TestSeedExtensions_ReCachesWhenInstalledVersionAdvances proves the version
-// guard: after the owner upgrades an extension so the INSTALLED version overtakes
-// the cached index version, a re-seed re-resolves + re-downloads and updates the
-// row to the new version — and is still MONOTONIC (a further unchanged run skips
-// again, no loop).
+// guard: after the owner upgrades an extension so the INSTALLED version changes,
+// a re-seed re-resolves + re-downloads and updates the row to the new version —
+// and a further unchanged run skips again (re-cache is once-per-change, no loop).
 func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -423,8 +422,9 @@ func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
 	assertCachedExtension(t, row, hexSHA([]byte("APK-V5")), 5, []int64{1})
 	assertCachedBytes(t, cache, "pkg.one", 5, []byte("APK-V5"))
 
-	// A THIRD run with nothing changed must skip again (monotonic, no loop):
-	// ext.VersionCode (5) <= stored version_code (5) → skip, zero http calls.
+	// A THIRD run with nothing changed must skip again (once-per-change, no loop):
+	// installed ext.VersionCode (5) == stored installed_version_code (5) → skip,
+	// zero http calls.
 	callsBefore := stub.callCount()
 	res3, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
 	if err != nil {
@@ -435,6 +435,67 @@ func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
 	}
 	if extra := stub.callCount() - callsBefore; extra != 0 {
 		t.Errorf("third pass made %d http calls, want 0 (re-cache is monotonic)", extra)
+	}
+}
+
+// TestSeedExtensions_IndexLagsInstalledNoLoop is the regression guard for the
+// refetch-loop bug: when the repo INDEX version PERSISTENTLY LAGS the INSTALLED
+// version (the owner sideloaded a newer build, or the repo rolled its published
+// version back), the old `ext.VersionCode <= existing.VersionCode` skip condition
+// compared two different axes (installed vs index) and was false every boot, so
+// the extension was re-resolved + re-downloaded from the upstream repo on EVERY
+// boot forever. Keying the skip on installed-version equality ends the loop: once
+// the bytes are cached (storing installed_version_code=100, version_code=90), a
+// second seed with the SAME installed version (100) skips with ZERO http calls.
+func TestSeedExtensions_IndexLagsInstalledNoLoop(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	const repo = "https://repo.test/repo"
+	stub := &stubHTTP{routes: map[string]stubResp{
+		// The index advertises version 90 while the extension is installed at 100 —
+		// a PERSISTENT lag (not a transient one that a re-seed would resolve).
+		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":90}]`)},
+		"https://repo.test/repo/apk/one.apk":    {status: 200, body: []byte("APK-V90")},
+	}}
+	client := &seedClient{
+		fakeClient: &fakeClient{},
+		repos:      []string{repo},
+		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 100)},
+		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
+	}
+
+	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	if err != nil {
+		t.Fatalf("first SeedExtensions: %v", err)
+	}
+	if res1.Cached != 1 {
+		t.Fatalf("first pass Cached = %d, want 1", res1.Cached)
+	}
+	// The bytes are cached under the INDEX version (90); the row records both the
+	// index version and the INSTALLED version (100) as the change-detector.
+	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName("pkg.one")).OnlyX(ctx)
+	if row.VersionCode != 90 {
+		t.Errorf("VersionCode = %d, want 90 (index version of the cached bytes)", row.VersionCode)
+	}
+	if row.InstalledVersionCode != 100 {
+		t.Errorf("InstalledVersionCode = %d, want 100 (installed version at cache time)", row.InstalledVersionCode)
+	}
+	firstCalls := stub.callCount()
+
+	// SECOND seed, installed version UNCHANGED (still 100). This is the boot that
+	// the old `<=`-against-index-version bug re-downloaded: it must now SKIP with
+	// zero http calls (the loop is gone).
+	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	if err != nil {
+		t.Fatalf("second SeedExtensions: %v", err)
+	}
+	if res2.Cached != 0 || res2.Gaps != 0 {
+		t.Errorf("second pass Result = %+v, want Cached:0 Gaps:0 (no refetch loop)", res2)
+	}
+	if extra := stub.callCount() - firstCalls; extra != 0 {
+		t.Errorf("second pass made %d http calls, want 0 (index lagging installed must not loop)", extra)
 	}
 }
 

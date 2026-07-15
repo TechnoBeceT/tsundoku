@@ -78,6 +78,27 @@ func (_u *HarvestedExtensionUpdate) AddVersionCode(v int) *HarvestedExtensionUpd
 	return _u
 }
 
+// SetInstalledVersionCode sets the "installed_version_code" field.
+func (_u *HarvestedExtensionUpdate) SetInstalledVersionCode(v int) *HarvestedExtensionUpdate {
+	_u.mutation.ResetInstalledVersionCode()
+	_u.mutation.SetInstalledVersionCode(v)
+	return _u
+}
+
+// SetNillableInstalledVersionCode sets the "installed_version_code" field if the given value is not nil.
+func (_u *HarvestedExtensionUpdate) SetNillableInstalledVersionCode(v *int) *HarvestedExtensionUpdate {
+	if v != nil {
+		_u.SetInstalledVersionCode(*v)
+	}
+	return _u
+}
+
+// AddInstalledVersionCode adds value to the "installed_version_code" field.
+func (_u *HarvestedExtensionUpdate) AddInstalledVersionCode(v int) *HarvestedExtensionUpdate {
+	_u.mutation.AddInstalledVersionCode(v)
+	return _u
+}
+
 // SetVersionName sets the "version_name" field.
 func (_u *HarvestedExtensionUpdate) SetVersionName(v string) *HarvestedExtensionUpdate {
 	_u.mutation.SetVersionName(v)
@@ -206,6 +227,12 @@ func (_u *HarvestedExtensionUpdate) sqlSave(ctx context.Context) (_node int, err
 	if value, ok := _u.mutation.AddedVersionCode(); ok {
 		_spec.AddField(harvestedextension.FieldVersionCode, field.TypeInt, value)
 	}
+	if value, ok := _u.mutation.InstalledVersionCode(); ok {
+		_spec.SetField(harvestedextension.FieldInstalledVersionCode, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedInstalledVersionCode(); ok {
+		_spec.AddField(harvestedextension.FieldInstalledVersionCode, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.VersionName(); ok {
 		_spec.SetField(harvestedextension.FieldVersionName, field.TypeString, value)
 	}
@@ -295,6 +322,27 @@ func (_u *HarvestedExtensionUpdateOne) SetNillableVersionCode(v *int) *Harvested
 // AddVersionCode adds value to the "version_code" field.
 func (_u *HarvestedExtensionUpdateOne) AddVersionCode(v int) *HarvestedExtensionUpdateOne {
 	_u.mutation.AddVersionCode(v)
+	return _u
+}
+
+// SetInstalledVersionCode sets the "installed_version_code" field.
+func (_u *HarvestedExtensionUpdateOne) SetInstalledVersionCode(v int) *HarvestedExtensionUpdateOne {
+	_u.mutation.ResetInstalledVersionCode()
+	_u.mutation.SetInstalledVersionCode(v)
+	return _u
+}
+
+// SetNillableInstalledVersionCode sets the "installed_version_code" field if the given value is not nil.
+func (_u *HarvestedExtensionUpdateOne) SetNillableInstalledVersionCode(v *int) *HarvestedExtensionUpdateOne {
+	if v != nil {
+		_u.SetInstalledVersionCode(*v)
+	}
+	return _u
+}
+
+// AddInstalledVersionCode adds value to the "installed_version_code" field.
+func (_u *HarvestedExtensionUpdateOne) AddInstalledVersionCode(v int) *HarvestedExtensionUpdateOne {
+	_u.mutation.AddInstalledVersionCode(v)
 	return _u
 }
 
@@ -455,6 +503,12 @@ func (_u *HarvestedExtensionUpdateOne) sqlSave(ctx context.Context) (_node *Harv
 	}
 	if value, ok := _u.mutation.AddedVersionCode(); ok {
 		_spec.AddField(harvestedextension.FieldVersionCode, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.InstalledVersionCode(); ok {
+		_spec.SetField(harvestedextension.FieldInstalledVersionCode, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedInstalledVersionCode(); ok {
+		_spec.AddField(harvestedextension.FieldInstalledVersionCode, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.VersionName(); ok {
 		_spec.SetField(harvestedextension.FieldVersionName, field.TypeString, value)
