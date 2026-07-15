@@ -423,10 +423,11 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 // Stop() with a nil check.
 //
 // In BOTH modes, once the engine is reachable it also launches the one-shot
-// engine-topology seed (enginetopo.RunSeed) in a detached, non-blocking
-// background goroutine — see startEngineTopoSeed. The seed can never delay the
-// HTTP server or the tickers (it is a fire-and-forget goroutine, reachability-
-// gated, panic-safe, and idempotent).
+// engine-topology reconcile + seed (enginetopo.Reconcile then
+// enginetopo.RunSeed) in a detached, non-blocking background goroutine — see
+// startEngineTopo. Neither can ever delay the HTTP server or the tickers (it
+// is a fire-and-forget goroutine, reachability-gated, panic-safe, and
+// idempotent).
 func startSuwayomiEngine(
 	ctx context.Context,
 	cfg *config.Config,
@@ -453,7 +454,7 @@ func startSuwayomiEngine(
 		runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 		runner.StartExtensionCheck(ctx, swClient)
 		runner.StartWarmup(ctx, warmupSvc)
-		startEngineTopoSeed(ctx, engineClient, entClient, apkStore)
+		startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc)
 	}
 
 	if cfg.Suwayomi.IsExternal() {
@@ -483,31 +484,109 @@ func startSuwayomiEngine(
 	return pm
 }
 
-// startEngineTopoSeed launches the one-shot engine-topology seed
-// (enginetopo.RunSeed) in a detached, non-blocking background goroutine. It is
-// called from startTickers, so it runs at the same "engine is now reachable"
-// point the recurring tickers do — after pm.Start in embedded mode, immediately
-// in external mode. RunSeed owns the safety guarantees (reachability probe,
-// per-pass fault isolation, panic recovery, idempotency); this wrapper only
-// detaches it onto a goroutine so a slow or failing seed can never delay boot.
-// http.Get is the production repo-index/apk fetcher.
+// startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
+// (enginetopo.Reconcile, DB->engine PROVISION) then SEED (enginetopo.RunSeed,
+// engine->DB CAPTURE) — in that order, in a single detached, non-blocking
+// background goroutine. It is called from startTickers, so it runs at the
+// same "engine is now reachable" point the recurring tickers do — after
+// pm.Start in embedded mode, immediately in external mode. http.Get is the
+// production repo-index/apk fetcher.
+//
+// ORDER MATTERS: Reconcile runs FIRST because it is what makes a freshly-
+// started/wiped/swapped engine-host USABLE — it installs the library's
+// required extensions (from the reachable repos), pushes the durable source
+// preferences, and pushes Tsundoku's own FlareSolverr/SOCKS config, all read
+// from Tsundoku's DB. Only after that does RunSeed's capture passes make
+// sense: on a genuinely fresh engine, running RunSeed alone first would
+// capture nothing (the engine is empty) and never provision it — Reconcile is
+// the recovery step a DEPLOYED update (prod-on-old-engine -> a new,
+// empty engine-host image) needs to end up matching the existing library.
+// Reconcile is IDEMPOTENT (an in-sync engine gets zero drift-driven
+// mutations — see ReconcileResult.InSync), so unlike a migration it is safe
+// to run this way on EVERY boot, not just a first/fresh one — this is the
+// self-healing recovery model (QCAT-245/250), not a one-time bootstrap.
+//
+// Both passes are detached onto ONE goroutine (not two) so Reconcile
+// deterministically finishes provisioning before RunSeed starts capturing —
+// running them concurrently could race a RunSeed capture against an
+// in-flight Reconcile install/push. Neither call can delay the HTTP server or
+// the tickers, which have already started by the time this goroutine is
+// launched.
 //
 // (QCAT-253, P2 Suwayomi-removal slice 5): targets engineClient
 // (internal/sourceengine) now, not the Suwayomi client — the seed's repo/
 // extension/preference passes are engine-agnostic capture. The retired
-// SeriesProvider.url backfill and engine-config gap-fill passes (and the
-// settingsSvc param they alone needed) are gone — see enginetopo.RunSeed's
-// doc comment.
-func startEngineTopoSeed(
+// SeriesProvider.url backfill and engine-config gap-fill seed are gone — see
+// enginetopo.RunSeed's doc comment. (P2 slice 7): settingsSvc is threaded
+// back in here — RunSeed itself still doesn't need it, but Reconcile does (it
+// satisfies enginetopo.ConfigProvider, the FlareSolverr/SOCKS push source).
+func startEngineTopo(
 	ctx context.Context,
 	engineClient sourceengine.Client,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
+	settingsSvc *settings.Service,
 ) {
-	go enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
-		Client:  engineClient,
-		DB:      entClient,
-		Cache:   apkStore,
-		HTTPGet: http.Get,
-	})
+	go func() {
+		runEngineTopoReconcile(ctx, engineClient, entClient, apkStore, settingsSvc)
+		enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
+			Client:  engineClient,
+			DB:      entClient,
+			Cache:   apkStore,
+			HTTPGet: http.Get,
+		})
+	}()
+}
+
+// runEngineTopoReconcile runs ONE enginetopo.Reconcile pass, mirroring
+// RunSeed's own safety contract (see its doc comment) since this is the other
+// half of the same detached boot goroutine:
+//   - REACHABILITY-GATED: probes the engine (Sources) first; an unreachable
+//     engine skips the pass entirely (Reconcile itself performs no such probe
+//     — it trusts the caller to gate it, exactly like RunSeed gates its own
+//     passes) rather than emitting a wall of per-call errors against a dead
+//     engine. RunSeed performs its own, separate probe right after, so a
+//     transient reachability flap between the two calls only skips whichever
+//     half it hit — both retry on the next boot.
+//   - PANIC-SAFE: a deferred recover turns any bug in Reconcile (or in this
+//     wrapper) into a logged error, never a crashed process.
+//   - LOGGED: the ReconcileResult is logged at Info (repos_set,
+//     extensions_installed, prefs_applied, config_applied, gaps_count) so an
+//     operator can see exactly what a boot provisioned; each individual gap
+//     (an isolated per-item failure — see ReconcileResult.Gaps) is ALSO
+//     logged at Warn so none is buried inside a count.
+func runEngineTopoReconcile(
+	ctx context.Context,
+	engineClient sourceengine.Client,
+	entClient *ent.Client,
+	apkStore *apkcache.Store,
+	settingsSvc *settings.Service,
+) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.ErrorContext(ctx, "enginetopo: reconcile panicked — recovered", "panic", r)
+		}
+	}()
+
+	if _, err := engineClient.Sources(ctx); err != nil {
+		slog.WarnContext(ctx, "enginetopo: engine unreachable, skipping reconcile (a later boot retries)", "err", err)
+		return
+	}
+
+	res, err := enginetopo.Reconcile(ctx, engineClient, entClient, apkStore, settingsSvc)
+	if err != nil {
+		slog.ErrorContext(ctx, "enginetopo: reconcile failed", "err", err)
+		return
+	}
+	slog.InfoContext(ctx, "enginetopo: reconcile complete",
+		"in_sync", res.InSync,
+		"repos_set", res.ReposSet,
+		"extensions_installed", res.ExtensionsInstalled,
+		"prefs_applied", res.PrefsApplied,
+		"config_applied", res.ConfigApplied,
+		"gaps_count", len(res.Gaps),
+	)
+	for _, gap := range res.Gaps {
+		slog.WarnContext(ctx, "enginetopo: reconcile gap", "err", gap)
+	}
 }

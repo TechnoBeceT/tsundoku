@@ -201,6 +201,37 @@ func TestSeedSourcePreferences_PerSourceFailureSkipsButContinues(t *testing.T) {
 	}
 }
 
+// TestSeedSourcePreferences_MultiSelectCanonicalizedSorted proves a
+// MultiSelect preference's captured value is SORTED before being stored,
+// regardless of the engine's native (unstable, Set<String>-backed) order —
+// the multiselect set-order canonicalization hardening carried forward from
+// the opus review of slice 5. A later reconcile pass's live-side re-capture
+// of the SAME set (in yet another order) then encodes byte-identically to
+// this stored row, so prefInSync recognizes it as in-sync (see
+// TestReconcile_MultiSelectOrderInsensitiveInSync in reconcile_test.go).
+func TestSeedSourcePreferences_MultiSelectCanonicalizedSorted(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	seedProvider(ctx, t, client, "Solo Leveling", "42", 1001)
+
+	fc := sourceenginefake.New(sourceenginefake.WithPreferences(42, []sourceengine.Preference{
+		{Type: sourceengine.PreferenceMultiSelect, Key: "blockedGroups", CurrentValue: []string{"GroupC", "GroupA", "GroupB"}},
+	}))
+
+	if _, err := enginetopo.SeedSourcePreferences(ctx, fc, client); err != nil {
+		t.Fatalf("SeedSourcePreferences: %v", err)
+	}
+
+	row := client.SourcePreference.Query().
+		Where(entsourcepreference.SourceID(42), entsourcepreference.Key("blockedGroups")).
+		OnlyX(ctx)
+	const want = `["GroupA","GroupB","GroupC"]`
+	if row.Value != want {
+		t.Errorf("stored value = %q, want sorted %q", row.Value, want)
+	}
+}
+
 // TestSeedSourcePreferences_SkipsNonNumericProvider proves a disk-origin
 // SeriesProvider row (provider stores a display NAME, not a numeric engine
 // source id) is silently skipped — no client call, not counted as a failure.

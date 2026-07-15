@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
@@ -328,6 +329,20 @@ func reconcileExtensions(
 // (a stored value that fails to parse for the live pref's kind) is still
 // isolated per-key BEFORE the batch is built, so one unparseable stored value
 // never blocks its sibling keys on the same source from being pushed.
+//
+// ACCEPTED TRADE-OFF — a network/validation-level SetPreferences failure (as
+// opposed to a pre-batch coercion failure) is isolated per-SOURCE, not
+// per-KEY: sourceengine.Client.SetPreferences returns exactly ONE error for
+// the whole call, so Reconcile has no way to see whether an engine that
+// validates keys individually still partially applied some of them before
+// reporting the failure — forcing a per-key push isn't warranted by that
+// uncertainty alone. This is safe rather than lossy because every pass reads
+// LIVE preference values fresh: whatever a partial-apply engine actually
+// accepted shows up in-sync on the NEXT pass and stops being retried, while a
+// genuinely still-drifted key keeps being retried (and keeps gapping) until
+// its underlying issue is fixed — nothing vanishes across passes, it is at
+// worst deferred one boot. See
+// TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent.
 func reconcilePrefs(ctx context.Context, client sourceengine.Client, db *ent.Client) (int, []error, error) {
 	rows, err := db.SourcePreference.Query().All(ctx)
 	if err != nil {
@@ -415,9 +430,54 @@ func buildSourceChanges(
 // the comparison is symmetric with how the value was stored. A live pref with no
 // current value set (encode ok=false) is never "in sync" with a stored value, so
 // the stored value is (re)pushed.
+//
+// MULTISELECT IS ORDER-INSENSITIVE. The engine's backing value is a
+// Set<String> with no stable iteration order, so a byte-for-byte JSON-array
+// string compare would treat a merely-reordered (semantically unchanged) set
+// as drifted and re-push it EVERY reconcile pass. encodePreferenceValue
+// already sorts a freshly-captured value (see its doc comment), which covers
+// the live side here — but the STORED side may be an older row captured
+// before that canonicalization (or written any other way), so both sides are
+// re-canonicalized here via multiSelectSetsEqual rather than trusting the
+// write path alone.
 func prefInSync(storedValue string, live sourceengine.Preference) bool {
 	liveValue, _, ok := encodePreferenceValue(live)
-	return ok && storedValue == liveValue
+	if !ok {
+		return false
+	}
+	if live.Type == sourceengine.PreferenceMultiSelect {
+		return multiSelectSetsEqual(storedValue, liveValue)
+	}
+	return storedValue == liveValue
+}
+
+// multiSelectSetsEqual reports whether two JSON-array-encoded MultiSelect
+// values hold the SAME SET of strings, ignoring order (see prefInSync's doc
+// comment for why). Malformed JSON on either side is never "in sync" — it
+// falls through to a re-push, which self-heals on the next successful
+// capture rather than getting stuck.
+func multiSelectSetsEqual(storedJSON, liveJSON string) bool {
+	stored, err := sortedStringSet(storedJSON)
+	if err != nil {
+		return false
+	}
+	live, err := sortedStringSet(liveJSON)
+	if err != nil {
+		return false
+	}
+	return slices.Equal(stored, live)
+}
+
+// sortedStringSet JSON-decodes raw as a []string and returns a sorted copy,
+// leaving the input untouched.
+func sortedStringSet(raw string) ([]string, error) {
+	var list []string
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return nil, err
+	}
+	sorted := append([]string(nil), list...)
+	slices.Sort(sorted)
+	return sorted, nil
 }
 
 // coercePrefValue REVERSES encodePreferenceValue: it turns a stored string value

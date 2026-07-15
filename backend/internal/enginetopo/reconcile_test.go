@@ -3,6 +3,7 @@ package enginetopo_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -20,21 +21,38 @@ import (
 
 // reconcileClient embeds the shared sourceengine fake and adds PER-ITEM error
 // injection the base fake can't express (its WithError is blanket-per-method,
-// not per-argument): a per-pkgName InstallExtension failure and a per-sourceID
-// SetPreferences failure, both needed to prove fault ISOLATION (one bad
-// item/source must not block its siblings). It also records the config actually
-// applied via SetFlareSolverr/SetSocks (the base fake returns it but Reconcile
-// itself discards the return value), so tests can assert the pushed config
-// without a redundant extra call that would corrupt CallCount assertions.
+// not per-argument): a per-pkgName InstallExtension failure, a per-sourceID
+// SetPreferences failure, and a per-(sourceID,key) SetPreferences REJECTION —
+// all needed to prove fault ISOLATION (one bad item/source/key must not block
+// its siblings). It also records the config actually applied via
+// SetFlareSolverr/SetSocks (the base fake returns it but Reconcile itself
+// discards the return value), so tests can assert the pushed config without a
+// redundant extra call that would corrupt CallCount assertions.
 type reconcileClient struct {
 	*sourceenginefake.Client
 
 	installErr  map[string]error // per-pkgName InstallExtension failure
-	setPrefsErr map[int64]error  // per-sourceID SetPreferences failure
+	setPrefsErr map[int64]error  // per-sourceID (whole-call) SetPreferences failure
+
+	// rejectKeys models an engine that validates each key in a
+	// SetPreferences batch INDEPENDENTLY: it PARTIALLY applies every
+	// accepted key (see SetPreferences below) before returning ONE
+	// batch-level error naming the rejected key(s) — sourceengine.Client's
+	// SetPreferences has no per-key result, only a single error for the
+	// whole call, so this is the sharpest fake extension that can prove a
+	// rejected sibling key does not silently drop an ACCEPTED sibling key's
+	// intent. See TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent.
+	rejectKeys map[int64]map[string]bool
 
 	mu               sync.Mutex
 	lastFlareSolverr sourceengine.FlareSolverrConfig
 	lastSocks        sourceengine.SocksConfig
+	// lastBatchKeys records the sorted key set Reconcile attempted to push
+	// for a source on its MOST RECENT SetPreferences call, regardless of
+	// whether that call ultimately succeeded — lets a test prove exactly
+	// which keys were IN a given pass's batch (e.g. that an already-in-sync
+	// key is excluded from a LATER pass's batch entirely).
+	lastBatchKeys map[int64][]string
 }
 
 func (c *reconcileClient) InstallExtension(ctx context.Context, pkgName, apkURL string) ([]sourceengine.Extension, error) {
@@ -45,10 +63,51 @@ func (c *reconcileClient) InstallExtension(ctx context.Context, pkgName, apkURL 
 }
 
 func (c *reconcileClient) SetPreferences(ctx context.Context, sourceID int64, changes map[string]any) ([]sourceengine.Preference, error) {
+	c.recordBatchKeys(sourceID, changes)
 	if err, ok := c.setPrefsErr[sourceID]; ok {
 		return nil, err
 	}
+	if bad := c.rejectKeys[sourceID]; len(bad) > 0 {
+		accepted := make(map[string]any, len(changes))
+		var rejected []string
+		for k, v := range changes {
+			if bad[k] {
+				rejected = append(rejected, k)
+				continue
+			}
+			accepted[k] = v
+		}
+		if len(rejected) > 0 {
+			if len(accepted) > 0 {
+				// Partial apply: push the accepted keys straight through to
+				// the embedded fake before surfacing the batch-level error
+				// for the rejected one(s) — modelling an engine that
+				// validates independently rather than atomically discarding
+				// the whole call.
+				if _, err := c.Client.SetPreferences(ctx, sourceID, accepted); err != nil {
+					return nil, err
+				}
+			}
+			return nil, fmt.Errorf("source %d rejected key(s) %v", sourceID, rejected)
+		}
+	}
 	return c.Client.SetPreferences(ctx, sourceID, changes)
+}
+
+// recordBatchKeys stores the sorted key set of a SetPreferences call for
+// sourceID into lastBatchKeys.
+func (c *reconcileClient) recordBatchKeys(sourceID int64, changes map[string]any) {
+	keys := make([]string, 0, len(changes))
+	for k := range changes {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	c.mu.Lock()
+	if c.lastBatchKeys == nil {
+		c.lastBatchKeys = map[int64][]string{}
+	}
+	c.lastBatchKeys[sourceID] = keys
+	c.mu.Unlock()
 }
 
 func (c *reconcileClient) SetFlareSolverr(ctx context.Context, patch sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
@@ -712,5 +771,176 @@ func assertSourcePref(ctx context.Context, t *testing.T, client *reconcileClient
 	prefs, err := client.Preferences(ctx, sourceID)
 	if err != nil || len(prefs) != 1 || prefs[0].CurrentValue != want {
 		t.Errorf("source %d after reconcile = %+v (err=%v), want nsfw=%v (%s)", sourceID, prefs, err, want, reason)
+	}
+}
+
+// TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent is
+// the carried-forward hardening item from the opus review of slice 5, now
+// that Reconcile runs live every boot: ONE key ("quality") in source 111's
+// drifted-preference batch is rejected by the engine while the SIBLING key
+// ("nsfw") in the SAME batch is valid. The batching design (see
+// reconcilePrefs's doc comment) means Reconcile itself sees only ONE
+// call-level error for the whole batch — it cannot tell whether the engine
+// partially applied "nsfw" before reporting the failure. This test proves the
+// documented ACCEPTED TRADE-OFF is actually safe, across TWO passes:
+//  1. Pass 1: both keys drift; ONE batched SetPreferences call is attempted;
+//     the engine (this reconcileClient, configured as a partial-apply engine
+//     via rejectKeys) accepts "nsfw" and rejects "quality" — the whole call
+//     still reports one gap, but "nsfw"'s value IS on the engine afterwards
+//     (not silently dropped).
+//  2. Pass 2 (the next boot): "nsfw" is now in sync and is excluded from the
+//     batch entirely (never re-attempted — its intent was not lost); only the
+//     still-drifted "quality" is retried, and — its underlying issue
+//     unchanged — gaps again. Nothing vanishes across passes; a fixed-later
+//     "quality" would converge exactly the same way "nsfw" did.
+func TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	seedStoredPref(ctx, t, db, 111, "nsfw", "true", sourceengine.PreferenceCheckBox) // valid, engine accepts
+	seedStoredPref(ctx, t, db, 111, "quality", "high", sourceengine.PreferenceList)  // engine rejects every pass
+
+	cfg := baseConfig()
+
+	client := &reconcileClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},
+			{Type: sourceengine.PreferenceList, Key: "quality", CurrentValue: "low"},
+		})),
+		rejectKeys: map[int64]map[string]bool{111: {"quality": true}},
+	}
+
+	// Pass 1: both keys drift together in one batch; the engine accepts
+	// "nsfw" and rejects "quality".
+	res1 := reconcileMustSucceed(ctx, t, client, db, cache, cfg)
+	assertMixedBatchPass(t, client, res1, []string{"nsfw", "quality"}, "pass 1")
+	assertMixedBatchPrefs(ctx, t, client, true, "low", "pass 1: nsfw accepted, quality rejected+unchanged")
+
+	// Pass 2 (the next boot): "nsfw" is already in sync and is excluded from
+	// the batch entirely — its intent was not lost — while "quality" is
+	// retried alone and gaps again (its underlying issue is unchanged).
+	res2 := reconcileMustSucceed(ctx, t, client, db, cache, cfg)
+	assertMixedBatchPass(t, client, res2, []string{"quality"}, "pass 2")
+	assertMixedBatchPrefs(ctx, t, client, true, "low", "pass 2: nsfw still applied, quality still rejected+unchanged")
+}
+
+// reconcileMustSucceed runs one Reconcile pass and fails the test if it
+// returns a hard error — every pass in
+// TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent
+// expects the rejection isolated as a gap, never a hard error. Split out
+// purely to keep the test bodies' cyclomatic complexity within the project's
+// cyclop gate.
+func reconcileMustSucceed(ctx context.Context, t *testing.T, client sourceengine.Client, db *ent.Client, cache *apkcache.Store, cfg enginetopo.ConfigProvider) enginetopo.ReconcileResult {
+	t.Helper()
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
+	if err != nil {
+		t.Fatalf("Reconcile returned hard error, want the rejection isolated as a gap: %v", err)
+	}
+	return res
+}
+
+// assertMixedBatchPass checks one pass's ReconcileResult + the exact
+// SetPreferences batch keys attempted, for
+// TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent.
+// Split out purely to keep the test bodies' cyclomatic complexity within the
+// project's cyclop gate.
+func assertMixedBatchPass(t *testing.T, client *reconcileClient, res enginetopo.ReconcileResult, wantBatchKeys []string, label string) {
+	t.Helper()
+	if len(res.Gaps) != 1 || !strings.Contains(res.Gaps[0].Error(), "111") {
+		t.Fatalf("%s Gaps = %v, want exactly 1 naming source 111", label, res.Gaps)
+	}
+	if res.PrefsApplied != 0 {
+		t.Errorf("%s PrefsApplied = %d, want 0 (the whole batch call reported an error)", label, res.PrefsApplied)
+	}
+	if got := client.lastBatchKeys[111]; !slices.Equal(got, wantBatchKeys) {
+		t.Errorf("%s batch keys = %v, want %v", label, got, wantBatchKeys)
+	}
+}
+
+// assertMixedBatchPrefs checks source 111's "nsfw" and "quality" preference
+// values after a TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent
+// pass. Split out purely to keep the test bodies' cyclomatic complexity
+// within the project's cyclop gate.
+func assertMixedBatchPrefs(ctx context.Context, t *testing.T, client *reconcileClient, wantNsfw bool, wantQuality, reason string) {
+	t.Helper()
+	prefs, err := client.Preferences(ctx, 111)
+	if err != nil {
+		t.Fatalf("Preferences: %v", err)
+	}
+	byKey := make(map[string]sourceengine.Preference, len(prefs))
+	for _, p := range prefs {
+		byKey[p.Key] = p
+	}
+	if v, ok := byKey["nsfw"].CurrentValue.(bool); !ok || v != wantNsfw {
+		t.Errorf("%s: nsfw = %v, want %v", reason, byKey["nsfw"].CurrentValue, wantNsfw)
+	}
+	if v, ok := byKey["quality"].CurrentValue.(string); !ok || v != wantQuality {
+		t.Errorf("%s: quality = %v, want %q", reason, byKey["quality"].CurrentValue, wantQuality)
+	}
+}
+
+// TestReconcile_MultiSelectOrderInsensitiveInSync proves the multiselect
+// set-order canonicalization hardening (carried forward from the opus review
+// of slice 5): a stored MultiSelect value and the engine's live value hold
+// the SAME SET of strings in a DIFFERENT order (the engine's backing
+// Set<String> has no stable iteration order) — this must be recognized as
+// in-sync, not re-pushed every single reconcile pass.
+func TestReconcile_MultiSelectOrderInsensitiveInSync(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	seedStoredPref(ctx, t, db, 111, "blocked", `["A","B","C"]`, sourceengine.PreferenceMultiSelect)
+
+	cfg := baseConfig()
+	client := &reconcileClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+			// Same set as stored, reordered.
+			{Type: sourceengine.PreferenceMultiSelect, Key: "blocked", CurrentValue: []string{"C", "A", "B"}},
+		})),
+	}
+
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.PrefsApplied != 0 {
+		t.Errorf("PrefsApplied = %d, want 0 (same set, different order = in sync)", res.PrefsApplied)
+	}
+	if client.CallCount("SetPreferences") != 0 {
+		t.Errorf("SetPreferences called %d times, want 0", client.CallCount("SetPreferences"))
+	}
+	if !res.InSync {
+		t.Errorf("InSync = false, want true; Result=%+v", res)
+	}
+}
+
+// TestReconcile_MultiSelectDifferentSetStillDrifts proves the
+// canonicalization is a SET compare, not a no-op — a genuinely different set
+// (not just reordered) still drifts and is pushed.
+func TestReconcile_MultiSelectDifferentSetStillDrifts(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	seedStoredPref(ctx, t, db, 111, "blocked", `["A","B"]`, sourceengine.PreferenceMultiSelect)
+
+	cfg := baseConfig()
+	client := &reconcileClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceMultiSelect, Key: "blocked", CurrentValue: []string{"A", "C"}},
+		})),
+	}
+
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.PrefsApplied != 1 {
+		t.Errorf("PrefsApplied = %d, want 1 (a genuinely different set must still drift)", res.PrefsApplied)
+	}
+	if client.CallCount("SetPreferences") != 1 {
+		t.Errorf("SetPreferences called %d times, want 1", client.CallCount("SetPreferences"))
 	}
 }

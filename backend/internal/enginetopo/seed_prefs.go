@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -120,13 +121,24 @@ func SeedSourcePreferences(ctx context.Context, client sourceengine.Client, db *
 //   - List / EditText         → the string as-is (this is the path a
 //     plaintext password preference takes — see the SECURITY note on
 //     SeedSourcePreferences).
-//   - MultiSelect             → a JSON array string (e.g. `["a","b"]`).
+//   - MultiSelect             → a SORTED JSON array string (e.g. `["a","b"]`).
 //
 // CurrentValue arrives already JSON-decoded (the engine host wire-encodes it
 // as its natural JSON type), so a bool/string/[]string type assertion is
 // enough — no further parsing. A []string CANNOT arrive as-is from
 // encoding/json (JSON arrays decode into []any), so MultiSelect additionally
 // accepts []any and coerces each element to a string.
+//
+// MULTISELECT ORDER CANONICALIZATION: the engine's backing value is a
+// Set<String> with no stable iteration order, so the list is SORTED before
+// encoding — otherwise a merely-reordered (semantically unchanged) set would
+// encode to a different JSON string on every capture. This function is the
+// ONE place both origins of a MultiSelect's encoded string go through — the
+// boot seed's write here, and reconcile.go's prefInSync live-side compare —
+// so sorting here alone keeps a freshly-captured value canonical on both
+// sides; prefInSync additionally re-sorts the STORED side too, so an older
+// row captured before this canonicalization still compares correctly (see
+// its doc comment).
 func encodePreferenceValue(p sourceengine.Preference) (value string, valueType string, ok bool) {
 	switch p.Type {
 	case sourceengine.PreferenceCheckBox, sourceengine.PreferenceSwitchCompat:
@@ -146,7 +158,9 @@ func encodePreferenceValue(p sourceengine.Preference) (value string, valueType s
 		if !ok {
 			return "", "", false
 		}
-		encoded, err := json.Marshal(list)
+		sorted := append([]string(nil), list...)
+		slices.Sort(sorted)
+		encoded, err := json.Marshal(sorted)
 		if err != nil {
 			// Structurally unreachable: a []string always marshals.
 			return "", "", false
