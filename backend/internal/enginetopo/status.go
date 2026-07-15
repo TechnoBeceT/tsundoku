@@ -79,12 +79,16 @@ func TopologyStatus(ctx context.Context, db *ent.Client) (Status, error) {
 		Where(entharvestedextension.ApkCached(true)).Count(ctx); err != nil {
 		return Status{}, fmt.Errorf("enginetopo.TopologyStatus: count cached extensions: %w", err)
 	}
+	// Load the live-source universe ONCE and share it across all three
+	// source-scoped counts (total, prefs-captured, seed-outcomes), so a count can
+	// never exceed SourcesTotal — a removed provider's lingering SourcePreference
+	// or SourceSeedState rows are uniformly excluded.
 	liveIDs, err := liveNumericSources(ctx, db)
 	if err != nil {
 		return Status{}, err
 	}
 	s.SourcesTotal = len(liveIDs)
-	if s.SourcesPrefsCaptured, err = countSourcesWithPrefs(ctx, db); err != nil {
+	if s.SourcesPrefsCaptured, err = countSourcesWithPrefs(ctx, db, liveIDs); err != nil {
 		return Status{}, err
 	}
 	if err = computeSeedOutcomes(ctx, db, liveIDs, &s); err != nil {
@@ -126,9 +130,12 @@ func liveNumericSources(ctx context.Context, db *ent.Client) (map[int64]bool, er
 }
 
 // countSourcesWithPrefs counts the distinct source ids that carry at least one
-// SourcePreference row (a source the preference seed has reached). Only the
-// source_id column is selected — never the .Sensitive() value column.
-func countSourcesWithPrefs(ctx context.Context, db *ent.Client) (int, error) {
+// SourcePreference row AND are still a LIVE source (in live) — scoped to the same
+// universe as SourcesTotal, so a removed source whose SourcePreference rows linger
+// (they are not cleaned on RemoveProvider/DeleteSeries) never pushes
+// prefsCaptured above total. Only the source_id column is selected — never the
+// .Sensitive() value column.
+func countSourcesWithPrefs(ctx context.Context, db *ent.Client, live map[int64]bool) (int, error) {
 	ids, err := db.SourcePreference.Query().
 		Unique(true).
 		Select(entsourcepreference.FieldSourceID).
@@ -136,7 +143,13 @@ func countSourcesWithPrefs(ctx context.Context, db *ent.Client) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("enginetopo.TopologyStatus: query source-pref sources: %w", err)
 	}
-	return len(ids), nil
+	count := 0
+	for _, id := range ids {
+		if live[int64(id)] {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // computeSeedOutcomes fills SourcesReached / SourcesFailed / FailedSources on s,

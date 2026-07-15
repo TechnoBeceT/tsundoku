@@ -341,6 +341,40 @@ func TestSeedSourcePreferences_SeedStateSelfHeals(t *testing.T) {
 	}
 }
 
+// TestSeedSourcePreferences_DeterministicSourceName PINS the L3 stable-name pick:
+// when the SAME numeric source appears across SeriesProvider rows with DIVERGING
+// provider_name values, the recorded SourceSeedState.source_name is the
+// DETERMINISTIC choice (lexicographically smallest), never the nondeterministic
+// last row Postgres returned. Regressing to last-write-wins or flipping the
+// comparator would fail this.
+func TestSeedSourcePreferences_DeterministicSourceName(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	// Two live rows for the SAME numeric source "42", names out of sorted order.
+	seedNamedProvider(ctx, t, client, "Solo Leveling", "42", "Zeta Name")
+	seedNamedProvider(ctx, t, client, "Omniscient Reader", "42", "Alpha Name")
+
+	fc := &fakeClient{
+		prefsBySource: map[string][]suwayomi.SourcePreference{
+			"42": {{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(true)}},
+		},
+	}
+
+	if _, err := enginetopo.SeedSourcePreferences(ctx, fc, client); err != nil {
+		t.Fatalf("SeedSourcePreferences: %v", err)
+	}
+
+	// Exactly one seed-state row, its name the lexicographically smallest.
+	rows := client.SourceSeedState.Query().Where(entsourceseedstate.SourceID(42)).AllX(ctx)
+	if len(rows) != 1 {
+		t.Fatalf("got %d seed-state rows for source 42, want exactly 1", len(rows))
+	}
+	if rows[0].SourceName != "Alpha Name" {
+		t.Errorf("source_name = %q, want %q (deterministic smallest, not last-write-wins)", rows[0].SourceName, "Alpha Name")
+	}
+}
+
 // TestSeedSourcePreferences_SeedStateWriteFailureIsNonFatal PINS the best-effort
 // contract: if the SourceSeedState upsert itself fails, the seed's CORE job is
 // unaffected. It forces ONLY the seed-state write to fail — by DROPping the
