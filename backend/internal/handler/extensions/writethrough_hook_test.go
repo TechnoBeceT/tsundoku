@@ -19,7 +19,8 @@ import (
 	handler "github.com/technobecet/tsundoku/internal/handler/extensions"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
-	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
 
 // durableEnv is a test harness that wires the extensions handler to a REAL Ent
@@ -34,7 +35,7 @@ type durableEnv struct {
 
 // newDurableEnv builds a durableEnv over fc with a real testdb + a temp-dir apk
 // cache and the given httpGet, registering the mutating extension routes.
-func newDurableEnv(t *testing.T, fc *fakeClient, httpGet func(string) (*http.Response, error)) *durableEnv {
+func newDurableEnv(t *testing.T, fc *sourceenginefake.Client, httpGet func(string) (*http.Response, error)) *durableEnv {
 	t.Helper()
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
@@ -76,16 +77,21 @@ func serveRoutes(routes map[string]string) func(string) (*http.Response, error) 
 	}
 }
 
-// installableFake models a Suwayomi that has pkg.test.one available: SetExtensionState
-// succeeds and the post-mutation re-read reports it installed (installedFlip), with a
-// repo whose index the capture can resolve.
-func installableFake() *fakeClient {
-	ext := seededExt() // Repo = "https://repo.test/index.min.json"; PkgName = "pkg.test.one"
-	return &fakeClient{
-		exts:          []suwayomicli.Extension{ext},
-		installedFlip: true,
-		sources:       []suwayomicli.Source{{ID: "5"}},
-	}
+// installableFake models an engine host that has pkg.test.one available:
+// InstallExtension succeeds (the base fake flips IsInstalled on its own
+// stored copy) and the seeded extension's Sources are embedded directly (no
+// separate lookup call, unlike the retired Suwayomi shape) so the capture can
+// resolve source ids straight off the mutation's own response.
+func installableFake() *sourceenginefake.Client {
+	repo := "https://repo.test/index.min.json" // matches seededExt's RepoURL
+	return sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{
+		{
+			PkgName:     "pkg.test.one",
+			RepoURL:     &repo,
+			IsInstalled: false,
+			Sources:     []sourceengine.Source{{ID: 5}},
+		},
+	}))
 }
 
 // TestInstall_WritesThroughToDurableStore proves a successful install captures the

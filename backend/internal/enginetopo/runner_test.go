@@ -9,27 +9,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
-	"github.com/technobecet/tsundoku/internal/settings"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
-
-// runnerDefaults are the settings defaults the RunSeed engine-config pass writes
-// against — only the flaresolverr group is exercised, but a full-ish set keeps
-// the Service constructor honest.
-func runnerDefaults() settings.Defaults {
-	return settings.Defaults{
-		DownloadInterval:       15 * time.Minute,
-		RefreshInterval:        2 * time.Hour,
-		RefreshConcurrency:     4,
-		MaxRetries:             3,
-		RetryBackoff:           time.Minute,
-		StaleGraceDays:         14,
-		FlareSolverrTimeout:    60,
-		FlareSolverrSessionTTL: 15,
-		EngineSocksPort:        1080,
-		EngineSocksVersion:     5,
-	}
-}
 
 // runSeedInBackground runs RunSeed on its own goroutine and fails the test if it
 // does not return within the deadline — the "never blocks" half of the boot-
@@ -50,98 +32,63 @@ func runSeedInBackground(t *testing.T, ctx context.Context, deps enginetopo.Seed
 
 // TestRunSeed_EngineUnreachableSkips proves the reachability gate: when the
 // engine probe (Sources) fails, every pass is skipped (Skipped=true) and no seed
-// work is done — no MangaMeta call, no ServerSettings call — so a dead engine at
-// boot produces one warning, not a wall of per-row failures. It also proves the
-// goroutine returns (does not block) on the failure path.
+// work is done — no Preferences call — so a dead engine at boot produces one
+// warning, not a wall of per-row failures. It also proves the goroutine returns
+// (does not block) on the failure path.
 func TestRunSeed_EngineUnreachableSkips(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 
-	// One live provider that WOULD be backfilled if the passes ran.
+	// One live provider that WOULD be preference-seeded if the passes ran.
 	seedProvider(ctx, t, client, "Solo Leveling", "123", 42)
 
-	fc := &fakeClient{
-		sourcesErr: errors.New("connection refused"),
-		urls:       map[int]string{42: "https://x.test/manga"},
-	}
+	fc := sourceenginefake.New(sourceenginefake.WithError("Sources", errors.New("connection refused")))
 	deps := enginetopo.SeedDeps{
-		Client:   fc,
-		DB:       client,
-		Cache:    apkcache.New(t.TempDir()),
-		Settings: settings.NewService(client, runnerDefaults()),
-		HTTPGet:  nil, // never reached — Sources fails first
+		Client:  fc,
+		DB:      client,
+		Cache:   apkcache.New(t.TempDir()),
+		HTTPGet: nil, // never reached — Sources fails first
 	}
 
 	rep := runSeedInBackground(t, ctx, deps)
 	if !rep.Skipped {
 		t.Fatalf("report.Skipped = false, want true (engine unreachable)")
 	}
-	if rep.URLsFilled != 0 {
-		t.Errorf("URLsFilled = %d, want 0 (no pass should have run)", rep.URLsFilled)
-	}
-	if got := fc.callCount(42); got != 0 {
-		t.Errorf("MangaMeta calls = %d, want 0 (backfill must be skipped)", got)
+	if got := fc.CallCount("Preferences"); got != 0 {
+		t.Errorf("Preferences calls = %d, want 0 (every pass must be skipped)", got)
 	}
 }
 
-// TestRunSeed_RunsEveryPass proves the happy path invokes all four seed funcs:
-// the URL backfill fills a live provider, the preference seed captures a source
-// preference, and the engine-config seed writes the flaresolverr settings — all
-// panic-free and without blocking. (The extension pass runs against an
-// empty-repo/empty-extension fake, so it legitimately caches nothing.)
+// TestRunSeed_RunsEveryPass proves the happy path invokes both seed funcs: the
+// preference seed captures a source preference, and the extension pass runs
+// (against an empty-repo/empty-extension fake it legitimately caches nothing) —
+// all panic-free and without blocking.
 func TestRunSeed_RunsEveryPass(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 
 	seedProvider(ctx, t, client, "Solo Leveling", "123", 42)
 
-	fc := &fakeClient{
-		urls: map[int]string{42: "https://solo.test/manga"},
-		prefsBySource: map[string][]suwayomi.SourcePreference{
-			"123": {
-				{Type: suwayomi.PreferenceEditText, Position: 1, Key: "lang", CurrentString: stringPtr("en")},
-			},
-		},
-		serverSettings: suwayomi.SuwayomiSettings{
-			FlareSolverrEnabled:     true,
-			FlareSolverrURL:         "http://flaresolverr.test:8191",
-			FlareSolverrTimeout:     60,
-			FlareSolverrSessionName: "tsundoku",
-			FlareSolverrSessionTTL:  15,
-		},
-	}
-	settingsSvc := settings.NewService(client, runnerDefaults())
+	fc := sourceenginefake.New(sourceenginefake.WithPreferences(123, []sourceengine.Preference{
+		{Type: sourceengine.PreferenceEditText, Key: "lang", CurrentValue: "en"},
+	}))
 	deps := enginetopo.SeedDeps{
-		Client:   fc,
-		DB:       client,
-		Cache:    apkcache.New(t.TempDir()),
-		Settings: settingsSvc,
-		HTTPGet:  nil, // no repos/extensions on the fake ⇒ never invoked
+		Client:  fc,
+		DB:      client,
+		Cache:   apkcache.New(t.TempDir()),
+		HTTPGet: nil, // no repos/extensions on the fake ⇒ never invoked
 	}
 
 	rep := runSeedInBackground(t, ctx, deps)
 	if rep.Skipped {
 		t.Fatalf("report.Skipped = true, want false (engine reachable)")
 	}
-	if rep.URLsFilled != 1 {
-		t.Errorf("URLsFilled = %d, want 1 (backfill pass ran)", rep.URLsFilled)
-	}
 	if rep.PrefsSeeded != 1 {
 		t.Errorf("PrefsSeeded = %d, want 1 (preference pass ran)", rep.PrefsSeeded)
 	}
 
-	// The engine-config pass wrote the flaresolverr values into the settings
-	// overlay — proving SeedEngineConfig ran end-to-end.
-	if got := settingsSvc.FlareSolverrURL(ctx); got != "http://flaresolverr.test:8191" {
-		t.Errorf("FlareSolverrURL = %q, want the seeded value (engine-config pass must have run)", got)
-	}
-
-	// And the backfill actually persisted the url.
-	rows, err := client.SeriesProvider.Query().All(ctx)
-	if err != nil {
-		t.Fatalf("query providers: %v", err)
-	}
-	if len(rows) != 1 || rows[0].URL != "https://solo.test/manga" {
-		t.Errorf("provider url = %v, want it filled by the backfill pass", rows)
+	rows := client.SourcePreference.Query().AllX(ctx)
+	if len(rows) != 1 || rows[0].Key != "lang" {
+		t.Errorf("preference rows = %v, want one 'lang' row (preference pass persisted it)", rows)
 	}
 }

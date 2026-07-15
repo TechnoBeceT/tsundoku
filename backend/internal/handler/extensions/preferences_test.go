@@ -4,57 +4,79 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"reflect"
 	"testing"
 
 	handler "github.com/technobecet/tsundoku/internal/handler/extensions"
-	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
 
-// boolPtr / strPtr build pointer payloads for the preference fixtures.
-func boolPtr(b bool) *bool    { return &b }
-func strPtr(s string) *string { return &s }
+// The source id every prefsFake fixture below addresses its preferences under.
+const prefsSourceID int64 = 42
 
-// switchPref / listPref / multiPref are seed preferences covering the variants a
-// write can target (bool, string, string-array).
-func switchPref(pos int, current bool) suwayomicli.SourcePreference {
-	return suwayomicli.SourcePreference{
-		Type: suwayomicli.PreferenceSwitch, Position: pos, Key: "dataSaver",
-		Title: "Data saver", CurrentBool: boolPtr(current), DefaultBool: false,
+// switchPref / listPref / multiPref are seed preferences covering the variants
+// a write can target (bool, string, string-array), keyed rather than
+// positioned (QCAT-253, P2 Suwayomi-removal slice 5: the engine host's
+// SetPreferences is key-addressed).
+func switchPref(current bool) sourceengine.Preference {
+	return sourceengine.Preference{
+		Type: sourceengine.PreferenceSwitchCompat, Key: "dataSaver",
+		Title: "Data saver", CurrentValue: current, DefaultValue: false,
 	}
 }
 
-func listPref(pos int, current string) suwayomicli.SourcePreference {
-	return suwayomicli.SourcePreference{
-		Type: suwayomicli.PreferenceList, Position: pos, Key: "quality",
-		Title: "Quality", CurrentString: strPtr(current), DefaultString: strPtr(""),
+func listPref(current string) sourceengine.Preference {
+	return sourceengine.Preference{
+		Type: sourceengine.PreferenceList, Key: "quality",
+		Title: "Quality", CurrentValue: current, DefaultValue: "",
 		Entries: []string{"Original", "Low"}, EntryValues: []string{"", ".256.jpg"},
 	}
 }
 
-func multiPref(pos int, current []string) suwayomicli.SourcePreference {
-	return suwayomicli.SourcePreference{
-		Type: suwayomicli.PreferenceMultiSelect, Position: pos, Key: "rating",
-		Title: "Rating", CurrentStringList: current,
+func multiPref(current []string) sourceengine.Preference {
+	var cv any
+	if current != nil {
+		cv = current
+	}
+	return sourceengine.Preference{
+		Type: sourceengine.PreferenceMultiSelect, Key: "rating",
+		Title: "Rating", CurrentValue: cv,
 		Entries: []string{"Safe", "Erotica"}, EntryValues: []string{"safe", "erotica"},
 	}
 }
 
-// prefsFake builds a fakeClient seeded with one source and its preferences.
-func prefsFake() *fakeClient {
-	src := suwayomicli.Source{ID: "src-en", Name: "MangaDex", Lang: "en"}
-	return &fakeClient{
-		sources: []suwayomicli.Source{src},
-		prefsBySource: map[string][]suwayomicli.SourcePreference{
-			"src-en": {switchPref(0, true), listPref(1, ".256.jpg"), multiPref(2, []string{"safe"})},
-		},
+// prefsFake builds a sourceenginefake.Client seeded with one extension whose
+// single source (id 42) carries the three variant preferences above.
+func prefsFake() *sourceenginefake.Client {
+	return sourceenginefake.New(
+		sourceenginefake.WithExtensions([]sourceengine.Extension{
+			{PkgName: "pkg.test", Sources: []sourceengine.Source{{ID: prefsSourceID, Name: "MangaDex", Lang: "en"}}},
+		}),
+		sourceenginefake.WithPreferences(prefsSourceID, []sourceengine.Preference{
+			switchPref(true), listPref(".256.jpg"), multiPref([]string{"safe"}),
+		}),
+	)
+}
+
+// findDTOByKey returns the preference DTO whose Key matches key, failing the
+// test if absent.
+func findDTOByKey(t *testing.T, prefs []handler.SourcePreferenceDTO, key string) handler.SourcePreferenceDTO {
+	t.Helper()
+	for _, p := range prefs {
+		if p.Key == key {
+			return p
+		}
 	}
+	t.Fatalf("no preference with key %q in %+v", key, prefs)
+	return handler.SourcePreferenceDTO{}
 }
 
 // --- GET preferences ----------------------------------------------------------
 
-// TestPreferences_OK proves GET groups an extension's preferences by source and
-// maps every variant's typed currentValue/default to its natural JSON type.
+// TestPreferences_OK proves GET groups an extension's preferences by source
+// (resolved from Extensions()'s own embedded Sources — no separate lookup
+// call) and maps every variant's untyped currentValue/default to its natural
+// JSON type.
 func TestPreferences_OK(t *testing.T) {
 	env := newTestEnv(t, prefsFake())
 	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.test/preferences", "")
@@ -69,11 +91,8 @@ func TestPreferences_OK(t *testing.T) {
 		t.Fatalf("want 1 source group, got %d", len(got.Sources))
 	}
 	g := got.Sources[0]
-	if g.SourceID != "src-en" || g.SourceName != "MangaDex" || g.Lang != "en" {
+	if g.SourceID != "42" || g.SourceName != "MangaDex" || g.Lang != "en" {
 		t.Errorf("group identity mismatch: %+v", g)
-	}
-	if !g.Enabled {
-		t.Errorf("group.Enabled = false, want true (the seeded source carries no Disabled flag)")
 	}
 	if len(g.Preferences) != 3 {
 		t.Fatalf("want 3 preferences, got %d", len(g.Preferences))
@@ -81,44 +100,35 @@ func TestPreferences_OK(t *testing.T) {
 	assertVariantJSONTypes(t, g.Preferences)
 }
 
-// TestPreferences_SurfacesDisabled proves a disabled source's group reports
-// enabled=false in the GET response — the Configure dialog's per-language
-// Switch reads this field.
-func TestPreferences_SurfacesDisabled(t *testing.T) {
-	fc := prefsFake()
-	fc.sources[0].Disabled = true
-	env := newTestEnv(t, fc)
-	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.test/preferences", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Preferences: want 200, got %d (%s)", rec.Code, rec.Body.String())
+// assertVariantJSONTypes checks the seeded switch/list/multi preferences mapped
+// to their natural JSON types (bool / string + entries / array), addressed by
+// key.
+func assertVariantJSONTypes(t *testing.T, prefs []handler.SourcePreferenceDTO) {
+	t.Helper()
+	sw := findDTOByKey(t, prefs, "dataSaver")
+	if b, ok := sw.CurrentValue.(bool); !ok || !b {
+		t.Errorf("switch currentValue: want JSON true, got %v (%T)", sw.CurrentValue, sw.CurrentValue)
 	}
-	var got handler.SourcePreferencesBySourceDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
+	list := findDTOByKey(t, prefs, "quality")
+	if s, ok := list.CurrentValue.(string); !ok || s != ".256.jpg" {
+		t.Errorf("list currentValue: want \".256.jpg\", got %v", list.CurrentValue)
 	}
-	if len(got.Sources) != 1 || got.Sources[0].Enabled {
-		t.Fatalf("want 1 disabled (enabled=false) group, got %+v", got.Sources)
+	if len(list.EntryValues) != 2 {
+		t.Errorf("list entryValues dropped: %+v", list)
+	}
+	multi := findDTOByKey(t, prefs, "rating")
+	if multi.Type != sourceengine.PreferenceMultiSelect {
+		t.Errorf("multiselect type: want %q, got %q", sourceengine.PreferenceMultiSelect, multi.Type)
 	}
 }
 
-// assertVariantJSONTypes checks the seeded switch/list/multi preferences mapped to
-// their natural JSON types (bool / string + entries / array + position).
-func assertVariantJSONTypes(t *testing.T, prefs []handler.SourcePreferenceDTO) {
-	t.Helper()
-	// Switch: currentValue is a JSON bool.
-	if b, ok := prefs[0].CurrentValue.(bool); !ok || !b {
-		t.Errorf("switch currentValue: want JSON true, got %v (%T)", prefs[0].CurrentValue, prefs[0].CurrentValue)
-	}
-	// List: currentValue is a JSON string; entries/entryValues present.
-	if s, ok := prefs[1].CurrentValue.(string); !ok || s != ".256.jpg" {
-		t.Errorf("list currentValue: want \".256.jpg\", got %v", prefs[1].CurrentValue)
-	}
-	if len(prefs[1].EntryValues) != 2 {
-		t.Errorf("list entryValues dropped: %+v", prefs[1])
-	}
-	// Position round-trips (the write selector).
-	if prefs[2].Position != 2 {
-		t.Errorf("multiselect position: want 2, got %d", prefs[2].Position)
+// TestPreferences_NotFound proves an unknown pkgName (absent from Extensions())
+// is a 404, not a false 200 or a panic.
+func TestPreferences_NotFound(t *testing.T) {
+	env := newTestEnv(t, prefsFake())
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.unknown/preferences", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Preferences unknown pkgName: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -131,11 +141,25 @@ func TestPreferences_Unauthorized(t *testing.T) {
 	}
 }
 
-// TestPreferences_Upstream502 proves a Suwayomi failure resolving sources is a 502.
-func TestPreferences_Upstream502(t *testing.T) {
-	fc := prefsFake()
-	fc.extSourcesErr = errors.New("suwayomi down")
-	env := newTestEnv(t, fc)
+// TestPreferences_ExtensionsUpstream502 proves a failure resolving the
+// extension list (needed to find pkgName's sources) is a 502.
+func TestPreferences_ExtensionsUpstream502(t *testing.T) {
+	env := newTestEnv(t, sourceenginefake.New(sourceenginefake.WithError("Extensions", errors.New("engine down"))))
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.test/preferences", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("Preferences Extensions upstream: want 502, got %d", rec.Code)
+	}
+}
+
+// TestPreferences_PreferencesUpstream502 proves a failure reading one source's
+// preferences is a 502.
+func TestPreferences_PreferencesUpstream502(t *testing.T) {
+	env := newTestEnv(t, sourceenginefake.New(
+		sourceenginefake.WithExtensions([]sourceengine.Extension{
+			{PkgName: "pkg.test", Sources: []sourceengine.Source{{ID: prefsSourceID, Name: "MangaDex", Lang: "en"}}},
+		}),
+		sourceenginefake.WithError("Preferences", errors.New("source unreachable")),
+	))
 	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/pkg.test/preferences", "")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("Preferences upstream: want 502, got %d", rec.Code)
@@ -145,140 +169,131 @@ func TestPreferences_Upstream502(t *testing.T) {
 // --- PATCH preference ---------------------------------------------------------
 
 // TestSetPreference_OK proves a write sends the correctly-typed value for the
-// variant at the position and returns the authoritative refreshed list (§16).
+// variant at the key and returns the authoritative refreshed list (§16).
 func TestSetPreference_OK(t *testing.T) {
 	fc := prefsFake()
-	// The authoritative post-write list the fake echoes back: switch now false.
-	fc.setPrefResult = []suwayomicli.SourcePreference{switchPref(0, false), listPref(1, ".256.jpg"), multiPref(2, []string{"safe"})}
 	env := newTestEnv(t, fc)
 
 	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
-		`{"sourceId":"src-en","position":0,"value":false}`)
+		`{"sourceId":"42","key":"dataSaver","value":false}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SetPreference: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if !fc.setPrefCalled || fc.lastSetSourceID != "src-en" || fc.lastSetPosition != 0 {
-		t.Errorf("write not dispatched correctly: called=%v src=%q pos=%d", fc.setPrefCalled, fc.lastSetSourceID, fc.lastSetPosition)
-	}
-	// The dispatched value must be the correctly-typed bool write for a switch
-	// preference, not e.g. a string coercion of "false".
-	wantValue := suwayomicli.BoolPreferenceValue(suwayomicli.PreferenceSwitch, false)
-	if !reflect.DeepEqual(fc.lastSetValue, wantValue) {
-		t.Errorf("dispatched value: got %+v, want %+v", fc.lastSetValue, wantValue)
+	if fc.CallCount("SetPreferences") != 1 {
+		t.Fatalf("SetPreferences calls = %d, want 1", fc.CallCount("SetPreferences"))
 	}
 	var got []handler.SourcePreferenceDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// The response is the refreshed list — the switch flipped to false (§16).
 	if len(got) != 3 {
 		t.Fatalf("want 3 prefs back, got %d", len(got))
 	}
-	if b, ok := got[0].CurrentValue.(bool); !ok || b {
-		t.Errorf("refreshed switch currentValue: want false, got %v", got[0].CurrentValue)
+	// The dispatched value must be the correctly-typed bool write for a switch
+	// preference, not e.g. a string coercion of "false" — observed via the
+	// refreshed list's JSON-typed currentValue.
+	pref := findDTOByKey(t, got, "dataSaver")
+	if b, ok := pref.CurrentValue.(bool); !ok || b {
+		t.Errorf("refreshed switch currentValue: want JSON false, got %v (%T)", pref.CurrentValue, pref.CurrentValue)
 	}
 }
 
 // TestSetPreference_ListValue proves a string value writes a list preference.
 func TestSetPreference_ListValue(t *testing.T) {
 	fc := prefsFake()
-	fc.setPrefResult = []suwayomicli.SourcePreference{listPref(1, ".256.jpg")}
 	env := newTestEnv(t, fc)
 
 	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
-		`{"sourceId":"src-en","position":1,"value":".256.jpg"}`)
+		`{"sourceId":"42","key":"quality","value":"low"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SetPreference list: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if fc.lastSetPosition != 1 {
-		t.Errorf("want position 1, got %d", fc.lastSetPosition)
-	}
-	// The dispatched value must be the correctly-typed string write for a list
-	// preference, not e.g. left as raw JSON.
-	wantValue := suwayomicli.StringPreferenceValue(suwayomicli.PreferenceList, ".256.jpg")
-	if !reflect.DeepEqual(fc.lastSetValue, wantValue) {
-		t.Errorf("dispatched value: got %+v, want %+v", fc.lastSetValue, wantValue)
+	var got []handler.SourcePreferenceDTO
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	pref := findDTOByKey(t, got, "quality")
+	if s, ok := pref.CurrentValue.(string); !ok || s != "low" {
+		t.Errorf("refreshed list currentValue: want \"low\", got %v (%T)", pref.CurrentValue, pref.CurrentValue)
 	}
 }
 
 // TestSetPreference_MultiSelectValue proves an array value writes a multi-select.
 func TestSetPreference_MultiSelectValue(t *testing.T) {
 	fc := prefsFake()
-	fc.setPrefResult = []suwayomicli.SourcePreference{multiPref(2, []string{"safe", "erotica"})}
 	env := newTestEnv(t, fc)
 
 	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
-		`{"sourceId":"src-en","position":2,"value":["safe","erotica"]}`)
+		`{"sourceId":"42","key":"rating","value":["safe","erotica"]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SetPreference multiselect: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if fc.lastSetPosition != 2 {
-		t.Errorf("want position 2, got %d", fc.lastSetPosition)
-	}
-	// The dispatched value must be the correctly-typed string-slice write for a
-	// multi-select preference.
-	wantValue := suwayomicli.MultiSelectPreferenceValue([]string{"safe", "erotica"})
-	if !reflect.DeepEqual(fc.lastSetValue, wantValue) {
-		t.Errorf("dispatched value: got %+v, want %+v", fc.lastSetValue, wantValue)
+	var got []handler.SourcePreferenceDTO
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	pref := findDTOByKey(t, got, "rating")
+	list, ok := pref.CurrentValue.([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("refreshed multiselect currentValue: want a 2-element array, got %v (%T)", pref.CurrentValue, pref.CurrentValue)
 	}
 }
 
-// TestSetPreference_TypeMismatch400 proves a value whose JSON type doesn't match
-// the variant at that position is a 400 (a bool sent to a list preference), and
-// no write is dispatched.
+// TestSetPreference_TypeMismatch400 proves a value whose JSON type doesn't
+// match the variant at that key is a 400 (a boolean sent to a list
+// preference), and no write is dispatched.
 func TestSetPreference_TypeMismatch400(t *testing.T) {
 	fc := prefsFake()
 	env := newTestEnv(t, fc)
-	// position 1 is a ListPreference — a boolean value is invalid.
+	// "quality" is a ListPreference — a boolean value is invalid.
 	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
-		`{"sourceId":"src-en","position":1,"value":true}`)
+		`{"sourceId":"42","key":"quality","value":true}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("type mismatch: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if fc.setPrefCalled {
+	if fc.CallCount("SetPreferences") != 0 {
 		t.Error("a write was dispatched despite a type-mismatched value")
 	}
 }
 
 // TestSetPreference_NullValue400 proves an explicit JSON `null` value is
-// rejected with the same "value required" 400 as an absent value (M3-1). Without
-// this guard, `null` (4 bytes) passes the "value present" length gate and then
-// json.Unmarshal("null", &dst) succeeds leaving a zero value — silently
-// clearing the preference instead of failing closed.
+// rejected with the same "value required" 400 as an absent value (M3-1).
+// Without this guard, `null` (4 bytes) passes the "value present" length gate
+// and then json.Unmarshal("null", &dst) succeeds leaving a zero value —
+// silently clearing the preference instead of failing closed.
 func TestSetPreference_NullValue400(t *testing.T) {
 	fc := prefsFake()
 	env := newTestEnv(t, fc)
 	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
-		`{"sourceId":"src-en","position":0,"value":null}`)
+		`{"sourceId":"42","key":"dataSaver","value":null}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("null value: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if fc.setPrefCalled {
+	if fc.CallCount("SetPreferences") != 0 {
 		t.Error("a write was dispatched despite a null value")
 	}
 }
 
-// TestSetPreference_OutOfRange400 proves a position past the end of the list is a
-// clean 400 (not a raw Suwayomi 502), and no write is dispatched.
-func TestSetPreference_OutOfRange400(t *testing.T) {
+// TestSetPreference_UnknownKey400 proves a key absent from the source's live
+// preference list is a clean 400 (not a raw engine-host 502), and no write is
+// dispatched.
+func TestSetPreference_UnknownKey400(t *testing.T) {
 	fc := prefsFake()
 	env := newTestEnv(t, fc)
 	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
-		`{"sourceId":"src-en","position":99,"value":true}`)
+		`{"sourceId":"42","key":"doesNotExist","value":true}`)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("out of range: want 400, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("unknown key: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if fc.setPrefCalled {
-		t.Error("a write was dispatched for an out-of-range position")
+	if fc.CallCount("SetPreferences") != 0 {
+		t.Error("a write was dispatched for an unknown key")
 	}
 }
 
-// TestSetPreference_MissingFields400 proves blank sourceId / missing position are 400s.
+// TestSetPreference_MissingFields400 proves blank/unparseable sourceId,
+// missing key, and missing value are all 400s.
 func TestSetPreference_MissingFields400(t *testing.T) {
 	cases := map[string]string{
-		"blank sourceId":   `{"sourceId":"","position":0,"value":true}`,
-		"missing position": `{"sourceId":"src-en","value":true}`,
-		"missing value":    `{"sourceId":"src-en","position":0}`,
+		"blank sourceId":       `{"sourceId":"","key":"dataSaver","value":true}`,
+		"non-numeric sourceId": `{"sourceId":"not-a-number","key":"dataSaver","value":true}`,
+		"missing key":          `{"sourceId":"42","value":true}`,
+		"missing value":        `{"sourceId":"42","key":"dataSaver"}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -291,13 +306,26 @@ func TestSetPreference_MissingFields400(t *testing.T) {
 	}
 }
 
-// TestSetPreference_Upstream502 proves a Suwayomi write failure is a 502.
+// TestSetPreference_ReadUpstream502 proves a failure of the pre-write
+// Preferences read (needed to resolve the variant at the key) is a 502.
+func TestSetPreference_ReadUpstream502(t *testing.T) {
+	env := newTestEnv(t, sourceenginefake.New(sourceenginefake.WithError("Preferences", errors.New("source down"))))
+	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
+		`{"sourceId":"42","key":"dataSaver","value":true}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("read upstream failure: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSetPreference_Upstream502 proves an engine-host write failure is a 502.
 func TestSetPreference_Upstream502(t *testing.T) {
-	fc := prefsFake()
-	fc.setPrefErr = errors.New("Expected change to SwitchPreferenceCompat")
+	fc := sourceenginefake.New(
+		sourceenginefake.WithPreferences(prefsSourceID, []sourceengine.Preference{switchPref(true)}),
+		sourceenginefake.WithError("SetPreferences", errors.New("engine rejected")),
+	)
 	env := newTestEnv(t, fc)
 	rec := env.do(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
-		`{"sourceId":"src-en","position":0,"value":true}`)
+		`{"sourceId":"42","key":"dataSaver","value":true}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("upstream write failure: want 502, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -307,7 +335,7 @@ func TestSetPreference_Upstream502(t *testing.T) {
 func TestSetPreference_Unauthorized(t *testing.T) {
 	env := newTestEnv(t, prefsFake())
 	rec := env.noAuth(http.MethodPatch, "/api/suwayomi/extensions/pkg.test/preferences",
-		`{"sourceId":"src-en","position":0,"value":true}`)
+		`{"sourceId":"42","key":"dataSaver","value":true}`)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("SetPreference no token: want 401, got %d", rec.Code)
 	}

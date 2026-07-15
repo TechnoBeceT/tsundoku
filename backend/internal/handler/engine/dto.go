@@ -9,12 +9,15 @@ import (
 // TopologyStatusDTO is the JSON shape of GET /api/engine/topology-status: the
 // captured-topology counts grouped by concern, plus gaps — human-readable notes
 // naming what is still missing (empty when nothing is outstanding).
+//
+// (QCAT-253, P2 Suwayomi-removal slice 5): the `urls` group is RETIRED along
+// with the SeriesProvider.url backfill pass it reported on — see
+// enginetopo.Status's doc comment.
 type TopologyStatusDTO struct {
-	Repos      int                 `json:"repos"`
-	Extensions ExtensionCountsDTO  `json:"extensions"`
-	Sources    SourceCountsDTO     `json:"sources"`
-	URLs       ProviderURLCountDTO `json:"urls"`
-	Gaps       []string            `json:"gaps"`
+	Repos      int                `json:"repos"`
+	Extensions ExtensionCountsDTO `json:"extensions"`
+	Sources    SourceCountsDTO    `json:"sources"`
+	Gaps       []string           `json:"gaps"`
 }
 
 // ExtensionCountsDTO reports harvested extensions vs. how many have their .apk
@@ -31,13 +34,6 @@ type SourceCountsDTO struct {
 	PrefsCaptured int `json:"prefsCaptured"`
 }
 
-// ProviderURLCountDTO reports how many SeriesProvider urls are resolved vs. still
-// fillable (live rows still missing a url).
-type ProviderURLCountDTO struct {
-	Filled    int `json:"filled"`
-	Remaining int `json:"remaining"`
-}
-
 // toTopologyStatusDTO maps the enginetopo.Status counts onto the wire DTO and
 // derives the human-readable gap notes. gaps is always a non-nil slice so the
 // field serializes as [] (never null) — a fully-captured or empty topology
@@ -47,9 +43,6 @@ func toTopologyStatusDTO(s enginetopo.Status) TopologyStatusDTO {
 	if missing := s.ExtensionsTotal - s.ExtensionsCached; missing > 0 {
 		gaps = append(gaps, fmt.Sprintf("%d extensions not cached", missing))
 	}
-	if s.URLsRemaining > 0 {
-		gaps = append(gaps, fmt.Sprintf("%d provider urls unresolved", s.URLsRemaining))
-	}
 	if missing := s.SourcesTotal - s.SourcesPrefsCaptured; missing > 0 {
 		gaps = append(gaps, fmt.Sprintf("%d sources without captured preferences", missing))
 	}
@@ -58,7 +51,6 @@ func toTopologyStatusDTO(s enginetopo.Status) TopologyStatusDTO {
 		Repos:      s.Repos,
 		Extensions: ExtensionCountsDTO{Total: s.ExtensionsTotal, Cached: s.ExtensionsCached},
 		Sources:    SourceCountsDTO{Total: s.SourcesTotal, PrefsCaptured: s.SourcesPrefsCaptured},
-		URLs:       ProviderURLCountDTO{Filled: s.URLsFilled, Remaining: s.URLsRemaining},
 		Gaps:       gaps,
 	}
 }

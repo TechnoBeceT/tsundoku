@@ -318,15 +318,19 @@ func registerRoutes(
 	authed.GET("/flaresolverr/settings", flareSolverrH.Get)
 	authed.PATCH("/flaresolverr/settings", flareSolverrH.Update)
 
-	// Suwayomi extension (Sources & Extensions) management. Like the settings
-	// proxy, the handler holds the Suwayomi client directly and proxies its
-	// extension GraphQL surface; no Tsundoku state is involved.
-	// db/cache/http.Get are the durable engine-topology store: an install/update/
-	// uninstall or repo change is written through to the HarvestedExtension/
-	// HarvestedRepo rows + the shared apk cache immediately (best-effort), so the
-	// store never lags a live owner change. apkStore is the SAME cache the boot
-	// seed writes and the /internal apk-serving route reads.
-	extensionsH := extensionsh.NewHandler(suwayomiClient, client, apkStore, http.Get)
+	// Sources & Extensions management (P2 Suwayomi-removal slice 5: repointed
+	// onto the engine host). Like the settings proxy, the handler holds the
+	// engine client directly and proxies its extension surface; no Tsundoku
+	// state is involved. db/cache/http.Get are the durable engine-topology
+	// store: an install/update/uninstall or repo change is written through to
+	// the HarvestedExtension/HarvestedRepo rows + the shared apk cache
+	// immediately (best-effort), so the store never lags a live owner change.
+	// apkStore is the SAME cache the boot seed writes and the /internal
+	// apk-serving route reads. The extension icon proxy + the per-language
+	// source enable/disable toggle are RETIRED: sourceengine has no
+	// PageBytes-shaped fetch (the FE renders iconUrl directly) and no
+	// server-side "disabled source" concept to proxy.
+	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
@@ -334,10 +338,8 @@ func registerRoutes(
 	authed.POST("/suwayomi/extensions/:pkgName/install", extensionsH.Install)
 	authed.POST("/suwayomi/extensions/:pkgName/update", extensionsH.Update)
 	authed.DELETE("/suwayomi/extensions/:pkgName", extensionsH.Uninstall)
-	authed.GET("/suwayomi/extensions/:pkgName/icon", extensionsH.Icon)
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", extensionsH.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", extensionsH.SetPreference)
-	authed.PATCH("/suwayomi/sources/:sourceId/enabled", extensionsH.SetSourceEnabled)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.

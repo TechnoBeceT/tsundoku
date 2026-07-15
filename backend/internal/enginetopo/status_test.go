@@ -6,7 +6,6 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
-	"github.com/technobecet/tsundoku/internal/ent"
 )
 
 // TestTopologyStatus_EmptyDBIsZero proves a fresh install (no harvested topology,
@@ -25,11 +24,9 @@ func TestTopologyStatus_EmptyDBIsZero(t *testing.T) {
 }
 
 // TestTopologyStatus_CountsFromDB proves every count is read straight from the
-// DB with the right semantics: extensions total vs cached, distinct NUMERIC
-// providers as the source universe (a disk-origin display-name provider is
-// excluded), distinct sources-with-prefs, and url filled vs. still-fillable
-// (a disk-origin row with suwayomi_id=0 and no url is NOT counted as remaining,
-// mirroring BackfillProviderURLs's candidate set).
+// DB with the right semantics: extensions total vs cached, and distinct
+// NUMERIC providers as the source universe (a disk-origin display-name
+// provider is excluded).
 func TestTopologyStatus_CountsFromDB(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -50,13 +47,11 @@ func TestTopologyStatus_CountsFromDB(t *testing.T) {
 	client.SourcePreference.Create().SetSourceID(456).SetKey("lang").SetValue("ko").SaveX(ctx)
 
 	// SeriesProviders: three numeric (live) sources {123,456,789} + one
-	// disk-origin display-name provider (suwayomi_id=0). Two live rows are
-	// url-filled, one live row (456) is empty-but-fillable, the disk row is
-	// empty-and-unfillable.
-	setURL(ctx, t, client, seedProvider(ctx, t, client, "Solo Leveling", "123", 42), "https://a.test/manga")
-	seedProvider(ctx, t, client, "Omniscient Reader", "456", 43) // url="" fillable
-	setURL(ctx, t, client, seedProvider(ctx, t, client, "TBATE", "789", 44), "https://c.test/manga")
-	seedProvider(ctx, t, client, "Nano Machine", "Asura Scans", 0) // disk-origin, url=""
+	// disk-origin display-name provider (suwayomi_id=0, excluded).
+	seedProvider(ctx, t, client, "Solo Leveling", "123", 42)
+	seedProvider(ctx, t, client, "Omniscient Reader", "456", 43)
+	seedProvider(ctx, t, client, "TBATE", "789", 44)
+	seedProvider(ctx, t, client, "Nano Machine", "Asura Scans", 0) // disk-origin
 
 	got, err := enginetopo.TopologyStatus(ctx, client)
 	if err != nil {
@@ -69,17 +64,8 @@ func TestTopologyStatus_CountsFromDB(t *testing.T) {
 		ExtensionsCached:     2,
 		SourcesTotal:         3, // 123, 456, 789 — "Asura Scans" excluded
 		SourcesPrefsCaptured: 2, // 123, 456
-		URLsFilled:           2, // 123, 789
-		URLsRemaining:        1, // 456 (empty + suwayomi_id!=0); disk row excluded
 	}
 	if got != want {
 		t.Errorf("Status = %+v, want %+v", got, want)
 	}
-}
-
-// setURL fills a SeriesProvider's url column and returns the row, so a fixture
-// can create a provider (seedProvider leaves url="") and then mark it resolved.
-func setURL(ctx context.Context, t *testing.T, client *ent.Client, sp *ent.SeriesProvider, url string) *ent.SeriesProvider {
-	t.Helper()
-	return client.SeriesProvider.UpdateOne(sp).SetURL(url).SaveX(ctx)
 }

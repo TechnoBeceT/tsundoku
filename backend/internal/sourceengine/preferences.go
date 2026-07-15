@@ -6,6 +6,28 @@ import (
 	"net/http"
 )
 
+// Preference.Type values — the androidx.preference class simpleName the
+// engine host reports (mirrors engine-host Preferences.kt's
+// `pref::class.java.simpleName`, confirmed against engine-host/src/main/
+// kotlin/enginehost/Preferences.kt). Only the switch variant's label differs
+// from the retired Suwayomi GraphQL union ("SwitchPreference" there vs
+// "SwitchPreferenceCompat" here, matching the real androidx class); the other
+// four are unchanged strings. Callers that type-switch on Preference.Type
+// (enginetopo's seed/reconcile passes, handler/extensions' preference
+// coercion) share these constants so the string literals live in one place.
+const (
+	// PreferenceCheckBox is a boolean checkbox.
+	PreferenceCheckBox = "CheckBoxPreference"
+	// PreferenceSwitchCompat is a boolean switch (androidx SwitchPreferenceCompat).
+	PreferenceSwitchCompat = "SwitchPreferenceCompat"
+	// PreferenceList is a single-choice list (Entries/EntryValues populated).
+	PreferenceList = "ListPreference"
+	// PreferenceMultiSelect is a multi-choice list (Entries/EntryValues populated).
+	PreferenceMultiSelect = "MultiSelectListPreference"
+	// PreferenceEditText is a free-text field.
+	PreferenceEditText = "EditTextPreference"
+)
+
 // preferencesResponse is the wire envelope both GET and PUT
 // /sources/{id}/preferences wrap their result in ({"preferences": [...]}).
 type preferencesResponse struct {

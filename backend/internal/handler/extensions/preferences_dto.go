@@ -1,28 +1,26 @@
 package extensions
 
 import (
-	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // SourcePreferenceDTO is the JSON shape of one source preference. It is a
-// camelCase mirror of suwayomi.SourcePreference, flattened so the FE reads a
+// camelCase mirror of sourceengine.Preference, flattened so the FE reads a
 // single control per row keyed off `type`:
-//   - CheckBoxPreference / SwitchPreference: currentValue/default are booleans.
-//   - ListPreference / EditTextPreference:   currentValue/default are strings
+//   - CheckBoxPreference / SwitchPreferenceCompat: currentValue/default are booleans.
+//   - ListPreference / EditTextPreference:         currentValue/default are strings
 //     (List also carries entries/entryValues).
-//   - MultiSelectListPreference:             currentValue/default are string arrays.
+//   - MultiSelectListPreference:                   currentValue/default are string arrays.
 //
 // currentValue and default are `any` so each variant serialises to its natural
-// JSON type (bool / string / array) or null when unset — the FE narrows on `type`.
-// position is the 0-based array index and is the ONLY selector a write may use
-// (the write mutation is position-indexed); it must be taken from a FRESH read,
-// never cached, since the array order can shift server-side.
+// JSON type (bool / string / array) or null when unset — the FE narrows on
+// `type`. A preference write is addressed by `key` (see PreferenceUpdateRequest)
+// — there is no position field (the engine host's SetPreferences is
+// key-addressed, unlike the retired Suwayomi position-indexed write).
 type SourcePreferenceDTO struct {
-	// Type is the union variant (Suwayomi __typename verbatim).
+	// Type is the union variant (the androidx.preference class simpleName).
 	Type string `json:"type"`
-	// Position is the 0-based index used as the write selector.
-	Position int `json:"position"`
-	// Key is the source-internal preference key ("" when null).
+	// Key is the source-internal preference key — the write selector.
 	Key string `json:"key"`
 	// Title is the human-readable label ("" when null).
 	Title string `json:"title"`
@@ -40,31 +38,20 @@ type SourcePreferenceDTO struct {
 
 // SourcePreferencesGroupDTO is one source's preferences within the grouped GET
 // response — a single extension backs one source per language.
+//
+// (QCAT-253, P2 Suwayomi-removal slice 5): `enabled` (the per-language
+// enable/disable toggle) is RETIRED along with PATCH
+// /api/suwayomi/sources/:sourceId/enabled — sourceengine has no server-side
+// "disabled source" concept to proxy (see handler.go's package doc).
 type SourcePreferencesGroupDTO struct {
-	// SourceID is the Suwayomi source id (the write body's sourceId).
+	// SourceID is the engine host source id (the write body's sourceId).
 	SourceID string `json:"sourceId"`
 	// SourceName is the human-readable source name.
 	SourceName string `json:"sourceName"`
 	// Lang is the source's BCP-47 language tag.
 	Lang string `json:"lang"`
-	// Enabled is the per-language enable/disable toggle — the inverse of
-	// suwayomicli.Source.Disabled: a disabled source is hidden from Tsundoku's
-	// Discover/Search/Browse source lists but keeps updating any series
-	// already adopted from it. Toggled via PATCH
-	// /api/suwayomi/sources/:sourceId/enabled.
-	Enabled bool `json:"enabled"`
 	// Preferences are this source's configurable preferences, in array order.
 	Preferences []SourcePreferenceDTO `json:"preferences"`
-}
-
-// SourceEnabledDTO is the response of PATCH /api/suwayomi/sources/:sourceId/enabled
-// — the authoritative per-language enable/disable state after the write
-// (§16 round-trip: re-read via suwayomicli.Client.Sources, never the request echo).
-type SourceEnabledDTO struct {
-	// SourceID is the Suwayomi source id.
-	SourceID string `json:"sourceId"`
-	// Enabled is the enable/disable state as re-read after the write.
-	Enabled bool `json:"enabled"`
 }
 
 // SourcePreferencesBySourceDTO is the GET response: an extension's preferences
@@ -83,36 +70,17 @@ func nonNilStrings(s []string) []string {
 	return s
 }
 
-// currentAndDefault resolves a preference's currentValue + default to their
-// natural JSON-typed values (bool / string / []string / null) based on the
-// variant. A nil pointer or nil slice serialises to JSON null; a non-nil empty
-// slice serialises to [] — preserving the "unset vs cleared" distinction.
-func currentAndDefault(p suwayomicli.SourcePreference) (current, def any) {
-	switch p.Type {
-	case suwayomicli.PreferenceCheckBox, suwayomicli.PreferenceSwitch:
-		return p.CurrentBool, p.DefaultBool
-	case suwayomicli.PreferenceList, suwayomicli.PreferenceEditText:
-		return p.CurrentString, p.DefaultString
-	case suwayomicli.PreferenceMultiSelect:
-		return p.CurrentStringList, p.DefaultStringList
-	default:
-		return nil, nil
-	}
-}
-
-// toSourcePreferenceDTO maps one client SourcePreference into the HTTP DTO. It is
+// toSourcePreferenceDTO maps one client Preference into the HTTP DTO. It is
 // the SINGLE mapper both preference endpoints route through, so no field is
 // dropped on one path but not another (§16).
-func toSourcePreferenceDTO(p suwayomicli.SourcePreference) SourcePreferenceDTO {
-	current, def := currentAndDefault(p)
+func toSourcePreferenceDTO(p sourceengine.Preference) SourcePreferenceDTO {
 	return SourcePreferenceDTO{
-		Type:         string(p.Type),
-		Position:     p.Position,
+		Type:         p.Type,
 		Key:          p.Key,
 		Title:        p.Title,
 		Summary:      p.Summary,
-		CurrentValue: current,
-		Default:      def,
+		CurrentValue: p.CurrentValue,
+		Default:      p.DefaultValue,
 		Entries:      nonNilStrings(p.Entries),
 		EntryValues:  nonNilStrings(p.EntryValues),
 	}
@@ -120,7 +88,7 @@ func toSourcePreferenceDTO(p suwayomicli.SourcePreference) SourcePreferenceDTO {
 
 // toSourcePreferenceDTOs maps a slice of preferences through the single mapper.
 // The result is always non-nil so an empty list serialises to [] (not null).
-func toSourcePreferenceDTOs(prefs []suwayomicli.SourcePreference) []SourcePreferenceDTO {
+func toSourcePreferenceDTOs(prefs []sourceengine.Preference) []SourcePreferenceDTO {
 	out := make([]SourcePreferenceDTO, 0, len(prefs))
 	for _, p := range prefs {
 		out = append(out, toSourcePreferenceDTO(p))

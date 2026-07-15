@@ -10,13 +10,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/ent"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
-
-// boolPtr / stringPtr are small pointer-literal helpers for building
-// suwayomi.SourcePreference fixtures below.
-func boolPtr(v bool) *bool       { return &v }
-func stringPtr(v string) *string { return &v }
 
 // TestSeedSourcePreferences_UpsertsEveryTypedValue proves each preference
 // variant is mapped to the correct (value, value_type) pair, including an
@@ -28,19 +24,15 @@ func TestSeedSourcePreferences_UpsertsEveryTypedValue(t *testing.T) {
 
 	seedProvider(ctx, t, client, "Solo Leveling", "42", 1001)
 
-	fc := &fakeClient{
-		prefsBySource: map[string][]suwayomi.SourcePreference{
-			"42": {
-				{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(true)},
-				{Type: suwayomi.PreferenceSwitch, Position: 1, Key: "useHttps", CurrentBool: boolPtr(false)},
-				{Type: suwayomi.PreferenceList, Position: 2, Key: "thumbnailQuality", CurrentString: stringPtr("high")},
-				{Type: suwayomi.PreferenceEditText, Position: 3, Key: "password", CurrentString: stringPtr("hunter2-plaintext")},
-				{Type: suwayomi.PreferenceMultiSelect, Position: 4, Key: "blockedGroups", CurrentStringList: []string{"GroupA", "GroupB"}},
-				// Unset current value — must be skipped, not seeded as "".
-				{Type: suwayomi.PreferenceEditText, Position: 5, Key: "username", CurrentString: nil},
-			},
-		},
-	}
+	fc := sourceenginefake.New(sourceenginefake.WithPreferences(42, []sourceengine.Preference{
+		{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: true},
+		{Type: sourceengine.PreferenceSwitchCompat, Key: "useHttps", CurrentValue: false},
+		{Type: sourceengine.PreferenceList, Key: "thumbnailQuality", CurrentValue: "high"},
+		{Type: sourceengine.PreferenceEditText, Key: "password", CurrentValue: "hunter2-plaintext"},
+		{Type: sourceengine.PreferenceMultiSelect, Key: "blockedGroups", CurrentValue: []string{"GroupA", "GroupB"}},
+		// Unset current value — must be skipped, not seeded as "".
+		{Type: sourceengine.PreferenceEditText, Key: "username", CurrentValue: nil},
+	}))
 
 	result, err := enginetopo.SeedSourcePreferences(ctx, fc, client)
 	if err != nil {
@@ -63,11 +55,11 @@ func TestSeedSourcePreferences_UpsertsEveryTypedValue(t *testing.T) {
 		value     string
 		valueType string
 	}{
-		{"nsfw", "true", string(suwayomi.PreferenceCheckBox)},
-		{"useHttps", "false", string(suwayomi.PreferenceSwitch)},
-		{"thumbnailQuality", "high", string(suwayomi.PreferenceList)},
-		{"password", "hunter2-plaintext", string(suwayomi.PreferenceEditText)},
-		{"blockedGroups", `["GroupA","GroupB"]`, string(suwayomi.PreferenceMultiSelect)},
+		{"nsfw", "true", sourceengine.PreferenceCheckBox},
+		{"useHttps", "false", sourceengine.PreferenceSwitchCompat},
+		{"thumbnailQuality", "high", sourceengine.PreferenceList},
+		{"password", "hunter2-plaintext", sourceengine.PreferenceEditText},
+		{"blockedGroups", `["GroupA","GroupB"]`, sourceengine.PreferenceMultiSelect},
 	}
 	assertSeededRows(t, rows, 42, wantRows)
 }
@@ -113,13 +105,9 @@ func TestSeedSourcePreferences_IdempotentSecondRun(t *testing.T) {
 
 	seedProvider(ctx, t, client, "Omniscient Reader", "7", 2001)
 
-	fc := &fakeClient{
-		prefsBySource: map[string][]suwayomi.SourcePreference{
-			"7": {
-				{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(false)},
-			},
-		},
-	}
+	fc := sourceenginefake.New(sourceenginefake.WithPreferences(7, []sourceengine.Preference{
+		{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},
+	}))
 
 	if _, err := enginetopo.SeedSourcePreferences(ctx, fc, client); err != nil {
 		t.Fatalf("first SeedSourcePreferences: %v", err)
@@ -131,9 +119,12 @@ func TestSeedSourcePreferences_IdempotentSecondRun(t *testing.T) {
 		t.Fatalf("first pass value = %q, want false", first.Value)
 	}
 
-	// The engine's value changed between passes (e.g. the owner flipped it in
-	// the Suwayomi UI directly) — the second seed must overwrite, not duplicate.
-	fc.prefsBySource["7"][0].CurrentBool = boolPtr(true)
+	// The engine's value changed between passes (e.g. the owner flipped it
+	// directly on the engine host) — the second seed must overwrite, not
+	// duplicate. SetPreferences mutates the fake's stored preference in place.
+	if _, err := fc.SetPreferences(ctx, 7, map[string]any{"nsfw": true}); err != nil {
+		t.Fatalf("seed fixture mutation: %v", err)
+	}
 
 	result, err := enginetopo.SeedSourcePreferences(ctx, fc, client)
 	if err != nil {
@@ -157,8 +148,24 @@ func TestSeedSourcePreferences_IdempotentSecondRun(t *testing.T) {
 	}
 }
 
+// prefsErrClient wraps the shared sourceengine fake, injecting a per-source
+// Preferences failure — the base fake's WithError is blanket (fails every
+// call to the named method regardless of source), which can't model "source
+// 10 fails, source 11 succeeds" in one client.
+type prefsErrClient struct {
+	*sourceenginefake.Client
+	errBySource map[int64]error
+}
+
+func (c *prefsErrClient) Preferences(ctx context.Context, sourceID int64) ([]sourceengine.Preference, error) {
+	if err, ok := c.errBySource[sourceID]; ok {
+		return nil, err
+	}
+	return c.Client.Preferences(ctx, sourceID)
+}
+
 // TestSeedSourcePreferences_PerSourceFailureSkipsButContinues proves a
-// SourcePreferences error on ONE source is logged+skipped (counted in
+// Preferences error on ONE source is logged+skipped (counted in
 // SkippedSources) without aborting the seed of every OTHER source.
 func TestSeedSourcePreferences_PerSourceFailureSkipsButContinues(t *testing.T) {
 	ctx := context.Background()
@@ -167,15 +174,11 @@ func TestSeedSourcePreferences_PerSourceFailureSkipsButContinues(t *testing.T) {
 	seedProvider(ctx, t, client, "Solo Leveling", "10", 3001)
 	seedProvider(ctx, t, client, "Omniscient Reader", "11", 3002)
 
-	fc := &fakeClient{
-		prefsBySource: map[string][]suwayomi.SourcePreference{
-			"11": {
-				{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(true)},
-			},
-		},
-		prefsErrBySource: map[string]error{
-			"10": errors.New("source offline"),
-		},
+	fc := &prefsErrClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(11, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: true},
+		})),
+		errBySource: map[int64]error{10: errors.New("source offline")},
 	}
 
 	result, err := enginetopo.SeedSourcePreferences(ctx, fc, client)
@@ -199,7 +202,7 @@ func TestSeedSourcePreferences_PerSourceFailureSkipsButContinues(t *testing.T) {
 }
 
 // TestSeedSourcePreferences_SkipsNonNumericProvider proves a disk-origin
-// SeriesProvider row (provider stores a display NAME, not a numeric Suwayomi
+// SeriesProvider row (provider stores a display NAME, not a numeric engine
 // source id) is silently skipped — no client call, not counted as a failure.
 func TestSeedSourcePreferences_SkipsNonNumericProvider(t *testing.T) {
 	ctx := context.Background()
@@ -207,7 +210,7 @@ func TestSeedSourcePreferences_SkipsNonNumericProvider(t *testing.T) {
 
 	seedProvider(ctx, t, client, "The Beginning After The End", "Weeb Central", 0)
 
-	fc := &fakeClient{}
+	fc := sourceenginefake.New()
 
 	result, err := enginetopo.SeedSourcePreferences(ctx, fc, client)
 	if err != nil {
@@ -217,7 +220,7 @@ func TestSeedSourcePreferences_SkipsNonNumericProvider(t *testing.T) {
 		t.Fatalf("got Seeded=%d SkippedSources=%d, want 0/0 (disk-origin provider has no engine source)",
 			result.Seeded, result.SkippedSources)
 	}
-	if c := fc.prefsCallCount("Weeb Central"); c != 0 {
-		t.Errorf("SourcePreferences called %d times for a disk-origin provider, want 0", c)
+	if c := fc.CallCount("Preferences"); c != 0 {
+		t.Errorf("Preferences called %d times for a disk-origin provider, want 0", c)
 	}
 }

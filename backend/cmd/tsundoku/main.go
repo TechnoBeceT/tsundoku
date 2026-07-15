@@ -307,7 +307,7 @@ func main() {
 	// engine-topology seed (BackfillProviderURLs → SeedExtensions →
 	// SeedSourcePreferences → SeedEngineConfig) in a detached background goroutine
 	// once the engine is reachable — see startSuwayomiEngine.
-	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, warmupSvc, entClient, apkStore)
+	pm := startSuwayomiEngine(ctx, cfg, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, suwayomiClient, engineClient, warmupSvc, entClient, apkStore)
 
 	e := server.New(cfg, entClient, authSvc, hub, ownerH, suwayomiClient, engineClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore)
 
@@ -435,6 +435,7 @@ func startSuwayomiEngine(
 	refreshSvc *refresh.Service,
 	unhealthyCount func(context.Context) (int, error),
 	swClient suwayomi.Client,
+	engineClient sourceengine.Client,
 	warmupSvc *warmup.Service,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
@@ -452,7 +453,7 @@ func startSuwayomiEngine(
 		runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 		runner.StartExtensionCheck(ctx, swClient)
 		runner.StartWarmup(ctx, warmupSvc)
-		startEngineTopoSeed(ctx, swClient, entClient, apkStore, settingsSvc)
+		startEngineTopoSeed(ctx, engineClient, entClient, apkStore)
 	}
 
 	if cfg.Suwayomi.IsExternal() {
@@ -489,20 +490,24 @@ func startSuwayomiEngine(
 // in external mode. RunSeed owns the safety guarantees (reachability probe,
 // per-pass fault isolation, panic recovery, idempotency); this wrapper only
 // detaches it onto a goroutine so a slow or failing seed can never delay boot.
-// http.Get is the production repo-index/apk fetcher; settingsSvc satisfies the
-// SettingsStore the engine-config seed gap-fills through.
+// http.Get is the production repo-index/apk fetcher.
+//
+// (QCAT-253, P2 Suwayomi-removal slice 5): targets engineClient
+// (internal/sourceengine) now, not the Suwayomi client — the seed's repo/
+// extension/preference passes are engine-agnostic capture. The retired
+// SeriesProvider.url backfill and engine-config gap-fill passes (and the
+// settingsSvc param they alone needed) are gone — see enginetopo.RunSeed's
+// doc comment.
 func startEngineTopoSeed(
 	ctx context.Context,
-	swClient suwayomi.Client,
+	engineClient sourceengine.Client,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
-	settingsSvc *settings.Service,
 ) {
 	go enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
-		Client:   swClient,
-		DB:       entClient,
-		Cache:    apkStore,
-		Settings: settingsSvc,
-		HTTPGet:  http.Get,
+		Client:  engineClient,
+		DB:      entClient,
+		Cache:   apkStore,
+		HTTPGet: http.Get,
 	})
 }

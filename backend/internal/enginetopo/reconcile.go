@@ -12,16 +12,14 @@ import (
 	entharvestedrepo "github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/settings"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // ConfigProvider is the narrow read surface Reconcile needs to push Tsundoku's
-// OWN FlareSolverr + SOCKS config onto the engine — exactly the settings the
-// engine-config seed (SeedEngineConfig) captured. It is the reverse of
-// flareSolverrUpdates/socksUpdates: those turn engine settings into Tsundoku
-// tunables, whereas Reconcile reads the resolved tunables back to rebuild the
-// engine's settings. Kept to precisely the ten typed getters used here so a test
-// double is trivial; *settings.Service satisfies it directly.
+// OWN FlareSolverr + SOCKS config onto the engine. It reads Tsundoku's OWN
+// runtime settings (never the engine), so it has no sourceengine dependency.
+// Kept to precisely the ten typed getters used here so a test double is
+// trivial; *settings.Service satisfies it directly.
 type ConfigProvider interface {
 	FlareSolverrEnabled(ctx context.Context) bool
 	FlareSolverrURL(ctx context.Context) string
@@ -43,25 +41,33 @@ var _ ConfigProvider = (*settings.Service)(nil)
 // pushing Tsundoku's durable engine-topology store back onto a wiped/swapped/
 // rebuilt engine.
 type ReconcileResult struct {
-	// InSync is true when the engine already matched the durable store, so the
-	// pass made ZERO engine mutations (and recorded no gaps).
+	// InSync is true when the engine already matched the durable store on every
+	// DRIFT-DETECTED axis (repos/extensions/prefs), so the pass made zero
+	// drift-driven engine mutations and recorded no gaps. See isInSync's doc
+	// comment for why ConfigApplied is deliberately excluded from this check.
 	InSync bool
 	// ReposSet is true when the engine's extension-repo list was rewritten from
 	// the durable HarvestedRepo set (it drifted from the engine's list).
 	ReposSet bool
 	// ExtensionsInstalled is the number of required-but-missing extensions the
-	// pass installed via SetExtensionState.
+	// pass installed via InstallExtension.
 	ExtensionsInstalled int
-	// PrefsApplied is the number of source-preference writes issued — one per
-	// stored preference whose engine value had drifted from the durable value.
+	// PrefsApplied is the number of individual (source,key) preference values
+	// that were pushed — the sum, across every source with at least one drifted
+	// key, of the keys included in that source's ONE batched SetPreferences
+	// call (see reconcilePrefs's doc comment on batching).
 	PrefsApplied int
-	// ConfigApplied is true when the engine's FlareSolverr/SOCKS settings were
-	// (re)pushed because they drifted from Tsundoku's owned config.
+	// ConfigApplied is true when the unconditional FlareSolverr+SOCKS config
+	// push succeeded (both SetFlareSolverr and SetSocks returned no error).
+	// Config performs NO drift detection (see reconcileConfig's doc comment) —
+	// it is pushed on EVERY pass by design — so ConfigApplied being true does
+	// NOT by itself indicate InSync.
 	ConfigApplied bool
 	// Gaps holds every per-item failure that was ISOLATED (a failed install, an
-	// unparseable stored preference, a config push error, …). Each is logged and
-	// recorded here; none aborts the rest of the pass. A non-empty Gaps means the
-	// pass is not fully in sync even if every other field is zero.
+	// unparseable stored preference, a failed source's preference push, a
+	// config push error, …). Each is logged and recorded here; none aborts the
+	// rest of the pass. A non-empty Gaps means the pass is not fully in sync
+	// even if every other field is zero.
 	Gaps []error
 }
 
@@ -72,41 +78,51 @@ type ReconcileResult struct {
 // to the topology Tsundoku remembers.
 //
 // It runs the drift-detect + reapply steps in order: repos → extensions →
-// source preferences → config. Each step READS the engine to detect drift and
-// only MUTATES when the engine differs, so the pass is IDEMPOTENT: against an
-// already-in-sync engine it issues zero mutations and returns InSync=true.
+// source preferences → config. The first three READ the engine to detect drift
+// and only MUTATE when the engine differs; config is a deliberate exception (see
+// reconcileConfig) — an unconditional push every pass, "Tsundoku is reality"
+// (QCAT-250). Against an already-in-sync engine (repos/extensions/prefs) the
+// pass issues zero DRIFT-DRIVEN mutations and returns InSync=true (config still
+// pushes, but is excluded from that check — see isInSync).
 //
-// EXTENSION INSTALL IS REPO-BASED. The Suwayomi Client installs an extension by
-// pkgName after a FetchExtensions refresh of the repo list — there is NO apkUrl
-// parameter on the interface. The apk byte cache (cache, apk_cached) is therefore
-// the durability RECORD (it guarantees the bytes still exist for a future
-// engine-host install-from-cache path), NOT something this pass installs from;
-// cache is unused here by design. A dead upstream repo means that pkg's install
-// may fail, which is isolated as a gap (below).
+// EXTENSION INSTALL IS REPO-BASED. sourceengine.Client.InstallExtension installs
+// by pkgName (resolved against the configured repos) after a RefreshExtensions
+// refresh of the repo list — there is no apkUrl fallback wired here (the
+// apk-cache-backed install path is DEFERRED, tracked as future work). The apk
+// byte cache (cache, apk_cached) is therefore the durability RECORD (it
+// guarantees the bytes still exist for a future engine-host install-from-cache
+// path), NOT something this pass installs from; cache is unused here by design.
+// A dead upstream repo means that pkg's install may fail, which is isolated as
+// a gap (below).
 //
 // FAULT ISOLATION. A per-item failure — one extension that won't install, one
-// preference that won't parse or write, a config push error — is logged
-// (slog.WarnContext) and recorded in Gaps; the remaining items still apply. Only
-// an ENUMERATING failure returns a hard error: it leaves the pass unable to even
-// determine drift, so it must not silently do nothing (mirrors SeedExtensions'
-// per-item vs enumerating distinction). The enumerating calls are: querying the
-// library's required-extension set + stored preferences (DB), and listing the
-// engine's installed extensions + repo list (engine).
+// preference that won't parse, one source's preference push, a config push
+// error — is logged (slog.WarnContext) and recorded in Gaps; the remaining
+// items still apply. Only an ENUMERATING failure returns a hard error: it
+// leaves the pass unable to even determine drift, so it must not silently do
+// nothing (mirrors SeedExtensions' per-item vs enumerating distinction). The
+// enumerating calls are: querying the library's required-extension set +
+// stored preferences (DB), and listing the engine's installed extensions + repo
+// list (engine). Preference pushes are batched ONE PER SOURCE (see
+// reconcilePrefs) — a push failure isolates the whole source's batch, not each
+// individual key; a per-row COERCION failure (a stored value the live pref's
+// kind can't parse) is still isolated per-key, before any network call.
 //
 // PRECONDITION — SEED BEFORE RECONCILE. Reconcile trusts Tsundoku's DB as the
-// authoritative record of engine state, so the boot seed passes (especially
-// SeedEngineConfig, plus the source-preference / extension / repo seeds) MUST
-// have run first to CAPTURE that state before Reconcile pushes it back. It
-// deliberately does NOT gate its config push on per-key ownership — it treats
-// the durable store as reality. Running it against a live, UN-captured engine
-// BEFORE the seed could therefore push Tsundoku's default (disabled/empty)
-// config over the engine's real settings; sequencing seed → reconcile is the
-// caller's responsibility, not something Reconcile can detect. The forward path
-// — provisioning Tsundoku's OWN internal engine, which starts empty — satisfies
-// this naturally. Ratified as decision QCAT-250.
+// authoritative record of engine state for repos/extensions/preferences, so the
+// boot seed passes (SeedExtensions + SeedSourcePreferences) MUST have run first
+// to CAPTURE that state before Reconcile pushes it back — running it against a
+// live, un-captured engine would push an empty durable store over the engine's
+// real repos/extensions/preferences. Config has NO such precondition: it is
+// pushed straight from Tsundoku's OWN settings (ConfigProvider), never a
+// captured engine snapshot (there is no engine-config seed any more — Tsundoku
+// owns this config from the start, QCAT-250). Sequencing seed → reconcile for
+// the other three axes is the caller's responsibility, not something Reconcile
+// can detect. The forward path — provisioning Tsundoku's OWN internal engine,
+// which starts empty — satisfies this naturally. Ratified as decision QCAT-250.
 func Reconcile(
 	ctx context.Context,
-	client suwayomi.Client,
+	client sourceengine.Client,
 	db *ent.Client,
 	cache *apkcache.Store,
 	cfg ConfigProvider,
@@ -150,13 +166,16 @@ func Reconcile(
 	return res, nil
 }
 
-// isInSync reports whether the pass made no engine mutation AND recorded no gap —
-// the honest "nothing needed changing" answer.
+// isInSync reports whether the pass made no DRIFT-DETECTED engine mutation AND
+// recorded no gap — the honest "nothing needed changing" answer over the three
+// axes that actually detect drift (repos/extensions/prefs). Config is EXCLUDED:
+// reconcileConfig no longer reads the engine to compare (see its doc comment),
+// so it "applies" (issues a PUT) on every single pass by design — folding it
+// into this check would make InSync=true permanently unreachable.
 func isInSync(res ReconcileResult) bool {
 	return !res.ReposSet &&
 		res.ExtensionsInstalled == 0 &&
 		res.PrefsApplied == 0 &&
-		!res.ConfigApplied &&
 		len(res.Gaps) == 0
 }
 
@@ -207,7 +226,7 @@ func intersectsNumeric(sourceIDs []int64, numeric map[int64]bool) bool {
 
 // installedPkgSet reads the engine's currently-installed extensions into a
 // pkgName set. Listing extensions failing is an enumerating error.
-func installedPkgSet(ctx context.Context, client suwayomi.Client) (map[string]bool, error) {
+func installedPkgSet(ctx context.Context, client sourceengine.Client) (map[string]bool, error) {
 	exts, err := client.Extensions(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("enginetopo.Reconcile: list extensions: %w", err)
@@ -224,21 +243,21 @@ func installedPkgSet(ctx context.Context, client suwayomi.Client) (map[string]bo
 // reconcileRepos rewrites the engine's extension-repo list from the durable
 // HarvestedRepo set WHEN it has drifted; an already-matching list is a no-op
 // (changed=false, no mutation). Reading either list failing is an enumerating
-// error; a SetExtensionRepos write failure is isolated as a gap (changed stays
-// false, so the extension step still runs but skips the repo-driven fetch).
-func reconcileRepos(ctx context.Context, client suwayomi.Client, db *ent.Client) (bool, []error, error) {
+// error; a SetRepos write failure is isolated as a gap (changed stays false, so
+// the extension step still runs but skips the repo-driven refresh).
+func reconcileRepos(ctx context.Context, client sourceengine.Client, db *ent.Client) (bool, []error, error) {
 	dbRepos, err := db.HarvestedRepo.Query().Select(entharvestedrepo.FieldURL).Strings(ctx)
 	if err != nil {
 		return false, nil, fmt.Errorf("enginetopo.Reconcile: query harvested repos: %w", err)
 	}
-	engineRepos, err := client.ExtensionRepos(ctx)
+	engineRepos, err := client.Repos(ctx)
 	if err != nil {
 		return false, nil, fmt.Errorf("enginetopo.Reconcile: list engine repos: %w", err)
 	}
 	if sameStringSet(dbRepos, engineRepos) {
 		return false, nil, nil
 	}
-	if err := client.SetExtensionRepos(ctx, dbRepos); err != nil {
+	if _, err := client.SetRepos(ctx, dbRepos); err != nil {
 		slog.WarnContext(ctx, "enginetopo: reconcile could not set engine repos", "err", err)
 		return false, []error{fmt.Errorf("set engine repos: %w", err)}, nil
 	}
@@ -246,14 +265,14 @@ func reconcileRepos(ctx context.Context, client suwayomi.Client, db *ent.Client)
 }
 
 // reconcileExtensions installs every required-but-missing extension. It first
-// refreshes the engine's available list from the repos (FetchExtensions) when
+// refreshes the engine's available list from the repos (RefreshExtensions) when
 // there is anything to do — a repo change OR a missing pkg — so a just-set repo's
 // extensions become installable. When nothing is missing and repos did not
 // change it is a pure no-op (zero mutations, honouring idempotency). A per-pkg
 // install failure is isolated as a gap.
 func reconcileExtensions(
 	ctx context.Context,
-	client suwayomi.Client,
+	client sourceengine.Client,
 	required []string,
 	installed map[string]bool,
 	reposChanged bool,
@@ -269,16 +288,19 @@ func reconcileExtensions(
 	}
 
 	var gaps []error
-	if _, err := client.FetchExtensions(ctx); err != nil {
+	if _, err := client.RefreshExtensions(ctx); err != nil {
 		// The repo-cache refresh failed; the installs below may still succeed from a
 		// prior cache, so record the gap and continue rather than abort.
 		slog.WarnContext(ctx, "enginetopo: reconcile could not refresh extensions from repos", "err", err)
-		gaps = append(gaps, fmt.Errorf("fetch extensions: %w", err))
+		gaps = append(gaps, fmt.Errorf("refresh extensions: %w", err))
 	}
 
 	count := 0
 	for _, pkg := range missing {
-		if err := client.SetExtensionState(ctx, pkg, suwayomi.ExtensionInstall); err != nil {
+		// apkURL "" — REPO-based install (resolved by the engine host against its
+		// configured repos); the apk-cache fallback is deferred (see Reconcile's
+		// doc comment).
+		if _, err := client.InstallExtension(ctx, pkg, ""); err != nil {
 			slog.WarnContext(ctx, "enginetopo: reconcile could not install extension, recording gap",
 				"pkg_name", pkg, "err", err)
 			gaps = append(gaps, fmt.Errorf("install extension %q: %w", pkg, err))
@@ -290,11 +312,23 @@ func reconcileExtensions(
 }
 
 // reconcilePrefs pushes every stored SourcePreference whose engine value has
-// drifted from the durable value back onto its source, addressed by the LIVE
-// pref's Position (the DB stores no position). Loading the stored rows failing is
-// an enumerating error; a per-source read failure, or a per-pref parse/write
-// failure, is isolated as a gap.
-func reconcilePrefs(ctx context.Context, client suwayomi.Client, db *ent.Client) (int, []error, error) {
+// drifted from the durable value back onto its source, addressed by KEY — the
+// engine host's SetPreferences write is key-addressed (no Position machinery;
+// contrast the retired Suwayomi GraphQL union, which required a 0-based array
+// position). Loading the stored rows failing is an enumerating error; a
+// per-source read failure, a per-row coercion failure, or a per-source WRITE
+// failure is isolated as a gap.
+//
+// BATCHING (a real behaviour change from the per-preference Suwayomi writes):
+// every drifted key for a given source is collected into ONE map and pushed via
+// a SINGLE SetPreferences(sourceID, changes) call — the engine host's own
+// Preferences.apply also applies a whole batch atomically-per-call. This means
+// fault isolation is now per-SOURCE for the network write (a batch failure gaps
+// every key in it together), not per-KEY as before; a per-row COERSION failure
+// (a stored value that fails to parse for the live pref's kind) is still
+// isolated per-key BEFORE the batch is built, so one unparseable stored value
+// never blocks its sibling keys on the same source from being pushed.
+func reconcilePrefs(ctx context.Context, client sourceengine.Client, db *ent.Client) (int, []error, error) {
 	rows, err := db.SourcePreference.Query().All(ctx)
 	if err != nil {
 		return 0, nil, fmt.Errorf("enginetopo.Reconcile: query source preferences: %w", err)
@@ -307,25 +341,34 @@ func reconcilePrefs(ctx context.Context, client suwayomi.Client, db *ent.Client)
 	applied := 0
 	var gaps []error
 	for sourceID, stored := range bySource {
-		sidStr := strconv.FormatInt(sourceID, 10)
-		live, err := client.SourcePreferences(ctx, sidStr)
+		live, err := client.Preferences(ctx, sourceID)
 		if err != nil {
 			slog.WarnContext(ctx, "enginetopo: reconcile could not read source preferences, skipping source",
 				"source_id", sourceID, "err", err)
 			gaps = append(gaps, fmt.Errorf("read source %d preferences: %w", sourceID, err))
 			continue
 		}
-		a, g := applySourcePrefs(ctx, client, sidStr, stored, indexPrefsByKey(live))
-		applied += a
-		gaps = append(gaps, g...)
+
+		pending, changes, buildGaps := buildSourceChanges(sourceID, stored, indexPrefsByKey(live))
+		gaps = append(gaps, buildGaps...)
+		if pending == 0 {
+			continue
+		}
+		if _, err := client.SetPreferences(ctx, sourceID, changes); err != nil {
+			slog.WarnContext(ctx, "enginetopo: reconcile could not set preferences, recording gap",
+				"source_id", sourceID, "err", err)
+			gaps = append(gaps, fmt.Errorf("set source %d preferences: %w", sourceID, err))
+			continue
+		}
+		applied += pending
 	}
 	return applied, gaps, nil
 }
 
 // indexPrefsByKey maps live preferences by their Key (skipping keyless ones,
 // which cannot be matched to a stored (source_id, key) row).
-func indexPrefsByKey(live []suwayomi.SourcePreference) map[string]suwayomi.SourcePreference {
-	byKey := make(map[string]suwayomi.SourcePreference, len(live))
+func indexPrefsByKey(live []sourceengine.Preference) map[string]sourceengine.Preference {
+	byKey := make(map[string]sourceengine.Preference, len(live))
 	for _, p := range live {
 		if p.Key != "" {
 			byKey[p.Key] = p
@@ -334,40 +377,36 @@ func indexPrefsByKey(live []suwayomi.SourcePreference) map[string]suwayomi.Sourc
 	return byKey
 }
 
-// applySourcePrefs writes each stored preference for one source whose live value
-// differs, using the live pref's Position + Type. A stored key with no live pref
-// is skipped; a stored value equal to the live value is left untouched
-// (idempotency); a parse or write failure is isolated as a gap.
-func applySourcePrefs(
-	ctx context.Context,
-	client suwayomi.Client,
-	sidStr string,
+// buildSourceChanges walks one source's stored preferences against its live
+// values and returns the count of keys that need pushing, the key->coerced-
+// value batch to send in ONE SetPreferences call, and any per-row gaps hit
+// while building it. A stored key with no live match is silently skipped (the
+// option no longer exists — not a gap); a stored value already equal to the
+// live value is left out of the batch (idempotency); a value that fails to
+// coerce for the live pref's kind is isolated as a gap and left out of the
+// batch (its sibling keys on the same source are unaffected).
+func buildSourceChanges(
+	sourceID int64,
 	stored []*ent.SourcePreference,
-	liveByKey map[string]suwayomi.SourcePreference,
-) (int, []error) {
-	applied := 0
+	liveByKey map[string]sourceengine.Preference,
+) (int, map[string]any, []error) {
+	changes := make(map[string]any)
 	var gaps []error
 	for _, row := range stored {
 		live, ok := liveByKey[row.Key]
 		if !ok || prefInSync(row.Value, live) {
 			continue
 		}
-		value, err := buildPrefValue(live.Type, row.Value)
+		value, err := coercePrefValue(live.Type, row.Value)
 		if err != nil {
-			slog.WarnContext(ctx, "enginetopo: reconcile could not build preference value, recording gap",
-				"source", sidStr, "key", row.Key, "err", err)
-			gaps = append(gaps, fmt.Errorf("build preference %q: %w", row.Key, err))
+			slog.Warn("enginetopo: reconcile could not build preference value, recording gap",
+				"source_id", sourceID, "key", row.Key, "err", err)
+			gaps = append(gaps, fmt.Errorf("build preference %q for source %d: %w", row.Key, sourceID, err))
 			continue
 		}
-		if _, err := client.SetSourcePreference(ctx, sidStr, live.Position, value); err != nil {
-			slog.WarnContext(ctx, "enginetopo: reconcile could not set preference, recording gap",
-				"source", sidStr, "key", row.Key, "err", err)
-			gaps = append(gaps, fmt.Errorf("set preference %q: %w", row.Key, err))
-			continue
-		}
-		applied++
+		changes[row.Key] = value
 	}
-	return applied, gaps
+	return len(changes), changes, gaps
 }
 
 // prefInSync reports whether a stored value already matches the live preference's
@@ -376,63 +415,72 @@ func applySourcePrefs(
 // the comparison is symmetric with how the value was stored. A live pref with no
 // current value set (encode ok=false) is never "in sync" with a stored value, so
 // the stored value is (re)pushed.
-func prefInSync(storedValue string, live suwayomi.SourcePreference) bool {
+func prefInSync(storedValue string, live sourceengine.Preference) bool {
 	liveValue, _, ok := encodePreferenceValue(live)
 	return ok && storedValue == liveValue
 }
 
-// buildPrefValue REVERSES encodePreferenceValue: it turns a stored string value
-// back into a typed suwayomi.PreferenceValue for the live pref's variant. The
-// kind comes from the LIVE pref (it is what SetSourcePreference validates
-// against), not the stored value_type. A parse failure or unknown kind is an
-// error the caller isolates as a gap.
-func buildPrefValue(kind suwayomi.PreferenceType, stored string) (suwayomi.PreferenceValue, error) {
+// coercePrefValue REVERSES encodePreferenceValue: it turns a stored string value
+// back into the JSON-native Go value (bool/string/[]string) the engine host's
+// SetPreferences wants for the live pref's variant. The kind comes from the
+// LIVE pref (it is what the engine host's Preferences.apply coerces against),
+// not the stored value_type. A parse failure or unknown kind is an error the
+// caller isolates as a gap.
+func coercePrefValue(kind, stored string) (any, error) {
 	switch kind {
-	case suwayomi.PreferenceCheckBox, suwayomi.PreferenceSwitch:
+	case sourceengine.PreferenceCheckBox, sourceengine.PreferenceSwitchCompat:
 		b, err := strconv.ParseBool(stored)
 		if err != nil {
-			return suwayomi.PreferenceValue{}, fmt.Errorf("parse bool %q: %w", stored, err)
+			return nil, fmt.Errorf("parse bool %q: %w", stored, err)
 		}
-		return suwayomi.BoolPreferenceValue(kind, b), nil
-	case suwayomi.PreferenceList, suwayomi.PreferenceEditText:
-		return suwayomi.StringPreferenceValue(kind, stored), nil
-	case suwayomi.PreferenceMultiSelect:
+		return b, nil
+	case sourceengine.PreferenceList, sourceengine.PreferenceEditText:
+		return stored, nil
+	case sourceengine.PreferenceMultiSelect:
 		var list []string
 		if err := json.Unmarshal([]byte(stored), &list); err != nil {
-			return suwayomi.PreferenceValue{}, fmt.Errorf("parse multiselect %q: %w", stored, err)
+			return nil, fmt.Errorf("parse multiselect %q: %w", stored, err)
 		}
-		return suwayomi.MultiSelectPreferenceValue(list), nil
+		return list, nil
 	default:
-		return suwayomi.PreferenceValue{}, fmt.Errorf("unknown preference kind %q", kind)
+		return nil, fmt.Errorf("unknown preference kind %q", kind)
 	}
 }
 
 // reconcileConfig pushes Tsundoku's owned FlareSolverr + SOCKS config onto the
-// engine WHEN it has drifted, comparing against a live ServerSettings read first
-// so an already-matching engine is a no-op. Reading or writing the settings is a
-// single item: a failure is isolated as a gap (never a hard error), because
-// config is independent of the extension + preference recovery.
-func reconcileConfig(ctx context.Context, client suwayomi.Client, cfg ConfigProvider) (bool, []error) {
-	live, err := client.ServerSettings(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "enginetopo: reconcile could not read server settings, recording gap", "err", err)
-		return false, []error{fmt.Errorf("read server settings: %w", err)}
-	}
+// engine UNCONDITIONALLY, every pass — no drift READ, no comparison. This is a
+// deliberate simplification from the retired Suwayomi settings proxy (which had
+// a `settings` query to read-before-write): sourceengine.Client exposes ONLY
+// SetFlareSolverr/SetSocks (both PUT, no matching GET), so there is nothing to
+// compare against. "Tsundoku is reality" (QCAT-250): the durable ConfigProvider
+// IS the desired state, so pushing it every reconcile is just an idempotent PUT
+// of owned config — the engine converges to it regardless of what it currently
+// holds. The loss of drift detection here is intentional, not an oversight (see
+// isInSync, which excludes this step from InSync accordingly).
+//
+// Both SetFlareSolverr and SetSocks are attempted independently so a SOCKS
+// failure never blocks the FlareSolverr push (or vice versa); either failure
+// is isolated as its own gap. ConfigApplied reports whether BOTH calls
+// succeeded.
+func reconcileConfig(ctx context.Context, client sourceengine.Client, cfg ConfigProvider) (bool, []error) {
 	desired := snapshotConfig(ctx, cfg)
-	if configInSync(live, desired) {
-		return false, nil
+
+	var gaps []error
+	if _, err := client.SetFlareSolverr(ctx, desired.flarePatch()); err != nil {
+		slog.WarnContext(ctx, "enginetopo: reconcile could not push flaresolverr config, recording gap", "err", err)
+		gaps = append(gaps, fmt.Errorf("set flaresolverr config: %w", err))
 	}
-	if err := client.SetServerSettings(ctx, desired.patch()); err != nil {
-		slog.WarnContext(ctx, "enginetopo: reconcile could not set server settings, recording gap", "err", err)
-		return false, []error{fmt.Errorf("set server settings: %w", err)}
+	if _, err := client.SetSocks(ctx, desired.socksPatch()); err != nil {
+		slog.WarnContext(ctx, "enginetopo: reconcile could not push socks config, recording gap", "err", err)
+		gaps = append(gaps, fmt.Errorf("set socks config: %w", err))
 	}
-	return true, nil
+	return len(gaps) == 0, gaps
 }
 
 // desiredConfig is a one-shot snapshot of Tsundoku's owned FlareSolverr + SOCKS
-// config, read from the ConfigProvider once so the compare and the patch build
-// use identical values (and issue no repeated DB reads). socksPort is stored in
-// its wire form (a numeric string) to match SuwayomiSettings.SocksProxyPort.
+// config, read from the ConfigProvider once so the two patches below are built
+// from identical values (and issue no repeated DB reads). socksPort is stored in
+// its wire form (a numeric string) to match sourceengine.SocksPatch.Port.
 type desiredConfig struct {
 	fsEnabled     bool
 	fsURL         string
@@ -462,61 +510,33 @@ func snapshotConfig(ctx context.Context, cfg ConfigProvider) desiredConfig {
 	}
 }
 
-// patch builds the SuwayomiSettingsPatch that would make the engine match this
-// desiredConfig. FlareSolverr fields are always set; the SOCKS fields are set
-// ONLY when SOCKS is enabled — mirroring socksUpdates' skip-when-off rule (a
-// disabled SOCKS proxy has nothing to push, and Tsundoku never seeds/pushes the
-// SOCKS username/password, so they are omitted here too).
-func (d desiredConfig) patch() suwayomi.SuwayomiSettingsPatch {
-	p := suwayomi.SuwayomiSettingsPatch{
-		FlareSolverrEnabled:            &d.fsEnabled,
-		FlareSolverrURL:                &d.fsURL,
-		FlareSolverrTimeout:            &d.fsTimeout,
-		FlareSolverrSessionName:        &d.fsSessionName,
-		FlareSolverrSessionTTL:         &d.fsSessionTTL,
-		FlareSolverrAsResponseFallback: &d.fsFallback,
+// flarePatch builds the FlareSolverrPatch carrying every field of this
+// desiredConfig — ALL-POINTER but every pointer is always non-nil (the
+// unconditional-push design has nothing to omit).
+func (d desiredConfig) flarePatch() sourceengine.FlareSolverrPatch {
+	return sourceengine.FlareSolverrPatch{
+		Enabled:            &d.fsEnabled,
+		URL:                &d.fsURL,
+		Session:            &d.fsSessionName,
+		SessionTTL:         &d.fsSessionTTL,
+		Timeout:            &d.fsTimeout,
+		AsResponseFallback: &d.fsFallback,
 	}
-	if d.socksEnabled {
-		enabled := true
-		p.SocksProxyEnabled = &enabled
-		p.SocksProxyHost = &d.socksHost
-		p.SocksProxyPort = &d.socksPort
-		p.SocksProxyVersion = &d.socksVersion
-	}
-	return p
 }
 
-// configInSync reports whether the engine's live settings already match the
-// desired config across every field the patch would set: always the FlareSolverr
-// subset, plus the SOCKS subset only when SOCKS is enabled (a disabled SOCKS is
-// never pushed, so it is not compared — matching patch()).
-func configInSync(live suwayomi.SuwayomiSettings, d desiredConfig) bool {
-	if !flareSolverrInSync(live, d) {
-		return false
+// socksPatch builds the SocksPatch carrying this desiredConfig's enabled/host/
+// port/version — ALWAYS, including when SOCKS is disabled (Tsundoku's own
+// "off" state is itself the desired state to push; "Tsundoku is reality").
+// Username/Password are deliberately left nil: Tsundoku never seeds or owns the
+// SOCKS credentials (mirrors the retired seed's same omission).
+func (d desiredConfig) socksPatch() sourceengine.SocksPatch {
+	enabled := d.socksEnabled
+	return sourceengine.SocksPatch{
+		Enabled: &enabled,
+		Host:    &d.socksHost,
+		Port:    &d.socksPort,
+		Version: &d.socksVersion,
 	}
-	if d.socksEnabled && !socksInSync(live, d) {
-		return false
-	}
-	return true
-}
-
-// flareSolverrInSync compares the six FlareSolverr fields.
-func flareSolverrInSync(live suwayomi.SuwayomiSettings, d desiredConfig) bool {
-	return live.FlareSolverrEnabled == d.fsEnabled &&
-		live.FlareSolverrURL == d.fsURL &&
-		live.FlareSolverrTimeout == d.fsTimeout &&
-		live.FlareSolverrSessionName == d.fsSessionName &&
-		live.FlareSolverrSessionTTL == d.fsSessionTTL &&
-		live.FlareSolverrAsResponseFallback == d.fsFallback
-}
-
-// socksInSync compares the four SOCKS fields Reconcile pushes (enabled/host/
-// port/version); the username/password are deliberately not owned by Tsundoku.
-func socksInSync(live suwayomi.SuwayomiSettings, d desiredConfig) bool {
-	return live.SocksProxyEnabled &&
-		live.SocksProxyHost == d.socksHost &&
-		live.SocksProxyPort == d.socksPort &&
-		live.SocksProxyVersion == d.socksVersion
 }
 
 // sameStringSet reports whether a and b contain the same set of strings

@@ -19,6 +19,11 @@ import (
 //
 // An empty database yields the zero Status (every count 0) — a valid, expected
 // answer for a fresh install that has adopted nothing yet, never an error.
+//
+// (QCAT-253, P2 Suwayomi-removal slice 5): URLsFilled/URLsRemaining are RETIRED
+// along with the SeriesProvider.url backfill pass they reported on (see
+// runner.go's RunSeed doc comment) — sourceengine-backed ingest sets url at
+// write time, so there is no longer a backfill gap to measure.
 type Status struct {
 	// Repos is the number of harvested extension-repository rows (HarvestedRepo).
 	Repos int
@@ -37,13 +42,6 @@ type Status struct {
 	// one captured SourcePreference row — of SourcesTotal, how many the
 	// preference seed has reached.
 	SourcesPrefsCaptured int
-	// URLsFilled is the number of SeriesProvider rows whose url is populated.
-	URLsFilled int
-	// URLsRemaining is the number of live (suwayomi_id != 0) SeriesProvider rows
-	// still missing a url — exactly BackfillProviderURLs's candidate set, so it
-	// is the count that pass can still fill (a disk-origin row with no source is
-	// unfillable and deliberately NOT counted here).
-	URLsRemaining int
 }
 
 // TopologyStatus computes the engine-topology Status from DB counts alone (no
@@ -71,20 +69,12 @@ func TopologyStatus(ctx context.Context, db *ent.Client) (Status, error) {
 	if s.SourcesPrefsCaptured, err = countSourcesWithPrefs(ctx, db); err != nil {
 		return Status{}, err
 	}
-	if s.URLsFilled, err = db.SeriesProvider.Query().
-		Where(entseriesprovider.URLNEQ("")).Count(ctx); err != nil {
-		return Status{}, fmt.Errorf("enginetopo.TopologyStatus: count filled urls: %w", err)
-	}
-	if s.URLsRemaining, err = db.SeriesProvider.Query().
-		Where(entseriesprovider.URL(""), entseriesprovider.SuwayomiIDNEQ(0)).Count(ctx); err != nil {
-		return Status{}, fmt.Errorf("enginetopo.TopologyStatus: count remaining urls: %w", err)
-	}
 
 	return s, nil
 }
 
 // countNumericSources counts the distinct SeriesProvider.provider values that
-// parse as a numeric Suwayomi source id (a live-ingested row), skipping the
+// parse as a numeric engine source id (a live-ingested row), skipping the
 // display-name providers a disk-origin row carries — the same numeric/name split
 // SeedSourcePreferences applies, so SourcesTotal matches the seed's own source
 // universe.
@@ -114,7 +104,7 @@ func countSourcesWithPrefs(ctx context.Context, db *ent.Client) (int, error) {
 		Select(entsourcepreference.FieldSourceID).
 		Ints(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("enginetopo.TopologyStatus: query source-pref sources: %w", err)
+		return 0, fmt.Errorf("enginetopo.TopologyStatus: count source-pref sources: %w", err)
 	}
 	return len(ids), nil
 }

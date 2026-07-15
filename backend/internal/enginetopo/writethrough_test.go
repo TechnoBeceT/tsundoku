@@ -11,8 +11,51 @@ import (
 	entharvestedextension "github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	entharvestedrepo "github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
+
+// capturingWriter is a settings.SettingsStore-shaped test double that records
+// the KeyValue batches it was asked to persist (ACCUMULATED across calls,
+// because WriteThroughEngineConfig writes FlareSolverr and SOCKS as two
+// separate batches), instead of touching a real DB.
+//
+// `owned` models the keys Tsundoku already has an explicit Settings row for:
+// every key written via SetMany is added to it, so a re-write inside one test
+// sees the previously-written keys as owned — WriteThroughEngineConfig is
+// UNCONDITIONAL (unlike the retired boot-seed gap-fill), so this is here only
+// to prove it overwrites already-owned keys, not to gate anything.
+type capturingWriter struct {
+	got   []settings.KeyValue
+	calls int
+	err   error
+	errOn int             // when >0, fail SetMany only on the errOn-th call (1-based)
+	owned map[string]bool // keys Tsundoku already owns (have an explicit row)
+}
+
+func (w *capturingWriter) SetMany(_ context.Context, updates []settings.KeyValue) error {
+	w.calls++
+	if w.err != nil && (w.errOn == 0 || w.errOn == w.calls) {
+		return w.err
+	}
+	if w.owned == nil {
+		w.owned = make(map[string]bool)
+	}
+	for _, kv := range updates {
+		w.owned[kv.Key] = true
+	}
+	w.got = append(w.got, updates...)
+	return nil
+}
+
+func (w *capturingWriter) value(key string) (string, bool) {
+	for _, kv := range w.got {
+		if kv.Key == key {
+			return kv.Value, true
+		}
+	}
+	return "", false
+}
 
 // TestOnExtensionInstalled proves the live write-through captures a just-installed
 // extension into the durable store: the HarvestedExtension row exists and the
@@ -28,12 +71,8 @@ func TestOnExtensionInstalled(t *testing.T) {
 		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":4}]`)},
 		"https://repo.test/repo/apk/one.apk":    {status: 200, body: apkBytes},
 	}}
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "7"}}},
-	}
 
-	enginetopo.OnExtensionInstalled(ctx, client, db, cache, stub.get, installedExt("pkg.one", repo, 4))
+	enginetopo.OnExtensionInstalled(ctx, db, cache, stub.get, installedExt("pkg.one", repo, 4, sourceengine.Source{ID: 7}))
 
 	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName("pkg.one")).OnlyX(ctx)
 	assertCachedExtension(t, row, hexSHA(apkBytes), 4, []int64{7})
@@ -53,13 +92,9 @@ func TestOnExtensionUninstalled(t *testing.T) {
 		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":2}]`)},
 		"https://repo.test/repo/apk/one.apk":    {status: 200, body: []byte("APK")},
 	}}
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
-	}
 
 	// Seed a real row + cached file via the capture path, then uninstall it.
-	enginetopo.OnExtensionInstalled(ctx, client, db, cache, stub.get, installedExt("pkg.one", repo, 2))
+	enginetopo.OnExtensionInstalled(ctx, db, cache, stub.get, installedExt("pkg.one", repo, 2, sourceengine.Source{ID: 1}))
 	if !cache.Exists("pkg.one", 2) {
 		t.Fatal("precondition: apk not cached before uninstall")
 	}

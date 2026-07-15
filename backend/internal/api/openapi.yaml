@@ -1321,7 +1321,7 @@ components:
         Read-only snapshot of how much engine topology Tsundoku has captured into
         its own durable store, computed from DB counts alone (no engine call). The
         observable counterpart of the one-shot boot-time seed passes.
-      required: [repos, extensions, sources, urls, gaps]
+      required: [repos, extensions, sources, gaps]
       properties:
         repos:
           type: integer
@@ -1351,18 +1351,6 @@ components:
               type: integer
               description: How many of those sources have at least one captured preference.
               example: 5
-        urls:
-          type: object
-          required: [filled, remaining]
-          properties:
-            filled:
-              type: integer
-              description: SeriesProvider rows whose url is resolved.
-              example: 40
-            remaining:
-              type: integer
-              description: Live SeriesProvider rows still missing a url (the backfill's remaining candidate set).
-              example: 12
         gaps:
           type: array
           description: |
@@ -1370,7 +1358,7 @@ components:
             "3 extensions not cached"). Empty when nothing is outstanding.
           items:
             type: string
-          example: ["3 extensions not cached", "12 provider urls unresolved"]
+          example: ["3 extensions not cached", "2 sources without captured preferences"]
 
     System:
       type: object
@@ -1751,10 +1739,12 @@ components:
     Extension:
       type: object
       description: |
-        A Suwayomi extension (a Tachiyomi/Mihon source plugin), proxied verbatim
-        from the active Suwayomi (embed or external). Tsundoku stores none of
-        this. The identity is pkgName (there is no numeric id); the install/nsfw/
-        obsolete flags use Suwayomi's isInstalled/isNsfw/isObsolete naming.
+        An extension (a Tachiyomi/Mihon source plugin), proxied verbatim from
+        the engine host. Tsundoku stores none of this. The identity is
+        pkgName (there is no numeric id); the install/nsfw flags use the
+        engine host's isInstalled/isNsfw naming. iconUrl is the engine host's
+        own reported icon image URL, served AS-IS (no same-origin proxy —
+        the FE renders it directly).
       required:
         - pkgName
         - name
@@ -1762,11 +1752,11 @@ components:
         - versionName
         - versionCode
         - iconUrl
-        - repo
+        - repoUrl
         - isInstalled
         - hasUpdate
         - isNsfw
-        - isObsolete
+        - sources
       properties:
         pkgName:
           type: string
@@ -1790,10 +1780,11 @@ components:
           example: 42
         iconUrl:
           type: string
-          description: Tsundoku same-origin icon proxy path ("/api/suwayomi/extensions/{pkgName}/icon"), not Suwayomi's own raw (cross-origin) icon URL.
-        repo:
+          description: The engine host's own reported icon image URL, served as-is.
+        repoUrl:
           type: string
-          description: Source repo URL this extension came from; "" when null.
+          nullable: true
+          description: Source repo URL this extension came from; null when not associated with a repo (e.g. sideloaded).
         isInstalled:
           type: boolean
           description: Whether the extension is currently installed.
@@ -1803,9 +1794,29 @@ components:
         isNsfw:
           type: boolean
           description: Whether the extension is flagged not-safe-for-work.
-        isObsolete:
-          type: boolean
-          description: Whether the extension is orphaned (no longer in any repo).
+        sources:
+          type: array
+          description: The content sources this extension provides (one per language it supports) — the set the per-source preferences endpoint resolves against.
+          items:
+            $ref: "#/components/schemas/ExtensionSource"
+
+    ExtensionSource:
+      type: object
+      description: One content source an extension provides.
+      required: [id, name, lang]
+      properties:
+        id:
+          type: string
+          description: The source's stable numeric identifier, as a decimal string.
+          example: "2499283573021220255"
+        name:
+          type: string
+          description: Human-readable source name.
+          example: MangaDex
+        lang:
+          type: string
+          description: BCP-47 language tag the source reports.
+          example: en
 
     ExtensionRepos:
       type: object
@@ -1837,17 +1848,16 @@ components:
     SourcePreference:
       type: object
       description: |
-        One configurable preference of a Suwayomi source (a Tachiyomi/Mihon
-        source setting), flattened from the GraphQL Preference union. Read `type`
-        first: it decides how `currentValue`/`default` are typed —
-        CheckBoxPreference/SwitchPreference are booleans, ListPreference/
-        EditTextPreference are strings (List also carries entries/entryValues),
-        MultiSelectListPreference are string arrays. `position` is the 0-based
-        array index and is the ONLY write selector; it must come from a FRESH read
-        (the array order can shift server-side — never cache positions).
+        One configurable preference of a source (a Tachiyomi/Mihon source
+        setting). Read `type` first: it decides how `currentValue`/`default`
+        are typed — CheckBoxPreference/SwitchPreferenceCompat are booleans,
+        ListPreference/EditTextPreference are strings (List also carries
+        entries/entryValues), MultiSelectListPreference are string arrays.
+        `key` is the ONLY write selector (KEY-addressed, not position-indexed
+        — the engine host's write is keyed, unlike the retired Suwayomi
+        position-indexed shape).
       required:
         - type
-        - position
         - key
         - title
         - summary
@@ -1858,19 +1868,16 @@ components:
       properties:
         type:
           type: string
-          description: The union variant (Suwayomi __typename).
+          description: The union variant (the androidx.preference class simpleName).
           enum:
             - CheckBoxPreference
-            - SwitchPreference
+            - SwitchPreferenceCompat
             - ListPreference
             - MultiSelectListPreference
             - EditTextPreference
-        position:
-          type: integer
-          description: 0-based array index — the (position-indexed) write selector.
         key:
           type: string
-          description: Source-internal preference key ("" when null).
+          description: Source-internal preference key — the write selector.
         title:
           type: string
           description: Human-readable label ("" when null).
@@ -1911,59 +1918,31 @@ components:
 
     SourcePreferencesGroup:
       type: object
-      description: One source's preferences within a grouped extension response (one source per language).
+      description: |
+        One source's preferences within a grouped extension response (one
+        source per language). The per-language enable/disable toggle is
+        RETIRED (sourceengine has no server-side "disabled source" concept
+        to proxy).
       required:
         - sourceId
         - sourceName
         - lang
-        - enabled
         - preferences
       properties:
         sourceId:
           type: string
-          description: The Suwayomi source id (the write body's sourceId).
+          description: The engine host source id (the write body's sourceId).
         sourceName:
           type: string
           description: Human-readable source name.
         lang:
           type: string
           description: BCP-47 language tag.
-        enabled:
-          type: boolean
-          description: |
-            The per-language enable/disable toggle. A disabled source is hidden
-            from Tsundoku's Discover/Search/Browse source lists but keeps
-            updating any series already adopted from it. Toggled via
-            PATCH /api/suwayomi/sources/{sourceId}/enabled.
         preferences:
           type: array
           description: This source's configurable preferences, in array order.
           items:
             $ref: "#/components/schemas/SourcePreference"
-
-    SourceEnabled:
-      type: object
-      description: The authoritative per-language enable/disable state, re-read after a write (§16 round-trip).
-      required:
-        - sourceId
-        - enabled
-      properties:
-        sourceId:
-          type: string
-          description: The Suwayomi source id.
-        enabled:
-          type: boolean
-          description: The enable/disable state as re-read after the write.
-
-    SetSourceEnabledRequest:
-      type: object
-      description: Set the per-language enable/disable state for one source.
-      required:
-        - enabled
-      properties:
-        enabled:
-          type: boolean
-          description: The new enable/disable state.
 
     SourcePreferencesBySource:
       type: object
@@ -1980,22 +1959,21 @@ components:
     SetSourcePreferenceRequest:
       type: object
       description: |
-        Write one source preference by POSITION. `value`'s JSON type must match the
-        variant at that position (boolean → CheckBox/Switch, string → List/EditText,
-        array of strings → MultiSelectList) — a mismatch is a 400. position must be
-        taken from a fresh read (positions can shift server-side).
+        Write one source preference by KEY. `value`'s JSON type must match the
+        variant at that key (boolean → CheckBox/Switch, string → List/EditText,
+        array of strings → MultiSelectList) — a mismatch is a 400. An unknown
+        key is also a 400.
       required:
         - sourceId
-        - position
+        - key
         - value
       properties:
         sourceId:
           type: string
-          description: The Suwayomi source id the preference belongs to.
-        position:
-          type: integer
-          minimum: 0
-          description: 0-based array index of the preference to write.
+          description: The engine host source id the preference belongs to.
+        key:
+          type: string
+          description: The source-internal preference key to write.
         value:
           nullable: true
           description: New value — a boolean, a string, or an array of strings (by variant).
@@ -6048,134 +6026,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /api/suwayomi/extensions/{pkgName}/icon:
-    get:
-      operationId: getExtensionIcon
-      summary: Extension icon image
-      description: |
-        Streams the extension's icon image, proxied from Suwayomi. Suwayomi's own
-        iconUrl is a cross-origin URL the browser cannot load directly, so this
-        endpoint looks the extension up by pkgName among Extensions() and streams
-        that entry's own reported icon (Suwayomi's REST icon path, confirmed live:
-        "/api/v1/extension/icon/{apkFileName}") as a binary blob. Returns 404 when
-        pkgName is unknown, 502 when Suwayomi fails to fetch the icon.
-      tags:
-        - suwayomi
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: pkgName
-          in: path
-          required: true
-          description: The extension package name (its identity).
-          schema:
-            type: string
-      responses:
-        "200":
-          description: The icon image bytes.
-          content:
-            image/*:
-              schema:
-                type: string
-                format: binary
-        "400":
-          description: A blank pkgName.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Missing or invalid Bearer token.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: No extension with that pkgName.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "502":
-          description: Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /api/suwayomi/sources/{sourceId}/enabled:
-    patch:
-      operationId: setSourceEnabled
-      summary: Toggle a source's per-language enable/disable state
-      description: |
-        Writes the CLIENT-CONVENTION enable/disable flag for one source (Suwayomi
-        has no server-side "disabled source" concept — the flag lives in a
-        per-source metadata key). Disabling hides the source from Tsundoku's
-        Discover/Search/Browse source lists but does NOT stop refreshing a series
-        already adopted from it, and does NOT delete the flag on re-enable.
-        Applies the write then RE-READS the authoritative state (§16 round-trip).
-        A blank sourceId or a missing `enabled` field is a 400; a sourceId absent
-        from the post-write re-read is a 404; any upstream Suwayomi failure
-        (the write or the re-read) is a 502.
-      tags:
-        - suwayomi
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: sourceId
-          in: path
-          required: true
-          description: The Suwayomi source id.
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetSourceEnabledRequest"
-      responses:
-        "200":
-          description: The authoritative enable/disable state after the write.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SourceEnabled"
-        "400":
-          description: A blank sourceId, invalid JSON body, or a missing `enabled` field.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Missing or invalid Bearer token.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: The source was absent from the post-write re-read.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "502":
-          description: Suwayomi was unreachable or returned a GraphQL error.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
   /api/suwayomi/extensions/{pkgName}/preferences:
     get:
       operationId: getExtensionPreferences
       summary: List an extension's per-source preferences
       description: |
-        Resolves the extension's sources (one per language) and returns each
-        source's configurable preferences, grouped by source. A pure passthrough —
-        Tsundoku stores none of this. Preferences are POSITION-indexed for writes;
-        the FE must use a fresh read's positions and never cache them. A blank
-        pkgName is a 400; any upstream Suwayomi failure is a 502.
+        Resolves the extension's sources (one per language, embedded on the
+        extension itself) and returns each source's configurable preferences,
+        grouped by source. A pure passthrough — Tsundoku stores none of this.
+        Preferences are KEY-addressed for writes (see the PATCH operation). A
+        blank pkgName is a 400; an unknown pkgName is a 404; any upstream
+        engine failure is a 502.
       tags:
         - suwayomi
       security:
@@ -6206,22 +6067,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No extension with that pkgName.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "502":
-          description: Suwayomi was unreachable or returned a GraphQL error.
+          description: The engine host was unreachable or returned an error.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
     patch:
       operationId: setExtensionPreference
-      summary: Write one source preference by position
+      summary: Write one source preference by key
       description: |
-        Writes a single preference (identified by sourceId + position) and returns
-        the FULL refreshed preference list for that source (§16 round-trip — the FE
-        re-derives fresh positions from it). value's JSON type must match the
-        variant at that position (boolean → CheckBox/Switch, string → List/EditText,
-        array → MultiSelectList); a mismatch or an out-of-range position is a 400.
-        Any upstream Suwayomi failure is a 502.
+        Writes a single preference (identified by sourceId + key) and returns
+        the FULL refreshed preference list for that source (§16 round-trip).
+        value's JSON type must match the variant at that key (boolean →
+        CheckBox/Switch, string → List/EditText, array → MultiSelectList); a
+        mismatch or an unknown key is a 400. Any upstream engine failure is a
+        502.
       tags:
         - suwayomi
       security:
@@ -6249,7 +6116,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/SourcePreference"
         "400":
-          description: A validation failure (blank sourceId, missing/negative or out-of-range position, or a value whose type doesn't match the variant).
+          description: A validation failure (blank/non-numeric sourceId, blank key, an unknown key, or a value whose type doesn't match the variant).
           content:
             application/json:
               schema:
@@ -6261,7 +6128,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
-          description: Suwayomi was unreachable or returned a GraphQL error.
+          description: The engine host was unreachable or returned an error.
           content:
             application/json:
               schema:

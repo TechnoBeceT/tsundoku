@@ -1,3 +1,16 @@
+// Package enginetopo holds the durable engine-topology store: one-shot,
+// boot-time capture passes (SeedExtensions, SeedSourcePreferences — see
+// RunSeed), their DB->engine inverse (Reconcile — the recovery core for a
+// wiped/swapped/rebuilt engine), a live best-effort write-through
+// (OnExtensionInstalled/OnExtensionUninstalled/OnReposSet,
+// WriteThroughEngineConfig), and a read-only status snapshot (TopologyStatus).
+// These are one-shot/owner-triggered maintenance passes, as opposed to the
+// recurring per-cycle work in internal/refresh/internal/download.
+//
+// (QCAT-253, P2 Suwayomi-removal slice 5): the extension/repo/preference
+// passes target internal/sourceengine (the engine-host client). The
+// SeriesProvider.url backfill and the engine-config gap-fill seed are
+// RETIRED — see RunSeed's doc comment.
 package enginetopo
 
 import (
@@ -7,26 +20,22 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // SeedDeps bundles the collaborators the one-shot topology seed needs. It is a
 // plain struct so main.go can wire the shared, construct-once instances (the
-// same suwayomi client, ent client, apkcache store, and settings service the
-// rest of the app uses) into RunSeed's single background call without a long
-// positional argument list.
+// same engine client, ent client, and apkcache store the rest of the app uses)
+// into RunSeed's single background call without a long positional argument
+// list.
 type SeedDeps struct {
 	// Client is the live engine client every pass reads from.
-	Client suwayomi.Client
+	Client sourceengine.Client
 	// DB is the shared Ent client every pass writes its captured topology into.
 	DB *ent.Client
 	// Cache is the SHARED apk byte cache (constructed once in main.go and also
 	// held by the /internal apk-serving handler) SeedExtensions caches into.
 	Cache *apkcache.Store
-	// Settings is the runtime-settings read+write surface SeedEngineConfig
-	// gap-fills the engine's FlareSolverr + SOCKS config into
-	// (*settings.Service satisfies it).
-	Settings SettingsStore
 	// HTTPGet fetches repo indexes + .apk bytes for SeedExtensions (http.Get in
 	// production; a stub in tests).
 	HTTPGet func(url string) (*http.Response, error)
@@ -38,8 +47,6 @@ type SeedDeps struct {
 // unreachable and every pass was skipped (every other field then zero).
 type SeedReport struct {
 	Skipped            bool
-	URLsFilled         int
-	URLsRemaining      int
 	Repos              int
 	ExtensionsCached   int
 	ExtensionGaps      int
@@ -47,12 +54,18 @@ type SeedReport struct {
 	PrefSourcesSkipped int
 }
 
-// RunSeed runs the four one-shot engine-topology seed passes in order —
-// BackfillProviderURLs → SeedExtensions → SeedSourcePreferences →
-// SeedEngineConfig — and returns (and logs) their aggregate outcome. It is the
-// boot-time wiring entry point: main.go launches it in a detached, non-blocking
-// background goroutine once the engine is up, so a slow or failing seed can never
-// delay the HTTP server or app boot.
+// RunSeed runs the two remaining one-shot engine-topology seed passes in order
+// — SeedExtensions → SeedSourcePreferences — and returns (and logs) their
+// aggregate outcome. It is the boot-time wiring entry point: main.go launches
+// it in a detached, non-blocking background goroutine once the engine is up,
+// so a slow or failing seed can never delay the HTTP server or app boot.
+//
+// (QCAT-253, P2 Suwayomi-removal slice 5): the SeriesProvider.url backfill and
+// the engine-config gap-fill seed are RETIRED — sourceengine.Client has no
+// id->url lookup (ingest sets url at write time now) and no readable engine
+// config to gap-fill from (Tsundoku owns config outright, see reconcile.go's
+// reconcileConfig). Their counts (URLsFilled/URLsRemaining) are gone from
+// SeedReport accordingly.
 //
 // Contract:
 //   - PANIC-SAFE: a deferred recover turns any seed bug into a logged error, so a
@@ -63,9 +76,8 @@ type SeedReport struct {
 //     by skipping. This avoids a wall of per-row failures against a dead engine.
 //   - FAULT-ISOLATED: each pass's error is logged and does NOT abort the others
 //     (the passes are independent — a dead extension repo must not stop the
-//     source-preference or engine-config seed). BackfillProviderURLs and
-//     SeedSourcePreferences never fail the whole pass on a per-row/per-source
-//     error (they log+count internally); SeedExtensions/SeedEngineConfig errors
+//     source-preference seed). SeedSourcePreferences never fails the whole pass
+//     on a per-source error (it logs+counts internally); SeedExtensions errors
 //     are logged here and the next pass still runs.
 //   - IDEMPOTENT: safe to re-run on every boot; a fully-seeded library does no
 //     work and makes no writes (see each pass's own idempotency doc).
@@ -83,14 +95,10 @@ func RunSeed(ctx context.Context, deps SeedDeps) SeedReport {
 		return report
 	}
 
-	report.URLsFilled, report.URLsRemaining = runBackfill(ctx, deps)
 	report.Repos, report.ExtensionsCached, report.ExtensionGaps = runSeedExtensions(ctx, deps)
 	report.PrefsSeeded, report.PrefSourcesSkipped = runSeedPrefs(ctx, deps)
-	runSeedConfig(ctx, deps)
 
 	slog.InfoContext(ctx, "enginetopo: topology seed complete",
-		"urls_filled", report.URLsFilled,
-		"urls_remaining", report.URLsRemaining,
 		"repos", report.Repos,
 		"extensions_cached", report.ExtensionsCached,
 		"extension_gaps", report.ExtensionGaps,
@@ -98,17 +106,6 @@ func RunSeed(ctx context.Context, deps SeedDeps) SeedReport {
 		"pref_sources_skipped", report.PrefSourcesSkipped,
 	)
 	return report
-}
-
-// runBackfill runs the SeriesProvider.url backfill, logging a query-level failure
-// (the only error it returns) and reporting zero fills in that case.
-func runBackfill(ctx context.Context, deps SeedDeps) (filled, remaining int) {
-	filled, remaining, err := BackfillProviderURLs(ctx, deps.Client, deps.DB)
-	if err != nil {
-		slog.ErrorContext(ctx, "enginetopo: backfill provider urls failed", "err", err)
-		return 0, 0
-	}
-	return filled, remaining
 }
 
 // runSeedExtensions runs the extension/repo/apk-cache seed, logging an
@@ -131,12 +128,4 @@ func runSeedPrefs(ctx context.Context, deps SeedDeps) (seeded, skipped int) {
 		return 0, 0
 	}
 	return res.Seeded, res.SkippedSources
-}
-
-// runSeedConfig runs the engine-config (FlareSolverr + SOCKS) seed, logging any
-// failure — it has no counts to report.
-func runSeedConfig(ctx context.Context, deps SeedDeps) {
-	if err := SeedEngineConfig(ctx, deps.Client, deps.Settings); err != nil {
-		slog.ErrorContext(ctx, "enginetopo: seed engine config failed", "err", err)
-	}
 }

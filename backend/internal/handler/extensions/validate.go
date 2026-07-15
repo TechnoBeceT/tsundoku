@@ -3,11 +3,12 @@ package extensions
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/pkg/urlx"
-	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // ReposUpdateRequest is the PUT /api/suwayomi/extensions/repos body. Repos is a
@@ -29,108 +30,83 @@ func validatePkgName(raw string) (string, error) {
 	return pkgName, nil
 }
 
-// PreferenceUpdateRequest is the PATCH …/{pkgName}/preferences body: which source
-// (sourceId) and which preference by POSITION to write, plus the raw value.
-// value is a json.RawMessage so it can be a bool, string, or string array — it is
-// coerced to the correct Go type against the variant at that position (see
+// PreferenceUpdateRequest is the PATCH …/{pkgName}/preferences body: which
+// source (sourceId) and which preference by KEY to write, plus the raw value.
+// value is a json.RawMessage so it can be a bool, string, or string array — it
+// is coerced to the correct Go type against the variant at that key (see
 // coercePreferenceValue), because the same JSON type can back two variants
-// (bool → checkbox OR switch; string → list OR editText). position is a pointer so
-// a missing key is rejected rather than silently defaulting to position 0.
+// (bool → checkbox OR switch; string → list OR editText).
 type PreferenceUpdateRequest struct {
-	// SourceID is the Suwayomi source id the preference belongs to.
+	// SourceID is the engine host source id the preference belongs to.
 	SourceID string `json:"sourceId"`
-	// Position is the 0-based array index of the preference to write.
-	Position *int `json:"position"`
+	// Key is the source-internal preference key to write.
+	Key string `json:"key"`
 	// Value is the new value (bool / string / []string) — coerced by variant.
 	Value json.RawMessage `json:"value"`
 }
 
-// validatePreferenceUpdate fail-closes the preference write body: sourceId must be
-// non-blank, position must be present and >= 0, and value must be present. It
-// returns the trimmed sourceId and the position. The value's TYPE is validated
-// later against the fetched variant (coercePreferenceValue) since it can't be
-// judged without knowing the preference kind at that position.
-func validatePreferenceUpdate(req PreferenceUpdateRequest) (string, int, error) {
-	sourceID := strings.TrimSpace(req.SourceID)
-	if sourceID == "" {
-		return "", 0, httperr.BadRequest("sourceId required")
+// validatePreferenceUpdate fail-closes the preference write body: sourceId must
+// be non-blank and parse as a decimal int64, key must be non-blank, and value
+// must be present. It returns the parsed sourceID and the trimmed key. The
+// value's TYPE is validated later against the fetched variant
+// (coercePreferenceValue) since it can't be judged without knowing the
+// preference kind at that key.
+func validatePreferenceUpdate(req PreferenceUpdateRequest) (int64, string, error) {
+	rawID := strings.TrimSpace(req.SourceID)
+	if rawID == "" {
+		return 0, "", httperr.BadRequest("sourceId required")
 	}
-	if req.Position == nil {
-		return "", 0, httperr.BadRequest("position required")
+	sourceID, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil {
+		return 0, "", httperr.BadRequest("sourceId must be numeric")
 	}
-	if *req.Position < 0 {
-		return "", 0, httperr.BadRequest("position must be >= 0")
+	key := strings.TrimSpace(req.Key)
+	if key == "" {
+		return 0, "", httperr.BadRequest("key required")
 	}
 	if len(req.Value) == 0 {
-		return "", 0, httperr.BadRequest("value required")
+		return 0, "", httperr.BadRequest("value required")
 	}
-	return sourceID, *req.Position, nil
+	return sourceID, key, nil
 }
 
-// coercePreferenceValue decodes the raw request value into the correct typed
-// PreferenceValue for the variant at the target position: a bool for a checkbox/
-// switch, a string for a list/edittext, a string array for a multi-select. A
-// value whose JSON type does not match the variant is a 400 (so the caller learns
-// the mismatch as a clean validation error, not a raw Suwayomi 502).
+// coercePreferenceValue decodes the raw request value into the correctly-typed
+// Go value for the variant at the target key: a bool for a checkbox/switch, a
+// string for a list/edittext, a string array for a multi-select — the
+// JSON-native shapes sourceengine.Client.SetPreferences' changes map expects.
+// A value whose JSON type does not match the variant is a 400 (so the caller
+// learns the mismatch as a clean validation error, not a raw engine-host 502).
 //
 // An explicit JSON null is rejected the same way as an absent value: `null`
 // unmarshals cleanly into a zero bool/string/slice for every variant, so
 // without this guard a null request would silently clear the preference
-// instead of failing closed (M3-1).
-func coercePreferenceValue(prefType suwayomicli.PreferenceType, raw json.RawMessage) (suwayomicli.PreferenceValue, error) {
+// instead of failing closed (mirrors the retired Suwayomi proxy's M3-1 fix).
+func coercePreferenceValue(prefType string, raw json.RawMessage) (any, error) {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return suwayomicli.PreferenceValue{}, httperr.BadRequest("value required")
+		return nil, httperr.BadRequest("value required")
 	}
 	switch prefType {
-	case suwayomicli.PreferenceCheckBox, suwayomicli.PreferenceSwitch:
+	case sourceengine.PreferenceCheckBox, sourceengine.PreferenceSwitchCompat:
 		var b bool
 		if err := json.Unmarshal(raw, &b); err != nil {
-			return suwayomicli.PreferenceValue{}, httperr.BadRequest("value must be a boolean for this preference")
+			return nil, httperr.BadRequest("value must be a boolean for this preference")
 		}
-		return suwayomicli.BoolPreferenceValue(prefType, b), nil
-	case suwayomicli.PreferenceList, suwayomicli.PreferenceEditText:
+		return b, nil
+	case sourceengine.PreferenceList, sourceengine.PreferenceEditText:
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return suwayomicli.PreferenceValue{}, httperr.BadRequest("value must be a string for this preference")
+			return nil, httperr.BadRequest("value must be a string for this preference")
 		}
-		return suwayomicli.StringPreferenceValue(prefType, s), nil
-	case suwayomicli.PreferenceMultiSelect:
+		return s, nil
+	case sourceengine.PreferenceMultiSelect:
 		var list []string
 		if err := json.Unmarshal(raw, &list); err != nil {
-			return suwayomicli.PreferenceValue{}, httperr.BadRequest("value must be an array of strings for this preference")
+			return nil, httperr.BadRequest("value must be an array of strings for this preference")
 		}
-		return suwayomicli.MultiSelectPreferenceValue(list), nil
+		return list, nil
 	default:
-		return suwayomicli.PreferenceValue{}, httperr.BadRequest("unknown preference type at this position")
+		return nil, httperr.BadRequest("unknown preference type at this key")
 	}
-}
-
-// SourceEnabledUpdateRequest is the PATCH …/sources/{sourceId}/enabled body.
-// Enabled is a pointer so a missing key is rejected rather than silently
-// defaulting to false (which would look like an owner-initiated disable).
-type SourceEnabledUpdateRequest struct {
-	// Enabled is the new per-language enable/disable state.
-	Enabled *bool `json:"enabled"`
-}
-
-// validateSourceID trims and requires a non-empty :sourceId path param. A
-// blank value is a 400; the trimmed value is returned for use as the source
-// identity.
-func validateSourceID(raw string) (string, error) {
-	sourceID := strings.TrimSpace(raw)
-	if sourceID == "" {
-		return "", httperr.BadRequest("sourceId required")
-	}
-	return sourceID, nil
-}
-
-// validateSourceEnabledUpdate fail-closes the enable/disable write body:
-// enabled must be present (non-nil). It returns the requested state.
-func validateSourceEnabledUpdate(req SourceEnabledUpdateRequest) (bool, error) {
-	if req.Enabled == nil {
-		return false, httperr.BadRequest("enabled required")
-	}
-	return *req.Enabled, nil
 }
 
 // validateRepos fail-closes the repos replacement body:

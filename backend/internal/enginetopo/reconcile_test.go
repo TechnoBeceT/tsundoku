@@ -3,7 +3,8 @@ package enginetopo_test
 import (
 	"context"
 	"errors"
-	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -11,113 +12,63 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
 
 // --- reconcile test fake -----------------------------------------------------
 
-// setPrefCall records one SetSourcePreference invocation so a test can assert
-// the reconcile pushed the right value at the right position for the right
-// source. value is compared via reflect.DeepEqual against the same
-// exported-constructor output the reconcile builds.
-type setPrefCall struct {
-	sourceID string
-	position int
-	value    suwayomi.PreferenceValue
-}
-
-// reconcileClient embeds the shared fakeClient (a full suwayomi.Client stub) and
-// overrides only the methods Reconcile drives, recording every ENGINE MUTATION
-// so a test can assert call counts (0 on an in-sync engine). Reads
-// (SourcePreferences) reuse the base fakeClient's prefsBySource machinery.
+// reconcileClient embeds the shared sourceengine fake and adds PER-ITEM error
+// injection the base fake can't express (its WithError is blanket-per-method,
+// not per-argument): a per-pkgName InstallExtension failure and a per-sourceID
+// SetPreferences failure, both needed to prove fault ISOLATION (one bad
+// item/source must not block its siblings). It also records the config actually
+// applied via SetFlareSolverr/SetSocks (the base fake returns it but Reconcile
+// itself discards the return value), so tests can assert the pushed config
+// without a redundant extra call that would corrupt CallCount assertions.
 type reconcileClient struct {
-	*fakeClient
+	*sourceenginefake.Client
 
-	engineRepos  []string
-	reposErr     error
-	exts         []suwayomi.Extension
-	extsErr      error
-	liveSettings suwayomi.SuwayomiSettings
-	settingsErr  error
-	installErr   map[string]error // per-pkg SetExtensionState failure
-	setReposErr  error            // SetExtensionRepos write failure (else nil)
+	installErr  map[string]error // per-pkgName InstallExtension failure
+	setPrefsErr map[int64]error  // per-sourceID SetPreferences failure
 
-	rmu           sync.Mutex
-	setReposCalls int
-	lastSetRepos  []string
-	fetchCalls    int
-	installed     []string
-	setPrefs      []setPrefCall
-	setSettings   []suwayomi.SuwayomiSettingsPatch
+	mu               sync.Mutex
+	lastFlareSolverr sourceengine.FlareSolverrConfig
+	lastSocks        sourceengine.SocksConfig
 }
 
-func (c *reconcileClient) ExtensionRepos(context.Context) ([]string, error) {
-	return c.engineRepos, c.reposErr
-}
-
-func (c *reconcileClient) Extensions(context.Context) ([]suwayomi.Extension, error) {
-	return c.exts, c.extsErr
-}
-
-func (c *reconcileClient) FetchExtensions(context.Context) ([]suwayomi.Extension, error) {
-	c.rmu.Lock()
-	c.fetchCalls++
-	c.rmu.Unlock()
-	return c.exts, nil
-}
-
-func (c *reconcileClient) SetExtensionRepos(_ context.Context, repos []string) error {
-	// Fail (without recording) when a test injects a write error — mirrors the
-	// return-before-record style SetExtensionState uses for installErr.
-	if c.setReposErr != nil {
-		return c.setReposErr
-	}
-	c.rmu.Lock()
-	c.setReposCalls++
-	c.lastSetRepos = repos
-	c.rmu.Unlock()
-	return nil
-}
-
-func (c *reconcileClient) SetExtensionState(_ context.Context, pkgName string, _ suwayomi.ExtensionAction) error {
+func (c *reconcileClient) InstallExtension(ctx context.Context, pkgName, apkURL string) ([]sourceengine.Extension, error) {
 	if err, ok := c.installErr[pkgName]; ok {
-		return err
+		return nil, err
 	}
-	c.rmu.Lock()
-	c.installed = append(c.installed, pkgName)
-	c.rmu.Unlock()
-	return nil
+	return c.Client.InstallExtension(ctx, pkgName, apkURL)
 }
 
-func (c *reconcileClient) SetSourcePreference(_ context.Context, sourceID string, position int, value suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
-	c.rmu.Lock()
-	c.setPrefs = append(c.setPrefs, setPrefCall{sourceID: sourceID, position: position, value: value})
-	c.rmu.Unlock()
-	return nil, nil
-}
-
-func (c *reconcileClient) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {
-	if c.settingsErr != nil {
-		return suwayomi.SuwayomiSettings{}, c.settingsErr
+func (c *reconcileClient) SetPreferences(ctx context.Context, sourceID int64, changes map[string]any) ([]sourceengine.Preference, error) {
+	if err, ok := c.setPrefsErr[sourceID]; ok {
+		return nil, err
 	}
-	return c.liveSettings, nil
+	return c.Client.SetPreferences(ctx, sourceID, changes)
 }
 
-func (c *reconcileClient) SetServerSettings(_ context.Context, patch suwayomi.SuwayomiSettingsPatch) error {
-	c.rmu.Lock()
-	c.setSettings = append(c.setSettings, patch)
-	c.rmu.Unlock()
-	return nil
-}
-
-func (c *reconcileClient) prefsByPosition() map[int]setPrefCall {
-	c.rmu.Lock()
-	defer c.rmu.Unlock()
-	m := make(map[int]setPrefCall, len(c.setPrefs))
-	for _, p := range c.setPrefs {
-		m[p.position] = p
+func (c *reconcileClient) SetFlareSolverr(ctx context.Context, patch sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
+	cfg, err := c.Client.SetFlareSolverr(ctx, patch)
+	if err == nil {
+		c.mu.Lock()
+		c.lastFlareSolverr = cfg
+		c.mu.Unlock()
 	}
-	return m
+	return cfg, err
+}
+
+func (c *reconcileClient) SetSocks(ctx context.Context, patch sourceengine.SocksPatch) (sourceengine.SocksConfig, error) {
+	cfg, err := c.Client.SetSocks(ctx, patch)
+	if err == nil {
+		c.mu.Lock()
+		c.lastSocks = cfg
+		c.mu.Unlock()
+	}
+	return cfg, err
 }
 
 // --- ConfigProvider test double ----------------------------------------------
@@ -148,60 +99,27 @@ func (c fakeConfig) EngineSocksHost(context.Context) string            { return 
 func (c fakeConfig) EngineSocksPort(context.Context) int               { return c.socksPort }
 func (c fakeConfig) EngineSocksVersion(context.Context) int            { return c.socksVersion }
 
-// matchedFlareConfig returns a fakeConfig and a SuwayomiSettings whose
-// FlareSolverr fields are IDENTICAL (SOCKS disabled), so configInSync is true —
-// the shared "config already matches" fixture.
-func matchedFlareConfig() (fakeConfig, suwayomi.SuwayomiSettings) {
-	cfg := fakeConfig{
+// baseConfig is a fixed FlareSolverr+SOCKS ConfigProvider fixture shared by
+// every test below (the specific values are arbitrary — reconcileConfig no
+// longer compares them against anything, it just pushes them).
+func baseConfig() fakeConfig {
+	return fakeConfig{
 		fsEnabled:     true,
 		fsURL:         "http://flare.test:8191",
 		fsTimeout:     60,
 		fsSessionName: "sess",
 		fsSessionTTL:  15,
 		fsFallback:    false,
-		socksEnabled:  false,
-	}
-	live := suwayomi.SuwayomiSettings{
-		FlareSolverrEnabled:            true,
-		FlareSolverrURL:                "http://flare.test:8191",
-		FlareSolverrTimeout:            60,
-		FlareSolverrSessionName:        "sess",
-		FlareSolverrSessionTTL:         15,
-		FlareSolverrAsResponseFallback: false,
-	}
-	return cfg, live
-}
-
-// matchedSocksConfig extends matchedFlareConfig with an ENABLED SOCKS proxy
-// whose host/port/version also match the live settings, so configInSync
-// exercises socksInSync's already-matching (no-push) branch.
-func matchedSocksConfig() (fakeConfig, suwayomi.SuwayomiSettings) {
-	cfg, live := matchedFlareConfig()
-	cfg.socksEnabled = true
-	cfg.socksHost = "127.0.0.1"
-	cfg.socksPort = 1080
-	cfg.socksVersion = 5
-	live.SocksProxyEnabled = true
-	live.SocksProxyHost = "127.0.0.1"
-	live.SocksProxyPort = "1080" // Suwayomi's wire form is a numeric string.
-	live.SocksProxyVersion = 5
-	return cfg, live
-}
-
-// newPrefOnlyClient builds a reconcileClient whose repo/extension/config steps
-// are all no-ops (no engine repos, no extensions, config matched via live), so
-// ONLY the source-preference step can act — the shared fixture for the
-// preference-branch tests.
-func newPrefOnlyClient(live suwayomi.SuwayomiSettings, prefs map[string][]suwayomi.SourcePreference) *reconcileClient {
-	return &reconcileClient{
-		fakeClient:   &fakeClient{prefsBySource: prefs},
-		liveSettings: live,
+		socksEnabled:  true,
+		socksHost:     "127.0.0.1",
+		socksPort:     1080,
+		socksVersion:  5,
 	}
 }
 
-// seedHarvestedExtension inserts a HarvestedExtension row mapping pkgName to the
-// given source ids, so requiredPkgSet can match it against the library's numeric
-// providers.
+// seedHarvestedExtension inserts a HarvestedExtension row mapping pkgName to
+// the given source ids, so requiredPkgSet can match it against the library's
+// numeric providers.
 func seedHarvestedExtension(ctx context.Context, t *testing.T, db *ent.Client, pkgName string, sourceIDs []int64) {
 	t.Helper()
 	db.HarvestedExtension.Create().
@@ -212,13 +130,13 @@ func seedHarvestedExtension(ctx context.Context, t *testing.T, db *ent.Client, p
 
 // seedStoredPref inserts a durable SourcePreference row (source_id, key) →
 // (value, value_type) directly, as the boot seed would have captured it.
-func seedStoredPref(ctx context.Context, t *testing.T, db *ent.Client, sourceID int64, key, value string, typ suwayomi.PreferenceType) {
+func seedStoredPref(ctx context.Context, t *testing.T, db *ent.Client, sourceID int64, key, value, typ string) {
 	t.Helper()
 	db.SourcePreference.Create().
 		SetSourceID(sourceID).
 		SetKey(key).
 		SetValue(value).
-		SetValueType(string(typ)).
+		SetValueType(typ).
 		SaveX(ctx)
 }
 
@@ -234,25 +152,18 @@ func TestReconcile_FreshEnginePopulatedDB(t *testing.T) {
 	seedProvider(ctx, t, db, "Solo Leveling", "111", 111)
 	seedHarvestedExtension(ctx, t, db, "pkg.one", []int64{111})
 	db.HarvestedRepo.Create().SetURL("https://repo.test/repo").SaveX(ctx)
-	seedStoredPref(ctx, t, db, 111, "nsfw", "true", suwayomi.PreferenceCheckBox)
+	seedStoredPref(ctx, t, db, 111, "nsfw", "true", sourceengine.PreferenceCheckBox)
 
-	cfg, _ := matchedFlareConfig()
-	cfg.socksEnabled = true
-	cfg.socksHost = "127.0.0.1"
-	cfg.socksPort = 1080
-	cfg.socksVersion = 5
+	cfg := baseConfig()
 
 	client := &reconcileClient{
-		fakeClient: &fakeClient{
-			prefsBySource: map[string][]suwayomi.SourcePreference{
-				// Live value (false) differs from the stored value (true) → push.
-				"111": {{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(false)}},
-			},
-		},
-		engineRepos: nil, // empty engine → repo drift
-		exts:        nil, // pkg.one not installed → missing
-		// Live FlareSolverr URL differs from cfg → config drift.
-		liveSettings: suwayomi.SuwayomiSettings{FlareSolverrURL: "http://stale.test"},
+		Client: sourceenginefake.New(
+			// Live value (false) differs from the stored value (true) → push.
+			sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+				{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},
+			}),
+			// engineRepos empty → repo drift; no extensions → pkg.one missing.
+		),
 	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
@@ -260,14 +171,14 @@ func TestReconcile_FreshEnginePopulatedDB(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	assertFreshResult(t, res)
-	assertFreshMutations(t, client)
+	assertFreshMutations(ctx, t, client)
 }
 
 // assertFreshResult checks the Result counts a full-recovery pass reports.
 func assertFreshResult(t *testing.T, res enginetopo.ReconcileResult) {
 	t.Helper()
 	if res.InSync {
-		t.Error("InSync = true, want false (fresh engine needed every change)")
+		t.Error("InSync = true, want false (fresh engine needed every drift-detected change)")
 	}
 	if !res.ReposSet {
 		t.Error("ReposSet = false, want true")
@@ -287,43 +198,50 @@ func assertFreshResult(t *testing.T, res enginetopo.ReconcileResult) {
 }
 
 // assertFreshMutations checks the exact engine mutations a full-recovery pass
-// issued (repo set, refresh, install, settings push with a numeric-string port).
-func assertFreshMutations(t *testing.T, client *reconcileClient) {
+// issued (repo set, refresh, install, pref push, config push).
+func assertFreshMutations(ctx context.Context, t *testing.T, client *reconcileClient) {
 	t.Helper()
-	gotRepos := client.setReposCalls == 1 && len(client.lastSetRepos) == 1 && client.lastSetRepos[0] == "https://repo.test/repo"
-	if !gotRepos {
-		t.Errorf("SetExtensionRepos calls=%d repos=%v, want 1 call with the durable repo", client.setReposCalls, client.lastSetRepos)
+	repos, err := client.Repos(ctx)
+	if err != nil || len(repos) != 1 || repos[0] != "https://repo.test/repo" {
+		t.Errorf("engine repos after reconcile = %v (err=%v), want [https://repo.test/repo]", repos, err)
 	}
-	if client.fetchCalls == 0 {
-		t.Error("FetchExtensions not called before installing a missing extension")
+	if client.CallCount("RefreshExtensions") == 0 {
+		t.Error("RefreshExtensions not called before installing a missing extension")
 	}
-	gotInstall := len(client.installed) == 1 && client.installed[0] == "pkg.one"
-	if !gotInstall {
-		t.Errorf("installed = %v, want [pkg.one]", client.installed)
+	if client.CallCount("InstallExtension") != 1 {
+		t.Errorf("InstallExtension calls = %d, want 1", client.CallCount("InstallExtension"))
 	}
-	assertFreshSettingsPatch(t, client)
+	prefs, err := client.Preferences(ctx, 111)
+	if err != nil || len(prefs) != 1 || prefs[0].CurrentValue != true {
+		t.Errorf("source 111 preferences after reconcile = %+v (err=%v), want nsfw=true", prefs, err)
+	}
+	// ONE batched call carried the single changed key (proves the batching
+	// design — never one call per key).
+	if got := client.CallCount("SetPreferences"); got != 1 {
+		t.Errorf("SetPreferences calls = %d, want 1 (one batched call per source)", got)
+	}
+	assertFreshConfigPushed(t, client)
 }
 
-// assertFreshSettingsPatch checks the single settings push carried the expected
-// FlareSolverr URL and the SOCKS port as a numeric STRING (Suwayomi's wire type).
-func assertFreshSettingsPatch(t *testing.T, client *reconcileClient) {
+// assertFreshConfigPushed checks the unconditional config push landed the
+// ConfigProvider's values on the engine.
+func assertFreshConfigPushed(t *testing.T, client *reconcileClient) {
 	t.Helper()
-	if len(client.setSettings) != 1 {
-		t.Fatalf("SetServerSettings calls = %d, want 1", len(client.setSettings))
+	if client.lastFlareSolverr.URL != "http://flare.test:8191" {
+		t.Errorf("pushed FlareSolverr URL = %q, want the cfg url", client.lastFlareSolverr.URL)
 	}
-	patch := client.setSettings[0]
-	if patch.SocksProxyPort == nil || *patch.SocksProxyPort != "1080" {
-		t.Errorf("patch SocksProxyPort = %v, want \"1080\"", patch.SocksProxyPort)
-	}
-	if patch.FlareSolverrURL == nil || *patch.FlareSolverrURL != "http://flare.test:8191" {
-		t.Errorf("patch FlareSolverrURL = %v, want the cfg url", patch.FlareSolverrURL)
+	if client.lastSocks.Port != "1080" {
+		t.Errorf("pushed SOCKS port = %q, want \"1080\" (numeric-string wire form)", client.lastSocks.Port)
 	}
 }
 
-// TestReconcile_InSyncEngineMakesZeroMutations proves idempotency: when the
-// engine already matches the durable store, Reconcile issues NO engine mutation
-// (no repo set, no fetch, no install, no pref write, no settings write) and
-// reports InSync=true.
+// TestReconcile_InSyncEngineMakesZeroMutations proves idempotency on the
+// DRIFT-DETECTED axes: when the engine already matches the durable store,
+// Reconcile issues no repo/extension/preference mutation and reports
+// InSync=true — even though config is STILL pushed unconditionally every pass
+// (ConfigApplied=true, SetFlareSolverr/SetSocks each called once), because
+// config performs no drift detection by design (see reconcileConfig's doc
+// comment) and is deliberately excluded from InSync.
 func TestReconcile_InSyncEngineMakesZeroMutations(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -332,20 +250,19 @@ func TestReconcile_InSyncEngineMakesZeroMutations(t *testing.T) {
 	seedProvider(ctx, t, db, "Solo Leveling", "111", 111)
 	seedHarvestedExtension(ctx, t, db, "pkg.one", []int64{111})
 	db.HarvestedRepo.Create().SetURL("https://repo.test/repo").SaveX(ctx)
-	seedStoredPref(ctx, t, db, 111, "nsfw", "true", suwayomi.PreferenceCheckBox)
+	seedStoredPref(ctx, t, db, 111, "nsfw", "true", sourceengine.PreferenceCheckBox)
 
-	cfg, live := matchedFlareConfig()
+	cfg := baseConfig()
 
 	client := &reconcileClient{
-		fakeClient: &fakeClient{
-			prefsBySource: map[string][]suwayomi.SourcePreference{
+		Client: sourceenginefake.New(
+			sourceenginefake.WithRepos([]string{"https://repo.test/repo"}), // matches DB
+			sourceenginefake.WithExtensions([]sourceengine.Extension{{PkgName: "pkg.one", IsInstalled: true}}),
+			sourceenginefake.WithPreferences(111, []sourceengine.Preference{
 				// Live value equals stored ("true") → no write.
-				"111": {{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(true)}},
-			},
-		},
-		engineRepos:  []string{"https://repo.test/repo"}, // matches DB
-		exts:         []suwayomi.Extension{{PkgName: "pkg.one", IsInstalled: true}},
-		liveSettings: live,
+				{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: true},
+			}),
+		),
 	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
@@ -355,20 +272,57 @@ func TestReconcile_InSyncEngineMakesZeroMutations(t *testing.T) {
 	if !res.InSync {
 		t.Errorf("InSync = false, want true (Result=%+v)", res)
 	}
-	if client.setReposCalls != 0 {
-		t.Errorf("SetExtensionRepos called %d times, want 0", client.setReposCalls)
+	if !res.ConfigApplied {
+		t.Error("ConfigApplied = false, want true (config always pushes)")
 	}
-	if client.fetchCalls != 0 {
-		t.Errorf("FetchExtensions called %d times, want 0", client.fetchCalls)
+	if client.CallCount("SetRepos") != 0 {
+		t.Errorf("SetRepos called %d times, want 0", client.CallCount("SetRepos"))
 	}
-	if len(client.installed) != 0 {
-		t.Errorf("installed = %v, want none", client.installed)
+	if client.CallCount("RefreshExtensions") != 0 {
+		t.Errorf("RefreshExtensions called %d times, want 0", client.CallCount("RefreshExtensions"))
 	}
-	if len(client.setPrefs) != 0 {
-		t.Errorf("SetSourcePreference called %d times, want 0", len(client.setPrefs))
+	if client.CallCount("InstallExtension") != 0 {
+		t.Errorf("InstallExtension called %d times, want 0", client.CallCount("InstallExtension"))
 	}
-	if len(client.setSettings) != 0 {
-		t.Errorf("SetServerSettings called %d times, want 0", len(client.setSettings))
+	if client.CallCount("SetPreferences") != 0 {
+		t.Errorf("SetPreferences called %d times, want 0", client.CallCount("SetPreferences"))
+	}
+	if client.CallCount("SetFlareSolverr") != 1 || client.CallCount("SetSocks") != 1 {
+		t.Errorf("config push calls = flare:%d socks:%d, want 1/1 (unconditional every pass)",
+			client.CallCount("SetFlareSolverr"), client.CallCount("SetSocks"))
+	}
+}
+
+// TestReconcile_ConfigAlwaysPushesEvenWhenNothingElseDrifted is the direct
+// unconditional-push proof: with an empty durable store (nothing to reconcile
+// on the other three axes) Reconcile STILL issues exactly one SetFlareSolverr +
+// one SetSocks call carrying the ConfigProvider's current values — there is no
+// engine-side comparison that could ever suppress it (sourceengine.Client has
+// no matching GET).
+func TestReconcile_ConfigAlwaysPushesEvenWhenNothingElseDrifted(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	cfg := baseConfig()
+	client := &reconcileClient{Client: sourceenginefake.New()}
+
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !res.ConfigApplied {
+		t.Error("ConfigApplied = false, want true")
+	}
+	if client.CallCount("SetFlareSolverr") != 1 || client.CallCount("SetSocks") != 1 {
+		t.Fatalf("config push calls = flare:%d socks:%d, want 1/1",
+			client.CallCount("SetFlareSolverr"), client.CallCount("SetSocks"))
+	}
+	if client.lastFlareSolverr.URL != cfg.fsURL {
+		t.Errorf("pushed FlareSolverr URL = %q, want %q", client.lastFlareSolverr.URL, cfg.fsURL)
+	}
+	if !client.lastSocks.Enabled || client.lastSocks.Host != cfg.socksHost {
+		t.Errorf("pushed SOCKS = %+v, want enabled with host %q", client.lastSocks, cfg.socksHost)
 	}
 }
 
@@ -386,20 +340,18 @@ func TestReconcile_PkgInstallErrorIsolated(t *testing.T) {
 	seedHarvestedExtension(ctx, t, db, "pkg.one", []int64{111})
 	seedHarvestedExtension(ctx, t, db, "pkg.two", []int64{222})
 	db.HarvestedRepo.Create().SetURL("https://repo.test/repo").SaveX(ctx)
-	seedStoredPref(ctx, t, db, 111, "nsfw", "true", suwayomi.PreferenceCheckBox)
+	seedStoredPref(ctx, t, db, 111, "nsfw", "true", sourceengine.PreferenceCheckBox)
 
-	cfg, _ := matchedFlareConfig()
+	cfg := baseConfig()
 
 	client := &reconcileClient{
-		fakeClient: &fakeClient{
-			prefsBySource: map[string][]suwayomi.SourcePreference{
-				"111": {{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(false)}},
-			},
-		},
-		engineRepos:  []string{"https://repo.test/repo"}, // repos match; only extensions missing
-		exts:         nil,                                // neither installed
-		liveSettings: suwayomi.SuwayomiSettings{FlareSolverrURL: "http://stale.test"},
-		installErr:   map[string]error{"pkg.one": errors.New("repo unreachable")},
+		Client: sourceenginefake.New(
+			sourceenginefake.WithRepos([]string{"https://repo.test/repo"}), // repos match; only extensions missing
+			sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+				{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},
+			}),
+		),
+		installErr: map[string]error{"pkg.one": errors.New("repo unreachable")},
 	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
@@ -409,11 +361,8 @@ func TestReconcile_PkgInstallErrorIsolated(t *testing.T) {
 	if res.ExtensionsInstalled != 1 {
 		t.Errorf("ExtensionsInstalled = %d, want 1 (pkg.two)", res.ExtensionsInstalled)
 	}
-	if len(client.installed) != 1 || client.installed[0] != "pkg.two" {
-		t.Errorf("installed = %v, want [pkg.two]", client.installed)
-	}
-	if len(res.Gaps) != 1 {
-		t.Fatalf("Gaps = %v, want exactly 1 (the failed pkg.one install)", res.Gaps)
+	if len(res.Gaps) != 1 || !strings.Contains(res.Gaps[0].Error(), "pkg.one") {
+		t.Fatalf("Gaps = %v, want exactly 1 naming pkg.one", res.Gaps)
 	}
 	if res.PrefsApplied != 1 {
 		t.Errorf("PrefsApplied = %d, want 1 (pref applied despite the install failure)", res.PrefsApplied)
@@ -426,10 +375,10 @@ func TestReconcile_PkgInstallErrorIsolated(t *testing.T) {
 	}
 }
 
-// TestReconcile_PrefDriftAllKinds proves the impedance-mismatch step across every
-// value kind: a stored preference whose live value DIFFERS is pushed exactly once
-// at the live pref's position with the correctly-typed reversed value, while a
-// stored preference EQUAL to its live value is not written at all.
+// TestReconcile_PrefDriftAllKinds proves the impedance-mismatch step across
+// every value kind: EVERY drifted key for source 111 is pushed in ONE batched
+// SetPreferences call (proving the batching design), while a stored preference
+// EQUAL to its live value is left out of that batch.
 func TestReconcile_PrefDriftAllKinds(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -437,25 +386,20 @@ func TestReconcile_PrefDriftAllKinds(t *testing.T) {
 
 	// No harvested extensions + no repos → the extension/repo steps are no-ops, so
 	// ONLY the preference step can produce writes.
-	seedStoredPref(ctx, t, db, 111, "nsfw", "true", suwayomi.PreferenceCheckBox)
-	seedStoredPref(ctx, t, db, 111, "quality", "high", suwayomi.PreferenceList)
-	seedStoredPref(ctx, t, db, 111, "blocked", `["A","B"]`, suwayomi.PreferenceMultiSelect)
-	seedStoredPref(ctx, t, db, 111, "https", "true", suwayomi.PreferenceSwitch)
+	seedStoredPref(ctx, t, db, 111, "nsfw", "true", sourceengine.PreferenceCheckBox)
+	seedStoredPref(ctx, t, db, 111, "quality", "high", sourceengine.PreferenceList)
+	seedStoredPref(ctx, t, db, 111, "blocked", `["A","B"]`, sourceengine.PreferenceMultiSelect)
+	seedStoredPref(ctx, t, db, 111, "https", "true", sourceengine.PreferenceSwitchCompat)
 
-	cfg, live := matchedFlareConfig()
+	cfg := baseConfig()
 
 	client := &reconcileClient{
-		fakeClient: &fakeClient{
-			prefsBySource: map[string][]suwayomi.SourcePreference{
-				"111": {
-					{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(false)},            // differs → push bool
-					{Type: suwayomi.PreferenceList, Position: 1, Key: "quality", CurrentString: stringPtr("low")},         // differs → push string
-					{Type: suwayomi.PreferenceMultiSelect, Position: 2, Key: "blocked", CurrentStringList: []string{"A"}}, // differs → push list
-					{Type: suwayomi.PreferenceSwitch, Position: 3, Key: "https", CurrentBool: boolPtr(true)},              // EQUAL → no write
-				},
-			},
-		},
-		liveSettings: live,
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},               // differs → push bool
+			{Type: sourceengine.PreferenceList, Key: "quality", CurrentValue: "low"},                // differs → push string
+			{Type: sourceengine.PreferenceMultiSelect, Key: "blocked", CurrentValue: []string{"A"}}, // differs → push list
+			{Type: sourceengine.PreferenceSwitchCompat, Key: "https", CurrentValue: true},           // EQUAL → no write
+		})),
 	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
@@ -465,34 +409,55 @@ func TestReconcile_PrefDriftAllKinds(t *testing.T) {
 	if res.PrefsApplied != 3 {
 		t.Errorf("PrefsApplied = %d, want 3", res.PrefsApplied)
 	}
-	if len(client.setPrefs) != 3 {
-		t.Fatalf("SetSourcePreference called %d times, want 3 (equal pref must not be written)", len(client.setPrefs))
+	if got := client.CallCount("SetPreferences"); got != 1 {
+		t.Fatalf("SetPreferences called %d times, want 1 (ONE batched call for all 3 drifted keys)", got)
 	}
 
-	byPos := client.prefsByPosition()
-	assertPrefValue(t, byPos, 0, suwayomi.BoolPreferenceValue(suwayomi.PreferenceCheckBox, true))
-	assertPrefValue(t, byPos, 1, suwayomi.StringPreferenceValue(suwayomi.PreferenceList, "high"))
-	assertPrefValue(t, byPos, 2, suwayomi.MultiSelectPreferenceValue([]string{"A", "B"}))
-	if _, ok := byPos[3]; ok {
-		t.Error("position 3 (the equal Switch pref) was written, want skipped")
+	prefs, err := client.Preferences(ctx, 111)
+	if err != nil {
+		t.Fatalf("Preferences: %v", err)
+	}
+	assertPrefDriftAllKinds(t, prefs)
+}
+
+// assertPrefDriftAllKinds checks every variant landed its pushed/unchanged
+// value after TestReconcile_PrefDriftAllKinds's reconcile pass. Split out
+// purely to keep the test body's cyclomatic complexity within the project's
+// cyclop gate.
+func assertPrefDriftAllKinds(t *testing.T, prefs []sourceengine.Preference) {
+	t.Helper()
+	byKey := make(map[string]sourceengine.Preference, len(prefs))
+	for _, p := range prefs {
+		byKey[p.Key] = p
+	}
+	assertBoolPref(t, byKey, "nsfw", true)
+	assertStringPref(t, byKey, "quality", "high")
+	assertListPref(t, byKey, "blocked", []string{"A", "B"})
+	assertBoolPref(t, byKey, "https", true) // unchanged (was already in sync)
+}
+
+// assertBoolPref fails unless byKey[key].CurrentValue is the bool want.
+func assertBoolPref(t *testing.T, byKey map[string]sourceengine.Preference, key string, want bool) {
+	t.Helper()
+	if v, ok := byKey[key].CurrentValue.(bool); !ok || v != want {
+		t.Errorf("%s = %v, want %v", key, byKey[key].CurrentValue, want)
 	}
 }
 
-// assertPrefValue fails unless a SetSourcePreference call was recorded at pos
-// carrying exactly want (compared by reflect.DeepEqual over the opaque
-// PreferenceValue built from the same exported constructors).
-func assertPrefValue(t *testing.T, byPos map[int]setPrefCall, pos int, want suwayomi.PreferenceValue) {
+// assertStringPref fails unless byKey[key].CurrentValue is the string want.
+func assertStringPref(t *testing.T, byKey map[string]sourceengine.Preference, key, want string) {
 	t.Helper()
-	call, ok := byPos[pos]
-	if !ok {
-		t.Errorf("no SetSourcePreference call at position %d", pos)
-		return
+	if v, ok := byKey[key].CurrentValue.(string); !ok || v != want {
+		t.Errorf("%s = %v, want %q", key, byKey[key].CurrentValue, want)
 	}
-	if call.sourceID != "111" {
-		t.Errorf("position %d sourceID = %q, want \"111\"", pos, call.sourceID)
-	}
-	if !reflect.DeepEqual(call.value, want) {
-		t.Errorf("position %d value = %+v, want %+v", pos, call.value, want)
+}
+
+// assertListPref fails unless byKey[key].CurrentValue is the []string want.
+func assertListPref(t *testing.T, byKey map[string]sourceengine.Preference, key string, want []string) {
+	t.Helper()
+	v, ok := byKey[key].CurrentValue.([]string)
+	if !ok || !slices.Equal(v, want) {
+		t.Errorf("%s = %v, want %v", key, byKey[key].CurrentValue, want)
 	}
 }
 
@@ -507,12 +472,9 @@ func TestReconcile_EnumerateExtensionsErrorIsHard(t *testing.T) {
 	seedProvider(ctx, t, db, "Solo Leveling", "111", 111)
 	seedHarvestedExtension(ctx, t, db, "pkg.one", []int64{111})
 
-	cfg, _ := matchedFlareConfig()
+	cfg := baseConfig()
 
-	client := &reconcileClient{
-		fakeClient: &fakeClient{},
-		extsErr:    errors.New("engine down"),
-	}
+	client := sourceenginefake.New(sourceenginefake.WithError("Extensions", errors.New("engine down")))
 
 	if _, err := enginetopo.Reconcile(ctx, client, db, cache, cfg); err == nil {
 		t.Fatal("Reconcile: want hard error when listing extensions fails, got nil")
@@ -521,24 +483,25 @@ func TestReconcile_EnumerateExtensionsErrorIsHard(t *testing.T) {
 
 // TestReconcile_WipedEnginePrefRepush proves THE real-recovery path: a stored
 // preference whose live pref exists (same key + a real Type) but has NO current
-// value set (a wiped engine) is (re)pushed exactly once, at the live pref's
-// position, with the correctly-typed reversed value. encodePreferenceValue
-// returns ok=false for a nil current value, so prefInSync is false and the
-// stored value repopulates the engine.
+// value set (a wiped engine, CurrentValue nil) is (re)pushed.
+// encodePreferenceValue returns ok=false for a nil current value, so prefInSync
+// is false and the stored value repopulates the engine.
 func TestReconcile_WipedEnginePrefRepush(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
 
-	seedStoredPref(ctx, t, db, 111, "https", "true", suwayomi.PreferenceSwitch)
+	seedStoredPref(ctx, t, db, 111, "https", "true", sourceengine.PreferenceSwitchCompat)
 
-	cfg, live := matchedFlareConfig()
+	cfg := baseConfig()
 
-	// Live pref present but with CurrentBool nil — the engine has the option but no
-	// value, exactly what a wipe/rebuild leaves behind.
-	client := newPrefOnlyClient(live, map[string][]suwayomi.SourcePreference{
-		"111": {{Type: suwayomi.PreferenceSwitch, Position: 5, Key: "https", CurrentBool: nil}},
-	})
+	// Live pref present but with CurrentValue nil — the engine has the option but
+	// no value, exactly what a wipe/rebuild leaves behind.
+	client := &reconcileClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceSwitchCompat, Key: "https", CurrentValue: nil},
+		})),
+	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
 	if err != nil {
@@ -547,44 +510,17 @@ func TestReconcile_WipedEnginePrefRepush(t *testing.T) {
 	if res.PrefsApplied != 1 {
 		t.Errorf("PrefsApplied = %d, want 1", res.PrefsApplied)
 	}
-	if len(client.setPrefs) != 1 {
-		t.Fatalf("SetSourcePreference called %d times, want 1 (wiped pref must be repushed)", len(client.setPrefs))
+	prefs, err := client.Preferences(ctx, 111)
+	if err != nil || len(prefs) != 1 {
+		t.Fatalf("Preferences after reconcile: %+v, %v", prefs, err)
 	}
-	byPos := client.prefsByPosition()
-	assertPrefValue(t, byPos, 5, suwayomi.BoolPreferenceValue(suwayomi.PreferenceSwitch, true))
-}
-
-// TestReconcile_SocksInSyncMakesZeroConfigMutation proves socksInSync's no-push
-// branch: when SOCKS is ENABLED and its host/port/version (plus FlareSolverr)
-// already match the engine, Reconcile issues no settings write and reports
-// ConfigApplied=false. No existing test drives an enabled-and-matching SOCKS, so
-// a wrong field comparison there would flap the config push every boot.
-func TestReconcile_SocksInSyncMakesZeroConfigMutation(t *testing.T) {
-	ctx := context.Background()
-	db := testdb.New(t)
-	cache := apkcache.New(t.TempDir())
-
-	cfg, live := matchedSocksConfig()
-
-	client := &reconcileClient{
-		fakeClient:   &fakeClient{},
-		liveSettings: live,
-	}
-
-	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if res.ConfigApplied {
-		t.Error("ConfigApplied = true, want false (SOCKS + FlareSolverr already match)")
-	}
-	if len(client.setSettings) != 0 {
-		t.Errorf("SetServerSettings called %d times, want 0", len(client.setSettings))
+	if v, ok := prefs[0].CurrentValue.(bool); !ok || !v {
+		t.Errorf("https = %v, want true (wiped pref repushed)", prefs[0].CurrentValue)
 	}
 }
 
-// TestReconcile_RepoWriteErrorIsolated proves a SetExtensionRepos write failure
-// is isolated as a gap, not a hard error: the pass records the failure, leaves
+// TestReconcile_RepoWriteErrorIsolated proves a SetRepos write failure is
+// isolated as a gap, not a hard error: the pass records the failure, leaves
 // ReposSet=false, and still applies the drifted preference and config.
 func TestReconcile_RepoWriteErrorIsolated(t *testing.T) {
 	ctx := context.Background()
@@ -592,19 +528,18 @@ func TestReconcile_RepoWriteErrorIsolated(t *testing.T) {
 	cache := apkcache.New(t.TempDir())
 
 	db.HarvestedRepo.Create().SetURL("https://repo.test/repo").SaveX(ctx)
-	seedStoredPref(ctx, t, db, 111, "nsfw", "true", suwayomi.PreferenceCheckBox)
+	seedStoredPref(ctx, t, db, 111, "nsfw", "true", sourceengine.PreferenceCheckBox)
 
-	cfg, _ := matchedFlareConfig()
+	cfg := baseConfig()
 
 	client := &reconcileClient{
-		fakeClient: &fakeClient{
-			prefsBySource: map[string][]suwayomi.SourcePreference{
-				"111": {{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(false)}},
-			},
-		},
-		engineRepos:  []string{"https://stale.test/repo"}, // differs from DB → drift → write attempted
-		setReposErr:  errors.New("repo store rejected"),
-		liveSettings: suwayomi.SuwayomiSettings{FlareSolverrURL: "http://stale.test"}, // config drift
+		Client: sourceenginefake.New(
+			sourceenginefake.WithRepos([]string{"https://stale.test/repo"}), // differs from DB → drift → write attempted
+			sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+				{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},
+			}),
+			sourceenginefake.WithError("SetRepos", errors.New("repo store rejected")),
+		),
 	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
@@ -625,65 +560,67 @@ func TestReconcile_RepoWriteErrorIsolated(t *testing.T) {
 	}
 }
 
-// TestReconcile_ConfigReadErrorIsolated proves the deliberate design that a
-// ServerSettings READ failure is an isolated gap (NOT a hard error, unlike the
-// enumerating extension/repo reads): config recovery is independent of the
-// extension + preference recovery, so it must not abort the whole pass.
-func TestReconcile_ConfigReadErrorIsolated(t *testing.T) {
+// TestReconcile_ConfigPushErrorIsolated proves a config push failure (here
+// SetFlareSolverr) is isolated as a gap — NOT a hard error — because config
+// recovery is independent of the extension + preference recovery.
+func TestReconcile_ConfigPushErrorIsolated(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
 
-	cfg, _ := matchedFlareConfig()
+	cfg := baseConfig()
 
 	client := &reconcileClient{
-		fakeClient:  &fakeClient{},
-		settingsErr: errors.New("server settings unreachable"),
+		Client: sourceenginefake.New(sourceenginefake.WithError("SetFlareSolverr", errors.New("engine unreachable"))),
 	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
 	if err != nil {
-		t.Fatalf("Reconcile returned hard error, want config read isolated as a gap: %v", err)
+		t.Fatalf("Reconcile returned hard error, want config push isolated as a gap: %v", err)
 	}
 	if res.ConfigApplied {
-		t.Error("ConfigApplied = true, want false (settings read failed)")
+		t.Error("ConfigApplied = true, want false (FlareSolverr push failed)")
 	}
 	if len(res.Gaps) != 1 {
-		t.Fatalf("Gaps = %v, want exactly 1 (the failed settings read)", res.Gaps)
+		t.Fatalf("Gaps = %v, want exactly 1 (the failed flaresolverr push)", res.Gaps)
 	}
-	if len(client.setSettings) != 0 {
-		t.Errorf("SetServerSettings called %d times, want 0", len(client.setSettings))
+	// SetSocks is independent and must still have been attempted.
+	if client.CallCount("SetSocks") != 1 {
+		t.Errorf("SetSocks calls = %d, want 1 (attempted despite the FlareSolverr failure)", client.CallCount("SetSocks"))
 	}
 }
 
 // TestReconcile_BuildPrefValueParseFailureIsolated proves a stored preference
-// whose value cannot be rebuilt for the live pref's kind (here a Switch stored as
-// the non-bool "notabool") is isolated as a gap: no hard error, no write for that
-// pref.
+// whose value cannot be coerced for the live pref's kind (here a Switch stored
+// as the non-bool "notabool") is isolated as a gap: no hard error, and the
+// whole source's batch is skipped (nothing left to push once its only drifted
+// key fails to coerce).
 func TestReconcile_BuildPrefValueParseFailureIsolated(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
 
-	seedStoredPref(ctx, t, db, 111, "https", "notabool", suwayomi.PreferenceSwitch)
+	seedStoredPref(ctx, t, db, 111, "https", "notabool", sourceengine.PreferenceSwitchCompat)
 
-	cfg, live := matchedFlareConfig()
+	cfg := baseConfig()
 
-	// Live value (false) differs from the unparseable stored value → a build is
+	// Live value (false) differs from the unparseable stored value → a coercion is
 	// attempted, and strconv.ParseBool fails.
-	client := newPrefOnlyClient(live, map[string][]suwayomi.SourcePreference{
-		"111": {{Type: suwayomi.PreferenceSwitch, Position: 0, Key: "https", CurrentBool: boolPtr(false)}},
-	})
+	client := &reconcileClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceSwitchCompat, Key: "https", CurrentValue: false},
+		})),
+	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
 	if err != nil {
-		t.Fatalf("Reconcile returned hard error, want parse failure isolated as a gap: %v", err)
+		t.Fatalf("Reconcile returned hard error, want coercion failure isolated as a gap: %v", err)
 	}
 	if len(res.Gaps) != 1 {
 		t.Fatalf("Gaps = %v, want exactly 1 (the unparseable stored pref)", res.Gaps)
 	}
-	if len(client.setPrefs) != 0 {
-		t.Errorf("SetSourcePreference called %d times, want 0 (parse failed before any write)", len(client.setPrefs))
+	if client.CallCount("SetPreferences") != 0 {
+		t.Errorf("SetPreferences called %d times, want 0 (coercion failed before any write)", client.CallCount("SetPreferences"))
 	}
 	if res.PrefsApplied != 0 {
 		t.Errorf("PrefsApplied = %d, want 0", res.PrefsApplied)
@@ -698,26 +635,82 @@ func TestReconcile_StoredKeyWithNoLivePrefSkipped(t *testing.T) {
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
 
-	seedStoredPref(ctx, t, db, 111, "ghost", "true", suwayomi.PreferenceSwitch)
+	seedStoredPref(ctx, t, db, 111, "ghost", "true", sourceengine.PreferenceSwitchCompat)
 
-	cfg, live := matchedFlareConfig()
+	cfg := baseConfig()
 
 	// The live source carries a DIFFERENT key, so "ghost" has no live match.
-	client := newPrefOnlyClient(live, map[string][]suwayomi.SourcePreference{
-		"111": {{Type: suwayomi.PreferenceSwitch, Position: 0, Key: "other", CurrentBool: boolPtr(true)}},
-	})
+	client := &reconcileClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceSwitchCompat, Key: "other", CurrentValue: true},
+		})),
+	}
 
 	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if len(client.setPrefs) != 0 {
-		t.Errorf("SetSourcePreference called %d times, want 0 (removed option skipped)", len(client.setPrefs))
+	if client.CallCount("SetPreferences") != 0 {
+		t.Errorf("SetPreferences called %d times, want 0 (removed option skipped)", client.CallCount("SetPreferences"))
 	}
 	if len(res.Gaps) != 0 {
 		t.Errorf("Gaps = %v, want none (a removed option is silent, not a gap)", res.Gaps)
 	}
 	if !res.InSync {
-		t.Errorf("InSync = false, want true (nothing needed changing); Result=%+v", res)
+		t.Errorf("InSync = false, want true (nothing needed changing on the drift-detected axes); Result=%+v", res)
+	}
+}
+
+// TestReconcile_MultiSourcePrefFailureIsolatedPerSource proves the batching
+// design's fault-isolation granularity: TWO sources each have one drifted
+// preference; source 222's SetPreferences call fails while source 111's still
+// succeeds — a batch failure on one source must never block another source's
+// batch.
+func TestReconcile_MultiSourcePrefFailureIsolatedPerSource(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	seedStoredPref(ctx, t, db, 111, "nsfw", "true", sourceengine.PreferenceCheckBox)
+	seedStoredPref(ctx, t, db, 222, "nsfw", "true", sourceengine.PreferenceCheckBox)
+
+	cfg := baseConfig()
+
+	client := &reconcileClient{
+		Client: sourceenginefake.New(
+			sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+				{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},
+			}),
+			sourceenginefake.WithPreferences(222, []sourceengine.Preference{
+				{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},
+			}),
+		),
+		setPrefsErr: map[int64]error{222: errors.New("source 222 rejected the write")},
+	}
+
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
+	if err != nil {
+		t.Fatalf("Reconcile returned hard error, want per-source isolation: %v", err)
+	}
+	if res.PrefsApplied != 1 {
+		t.Errorf("PrefsApplied = %d, want 1 (only source 111's key)", res.PrefsApplied)
+	}
+	if len(res.Gaps) != 1 || !strings.Contains(res.Gaps[0].Error(), "222") {
+		t.Fatalf("Gaps = %v, want exactly 1 naming source 222", res.Gaps)
+	}
+
+	assertSourcePref(ctx, t, client, 111, true, "its push succeeded")
+	assertSourcePref(ctx, t, client, 222, false, "its push failed")
+}
+
+// assertSourcePref checks sourceID's single "nsfw" preference reads back as
+// want after TestReconcile_MultiSourcePrefFailureIsolatedPerSource's reconcile
+// pass. Split out purely to keep the test body's cyclomatic complexity within
+// the project's cyclop gate.
+func assertSourcePref(ctx context.Context, t *testing.T, client *reconcileClient, sourceID int64, want bool, reason string) {
+	t.Helper()
+	prefs, err := client.Preferences(ctx, sourceID)
+	if err != nil || len(prefs) != 1 || prefs[0].CurrentValue != want {
+		t.Errorf("source %d after reconcile = %+v (err=%v), want nsfw=%v (%s)", sourceID, prefs, err, want, reason)
 	}
 }
