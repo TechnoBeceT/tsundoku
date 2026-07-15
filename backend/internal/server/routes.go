@@ -140,7 +140,7 @@ import (
 //   - /api/series/:id/tracking/:recordId/refresh (POST) — re-pull a binding's remote entry (RequireOwner).
 //   - /api/series/:id/tracking/:recordId/update (POST) — owner's manual tracking-sheet edit (RequireOwner).
 //   - /api/series/:id/tracking/sync (POST)         — pull + converge every binding for a series (RequireOwner).
-//   - /internal/extensions/apk/:pkg/:version (GET) — cached extension .apk bytes for engine recovery (RequireOwner; NOT in the OpenAPI spec).
+//   - /internal/extensions/apk/:pkg/:file (GET) — cached extension .apk bytes for engine recovery; :file = "<pkg>-<version>.apk" (RequireOwner; NOT in the OpenAPI spec).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
 func registerRoutes(
@@ -393,11 +393,14 @@ func registerRoutes(
 	// RequireOwner: a future engine-recovery/reconcile pass consumes them via an
 	// apkUrl to re-install extensions from Tsundoku's own APK byte cache even when
 	// the upstream repo is offline. The cache lives under the Suwayomi runtime dir
-	// (the same canonical location enginetopo.SeedExtensions writes to).
+	// (the same canonical location enginetopo.SeedExtensions writes to). The last
+	// URL segment is the collision-free filename "<pkg>-<version>.apk" (the
+	// engine-host loader names the installed file from it) — the reconcile builds
+	// apkUrl ending in that filename; the handler parses (pkg, version) back out.
 	apkStore := apkcache.New(filepath.Join(cfg.Suwayomi.RuntimeDir, "apkcache"))
 	engineH := engineh.NewHandler(apkStore)
 	internalAPI := e.Group("/internal", mw.RequireOwner(authSvc, cfg.Auth.CookieSecure))
-	internalAPI.GET("/extensions/apk/:pkg/:version", engineH.ServeAPK)
+	internalAPI.GET("/extensions/apk/:pkg/:file", engineH.ServeAPK)
 
 	// SPA static serving + unknown-route handling (registered last).
 	registerStaticSPA(e)

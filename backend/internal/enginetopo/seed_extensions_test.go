@@ -119,7 +119,7 @@ func TestSeedExtensions_HappyPath(t *testing.T) {
 	apkBytes := []byte("APK-BYTES-ONE")
 
 	stub := &stubHTTP{routes: map[string]stubResp{
-		indexURL: {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"pkg.one-v1.apk"}]`)},
+		indexURL: {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"pkg.one-v1.apk","code":5}]`)},
 		apkURL:   {status: 200, body: apkBytes},
 	}}
 
@@ -212,7 +212,7 @@ func TestSeedExtensions_RepoIndexFailureIsGap(t *testing.T) {
 
 	stub := &stubHTTP{
 		routes: map[string]stubResp{
-			"https://good.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk"}]`)},
+			"https://good.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":1}]`)},
 			"https://good.test/repo/apk/one.apk":    {status: 200, body: apkBytes},
 		},
 		fail: map[string]error{
@@ -258,7 +258,7 @@ func TestSeedExtensions_IdempotentSecondRun(t *testing.T) {
 
 	const repo = "https://repo.test/repo"
 	stub := &stubHTTP{routes: map[string]stubResp{
-		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk"}]`)},
+		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":1}]`)},
 		"https://repo.test/repo/apk/one.apk":    {status: 200, body: []byte("APK")},
 	}}
 	client := &seedClient{
@@ -289,6 +289,89 @@ func TestSeedExtensions_IdempotentSecondRun(t *testing.T) {
 	}
 	if extra := stub.callCount() - firstCalls; extra != 0 {
 		t.Errorf("second pass made %d http calls, want 0 (already cached)", extra)
+	}
+}
+
+// TestSeedExtensions_RecordsIndexVersionNotInstalled proves the recorded
+// version_code + apk_sha256 + cache file describe the BYTES the index points at
+// (its own version), NOT the older installed version — so all four
+// (version_code, sha, file name, serve URL) stay mutually consistent when the
+// repo has advanced past the installed version.
+func TestSeedExtensions_RecordsIndexVersionNotInstalled(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	const repo = "https://repo.test/repo"
+	apkBytes := []byte("APK-V7")
+	stub := &stubHTTP{routes: map[string]stubResp{
+		// Repo advertises version 7; the extension is installed at version 3.
+		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":7}]`)},
+		"https://repo.test/repo/apk/one.apk":    {status: 200, body: apkBytes},
+	}}
+	client := &seedClient{
+		fakeClient: &fakeClient{},
+		repos:      []string{repo},
+		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 3)},
+		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "9"}}},
+	}
+
+	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	if err != nil {
+		t.Fatalf("SeedExtensions: %v", err)
+	}
+	assertResult(t, res, enginetopo.Result{Repos: 1, Cached: 1, Gaps: 0})
+
+	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName("pkg.one")).OnlyX(ctx)
+	// version_code + sha describe the downloaded (index) bytes, and the cache file
+	// is keyed by version 7 — not the installed 3.
+	assertCachedExtension(t, row, hexSHA(apkBytes), 7, []int64{9})
+	assertCachedBytes(t, cache, "pkg.one", 7, apkBytes)
+	if cache.Exists("pkg.one", 3) {
+		t.Error("apk cached under installed version 3, want only the index version 7")
+	}
+}
+
+// TestSeedExtensions_ReDownloadsWhenFileMissing proves the idempotency skip is
+// gated on the FILE, not just the DB row: a row claiming apk_cached=true whose
+// cache file was removed (e.g. the engine volume was recreated) is re-downloaded.
+func TestSeedExtensions_ReDownloadsWhenFileMissing(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	const repo = "https://repo.test/repo"
+	stub := &stubHTTP{routes: map[string]stubResp{
+		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":1}]`)},
+		"https://repo.test/repo/apk/one.apk":    {status: 200, body: []byte("APK")},
+	}}
+	client := &seedClient{
+		fakeClient: &fakeClient{},
+		repos:      []string{repo},
+		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 1)},
+		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
+	}
+
+	if _, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get); err != nil {
+		t.Fatalf("first SeedExtensions: %v", err)
+	}
+	// The row now says cached — but delete the bytes out from under it.
+	if err := cache.Remove("pkg.one", 1); err != nil {
+		t.Fatalf("cache.Remove: %v", err)
+	}
+	if cache.Exists("pkg.one", 1) {
+		t.Fatal("cache file still present after Remove")
+	}
+
+	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	if err != nil {
+		t.Fatalf("second SeedExtensions: %v", err)
+	}
+	if res2.Cached != 1 {
+		t.Errorf("second pass Cached = %d, want 1 (file was missing → re-download)", res2.Cached)
+	}
+	if !cache.Exists("pkg.one", 1) {
+		t.Error("apk not re-cached after its file was removed")
 	}
 }
 

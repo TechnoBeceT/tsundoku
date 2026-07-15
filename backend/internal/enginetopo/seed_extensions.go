@@ -40,15 +40,18 @@ type Result struct {
 // Flow:
 //  1. client.ExtensionRepos → upsert one HarvestedRepo row per URL.
 //  2. client.Extensions → for each INSTALLED extension: resolve its .apk download
-//     URL from its repo's index.min.json (fetched via httpGet), download the .apk
-//     bytes (httpGet), cache.Put them, read its source ids
-//     (client.ExtensionSources), and upsert a HarvestedExtension row with
-//     apk_sha256 + apk_cached=true.
+//     URL AND version from its repo's index.min.json (fetched via httpGet),
+//     download the .apk bytes (httpGet), cache.Put them, read its source ids
+//     (client.ExtensionSources), and upsert a HarvestedExtension row whose
+//     version_code + apk_sha256 describe the cached bytes (the index entry's own
+//     version, not the possibly-older installed version) with apk_cached=true.
 //
-// It is idempotent: an extension already cached at its current version is
-// skipped (no index fetch, no download, no Put) and does NOT count toward
-// Cached, so a second run over an unchanged library caches 0 and makes zero
-// HTTP calls for those extensions.
+// It is idempotent: an extension whose row is apk_cached=true AND whose cache
+// FILE is present is skipped (no index fetch, no download, no Put) and does NOT
+// count toward Cached, so a second run over an unchanged library caches 0 and
+// makes zero HTTP calls for those extensions. A row claiming cached but missing
+// its file (e.g. the engine volume was recreated) is re-downloaded — the file,
+// not the row alone, is the durable truth.
 //
 // Partial success: a per-extension failure is logged (slog.Warn), recorded with
 // apk_cached=false, and counted in Gaps — one dead repo never aborts the pass.
@@ -104,9 +107,17 @@ func SeedExtensions(
 // seedOneExtension caches one installed extension's .apk and upserts its
 // HarvestedExtension row. It returns cached=true when it freshly downloaded and
 // cached the apk, and cached=false (with a nil error) when the extension was
-// already cached at this version — the idempotency skip, which does NO network
-// I/O. Any resolution/download/persist failure is returned so the caller can
-// record it as a gap.
+// already cached AND its cache file is present — the idempotency skip, which
+// does NO network I/O. Any resolution/download/persist failure is returned so
+// the caller can record it as a gap.
+//
+// The version_code + apk_sha256 recorded describe the BYTES actually cached: the
+// APK is resolved from the repo index (which advertises the latest known-good
+// version), so the index entry's OWN version code — not the installed
+// ext.VersionCode, which may lag the repo — is what is cached, named, and
+// recorded, keeping version_code, apk_sha256, the cache file name, and the serve
+// URL mutually consistent. (Installing the latest known-good APK is safe: source
+// ids are stable across versions.)
 func seedOneExtension(
 	ctx context.Context,
 	client suwayomi.Client,
@@ -116,18 +127,18 @@ func seedOneExtension(
 	httpGet func(url string) (*http.Response, error),
 	ext suwayomi.Extension,
 ) (cached bool, err error) {
-	if already, err := isAlreadyCached(ctx, db, ext); err != nil {
+	if already, err := isAlreadyCached(ctx, db, cache, ext); err != nil {
 		return false, err
 	} else if already {
 		return false, nil
 	}
 
-	apkURL, err := indexes.apkURL(ext.Repo, ext.PkgName)
+	apkURL, indexVersion, err := indexes.resolve(ext.Repo, ext.PkgName)
 	if err != nil {
 		return false, err
 	}
 
-	sha, err := downloadAndCache(ctx, cache, httpGet, apkURL, ext)
+	sha, err := downloadAndCache(cache, httpGet, apkURL, ext.PkgName, indexVersion)
 	if err != nil {
 		return false, err
 	}
@@ -140,7 +151,7 @@ func seedOneExtension(
 	row := extensionRow{
 		pkgName:     ext.PkgName,
 		repoURL:     ext.Repo,
-		versionCode: ext.VersionCode,
+		versionCode: indexVersion,
 		versionName: ext.VersionName,
 		sourceIDs:   sourceIDs(sources),
 		apkSHA256:   sha,
@@ -152,14 +163,14 @@ func seedOneExtension(
 	return true, nil
 }
 
-// downloadAndCache fetches the .apk at apkURL and streams it into the cache,
-// returning the sha256 the cache computed. A non-200 status is an error.
+// downloadAndCache fetches the .apk at apkURL and streams it into the cache
+// under (pkgName, version), returning the sha256 the cache computed. A non-200
+// status is an error.
 func downloadAndCache(
-	ctx context.Context,
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
-	apkURL string,
-	ext suwayomi.Extension,
+	apkURL, pkgName string,
+	version int,
 ) (string, error) {
 	resp, err := httpGet(apkURL)
 	if err != nil {
@@ -169,16 +180,20 @@ func downloadAndCache(
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download apk %q: status %d", apkURL, resp.StatusCode)
 	}
-	sha, _, err := cache.Put(ext.PkgName, ext.VersionCode, resp.Body)
+	sha, _, err := cache.Put(pkgName, version, resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("cache apk: %w", err)
 	}
 	return sha, nil
 }
 
-// isAlreadyCached reports whether ext is already stored at its CURRENT version
-// with its apk cached — the idempotency guard that makes a re-run a no-op.
-func isAlreadyCached(ctx context.Context, db *ent.Client, ext suwayomi.Extension) (bool, error) {
+// isAlreadyCached reports whether ext is already stored with apk_cached=true AND
+// its cache FILE is actually present — the idempotency guard that makes a re-run
+// a no-op. The file check is load-bearing: the DB row lives in Postgres but the
+// bytes live on the engine volume, so a row alone must never be trusted (a
+// recreated volume would leave a "cached" row 404ing at recovery time). When the
+// file is absent the extension is re-downloaded even though the row claims cached.
+func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store, ext suwayomi.Extension) (bool, error) {
 	existing, err := db.HarvestedExtension.Query().
 		Where(entharvestedextension.PkgName(ext.PkgName)).
 		Only(ctx)
@@ -188,7 +203,7 @@ func isAlreadyCached(ctx context.Context, db *ent.Client, ext suwayomi.Extension
 	if err != nil {
 		return false, fmt.Errorf("query harvested extension: %w", err)
 	}
-	return existing.ApkCached && existing.VersionCode == ext.VersionCode, nil
+	return existing.ApkCached && cache.Exists(ext.PkgName, existing.VersionCode), nil
 }
 
 // sourceIDs converts the Suwayomi sources an extension provides into the int64
@@ -287,6 +302,11 @@ func upsertRepo(ctx context.Context, db *ent.Client, url string) error {
 
 // --- Mihon repo index resolution --------------------------------------------
 
+// maxIndexBytes bounds how much of a repo's index.min.json is read into memory.
+// 16 MiB is far above any real index (the largest community repos are a few MiB)
+// yet cheap insurance against a hostile or corrupt endpoint streaming forever.
+const maxIndexBytes = 16 << 20
+
 // repoIndexEntry is one extension entry from a repo's index.min.json (only the
 // fields we need; unknown fields are ignored). It mirrors engine-host's
 // RepoIndexEntry.
@@ -295,6 +315,10 @@ type repoIndexEntry struct {
 	Pkg string `json:"pkg"`
 	// Apk is the .apk file name, resolved against "<repoBase>/apk/<apk>".
 	Apk string `json:"apk"`
+	// Code is the entry's own numeric version code — the version of the BYTES
+	// this entry points at, recorded so the stored version_code describes the
+	// cached apk rather than the (possibly older) installed version.
+	Code int `json:"code"`
 }
 
 // indexResult memoises one repo's index fetch (entries or the failure), so a
@@ -305,7 +329,8 @@ type indexResult struct {
 }
 
 // indexResolver fetches + caches repo index.min.json documents and resolves an
-// extension's .apk download URL from them, mirroring engine-host's URL scheme.
+// extension's .apk download URL + version from them, mirroring engine-host's URL
+// scheme.
 type indexResolver struct {
 	httpGet func(url string) (*http.Response, error)
 	byRepo  map[string]indexResult
@@ -316,23 +341,25 @@ func newIndexResolver(httpGet func(url string) (*http.Response, error)) *indexRe
 	return &indexResolver{httpGet: httpGet, byRepo: make(map[string]indexResult)}
 }
 
-// apkURL resolves the .apk download URL for pkgName within repoURL's index. It
-// errors when the repo url is blank, the index cannot be fetched/parsed, or the
-// index has no entry for pkgName.
-func (r *indexResolver) apkURL(repoURL, pkgName string) (string, error) {
+// resolve returns the .apk download URL AND the version code for pkgName within
+// repoURL's index. The version is the index entry's own Code (the version of the
+// bytes the URL points at), so the caller records metadata that matches the
+// cached file. It errors when the repo url is blank, the index cannot be
+// fetched/parsed, or the index has no entry for pkgName.
+func (r *indexResolver) resolve(repoURL, pkgName string) (apkURL string, version int, err error) {
 	if strings.TrimSpace(repoURL) == "" {
-		return "", fmt.Errorf("extension %q has no repo url", pkgName)
+		return "", 0, fmt.Errorf("extension %q has no repo url", pkgName)
 	}
 	entries, err := r.entriesFor(repoURL)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	for _, e := range entries {
 		if e.Pkg == pkgName {
-			return apkURLFor(repoURL, e.Apk), nil
+			return apkURLFor(repoURL, e.Apk), e.Code, nil
 		}
 	}
-	return "", fmt.Errorf("extension %q not found in repo index %q", pkgName, repoURL)
+	return "", 0, fmt.Errorf("extension %q not found in repo index %q", pkgName, repoURL)
 }
 
 // entriesFor fetches and parses repoURL's index.min.json, memoising the result
@@ -357,7 +384,9 @@ func fetchIndex(httpGet func(url string) (*http.Response, error), repoURL string
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch repo index %q: status %d", indexURL, resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	// Cap the read so a hostile/oversized index can't OOM the process. The apk
+	// download itself streams straight into the cache and needs no such cap.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxIndexBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read repo index %q: %w", indexURL, err)
 	}

@@ -50,7 +50,7 @@ func (s *Store) Path(pkg string, version int) string {
 
 // Put streams r into the cache at Path(pkg, version) and returns the SHA-256 hex
 // of the bytes written plus the final path. The write is atomic: bytes go to a
-// sibling temp file that is fsynced then renamed over the final path, so a
+// unique sibling temp file that is fsynced then renamed over the final path, so a
 // mid-write failure — including a reader that errors part-way through — removes
 // the temp file and never leaves a partial file at the final path (any previous
 // cached file stays intact). Put is idempotent: a re-Put of the same
@@ -61,16 +61,17 @@ func (s *Store) Put(pkg string, version int, r io.Reader) (sha256Hex string, pat
 		return "", "", fmt.Errorf("apkcache: create cache dir: %w", err)
 	}
 	finalPath := s.Path(pkg, version)
-	tmpPath := finalPath + ".tmp"
 
-	// G304: tmpPath is built from the cache root + a sanitised package name — not
-	// a path-traversal concern.
-	//nolint:gosec
-	f, err := os.Create(tmpPath)
+	// A UNIQUE temp file (os.CreateTemp fills the "*" with a random suffix) —
+	// never a fixed "<final>.tmp" — so two concurrent Puts of the same
+	// (pkg, version) write to separate temp files and can never interleave into
+	// one and corrupt each other. The rename below stays the single atomic commit.
+	f, err := os.CreateTemp(s.dir, filepath.Base(finalPath)+".*.tmp")
 	if err != nil {
 		// Defensive path: reachable only on OS-level I/O failure (fd exhausted / permission denied).
 		return "", "", fmt.Errorf("apkcache: create temp file: %w", err)
 	}
+	tmpPath := f.Name()
 
 	// Hash while writing so the caller gets the sha256 without a second read.
 	hasher := sha256.New()
@@ -114,6 +115,16 @@ func (s *Store) Open(pkg string, version int) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("apkcache: open cached apk: %w", err)
 	}
 	return f, nil
+}
+
+// Exists reports whether the cached .apk file for (pkg, version) is present on
+// disk. It is the durable-truth check the seed uses: a HarvestedExtension row
+// claiming apk_cached=true is trusted ONLY when the file actually backs it, so a
+// recreated engine volume (Postgres survives, the bytes do not) triggers a
+// re-download instead of a false skip that would 404 at recovery time.
+func (s *Store) Exists(pkg string, version int) bool {
+	_, err := os.Stat(s.Path(pkg, version))
+	return err == nil
 }
 
 // Remove deletes the cached .apk for (pkg, version). A missing file is not an

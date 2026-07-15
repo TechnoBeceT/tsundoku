@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
@@ -31,14 +32,24 @@ func NewHandler(cache *apkcache.Store) *Handler {
 	return &Handler{cache: cache}
 }
 
-// ServeAPK handles GET /internal/extensions/apk/:pkg/:version. It streams the
-// cached .apk for the (pkg, version) with the Android-package content type.
-// Returns 400 on a non-integer version, 404 when the apk is not cached.
+// ServeAPK handles GET /internal/extensions/apk/:pkg/:file. It streams the cached
+// .apk for the (pkg, version) with the Android-package content type.
+//
+// The LAST path segment MUST be the collision-free filename "<pkg>-<version>.apk"
+// — NOT a bare version integer. This is a host-consumption contract: the
+// engine-host loader names the file it installs from apkUrl.substringAfterLast('/'),
+// so a URL ending in a bare version int would name two same-version extensions
+// the same file and load the wrong bytes. The reconcile therefore constructs
+// apkUrl ending in "<pkg>-<version>.apk"; this handler parses the version back
+// out of :file (validating it matches :pkg) and serves cache.Open(pkg, version).
+//
+// Returns 400 when :file is not "<pkg>-<version>.apk", 404 when the apk is not
+// cached.
 func (h *Handler) ServeAPK(c echo.Context) error {
 	pkg := c.Param("pkg")
-	version, err := strconv.Atoi(c.Param("version"))
+	version, err := versionFromAPKFile(pkg, c.Param("file"))
 	if err != nil {
-		return httperr.BadRequest("version must be an integer")
+		return httperr.BadRequest(`file must be "<pkg>-<version>.apk"`)
 	}
 
 	rc, err := h.cache.Open(pkg, version)
@@ -53,3 +64,27 @@ func (h *Handler) ServeAPK(c echo.Context) error {
 
 	return c.Stream(http.StatusOK, apkContentType, rc)
 }
+
+// versionFromAPKFile parses the version integer out of a "<pkg>-<version>.apk"
+// filename, validating that it belongs to pkg (the same pkg the URL carries as
+// its own segment). It is the inverse of the reconcile's URL construction, so a
+// malformed or mismatched filename is rejected (→ 400) rather than silently
+// serving the wrong extension.
+func versionFromAPKFile(pkg, file string) (int, error) {
+	rest, ok := strings.CutSuffix(file, ".apk")
+	if !ok {
+		return 0, errBadAPKFile
+	}
+	verStr, ok := strings.CutPrefix(rest, pkg+"-")
+	if !ok {
+		return 0, errBadAPKFile
+	}
+	version, err := strconv.Atoi(verStr)
+	if err != nil {
+		return 0, errBadAPKFile
+	}
+	return version, nil
+}
+
+// errBadAPKFile marks a serve-URL filename that is not "<pkg>-<version>.apk".
+var errBadAPKFile = errors.New("engine: apk file must be \"<pkg>-<version>.apk\"")

@@ -38,7 +38,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
 	internalG := e.Group("/internal", middleware.RequireOwner(authSvc, false))
-	internalG.GET("/extensions/apk/:pkg/:version", h.ServeAPK)
+	internalG.GET("/extensions/apk/:pkg/:file", h.ServeAPK)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -66,7 +66,7 @@ func TestServeAPK_OK(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	rec := env.do("/internal/extensions/apk/pkg.one/5", true)
+	rec := env.do("/internal/extensions/apk/pkg.one/pkg.one-5.apk", true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -81,18 +81,27 @@ func TestServeAPK_OK(t *testing.T) {
 // TestServeAPK_NotCached proves an uncached (pkg, version) is a 404.
 func TestServeAPK_NotCached(t *testing.T) {
 	env := newTestEnv(t)
-	rec := env.do("/internal/extensions/apk/pkg.missing/9", true)
+	rec := env.do("/internal/extensions/apk/pkg.missing/pkg.missing-9.apk", true)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
-// TestServeAPK_BadVersion proves a non-integer version param is a 400.
-func TestServeAPK_BadVersion(t *testing.T) {
+// TestServeAPK_BadFile proves a filename that is not "<pkg>-<version>.apk" is a
+// 400: a non-integer version, a missing .apk suffix, and a filename whose pkg
+// prefix does not match the :pkg segment are all rejected (the last guards
+// against serving the wrong extension).
+func TestServeAPK_BadFile(t *testing.T) {
 	env := newTestEnv(t)
-	rec := env.do("/internal/extensions/apk/pkg.one/not-a-number", true)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
+	for _, file := range []string{
+		"pkg.one-not-a-number.apk", // version not an int
+		"pkg.one-5",                // no .apk suffix
+		"pkg.other-5.apk",          // pkg prefix mismatches :pkg
+	} {
+		rec := env.do("/internal/extensions/apk/pkg.one/"+file, true)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("file %q: status = %d, want 400", file, rec.Code)
+		}
 	}
 }
 
@@ -103,7 +112,7 @@ func TestServeAPK_Unauthorized(t *testing.T) {
 	if _, _, err := env.cache.Put("pkg.one", 5, bytes.NewReader([]byte("apk"))); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	rec := env.do("/internal/extensions/apk/pkg.one/5", false)
+	rec := env.do("/internal/extensions/apk/pkg.one/pkg.one-5.apk", false)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
