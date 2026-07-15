@@ -14,20 +14,29 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	suwayomicli "github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // Handler serves the Suwayomi server-settings proxy endpoints. It holds the
 // Suwayomi client whose BaseURL() targets the active (embedded or external)
-// Suwayomi instance.
+// Suwayomi instance, plus an optional durable settings writer that the config
+// write-through captures the owner's just-applied FlareSolverr/SOCKS values into.
 type Handler struct {
 	sw suwayomicli.Client
+	// settings is the durable settings overlay the config write-through captures
+	// into (enginetopo.WriteThroughEngineConfig). nil disables the write-through
+	// (a pure proxy) — used where topology capture is not wired, e.g. focused
+	// proxy tests.
+	settings enginetopo.ConfigWriter
 }
 
-// NewHandler constructs a Handler bound to a Suwayomi client.
-func NewHandler(sw suwayomicli.Client) *Handler {
-	return &Handler{sw: sw}
+// NewHandler constructs a Handler bound to a Suwayomi client and a durable
+// settings writer. The settings writer may be nil, which turns the Update
+// write-through into a no-op (pure passthrough).
+func NewHandler(sw suwayomicli.Client, settingsWriter enginetopo.ConfigWriter) *Handler {
+	return &Handler{sw: sw, settings: settingsWriter}
 }
 
 // Get handles GET /api/suwayomi/settings. It reads the current FlareSolverr +
@@ -64,6 +73,13 @@ func (h *Handler) Update(c echo.Context) error {
 	settings, err := h.sw.ServerSettings(ctx)
 	if err != nil {
 		return httperr.Upstream(err)
+	}
+	// Best-effort durable write-through: capture the owner's just-applied
+	// FlareSolverr/SOCKS config into Tsundoku's settings overlay unconditionally
+	// (an owner edit overwrites — the opposite of the boot seed's gap-fill). A
+	// failure here is logged inside the helper and never affects this response.
+	if h.settings != nil {
+		enginetopo.WriteThroughEngineConfig(ctx, h.settings, settings)
 	}
 	return c.JSON(http.StatusOK, toDTO(settings))
 }
