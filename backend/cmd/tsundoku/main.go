@@ -48,6 +48,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/metadata/providers"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
@@ -259,19 +260,22 @@ func main() {
 	runner.StartTrackerRetry(ctx, trackerRetryQueue, syncSvc)
 
 	// Discovery sweep service (M5): re-fetches every monitored series' chapter
-	// list to find new releases. Its own ingest shares the same Ent client +
-	// Suwayomi client; NewIngest is a stateless constructor so a second instance
-	// alongside the one built in registerRoutes is fine.
+	// list to find new releases. Suwayomi-removal P2 slice 3a: refresh's ingest
+	// is now the engine-agnostic internal/ingest.Ingest, targeting the
+	// engine-host client built above — refresh no longer talks to Suwayomi at
+	// all. It gets its OWN PRIVATE ChapterCache (not the suwayomi one shared by
+	// registerRoutes' ingest/imports wiring): refresh fetches via
+	// FetchChaptersUncached (fresh every sweep, so a long interactive-cache TTL
+	// can never stale-out discovery) + ingests via AddSeriesWithChapters (never
+	// the gated/cached AddSeries), so it never actually reads this cache — a
+	// private instance just keeps this slice from touching the shared one.
+	// It shares gateSvc with every other background source-access path.
+	refreshChapterCache := ingest.NewChapterCache(func(ctx context.Context) time.Duration {
+		return settingsSvc.ChapterCacheTTL(ctx)
+	})
 	refreshSvc := refresh.NewService(
 		entClient,
-		// Refresh's ingest shares the gate but NOT the chapter cache in effect:
-		// refresh fetches via FetchChaptersUncached (fresh every sweep, so a long
-		// interactive-cache TTL can never stale-out discovery) + ingests via
-		// AddSeriesWithChapters (never the gated/cached AddSeries). It applies its
-		// OWN gate around the single per-source-manga pre-fetch, so no double-Wait.
-		// The cache is still passed for the constructor's shape; refresh just
-		// doesn't route its pre-fetch through it.
-		suwayomi.NewIngestWithGate(suwayomiClient, entClient, chapterCache, gateSvc),
+		ingest.NewIngestWithGate(engineClient, entClient, refreshChapterCache, gateSvc),
 		hub,
 		settingsSvc,
 		gateSvc,

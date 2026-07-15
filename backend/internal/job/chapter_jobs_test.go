@@ -21,10 +21,13 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	enginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/warmup"
@@ -620,54 +623,6 @@ func TestRunner_Trigger_Coalesces(t *testing.T) {
 	}
 }
 
-// fakeSuwayomi is a minimal suwayomi.Client returning one chapter for any manga,
-// used to prove StartRefresh discovers chapters and then triggers a download.
-type fakeSuwayomi struct{}
-
-func (fakeSuwayomi) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
-func (fakeSuwayomi) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
-	return nil, nil
-}
-func (fakeSuwayomi) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
-	return suwayomi.BrowseResult{}, nil
-}
-func (fakeSuwayomi) FetchChapters(context.Context, int) ([]suwayomi.Chapter, error) {
-	n := 1.0
-	return []suwayomi.Chapter{{ID: 1, Index: 0, Number: &n, URL: "u1"}}, nil
-}
-func (fakeSuwayomi) MangaChapters(context.Context, int) ([]suwayomi.Chapter, error) { return nil, nil }
-func (fakeSuwayomi) MangaMeta(context.Context, int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (fakeSuwayomi) FetchMangaDetails(context.Context, int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (fakeSuwayomi) ChapterPages(context.Context, int) ([]string, error)       { return nil, nil }
-func (fakeSuwayomi) PageBytes(context.Context, string) ([]byte, string, error) { return nil, "", nil }
-func (fakeSuwayomi) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {
-	return suwayomi.SuwayomiSettings{}, nil
-}
-func (fakeSuwayomi) SetServerSettings(context.Context, suwayomi.SuwayomiSettingsPatch) error {
-	return nil
-}
-func (fakeSuwayomi) Extensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
-func (fakeSuwayomi) SetExtensionState(context.Context, string, suwayomi.ExtensionAction) error {
-	return nil
-}
-func (fakeSuwayomi) FetchExtensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
-func (fakeSuwayomi) ExtensionRepos(context.Context) ([]string, error)              { return nil, nil }
-func (fakeSuwayomi) SetExtensionRepos(context.Context, []string) error             { return nil }
-func (fakeSuwayomi) SourcePreferences(context.Context, string) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
-}
-func (fakeSuwayomi) SetSourcePreference(context.Context, string, int, suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
-}
-func (fakeSuwayomi) ExtensionSources(context.Context, string) ([]suwayomi.Source, error) {
-	return nil, nil
-}
-func (fakeSuwayomi) SetSourceEnabled(context.Context, string, bool) error { return nil }
-
 // TestRunner_StartRefresh_DiscoversAndDownloads verifies the refresh ticker
 // re-fetches a monitored series (creating a wanted chapter) and then triggers a
 // download cycle that drains it — end to end.
@@ -678,12 +633,17 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 	storage := t.TempDir()
 	hub := sse.NewHub()
 
-	// Monitored series + provider with a known suwayomi_id, NO chapters yet.
+	// Monitored series + provider, URL-addressed at a numeric source id, NO
+	// chapters yet — the sourceengine fake below is configured to return one
+	// chapter for exactly this (sourceID, url) pair.
+	const discSourceID, discURL = 99, "/manga/disc-series"
 	s := client.Series.Create().SetTitle("Disc Series").SetSlug("disc-series").SetMonitored(true).SaveX(ctx)
-	client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(42).SetImportance(10).SaveX(ctx)
+	client.SeriesProvider.Create().SetSeries(s).SetProvider("99").SetURL(discURL).SetImportance(10).SaveX(ctx)
 
-	fc := fakeSuwayomi{}
-	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, settings.Static{Concurrency: 2}, nil)
+	fc := enginefake.New(enginefake.WithChapters(discSourceID, discURL, []sourceengine.Chapter{
+		{Number: 1, URL: "u1"},
+	}))
+	refreshSvc := refresh.NewService(client, ingest.NewIngest(fc, client), hub, settings.Static{Concurrency: 2}, nil)
 
 	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour, Refresh: 100 * time.Millisecond})
@@ -797,8 +757,11 @@ func TestStartRefresh_BroadcastsHealthSummary(t *testing.T) {
 	events, unsub := hub.Subscribe()
 	defer unsub()
 
-	fc := fakeSuwayomi{}
-	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, settings.Static{Concurrency: 2}, nil)
+	// No series/provider is seeded here — this test only asserts that
+	// StartRefresh's health.summary broadcast fires after a sweep, so an empty
+	// (unconfigured) sourceengine fake is enough; the sweep itself has nothing
+	// to discover.
+	refreshSvc := refresh.NewService(client, ingest.NewIngest(enginefake.New(), client), hub, settings.Static{Concurrency: 2}, nil)
 
 	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Refresh: 50 * time.Millisecond})
