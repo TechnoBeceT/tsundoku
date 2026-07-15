@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -297,7 +298,11 @@ func registerRoutes(
 	// Suwayomi server-settings proxy (FlareSolverr + SOCKS). The handler holds
 	// the Suwayomi client directly and proxies its server-global settings; no
 	// Tsundoku state is involved.
-	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient)
+	// settingsSvc is passed as the durable ConfigWriter so a PATCH captures the
+	// owner's just-applied FlareSolverr/SOCKS values into Tsundoku's settings
+	// overlay (best-effort write-through — the opposite of the boot seed's
+	// gap-fill: an explicit owner edit overwrites).
+	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient, settingsSvc)
 	authed.GET("/suwayomi/settings", suwayomiSettingsH.Get)
 	authed.PATCH("/suwayomi/settings", suwayomiSettingsH.Update)
 
@@ -312,7 +317,12 @@ func registerRoutes(
 	// Suwayomi extension (Sources & Extensions) management. Like the settings
 	// proxy, the handler holds the Suwayomi client directly and proxies its
 	// extension GraphQL surface; no Tsundoku state is involved.
-	extensionsH := extensionsh.NewHandler(suwayomiClient)
+	// db/cache/http.Get are the durable engine-topology store: an install/update/
+	// uninstall or repo change is written through to the HarvestedExtension/
+	// HarvestedRepo rows + the shared apk cache immediately (best-effort), so the
+	// store never lags a live owner change. apkStore is the SAME cache the boot
+	// seed writes and the /internal apk-serving route reads.
+	extensionsH := extensionsh.NewHandler(suwayomiClient, client, apkStore, http.Get)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)

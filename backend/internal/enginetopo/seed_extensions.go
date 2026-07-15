@@ -112,13 +112,11 @@ func SeedExtensions(
 // does NO network I/O. Any resolution/download/persist failure is returned so
 // the caller can record it as a gap.
 //
-// The version_code + apk_sha256 recorded describe the BYTES actually cached: the
-// APK is resolved from the repo index (which advertises the latest known-good
-// version), so the index entry's OWN version code — not the installed
-// ext.VersionCode, which may lag the repo — is what is cached, named, and
-// recorded, keeping version_code, apk_sha256, the cache file name, and the serve
-// URL mutually consistent. (Installing the latest known-good APK is safe: source
-// ids are stable across versions.)
+// The two seed-specific behaviours — the idempotency skip and (at the call site)
+// gap-recording — live HERE; the actual caching work is delegated to the shared
+// recordInstalledExtension core (which the live write-through also drives via the
+// exported RecordInstalledExtension), so there is exactly one copy of the
+// resolve→download→cache→read-sources→upsert logic.
 func seedOneExtension(
 	ctx context.Context,
 	client suwayomi.Client,
@@ -133,20 +131,72 @@ func seedOneExtension(
 	} else if already {
 		return false, nil
 	}
+	if err := recordInstalledExtension(ctx, client, db, cache, indexes, httpGet, ext); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
+// RecordInstalledExtension caches one installed extension's .apk bytes and
+// upserts its HarvestedExtension row — the durable capture of a single installed
+// extension. It is the LIVE write-through entry point (see OnExtensionInstalled):
+// after the owner installs or updates an extension through Tsundoku, this records
+// the just-affected extension into the topology store immediately, without
+// waiting for the next boot seed.
+//
+// It ALWAYS does the work: unlike the seed's seedOneExtension it performs NO
+// idempotency skip (an install/update just changed the engine, so the current
+// bytes must be re-captured) and records NO gap on failure (the caller decides —
+// the write-through logs and continues). Re-capturing an unchanged extension is a
+// wasted download but never wrong.
+//
+// The version_code + apk_sha256 recorded describe the BYTES actually cached: the
+// apk is resolved from the repo index (which advertises the latest known-good
+// version), so the index entry's OWN version code — not the installed
+// ext.VersionCode, which may lag the repo — is cached, named, and recorded;
+// installed_version_code stores ext.VersionCode as the seed's change-detector.
+// (Installing the latest known-good apk is safe: source ids are stable across
+// versions.)
+func RecordInstalledExtension(
+	ctx context.Context,
+	client suwayomi.Client,
+	db *ent.Client,
+	cache *apkcache.Store,
+	httpGet func(url string) (*http.Response, error),
+	ext suwayomi.Extension,
+) error {
+	return recordInstalledExtension(ctx, client, db, cache, newIndexResolver(httpGet), httpGet, ext)
+}
+
+// recordInstalledExtension is the resolver-injected caching core shared by the
+// boot seed (seedOneExtension, which passes a resolver MEMOISED across the whole
+// pass so a repo index is fetched at most once even with several extensions from
+// it) and the live write-through (RecordInstalledExtension, which passes a
+// one-shot resolver for its single extension). Keeping the resolver a parameter
+// is what lets both callers share this one body without the seed losing its
+// per-pass index memoisation.
+func recordInstalledExtension(
+	ctx context.Context,
+	client suwayomi.Client,
+	db *ent.Client,
+	cache *apkcache.Store,
+	indexes *indexResolver,
+	httpGet func(url string) (*http.Response, error),
+	ext suwayomi.Extension,
+) error {
 	apkURL, indexVersion, err := indexes.resolve(ext.Repo, ext.PkgName)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	sha, err := downloadAndCache(cache, httpGet, apkURL, ext.PkgName, indexVersion, maxAPKBytes)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	sources, err := client.ExtensionSources(ctx, ext.PkgName)
 	if err != nil {
-		return false, fmt.Errorf("read extension sources: %w", err)
+		return fmt.Errorf("read extension sources: %w", err)
 	}
 
 	row := extensionRow{
@@ -160,9 +210,9 @@ func seedOneExtension(
 		apkCached:            true,
 	}
 	if err := upsertExtension(ctx, db, row); err != nil {
-		return false, fmt.Errorf("persist harvested extension: %w", err)
+		return fmt.Errorf("persist harvested extension: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 // maxAPKBytes is the ceiling on how many bytes a single extension .apk download

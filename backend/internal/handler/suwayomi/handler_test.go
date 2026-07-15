@@ -95,7 +95,9 @@ type testEnv struct {
 func newTestEnv(t *testing.T, fc *fakeClient) *testEnv {
 	t.Helper()
 	authSvc := auth.NewService(testSecret)
-	h := handler.NewHandler(fc)
+	// nil settings writer: these tests exercise the pure proxy behaviour; the
+	// durable config write-through is covered separately (writethrough_test.go).
+	h := handler.NewHandler(fc, nil)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
