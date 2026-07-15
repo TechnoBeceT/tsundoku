@@ -45,6 +45,30 @@ func (f EtagCacheFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, e
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.EtagCacheMutation", m)
 }
 
+// The HarvestedExtensionFunc type is an adapter to allow the use of ordinary
+// function as HarvestedExtension mutator.
+type HarvestedExtensionFunc func(context.Context, *ent.HarvestedExtensionMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f HarvestedExtensionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.HarvestedExtensionMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.HarvestedExtensionMutation", m)
+}
+
+// The HarvestedRepoFunc type is an adapter to allow the use of ordinary
+// function as HarvestedRepo mutator.
+type HarvestedRepoFunc func(context.Context, *ent.HarvestedRepoMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f HarvestedRepoFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.HarvestedRepoMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.HarvestedRepoMutation", m)
+}
+
 // The ImportEntryFunc type is an adapter to allow the use of ordinary
 // function as ImportEntry mutator.
 type ImportEntryFunc func(context.Context, *ent.ImportEntryMutation) (ent.Value, error)
@@ -187,6 +211,18 @@ func (f SourceMetricFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceMetricMutation", m)
+}
+
+// The SourcePreferenceFunc type is an adapter to allow the use of ordinary
+// function as SourcePreference mutator.
+type SourcePreferenceFunc func(context.Context, *ent.SourcePreferenceMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourcePreferenceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourcePreferenceMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourcePreferenceMutation", m)
 }
 
 // The SuwayomiSyncStateFunc type is an adapter to allow the use of ordinary

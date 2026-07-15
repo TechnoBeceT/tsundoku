@@ -15,6 +15,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
+	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
+	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
@@ -28,6 +30,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
+	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -46,6 +49,8 @@ const (
 	TypeCategory           = "Category"
 	TypeChapter            = "Chapter"
 	TypeEtagCache          = "EtagCache"
+	TypeHarvestedExtension = "HarvestedExtension"
+	TypeHarvestedRepo      = "HarvestedRepo"
 	TypeImportEntry        = "ImportEntry"
 	TypeLatestSeries       = "LatestSeries"
 	TypeOwner              = "Owner"
@@ -58,6 +63,7 @@ const (
 	TypeSourceCircuitState = "SourceCircuitState"
 	TypeSourceEvent        = "SourceEvent"
 	TypeSourceMetric       = "SourceMetric"
+	TypeSourcePreference   = "SourcePreference"
 	TypeSuwayomiSyncState  = "SuwayomiSyncState"
 	TypeTrackBinding       = "TrackBinding"
 	TypeTrackerConnection  = "TrackerConnection"
@@ -2921,6 +2927,1231 @@ func (m *EtagCacheMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *EtagCacheMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown EtagCache edge %s", name)
+}
+
+// HarvestedExtensionMutation represents an operation that mutates the HarvestedExtension nodes in the graph.
+type HarvestedExtensionMutation struct {
+	config
+	op               Op
+	typ              string
+	id               *uuid.UUID
+	pkg_name         *string
+	repo_url         *string
+	version_code     *int
+	addversion_code  *int
+	version_name     *string
+	source_ids       *[]int64
+	appendsource_ids []int64
+	apk_sha256       *string
+	apk_cached       *bool
+	updated_at       *time.Time
+	clearedFields    map[string]struct{}
+	done             bool
+	oldValue         func(context.Context) (*HarvestedExtension, error)
+	predicates       []predicate.HarvestedExtension
+}
+
+var _ ent.Mutation = (*HarvestedExtensionMutation)(nil)
+
+// harvestedextensionOption allows management of the mutation configuration using functional options.
+type harvestedextensionOption func(*HarvestedExtensionMutation)
+
+// newHarvestedExtensionMutation creates new mutation for the HarvestedExtension entity.
+func newHarvestedExtensionMutation(c config, op Op, opts ...harvestedextensionOption) *HarvestedExtensionMutation {
+	m := &HarvestedExtensionMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeHarvestedExtension,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withHarvestedExtensionID sets the ID field of the mutation.
+func withHarvestedExtensionID(id uuid.UUID) harvestedextensionOption {
+	return func(m *HarvestedExtensionMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *HarvestedExtension
+		)
+		m.oldValue = func(ctx context.Context) (*HarvestedExtension, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().HarvestedExtension.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withHarvestedExtension sets the old HarvestedExtension of the mutation.
+func withHarvestedExtension(node *HarvestedExtension) harvestedextensionOption {
+	return func(m *HarvestedExtensionMutation) {
+		m.oldValue = func(context.Context) (*HarvestedExtension, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m HarvestedExtensionMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m HarvestedExtensionMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of HarvestedExtension entities.
+func (m *HarvestedExtensionMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *HarvestedExtensionMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *HarvestedExtensionMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().HarvestedExtension.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPkgName sets the "pkg_name" field.
+func (m *HarvestedExtensionMutation) SetPkgName(s string) {
+	m.pkg_name = &s
+}
+
+// PkgName returns the value of the "pkg_name" field in the mutation.
+func (m *HarvestedExtensionMutation) PkgName() (r string, exists bool) {
+	v := m.pkg_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPkgName returns the old "pkg_name" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldPkgName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPkgName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPkgName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPkgName: %w", err)
+	}
+	return oldValue.PkgName, nil
+}
+
+// ResetPkgName resets all changes to the "pkg_name" field.
+func (m *HarvestedExtensionMutation) ResetPkgName() {
+	m.pkg_name = nil
+}
+
+// SetRepoURL sets the "repo_url" field.
+func (m *HarvestedExtensionMutation) SetRepoURL(s string) {
+	m.repo_url = &s
+}
+
+// RepoURL returns the value of the "repo_url" field in the mutation.
+func (m *HarvestedExtensionMutation) RepoURL() (r string, exists bool) {
+	v := m.repo_url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRepoURL returns the old "repo_url" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldRepoURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRepoURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRepoURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRepoURL: %w", err)
+	}
+	return oldValue.RepoURL, nil
+}
+
+// ResetRepoURL resets all changes to the "repo_url" field.
+func (m *HarvestedExtensionMutation) ResetRepoURL() {
+	m.repo_url = nil
+}
+
+// SetVersionCode sets the "version_code" field.
+func (m *HarvestedExtensionMutation) SetVersionCode(i int) {
+	m.version_code = &i
+	m.addversion_code = nil
+}
+
+// VersionCode returns the value of the "version_code" field in the mutation.
+func (m *HarvestedExtensionMutation) VersionCode() (r int, exists bool) {
+	v := m.version_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVersionCode returns the old "version_code" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldVersionCode(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVersionCode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVersionCode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVersionCode: %w", err)
+	}
+	return oldValue.VersionCode, nil
+}
+
+// AddVersionCode adds i to the "version_code" field.
+func (m *HarvestedExtensionMutation) AddVersionCode(i int) {
+	if m.addversion_code != nil {
+		*m.addversion_code += i
+	} else {
+		m.addversion_code = &i
+	}
+}
+
+// AddedVersionCode returns the value that was added to the "version_code" field in this mutation.
+func (m *HarvestedExtensionMutation) AddedVersionCode() (r int, exists bool) {
+	v := m.addversion_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetVersionCode resets all changes to the "version_code" field.
+func (m *HarvestedExtensionMutation) ResetVersionCode() {
+	m.version_code = nil
+	m.addversion_code = nil
+}
+
+// SetVersionName sets the "version_name" field.
+func (m *HarvestedExtensionMutation) SetVersionName(s string) {
+	m.version_name = &s
+}
+
+// VersionName returns the value of the "version_name" field in the mutation.
+func (m *HarvestedExtensionMutation) VersionName() (r string, exists bool) {
+	v := m.version_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVersionName returns the old "version_name" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldVersionName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVersionName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVersionName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVersionName: %w", err)
+	}
+	return oldValue.VersionName, nil
+}
+
+// ResetVersionName resets all changes to the "version_name" field.
+func (m *HarvestedExtensionMutation) ResetVersionName() {
+	m.version_name = nil
+}
+
+// SetSourceIds sets the "source_ids" field.
+func (m *HarvestedExtensionMutation) SetSourceIds(i []int64) {
+	m.source_ids = &i
+	m.appendsource_ids = nil
+}
+
+// SourceIds returns the value of the "source_ids" field in the mutation.
+func (m *HarvestedExtensionMutation) SourceIds() (r []int64, exists bool) {
+	v := m.source_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceIds returns the old "source_ids" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldSourceIds(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceIds: %w", err)
+	}
+	return oldValue.SourceIds, nil
+}
+
+// AppendSourceIds adds i to the "source_ids" field.
+func (m *HarvestedExtensionMutation) AppendSourceIds(i []int64) {
+	m.appendsource_ids = append(m.appendsource_ids, i...)
+}
+
+// AppendedSourceIds returns the list of values that were appended to the "source_ids" field in this mutation.
+func (m *HarvestedExtensionMutation) AppendedSourceIds() ([]int64, bool) {
+	if len(m.appendsource_ids) == 0 {
+		return nil, false
+	}
+	return m.appendsource_ids, true
+}
+
+// ClearSourceIds clears the value of the "source_ids" field.
+func (m *HarvestedExtensionMutation) ClearSourceIds() {
+	m.source_ids = nil
+	m.appendsource_ids = nil
+	m.clearedFields[harvestedextension.FieldSourceIds] = struct{}{}
+}
+
+// SourceIdsCleared returns if the "source_ids" field was cleared in this mutation.
+func (m *HarvestedExtensionMutation) SourceIdsCleared() bool {
+	_, ok := m.clearedFields[harvestedextension.FieldSourceIds]
+	return ok
+}
+
+// ResetSourceIds resets all changes to the "source_ids" field.
+func (m *HarvestedExtensionMutation) ResetSourceIds() {
+	m.source_ids = nil
+	m.appendsource_ids = nil
+	delete(m.clearedFields, harvestedextension.FieldSourceIds)
+}
+
+// SetApkSha256 sets the "apk_sha256" field.
+func (m *HarvestedExtensionMutation) SetApkSha256(s string) {
+	m.apk_sha256 = &s
+}
+
+// ApkSha256 returns the value of the "apk_sha256" field in the mutation.
+func (m *HarvestedExtensionMutation) ApkSha256() (r string, exists bool) {
+	v := m.apk_sha256
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldApkSha256 returns the old "apk_sha256" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldApkSha256(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldApkSha256 is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldApkSha256 requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldApkSha256: %w", err)
+	}
+	return oldValue.ApkSha256, nil
+}
+
+// ResetApkSha256 resets all changes to the "apk_sha256" field.
+func (m *HarvestedExtensionMutation) ResetApkSha256() {
+	m.apk_sha256 = nil
+}
+
+// SetApkCached sets the "apk_cached" field.
+func (m *HarvestedExtensionMutation) SetApkCached(b bool) {
+	m.apk_cached = &b
+}
+
+// ApkCached returns the value of the "apk_cached" field in the mutation.
+func (m *HarvestedExtensionMutation) ApkCached() (r bool, exists bool) {
+	v := m.apk_cached
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldApkCached returns the old "apk_cached" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldApkCached(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldApkCached is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldApkCached requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldApkCached: %w", err)
+	}
+	return oldValue.ApkCached, nil
+}
+
+// ResetApkCached resets all changes to the "apk_cached" field.
+func (m *HarvestedExtensionMutation) ResetApkCached() {
+	m.apk_cached = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *HarvestedExtensionMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *HarvestedExtensionMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *HarvestedExtensionMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the HarvestedExtensionMutation builder.
+func (m *HarvestedExtensionMutation) Where(ps ...predicate.HarvestedExtension) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the HarvestedExtensionMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *HarvestedExtensionMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.HarvestedExtension, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *HarvestedExtensionMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *HarvestedExtensionMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (HarvestedExtension).
+func (m *HarvestedExtensionMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *HarvestedExtensionMutation) Fields() []string {
+	fields := make([]string, 0, 8)
+	if m.pkg_name != nil {
+		fields = append(fields, harvestedextension.FieldPkgName)
+	}
+	if m.repo_url != nil {
+		fields = append(fields, harvestedextension.FieldRepoURL)
+	}
+	if m.version_code != nil {
+		fields = append(fields, harvestedextension.FieldVersionCode)
+	}
+	if m.version_name != nil {
+		fields = append(fields, harvestedextension.FieldVersionName)
+	}
+	if m.source_ids != nil {
+		fields = append(fields, harvestedextension.FieldSourceIds)
+	}
+	if m.apk_sha256 != nil {
+		fields = append(fields, harvestedextension.FieldApkSha256)
+	}
+	if m.apk_cached != nil {
+		fields = append(fields, harvestedextension.FieldApkCached)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, harvestedextension.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *HarvestedExtensionMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case harvestedextension.FieldPkgName:
+		return m.PkgName()
+	case harvestedextension.FieldRepoURL:
+		return m.RepoURL()
+	case harvestedextension.FieldVersionCode:
+		return m.VersionCode()
+	case harvestedextension.FieldVersionName:
+		return m.VersionName()
+	case harvestedextension.FieldSourceIds:
+		return m.SourceIds()
+	case harvestedextension.FieldApkSha256:
+		return m.ApkSha256()
+	case harvestedextension.FieldApkCached:
+		return m.ApkCached()
+	case harvestedextension.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *HarvestedExtensionMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case harvestedextension.FieldPkgName:
+		return m.OldPkgName(ctx)
+	case harvestedextension.FieldRepoURL:
+		return m.OldRepoURL(ctx)
+	case harvestedextension.FieldVersionCode:
+		return m.OldVersionCode(ctx)
+	case harvestedextension.FieldVersionName:
+		return m.OldVersionName(ctx)
+	case harvestedextension.FieldSourceIds:
+		return m.OldSourceIds(ctx)
+	case harvestedextension.FieldApkSha256:
+		return m.OldApkSha256(ctx)
+	case harvestedextension.FieldApkCached:
+		return m.OldApkCached(ctx)
+	case harvestedextension.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown HarvestedExtension field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *HarvestedExtensionMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case harvestedextension.FieldPkgName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPkgName(v)
+		return nil
+	case harvestedextension.FieldRepoURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRepoURL(v)
+		return nil
+	case harvestedextension.FieldVersionCode:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVersionCode(v)
+		return nil
+	case harvestedextension.FieldVersionName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVersionName(v)
+		return nil
+	case harvestedextension.FieldSourceIds:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceIds(v)
+		return nil
+	case harvestedextension.FieldApkSha256:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetApkSha256(v)
+		return nil
+	case harvestedextension.FieldApkCached:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetApkCached(v)
+		return nil
+	case harvestedextension.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown HarvestedExtension field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *HarvestedExtensionMutation) AddedFields() []string {
+	var fields []string
+	if m.addversion_code != nil {
+		fields = append(fields, harvestedextension.FieldVersionCode)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *HarvestedExtensionMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case harvestedextension.FieldVersionCode:
+		return m.AddedVersionCode()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *HarvestedExtensionMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case harvestedextension.FieldVersionCode:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddVersionCode(v)
+		return nil
+	}
+	return fmt.Errorf("unknown HarvestedExtension numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *HarvestedExtensionMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(harvestedextension.FieldSourceIds) {
+		fields = append(fields, harvestedextension.FieldSourceIds)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *HarvestedExtensionMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *HarvestedExtensionMutation) ClearField(name string) error {
+	switch name {
+	case harvestedextension.FieldSourceIds:
+		m.ClearSourceIds()
+		return nil
+	}
+	return fmt.Errorf("unknown HarvestedExtension nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *HarvestedExtensionMutation) ResetField(name string) error {
+	switch name {
+	case harvestedextension.FieldPkgName:
+		m.ResetPkgName()
+		return nil
+	case harvestedextension.FieldRepoURL:
+		m.ResetRepoURL()
+		return nil
+	case harvestedextension.FieldVersionCode:
+		m.ResetVersionCode()
+		return nil
+	case harvestedextension.FieldVersionName:
+		m.ResetVersionName()
+		return nil
+	case harvestedextension.FieldSourceIds:
+		m.ResetSourceIds()
+		return nil
+	case harvestedextension.FieldApkSha256:
+		m.ResetApkSha256()
+		return nil
+	case harvestedextension.FieldApkCached:
+		m.ResetApkCached()
+		return nil
+	case harvestedextension.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown HarvestedExtension field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *HarvestedExtensionMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *HarvestedExtensionMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *HarvestedExtensionMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *HarvestedExtensionMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *HarvestedExtensionMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *HarvestedExtensionMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *HarvestedExtensionMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown HarvestedExtension unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *HarvestedExtensionMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown HarvestedExtension edge %s", name)
+}
+
+// HarvestedRepoMutation represents an operation that mutates the HarvestedRepo nodes in the graph.
+type HarvestedRepoMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *uuid.UUID
+	url           *string
+	created_at    *time.Time
+	updated_at    *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*HarvestedRepo, error)
+	predicates    []predicate.HarvestedRepo
+}
+
+var _ ent.Mutation = (*HarvestedRepoMutation)(nil)
+
+// harvestedrepoOption allows management of the mutation configuration using functional options.
+type harvestedrepoOption func(*HarvestedRepoMutation)
+
+// newHarvestedRepoMutation creates new mutation for the HarvestedRepo entity.
+func newHarvestedRepoMutation(c config, op Op, opts ...harvestedrepoOption) *HarvestedRepoMutation {
+	m := &HarvestedRepoMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeHarvestedRepo,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withHarvestedRepoID sets the ID field of the mutation.
+func withHarvestedRepoID(id uuid.UUID) harvestedrepoOption {
+	return func(m *HarvestedRepoMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *HarvestedRepo
+		)
+		m.oldValue = func(ctx context.Context) (*HarvestedRepo, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().HarvestedRepo.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withHarvestedRepo sets the old HarvestedRepo of the mutation.
+func withHarvestedRepo(node *HarvestedRepo) harvestedrepoOption {
+	return func(m *HarvestedRepoMutation) {
+		m.oldValue = func(context.Context) (*HarvestedRepo, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m HarvestedRepoMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m HarvestedRepoMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of HarvestedRepo entities.
+func (m *HarvestedRepoMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *HarvestedRepoMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *HarvestedRepoMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().HarvestedRepo.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetURL sets the "url" field.
+func (m *HarvestedRepoMutation) SetURL(s string) {
+	m.url = &s
+}
+
+// URL returns the value of the "url" field in the mutation.
+func (m *HarvestedRepoMutation) URL() (r string, exists bool) {
+	v := m.url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldURL returns the old "url" field's value of the HarvestedRepo entity.
+// If the HarvestedRepo object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedRepoMutation) OldURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldURL: %w", err)
+	}
+	return oldValue.URL, nil
+}
+
+// ResetURL resets all changes to the "url" field.
+func (m *HarvestedRepoMutation) ResetURL() {
+	m.url = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *HarvestedRepoMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *HarvestedRepoMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the HarvestedRepo entity.
+// If the HarvestedRepo object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedRepoMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *HarvestedRepoMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *HarvestedRepoMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *HarvestedRepoMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the HarvestedRepo entity.
+// If the HarvestedRepo object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedRepoMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *HarvestedRepoMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the HarvestedRepoMutation builder.
+func (m *HarvestedRepoMutation) Where(ps ...predicate.HarvestedRepo) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the HarvestedRepoMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *HarvestedRepoMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.HarvestedRepo, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *HarvestedRepoMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *HarvestedRepoMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (HarvestedRepo).
+func (m *HarvestedRepoMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *HarvestedRepoMutation) Fields() []string {
+	fields := make([]string, 0, 3)
+	if m.url != nil {
+		fields = append(fields, harvestedrepo.FieldURL)
+	}
+	if m.created_at != nil {
+		fields = append(fields, harvestedrepo.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, harvestedrepo.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *HarvestedRepoMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case harvestedrepo.FieldURL:
+		return m.URL()
+	case harvestedrepo.FieldCreatedAt:
+		return m.CreatedAt()
+	case harvestedrepo.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *HarvestedRepoMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case harvestedrepo.FieldURL:
+		return m.OldURL(ctx)
+	case harvestedrepo.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case harvestedrepo.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown HarvestedRepo field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *HarvestedRepoMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case harvestedrepo.FieldURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetURL(v)
+		return nil
+	case harvestedrepo.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case harvestedrepo.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown HarvestedRepo field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *HarvestedRepoMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *HarvestedRepoMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *HarvestedRepoMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown HarvestedRepo numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *HarvestedRepoMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *HarvestedRepoMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *HarvestedRepoMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown HarvestedRepo nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *HarvestedRepoMutation) ResetField(name string) error {
+	switch name {
+	case harvestedrepo.FieldURL:
+		m.ResetURL()
+		return nil
+	case harvestedrepo.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case harvestedrepo.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown HarvestedRepo field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *HarvestedRepoMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *HarvestedRepoMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *HarvestedRepoMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *HarvestedRepoMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *HarvestedRepoMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *HarvestedRepoMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *HarvestedRepoMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown HarvestedRepo unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *HarvestedRepoMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown HarvestedRepo edge %s", name)
 }
 
 // ImportEntryMutation represents an operation that mutates the ImportEntry nodes in the graph.
@@ -13769,6 +15000,644 @@ func (m *SourceMetricMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SourceMetricMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown SourceMetric edge %s", name)
+}
+
+// SourcePreferenceMutation represents an operation that mutates the SourcePreference nodes in the graph.
+type SourcePreferenceMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *uuid.UUID
+	source_id     *int64
+	addsource_id  *int64
+	key           *string
+	value         *string
+	value_type    *string
+	created_at    *time.Time
+	updated_at    *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*SourcePreference, error)
+	predicates    []predicate.SourcePreference
+}
+
+var _ ent.Mutation = (*SourcePreferenceMutation)(nil)
+
+// sourcepreferenceOption allows management of the mutation configuration using functional options.
+type sourcepreferenceOption func(*SourcePreferenceMutation)
+
+// newSourcePreferenceMutation creates new mutation for the SourcePreference entity.
+func newSourcePreferenceMutation(c config, op Op, opts ...sourcepreferenceOption) *SourcePreferenceMutation {
+	m := &SourcePreferenceMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourcePreference,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourcePreferenceID sets the ID field of the mutation.
+func withSourcePreferenceID(id uuid.UUID) sourcepreferenceOption {
+	return func(m *SourcePreferenceMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourcePreference
+		)
+		m.oldValue = func(ctx context.Context) (*SourcePreference, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourcePreference.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourcePreference sets the old SourcePreference of the mutation.
+func withSourcePreference(node *SourcePreference) sourcepreferenceOption {
+	return func(m *SourcePreferenceMutation) {
+		m.oldValue = func(context.Context) (*SourcePreference, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourcePreferenceMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourcePreferenceMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourcePreference entities.
+func (m *SourcePreferenceMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourcePreferenceMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourcePreferenceMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourcePreference.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourcePreferenceMutation) SetSourceID(i int64) {
+	m.source_id = &i
+	m.addsource_id = nil
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourcePreferenceMutation) SourceID() (r int64, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourcePreference entity.
+// If the SourcePreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourcePreferenceMutation) OldSourceID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// AddSourceID adds i to the "source_id" field.
+func (m *SourcePreferenceMutation) AddSourceID(i int64) {
+	if m.addsource_id != nil {
+		*m.addsource_id += i
+	} else {
+		m.addsource_id = &i
+	}
+}
+
+// AddedSourceID returns the value that was added to the "source_id" field in this mutation.
+func (m *SourcePreferenceMutation) AddedSourceID() (r int64, exists bool) {
+	v := m.addsource_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourcePreferenceMutation) ResetSourceID() {
+	m.source_id = nil
+	m.addsource_id = nil
+}
+
+// SetKey sets the "key" field.
+func (m *SourcePreferenceMutation) SetKey(s string) {
+	m.key = &s
+}
+
+// Key returns the value of the "key" field in the mutation.
+func (m *SourcePreferenceMutation) Key() (r string, exists bool) {
+	v := m.key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKey returns the old "key" field's value of the SourcePreference entity.
+// If the SourcePreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourcePreferenceMutation) OldKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKey: %w", err)
+	}
+	return oldValue.Key, nil
+}
+
+// ResetKey resets all changes to the "key" field.
+func (m *SourcePreferenceMutation) ResetKey() {
+	m.key = nil
+}
+
+// SetValue sets the "value" field.
+func (m *SourcePreferenceMutation) SetValue(s string) {
+	m.value = &s
+}
+
+// Value returns the value of the "value" field in the mutation.
+func (m *SourcePreferenceMutation) Value() (r string, exists bool) {
+	v := m.value
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldValue returns the old "value" field's value of the SourcePreference entity.
+// If the SourcePreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourcePreferenceMutation) OldValue(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldValue is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldValue requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldValue: %w", err)
+	}
+	return oldValue.Value, nil
+}
+
+// ResetValue resets all changes to the "value" field.
+func (m *SourcePreferenceMutation) ResetValue() {
+	m.value = nil
+}
+
+// SetValueType sets the "value_type" field.
+func (m *SourcePreferenceMutation) SetValueType(s string) {
+	m.value_type = &s
+}
+
+// ValueType returns the value of the "value_type" field in the mutation.
+func (m *SourcePreferenceMutation) ValueType() (r string, exists bool) {
+	v := m.value_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldValueType returns the old "value_type" field's value of the SourcePreference entity.
+// If the SourcePreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourcePreferenceMutation) OldValueType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldValueType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldValueType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldValueType: %w", err)
+	}
+	return oldValue.ValueType, nil
+}
+
+// ResetValueType resets all changes to the "value_type" field.
+func (m *SourcePreferenceMutation) ResetValueType() {
+	m.value_type = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *SourcePreferenceMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *SourcePreferenceMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the SourcePreference entity.
+// If the SourcePreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourcePreferenceMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *SourcePreferenceMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourcePreferenceMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourcePreferenceMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourcePreference entity.
+// If the SourcePreference object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourcePreferenceMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourcePreferenceMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourcePreferenceMutation builder.
+func (m *SourcePreferenceMutation) Where(ps ...predicate.SourcePreference) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourcePreferenceMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourcePreferenceMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourcePreference, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourcePreferenceMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourcePreferenceMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourcePreference).
+func (m *SourcePreferenceMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourcePreferenceMutation) Fields() []string {
+	fields := make([]string, 0, 6)
+	if m.source_id != nil {
+		fields = append(fields, sourcepreference.FieldSourceID)
+	}
+	if m.key != nil {
+		fields = append(fields, sourcepreference.FieldKey)
+	}
+	if m.value != nil {
+		fields = append(fields, sourcepreference.FieldValue)
+	}
+	if m.value_type != nil {
+		fields = append(fields, sourcepreference.FieldValueType)
+	}
+	if m.created_at != nil {
+		fields = append(fields, sourcepreference.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourcepreference.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourcePreferenceMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcepreference.FieldSourceID:
+		return m.SourceID()
+	case sourcepreference.FieldKey:
+		return m.Key()
+	case sourcepreference.FieldValue:
+		return m.Value()
+	case sourcepreference.FieldValueType:
+		return m.ValueType()
+	case sourcepreference.FieldCreatedAt:
+		return m.CreatedAt()
+	case sourcepreference.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourcePreferenceMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcepreference.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourcepreference.FieldKey:
+		return m.OldKey(ctx)
+	case sourcepreference.FieldValue:
+		return m.OldValue(ctx)
+	case sourcepreference.FieldValueType:
+		return m.OldValueType(ctx)
+	case sourcepreference.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case sourcepreference.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourcePreference field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourcePreferenceMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcepreference.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourcepreference.FieldKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKey(v)
+		return nil
+	case sourcepreference.FieldValue:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetValue(v)
+		return nil
+	case sourcepreference.FieldValueType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetValueType(v)
+		return nil
+	case sourcepreference.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case sourcepreference.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourcePreference field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourcePreferenceMutation) AddedFields() []string {
+	var fields []string
+	if m.addsource_id != nil {
+		fields = append(fields, sourcepreference.FieldSourceID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourcePreferenceMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourcepreference.FieldSourceID:
+		return m.AddedSourceID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourcePreferenceMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourcepreference.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSourceID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourcePreference numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourcePreferenceMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourcePreferenceMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourcePreferenceMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown SourcePreference nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourcePreferenceMutation) ResetField(name string) error {
+	switch name {
+	case sourcepreference.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourcepreference.FieldKey:
+		m.ResetKey()
+		return nil
+	case sourcepreference.FieldValue:
+		m.ResetValue()
+		return nil
+	case sourcepreference.FieldValueType:
+		m.ResetValueType()
+		return nil
+	case sourcepreference.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case sourcepreference.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourcePreference field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourcePreferenceMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourcePreferenceMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourcePreferenceMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourcePreferenceMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourcePreferenceMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourcePreferenceMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourcePreferenceMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourcePreference unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourcePreferenceMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourcePreference edge %s", name)
 }
 
 // SuwayomiSyncStateMutation represents an operation that mutates the SuwayomiSyncState nodes in the graph.

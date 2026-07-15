@@ -15,6 +15,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
+	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
+	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
@@ -27,6 +29,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
+	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -93,6 +96,8 @@ func checkColumn(t, c string) error {
 			category.Table:           category.ValidColumn,
 			chapter.Table:            chapter.ValidColumn,
 			etagcache.Table:          etagcache.ValidColumn,
+			harvestedextension.Table: harvestedextension.ValidColumn,
+			harvestedrepo.Table:      harvestedrepo.ValidColumn,
 			importentry.Table:        importentry.ValidColumn,
 			latestseries.Table:       latestseries.ValidColumn,
 			owner.Table:              owner.ValidColumn,
@@ -105,6 +110,7 @@ func checkColumn(t, c string) error {
 			sourcecircuitstate.Table: sourcecircuitstate.ValidColumn,
 			sourceevent.Table:        sourceevent.ValidColumn,
 			sourcemetric.Table:       sourcemetric.ValidColumn,
+			sourcepreference.Table:   sourcepreference.ValidColumn,
 			suwayomisyncstate.Table:  suwayomisyncstate.ValidColumn,
 			trackbinding.Table:       trackbinding.ValidColumn,
 			trackerconnection.Table:  trackerconnection.ValidColumn,

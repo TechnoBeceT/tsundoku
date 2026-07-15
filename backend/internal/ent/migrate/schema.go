@@ -87,6 +87,37 @@ var (
 		Columns:    EtagCachesColumns,
 		PrimaryKey: []*schema.Column{EtagCachesColumns[0]},
 	}
+	// HarvestedExtensionsColumns holds the columns for the "harvested_extensions" table.
+	HarvestedExtensionsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "pkg_name", Type: field.TypeString, Unique: true},
+		{Name: "repo_url", Type: field.TypeString, Default: ""},
+		{Name: "version_code", Type: field.TypeInt, Default: 0},
+		{Name: "version_name", Type: field.TypeString, Default: ""},
+		{Name: "source_ids", Type: field.TypeJSON, Nullable: true},
+		{Name: "apk_sha256", Type: field.TypeString, Default: ""},
+		{Name: "apk_cached", Type: field.TypeBool, Default: false},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// HarvestedExtensionsTable holds the schema information for the "harvested_extensions" table.
+	HarvestedExtensionsTable = &schema.Table{
+		Name:       "harvested_extensions",
+		Columns:    HarvestedExtensionsColumns,
+		PrimaryKey: []*schema.Column{HarvestedExtensionsColumns[0]},
+	}
+	// HarvestedReposColumns holds the columns for the "harvested_repos" table.
+	HarvestedReposColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "url", Type: field.TypeString, Unique: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// HarvestedReposTable holds the schema information for the "harvested_repos" table.
+	HarvestedReposTable = &schema.Table{
+		Name:       "harvested_repos",
+		Columns:    HarvestedReposColumns,
+		PrimaryKey: []*schema.Column{HarvestedReposColumns[0]},
+	}
 	// ImportEntriesColumns holds the columns for the "import_entries" table.
 	ImportEntriesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -367,6 +398,29 @@ var (
 		Columns:    SourceMetricsColumns,
 		PrimaryKey: []*schema.Column{SourceMetricsColumns[0]},
 	}
+	// SourcePreferencesColumns holds the columns for the "source_preferences" table.
+	SourcePreferencesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeInt64},
+		{Name: "key", Type: field.TypeString},
+		{Name: "value", Type: field.TypeString, Default: ""},
+		{Name: "value_type", Type: field.TypeString, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourcePreferencesTable holds the schema information for the "source_preferences" table.
+	SourcePreferencesTable = &schema.Table{
+		Name:       "source_preferences",
+		Columns:    SourcePreferencesColumns,
+		PrimaryKey: []*schema.Column{SourcePreferencesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "sourcepreference_source_id_key",
+				Unique:  true,
+				Columns: []*schema.Column{SourcePreferencesColumns[1], SourcePreferencesColumns[2]},
+			},
+		},
+	}
 	// SuwayomiSyncStatesColumns holds the columns for the "suwayomi_sync_states" table.
 	SuwayomiSyncStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -461,6 +515,8 @@ var (
 		CategoriesTable,
 		ChaptersTable,
 		EtagCachesTable,
+		HarvestedExtensionsTable,
+		HarvestedReposTable,
 		ImportEntriesTable,
 		LatestSeriesTable,
 		OwnersTable,
@@ -473,6 +529,7 @@ var (
 		SourceCircuitStatesTable,
 		SourceEventsTable,
 		SourceMetricsTable,
+		SourcePreferencesTable,
 		SuwayomiSyncStatesTable,
 		TrackBindingsTable,
 		TrackerConnectionsTable,
