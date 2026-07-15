@@ -13,11 +13,11 @@ import (
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
-// Result summarizes one SeedSourcePreferences pass: how many individual
+// PreferenceSeedResult summarizes one SeedSourcePreferences pass: how many individual
 // preference values were written, and how many SOURCES were skipped outright
 // because listing their preferences failed (a per-source client error, not a
 // per-preference one — see the doc comment below).
-type Result struct {
+type PreferenceSeedResult struct {
 	// Seeded is the count of individual (source_id, key) rows written
 	// (created or updated) across every source that answered.
 	Seeded int
@@ -52,16 +52,16 @@ type Result struct {
 // value column, matching the ratified TrackerConnection plaintext-secrets
 // model; this function does not attempt to detect or skip password-shaped
 // preferences.
-func SeedSourcePreferences(ctx context.Context, client suwayomi.Client, db *ent.Client) (Result, error) {
+func SeedSourcePreferences(ctx context.Context, client suwayomi.Client, db *ent.Client) (PreferenceSeedResult, error) {
 	providers, err := db.SeriesProvider.Query().
 		Unique(true).
 		Select(entseriesprovider.FieldProvider).
 		Strings(ctx)
 	if err != nil {
-		return Result{}, fmt.Errorf("enginetopo.SeedSourcePreferences: query providers: %w", err)
+		return PreferenceSeedResult{}, fmt.Errorf("enginetopo.SeedSourcePreferences: query providers: %w", err)
 	}
 
-	var result Result
+	var result PreferenceSeedResult
 	for _, provider := range providers {
 		sourceID, perr := strconv.ParseInt(provider, 10, 64)
 		if perr != nil {
