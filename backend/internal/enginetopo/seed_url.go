@@ -1,7 +1,9 @@
 // Package enginetopo holds one-shot, owner-triggered maintenance passes that
 // prepare the library for an engine swap or topology change — as opposed to
-// the recurring per-cycle work in internal/refresh/internal/download. The
-// first (and so far only) resident is BackfillProviderURLs.
+// the recurring per-cycle work in internal/refresh/internal/download.
+// Residents: BackfillProviderURLs (SeriesProvider.url), SeedSourcePreferences
+// (per-source Tachiyomi/Mihon preferences), and SeedEngineConfig (the engine's
+// FlareSolverr + SOCKS server settings).
 package enginetopo
 
 import (

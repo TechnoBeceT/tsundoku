@@ -1,6 +1,8 @@
-// Package enginetopo_test exercises the one-shot SeriesProvider.url backfill
-// against an ephemeral Postgres (testdb) and an in-process fake suwayomi.Client
-// — no JVM, no network.
+// Package enginetopo_test exercises the enginetopo one-shot maintenance passes
+// (SeriesProvider.url backfill, source-preference seeding, engine-config
+// seeding) against an ephemeral Postgres (testdb) and an in-process fake
+// suwayomi.Client — no JVM, no network. The fakeClient type defined in this
+// file is shared by every *_test.go in the package (§2 DRY).
 package enginetopo_test
 
 import (
@@ -28,6 +30,17 @@ type fakeClient struct {
 
 	mu    sync.Mutex
 	calls map[int]int
+
+	// prefsBySource / prefsErrBySource configure SourcePreferences per
+	// sourceID (used by seed_prefs_test.go); prefsCalls counts invocations.
+	prefsBySource    map[string][]suwayomi.SourcePreference
+	prefsErrBySource map[string]error
+	prefsCalls       map[string]int
+
+	// serverSettings / serverSettingsErr configure ServerSettings (used by
+	// seed_config_test.go).
+	serverSettings    suwayomi.SuwayomiSettings
+	serverSettingsErr error
 }
 
 func (f *fakeClient) MangaMeta(_ context.Context, mangaID int) (suwayomi.Manga, error) {
@@ -49,6 +62,14 @@ func (f *fakeClient) callCount(mangaID int) int {
 	return f.calls[mangaID]
 }
 
+// prefsCallCount reports how many times SourcePreferences was called for
+// sourceID (used by seed_prefs_test.go to assert per-source skip behavior).
+func (f *fakeClient) prefsCallCount(sourceID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.prefsCalls[sourceID]
+}
+
 func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
 func (f *fakeClient) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
 	return nil, nil
@@ -68,7 +89,10 @@ func (f *fakeClient) FetchMangaDetails(context.Context, int) (suwayomi.Manga, er
 func (f *fakeClient) ChapterPages(context.Context, int) ([]string, error)       { return nil, nil }
 func (f *fakeClient) PageBytes(context.Context, string) ([]byte, string, error) { return nil, "", nil }
 func (f *fakeClient) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {
-	return suwayomi.SuwayomiSettings{}, nil
+	if f.serverSettingsErr != nil {
+		return suwayomi.SuwayomiSettings{}, f.serverSettingsErr
+	}
+	return f.serverSettings, nil
 }
 func (f *fakeClient) SetServerSettings(context.Context, suwayomi.SuwayomiSettingsPatch) error {
 	return nil
@@ -80,8 +104,17 @@ func (f *fakeClient) SetExtensionState(context.Context, string, suwayomi.Extensi
 func (f *fakeClient) FetchExtensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
 func (f *fakeClient) ExtensionRepos(context.Context) ([]string, error)              { return nil, nil }
 func (f *fakeClient) SetExtensionRepos(context.Context, []string) error             { return nil }
-func (f *fakeClient) SourcePreferences(context.Context, string) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
+func (f *fakeClient) SourcePreferences(_ context.Context, sourceID string) ([]suwayomi.SourcePreference, error) {
+	f.mu.Lock()
+	if f.prefsCalls == nil {
+		f.prefsCalls = make(map[string]int)
+	}
+	f.prefsCalls[sourceID]++
+	f.mu.Unlock()
+	if err, ok := f.prefsErrBySource[sourceID]; ok {
+		return nil, err
+	}
+	return f.prefsBySource[sourceID], nil
 }
 func (f *fakeClient) SetSourcePreference(context.Context, string, int, suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
 	return nil, nil

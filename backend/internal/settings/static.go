@@ -48,6 +48,12 @@ type Static struct {
 	FlareSolverrFallback    bool
 	// NotificationsOn backs the NotificationsEnabled accessor.
 	NotificationsOn bool
+	// EngineSocksOn..EngineSocksVer back the EngineSocks* accessors below
+	// (engine SOCKS-proxy config, mirrors the FlareSolverr* fields' pattern).
+	EngineSocksOn     bool
+	EngineSocksAddr   string
+	EngineSocksPortNo int
+	EngineSocksVer    int
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -127,3 +133,15 @@ func (s Static) FlareSolverrResponseFallback(context.Context) bool { return s.Fl
 
 // NotificationsEnabled returns the fixed new-chapter notifications toggle.
 func (s Static) NotificationsEnabled(context.Context) bool { return s.NotificationsOn }
+
+// EngineSocksEnabled returns the fixed engine SOCKS-proxy enabled toggle.
+func (s Static) EngineSocksEnabled(context.Context) bool { return s.EngineSocksOn }
+
+// EngineSocksHost returns the fixed engine SOCKS-proxy hostname or IP.
+func (s Static) EngineSocksHost(context.Context) string { return s.EngineSocksAddr }
+
+// EngineSocksPort returns the fixed engine SOCKS-proxy port.
+func (s Static) EngineSocksPort(context.Context) int { return s.EngineSocksPortNo }
+
+// EngineSocksVersion returns the fixed engine SOCKS protocol version.
+func (s Static) EngineSocksVersion(context.Context) int { return s.EngineSocksVer }
