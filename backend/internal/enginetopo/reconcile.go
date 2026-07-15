@@ -47,8 +47,12 @@ type ReconcileResult struct {
 	// drift-driven engine mutations and recorded no gaps. See isInSync's doc
 	// comment for why ConfigApplied is deliberately excluded from this check.
 	InSync bool
-	// ReposSet is true when the engine's extension-repo list was rewritten from
-	// the durable HarvestedRepo set (it drifted from the engine's list).
+	// ReposSet is true when the engine's extension-repo list was PUSHED the
+	// UNION of the durable HarvestedRepo set and the engine's own live list
+	// (the durable set knew a repo the engine didn't have). reconcileRepos is
+	// ADDITIVE-ONLY: it never removes a repo the engine already has, so
+	// ReposSet is false whenever the durable set is a subset of (or equal to)
+	// the engine's live list, even if the DB's own record is incomplete.
 	ReposSet bool
 	// ExtensionsInstalled is the number of required-but-missing extensions the
 	// pass installed via InstallExtension.
@@ -109,18 +113,36 @@ type ReconcileResult struct {
 // individual key; a per-row COERCION failure (a stored value the live pref's
 // kind can't parse) is still isolated per-key, before any network call.
 //
-// PRECONDITION — SEED BEFORE RECONCILE. Reconcile trusts Tsundoku's DB as the
-// authoritative record of engine state for repos/extensions/preferences, so the
-// boot seed passes (SeedExtensions + SeedSourcePreferences) MUST have run first
-// to CAPTURE that state before Reconcile pushes it back — running it against a
-// live, un-captured engine would push an empty durable store over the engine's
-// real repos/extensions/preferences. Config has NO such precondition: it is
-// pushed straight from Tsundoku's OWN settings (ConfigProvider), never a
-// captured engine snapshot (there is no engine-config seed any more — Tsundoku
-// owns this config from the start, QCAT-250). Sequencing seed → reconcile for
-// the other three axes is the caller's responsibility, not something Reconcile
-// can detect. The forward path — provisioning Tsundoku's OWN internal engine,
-// which starts empty — satisfies this naturally. Ratified as decision QCAT-250.
+// PRECONDITION — SEED BEFORE RECONCILE (extensions + preferences only).
+// Reconcile trusts Tsundoku's DB as the authoritative record of the library's
+// REQUIRED extensions and preferences, so the boot seed passes (SeedExtensions
+// + SeedSourcePreferences) SHOULD have run first to CAPTURE that state before
+// Reconcile pushes it back for those two axes — running it against a live,
+// un-captured engine means reconcileExtensions/reconcilePrefs see an
+// incomplete durable snapshot (fewer installs / fewer pushed preferences than
+// a fully-captured DB would produce). Neither axis is destructive either way:
+// reconcileExtensions only INSTALLS required-but-missing packages (never
+// uninstalls one the engine already has), and reconcilePrefs only pushes
+// STORED keys onto matching LIVE keys (never touches a live preference the DB
+// has no row for) — an un-captured DB under-reconciles, it does not regress
+// the engine.
+//
+// REPOS ARE THE EXCEPTION THAT NEEDS NO PRECONDITION AT ALL. reconcileRepos is
+// ADDITIVE-ONLY (see its doc comment): it pushes the UNION of the durable
+// HarvestedRepo set and the engine's own live repo list, so a stale or
+// un-captured DB (restored from an old backup, or a fresh Tsundoku pointed at
+// an already-configured engine) can only ADD repos the engine is missing,
+// never drop ones it already has. This is exactly what makes it safe for
+// cmd/tsundoku/main.go's startEngineTopo to run Reconcile on EVERY boot BEFORE
+// RunSeed's capture pass — repos self-heal regardless of ordering.
+//
+// Config has NO such precondition either: it is pushed straight from
+// Tsundoku's OWN settings (ConfigProvider), never a captured engine snapshot
+// (there is no engine-config seed any more — Tsundoku owns this config from
+// the start, QCAT-250). Sequencing seed → reconcile for extensions/preferences
+// is the caller's responsibility, not something Reconcile can detect. The
+// forward path — provisioning Tsundoku's OWN internal engine, which starts
+// empty — satisfies it naturally. Ratified as decision QCAT-250.
 func Reconcile(
 	ctx context.Context,
 	client sourceengine.Client,
@@ -241,11 +263,29 @@ func installedPkgSet(ctx context.Context, client sourceengine.Client) (map[strin
 	return installed, nil
 }
 
-// reconcileRepos rewrites the engine's extension-repo list from the durable
-// HarvestedRepo set WHEN it has drifted; an already-matching list is a no-op
-// (changed=false, no mutation). Reading either list failing is an enumerating
-// error; a SetRepos write failure is isolated as a gap (changed stays false, so
-// the extension step still runs but skips the repo-driven refresh).
+// reconcileRepos is ADDITIVE-ONLY: it computes the UNION of the durable
+// HarvestedRepo set and the engine's OWN live repo list, and pushes that union
+// via client.SetRepos ONLY when the union differs from the engine's current
+// list — i.e. only when the DB knows a repo the engine doesn't have yet. When
+// dbRepos is a subset of (or equal to) engineRepos, the union equals
+// engineRepos and reconcileRepos makes NO call: the engine already has
+// everything the DB knows, possibly plus extras, and those extras must never
+// be dropped just because the DB hasn't captured them.
+//
+// This is deliberately NOT a "make the engine match the DB" replace: unlike
+// extensions/preferences (see Reconcile's PRECONDITION doc comment), Reconcile
+// now runs on EVERY boot BEFORE the seed captures the engine's true repo list
+// (cmd/tsundoku/main.go startEngineTopo), so a DB that is a stale or partial
+// snapshot of the engine's real repos (restored from an old backup, or a
+// fresh Tsundoku pointed at an already-configured engine) must never REPLACE
+// the engine's list with its own incomplete one — that would silently wipe
+// the un-captured repos, and the next RunSeed would re-capture the wiped
+// (smaller) list, making the loss self-reinforcing and permanently
+// undetectable (InSync=true forever after).
+//
+// Reading either list failing is an enumerating error; a SetRepos write
+// failure is isolated as a gap (changed stays false, so the extension step
+// still runs but skips the repo-driven refresh).
 func reconcileRepos(ctx context.Context, client sourceengine.Client, db *ent.Client) (bool, []error, error) {
 	dbRepos, err := db.HarvestedRepo.Query().Select(entharvestedrepo.FieldURL).Strings(ctx)
 	if err != nil {
@@ -255,10 +295,11 @@ func reconcileRepos(ctx context.Context, client sourceengine.Client, db *ent.Cli
 	if err != nil {
 		return false, nil, fmt.Errorf("enginetopo.Reconcile: list engine repos: %w", err)
 	}
-	if sameStringSet(dbRepos, engineRepos) {
+	union := unionStringSet(dbRepos, engineRepos)
+	if sameStringSet(union, engineRepos) {
 		return false, nil, nil
 	}
-	if _, err := client.SetRepos(ctx, dbRepos); err != nil {
+	if _, err := client.SetRepos(ctx, union); err != nil {
 		slog.WarnContext(ctx, "enginetopo: reconcile could not set engine repos", "err", err)
 		return false, []error{fmt.Errorf("set engine repos: %w", err)}, nil
 	}
@@ -597,6 +638,26 @@ func (d desiredConfig) socksPatch() sourceengine.SocksPatch {
 		Port:    &d.socksPort,
 		Version: &d.socksVersion,
 	}
+}
+
+// unionStringSet returns the deduplicated union of a and b, sorted for a
+// stable, order-insensitive result — reconcileRepos's ADDITIVE target list.
+// Sorting means the result (and therefore whether reconcileRepos even issues
+// a SetRepos call) never depends on either input's original ordering.
+func unionStringSet(a, b []string) []string {
+	set := make(map[string]struct{}, len(a)+len(b))
+	for _, s := range a {
+		set[s] = struct{}{}
+	}
+	for _, s := range b {
+		set[s] = struct{}{}
+	}
+	union := make([]string, 0, len(set))
+	for s := range set {
+		union = append(union, s)
+	}
+	slices.Sort(union)
+	return union
 }
 
 // sameStringSet reports whether a and b contain the same set of strings

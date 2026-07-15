@@ -619,6 +619,127 @@ func TestReconcile_RepoWriteErrorIsolated(t *testing.T) {
 	}
 }
 
+// TestReconcile_RepoUnionKeepsEngineExtraAndAddsDBExtra proves reconcileRepos
+// is ADDITIVE-ONLY: when the engine already has a repo the DB has never
+// captured AND the DB knows a repo the engine lacks, Reconcile pushes the
+// UNION — the engine's un-captured repo survives (never dropped) and the DB's
+// repo is added. This is the exact regression the fix closes: before it,
+// SetRepos(dbRepos) would have REPLACED the engine's list, silently wiping the
+// engine-only repo.
+func TestReconcile_RepoUnionKeepsEngineExtraAndAddsDBExtra(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	db.HarvestedRepo.Create().SetURL("https://db-only.test/repo").SaveX(ctx)
+
+	cfg := baseConfig()
+	client := &reconcileClient{
+		Client: sourceenginefake.New(
+			sourceenginefake.WithRepos([]string{"https://engine-only.test/repo"}),
+		),
+	}
+
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !res.ReposSet {
+		t.Error("ReposSet = false, want true (the union added a repo the engine lacked)")
+	}
+	if client.CallCount("SetRepos") != 1 {
+		t.Fatalf("SetRepos calls = %d, want 1", client.CallCount("SetRepos"))
+	}
+
+	gotRepos, err := client.Repos(ctx)
+	if err != nil {
+		t.Fatalf("Repos: %v", err)
+	}
+	want := []string{"https://db-only.test/repo", "https://engine-only.test/repo"}
+	got := append([]string(nil), gotRepos...)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("engine repos after reconcile = %v, want %v (union — engine's extra kept, DB's extra added)", got, want)
+	}
+}
+
+// TestReconcile_RepoSubsetOfEngineMakesZeroCalls proves reconcileRepos never
+// regresses the engine when the DB's known repo set is a STRICT SUBSET of
+// what the engine already has — e.g. a DB restored from an old backup, or a
+// fresh Tsundoku pointed at an already-configured engine. The union equals
+// the engine's own list, so no SetRepos call is issued at all and every one
+// of the engine's repos (including the one the DB never captured) survives.
+func TestReconcile_RepoSubsetOfEngineMakesZeroCalls(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	db.HarvestedRepo.Create().SetURL("https://repo.test/repo").SaveX(ctx)
+
+	cfg := baseConfig()
+	client := &reconcileClient{
+		Client: sourceenginefake.New(
+			// engineRepos is a strict SUPERSET of dbRepos — the DB hasn't
+			// captured "https://extra.test/repo" yet.
+			sourceenginefake.WithRepos([]string{"https://repo.test/repo", "https://extra.test/repo"}),
+		),
+	}
+
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.ReposSet {
+		t.Error("ReposSet = true, want false (DB is a subset of the engine's repos — already in sync)")
+	}
+	if client.CallCount("SetRepos") != 0 {
+		t.Errorf("SetRepos called %d times, want 0 (must never regress the engine's un-captured repo)", client.CallCount("SetRepos"))
+	}
+
+	gotRepos, err := client.Repos(ctx)
+	if err != nil {
+		t.Fatalf("Repos: %v", err)
+	}
+	want := []string{"https://extra.test/repo", "https://repo.test/repo"}
+	got := append([]string(nil), gotRepos...)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("engine repos after reconcile = %v, want %v (unchanged — the engine's extra repo must survive)", got, want)
+	}
+}
+
+// TestReconcile_RepoEqualSetsMakeZeroCalls proves the ordinary in-sync case:
+// when the DB's repo set and the engine's live repo set are already equal
+// (order-insensitive), Reconcile issues zero SetRepos calls.
+func TestReconcile_RepoEqualSetsMakeZeroCalls(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	db.HarvestedRepo.Create().SetURL("https://repo.test/repo").SaveX(ctx)
+	db.HarvestedRepo.Create().SetURL("https://repo.test/other").SaveX(ctx)
+
+	cfg := baseConfig()
+	client := &reconcileClient{
+		Client: sourceenginefake.New(
+			// Same set, deliberately different ORDER — proves the comparison
+			// is order-insensitive, not just a coincidental match.
+			sourceenginefake.WithRepos([]string{"https://repo.test/other", "https://repo.test/repo"}),
+		),
+	}
+
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.ReposSet {
+		t.Error("ReposSet = true, want false (equal sets — already in sync)")
+	}
+	if client.CallCount("SetRepos") != 0 {
+		t.Errorf("SetRepos called %d times, want 0", client.CallCount("SetRepos"))
+	}
+}
+
 // TestReconcile_ConfigPushErrorIsolated proves a config push failure (here
 // SetFlareSolverr) is isolated as a gap — NOT a hard error — because config
 // recovery is independent of the extension + preference recovery.
