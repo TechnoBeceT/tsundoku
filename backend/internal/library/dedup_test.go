@@ -291,10 +291,11 @@ func setupDriftedSeries(t *testing.T, client *ent.Client, storage string, import
 
 	live := client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("weeb").
+		// Provider is a numeric source id string — the live-provider marker
+		// under the new identity model (see series.IsLinkedProvider).
+		SetProvider("99").
 		SetProviderName("mangadex").
 		SetScanlator("Alpha").
-		SetSuwayomiID(99).
 		SetImportance(importance).
 		SaveX(ctx)
 	if withFeed {
@@ -352,10 +353,9 @@ func TestDedupProviders_ScanlatorCaseInsensitiveMerge(t *testing.T) {
 
 	live := client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("weeb").
+		SetProvider("99").
 		SetProviderName("mangadex").
 		SetScanlator("Reset Scans").
-		SetSuwayomiID(99).
 		SetImportance(5).
 		SaveX(ctx)
 	one, two := 1.0, 2.0
@@ -441,10 +441,9 @@ func TestDedupProviders_PrefersFeedBearingTwin(t *testing.T) {
 	// A SECOND matching linked twin (same name + scanlator) with NO feed.
 	emptyTwin := client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("weeb2").
+		SetProvider("100").
 		SetProviderName("mangadex").
 		SetScanlator("Alpha").
-		SetSuwayomiID(100).
 		SetImportance(3).
 		SaveX(ctx)
 

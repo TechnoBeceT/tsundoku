@@ -62,10 +62,11 @@ func seedDriftedSeries(t *testing.T, env *testEnv) uuid.UUID {
 	ser := env.client.Series.Query().OnlyX(ctx)
 	live := env.client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("weeb").
+		// Provider is a numeric source id string — the live-provider marker
+		// under the new identity model (see series.IsLinkedProvider).
+		SetProvider("99").
 		SetProviderName("mangadex").
 		SetScanlator("Alpha").
-		SetSuwayomiID(99).
 		SetImportance(5).
 		SaveX(ctx)
 	one, two := 1.0, 2.0
@@ -85,8 +86,8 @@ func assertDedupResult(t *testing.T, got providerDedupResult) {
 	if len(got.Series.Providers) != 1 {
 		t.Fatalf("series providers = %d, want 1 (disk row folded away)", len(got.Series.Providers))
 	}
-	if p := got.Series.Providers[0]; !p.Linked || p.Provider != "weeb" {
-		t.Fatalf("remaining provider = %+v, want linked=true provider=weeb", p)
+	if p := got.Series.Providers[0]; !p.Linked || p.Provider != "99" {
+		t.Fatalf("remaining provider = %+v, want linked=true provider=99", p)
 	}
 }
 

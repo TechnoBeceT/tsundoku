@@ -48,7 +48,7 @@ type SeriesSummaryDTO struct {
 	Monitored   bool   `json:"monitored"`
 	Completed   bool   `json:"completed"`
 	// NeedsSource is true when the series has NO live download source — zero
-	// SeriesProvider rows with SuwayomiID != 0 (see needsSource). It is
+	// SeriesProvider rows satisfying IsLinkedProvider (see needsSource). It is
 	// COVER-INDEPENDENT: a Kaizoku-migration series can carry a metadata cover
 	// (via AutoIdentify/SetCover) while still lacking a real engine to fetch
 	// new chapters from, and the owner needs that fact visible regardless of
@@ -300,10 +300,14 @@ type ChapterDTO struct {
 // resolved metadata provider (the one currently supplying DisplayName + CoverURL).
 // The health fields (Health, ChaptersBehind, NewestChapterAt, LastSyncedAt,
 // LastError) are derived on read — never persisted. Linked is false for a
-// disk-origin provider (suwayomi_id == 0 — an "unlinked/unknown group" created
-// by library import/reconcile, never a real Suwayomi source) so the FE can list
-// it as a Match candidate. MangaID is the source's Suwayomi manga ID; 0 for
-// unlinked disk-origin providers.
+// disk-origin provider (fails IsLinkedProvider — an "unlinked/unknown group"
+// created by library import/reconcile, never a real live source) so the FE
+// can list it as a Match candidate. MangaID is ALWAYS 0 (P2 Suwayomi-removal:
+// the url-addressed engine host has no per-manga numeric id equivalent to
+// the retired SuwayomiID column) — retained, not read as meaningful, purely
+// for FE wire compatibility (mirrors the same "unused, kept for wire compat"
+// carve-out already made for AdoptProvider/ProviderRef.MangaID elsewhere in
+// this P2 migration).
 //
 // The two chapter numbers on this DTO answer DIFFERENT questions and must never
 // be confused in the UI:
@@ -406,15 +410,16 @@ func newSummaryDTO(s *ent.Series, rollup seriesRollup) SeriesSummaryDTO {
 }
 
 // needsSource is true when NONE of the given providers is a live download
-// source — i.e. every provider is disk-origin (SuwayomiID == 0, created by
-// library import/reconcile/Kaizoku migration, never a real Suwayomi source).
-// Cover state is deliberately irrelevant here (handover 2026-07-13#15): a
-// series can have a metadata cover via AutoIdentify/SetCover while still
-// having zero live engine to fetch new chapters from — "needs source" tracks
-// that gap independently. A series with no providers at all also needs one.
+// source — i.e. every provider is disk-origin (fails IsLinkedProvider,
+// created by library import/reconcile/Kaizoku migration, never a real
+// engine-host source). Cover state is deliberately irrelevant here (handover
+// 2026-07-13#15): a series can have a metadata cover via
+// AutoIdentify/SetCover while still having zero live engine to fetch new
+// chapters from — "needs source" tracks that gap independently. A series
+// with no providers at all also needs one.
 func needsSource(providers []*ent.SeriesProvider) bool {
 	for _, p := range providers {
-		if p.SuwayomiID != 0 {
+		if IsLinkedProvider(p) {
 			return false
 		}
 	}
@@ -498,12 +503,13 @@ func newProviderDTO(p *ent.SeriesProvider, h ProviderHealth, seriesID uuid.UUID,
 		Title:            p.Title,
 		CoverURL:         coverURL,
 		IsMetadataSource: isMetadataSource,
-		Linked:           p.SuwayomiID != 0,
-		MangaID:          p.SuwayomiID,
-		ChapterCount:     chapterCount,
-		FeedCount:        len(p.Edges.ProviderChapters),
-		FeedRanges:       feedRanges(p),
-		HasFeed:          len(p.Edges.ProviderChapters) > 0,
+		Linked:           IsLinkedProvider(p),
+		// MangaID is always 0 now — see the ProviderDTO doc comment.
+		MangaID:      0,
+		ChapterCount: chapterCount,
+		FeedCount:    len(p.Edges.ProviderChapters),
+		FeedRanges:   feedRanges(p),
+		HasFeed:      len(p.Edges.ProviderChapters) > 0,
 
 		FractionalCount:    fracCount,
 		FractionalChapters: fracChapters,

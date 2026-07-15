@@ -290,8 +290,9 @@ func TestMatchDiskProvider_NewChaptersEnterWanted(t *testing.T) {
 
 // TestMatchDiskProvider_NotADiskProviderRejected asserts the guard: matching
 // against a SeriesProvider that is already a real, linked source
-// (suwayomi_id != 0) is rejected with ErrNotADiskProvider — Match only
-// operates on unlinked disk-origin groups.
+// (series.IsLinkedProvider true — Provider parses as a numeric source id) is
+// rejected with ErrNotADiskProvider — Match only operates on unlinked
+// disk-origin groups.
 func TestMatchDiskProvider_NotADiskProviderRejected(t *testing.T) {
 	storage := t.TempDir()
 	client := testdb.New(t)
@@ -300,8 +301,8 @@ func TestMatchDiskProvider_NotADiskProviderRejected(t *testing.T) {
 	ser, _ := setupMatchFixture(t, client, storage)
 	linked := client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("already-real").
-		SetSuwayomiID(7).
+		// Provider is a numeric source id string — the live-provider marker.
+		SetProvider("7").
 		SetImportance(9).
 		SaveX(ctx)
 

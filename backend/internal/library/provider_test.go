@@ -187,6 +187,43 @@ func TestAddProvider_AttachesSourceAndFlagsUpgrade(t *testing.T) {
 	assertAddProviderErrors(t, ctx, svc, ser.ID)
 }
 
+// TestAddProvider_LinkedThroughRealIngest is the P2 slice 3c regression proof:
+// a provider attached through the REAL ingest.Ingest.AddSeries (not a
+// hand-constructed row) must report Linked==true and the series must report
+// NeedsSource==false. Before this slice, internal/ingest never set
+// SeriesProvider.SuwayomiID on a newly-created row, so the old
+// `SuwayomiID != 0` discriminator always read false for a freshly-adopted
+// live source — this closes exactly that gap by exercising the real
+// service→ingest chain (mirrors library.AddProvider/imports.Service.Adopt),
+// not a fixture that hand-sets SuwayomiID.
+func TestAddProvider_LinkedThroughRealIngest(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	// A bare series with NO providers at all — the "needs a source" case.
+	ser := client.Series.Create().SetTitle("Fresh Series").SetSlug("fresh-series").SaveX(ctx)
+
+	fake := newFakeClientWithFeed(t) // returns 2 chapters keyed "1","2" for any url
+	ingestSvc := ingest.NewIngest(fake, client)
+	seriesSvc := series.NewService(client, storage, 14)
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
+
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "")
+	if err != nil {
+		t.Fatalf("AddProvider: %v", err)
+	}
+	if dto.NeedsSource {
+		t.Errorf("SeriesDetailDTO.NeedsSource = true, want false (a real live source was just attached)")
+	}
+	if len(dto.Providers) != 1 {
+		t.Fatalf("providers = %d, want 1", len(dto.Providers))
+	}
+	if p := dto.Providers[0]; !p.Linked {
+		t.Errorf("provider Linked = false, want true (provider=%q was attached via the real ingest chain)", p.Provider)
+	}
+}
+
 // TestAddProvider_ScanlatorAware verifies that AddProvider treats the same
 // source under two DIFFERENT scanlators as two independent SeriesProvider
 // rows — each keeping its OWN importance — rather than colliding on

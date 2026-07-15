@@ -21,8 +21,8 @@ import (
 )
 
 // ErrNotADiskProvider is returned by MatchDiskProvider when the target
-// SeriesProvider is already a real, linked Suwayomi source (suwayomi_id != 0).
-// Match only operates on unlinked disk-origin groups — see ProviderDTO.Linked.
+// SeriesProvider is already a real, linked live source (series.IsLinkedProvider
+// true). Match only operates on unlinked disk-origin groups — see ProviderDTO.Linked.
 var ErrNotADiskProvider = errors.New("provider is not a disk-origin (unlinked) provider")
 
 // relabeledChapter records one chapter's successful disk relabel, so a later
@@ -53,7 +53,7 @@ type relabeledChapter struct {
 // Algorithm (disk-first + DB tx, mirrors disk.MoveSeriesCategory's
 // rename-then-compensate pattern — disk ops cannot live inside a DB tx):
 //  1. Load the series and the target disk provider; reject a provider that is
-//     already linked (suwayomi_id != 0) with ErrNotADiskProvider.
+//     already linked (series.IsLinkedProvider true) with ErrNotADiskProvider.
 //  2. Attach the real source via ingest.Ingest.AddSeries (idempotent) and
 //     set its importance. An engine-host fetch failure is wrapped as
 //     ErrSourceNotFound (mirrors AddProvider). If a later step fails, this
@@ -102,7 +102,7 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 	if err != nil {
 		return series.SeriesDetailDTO{}, fmt.Errorf("library.MatchDiskProvider: load provider %s: %w", diskProviderID, err)
 	}
-	if diskSP.SuwayomiID != 0 {
+	if series.IsLinkedProvider(diskSP) {
 		return series.SeriesDetailDTO{}, ErrNotADiskProvider
 	}
 

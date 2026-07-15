@@ -217,19 +217,21 @@ func assertMatchedProviderDTO(t *testing.T, got series.SeriesDetailDTO) {
 	if p.Provider != wantProvider || p.Importance != 5 {
 		t.Fatalf("provider = %+v, want provider=%s importance=5", p, wantProvider)
 	}
-	// NOTE: p.Linked / p.MangaID are NOT asserted here. Both are derived from
-	// SeriesProvider.SuwayomiID (see series.newProviderDTO), which
-	// internal/ingest.Ingest (the P2 Suwayomi-removal replacement for
-	// suwayomi.Ingest) never sets on a newly-created row — confirmed
-	// empirically, p.Linked reads false and p.MangaID reads 0 here even
-	// though this IS the freshly-matched, real, live provider. This looks
-	// like a gap carried by the migration (SuwayomiID has no equivalent
-	// write path in the new URL-addressed ingest model) that reaches beyond
-	// this DTO field into internal/library's own merge-at-attach/dedup
-	// matching (matchingUnlinkedDiskProvider filters on SuwayomiID == 0) and
-	// series.needsSource — both internal/library and internal/series are
-	// out of scope for this test file, so it is flagged here rather than
-	// silently asserted around.
+	// p.Linked must be true: Match's whole point is attributing the disk
+	// chapters to a REAL, live source, and Provider ("1", the stringified
+	// weebSourceID) parses as numeric — series.IsLinkedProvider — so the DTO
+	// now correctly reports it as linked (P2 slice 3c fixed the SuwayomiID==0
+	// regression this comment used to document: internal/ingest never sets
+	// SuwayomiID on a newly-created row, so the old suwayomi_id!=0 check
+	// always read false for a freshly-matched provider).
+	if !p.Linked {
+		t.Fatalf("provider Linked = false, want true (Provider=%q is a numeric source id)", p.Provider)
+	}
+	// p.MangaID is always 0 now — see ProviderDTO's doc comment (P2
+	// Suwayomi-removal: no url-addressed manga-id equivalent).
+	if p.MangaID != 0 {
+		t.Fatalf("provider MangaID = %d, want 0", p.MangaID)
+	}
 	if p.ChapterCount != 2 {
 		t.Fatalf("provider ChapterCount = %d, want 2 (both re-pointed chapters)", p.ChapterCount)
 	}

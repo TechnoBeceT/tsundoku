@@ -12,29 +12,28 @@ import (
 
 // TestNeedsSource proves the "Needs source" signal (handover 2026-07-13#15) is
 // COVER-INDEPENDENT and computed purely from whether a series has a live
-// download source (SuwayomiID != 0), across the three cases the definition
-// covers, and that ListSeries + GetSeries agree (no N+1: both already
-// eager-load providers for display resolution, so NeedsSource costs nothing
-// extra).
+// download source (series.IsLinkedProvider true — Provider parses as a
+// numeric source id), across the three cases the definition covers, and that
+// ListSeries + GetSeries agree (no N+1: both already eager-load providers for
+// display resolution, so NeedsSource costs nothing extra).
 func TestNeedsSource(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 
-	// Case 1: only a disk-origin provider (SuwayomiID == 0) -> needs source.
+	// Case 1: only a disk-origin provider (non-numeric Provider) -> needs source.
 	diskOnly := db.Series.Create().SetTitle("Disk Only").SetSlug("disk-only").SaveX(ctx)
 	db.SeriesProvider.Create().
 		SetSeriesID(diskOnly.ID).
 		SetProvider("mangadex").
 		SetImportance(1).
-		// SuwayomiID left at its zero-value default (0) — the disk-origin marker.
+		// Provider is a non-numeric display name — the disk-origin marker.
 		SaveX(ctx)
 
-	// Case 2: only a live provider (SuwayomiID != 0) -> does not need a source.
+	// Case 2: only a live provider (numeric Provider) -> does not need a source.
 	liveOnly := db.Series.Create().SetTitle("Live Only").SetSlug("live-only").SaveX(ctx)
 	db.SeriesProvider.Create().
 		SetSeriesID(liveOnly.ID).
-		SetProvider("weeb").
-		SetSuwayomiID(42).
+		SetProvider("42").
 		SetImportance(5).
 		SaveX(ctx)
 
@@ -48,8 +47,7 @@ func TestNeedsSource(t *testing.T) {
 		SaveX(ctx)
 	db.SeriesProvider.Create().
 		SetSeriesID(both.ID).
-		SetProvider("weeb").
-		SetSuwayomiID(99).
+		SetProvider("99").
 		SetImportance(5).
 		SaveX(ctx)
 
