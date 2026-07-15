@@ -367,6 +367,14 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		// NotificationsEnabled has no env var: new-chapter notifications are on by
 		// default (the owner disables via the Settings UI).
 		NotificationsEnabled: true,
+		// EngineSocksEnabled..EngineSocksVersion mirror the FlareSolverr group:
+		// fixed factory defaults, no env var — enginetopo.SeedEngineConfig
+		// overwrites them from the live engine's own SOCKS settings on its
+		// one-shot seed pass, and the owner can further edit via the Settings UI.
+		EngineSocksEnabled: false,
+		EngineSocksHost:    "",
+		EngineSocksPort:    1080,
+		EngineSocksVersion: 5,
 	}
 }
 

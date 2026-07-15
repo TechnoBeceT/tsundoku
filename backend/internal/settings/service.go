@@ -195,6 +195,28 @@ func (s *Service) NotificationsEnabled(ctx context.Context) bool {
 	return s.resolveBool(ctx, KeyNotificationsEnabled)
 }
 
+// EngineSocksEnabled reports whether the engine's SOCKS proxy is currently
+// enabled (DB override else default false).
+func (s *Service) EngineSocksEnabled(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeyEngineSocksEnabled)
+}
+
+// EngineSocksHost is the SOCKS proxy hostname or IP (DB override else default "").
+func (s *Service) EngineSocksHost(ctx context.Context) string {
+	return s.resolve(ctx, KeyEngineSocksHost)
+}
+
+// EngineSocksPort is the SOCKS proxy port (DB override else default 1080).
+func (s *Service) EngineSocksPort(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyEngineSocksPort)
+}
+
+// EngineSocksVersion is the SOCKS protocol version, 4 or 5 (DB override else
+// default 5).
+func (s *Service) EngineSocksVersion(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyEngineSocksVersion)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

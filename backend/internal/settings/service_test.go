@@ -39,6 +39,10 @@ func testDefaults() settings.Defaults {
 		FlareSolverrSessionName: "",
 		FlareSolverrSessionTTL:  15,
 		NotificationsEnabled:    true,
+		EngineSocksEnabled:      false,
+		EngineSocksHost:         "",
+		EngineSocksPort:         1080,
+		EngineSocksVersion:      5,
 	}
 }
 
@@ -241,8 +245,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 26 {
-		t.Fatalf("List len = %d, want 26", len(list))
+	if len(list) != 30 {
+		t.Fatalf("List len = %d, want 30", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -842,5 +846,119 @@ func TestFlareSolverrIntBounds(t *testing.T) {
 	}
 	if err := svc.Set(ctx, settings.KeyFlareSolverrSessionTTL, "1440"); err != nil {
 		t.Fatalf("Set sessionTtl=1440 (max): %v", err)
+	}
+}
+
+// TestEngineSocksDefaults proves every engine.socks_* accessor returns its
+// injected default when the Settings table has no override.
+func TestEngineSocksDefaults(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if svc.EngineSocksEnabled(ctx) {
+		t.Error("EngineSocksEnabled default = true, want false")
+	}
+	if got := svc.EngineSocksHost(ctx); got != "" {
+		t.Errorf("EngineSocksHost default = %q, want \"\"", got)
+	}
+	if got := svc.EngineSocksPort(ctx); got != 1080 {
+		t.Errorf("EngineSocksPort default = %d, want 1080", got)
+	}
+	if got := svc.EngineSocksVersion(ctx); got != 5 {
+		t.Errorf("EngineSocksVersion default = %d, want 5", got)
+	}
+}
+
+// TestEngineSocksSetAndResolve proves every engine.socks_* tunable round-trips
+// through Set + its typed accessor.
+func TestEngineSocksSetAndResolve(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if err := svc.Set(ctx, settings.KeyEngineSocksEnabled, "true"); err != nil {
+		t.Fatalf("Set enabled: %v", err)
+	}
+	if !svc.EngineSocksEnabled(ctx) {
+		t.Error("after Set true, EngineSocksEnabled = false")
+	}
+
+	if err := svc.Set(ctx, settings.KeyEngineSocksHost, "  socks.internal  "); err != nil {
+		t.Fatalf("Set host: %v", err)
+	}
+	if got := svc.EngineSocksHost(ctx); got != "socks.internal" {
+		t.Errorf("EngineSocksHost after Set = %q, want trimmed \"socks.internal\"", got)
+	}
+
+	if err := svc.Set(ctx, settings.KeyEngineSocksPort, "1081"); err != nil {
+		t.Fatalf("Set port: %v", err)
+	}
+	if got := svc.EngineSocksPort(ctx); got != 1081 {
+		t.Errorf("EngineSocksPort after Set = %d, want 1081", got)
+	}
+
+	if err := svc.Set(ctx, settings.KeyEngineSocksVersion, "4"); err != nil {
+		t.Fatalf("Set version=4: %v", err)
+	}
+	if got := svc.EngineSocksVersion(ctx); got != 4 {
+		t.Errorf("EngineSocksVersion after Set = %d, want 4", got)
+	}
+}
+
+// TestEngineSocksPortBounds proves the port tunable rejects values outside
+// [1, 65535].
+func TestEngineSocksPortBounds(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	cases := []struct{ name, value string }{
+		{"below min", "0"},
+		{"above max", "65536"},
+		{"unparseable", "many"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := svc.Set(ctx, settings.KeyEngineSocksPort, tc.value); !errors.Is(err, settings.ErrInvalidSetting) {
+				t.Fatalf("Set(port, %q): want ErrInvalidSetting, got %v", tc.value, err)
+			}
+		})
+	}
+
+	if err := svc.Set(ctx, settings.KeyEngineSocksPort, "1"); err != nil {
+		t.Fatalf("Set port=1 (min): %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyEngineSocksPort, "65535"); err != nil {
+		t.Fatalf("Set port=65535 (max): %v", err)
+	}
+}
+
+// TestEngineSocksVersionMustBe4Or5 proves the version tunable accepts ONLY 4
+// or 5 — not a contiguous range like every other bounded int tunable.
+func TestEngineSocksVersionMustBe4Or5(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	cases := []struct{ name, value string }{
+		{"zero", "0"},
+		{"three", "3"},
+		{"six", "6"},
+		{"unparseable", "five"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := svc.Set(ctx, settings.KeyEngineSocksVersion, tc.value); !errors.Is(err, settings.ErrInvalidSetting) {
+				t.Fatalf("Set(version, %q): want ErrInvalidSetting, got %v", tc.value, err)
+			}
+		})
+	}
+
+	if err := svc.Set(ctx, settings.KeyEngineSocksVersion, "4"); err != nil {
+		t.Fatalf("Set version=4: %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyEngineSocksVersion, "5"); err != nil {
+		t.Fatalf("Set version=5: %v", err)
 	}
 }
