@@ -341,6 +341,53 @@ func TestSeedSourcePreferences_SeedStateSelfHeals(t *testing.T) {
 	}
 }
 
+// TestSeedSourcePreferences_SeedStateWriteFailureIsNonFatal PINS the best-effort
+// contract: if the SourceSeedState upsert itself fails, the seed's CORE job is
+// unaffected. It forces ONLY the seed-state write to fail — by DROPping the
+// source_seed_states table out from under the pass while source_preferences is
+// intact — then asserts (a) SeedSourcePreferences returns nil error, (b) the
+// SourcePreference rows for a successful source are STILL written, (c) the
+// Seeded/SkippedSources counts are intact. Removing the log-and-continue guard
+// (propagating the upsert error) would fail this test.
+func TestSeedSourcePreferences_SeedStateWriteFailureIsNonFatal(t *testing.T) {
+	ctx := context.Background()
+	client, db := testdb.NewWithSQL(t)
+
+	seedNamedProvider(ctx, t, client, "Solo Leveling", "42", "Comix")           // read OK, has a pref
+	seedNamedProvider(ctx, t, client, "Omniscient Reader", "10", "Asura Scans") // read errors
+
+	fc := &fakeClient{
+		prefsBySource: map[string][]suwayomi.SourcePreference{
+			"42": {{Type: suwayomi.PreferenceCheckBox, Position: 0, Key: "nsfw", CurrentBool: boolPtr(true)}},
+		},
+		prefsErrBySource: map[string]error{"10": errors.New("source offline")},
+	}
+
+	// Remove the seed-state table so EVERY SourceSeedState upsert errors, while the
+	// source_preferences table (the seed's real output) stays writable.
+	if _, err := db.ExecContext(ctx, `DROP TABLE source_seed_states`); err != nil {
+		t.Fatalf("DROP TABLE source_seed_states: %v", err)
+	}
+
+	result, err := enginetopo.SeedSourcePreferences(ctx, fc, client)
+	if err != nil {
+		t.Fatalf("SeedSourcePreferences returned error despite best-effort seed-state write: %v", err)
+	}
+	if result.Seeded != 1 {
+		t.Errorf("Seeded = %d, want 1 (source 42's nsfw still written)", result.Seeded)
+	}
+	if result.SkippedSources != 1 {
+		t.Errorf("SkippedSources = %d, want 1 (source 10)", result.SkippedSources)
+	}
+
+	// The core output — source 42's preference — must be present regardless of the
+	// seed-state write failure.
+	rows := client.SourcePreference.Query().Where(entsourcepreference.SourceID(42)).AllX(ctx)
+	if len(rows) != 1 || rows[0].Key != "nsfw" || rows[0].Value != "true" {
+		t.Errorf("source 42 SourcePreference rows = %+v, want exactly 1 (nsfw=true)", rows)
+	}
+}
+
 // TestSeedSourcePreferences_SkipsNonNumericProvider proves a disk-origin
 // SeriesProvider row (provider stores a display NAME, not a numeric Suwayomi
 // source id) is silently skipped — no client call, not counted as a failure.

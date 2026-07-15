@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"time"
 
@@ -64,24 +65,47 @@ type PreferenceSeedResult struct {
 // value column, matching the ratified TrackerConnection plaintext-secrets
 // model; this function does not attempt to detect or skip password-shaped
 // preferences.
-func SeedSourcePreferences(ctx context.Context, client suwayomi.Client, db *ent.Client) (PreferenceSeedResult, error) {
-	// Load provider + provider_name distinct in ONE query: the provider strings
-	// drive the iteration, and nameByProvider supplies the human-readable source
-	// name for each SourceSeedState row without an N+1 per-source name lookup.
+// distinctProvidersWithNames loads provider + provider_name distinct in ONE
+// query (no N+1 per-source name lookup) and returns the DETERMINISTIC iteration
+// order plus a provider→name map. Rows are sorted by (provider, provider_name)
+// and folded first-write-wins, so a provider that carries diverging
+// provider_name values across its SeriesProvider rows resolves to a STABLE name
+// (the lexicographically smallest), never the nondeterministic last row Postgres
+// happened to return.
+func distinctProvidersWithNames(ctx context.Context, db *ent.Client) ([]string, map[string]string, error) {
 	rows, err := db.SeriesProvider.Query().
 		Unique(true).
 		Select(entseriesprovider.FieldProvider, entseriesprovider.FieldProviderName).
 		All(ctx)
 	if err != nil {
-		return PreferenceSeedResult{}, fmt.Errorf("enginetopo.SeedSourcePreferences: query providers: %w", err)
+		return nil, nil, fmt.Errorf("enginetopo.SeedSourcePreferences: query providers: %w", err)
 	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Provider != rows[j].Provider {
+			return rows[i].Provider < rows[j].Provider
+		}
+		return rows[i].ProviderName < rows[j].ProviderName
+	})
 	nameByProvider := make(map[string]string, len(rows))
+	providers := make([]string, 0, len(rows))
 	for _, r := range rows {
+		if _, seen := nameByProvider[r.Provider]; seen {
+			continue // first-write-wins over the sorted order (stable name pick).
+		}
 		nameByProvider[r.Provider] = r.ProviderName
+		providers = append(providers, r.Provider)
+	}
+	return providers, nameByProvider, nil
+}
+
+func SeedSourcePreferences(ctx context.Context, client suwayomi.Client, db *ent.Client) (PreferenceSeedResult, error) {
+	providers, nameByProvider, err := distinctProvidersWithNames(ctx, db)
+	if err != nil {
+		return PreferenceSeedResult{}, err
 	}
 
 	var result PreferenceSeedResult
-	for provider := range nameByProvider {
+	for _, provider := range providers {
 		sourceID, perr := strconv.ParseInt(provider, 10, 64)
 		if perr != nil {
 			// Disk-origin provider (a display name, not a numeric source id) —

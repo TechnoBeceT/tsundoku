@@ -54,14 +54,14 @@ func TestTopologyStatus_CountsFromDB(t *testing.T) {
 	client.SourcePreference.Create().SetSourceID(123).SetKey("quality").SetValue("high").SaveX(ctx)
 	client.SourcePreference.Create().SetSourceID(456).SetKey("lang").SetValue("ko").SaveX(ctx)
 
-	// SourceSeedState: two sources read OK (123 named, 456 unnamed) → SourcesReached=2;
-	// two sources whose read FAILED (789 named "Asura Scans", 999 unnamed) →
-	// SourcesFailed=2, FailedSources sorted with the unnamed one falling back to its
-	// id string → ["999", "Asura Scans"].
+	// SourceSeedState (scoped to LIVE sources): 123 & 456 read OK (both live) →
+	// SourcesReached=2; 789 read FAILED with no name (live → id-fallback "789");
+	// 999 read FAILED but is NOT a live provider (a removed source) → IGNORED,
+	// proving stale rows never inflate the counts (reached+failed <= total).
 	client.SourceSeedState.Create().SetSourceID(123).SetSourceName("Comix").SetPrefsReadOk(true).SaveX(ctx)
 	client.SourceSeedState.Create().SetSourceID(456).SetPrefsReadOk(true).SaveX(ctx)
-	client.SourceSeedState.Create().SetSourceID(789).SetSourceName("Asura Scans").SetPrefsReadOk(false).SetLastError("boom").SaveX(ctx)
-	client.SourceSeedState.Create().SetSourceID(999).SetPrefsReadOk(false).SetLastError("boom").SaveX(ctx)
+	client.SourceSeedState.Create().SetSourceID(789).SetPrefsReadOk(false).SetLastError("boom").SaveX(ctx)
+	client.SourceSeedState.Create().SetSourceID(999).SetSourceName("Removed Ghost").SetPrefsReadOk(false).SetLastError("boom").SaveX(ctx)
 
 	// SeriesProviders: three numeric (live) sources {123,456,789} + one
 	// disk-origin display-name provider (suwayomi_id=0). Two live rows are
@@ -81,13 +81,13 @@ func TestTopologyStatus_CountsFromDB(t *testing.T) {
 		Repos:                2,
 		ExtensionsTotal:      3,
 		ExtensionsCached:     2,
-		SourcesTotal:         3, // 123, 456, 789 — "Asura Scans" excluded
-		SourcesPrefsCaptured: 2, // 123, 456
-		SourcesReached:       2, // 123, 456 read OK
-		SourcesFailed:        2, // 789, 999 read FAILED
-		FailedSources:        []string{"999", "Asura Scans"},
-		URLsFilled:           2, // 123, 789
-		URLsRemaining:        1, // 456 (empty + suwayomi_id!=0); disk row excluded
+		SourcesTotal:         3,               // 123, 456, 789 — "Asura Scans" excluded
+		SourcesPrefsCaptured: 2,               // 123, 456
+		SourcesReached:       2,               // 123, 456 read OK (both live)
+		SourcesFailed:        1,               // 789 (live); 999 is stale (not live) → ignored
+		FailedSources:        []string{"789"}, // id-fallback for the unnamed live source
+		URLsFilled:           2,               // 123, 789
+		URLsRemaining:        1,               // 456 (empty + suwayomi_id!=0); disk row excluded
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Status = %+v, want %+v", got, want)
@@ -99,4 +99,44 @@ func TestTopologyStatus_CountsFromDB(t *testing.T) {
 func setURL(ctx context.Context, t *testing.T, client *ent.Client, sp *ent.SeriesProvider, url string) *ent.SeriesProvider {
 	t.Helper()
 	return client.SeriesProvider.UpdateOne(sp).SetURL(url).SaveX(ctx)
+}
+
+// TestTopologyStatus_RemovedSourceDropsFromFailed proves the LIVE-source scoping:
+// a source with a failed seed-state read stops counting the moment its
+// SeriesProvider rows are removed (RemoveProvider/DeleteSeries leave the
+// SourceSeedState row behind), so it never haunts failed/failedSources and the
+// counts stay <= SourcesTotal.
+func TestTopologyStatus_RemovedSourceDropsFromFailed(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	// Source 42 is live and its last preference read FAILED.
+	sp := seedProvider(ctx, t, client, "Solo Leveling", "42", 100)
+	client.SourceSeedState.Create().SetSourceID(42).SetSourceName("Comix").SetPrefsReadOk(false).SetLastError("boom").SaveX(ctx)
+
+	before, err := enginetopo.TopologyStatus(ctx, client)
+	if err != nil {
+		t.Fatalf("TopologyStatus (before): %v", err)
+	}
+	if before.SourcesFailed != 1 || len(before.FailedSources) != 1 || before.FailedSources[0] != "Comix" {
+		t.Fatalf("before removal: SourcesFailed=%d FailedSources=%v, want 1 / [Comix]", before.SourcesFailed, before.FailedSources)
+	}
+
+	// Remove the provider (its series too) — the SourceSeedState row is intentionally
+	// left behind, exactly what RemoveProvider/DeleteSeries do.
+	seriesID := client.SeriesProvider.GetX(ctx, sp.ID).QuerySeries().OnlyIDX(ctx)
+	client.SeriesProvider.DeleteOneID(sp.ID).ExecX(ctx)
+	client.Series.DeleteOneID(seriesID).ExecX(ctx)
+
+	after, err := enginetopo.TopologyStatus(ctx, client)
+	if err != nil {
+		t.Fatalf("TopologyStatus (after): %v", err)
+	}
+	if after.SourcesFailed != 0 || len(after.FailedSources) != 0 {
+		t.Errorf("after removal: SourcesFailed=%d FailedSources=%v, want 0 / [] (stale row ignored)", after.SourcesFailed, after.FailedSources)
+	}
+	if after.SourcesReached+after.SourcesFailed > after.SourcesTotal {
+		t.Errorf("reached(%d)+failed(%d) > total(%d) — scoping broken",
+			after.SourcesReached, after.SourcesFailed, after.SourcesTotal)
+	}
 }

@@ -79,17 +79,15 @@ func TopologyStatus(ctx context.Context, db *ent.Client) (Status, error) {
 		Where(entharvestedextension.ApkCached(true)).Count(ctx); err != nil {
 		return Status{}, fmt.Errorf("enginetopo.TopologyStatus: count cached extensions: %w", err)
 	}
-	if s.SourcesTotal, err = countNumericSources(ctx, db); err != nil {
+	liveIDs, err := liveNumericSources(ctx, db)
+	if err != nil {
 		return Status{}, err
 	}
+	s.SourcesTotal = len(liveIDs)
 	if s.SourcesPrefsCaptured, err = countSourcesWithPrefs(ctx, db); err != nil {
 		return Status{}, err
 	}
-	if s.SourcesReached, err = db.SourceSeedState.Query().
-		Where(entsourceseedstate.PrefsReadOk(true)).Count(ctx); err != nil {
-		return Status{}, fmt.Errorf("enginetopo.TopologyStatus: count reached sources: %w", err)
-	}
-	if s.SourcesFailed, s.FailedSources, err = failedSources(ctx, db); err != nil {
+	if err = computeSeedOutcomes(ctx, db, liveIDs, &s); err != nil {
 		return Status{}, err
 	}
 	if s.URLsFilled, err = db.SeriesProvider.Query().
@@ -104,26 +102,27 @@ func TopologyStatus(ctx context.Context, db *ent.Client) (Status, error) {
 	return s, nil
 }
 
-// countNumericSources counts the distinct SeriesProvider.provider values that
-// parse as a numeric Suwayomi source id (a live-ingested row), skipping the
+// liveNumericSources returns the set of distinct SeriesProvider.provider values
+// that parse as a numeric Suwayomi source id (a live-ingested row), skipping the
 // display-name providers a disk-origin row carries — the same numeric/name split
-// SeedSourcePreferences applies, so SourcesTotal matches the seed's own source
-// universe.
-func countNumericSources(ctx context.Context, db *ent.Client) (int, error) {
+// SeedSourcePreferences applies. SourcesTotal is len(set), and the set doubles as
+// the LIVE-source filter for the seed-outcome counts so a SourceSeedState row for
+// a removed provider is never counted (reached+failed can never exceed total).
+func liveNumericSources(ctx context.Context, db *ent.Client) (map[int64]bool, error) {
 	providers, err := db.SeriesProvider.Query().
 		Unique(true).
 		Select(entseriesprovider.FieldProvider).
 		Strings(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("enginetopo.TopologyStatus: query providers: %w", err)
+		return nil, fmt.Errorf("enginetopo.TopologyStatus: query providers: %w", err)
 	}
-	count := 0
+	ids := make(map[int64]bool, len(providers))
 	for _, p := range providers {
-		if _, perr := strconv.ParseInt(p, 10, 64); perr == nil {
-			count++
+		if id, perr := strconv.ParseInt(p, 10, 64); perr == nil {
+			ids[id] = true
 		}
 	}
-	return count, nil
+	return ids, nil
 }
 
 // countSourcesWithPrefs counts the distinct source ids that carry at least one
@@ -140,26 +139,45 @@ func countSourcesWithPrefs(ctx context.Context, db *ent.Client) (int, error) {
 	return len(ids), nil
 }
 
-// failedSources returns how many sources' last preference-READ errored and the
-// sorted list of their names (source_name, falling back to the source_id string
-// when the name is ""). Only the two columns it needs are selected. The slice is
-// always non-nil so the caller (and the DTO) serializes it as [] never null.
-func failedSources(ctx context.Context, db *ent.Client) (int, []string, error) {
+// computeSeedOutcomes fills SourcesReached / SourcesFailed / FailedSources on s,
+// scoped to LIVE sources only: a SourceSeedState row whose source_id is no longer
+// a current numeric SeriesProvider.provider (its provider was removed by
+// RemoveProvider/DeleteSeries, which do not touch this bookkeeping table) is
+// IGNORED — so reached+failed never exceed SourcesTotal and a removed source
+// drops out of FailedSources immediately. One All() over the seed-state rows,
+// intersected in memory with the live-id set (no N+1). Only the columns needed
+// are selected (SourceSeedState has no .Sensitive() column). FailedSources is
+// sorted (name, falling back to the source_id string) and always non-nil.
+func computeSeedOutcomes(ctx context.Context, db *ent.Client, live map[int64]bool, s *Status) error {
 	rows, err := db.SourceSeedState.Query().
-		Where(entsourceseedstate.PrefsReadOk(false)).
-		Select(entsourceseedstate.FieldSourceID, entsourceseedstate.FieldSourceName).
+		Select(
+			entsourceseedstate.FieldSourceID,
+			entsourceseedstate.FieldSourceName,
+			entsourceseedstate.FieldPrefsReadOk,
+		).
 		All(ctx)
 	if err != nil {
-		return 0, nil, fmt.Errorf("enginetopo.TopologyStatus: query failed sources: %w", err)
+		return fmt.Errorf("enginetopo.TopologyStatus: query seed states: %w", err)
 	}
-	names := make([]string, 0, len(rows))
+	failed := make([]string, 0, len(rows))
 	for _, r := range rows {
+		if !live[r.SourceID] {
+			// Stale row for a source whose provider was removed — not in the live
+			// universe, so it must not inflate the counts nor haunt FailedSources.
+			continue
+		}
+		if r.PrefsReadOk {
+			s.SourcesReached++
+			continue
+		}
+		s.SourcesFailed++
 		name := r.SourceName
 		if name == "" {
 			name = strconv.FormatInt(r.SourceID, 10)
 		}
-		names = append(names, name)
+		failed = append(failed, name)
 	}
-	sort.Strings(names)
-	return len(rows), names, nil
+	sort.Strings(failed)
+	s.FailedSources = failed
+	return nil
 }
