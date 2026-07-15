@@ -10,8 +10,11 @@
 //  4. auth.NewService — builds the HMAC token service from the validated secret.
 //  5. sse.NewHub — allocates the SSE subscriber registry.
 //  6. owner.NewHandler — assembles the claim/login handler.
-//  7. download.New + job.NewRunner — assembles the dispatcher and chapter job runner
-//     with the real Suwayomi ChapterFetcher (M2).
+//  7. download.New + job.NewRunner — assembles the dispatcher and chapter job runner.
+//     The dispatcher's ChapterFetcher is the engine-host client (internal/
+//     sourceengine, Suwayomi-removal P2 slice 2) — every OTHER consumer
+//     (ingest/imports/refresh/warmup/cover/handlers) still targets Suwayomi
+//     and is repointed in a later slice.
 //  8. Suwayomi engine, branched on cfg.Suwayomi.IsExternal():
 //     - EXTERNAL mode (TSUNDOKU_SUWAYOMI_EXTERNALURL set): no ProcessManager is
 //     constructed; the download + refresh tickers start immediately against
@@ -56,6 +59,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
@@ -209,12 +213,19 @@ func main() {
 		return settingsSvc.ChapterCacheTTL(ctx)
 	})
 
-	// Build the Suwayomi HTTP client and real ChapterFetcher now — these are
-	// just typed values and do not require Suwayomi to be running yet. They are
-	// passed to download.New immediately so the dispatcher is fully wired.
+	// Build the Suwayomi HTTP client now — every consumer OTHER than the
+	// download dispatcher (ingest/imports/refresh/warmup/cover/handlers) still
+	// targets Suwayomi and is repointed in a later Suwayomi-removal slice.
 	httpc := &http.Client{Timeout: cfg.Suwayomi.HTTPTimeout}
 	suwayomiClient := suwayomi.NewClient(cfg.Suwayomi, httpc)
-	suwayomiFetcher := suwayomi.NewFetcher(suwayomiClient)
+
+	// Build the engine-host client + ChapterFetcher — these are just typed
+	// values and do not require the engine host to be running yet. This is
+	// the first real use of internal/sourceengine (Suwayomi-removal P2 slice
+	// 2): the download dispatcher's fetcher now targets the engine-host
+	// instead of Suwayomi.
+	engineClient := sourceengine.New(cfg.Engine.URL, httpc)
+	engineFetcher := sourceengine.NewFetcher(engineClient)
 
 	// Shared extension-.apk byte cache (rooted under the Suwayomi runtime dir).
 	// Constructed ONCE here and handed to BOTH the boot-time engine-topology seed
@@ -228,7 +239,7 @@ func main() {
 	// targets BaseURL() either way) and the metrics store.
 	warmupSvc := warmup.NewService(suwayomiClient, metricsSvc, settingsSvc, gateSvc)
 
-	dispatcher := download.New(entClient, suwayomiFetcher, hub, download.Config{
+	dispatcher := download.New(entClient, engineFetcher, hub, download.Config{
 		Storage: cfg.Storage.Folder,
 	}, settingsSvc, gateSvc)
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)

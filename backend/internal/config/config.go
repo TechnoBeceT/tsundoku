@@ -49,6 +49,10 @@ type Config struct {
 	Metadata MetadataConfig
 	// Tracker holds the Phase-3 tracker OAuth subsystem's credentials.
 	Tracker TrackerConfig
+	// Engine holds connection settings for the engine-host (the Kotlin/Mihon
+	// process replacing Suwayomi as the download engine — Suwayomi-removal
+	// P2 migration).
+	Engine EngineConfig
 }
 
 // AuthConfig holds HMAC signing settings for the single-owner auth layer.
@@ -457,6 +461,24 @@ type TrackerConfig struct {
 	PublicURL string `koanf:"publicurl"`
 }
 
+// EngineConfig holds connection settings for the engine-host — the Kotlin/
+// Mihon process that replaces Suwayomi as the download engine (Suwayomi-
+// removal P2 migration; see internal/sourceengine for the typed client).
+// This slice wires the config + the DOWNLOAD path only; every other
+// consumer (ingest/imports/refresh/warmup/cover/handlers) still targets
+// Suwayomi and is repointed in a later slice.
+type EngineConfig struct {
+	// URL is the engine-host's base HTTP address (e.g. "http://localhost:7777",
+	// no trailing slash required — sourceengine.New trims one if present).
+	// Defaults to "http://localhost:7777" (the engine-host's own default
+	// listen port, confirmed against engine-host/src/main/kotlin/enginehost/
+	// Main.kt's TSUNDOKU_ENGINE_PORT fallback). When non-empty it must be a
+	// well-formed absolute http/https URL — validate() fails closed
+	// otherwise, mirroring Suwayomi.ExternalURL / Tracker.PublicURL. Set via
+	// TSUNDOKU_ENGINE_URL.
+	URL string
+}
+
 // StorageConfig holds library-path settings.
 type StorageConfig struct {
 	// Folder is the absolute path to the manga library on disk where
@@ -529,6 +551,8 @@ func defaults() map[string]any {
 		"tracker.malclientid":     "",
 		"tracker.malclientsecret": "",
 		"tracker.publicurl":       "",
+		// Engine — the engine-host connection (Suwayomi-removal P2).
+		"engine.url": "http://localhost:7777",
 	}
 }
 
@@ -628,6 +652,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_TRACKER_ANILISTCLIENTID        → tracker.anilistclientid
 //	TSUNDOKU_TRACKER_MALCLIENTID            → tracker.malclientid
 //	TSUNDOKU_TRACKER_PUBLICURL              → tracker.publicurl
+//	TSUNDOKU_ENGINE_URL                     → engine.url
 //
 // Convention: after stripping the prefix the first "_" separates the
 // top-level struct key from the field name; the remainder is kept as-is
@@ -678,6 +703,9 @@ const minAuthSecretLen = 16
 //   - Tracker.PublicURL, when set, must be a well-formed absolute http/https
 //     URL — blank leaves the whole tracker OAuth subsystem dormant and is
 //     NOT an error (see TrackerConfig's doc comment).
+//   - Engine.URL, when non-empty, must be a well-formed absolute http/https
+//     URL — the default is always valid, so this only fires on an operator
+//     override (see EngineConfig's doc comment).
 func (c *Config) validate() error {
 	var errs []string
 
@@ -726,6 +754,7 @@ func (c *Config) validate() error {
 
 	errs = append(errs, validateSourcesConfig(c.Sources)...)
 	errs = append(errs, validateTrackerConfig(c.Tracker)...)
+	errs = append(errs, validateEngineConfig(c.Engine)...)
 
 	if len(errs) > 0 {
 		return errors.New("config: invalid configuration: " + strings.Join(errs, "; "))
@@ -803,6 +832,18 @@ func validateTrackerConfig(t TrackerConfig) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("TSUNDOKU_TRACKER_PUBLICURL %q must be an absolute http/https URL", t.PublicURL)}
+}
+
+// validateEngineConfig fails closed on a malformed engine-host URL. A blank
+// value is accepted (the caller-facing default is always non-blank, but the
+// check itself mirrors validateTrackerConfig's "blank disables" shape rather
+// than special-casing on the default); a non-blank value must be an absolute
+// http/https URL with a host, reusing the shared urlx kernel (§2 DRY).
+func validateEngineConfig(e EngineConfig) []string {
+	if e.URL == "" || urlx.IsAbsoluteHTTP(e.URL) {
+		return nil
+	}
+	return []string{fmt.Sprintf("TSUNDOKU_ENGINE_URL %q must be an absolute http/https URL", e.URL)}
 }
 
 // validateSuwayomiDatabase fails closed on a misconfigured embedded-Suwayomi DB

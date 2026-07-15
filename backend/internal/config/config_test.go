@@ -1291,3 +1291,73 @@ func TestTrackerConfig_BlankPublicURLPasses(t *testing.T) {
 		t.Fatalf("Load with a blank TSUNDOKU_TRACKER_PUBLICURL: %v", err)
 	}
 }
+
+// TestEngineConfig_DefaultURL confirms Load() defaults EngineConfig.URL to the
+// engine-host's default listen address (http://localhost:7777 — confirmed
+// against engine-host/src/main/kotlin/enginehost/Main.kt's
+// TSUNDOKU_ENGINE_PORT fallback) when TSUNDOKU_ENGINE_URL is unset.
+func TestEngineConfig_DefaultURL(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Engine.URL != "http://localhost:7777" {
+		t.Fatalf("Engine.URL = %q, want %q", cfg.Engine.URL, "http://localhost:7777")
+	}
+}
+
+// TestEngineConfig_FromEnv confirms TSUNDOKU_ENGINE_URL overrides the default.
+func TestEngineConfig_FromEnv(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_ENGINE_URL", "http://engine-host:9000")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Engine.URL != "http://engine-host:9000" {
+		t.Fatalf("Engine.URL = %q, want %q", cfg.Engine.URL, "http://engine-host:9000")
+	}
+}
+
+// TestValidateAcceptsEngineURL confirms validate() accepts the default plus any
+// well-formed absolute http(s) URL, mirroring TestValidateAcceptsExternalURL.
+func TestValidateAcceptsEngineURL(t *testing.T) {
+	for _, raw := range []string{"http://localhost:7777", "https://engine.example/rpc"} {
+		cfg := &config.Config{
+			Database: config.DatabaseConfig{Password: "somepassword"},
+			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+			Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+			Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+			Sources:  validSourcesConfig(),
+			Engine:   config.EngineConfig{URL: raw},
+		}
+		if err := config.ExportValidateForTest(cfg); err != nil {
+			t.Errorf("validate() rejected Engine.URL %q, want accept: %v", raw, err)
+		}
+	}
+}
+
+// TestValidateRejectsMalformedEngineURL confirms validate() fails closed on a
+// non-empty, malformed Engine.URL, and that the error names the bad key.
+func TestValidateRejectsMalformedEngineURL(t *testing.T) {
+	for _, raw := range []string{"not-a-url", "ftp://x", "://x", "http://"} {
+		cfg := &config.Config{
+			Database: config.DatabaseConfig{Password: "somepassword"},
+			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+			Engine:   config.EngineConfig{URL: raw},
+		}
+		err := config.ExportValidateForTest(cfg)
+		if err == nil {
+			t.Errorf("validate() accepted malformed Engine.URL %q, want reject", raw)
+			continue
+		}
+		if !strings.Contains(err.Error(), "TSUNDOKU_ENGINE_URL") {
+			t.Errorf("error for %q should name TSUNDOKU_ENGINE_URL, got: %v", raw, err)
+		}
+	}
+}
