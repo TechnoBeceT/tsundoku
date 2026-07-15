@@ -375,6 +375,69 @@ func TestSeedExtensions_ReDownloadsWhenFileMissing(t *testing.T) {
 	}
 }
 
+// TestSeedExtensions_ReCachesWhenInstalledVersionAdvances proves the version
+// guard: after the owner upgrades an extension so the INSTALLED version overtakes
+// the cached index version, a re-seed re-resolves + re-downloads and updates the
+// row to the new version — and is still MONOTONIC (a further unchanged run skips
+// again, no loop).
+func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	const repo = "https://repo.test/repo"
+	const indexURL = "https://repo.test/repo/index.min.json"
+	const apkURL = "https://repo.test/repo/apk/one.apk"
+
+	stub := &stubHTTP{routes: map[string]stubResp{
+		indexURL: {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":3}]`)},
+		apkURL:   {status: 200, body: []byte("APK-V3")},
+	}}
+	client := &seedClient{
+		fakeClient: &fakeClient{},
+		repos:      []string{repo},
+		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 3)},
+		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
+	}
+
+	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	if err != nil {
+		t.Fatalf("first SeedExtensions: %v", err)
+	}
+	assertResult(t, res1, enginetopo.Result{Repos: 1, Cached: 1, Gaps: 0})
+
+	// The owner upgrades the extension: the installed version overtakes the cached
+	// index version (3 → 5), and the repo now advertises the new build.
+	client.exts = []suwayomi.Extension{installedExt("pkg.one", repo, 5)}
+	stub.routes[indexURL] = stubResp{status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":5}]`)}
+	stub.routes[apkURL] = stubResp{status: 200, body: []byte("APK-V5")}
+
+	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	if err != nil {
+		t.Fatalf("second SeedExtensions: %v", err)
+	}
+	if res2.Cached != 1 {
+		t.Errorf("second pass Cached = %d, want 1 (installed version advanced past the cached version)", res2.Cached)
+	}
+	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName("pkg.one")).OnlyX(ctx)
+	assertCachedExtension(t, row, hexSHA([]byte("APK-V5")), 5, []int64{1})
+	assertCachedBytes(t, cache, "pkg.one", 5, []byte("APK-V5"))
+
+	// A THIRD run with nothing changed must skip again (monotonic, no loop):
+	// ext.VersionCode (5) <= stored version_code (5) → skip, zero http calls.
+	callsBefore := stub.callCount()
+	res3, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	if err != nil {
+		t.Fatalf("third SeedExtensions: %v", err)
+	}
+	if res3.Cached != 0 || res3.Gaps != 0 {
+		t.Errorf("third pass Result = %+v, want Cached:0 Gaps:0 (no re-cache loop)", res3)
+	}
+	if extra := stub.callCount() - callsBefore; extra != 0 {
+		t.Errorf("third pass made %d http calls, want 0 (re-cache is monotonic)", extra)
+	}
+}
+
 // TestSeedExtensions_ListReposErrorAborts proves an enumerating failure (listing
 // repos) aborts the pass with an error rather than partial success.
 func TestSeedExtensions_ListReposErrorAborts(t *testing.T) {

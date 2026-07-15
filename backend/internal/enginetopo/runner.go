@@ -23,9 +23,10 @@ type SeedDeps struct {
 	// Cache is the SHARED apk byte cache (constructed once in main.go and also
 	// held by the /internal apk-serving handler) SeedExtensions caches into.
 	Cache *apkcache.Store
-	// Settings is the runtime-settings write surface SeedEngineConfig seeds the
-	// engine's FlareSolverr + SOCKS config into (*settings.Service satisfies it).
-	Settings SettingsWriter
+	// Settings is the runtime-settings read+write surface SeedEngineConfig
+	// gap-fills the engine's FlareSolverr + SOCKS config into
+	// (*settings.Service satisfies it).
+	Settings SettingsStore
 	// HTTPGet fetches repo indexes + .apk bytes for SeedExtensions (http.Get in
 	// production; a stub in tests).
 	HTTPGet func(url string) (*http.Response, error)

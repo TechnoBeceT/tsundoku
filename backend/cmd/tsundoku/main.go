@@ -470,7 +470,7 @@ func startSuwayomiEngine(
 // per-pass fault isolation, panic recovery, idempotency); this wrapper only
 // detaches it onto a goroutine so a slow or failing seed can never delay boot.
 // http.Get is the production repo-index/apk fetcher; settingsSvc satisfies the
-// SettingsWriter the engine-config seed writes through.
+// SettingsStore the engine-config seed gap-fills through.
 func startEngineTopoSeed(
 	ctx context.Context,
 	swClient suwayomi.Client,

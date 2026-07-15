@@ -234,6 +234,31 @@ func (s *Service) List(ctx context.Context) []SettingDTO {
 	return out
 }
 
+// ExistingKeys reports which of the given tunable keys already have an explicit
+// row in the Settings table — i.e. the keys Tsundoku currently OWNS an override
+// for. A key ABSENT from the returned set has no row: it is unset and still
+// resolves to its injected default (the IsNotFound branch of resolve), so it is
+// a "gap" a one-time seed may fill without clobbering an owner edit. It reads the
+// key column only (one narrow IN query), mirroring seed-side query style; an
+// empty keys slice short-circuits with no query.
+func (s *Service) ExistingKeys(ctx context.Context, keys []string) (map[string]bool, error) {
+	present := make(map[string]bool, len(keys))
+	if len(keys) == 0 {
+		return present, nil
+	}
+	rows, err := s.client.Settings.Query().
+		Where(entsettings.KeyIn(keys...)).
+		Select(entsettings.FieldKey).
+		Strings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("settings.ExistingKeys: query keys: %w", err)
+	}
+	for _, k := range rows {
+		present[k] = true
+	}
+	return present, nil
+}
+
 // Set validates and upserts a single tunable. Unknown key → ErrUnknownSetting;
 // an out-of-bounds or unparseable value → ErrInvalidSetting; the store therefore
 // never holds an invalid value. It is the single-key form of SetMany.

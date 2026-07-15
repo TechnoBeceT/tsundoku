@@ -3,6 +3,7 @@ package enginetopo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -138,7 +139,7 @@ func seedOneExtension(
 		return false, err
 	}
 
-	sha, err := downloadAndCache(cache, httpGet, apkURL, ext.PkgName, indexVersion)
+	sha, err := downloadAndCache(cache, httpGet, apkURL, ext.PkgName, indexVersion, maxAPKBytes)
 	if err != nil {
 		return false, err
 	}
@@ -163,14 +164,54 @@ func seedOneExtension(
 	return true, nil
 }
 
+// maxAPKBytes is the ceiling on how many bytes a single extension .apk download
+// may stream into the cache. 256 MiB is orders of magnitude above any real
+// manga-source extension apk (they are a few MiB) — a pure safety ceiling against
+// a hostile or broken repo streaming unbounded bytes and filling the cache volume,
+// NOT a size any legitimate apk approaches.
+const maxAPKBytes = 256 << 20
+
+// errAPKTooLarge is returned by a cappedReader once the wrapped stream exceeds
+// its byte cap. Surfacing it lets cache.Put fail cleanly (dropping its temp file)
+// so the extension is recorded as an uncached gap.
+var errAPKTooLarge = errors.New("enginetopo: apk exceeds maximum allowed size")
+
+// cappedReader wraps an io.Reader and returns errAPKTooLarge as soon as more than
+// max bytes have been read through it. It exists BECAUSE a bare io.LimitReader is
+// wrong here: LimitReader SILENTLY stops at the cap, which would make cache.Put
+// commit a TRUNCATED apk (with the wrong sha256) as a SUCCESS — worse than the
+// unbounded read it guards against. Erroring instead makes the truncation a clean
+// failure the caller records as a gap.
+type cappedReader struct {
+	r    io.Reader
+	max  int64
+	read int64
+}
+
+// Read reads from the wrapped reader, failing with errAPKTooLarge the instant the
+// cumulative bytes read would exceed max (a stream one byte over the cap is
+// rejected, never truncated-and-accepted).
+func (c *cappedReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += int64(n)
+	if c.read > c.max {
+		return n, errAPKTooLarge
+	}
+	return n, err
+}
+
 // downloadAndCache fetches the .apk at apkURL and streams it into the cache
 // under (pkgName, version), returning the sha256 the cache computed. A non-200
-// status is an error.
+// status is an error. The body is streamed through a cappedReader bounded at
+// maxBytes, so a hostile/broken repo streaming unbounded bytes fails cleanly (no
+// partial apk is cached — cache.Put drops its temp file on the read error) rather
+// than filling the cache volume.
 func downloadAndCache(
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
 	apkURL, pkgName string,
 	version int,
+	maxBytes int64,
 ) (string, error) {
 	resp, err := httpGet(apkURL)
 	if err != nil {
@@ -180,19 +221,31 @@ func downloadAndCache(
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download apk %q: status %d", apkURL, resp.StatusCode)
 	}
-	sha, _, err := cache.Put(pkgName, version, resp.Body)
+	sha, _, err := cache.Put(pkgName, version, &cappedReader{r: resp.Body, max: maxBytes})
 	if err != nil {
 		return "", fmt.Errorf("cache apk: %w", err)
 	}
 	return sha, nil
 }
 
-// isAlreadyCached reports whether ext is already stored with apk_cached=true AND
-// its cache FILE is actually present — the idempotency guard that makes a re-run
-// a no-op. The file check is load-bearing: the DB row lives in Postgres but the
-// bytes live on the engine volume, so a row alone must never be trusted (a
-// recreated volume would leave a "cached" row 404ing at recovery time). When the
-// file is absent the extension is re-downloaded even though the row claims cached.
+// isAlreadyCached reports whether ext is already stored with apk_cached=true, its
+// cache FILE is present, AND the cached version is still current — the idempotency
+// guard that makes a re-run a no-op.
+//
+// The file check is load-bearing: the DB row lives in Postgres but the bytes live
+// on the engine volume, so a row alone must never be trusted (a recreated volume
+// would leave a "cached" row 404ing at recovery time). When the file is absent the
+// extension is re-downloaded even though the row claims cached.
+//
+// The version check re-caches after the owner upgrades an extension: the stored
+// version_code is the INDEX version that was cached; when the currently-installed
+// version has OVERTAKEN it (ext.VersionCode > existing.VersionCode) the cached
+// bytes are stale, so we re-resolve + re-download. This is MONOTONIC and cannot
+// loop — a re-cache stores the new (>= installed) index version, so the condition
+// is false again next boot. The comparison is `<=`, deliberately NOT `!=`: the
+// installed version legitimately LAGS the cached index version right after a seed
+// (the index advertises the latest known-good build, ahead of what is installed),
+// and `!=` would re-download that unchanged extension on every boot.
 func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store, ext suwayomi.Extension) (bool, error) {
 	existing, err := db.HarvestedExtension.Query().
 		Where(entharvestedextension.PkgName(ext.PkgName)).
@@ -203,7 +256,9 @@ func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store,
 	if err != nil {
 		return false, fmt.Errorf("query harvested extension: %w", err)
 	}
-	return existing.ApkCached && cache.Exists(ext.PkgName, existing.VersionCode), nil
+	return existing.ApkCached &&
+		cache.Exists(ext.PkgName, existing.VersionCode) &&
+		ext.VersionCode <= existing.VersionCode, nil
 }
 
 // sourceIDs converts the Suwayomi sources an extension provides into the int64

@@ -45,6 +45,13 @@ const backfillConcurrency = 8
 // pass (partial success, matching the never-auto-delete/upsert-only
 // conventions the rest of the ingest engine follows). err is non-nil only
 // when the initial query enumerating candidate rows fails.
+//
+// PANIC-SAFE per worker: the rows are fanned out across errgroup goroutines, and
+// errgroup does NOT recover a panic in a child goroutine — an unrecovered one
+// (e.g. a nil deref on a malformed MangaMeta response) would escape RunSeed's
+// top-level recover and crash the whole process. Each worker therefore recovers
+// its own panic, logs it, and counts that row in `remaining` (a failed row), so
+// a single bad row degrades to a gap instead of taking the process down.
 func BackfillProviderURLs(ctx context.Context, client suwayomi.Client, db *ent.Client) (filled int, remaining int, err error) {
 	rows, err := db.SeriesProvider.Query().
 		Where(
@@ -61,19 +68,30 @@ func BackfillProviderURLs(ctx context.Context, client suwayomi.Client, db *ent.C
 	g.SetLimit(backfillConcurrency)
 	for _, row := range rows {
 		g.Go(func() error {
-			ok := backfillOne(gctx, client, db, row)
-			mu.Lock()
-			if ok {
-				filled++
-			} else {
-				remaining++
-			}
-			mu.Unlock()
+			ok := false
+			// Count exactly once, in the deferred func, so a recovered panic and a
+			// normal return both funnel through the same single counting site.
+			defer func() {
+				if r := recover(); r != nil {
+					slog.ErrorContext(gctx, "enginetopo: recovered panic in backfillOne",
+						"series_provider", row.ID, "err", r)
+					ok = false
+				}
+				mu.Lock()
+				if ok {
+					filled++
+				} else {
+					remaining++
+				}
+				mu.Unlock()
+			}()
+			ok = backfillOne(gctx, client, db, row)
 			return nil
 		})
 	}
 	// backfillOne never returns a non-nil error (failures are logged+counted
-	// internally), so Wait never propagates one.
+	// internally) and a worker panic is recovered above, so Wait never
+	// propagates an error.
 	_ = g.Wait()
 
 	return filled, remaining, nil
