@@ -1,9 +1,12 @@
-// Package engine holds the INTERNAL engine-topology HTTP endpoints — routes
-// under /internal that Tsundoku itself (and a future engine-recovery/reconcile
-// pass) consumes, NOT part of the public owner API and deliberately absent from
-// the OpenAPI spec. Its first resident serves cached extension .apk bytes so the
-// engine's extensions can be re-installed from Tsundoku's own store even when the
-// upstream repo is offline.
+// Package engine holds the engine-topology HTTP endpoints. Two kinds live here:
+//   - the INTERNAL /internal apk-serving route a future engine-recovery/reconcile
+//     pass consumes (NOT part of the public owner API, deliberately absent from
+//     the OpenAPI spec) — it streams cached extension .apk bytes so the engine's
+//     extensions can be re-installed from Tsundoku's own store even when the
+//     upstream repo is offline; and
+//   - the owner-facing /api/engine/topology-status readout (IN the OpenAPI spec)
+//     that reports, from DB counts alone, how much engine topology Tsundoku has
+//     captured — the observable counterpart of the one-shot seed passes.
 package engine
 
 import (
@@ -15,21 +18,26 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
+	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 )
 
 // apkContentType is the standard MIME type for an Android package.
 const apkContentType = "application/vnd.android.package-archive"
 
-// Handler serves the internal engine-topology endpoints. It holds the APK cache
-// store directly (no Tsundoku service/DB) — the bytes come straight off disk.
+// Handler serves the engine-topology endpoints. It holds the APK cache store
+// directly (the /internal apk bytes come straight off disk) and the Ent client
+// (the /api topology-status readout counts captured topology rows). Neither
+// endpoint calls the engine.
 type Handler struct {
 	cache *apkcache.Store
+	db    *entpkg.Client
 }
 
-// NewHandler constructs a Handler bound to the APK cache store.
-func NewHandler(cache *apkcache.Store) *Handler {
-	return &Handler{cache: cache}
+// NewHandler constructs a Handler bound to the APK cache store (serves the
+// cached .apk bytes) and the Ent client (computes the topology-status counts).
+func NewHandler(cache *apkcache.Store, db *entpkg.Client) *Handler {
+	return &Handler{cache: cache, db: db}
 }
 
 // ServeAPK handles GET /internal/extensions/apk/:pkg/:file. It streams the cached

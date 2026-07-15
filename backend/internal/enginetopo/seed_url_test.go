@@ -41,6 +41,11 @@ type fakeClient struct {
 	// seed_config_test.go).
 	serverSettings    suwayomi.SuwayomiSettings
 	serverSettingsErr error
+
+	// sourcesErr, when non-nil, makes Sources fail — used by runner_test.go to
+	// drive RunSeed's engine-unreachable skip path (Sources is its reachability
+	// probe).
+	sourcesErr error
 }
 
 func (f *fakeClient) MangaMeta(_ context.Context, mangaID int) (suwayomi.Manga, error) {
@@ -70,7 +75,9 @@ func (f *fakeClient) prefsCallCount(sourceID string) int {
 	return f.prefsCalls[sourceID]
 }
 
-func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
+func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) {
+	return nil, f.sourcesErr
+}
 func (f *fakeClient) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
 	return nil, nil
 }

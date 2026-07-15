@@ -1307,6 +1307,63 @@ components:
           items:
             $ref: "#/components/schemas/Provider"
 
+    EngineTopologyStatus:
+      type: object
+      description: |
+        Read-only snapshot of how much engine topology Tsundoku has captured into
+        its own durable store, computed from DB counts alone (no engine call). The
+        observable counterpart of the one-shot boot-time seed passes.
+      required: [repos, extensions, sources, urls, gaps]
+      properties:
+        repos:
+          type: integer
+          description: Number of harvested extension-repository URLs.
+          example: 3
+        extensions:
+          type: object
+          required: [total, cached]
+          properties:
+            total:
+              type: integer
+              description: Number of harvested extensions.
+              example: 12
+            cached:
+              type: integer
+              description: How many of those extensions have their .apk bytes cached locally for offline recovery.
+              example: 9
+        sources:
+          type: object
+          required: [total, prefsCaptured]
+          properties:
+            total:
+              type: integer
+              description: The library's live-source universe (distinct numeric SeriesProvider providers).
+              example: 8
+            prefsCaptured:
+              type: integer
+              description: How many of those sources have at least one captured preference.
+              example: 5
+        urls:
+          type: object
+          required: [filled, remaining]
+          properties:
+            filled:
+              type: integer
+              description: SeriesProvider rows whose url is resolved.
+              example: 40
+            remaining:
+              type: integer
+              description: Live SeriesProvider rows still missing a url (the backfill's remaining candidate set).
+              example: 12
+        gaps:
+          type: array
+          description: |
+            Human-readable notes naming what is still outstanding (e.g.
+            "3 extensions not cached"). Empty when nothing is outstanding.
+          items:
+            type: string
+          example: ["3 extensions not cached", "12 provider urls unresolved"]
+
     System:
       type: object
       required: [storageFolder, serverPort, database]
@@ -5426,6 +5483,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/engine/topology-status:
+    get:
+      operationId: getEngineTopologyStatus
+      summary: Read-only captured engine-topology status
+      description: |
+        Returns a read-only snapshot of how much of the engine topology Tsundoku
+        has captured into its own durable store — harvested extension repos,
+        extensions and how many have their .apk bytes cached for offline recovery,
+        the library's live-source universe and how many sources have their
+        preferences captured, and how many SeriesProvider urls are resolved vs.
+        still fillable. Every number is computed from DB counts alone (no engine
+        call), so a fresh install with nothing adopted is a valid all-zero 200,
+        not an error. `gaps` carries human-readable notes naming what is still
+        outstanding (empty when nothing is).
+      tags:
+        - engine
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The captured engine-topology status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngineTopologyStatus"
         "401":
           description: Missing or invalid Bearer token.
           content:

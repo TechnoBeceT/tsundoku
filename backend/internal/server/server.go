@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	"github.com/technobecet/tsundoku/internal/config"
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
@@ -47,6 +48,11 @@ import (
 // It is called by Adopt and ReorderProviders on success to kick an immediate
 // download/upgrade cycle (M5); passing a no-op func() disables the behaviour.
 //
+// apkStore is the SHARED extension-.apk byte cache constructed once in main.go
+// (and also handed to the boot-time enginetopo seed goroutine) — the engine
+// handler serves the /internal apk bytes from, and the seed writes to, the same
+// store.
+//
 // metaSvc is the Phase-1 native metadata engine's orchestration service
 // (spec/metadata-engine-phase1) — it both serves the metadata HTTP endpoints
 // directly and is injected as the imports/library AutoIdentifier so a fresh
@@ -80,6 +86,7 @@ func New(
 	pushSubsSvc *pushsvc.Service,
 	vapidPublicKey string,
 	trigger func(),
+	apkStore *apkcache.Store,
 ) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -102,6 +109,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, suwayomiClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore)
 	return e
 }
