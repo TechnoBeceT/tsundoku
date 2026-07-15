@@ -2,6 +2,7 @@ package enginetopo_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -10,7 +11,8 @@ import (
 )
 
 // TestTopologyStatus_EmptyDBIsZero proves a fresh install (no harvested topology,
-// no library) is a valid zero Status, never an error.
+// no library) is a valid zero Status (every count 0, FailedSources a non-nil
+// empty slice), never an error.
 func TestTopologyStatus_EmptyDBIsZero(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -19,8 +21,11 @@ func TestTopologyStatus_EmptyDBIsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TopologyStatus: %v", err)
 	}
-	if (got != enginetopo.Status{}) {
-		t.Errorf("empty DB Status = %+v, want zero", got)
+	// Status now carries a slice field, so compare with reflect.DeepEqual. The
+	// zero value has FailedSources as a non-nil empty slice (never null on the wire).
+	want := enginetopo.Status{FailedSources: []string{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("empty DB Status = %+v, want %+v", got, want)
 	}
 }
 
@@ -49,6 +54,15 @@ func TestTopologyStatus_CountsFromDB(t *testing.T) {
 	client.SourcePreference.Create().SetSourceID(123).SetKey("quality").SetValue("high").SaveX(ctx)
 	client.SourcePreference.Create().SetSourceID(456).SetKey("lang").SetValue("ko").SaveX(ctx)
 
+	// SourceSeedState: two sources read OK (123 named, 456 unnamed) → SourcesReached=2;
+	// two sources whose read FAILED (789 named "Asura Scans", 999 unnamed) →
+	// SourcesFailed=2, FailedSources sorted with the unnamed one falling back to its
+	// id string → ["999", "Asura Scans"].
+	client.SourceSeedState.Create().SetSourceID(123).SetSourceName("Comix").SetPrefsReadOk(true).SaveX(ctx)
+	client.SourceSeedState.Create().SetSourceID(456).SetPrefsReadOk(true).SaveX(ctx)
+	client.SourceSeedState.Create().SetSourceID(789).SetSourceName("Asura Scans").SetPrefsReadOk(false).SetLastError("boom").SaveX(ctx)
+	client.SourceSeedState.Create().SetSourceID(999).SetPrefsReadOk(false).SetLastError("boom").SaveX(ctx)
+
 	// SeriesProviders: three numeric (live) sources {123,456,789} + one
 	// disk-origin display-name provider (suwayomi_id=0). Two live rows are
 	// url-filled, one live row (456) is empty-but-fillable, the disk row is
@@ -69,10 +83,13 @@ func TestTopologyStatus_CountsFromDB(t *testing.T) {
 		ExtensionsCached:     2,
 		SourcesTotal:         3, // 123, 456, 789 — "Asura Scans" excluded
 		SourcesPrefsCaptured: 2, // 123, 456
+		SourcesReached:       2, // 123, 456 read OK
+		SourcesFailed:        2, // 789, 999 read FAILED
+		FailedSources:        []string{"999", "Asura Scans"},
 		URLsFilled:           2, // 123, 789
 		URLsRemaining:        1, // 456 (empty + suwayomi_id!=0); disk row excluded
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Status = %+v, want %+v", got, want)
 	}
 }

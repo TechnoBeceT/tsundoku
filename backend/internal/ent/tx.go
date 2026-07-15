@@ -48,6 +48,8 @@ type Tx struct {
 	SourceMetric *SourceMetricClient
 	// SourcePreference is the client for interacting with the SourcePreference builders.
 	SourcePreference *SourcePreferenceClient
+	// SourceSeedState is the client for interacting with the SourceSeedState builders.
+	SourceSeedState *SourceSeedStateClient
 	// SuwayomiSyncState is the client for interacting with the SuwayomiSyncState builders.
 	SuwayomiSyncState *SuwayomiSyncStateClient
 	// TrackBinding is the client for interacting with the TrackBinding builders.
@@ -203,6 +205,7 @@ func (tx *Tx) init() {
 	tx.SourceEvent = NewSourceEventClient(tx.config)
 	tx.SourceMetric = NewSourceMetricClient(tx.config)
 	tx.SourcePreference = NewSourcePreferenceClient(tx.config)
+	tx.SourceSeedState = NewSourceSeedStateClient(tx.config)
 	tx.SuwayomiSyncState = NewSuwayomiSyncStateClient(tx.config)
 	tx.TrackBinding = NewTrackBindingClient(tx.config)
 	tx.TrackerConnection = NewTrackerConnectionClient(tx.config)

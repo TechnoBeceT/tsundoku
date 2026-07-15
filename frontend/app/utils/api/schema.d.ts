@@ -2704,6 +2704,23 @@ export interface components {
                  * @example 5
                  */
                 prefsCaptured: number;
+                /**
+                 * @description How many sources' last preference read succeeded (a source may be reached yet carry zero non-default preferences).
+                 * @example 7
+                 */
+                reached: number;
+                /**
+                 * @description How many sources' last preference read errored (a real gap).
+                 * @example 1
+                 */
+                failed: number;
+                /**
+                 * @description Names of the sources whose last preference read errored (source name, falling back to the source id). Empty when none failed.
+                 * @example [
+                 *       "Comix"
+                 *     ]
+                 */
+                failedSources: string[];
             };
             urls: {
                 /**

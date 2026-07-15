@@ -34,6 +34,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -80,6 +81,8 @@ type Client struct {
 	SourceMetric *SourceMetricClient
 	// SourcePreference is the client for interacting with the SourcePreference builders.
 	SourcePreference *SourcePreferenceClient
+	// SourceSeedState is the client for interacting with the SourceSeedState builders.
+	SourceSeedState *SourceSeedStateClient
 	// SuwayomiSyncState is the client for interacting with the SuwayomiSyncState builders.
 	SuwayomiSyncState *SuwayomiSyncStateClient
 	// TrackBinding is the client for interacting with the TrackBinding builders.
@@ -115,6 +118,7 @@ func (c *Client) init() {
 	c.SourceEvent = NewSourceEventClient(c.config)
 	c.SourceMetric = NewSourceMetricClient(c.config)
 	c.SourcePreference = NewSourcePreferenceClient(c.config)
+	c.SourceSeedState = NewSourceSeedStateClient(c.config)
 	c.SuwayomiSyncState = NewSuwayomiSyncStateClient(c.config)
 	c.TrackBinding = NewTrackBindingClient(c.config)
 	c.TrackerConnection = NewTrackerConnectionClient(c.config)
@@ -228,6 +232,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		SourceEvent:        NewSourceEventClient(cfg),
 		SourceMetric:       NewSourceMetricClient(cfg),
 		SourcePreference:   NewSourcePreferenceClient(cfg),
+		SourceSeedState:    NewSourceSeedStateClient(cfg),
 		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
 		TrackBinding:       NewTrackBindingClient(cfg),
 		TrackerConnection:  NewTrackerConnectionClient(cfg),
@@ -268,6 +273,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		SourceEvent:        NewSourceEventClient(cfg),
 		SourceMetric:       NewSourceMetricClient(cfg),
 		SourcePreference:   NewSourcePreferenceClient(cfg),
+		SourceSeedState:    NewSourceSeedStateClient(cfg),
 		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
 		TrackBinding:       NewTrackBindingClient(cfg),
 		TrackerConnection:  NewTrackerConnectionClient(cfg),
@@ -304,7 +310,7 @@ func (c *Client) Use(hooks ...Hook) {
 		c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush, c.ProviderChapter,
 		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourcePreference,
-		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
+		c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Use(hooks...)
 	}
@@ -318,7 +324,7 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush, c.ProviderChapter,
 		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourcePreference,
-		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
+		c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -363,6 +369,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SourceMetric.mutate(ctx, m)
 	case *SourcePreferenceMutation:
 		return c.SourcePreference.mutate(ctx, m)
+	case *SourceSeedStateMutation:
+		return c.SourceSeedState.mutate(ctx, m)
 	case *SuwayomiSyncStateMutation:
 		return c.SuwayomiSyncState.mutate(ctx, m)
 	case *TrackBindingMutation:
@@ -2960,6 +2968,139 @@ func (c *SourcePreferenceClient) mutate(ctx context.Context, m *SourcePreference
 	}
 }
 
+// SourceSeedStateClient is a client for the SourceSeedState schema.
+type SourceSeedStateClient struct {
+	config
+}
+
+// NewSourceSeedStateClient returns a client for the SourceSeedState from the given config.
+func NewSourceSeedStateClient(c config) *SourceSeedStateClient {
+	return &SourceSeedStateClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourceseedstate.Hooks(f(g(h())))`.
+func (c *SourceSeedStateClient) Use(hooks ...Hook) {
+	c.hooks.SourceSeedState = append(c.hooks.SourceSeedState, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourceseedstate.Intercept(f(g(h())))`.
+func (c *SourceSeedStateClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceSeedState = append(c.inters.SourceSeedState, interceptors...)
+}
+
+// Create returns a builder for creating a SourceSeedState entity.
+func (c *SourceSeedStateClient) Create() *SourceSeedStateCreate {
+	mutation := newSourceSeedStateMutation(c.config, OpCreate)
+	return &SourceSeedStateCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceSeedState entities.
+func (c *SourceSeedStateClient) CreateBulk(builders ...*SourceSeedStateCreate) *SourceSeedStateCreateBulk {
+	return &SourceSeedStateCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceSeedStateClient) MapCreateBulk(slice any, setFunc func(*SourceSeedStateCreate, int)) *SourceSeedStateCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceSeedStateCreateBulk{err: fmt.Errorf("calling to SourceSeedStateClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceSeedStateCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceSeedStateCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceSeedState.
+func (c *SourceSeedStateClient) Update() *SourceSeedStateUpdate {
+	mutation := newSourceSeedStateMutation(c.config, OpUpdate)
+	return &SourceSeedStateUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceSeedStateClient) UpdateOne(_m *SourceSeedState) *SourceSeedStateUpdateOne {
+	mutation := newSourceSeedStateMutation(c.config, OpUpdateOne, withSourceSeedState(_m))
+	return &SourceSeedStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceSeedStateClient) UpdateOneID(id uuid.UUID) *SourceSeedStateUpdateOne {
+	mutation := newSourceSeedStateMutation(c.config, OpUpdateOne, withSourceSeedStateID(id))
+	return &SourceSeedStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceSeedState.
+func (c *SourceSeedStateClient) Delete() *SourceSeedStateDelete {
+	mutation := newSourceSeedStateMutation(c.config, OpDelete)
+	return &SourceSeedStateDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceSeedStateClient) DeleteOne(_m *SourceSeedState) *SourceSeedStateDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceSeedStateClient) DeleteOneID(id uuid.UUID) *SourceSeedStateDeleteOne {
+	builder := c.Delete().Where(sourceseedstate.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceSeedStateDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceSeedState.
+func (c *SourceSeedStateClient) Query() *SourceSeedStateQuery {
+	return &SourceSeedStateQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceSeedState},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceSeedState entity by its id.
+func (c *SourceSeedStateClient) Get(ctx context.Context, id uuid.UUID) (*SourceSeedState, error) {
+	return c.Query().Where(sourceseedstate.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceSeedStateClient) GetX(ctx context.Context, id uuid.UUID) *SourceSeedState {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceSeedStateClient) Hooks() []Hook {
+	return c.hooks.SourceSeedState
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceSeedStateClient) Interceptors() []Interceptor {
+	return c.inters.SourceSeedState
+}
+
+func (c *SourceSeedStateClient) mutate(ctx context.Context, m *SourceSeedStateMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceSeedStateCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceSeedStateUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceSeedStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceSeedStateDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceSeedState mutation op: %q", m.Op())
+	}
+}
+
 // SuwayomiSyncStateClient is a client for the SuwayomiSyncState schema.
 type SuwayomiSyncStateClient struct {
 	config
@@ -3397,14 +3538,14 @@ type (
 		Category, Chapter, EtagCache, HarvestedExtension, HarvestedRepo, ImportEntry,
 		LatestSeries, Owner, PendingTrackPush, ProviderChapter, PushSubscription,
 		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
-		SourceMetric, SourcePreference, SuwayomiSyncState, TrackBinding,
-		TrackerConnection []ent.Hook
+		SourceMetric, SourcePreference, SourceSeedState, SuwayomiSyncState,
+		TrackBinding, TrackerConnection []ent.Hook
 	}
 	inters struct {
 		Category, Chapter, EtagCache, HarvestedExtension, HarvestedRepo, ImportEntry,
 		LatestSeries, Owner, PendingTrackPush, ProviderChapter, PushSubscription,
 		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
-		SourceMetric, SourcePreference, SuwayomiSyncState, TrackBinding,
-		TrackerConnection []ent.Interceptor
+		SourceMetric, SourcePreference, SourceSeedState, SuwayomiSyncState,
+		TrackBinding, TrackerConnection []ent.Interceptor
 	}
 )

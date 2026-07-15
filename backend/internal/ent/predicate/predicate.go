@@ -60,6 +60,9 @@ type SourceMetric func(*sql.Selector)
 // SourcePreference is the predicate function for sourcepreference builders.
 type SourcePreference func(*sql.Selector)
 
+// SourceSeedState is the predicate function for sourceseedstate builders.
+type SourceSeedState func(*sql.Selector)
+
 // SuwayomiSyncState is the predicate function for suwayomisyncstate builders.
 type SuwayomiSyncState func(*sql.Selector)
 

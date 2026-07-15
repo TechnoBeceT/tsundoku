@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	entsourcepreference "github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	entsourceseedstate "github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
@@ -63,28 +65,40 @@ type PreferenceSeedResult struct {
 // model; this function does not attempt to detect or skip password-shaped
 // preferences.
 func SeedSourcePreferences(ctx context.Context, client suwayomi.Client, db *ent.Client) (PreferenceSeedResult, error) {
-	providers, err := db.SeriesProvider.Query().
+	// Load provider + provider_name distinct in ONE query: the provider strings
+	// drive the iteration, and nameByProvider supplies the human-readable source
+	// name for each SourceSeedState row without an N+1 per-source name lookup.
+	rows, err := db.SeriesProvider.Query().
 		Unique(true).
-		Select(entseriesprovider.FieldProvider).
-		Strings(ctx)
+		Select(entseriesprovider.FieldProvider, entseriesprovider.FieldProviderName).
+		All(ctx)
 	if err != nil {
 		return PreferenceSeedResult{}, fmt.Errorf("enginetopo.SeedSourcePreferences: query providers: %w", err)
 	}
+	nameByProvider := make(map[string]string, len(rows))
+	for _, r := range rows {
+		nameByProvider[r.Provider] = r.ProviderName
+	}
 
 	var result PreferenceSeedResult
-	for _, provider := range providers {
+	for provider := range nameByProvider {
 		sourceID, perr := strconv.ParseInt(provider, 10, 64)
 		if perr != nil {
 			// Disk-origin provider (a display name, not a numeric source id) —
 			// nothing to seed from, and not a failure.
 			continue
 		}
+		name := nameByProvider[provider]
 
 		prefs, err := client.SourcePreferences(ctx, provider)
 		if err != nil {
 			slog.WarnContext(ctx, "enginetopo: SourcePreferences failed, skipping source",
 				"source_id", sourceID, "err", err)
 			result.SkippedSources++
+			// Record the READ FAILURE so the topology status can positively report
+			// this source's preferences could not be read (a real gap), distinct
+			// from a source that was reached but had nothing to capture.
+			recordSeedState(ctx, db, sourceID, name, false, err.Error())
 			continue
 		}
 
@@ -107,9 +121,26 @@ func SeedSourcePreferences(ctx context.Context, client suwayomi.Client, db *ent.
 			}
 			result.Seeded++
 		}
+
+		// The READ succeeded (independent of how many prefs existed or whether any
+		// individual pref-row write above failed) — record ok=true and clear any
+		// prior read error, so a previously-failed source self-heals on re-run.
+		recordSeedState(ctx, db, sourceID, name, true, "")
 	}
 
 	return result, nil
+}
+
+// recordSeedState upserts the per-source SourceSeedState row (best-effort: an
+// upsert error is logged and swallowed, never aborting the pass nor blocking the
+// SourcePreference writes — the seed's core job cannot depend on this bookkeeping
+// row). It centralizes the log-and-continue handling for both the read-failure
+// and read-success call sites.
+func recordSeedState(ctx context.Context, db *ent.Client, sourceID int64, name string, ok bool, readErr string) {
+	if err := upsertSourceSeedState(ctx, db, sourceID, name, ok, readErr); err != nil {
+		slog.WarnContext(ctx, "enginetopo: failed to persist source seed-state",
+			"source_id", sourceID, "err", err)
+	}
 }
 
 // encodePreferenceValue converts a decoded suwayomi.SourcePreference's
@@ -174,4 +205,42 @@ func upsertSourcePreference(ctx context.Context, db *ent.Client, sourceID int64,
 		SetValue(value).
 		SetValueType(valueType).
 		Exec(ctx)
+}
+
+// upsertSourceSeedState writes one SourceSeedState row per source recording the
+// last preference-READ outcome: creates it the first time, overwrites it
+// thereafter. Like upsertSourcePreference over its unique index, SourceSeedState
+// is keyed by a single-column unique index on source_id, so this is a plain
+// query-then-write, not a generated ON CONFLICT upsert.
+//
+// On a successful read (ok=true) it stamps prefs_read_at=now and CLEARS
+// last_error (self-healing — a previously-failed source flips ok=false→true with
+// an empty error). On a failed read (ok=false) it sets last_error and leaves
+// prefs_read_at UNCHANGED, preserving the last-good read time.
+func upsertSourceSeedState(ctx context.Context, db *ent.Client, sourceID int64, name string, ok bool, readErr string) error {
+	existing, err := db.SourceSeedState.Query().
+		Where(entsourceseedstate.SourceID(sourceID)).
+		Only(ctx)
+	if ent.IsNotFound(err) {
+		create := db.SourceSeedState.Create().
+			SetSourceID(sourceID).
+			SetSourceName(name).
+			SetPrefsReadOk(ok).
+			SetLastError(readErr)
+		if ok {
+			create = create.SetPrefsReadAt(time.Now())
+		}
+		return create.Exec(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("query existing source seed-state: %w", err)
+	}
+	update := db.SourceSeedState.UpdateOneID(existing.ID).
+		SetSourceName(name).
+		SetPrefsReadOk(ok).
+		SetLastError(readErr)
+	if ok {
+		update = update.SetPrefsReadAt(time.Now())
+	}
+	return update.Exec(ctx)
 }

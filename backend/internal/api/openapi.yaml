@@ -1337,7 +1337,7 @@ components:
               example: 9
         sources:
           type: object
-          required: [total, prefsCaptured]
+          required: [total, prefsCaptured, reached, failed, failedSources]
           properties:
             total:
               type: integer
@@ -1347,6 +1347,20 @@ components:
               type: integer
               description: How many of those sources have at least one captured preference.
               example: 5
+            reached:
+              type: integer
+              description: How many sources' last preference read succeeded (a source may be reached yet carry zero non-default preferences).
+              example: 7
+            failed:
+              type: integer
+              description: How many sources' last preference read errored (a real gap).
+              example: 1
+            failedSources:
+              type: array
+              description: Names of the sources whose last preference read errored (source name, falling back to the source id). Empty when none failed.
+              items:
+                type: string
+              example: ["Comix"]
         urls:
           type: object
           required: [filled, remaining]

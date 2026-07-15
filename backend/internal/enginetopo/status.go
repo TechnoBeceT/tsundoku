@@ -3,12 +3,14 @@ package enginetopo
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entharvestedextension "github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	entsourcepreference "github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	entsourceseedstate "github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 )
 
 // Status is a read-only snapshot of how much of the engine topology Tsundoku
@@ -37,6 +39,18 @@ type Status struct {
 	// one captured SourcePreference row — of SourcesTotal, how many the
 	// preference seed has reached.
 	SourcesPrefsCaptured int
+	// SourcesReached is the number of sources whose last preference-READ SUCCEEDED
+	// (SourceSeedState.prefs_read_ok=true) — a source may be reached yet have zero
+	// non-default preferences, so this is DISTINCT from SourcesPrefsCaptured.
+	SourcesReached int
+	// SourcesFailed is the number of sources whose last preference-READ ERRORED
+	// (SourceSeedState.prefs_read_ok=false) — a real gap the status reports
+	// positively rather than inferring it from a missing count.
+	SourcesFailed int
+	// FailedSources names the sources (source_name, falling back to the source_id
+	// string when the name is "") whose last preference-READ errored, sorted for
+	// deterministic output. Always non-nil (an empty slice when none failed).
+	FailedSources []string
 	// URLsFilled is the number of SeriesProvider rows whose url is populated.
 	URLsFilled int
 	// URLsRemaining is the number of live (suwayomi_id != 0) SeriesProvider rows
@@ -69,6 +83,13 @@ func TopologyStatus(ctx context.Context, db *ent.Client) (Status, error) {
 		return Status{}, err
 	}
 	if s.SourcesPrefsCaptured, err = countSourcesWithPrefs(ctx, db); err != nil {
+		return Status{}, err
+	}
+	if s.SourcesReached, err = db.SourceSeedState.Query().
+		Where(entsourceseedstate.PrefsReadOk(true)).Count(ctx); err != nil {
+		return Status{}, fmt.Errorf("enginetopo.TopologyStatus: count reached sources: %w", err)
+	}
+	if s.SourcesFailed, s.FailedSources, err = failedSources(ctx, db); err != nil {
 		return Status{}, err
 	}
 	if s.URLsFilled, err = db.SeriesProvider.Query().
@@ -117,4 +138,28 @@ func countSourcesWithPrefs(ctx context.Context, db *ent.Client) (int, error) {
 		return 0, fmt.Errorf("enginetopo.TopologyStatus: query source-pref sources: %w", err)
 	}
 	return len(ids), nil
+}
+
+// failedSources returns how many sources' last preference-READ errored and the
+// sorted list of their names (source_name, falling back to the source_id string
+// when the name is ""). Only the two columns it needs are selected. The slice is
+// always non-nil so the caller (and the DTO) serializes it as [] never null.
+func failedSources(ctx context.Context, db *ent.Client) (int, []string, error) {
+	rows, err := db.SourceSeedState.Query().
+		Where(entsourceseedstate.PrefsReadOk(false)).
+		Select(entsourceseedstate.FieldSourceID, entsourceseedstate.FieldSourceName).
+		All(ctx)
+	if err != nil {
+		return 0, nil, fmt.Errorf("enginetopo.TopologyStatus: query failed sources: %w", err)
+	}
+	names := make([]string, 0, len(rows))
+	for _, r := range rows {
+		name := r.SourceName
+		if name == "" {
+			name = strconv.FormatInt(r.SourceID, 10)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return len(rows), names, nil
 }
