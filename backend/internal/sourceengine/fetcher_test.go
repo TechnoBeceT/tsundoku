@@ -13,15 +13,21 @@ import (
 // TestFetcher_Fetch_Success proves Fetch parses ref.Provider as the numeric
 // sourceID, calls Pages then Image per page, and assembles ChapterPages in
 // page order with the extension derived from each page's content type.
+//
+// The two pages carry REAL, fully-decodable image bytes: since the
+// broken/truncated-page guard (GAP-083) was wired into Fetch, a fake byte
+// slice like {1,2,3} no longer decodes and would fail this test for the
+// wrong reason.
 func TestFetcher_Fetch_Success(t *testing.T) {
+	jpg, png := validJPEG(t), validPNG(t)
 	pages := []sourceengine.Page{
 		{Index: 0, URL: "/ch/1/page/0", ImageURL: "https://x/p0.jpg"},
 		{Index: 1, URL: "/ch/1/page/1", ImageURL: "https://x/p1.png"},
 	}
 	client := fake.New(
 		fake.WithPages(7, "/ch/1", pages),
-		fake.WithImage(7, "/ch/1/page/0", []byte{1, 2, 3}, "image/jpeg"),
-		fake.WithImage(7, "/ch/1/page/1", []byte{4, 5, 6}, "image/png"),
+		fake.WithImage(7, "/ch/1/page/0", jpg, "image/jpeg"),
+		fake.WithImage(7, "/ch/1/page/1", png, "image/png"),
 	)
 	f := sourceengine.NewFetcher(client)
 
@@ -37,8 +43,8 @@ func TestFetcher_Fetch_Success(t *testing.T) {
 	if got.PageCount != 2 || len(got.Pages) != 2 {
 		t.Fatalf("Fetch PageCount/len(Pages) = %d/%d, want 2/2", got.PageCount, len(got.Pages))
 	}
-	assertPageImage(t, got.Pages[0], "jpg", []byte{1, 2, 3})
-	assertPageImage(t, got.Pages[1], "png", []byte{4, 5, 6})
+	assertPageImage(t, got.Pages[0], "jpg", jpg)
+	assertPageImage(t, got.Pages[1], "png", png)
 	assertProgressCalls(t, progressCalls, [][2]int{{1, 2}, {2, 2}})
 	if client.CallCount("Pages") != 1 {
 		t.Errorf("Pages called %d times, want 1", client.CallCount("Pages"))
@@ -138,6 +144,52 @@ func TestFetcher_Fetch_ImageError(t *testing.T) {
 	}
 }
 
+// TestFetcher_Fetch_BrokenPageFailsWholeChapter is the core reliability
+// guarantee restored in GAP-083: a multi-page chapter where a MIDDLE page is
+// broken (truncated, HTML-as-200, or a 0-byte body) fails the WHOLE fetch
+// with an error wrapping sourceengine.ErrBrokenPage and returns the zero
+// ChapterPages — no partial slice, so the download dispatcher never renders
+// a CBZ with a missing panel and instead bumps the source for retry / falls
+// through to another source. Each broken shape is exercised with real valid
+// pages around it, mirroring the retired internal/suwayomi test this
+// replaces.
+func TestFetcher_Fetch_BrokenPageFailsWholeChapter(t *testing.T) {
+	broken := map[string][]byte{
+		"truncated jpeg": truncatedJPEG(t),
+		"html as 200":    htmlPage(),
+		"empty body":     {},
+	}
+	for name, badPage := range broken {
+		t.Run(name, func(t *testing.T) {
+			pages := []sourceengine.Page{
+				{Index: 0, URL: "/ch/1/page/0"},
+				{Index: 1, URL: "/ch/1/page/1"},
+				{Index: 2, URL: "/ch/1/page/2"},
+			}
+			client := fake.New(
+				fake.WithPages(7, "/ch/1", pages),
+				fake.WithImage(7, "/ch/1/page/0", validJPEG(t), "image/jpeg"),
+				fake.WithImage(7, "/ch/1/page/1", badPage, "image/jpeg"), // the broken middle page
+				fake.WithImage(7, "/ch/1/page/2", validPNG(t), "image/png"),
+			)
+			f := sourceengine.NewFetcher(client)
+
+			got, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
+			if !errors.Is(err, sourceengine.ErrBrokenPage) {
+				t.Fatalf("Fetch error = %v, want wrapping ErrBrokenPage", err)
+			}
+			if got.PageCount != 0 || len(got.Pages) != 0 {
+				t.Errorf("broken page must yield zero ChapterPages, got %+v", got)
+			}
+			// Only the two pages up to and including the broken one are ever
+			// fetched — the loop must not continue past a failure.
+			if got := client.CallCount("Image"); got != 2 {
+				t.Errorf("Image called %d times, want 2 (stop at the broken page)", got)
+			}
+		})
+	}
+}
+
 // TestFetcher_Fetch_ContextCancelled proves a pre-cancelled context aborts
 // before any client call.
 func TestFetcher_Fetch_ContextCancelled(t *testing.T) {
@@ -172,9 +224,12 @@ func TestFetcher_ExtFromContentType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.contentType, func(t *testing.T) {
 			pages := []sourceengine.Page{{Index: 0, URL: "/p", ImageURL: "https://x/p"}}
+			// The declared contentType drives the Ext mapping under test; the
+			// actual bytes must still be a real, decodable image now that the
+			// broken-page guard (GAP-083) validates every page's content.
 			client := fake.New(
 				fake.WithPages(7, "/ch/1", pages),
-				fake.WithImage(7, "/p", []byte{9}, tt.contentType),
+				fake.WithImage(7, "/p", validJPEG(t), tt.contentType),
 			)
 			f := sourceengine.NewFetcher(client)
 
@@ -220,8 +275,8 @@ func TestFetcher_Fetch_ContextCancelledMidLoop(t *testing.T) {
 	}
 	base := fake.New(
 		fake.WithPages(7, "/ch/1", pages),
-		fake.WithImage(7, "/ch/1/page/0", []byte{1}, "image/jpeg"),
-		fake.WithImage(7, "/ch/1/page/1", []byte{2}, "image/jpeg"),
+		fake.WithImage(7, "/ch/1/page/0", validJPEG(t), "image/jpeg"),
+		fake.WithImage(7, "/ch/1/page/1", validJPEG(t), "image/jpeg"),
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

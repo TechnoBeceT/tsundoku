@@ -52,6 +52,12 @@ func NewFetcher(client Client) *Fetcher {
 //   - If Image returns an error on any page, Fetch returns the zero
 //     ChapterPages and the wrapped error. No partial result is ever
 //     returned alongside a nil error.
+//   - If any page fails image validation (empty, truncated, non-image, or a
+//     decompression-bomb-sized body — see imagevalidate.go), Fetch returns
+//     the zero ChapterPages and an error wrapping ErrBrokenPage, so the
+//     whole chapter attempt fails cleanly rather than persisting a broken
+//     panel. The existing per-source retry + cross-source fall-through then
+//     drives the chapter to a COMPLETE download.
 //   - If ctx is cancelled or expired (checked before entering the page loop
 //     and before each Image call), Fetch returns ctx.Err() wrapped in a
 //     descriptive message.
@@ -87,6 +93,16 @@ func (f *Fetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.Chap
 		data, contentType, err := f.client.Image(ctx, sourceID, page.URL, page.ImageURL)
 		if err != nil {
 			return fetcher.ChapterPages{}, fmt.Errorf("sourceengine fetcher: image: %w", err)
+		}
+
+		// Prove the page is a complete, decodable image BEFORE it enters the
+		// result. A truncated body, an HTML challenge page served as 200, or a
+		// 0-byte body all pass Client.Image's transport checks but must never
+		// become a panel; on any such page fail the WHOLE chapter (all-or-
+		// nothing) so retry + fall-through deliver a complete chapter from
+		// this or another source. See imagevalidate.go.
+		if err := validateImagePage(data); err != nil {
+			return fetcher.ChapterPages{}, fmt.Errorf("sourceengine fetcher: page %d: %w", len(images), err)
 		}
 		images = append(images, fetcher.PageImage{Data: data, Ext: extFromContentType(contentType)})
 
