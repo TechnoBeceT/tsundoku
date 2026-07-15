@@ -4,9 +4,17 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 )
+
+// sourceListerTimeout bounds the in-request engine call the health scan makes.
+// GetSeries/LibraryHealth/UnhealthyCount invoke loadedSources synchronously, so
+// a hung engine socket would otherwise stall the caller until its transport
+// timeout. The availability signal is advisory and 2s is ample for a local
+// engine, so the check can never dominate a detail-page load.
+const sourceListerTimeout = 2 * time.Second
 
 // SourceLister is the narrow port the health scan uses to learn which sources
 // the engine currently has loaded, so a provider whose Suwayomi extension was
@@ -36,21 +44,35 @@ func (s *Service) WithSourceLister(l SourceLister) *Service {
 
 // loadedSources resolves the engine's currently-loaded source set ONCE for a
 // whole health scan. It returns active=true only when the set was positively
-// determined (a lister is attached, it reported ok, and no error) — the
-// fail-safe contract: on a nil lister, an error, or ok=false it returns
-// active=false so NO provider is flagged unavailable this scan. A load failure
-// is logged once at WARN and swallowed (best-effort: a missing availability
-// signal must never break the health read).
+// determined (a lister is attached, it reported ok, no error, and the set is
+// NON-EMPTY) — the fail-safe contract: on a nil lister, an error, ok=false, OR
+// an empty set it returns active=false so NO provider is flagged unavailable
+// this scan. The engine call is bounded by sourceListerTimeout so a hung engine
+// can't stall the caller (a timeout is just another error → fails safe). A load
+// failure is logged once at WARN and swallowed (best-effort: a missing
+// availability signal must never break the health read).
 func (s *Service) loadedSources(ctx context.Context) (loaded map[int64]struct{}, active bool) {
 	if s.sourceLister == nil {
 		return nil, false
 	}
+	ctx, cancel := context.WithTimeout(ctx, sourceListerTimeout)
+	defer cancel()
 	set, ok, err := s.sourceLister.LoadedSourceIDs(ctx)
 	if err != nil {
 		slog.Warn("series: could not load engine source set for availability check — no source flagged unavailable this scan", "error", err)
 		return nil, false
 	}
 	if !ok {
+		return nil, false
+	}
+	// An empty-but-successful set is treated as engine-not-ready, NOT as "every
+	// extension uninstalled". During an engine restart/reload window the GraphQL
+	// endpoint answers before its sources have loaded, momentarily returning an
+	// empty set; flagging every live provider unavailable off that blip would
+	// spike UnhealthyCount (an SSE) and could provoke a destructive "remove". The
+	// genuine all-extensions-uninstalled state is vanishingly rare, so fail safe
+	// — indistinguishable here from the nil/error/ok==false paths above.
+	if len(set) == 0 {
 		return nil, false
 	}
 	return set, true

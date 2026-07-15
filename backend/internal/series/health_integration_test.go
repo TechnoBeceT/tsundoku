@@ -175,15 +175,18 @@ func seedUnavailableFixture(t *testing.T, ctx context.Context, db *ent.Client) s
 // provider whose source is no longer loaded as "unavailable", while a
 // disk-origin provider absent from the same loaded set stays "ok" (it was never
 // an engine source). Non-vacuous: drop the SuwayomiID==0 guard and the
-// disk-origin provider would flip to unavailable too.
+// disk-origin provider would flip to unavailable too. The loaded set is
+// NON-EMPTY (carries an unrelated source id) so it reads as engine-ready — the
+// M1 empty-set guard treats an empty successful set as engine-not-ready.
 func TestGetSeriesFlagsUnavailableSource(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	seriesID := seedUnavailableFixture(t, ctx, db)
 
-	// Loaded set is empty ⇒ source 777 is absent (extension uninstalled).
+	// Engine ready with a non-empty loaded set that OMITS source 777 ⇒ 777's
+	// extension is uninstalled (unavailable).
 	svc := series.NewService(db, t.TempDir(), 14).
-		WithSourceLister(fakeSourceLister{loaded: map[int64]struct{}{}, ok: true})
+		WithSourceLister(fakeSourceLister{loaded: map[int64]struct{}{999: {}}, ok: true})
 
 	got, err := svc.GetSeries(ctx, uuid.MustParse(seriesID))
 	if err != nil {
@@ -246,6 +249,32 @@ func TestGetSeriesFailSafeWhenListerCannotLoad(t *testing.T) {
 	}
 }
 
+// TestGetSeriesEmptyLoadedSetFlagsNothing proves the M1 guard: an empty-but-
+// successful loaded set (ok=true, len==0 — the engine restart/reload window
+// where GraphQL answers before sources have loaded) is treated as
+// engine-not-ready, so NO provider is flagged unavailable. Without the guard
+// EVERY live provider would flip to unavailable off that blip. Non-vacuous:
+// remove the len(set)==0 check in loadedSources and provider 777 reports
+// unavailable.
+func TestGetSeriesEmptyLoadedSetFlagsNothing(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	seriesID := seedUnavailableFixture(t, ctx, db)
+
+	svc := series.NewService(db, t.TempDir(), 14).
+		WithSourceLister(fakeSourceLister{loaded: map[int64]struct{}{}, ok: true})
+
+	got, err := svc.GetSeries(ctx, uuid.MustParse(seriesID))
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	for _, p := range got.Providers {
+		if p.Health == series.HealthUnavailable {
+			t.Errorf("provider %s flagged unavailable off an empty loaded set, want fail-safe (no flag)", p.Provider)
+		}
+	}
+}
+
 // TestUnhealthyCountIncludesUnavailable proves an unavailable-only series (no
 // stale/erroring source, just a missing extension) counts as unhealthy and is
 // returned by the library scan. Non-vacuous: drop HealthUnavailable from
@@ -255,8 +284,9 @@ func TestUnhealthyCountIncludesUnavailable(t *testing.T) {
 	db := testdb.New(t)
 	seriesID := seedUnavailableFixture(t, ctx, db)
 
+	// Engine ready with a non-empty loaded set that OMITS source 777.
 	svc := series.NewService(db, t.TempDir(), 14).
-		WithSourceLister(fakeSourceLister{loaded: map[int64]struct{}{}, ok: true})
+		WithSourceLister(fakeSourceLister{loaded: map[int64]struct{}{999: {}}, ok: true})
 
 	n, err := svc.UnhealthyCount(ctx)
 	if err != nil {
