@@ -14,6 +14,7 @@ import {
   scrollAfterReflow,
   centeredPage,
   finishedChapterIds,
+  atBottomOfLastChapter,
   pruneSeenBelow,
   trimTrailingFailures,
   type PageRect,
@@ -141,6 +142,42 @@ describe('finishedChapterIds', () => {
     // through ch-prev (seenBelow first). Asserting `[]` here is exactly the
     // assertion that fails under the old rule above.
     expect(finishedChapterIds(prepended, scrollTop, new Set()).finished).toEqual([])
+  })
+})
+
+describe('atBottomOfLastChapter', () => {
+  // The last chapter's end-divider can never cross the viewport top, so
+  // `finishedChapterIds` can never finish it — this true-bottom signal covers
+  // exactly that gap. clientHeight 600, scrollHeight 5000 → true bottom scrollTop
+  // is 4400 (5000 - 600).
+  it('finishes the last chapter only at the true bottom of scroll', () => {
+    expect(atBottomOfLastChapter(true, true, 4400, 600, 5000)).toBe(true)
+  })
+
+  it('tolerates sub-pixel rounding within BOTTOM_EPSILON of the true bottom', () => {
+    // 4398 + 600 = 4998 >= 5000 - 2 → still counts as bottom.
+    expect(atBottomOfLastChapter(true, true, 4398, 600, 5000)).toBe(true)
+  })
+
+  it('does NOT finish while the reader is still short of the bottom', () => {
+    // 4000 + 600 = 4600, well below 5000 - 2 → not yet at bottom.
+    expect(atBottomOfLastChapter(true, true, 4000, 600, 5000)).toBe(false)
+  })
+
+  it('does NOT finish when a later chapter still exists (not the last chapter)', () => {
+    // Reaching the bottom of a NON-final mounted window must not mark it finished —
+    // only `finishedChapterIds`' below->above transition may finish those.
+    expect(atBottomOfLastChapter(false, true, 4400, 600, 5000)).toBe(false)
+  })
+
+  it('does NOT finish a last chapter with zero visible pages (mirrors the visiblePages===0 skip)', () => {
+    expect(atBottomOfLastChapter(true, false, 4400, 600, 5000)).toBe(false)
+  })
+
+  it('treats content shorter than the viewport as already at the bottom', () => {
+    // A last chapter that fits entirely on screen (scrollHeight <= clientHeight)
+    // has nothing to scroll — scrollTop 0 already satisfies the bottom test.
+    expect(atBottomOfLastChapter(true, true, 0, 600, 400)).toBe(true)
   })
 })
 

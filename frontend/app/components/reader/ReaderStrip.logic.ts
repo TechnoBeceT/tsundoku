@@ -136,6 +136,41 @@ export function finishedChapterIds(
   return { finished, seenBelow: nextSeenBelow }
 }
 
+/** The px tolerance for treating the scroller as at its TRUE bottom — small enough
+ *  that only a genuine end-of-scroll qualifies, large enough to absorb the sub-pixel
+ *  rounding of scrollTop/clientHeight/scrollHeight. */
+export const BOTTOM_EPSILON = 2
+
+/**
+ * atBottomOfLastChapter — whether the reader has scrolled the FINAL chapter all the
+ * way to the true bottom of the strip, the signal that the last chapter is finished.
+ *
+ * `finishedChapterIds` cannot detect the last chapter's completion: its below->above
+ * divider transition is geometrically impossible for the final chapter. Its end-divider
+ * sits at the very bottom of the scroller (only a 1px tail sentinel follows), so the
+ * max reachable scrollTop (`scrollHeight - clientHeight`) leaves that tall divider
+ * still below the viewport top — it can never cross it, so the last chapter would never
+ * auto-mark read. This is the last chapter's genuine completion signal instead: the
+ * scroller reaching its true bottom (`scrollTop + clientHeight >= scrollHeight - EPS`).
+ *
+ * Gated on `isLastChapter` (the last mounted chapter is the last in the full list, so
+ * only the real final chapter qualifies) and `lastChapterHasPages` (>0 visible pages —
+ * mirrors the `visiblePages === 0` skip `finishedChapterIds`' caller applies, so a
+ * fully-failed/empty chapter never "finishes" on a bare scroll to bottom). It fires on
+ * reaching the real END OF SCROLL, never merely on reaching a declared pageCount — the
+ * tail-404 trim still governs how many pages render, so an over-declared count still
+ * lands at true bottom.
+ */
+export function atBottomOfLastChapter(
+  isLastChapter: boolean,
+  lastChapterHasPages: boolean,
+  scrollTop: number,
+  clientHeight: number,
+  scrollHeight: number,
+): boolean {
+  return isLastChapter && lastChapterHasPages && scrollTop + clientHeight >= scrollHeight - BOTTOM_EPSILON
+}
+
 /**
  * pruneSeenBelow — drops observations for chapters that are no longer mounted.
  * `seenBelow` (see `finishedChapterIds`) is an observation about the CURRENT
