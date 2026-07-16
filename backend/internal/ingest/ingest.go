@@ -146,7 +146,7 @@ func (i *Ingest) AddSeries(
 	//    scanlator's chapters; filtering happens in mapToFetchedChapters below.
 	//    On a cache hit NO upstream request is made, so the gate is
 	//    legitimately bypassed (there is nothing to throttle).
-	swChapters, err := i.fetchForAdopt(ctx, sourceID, url, providerName)
+	swChapters, err := i.fetchForAdopt(ctx, sourceID, url, title, providerName)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeries: fetch chapters for source %d url %q: %w", sourceID, url, err)
 	}
@@ -457,17 +457,20 @@ func (i *Ingest) resolveProviderName(ctx context.Context, sourceID int64) string
 // sweep applies its OWN source-politeness gate (Wait + breaker bookkeeping)
 // around this call, so it is also deliberately UNGATED here (no double-Wait).
 // Keeping refresh off the shared cache is what lets that cache be a
-// long-lived, interactive-only memo.
-func (i *Ingest) FetchChaptersUncached(ctx context.Context, sourceID int64, url string) ([]sourceengine.Chapter, error) {
-	return i.client.Chapters(ctx, sourceID, url)
+// long-lived, interactive-only memo. mangaTitle is passed through to the
+// engine host's chapter-number recognition; "" is safe when unknown.
+func (i *Ingest) FetchChaptersUncached(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
+	return i.client.Chapters(ctx, sourceID, url, mangaTitle)
 }
 
 // fetchForAdopt returns the raw chapter list for the adopt/attach path: cached
 // AND, on a cache miss, gated. The gate wraps the ONE real upstream fetch, so a
-// cache hit makes no request and correctly skips the gate.
-func (i *Ingest) fetchForAdopt(ctx context.Context, sourceID int64, url string, providerName string) ([]sourceengine.Chapter, error) {
+// cache hit makes no request and correctly skips the gate. title feeds the
+// engine host's chapter-number recognition on a cache miss (a cache hit never
+// re-fetches, so it has no effect then).
+func (i *Ingest) fetchForAdopt(ctx context.Context, sourceID int64, url string, title string, providerName string) ([]sourceengine.Chapter, error) {
 	return i.chaptersThroughCache(ctx, sourceID, url, func() ([]sourceengine.Chapter, error) {
-		return i.gatedUpstream(ctx, sourceID, url, providerName)
+		return i.gatedUpstream(ctx, sourceID, url, title, providerName)
 	})
 }
 
@@ -486,15 +489,16 @@ func (i *Ingest) chaptersThroughCache(ctx context.Context, sourceID int64, url s
 // so the breaker converges. A nil gate makes every step a no-op (ungated fetch).
 // The gate key is the physical-source identity (provider display name else the
 // stringified source id, trimmed) — the SAME key refresh/download use, so one
-// source's breaker state is shared across every path.
-func (i *Ingest) gatedUpstream(ctx context.Context, sourceID int64, url string, providerName string) ([]sourceengine.Chapter, error) {
+// source's breaker state is shared across every path. title feeds the engine
+// host's chapter-number recognition.
+func (i *Ingest) gatedUpstream(ctx context.Context, sourceID int64, url string, title string, providerName string) ([]sourceengine.Chapter, error) {
 	key := gateKey(providerName, sourceID)
 	now := time.Now()
 	if !i.gateAvailable(ctx, key, now) {
 		return nil, fmt.Errorf("%w: %s", ErrSourceCooledDown, key)
 	}
 	i.gateWait(ctx, key)
-	chs, err := i.client.Chapters(ctx, sourceID, url)
+	chs, err := i.client.Chapters(ctx, sourceID, url, title)
 	if err != nil {
 		i.gateRecordFailure(ctx, key, err, now)
 		return nil, err

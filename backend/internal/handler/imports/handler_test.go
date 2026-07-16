@@ -128,7 +128,7 @@ func (f *fakeEngineClient) MangaDetails(_ context.Context, _ int64, url string) 
 	return sourceengine.MangaDetails{}, nil
 }
 
-func (f *fakeEngineClient) Chapters(_ context.Context, _ int64, url string) ([]sourceengine.Chapter, error) {
+func (f *fakeEngineClient) Chapters(_ context.Context, _ int64, url string, _ string) ([]sourceengine.Chapter, error) {
 	if f.chapterErrs != nil {
 		if err, ok := f.chapterErrs[url]; ok {
 			return nil, err

@@ -119,7 +119,7 @@ func (f *fakeClient) MangaDetails(_ context.Context, _ int64, url string) (sourc
 	return sourceengine.MangaDetails{}, nil
 }
 
-func (f *fakeClient) Chapters(_ context.Context, _ int64, url string) ([]sourceengine.Chapter, error) {
+func (f *fakeClient) Chapters(_ context.Context, _ int64, url string, _ string) ([]sourceengine.Chapter, error) {
 	// Per-manga dispatch (Task 4): error first, then chapters.
 	if f.chapterErrsByURL != nil {
 		if err, ok := f.chapterErrsByURL[url]; ok {

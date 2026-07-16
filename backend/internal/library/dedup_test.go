@@ -44,7 +44,7 @@ func (f *fakeNamedSourceClient) Sources(ctx context.Context) ([]sourceengine.Sou
 	return []sourceengine.Source{{ID: f.sourceID, Name: f.sourceName, Lang: "en"}}, nil
 }
 
-func (f *fakeNamedSourceClient) Chapters(ctx context.Context, sourceID int64, url string) ([]sourceengine.Chapter, error) {
+func (f *fakeNamedSourceClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
 	if f.emptyFeed {
 		return nil, nil
 	}

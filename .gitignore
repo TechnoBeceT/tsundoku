@@ -16,6 +16,8 @@ backend/dist/
 
 # Local scratch / working files (not for VCS)
 Prototype/
+config/
+series/
 
 # Environment / secrets
 .env
@@ -37,3 +39,4 @@ Thumbs.db
 /tmp/
 coverage.out
 coverage.html
+docker-compose.override.yml

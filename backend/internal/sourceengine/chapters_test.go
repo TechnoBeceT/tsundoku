@@ -2,6 +2,7 @@ package sourceengine_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -10,12 +11,16 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
-// TestChapters_Success proves POST /chapters sends {sourceId,url} and the
-// wrapped {chapters:[...]} response is unwrapped to []Chapter.
+// TestChapters_Success proves POST /chapters sends {sourceId,url,mangaTitle}
+// and the wrapped {chapters:[...]} response is unwrapped to []Chapter.
 func TestChapters_Success(t *testing.T) {
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/chapters" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
 		}
 		writeJSON(t, w, http.StatusOK, map[string]any{
 			"chapters": []map[string]any{
@@ -26,7 +31,7 @@ func TestChapters_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := newTestClient(t, srv).Chapters(context.Background(), 7, "/manga/1")
+	got, err := newTestClient(t, srv).Chapters(context.Background(), 7, "/manga/1", "My Series")
 	if err != nil {
 		t.Fatalf("Chapters: %v", err)
 	}
@@ -37,6 +42,9 @@ func TestChapters_Success(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Chapters = %+v, want %+v", got, want)
 	}
+	if gotBody["mangaTitle"] != "My Series" {
+		t.Errorf("request mangaTitle = %v, want %q", gotBody["mangaTitle"], "My Series")
+	}
 }
 
 // TestChapters_BadRequest proves a 400 from /chapters maps to *BadRequestError.
@@ -46,7 +54,7 @@ func TestChapters_BadRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestClient(t, srv).Chapters(context.Background(), 1, "/manga/1")
+	_, err := newTestClient(t, srv).Chapters(context.Background(), 1, "/manga/1", "")
 	assertBadRequestError(t, err)
 }
 
@@ -57,6 +65,6 @@ func TestChapters_UpstreamFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestClient(t, srv).Chapters(context.Background(), 1, "/manga/1")
+	_, err := newTestClient(t, srv).Chapters(context.Background(), 1, "/manga/1", "")
 	assertUpstreamError(t, err, http.StatusBadGateway)
 }

@@ -77,7 +77,14 @@ data class BrowseRequest(val sourceId: Long, val page: Int = 1)
 
 data class MangaRequest(val sourceId: Long, val url: String)
 
-data class ChaptersRequest(val sourceId: Long, val url: String)
+/**
+ * [mangaTitle] feeds [enginehost.vendor.ChapterRecognition] (the vendored Suwayomi
+ * chapter-number-recognition step SourceCalls.chapters runs before returning) — it strips the
+ * manga title from a chapter name before number-matching, so recognition is more accurate with it
+ * than without. Optional/defaulted to "" for backward compatibility; recognition still works on ""
+ * (it just skips the title-strip step).
+ */
+data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: String = "")
 
 data class PagesRequest(val sourceId: Long, val chapterUrl: String)
 

@@ -42,11 +42,11 @@ func (c *countingClient) Search(ctx context.Context, sourceID int64, query strin
 	return c.fakeClient.Search(ctx, sourceID, query, page)
 }
 
-func (c *countingClient) Chapters(ctx context.Context, sourceID int64, url string) ([]sourceengine.Chapter, error) {
+func (c *countingClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
 	c.mu.Lock()
 	c.fetchCalls[url]++
 	c.mu.Unlock()
-	return c.fakeClient.Chapters(ctx, sourceID, url)
+	return c.fakeClient.Chapters(ctx, sourceID, url, mangaTitle)
 }
 
 func (c *countingClient) searchCount(sourceID int64) int {

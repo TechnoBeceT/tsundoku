@@ -9,6 +9,7 @@ package enginehost
  * blocking HttpServer threads.
  */
 
+import enginehost.vendor.ChapterRecognition
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
@@ -81,15 +82,31 @@ object SourceCalls {
             update.manga.toDetailsDto(url)
         }
 
-    /** Fetch the chapter list for a source-relative manga url. */
+    /**
+     * Fetch the chapter list for a source-relative manga url, running Suwayomi's own
+     * service-layer chapter post-processing (Chapter.kt's `updateChapterListDatabase`) on the raw
+     * extension output before returning it — see [SChapter.toChapterDto] for the per-chapter steps.
+     * [mangaTitle] (optional; "" when unknown) improves number recognition and is passed to the
+     * source's own [HttpSource.prepareNewChapter] hook exactly like Suwayomi does.
+     */
     fun chapters(
         source: Source,
         url: String,
+        mangaTitle: String = "",
     ): ChaptersResponse =
         runBlocking {
-            val seed = SManga.create().apply { this.url = url }
+            val seed = SManga.create().apply { this.url = url; title = mangaTitle }
             val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = false, fetchChapters = true)
-            ChaptersResponse(update.chapters.map { it.toChapterDto() })
+            val http = source as? HttpSource
+            ChaptersResponse(
+                update.chapters.map { chapter ->
+                    // I1: a source may override prepareNewChapter to set fields (name/number)
+                    // BEFORE recognition runs — mirrors Chapter.kt:172. Deprecated upstream, but
+                    // still honored so a source relying on it isn't silently broken here.
+                    http?.prepareNewChapter(chapter, seed)
+                    chapter.toChapterDto(mangaTitle)
+                },
+            )
         }
 
     /**
@@ -162,12 +179,27 @@ object SourceCalls {
             thumbnailUrl = thumbnail_url,
         )
 
-    private fun SChapter.toChapterDto() =
-        ChapterDto(
+    /**
+     * Maps a raw extension [SChapter] to the wire [ChapterDto], applying the two Suwayomi
+     * Chapter.kt post-processing steps engine-host must mirror (C1/I2 in the P2 mapper audit):
+     *  - [ChapterRecognition.parseChapterNumber] (C1): derives a real chapter number from the
+     *    chapter NAME when the extension left `chapter_number` at Mihon's -1 "unset" sentinel (or
+     *    Suwayomi's own -2 "hidden" sentinel is passed through unchanged) — this is what keeps a
+     *    number-less source keyed by NUMBER instead of NAME downstream in Tsundoku, so it dedups
+     *    and sorts correctly against every other source. The result is a Double/float DECIMAL
+     *    (e.g. 10.5 for "Chapter 10.5") and is never rounded — fractional chapters must survive.
+     *  - scanlator blank/whitespace normalization (I2): `ifBlank { null }?.trim()`, so a padded or
+     *    whitespace-only scanlator never drifts against Tsundoku's EqualFold provider matching.
+     * `prepareNewChapter` (I1) runs BEFORE this, in [chapters], since it needs the SManga seed.
+     */
+    private fun SChapter.toChapterDto(mangaTitle: String): ChapterDto {
+        val recognizedNumber = ChapterRecognition.parseChapterNumber(mangaTitle, name, chapter_number.toDouble())
+        return ChapterDto(
             url = url,
             name = name,
-            number = chapter_number,
-            scanlator = scanlator,
+            number = recognizedNumber.toFloat(),
+            scanlator = scanlator?.ifBlank { null }?.trim(),
             uploadDate = date_upload,
         )
+    }
 }

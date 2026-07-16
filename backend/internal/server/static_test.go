@@ -47,7 +47,7 @@ func (nullEngineClient) Latest(_ context.Context, _ int64, _ int) (sourceengine.
 func (nullEngineClient) MangaDetails(_ context.Context, _ int64, _ string) (sourceengine.MangaDetails, error) {
 	panic("nullEngineClient.MangaDetails called in test")
 }
-func (nullEngineClient) Chapters(_ context.Context, _ int64, _ string) ([]sourceengine.Chapter, error) {
+func (nullEngineClient) Chapters(_ context.Context, _ int64, _ string, _ string) ([]sourceengine.Chapter, error) {
 	panic("nullEngineClient.Chapters called in test")
 }
 func (nullEngineClient) Pages(_ context.Context, _ int64, _ string) ([]sourceengine.Page, error) {

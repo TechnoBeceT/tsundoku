@@ -556,7 +556,10 @@ func (s *Service) fetchChapters(ctx context.Context, sourceID string, url string
 		return nil, fmt.Errorf("imports: invalid source id %q: %w", sourceID, err)
 	}
 	fetch := func() ([]sourceengine.Chapter, error) {
-		return s.client.Chapters(ctx, id, url)
+		// "" mangaTitle: this is the read-only discovery path (coverage/inspect
+		// preview, nothing stored yet) — recognition still runs, just without
+		// the title-strip step. See sourceengine.Client.Chapters's doc comment.
+		return s.client.Chapters(ctx, id, url, "")
 	}
 	if s.chapterCache == nil {
 		return fetch()

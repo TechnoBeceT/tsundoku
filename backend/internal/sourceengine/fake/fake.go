@@ -232,8 +232,9 @@ func (c *Client) MangaDetails(_ context.Context, sourceID int64, url string) (so
 }
 
 // Chapters returns the WithChapters-configured chapter list for (sourceID,
-// url).
-func (c *Client) Chapters(_ context.Context, sourceID int64, url string) ([]sourceengine.Chapter, error) {
+// url). mangaTitle is accepted (interface parity with the real client) but
+// ignored — the fake never runs recognition, so it has no effect here.
+func (c *Client) Chapters(_ context.Context, sourceID int64, url string, _ string) ([]sourceengine.Chapter, error) {
 	c.record("Chapters")
 	if err := c.errFor("Chapters"); err != nil {
 		return nil, err

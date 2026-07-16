@@ -249,7 +249,10 @@ func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.T
 	// (source, manga) grouping already dedups to one fetch per sweep, so refresh
 	// gets its dedup from grouping, not the cache, and always sees new chapters —
 	// the long, hot-reloadable interactive cache TTL can never stale-out discovery.
-	raw, fetchErr := s.ingest.FetchChaptersUncached(ctx, grp.sourceID, grp.url)
+	// Every provider in a group shares one physical (source, manga url), so the
+	// first provider's title feeds the engine host's chapter-number recognition
+	// for the whole group's fetch (groups are never built with zero providers).
+	raw, fetchErr := s.ingest.FetchChaptersUncached(ctx, grp.sourceID, grp.url, grp.providers[0].title)
 	if fetchErr != nil {
 		s.handleGroupFetchError(ctx, grp, fetchErr, now, mu, result)
 		return

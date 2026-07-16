@@ -69,8 +69,13 @@ type Client interface {
 	// MangaDetails fetches full metadata for the manga at url on sourceID.
 	MangaDetails(ctx context.Context, sourceID int64, url string) (MangaDetails, error)
 
-	// Chapters fetches the chapter list for the manga at url on sourceID.
-	Chapters(ctx context.Context, sourceID int64, url string) ([]Chapter, error)
+	// Chapters fetches the chapter list for the manga at url on sourceID,
+	// running the engine host's chapter-number-recognition/scanlator-
+	// normalization post-processing (mirrors Suwayomi's own Chapter.kt
+	// service layer). mangaTitle improves number recognition (it is
+	// stripped from a chapter name before number-matching) and is safe to
+	// pass as "" when unknown.
+	Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]Chapter, error)
 
 	// Pages fetches the page list for the chapter at chapterURL on sourceID.
 	// Each Page's own (URL, ImageURL) address pair must be fed back to Image

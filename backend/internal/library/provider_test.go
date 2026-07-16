@@ -83,7 +83,7 @@ func (f *fakeAddProviderClient) Latest(ctx context.Context, sourceID int64, page
 func (f *fakeAddProviderClient) MangaDetails(ctx context.Context, sourceID int64, url string) (sourceengine.MangaDetails, error) {
 	return sourceengine.MangaDetails{URL: url, Title: "My Series"}, nil
 }
-func (f *fakeAddProviderClient) Chapters(ctx context.Context, sourceID int64, url string) ([]sourceengine.Chapter, error) {
+func (f *fakeAddProviderClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
 	if f.chapters != nil {
 		return f.chapters, nil
 	}

@@ -262,11 +262,11 @@ type partialFailClient struct {
 	failURL string
 }
 
-func (p *partialFailClient) Chapters(ctx context.Context, sourceID int64, url string) ([]sourceengine.Chapter, error) {
+func (p *partialFailClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
 	if url == p.failURL {
 		return nil, errors.New("source offline")
 	}
-	return p.Client.Chapters(ctx, sourceID, url)
+	return p.Client.Chapters(ctx, sourceID, url, mangaTitle)
 }
 
 func TestRefreshAll_PreservesImportance_And_NeverDeletes(t *testing.T) {
