@@ -90,7 +90,7 @@ export const Engine: Story = {
 
 /** Server config pane — the Tsundoku-owned FlareSolverr card (on). */
 export const ServerConfig: Story = {
-  render: () => withPane('suwayomi'),
+  render: () => withPane('serverConfig'),
 }
 
 /** Sources & Extensions — installed / available / repositories segments. */

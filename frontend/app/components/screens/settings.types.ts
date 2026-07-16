@@ -11,7 +11,7 @@
  */
 
 /** The seven settings panes, selected from the sticky sidebar nav. */
-export type SettingsPane = 'library' | 'categories' | 'engine' | 'suwayomi' | 'extensions' | 'sources' | 'trackers' | 'notifications'
+export type SettingsPane = 'library' | 'categories' | 'engine' | 'serverConfig' | 'extensions' | 'sources' | 'trackers' | 'notifications'
 
 /** NotificationPermission is this device's honest Web Push status (Notifications pane). */
 export type NotificationPermissionState = 'unsupported' | 'blocked' | 'granted' | 'default'

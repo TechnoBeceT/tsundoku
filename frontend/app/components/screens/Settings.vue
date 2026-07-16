@@ -38,7 +38,7 @@ import type {
  *                   toggle + read-only System)
  *   - categories  → CategoriesPane   (user-definable category CRUD)
  *   - engine      → EnginePane       (read-only status + upgrade stepper)
- *   - suwayomi    → SuwayomiPane      (the Tsundoku-owned FlareSolverr card,
+ *   - serverConfig → SuwayomiPane     (the Tsundoku-owned FlareSolverr card,
  *                   QCAT-238 — the proxied Suwayomi SOCKS card was RETIRED
  *                   with the P2 Suwayomi-removal backend cutover)
  *   - extensions  → ExtensionsPane    (installed / available / repositories)
@@ -293,7 +293,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
         />
 
         <SuwayomiPane
-          v-else-if="activePane === 'suwayomi'"
+          v-else-if="activePane === 'serverConfig'"
           :flare-solverr="flareSolverr"
           :flare-solverr-save="flareSolverrSave"
           @save-flaresolverr="emit('save-flaresolverr', $event)"
