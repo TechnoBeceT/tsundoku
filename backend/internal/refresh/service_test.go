@@ -129,9 +129,12 @@ func TestRefreshAll_BypassesInteractiveChapterCache(t *testing.T) {
 	seedMonitoredSeries(t, ctx, db, "cached-series", sourceID, mangaURL)
 
 	// Pre-seed the SHARED interactive cache with a STALE 1-chapter list under the
-	// exact key refresh would use if it read the cache.
+	// exact key refresh would use if it read the cache — including the series'
+	// own title ("cached-series", matching seedMonitoredSeries below), since the
+	// cache key is now (sourceID, url, mangaTitle) and refresh would look up
+	// its own series title, never "".
 	cache := ingest.NewChapterCacheConst(time.Hour)
-	if _, err := cache.Get(ctx, sourceID, mangaURL, func() ([]sourceengine.Chapter, error) {
+	if _, err := cache.Get(ctx, sourceID, mangaURL, "cached-series", func() ([]sourceengine.Chapter, error) {
 		return []sourceengine.Chapter{{Number: num(1), URL: "u1"}}, nil
 	}); err != nil {
 		t.Fatalf("seed cache: %v", err)

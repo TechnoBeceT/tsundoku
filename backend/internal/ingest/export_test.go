@@ -9,6 +9,9 @@ package ingest
 import (
 	"context"
 	"time"
+
+	"github.com/technobecet/tsundoku/internal/chapter"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // NewChapterCacheClock builds a ChapterCache with an injectable TTL provider AND
@@ -18,4 +21,12 @@ func NewChapterCacheClock(ttl func(context.Context) time.Duration, now func() ti
 	c := NewChapterCache(ttl)
 	c.now = now
 	return c
+}
+
+// MapToFetchedChapters exposes the unexported mapToFetchedChapters mapper so
+// black-box tests can pin its field-mapping deltas (notably the reversed
+// ProviderIndex direction — see its doc comment) without going through the
+// full AddSeries/testdb round-trip.
+func MapToFetchedChapters(chs []sourceengine.Chapter, scanlator string) []chapter.FetchedChapter {
+	return mapToFetchedChapters(chs, scanlator)
 }

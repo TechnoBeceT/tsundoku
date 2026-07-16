@@ -200,6 +200,16 @@ func parseChapterURL(raw string) (string, error) {
 	return u, nil
 }
 
+// parseOptionalTitle trims the OPTIONAL ?title= query param used by
+// InspectChapters/Breakdown to feed the engine host's chapter-number
+// recognition and the shared discovery chapter cache (see
+// imports.Service.fetchChapters's doc comment). It is free text, not an
+// identity key, so there is nothing to validate beyond trimming — an absent
+// or blank value is the documented "" (unknown title) case, never an error.
+func parseOptionalTitle(raw string) string {
+	return strings.TrimSpace(raw)
+}
+
 // validateAdoptBody validates the parsed AdoptRequestBody:
 //   - title must be non-blank.
 //   - providers must have >= 1 entry.

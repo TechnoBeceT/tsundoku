@@ -260,16 +260,58 @@ func TestDiscovery_ChapterCacheSharedAcrossPaths(t *testing.T) {
 	svc := imports.NewService(cc, nil, nil, "", testSearchTimeout, nil)
 	imports.SetChapterCacheForTest(svc, ingest.NewChapterCacheConst(time.Minute))
 
-	if _, err := svc.SourceBreakdown(ctx, "1", url); err != nil {
+	if _, err := svc.SourceBreakdown(ctx, "1", url, ""); err != nil {
 		t.Fatalf("SourceBreakdown 1: %v", err)
 	}
-	if _, err := svc.SourceBreakdown(ctx, "1", url); err != nil {
+	if _, err := svc.SourceBreakdown(ctx, "1", url, ""); err != nil {
 		t.Fatalf("SourceBreakdown 2: %v", err)
 	}
-	if _, err := svc.InspectChapters(ctx, "1", url); err != nil {
+	if _, err := svc.InspectChapters(ctx, "1", url, ""); err != nil {
 		t.Fatalf("InspectChapters: %v", err)
 	}
 	if got := cc.fetchCount(url); got != 1 {
 		t.Fatalf("Chapters called %d times for %q, want 1 (coverage+inspect share cache)", got, url)
+	}
+}
+
+// TestDiscovery_ChapterCacheKeyedByTitle_NoCrossContamination proves the P2
+// chapter-fidelity fix: a title="" discovery preview (the default before this
+// fix) and a real-title fetch for the SAME (source, manga) are DISTINCT cache
+// entries — the real-title call is NOT served the ""-recognized result, and
+// vice versa. Without mangaTitle in the cache key this would be a single
+// shared entry (see the P2 review's "mangaTitle threading is defeated by the
+// shared cache" finding) — whichever title ran first would silently poison
+// the other caller's chapter-number recognition for the whole TTL.
+func TestDiscovery_ChapterCacheKeyedByTitle_NoCrossContamination(t *testing.T) {
+	ctx := context.Background()
+	const url = "/manga/9"
+	cc := newCountingClient(&fakeClient{
+		sources: []sourceengine.Source{{ID: 1, Name: "S1"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{
+			url: {{URL: "/ch/1", Number: 1, Scanlator: "X"}},
+		},
+	})
+	svc := imports.NewService(cc, nil, nil, "", testSearchTimeout, nil)
+	imports.SetChapterCacheForTest(svc, ingest.NewChapterCacheConst(time.Minute))
+
+	// A title="" preview (e.g. a coverage/inspect call before the caller knows
+	// the real title) populates ONE entry...
+	if _, err := svc.InspectChapters(ctx, "1", url, ""); err != nil {
+		t.Fatalf("InspectChapters (title=\"\"): %v", err)
+	}
+	// ...a real-title call for the SAME (source, manga) must NOT reuse it: this
+	// is a cache MISS and triggers its own upstream fetch.
+	if _, err := svc.InspectChapters(ctx, "1", url, "My Series"); err != nil {
+		t.Fatalf("InspectChapters (title=%q): %v", "My Series", err)
+	}
+	if got := cc.fetchCount(url); got != 2 {
+		t.Fatalf("Chapters called %d times for %q, want 2 (\"\" and a real title must NOT share an entry)", got, url)
+	}
+	// A repeat of the SAME real title, however, is still a cache hit.
+	if _, err := svc.InspectChapters(ctx, "1", url, "My Series"); err != nil {
+		t.Fatalf("InspectChapters (title=%q) repeat: %v", "My Series", err)
+	}
+	if got := cc.fetchCount(url); got != 2 {
+		t.Fatalf("Chapters called %d times for %q, want still 2 (repeat of the same title is a hit)", got, url)
 	}
 }

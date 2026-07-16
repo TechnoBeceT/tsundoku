@@ -90,21 +90,30 @@ func (h *Handler) Search(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// InspectChapters handles GET /api/sources/:sourceId/manga/:mangaId/chapters?url=.
+// InspectChapters handles GET /api/sources/:sourceId/manga/:mangaId/chapters?url=&title=.
 //
 // P2 Suwayomi-removal (slice 3b): the backend is URL-addressed — it requires a
 // REQUIRED ?url query param (the source-relative manga URL) and returns the
 // live chapter list as []ChapterInspectDTO. :mangaId stays in the route (FE
 // compat) but is bound/ignored; a request that only sends :mangaId (the
 // not-yet-updated frontend) gets a clean 400 until slice 3b-FE sends ?url=.
+//
+// ?title= is OPTIONAL free text (the manga's display title, e.g. from a
+// Discover candidate the caller already has in hand) — passing it improves
+// the engine host's chapter-number recognition AND lets this preview populate
+// the SAME shared chapter-cache entry a later Adopt for the same manga will
+// hit (see imports.Service.fetchChapters's doc comment). Omitting it is safe
+// (recognition still runs, just without the title-strip step); no validation
+// beyond trimming, since it feeds a display heuristic, not an identity key.
 func (h *Handler) InspectChapters(c echo.Context) error {
 	sourceID := c.Param("sourceId")
 	url, err := parseChapterURL(c.QueryParam("url"))
 	if err != nil {
 		return err
 	}
+	title := parseOptionalTitle(c.QueryParam("title"))
 
-	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, url)
+	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, url, title)
 	if err != nil {
 		return err
 	}
@@ -170,25 +179,28 @@ func (h *Handler) Details(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// Breakdown handles GET /api/sources/:sourceId/manga/:mangaId/breakdown?url=.
+// Breakdown handles GET /api/sources/:sourceId/manga/:mangaId/breakdown?url=&title=.
 //
 // It fetches the live chapter feed for (sourceId, url) and groups it by
 // scanlator, returning a SourceBreakdownDTO so the adopt UI can auto-split a
 // source into per-scanlator rows with counts + display ranges.
 //
 // P2 Suwayomi-removal (slice 3b): requires a REQUIRED ?url query param (see
-// InspectChapters's doc comment for the transition). An unknown :sourceId maps
-// to 404 (mirrors Details); any other failure is a genuine upstream source
-// problem and maps to 502 via the shared httperr.Upstream (mirrors Details),
-// so a source outage never surfaces as a false 200.
+// InspectChapters's doc comment for the transition). ?title= is OPTIONAL —
+// same free-text/cache-sharing contract as InspectChapters's (see its doc
+// comment). An unknown :sourceId maps to 404 (mirrors Details); any other
+// failure is a genuine upstream source problem and maps to 502 via the shared
+// httperr.Upstream (mirrors Details), so a source outage never surfaces as a
+// false 200.
 func (h *Handler) Breakdown(c echo.Context) error {
 	sourceID := c.Param("sourceId")
 	url, err := parseChapterURL(c.QueryParam("url"))
 	if err != nil {
 		return err
 	}
+	title := parseOptionalTitle(c.QueryParam("title"))
 
-	out, err := h.svc.SourceBreakdown(c.Request().Context(), sourceID, url)
+	out, err := h.svc.SourceBreakdown(c.Request().Context(), sourceID, url, title)
 	if err != nil {
 		if errors.Is(err, imports.ErrSourceNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")

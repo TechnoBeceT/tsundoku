@@ -467,20 +467,24 @@ func (i *Ingest) FetchChaptersUncached(ctx context.Context, sourceID int64, url 
 // AND, on a cache miss, gated. The gate wraps the ONE real upstream fetch, so a
 // cache hit makes no request and correctly skips the gate. title feeds the
 // engine host's chapter-number recognition on a cache miss (a cache hit never
-// re-fetches, so it has no effect then).
+// re-fetches, so it has no effect then) AND is part of the cache key itself
+// (see chaptersThroughCache) — a title="" discovery preview populated by
+// imports.Service never masquerades as this call's real-title result.
 func (i *Ingest) fetchForAdopt(ctx context.Context, sourceID int64, url string, title string, providerName string) ([]sourceengine.Chapter, error) {
-	return i.chaptersThroughCache(ctx, sourceID, url, func() ([]sourceengine.Chapter, error) {
+	return i.chaptersThroughCache(ctx, sourceID, url, title, func() ([]sourceengine.Chapter, error) {
 		return i.gatedUpstream(ctx, sourceID, url, title, providerName)
 	})
 }
 
 // chaptersThroughCache routes fetch through the shared chapter cache when one is
 // wired, else calls fetch directly (nil cache = today's uncached behaviour).
-func (i *Ingest) chaptersThroughCache(ctx context.Context, sourceID int64, url string, fetch func() ([]sourceengine.Chapter, error)) ([]sourceengine.Chapter, error) {
+// title is threaded into the cache key (see chapterCacheKey's doc comment) so a
+// fetch made under one mangaTitle can never be served back for a different one.
+func (i *Ingest) chaptersThroughCache(ctx context.Context, sourceID int64, url string, title string, fetch func() ([]sourceengine.Chapter, error)) ([]sourceengine.Chapter, error) {
 	if i.cache == nil {
 		return fetch()
 	}
-	return i.cache.Get(ctx, sourceID, url, fetch)
+	return i.cache.Get(ctx, sourceID, url, title, fetch)
 }
 
 // gatedUpstream performs exactly ONE client.Chapters call wrapped in the
@@ -616,8 +620,18 @@ func hasParsedNumber(ch sourceengine.Chapter) bool {
 // Field mapping deltas versus the old Suwayomi mapping (sourceengine.Chapter
 // carries no per-chapter engine id, no explicit provider index, and no page
 // count):
-//   - ProviderIndex is the chapter's 0-based POSITION in the (already
-//     scanlator-filtered) slice — the engine host does not report one.
+//   - ProviderIndex is the chapter's REVERSED 0-based position in the
+//     (already scanlator-filtered) slice — the engine host does not report
+//     one, so Go derives it. The engine host's raw list is newest-first
+//     (index 0 = newest chapter — see SourceCalls.chapters), and Suwayomi's
+//     own Chapter.kt assigns its equivalent field, sourceOrder, from that same
+//     raw list REVERSED (`uniqueChapters.reversed().forEachIndexed`, P2
+//     mapper-audit M6) so the OLDEST chapter gets the LOWEST index and the
+//     NEWEST the HIGHEST — the convention ProviderIndex's own doc comment
+//     ("used for ordering when numeric chapter numbers are absent or
+//     ambiguous") assumes. Mirroring the direction here means a future
+//     ProviderIndex-based tiebreak (unnumbered chapters, where Number can't
+//     order them) agrees with Suwayomi's, instead of running backwards.
 //   - PageCount is always nil: it is not known at ingest time, only once a
 //     chapter is actually downloaded/rendered, so passing nil (rather than a
 //     misleading literal 0) means the M1 ingest stores no page count here.
@@ -641,10 +655,13 @@ func mapToFetchedChapters(chs []sourceengine.Chapter, scanlator string) []chapte
 			uploadDate = &t
 		}
 		out[idx] = chapter.FetchedChapter{
-			Number:        num,
-			Name:          ch.Name,
-			URL:           ch.URL,
-			ProviderIndex: idx,
+			Number: num,
+			Name:   ch.Name,
+			URL:    ch.URL,
+			// Reversed: the raw slice is newest-first (index 0 = newest), so the
+			// oldest chapter (the LAST element) must get index 0 to match
+			// Suwayomi's sourceOrder convention — see the doc comment above.
+			ProviderIndex: len(chs) - 1 - idx,
 			PageCount:     nil,
 			UploadDate:    uploadDate,
 		}

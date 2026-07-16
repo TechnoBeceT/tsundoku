@@ -32,11 +32,11 @@ func TestChapterCache_HitWithinTTL(t *testing.T) {
 	var calls int
 	fetch := func() ([]sourceengine.Chapter, error) { calls++; return chOf(1), nil }
 
-	first, err := c.Get(context.Background(), 7, "src", fetch)
+	first, err := c.Get(context.Background(), 7, "src", "", fetch)
 	if err != nil {
 		t.Fatalf("first Get: %v", err)
 	}
-	second, err := c.Get(context.Background(), 7, "src", fetch)
+	second, err := c.Get(context.Background(), 7, "src", "", fetch)
 	if err != nil {
 		t.Fatalf("second Get: %v", err)
 	}
@@ -58,12 +58,12 @@ func TestChapterCache_ExpiryRefetches(t *testing.T) {
 	var calls int
 	fetch := func() ([]sourceengine.Chapter, error) { calls++; return chOf(calls), nil }
 
-	if _, err := c.Get(context.Background(), 1, "src", fetch); err != nil {
+	if _, err := c.Get(context.Background(), 1, "src", "", fetch); err != nil {
 		t.Fatalf("first Get: %v", err)
 	}
 	// Advance past the TTL: the entry is stale, so the next Get refetches.
 	now = now.Add(51 * time.Millisecond)
-	if _, err := c.Get(context.Background(), 1, "src", fetch); err != nil {
+	if _, err := c.Get(context.Background(), 1, "src", "", fetch); err != nil {
 		t.Fatalf("second Get: %v", err)
 	}
 	if calls != 2 {
@@ -79,12 +79,43 @@ func TestChapterCache_DistinctKeysIsolated(t *testing.T) {
 	fetch := func() ([]sourceengine.Chapter, error) { calls++; return chOf(calls), nil }
 
 	// Distinct urls, same source.
-	_, _ = c.Get(context.Background(), 1, "url-a", fetch)
-	_, _ = c.Get(context.Background(), 1, "url-b", fetch)
+	_, _ = c.Get(context.Background(), 1, "url-a", "", fetch)
+	_, _ = c.Get(context.Background(), 1, "url-b", "", fetch)
 	// Distinct source ids, same url.
-	_, _ = c.Get(context.Background(), 2, "url-a", fetch)
+	_, _ = c.Get(context.Background(), 2, "url-a", "", fetch)
 	if calls != 3 {
 		t.Fatalf("fetch called %d times, want 3 (distinct keys must not share)", calls)
+	}
+}
+
+// TestChapterCache_DistinctTitlesIsolated proves the P2 chapter-fidelity fix:
+// mangaTitle is part of the cache key, so a "" preview and a real-title fetch
+// for the SAME (sourceID, url) are DISTINCT entries — one never masquerades as
+// the other's recognition result. Before this fix a title="" discovery preview
+// (SourceBreakdown/InspectChapters) run before Adopt would poison the adopt-side
+// ingest.Ingest's real-title fetch for the whole TTL (they share one *ChapterCache
+// instance in production), so the engine host's title-strip recognition step
+// never actually ran on the adopt path. A repeat of the SAME title is still a hit.
+func TestChapterCache_DistinctTitlesIsolated(t *testing.T) {
+	c := ingest.NewChapterCacheConst(time.Minute)
+	var calls int
+	fetch := func() ([]sourceengine.Chapter, error) { calls++; return chOf(calls), nil }
+
+	// "" preview, then a real title, then a DIFFERENT real title: three distinct
+	// keys for the SAME (sourceID, url) ⇒ three fetches.
+	_, _ = c.Get(context.Background(), 1, "src", "", fetch)
+	_, _ = c.Get(context.Background(), 1, "src", "One Piece", fetch)
+	_, _ = c.Get(context.Background(), 1, "src", "7th Time Loop", fetch)
+	if calls != 3 {
+		t.Fatalf("fetch called %d times, want 3 (distinct titles must not share)", calls)
+	}
+	// A repeat of an already-seen title (including the "" preview's) is a hit —
+	// proving isolation is keyed by title equality, not merely "any second Get
+	// with the same title always misses".
+	_, _ = c.Get(context.Background(), 1, "src", "", fetch)
+	_, _ = c.Get(context.Background(), 1, "src", "One Piece", fetch)
+	if calls != 3 {
+		t.Fatalf("fetch called %d times, want still 3 (repeat of a seen title is a hit)", calls)
 	}
 }
 
@@ -102,10 +133,10 @@ func TestChapterCache_ErrorNotCached(t *testing.T) {
 		return chOf(9), nil
 	}
 
-	if _, err := c.Get(context.Background(), 1, "src", fetch); !errors.Is(err, boom) {
+	if _, err := c.Get(context.Background(), 1, "src", "", fetch); !errors.Is(err, boom) {
 		t.Fatalf("first Get err = %v, want boom", err)
 	}
-	got, err := c.Get(context.Background(), 1, "src", fetch)
+	got, err := c.Get(context.Background(), 1, "src", "", fetch)
 	if err != nil {
 		t.Fatalf("second Get: %v", err)
 	}
@@ -126,7 +157,7 @@ func TestChapterCache_ZeroTTLDisabled(t *testing.T) {
 	fetch := func() ([]sourceengine.Chapter, error) { calls++; return chOf(calls), nil }
 
 	for i := 0; i < 3; i++ {
-		if _, err := c.Get(context.Background(), 1, "src", fetch); err != nil {
+		if _, err := c.Get(context.Background(), 1, "src", "", fetch); err != nil {
 			t.Fatalf("Get %d: %v", i, err)
 		}
 	}
@@ -149,12 +180,12 @@ func TestChapterCache_TTLHotReload(t *testing.T) {
 	fetch := func() ([]sourceengine.Chapter, error) { calls++; return chOf(calls), nil }
 
 	// Write an entry at t=0 with a 1h TTL.
-	if _, err := c.Get(context.Background(), 1, "src", fetch); err != nil {
+	if _, err := c.Get(context.Background(), 1, "src", "", fetch); err != nil {
 		t.Fatalf("first Get: %v", err)
 	}
 	// Advance 30m — still live under the 1h TTL, so a hit (no new fetch).
 	now = now.Add(30 * time.Minute)
-	if _, err := c.Get(context.Background(), 1, "src", fetch); err != nil {
+	if _, err := c.Get(context.Background(), 1, "src", "", fetch); err != nil {
 		t.Fatalf("second Get: %v", err)
 	}
 	if calls != 1 {
@@ -163,7 +194,7 @@ func TestChapterCache_TTLHotReload(t *testing.T) {
 	// Shrink the TTL to 10m WITHOUT moving the clock: the 30m-old entry is now
 	// stale, so the next Get refetches — proving the TTL is read per-Get.
 	ttl = 10 * time.Minute
-	if _, err := c.Get(context.Background(), 1, "src", fetch); err != nil {
+	if _, err := c.Get(context.Background(), 1, "src", "", fetch); err != nil {
 		t.Fatalf("third Get: %v", err)
 	}
 	if calls != 2 {
@@ -185,7 +216,7 @@ func TestChapterCache_ConcurrentGetRaceClean(t *testing.T) {
 		sourceID := int64(i % 5) // 5 distinct keys, heavy overlap
 		go func() {
 			defer wg.Done()
-			got, err := c.Get(context.Background(), sourceID, url, func() ([]sourceengine.Chapter, error) {
+			got, err := c.Get(context.Background(), sourceID, url, "", func() ([]sourceengine.Chapter, error) {
 				atomic.AddInt64(&total, 1)
 				return chOf(int(sourceID) + 1), nil
 			})

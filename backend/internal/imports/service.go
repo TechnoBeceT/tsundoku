@@ -542,29 +542,34 @@ func (s *Service) resolveSource(ctx context.Context, sourceID string) (sourceeng
 	return sourceengine.Source{}, ErrSourceNotFound
 }
 
-// fetchChapters returns the raw, unfiltered chapter list for (sourceID, url)
-// through the shared chapter cache (Task C2) when one is wired, else straight
-// from the client. It is the single point the read-only discovery paths
-// (SourceBreakdown, InspectChapters) fetch chapters, so they share their result
-// with each other AND with the adopt-side ingest.Ingest (same cache instance)
-// — a coverage→configure→adopt session triggers ONE upstream Chapters call.
+// fetchChapters returns the raw, unfiltered chapter list for (sourceID, url,
+// mangaTitle) through the shared chapter cache (Task C2) when one is wired,
+// else straight from the client. It is the single point the read-only
+// discovery paths (SourceBreakdown, InspectChapters) fetch chapters, so they
+// share their result with each other AND with the adopt-side ingest.Ingest
+// (same cache instance) — a coverage→configure→adopt session that passes the
+// SAME mangaTitle at every step triggers ONE upstream Chapters call.
+// mangaTitle is "" when the caller doesn't know the manga's title yet (still
+// safe — recognition just skips the title-strip step); PASS THE REAL TITLE
+// WHEN YOU HAVE IT (e.g. a Discover candidate's own Title) so the preview's
+// cache entry is the SAME, correctly-recognized one the eventual adopt will
+// reuse — see chapterCacheKey's doc comment for why mangaTitle is part of the
+// key (a "" preview and a real-title adopt must never share an entry, but two
+// preview calls passing the SAME real title legitimately should).
 // sourceID is parsed to the engine host's numeric id; an unparseable value
 // yields a wrapped error (the route only loosely validates :sourceId).
-func (s *Service) fetchChapters(ctx context.Context, sourceID string, url string) ([]sourceengine.Chapter, error) {
+func (s *Service) fetchChapters(ctx context.Context, sourceID string, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
 	id, err := strconv.ParseInt(sourceID, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("imports: invalid source id %q: %w", sourceID, err)
 	}
 	fetch := func() ([]sourceengine.Chapter, error) {
-		// "" mangaTitle: this is the read-only discovery path (coverage/inspect
-		// preview, nothing stored yet) — recognition still runs, just without
-		// the title-strip step. See sourceengine.Client.Chapters's doc comment.
-		return s.client.Chapters(ctx, id, url, "")
+		return s.client.Chapters(ctx, id, url, mangaTitle)
 	}
 	if s.chapterCache == nil {
 		return fetch()
 	}
-	return s.chapterCache.Get(ctx, id, url, fetch)
+	return s.chapterCache.Get(ctx, id, url, mangaTitle, fetch)
 }
 
 // chapterNumber returns a pointer to ch.Number, or nil when the engine host's
@@ -585,15 +590,19 @@ func chapterNumber(ch sourceengine.Chapter) *float64 {
 
 // InspectChapters fetches the live chapter list for the manga at url on
 // sourceID and returns a lightweight preview as []ChapterInspectDTO.
+// mangaTitle is optional ("" when unknown) and, when supplied, both improves
+// the engine host's chapter-number recognition AND lets this preview populate
+// the SAME chapter-cache entry the later adopt will read (see fetchChapters's
+// doc comment) — pass the candidate's real title when the caller has it.
 //
 // NOTE: On a cache MISS this fetches via sourceengine.Client.Chapters — which
 // contacts the upstream source — giving the user an up-to-date chapter count
 // before adopting. Within the short chapter-cache TTL (Task C2) a repeat call
-// for the same source-manga reuses the memoized list and makes NO upstream
-// request (an anti-ban de-amplification; the count is at most a few minutes
-// stale).
-func (s *Service) InspectChapters(ctx context.Context, sourceID string, url string) ([]ChapterInspectDTO, error) {
-	chapters, err := s.fetchChapters(ctx, sourceID, url)
+// for the same source-manga AND mangaTitle reuses the memoized list and makes
+// NO upstream request (an anti-ban de-amplification; the count is at most a
+// few minutes stale).
+func (s *Service) InspectChapters(ctx context.Context, sourceID string, url string, mangaTitle string) ([]ChapterInspectDTO, error) {
+	chapters, err := s.fetchChapters(ctx, sourceID, url, mangaTitle)
 	if err != nil {
 		return nil, err
 	}
@@ -621,16 +630,20 @@ func (s *Service) InspectChapters(ctx context.Context, sourceID string, url stri
 // (see chapterNumber) contribute to a group's Ranges/Count coverage input;
 // Total counts every chapter regardless.
 //
+// mangaTitle is optional ("" when unknown) and threads through to
+// fetchChapters exactly like InspectChapters's — see its doc comment for why
+// passing the real title matters for the later adopt's cache hit.
+//
 // An unknown sourceID yields ErrSourceNotFound (→ 404, mirrors Browse/
 // MangaDetails); a client.Chapters failure is returned verbatim (the
 // caller maps it to a 502, mirroring Details' upstream mapping).
-func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url string) (SourceBreakdownDTO, error) {
+func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url string, mangaTitle string) (SourceBreakdownDTO, error) {
 	src, err := s.resolveSource(ctx, sourceID)
 	if err != nil {
 		return SourceBreakdownDTO{}, err
 	}
 
-	chapters, err := s.fetchChapters(ctx, sourceID, url)
+	chapters, err := s.fetchChapters(ctx, sourceID, url, mangaTitle)
 	if err != nil {
 		return SourceBreakdownDTO{}, err
 	}

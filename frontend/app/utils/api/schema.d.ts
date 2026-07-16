@@ -5244,6 +5244,8 @@ export interface operations {
             query?: {
                 /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
                 url?: string;
+                /** @description Optional manga display title (e.g. from an already-fetched Discover candidate). Improves the engine host's chapter-number recognition and lets this preview share its cache entry with a later Adopt for the same manga+title (see the mangaTitle-keyed discovery chapter cache). Omitting it is safe; recognition still runs, just without the title-strip step. */
+                title?: string;
             };
             header?: never;
             path: {
@@ -5354,6 +5356,8 @@ export interface operations {
             query?: {
                 /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
                 url?: string;
+                /** @description Optional manga display title (e.g. from an already-fetched Discover candidate). Improves the engine host's chapter-number recognition and lets this preview share its cache entry with a later Adopt for the same manga+title (see the mangaTitle-keyed discovery chapter cache). Omitting it is safe; recognition still runs, just without the title-strip step. */
+                title?: string;
             };
             header?: never;
             path: {

@@ -713,7 +713,7 @@ func TestService_InspectChapters(t *testing.T) {
 	}
 	svc := newService(fc)
 
-	got, err := svc.InspectChapters(context.Background(), "1", "/manga/7")
+	got, err := svc.InspectChapters(context.Background(), "1", "/manga/7", "")
 	if err != nil {
 		t.Fatalf("InspectChapters: unexpected error: %v", err)
 	}
@@ -752,7 +752,7 @@ func TestService_InspectChapters_Error(t *testing.T) {
 	fc := &fakeClient{chaptersErr: sentinel}
 	svc := newService(fc)
 
-	_, err := svc.InspectChapters(context.Background(), "1", "/manga/99")
+	_, err := svc.InspectChapters(context.Background(), "1", "/manga/99", "")
 	if !errors.Is(err, sentinel) {
 		t.Errorf("InspectChapters error: got %v, want to wrap %v", err, sentinel)
 	}
@@ -1015,7 +1015,7 @@ func TestService_SourceBreakdown_GroupsByScanlator(t *testing.T) {
 	}
 	svc := newService(fc)
 
-	got, err := svc.SourceBreakdown(context.Background(), "1", url)
+	got, err := svc.SourceBreakdown(context.Background(), "1", url, "")
 	if err != nil {
 		t.Fatalf("SourceBreakdown: unexpected error: %v", err)
 	}
@@ -1056,7 +1056,7 @@ func TestService_SourceBreakdown_SortTiesByName(t *testing.T) {
 	}
 	svc := newService(fc)
 
-	got, err := svc.SourceBreakdown(context.Background(), "1", url)
+	got, err := svc.SourceBreakdown(context.Background(), "1", url, "")
 	if err != nil {
 		t.Fatalf("SourceBreakdown: unexpected error: %v", err)
 	}
@@ -1077,7 +1077,7 @@ func TestService_SourceBreakdown_UnknownSource(t *testing.T) {
 	fc := &fakeClient{sources: []sourceengine.Source{{ID: 99, Name: "Real", Lang: "en"}}}
 	svc := newService(fc)
 
-	_, err := svc.SourceBreakdown(context.Background(), "ghost", "/manga/1")
+	_, err := svc.SourceBreakdown(context.Background(), "ghost", "/manga/1", "")
 	if !errors.Is(err, imports.ErrSourceNotFound) {
 		t.Errorf("SourceBreakdown unknown source: err = %v, want ErrSourceNotFound", err)
 	}
@@ -1096,7 +1096,7 @@ func TestService_SourceBreakdown_UpstreamError(t *testing.T) {
 	}
 	svc := newService(fc)
 
-	_, err := svc.SourceBreakdown(context.Background(), "1", url)
+	_, err := svc.SourceBreakdown(context.Background(), "1", url, "")
 	if !errors.Is(err, sentinel) {
 		t.Errorf("SourceBreakdown upstream error: err = %v, want to wrap %v", err, sentinel)
 	}

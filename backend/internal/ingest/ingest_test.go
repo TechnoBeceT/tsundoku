@@ -12,7 +12,9 @@ package ingest_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -435,6 +437,94 @@ func TestIngest_AddSeries_FetchChaptersError(t *testing.T) {
 	// No Series rows should have been created (client error fires before DB touch).
 	if n := len(client.Series.Query().AllX(ctx)); n != 0 {
 		t.Errorf("Series count after client error: got %d, want 0", n)
+	}
+}
+
+// countingChapterClient wraps enginefake.Client and counts Chapters calls per
+// url, so a test can prove a given (source, manga) was fetched from the
+// upstream engine host exactly N times — the same shape as
+// internal/imports/cache_test.go's countingClient, reimplemented here because
+// this package's tests exercise Ingest directly (no imports.Service in scope).
+type countingChapterClient struct {
+	*enginefake.Client
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func newCountingChapterClient(fc *enginefake.Client) *countingChapterClient {
+	return &countingChapterClient{Client: fc, calls: map[string]int{}}
+}
+
+func (c *countingChapterClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
+	c.mu.Lock()
+	c.calls[url]++
+	c.mu.Unlock()
+	return c.Client.Chapters(ctx, sourceID, url, mangaTitle)
+}
+
+func (c *countingChapterClient) count(url string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls[url]
+}
+
+// TestIngest_AddSeries_SharedCacheKeyedByTitle_NoCrossContamination is the P2
+// chapter-fidelity regression proof at the Ingest layer: production shares ONE
+// *ingest.ChapterCache between imports.Service's read-only discovery preview
+// (mangaTitle="" — see its fetchChapters doc comment) and this package's
+// fetchForAdopt (the real title). Before the cache key included mangaTitle,
+// whichever call ran first "won" the entry for the whole TTL — so a preview
+// run before Adopt (the normal coverage→configure→adopt wizard flow) silently
+// starved the adopt-side fetch of the engine host's title-strip recognition
+// step. This proves AddSeries's real-title fetch is NOT served the ""
+// preview's entry: it triggers its OWN upstream Chapters call, and a THIRD
+// call with the same real title is then a genuine cache hit.
+func TestIngest_AddSeries_SharedCacheKeyedByTitle_NoCrossContamination(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		sourceID  int64 = 88
+		mangaURL        = "/manga/shared-cache"
+		realTitle       = "7th Time Loop"
+	)
+	stubs := []sourceengine.Chapter{{Name: "Chapter 1", Number: 1, URL: "https://engine.test/shared/1"}}
+	fc := enginefake.New(
+		enginefake.WithChapters(sourceID, mangaURL, stubs),
+		enginefake.WithMangaDetails(sourceID, mangaURL, sourceengine.MangaDetails{Title: realTitle}),
+	)
+	cc := newCountingChapterClient(fc)
+	cache := ingest.NewChapterCacheConst(time.Minute)
+
+	// Simulate the discovery preview sharing the SAME cache instance production
+	// wires between imports.Service and this package's Ingest.
+	if _, err := cache.Get(ctx, sourceID, mangaURL, "", func() ([]sourceengine.Chapter, error) {
+		return cc.Chapters(ctx, sourceID, mangaURL, "")
+	}); err != nil {
+		t.Fatalf("preview cache.Get: %v", err)
+	}
+	if got := cc.count(mangaURL); got != 1 {
+		t.Fatalf("preview fetch count = %d, want 1", got)
+	}
+
+	// Adopt: AddSeries with the REAL title, sharing the same cache instance —
+	// must NOT be served the ""-populated entry.
+	ing := ingest.NewIngestWithGate(cc, client, cache, nil)
+	if _, err := ing.AddSeries(ctx, sourceID, mangaURL, realTitle, ""); err != nil {
+		t.Fatalf("AddSeries: %v", err)
+	}
+	if got := cc.count(mangaURL); got != 2 {
+		t.Fatalf("post-adopt fetch count = %d, want 2 (real-title fetch must NOT reuse the \"\" preview's entry)", got)
+	}
+
+	// A repeat with the SAME real title is a genuine hit (no third fetch).
+	if _, err := cache.Get(ctx, sourceID, mangaURL, realTitle, func() ([]sourceengine.Chapter, error) {
+		return cc.Chapters(ctx, sourceID, mangaURL, realTitle)
+	}); err != nil {
+		t.Fatalf("repeat cache.Get: %v", err)
+	}
+	if got := cc.count(mangaURL); got != 2 {
+		t.Fatalf("post-repeat fetch count = %d, want still 2 (same real title must hit)", got)
 	}
 }
 
@@ -1049,5 +1139,39 @@ func TestIngest_AddSeries_MangaDetailsError(t *testing.T) {
 	// No SeriesProvider rows should have been created.
 	if n := len(client.SeriesProvider.Query().AllX(ctx)); n != 0 {
 		t.Errorf("SeriesProvider count after MangaDetails error: got %d, want 0", n)
+	}
+}
+
+// TestMapToFetchedChapters_ProviderIndexReversed proves the P2 mapper-audit M6
+// fix: the engine host's raw chapter list is newest-first (index 0 = newest —
+// see SourceCalls.chapters), and mapToFetchedChapters must assign
+// ProviderIndex REVERSED (oldest=0 .. newest=N-1) to match Suwayomi's own
+// sourceOrder convention (Chapter.kt's `uniqueChapters.reversed().
+// forEachIndexed`). A raw 3-chapter list ["newest", "middle", "oldest"] must
+// therefore map to ProviderIndex [2, 1, 0] — NOT the raw position [0, 1, 2].
+func TestMapToFetchedChapters_ProviderIndexReversed(t *testing.T) {
+	raw := []sourceengine.Chapter{
+		{Name: "newest", Number: 3, URL: "/ch/3"},
+		{Name: "middle", Number: 2, URL: "/ch/2"},
+		{Name: "oldest", Number: 1, URL: "/ch/1"},
+	}
+	got := ingest.MapToFetchedChapters(raw, "")
+	if len(got) != 3 {
+		t.Fatalf("MapToFetchedChapters: got %d chapters, want 3", len(got))
+	}
+	wantIndex := []int{2, 1, 0} // reversed: raw idx 0 (newest) -> 2, raw idx 2 (oldest) -> 0
+	for i, fc := range got {
+		if fc.ProviderIndex != wantIndex[i] {
+			t.Errorf("ProviderIndex[%d] (%s): got %d, want %d", i, fc.Name, fc.ProviderIndex, wantIndex[i])
+		}
+	}
+	// The OLDEST chapter (last in the raw, newest-first list) must carry the
+	// LOWEST index — the direction Suwayomi's sourceOrder uses.
+	if got[2].ProviderIndex != 0 {
+		t.Errorf("oldest chapter ProviderIndex: got %d, want 0", got[2].ProviderIndex)
+	}
+	// The NEWEST chapter (first in the raw list) must carry the HIGHEST index.
+	if got[0].ProviderIndex != len(got)-1 {
+		t.Errorf("newest chapter ProviderIndex: got %d, want %d", got[0].ProviderIndex, len(got)-1)
 	}
 }
