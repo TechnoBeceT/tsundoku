@@ -9,7 +9,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/category"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
-	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourcecover"
 )
 
 // Handler holds the dependencies for the library (series) HTTP handlers.
@@ -17,18 +17,19 @@ import (
 type Handler struct {
 	svc             *seriessvc.Service
 	trigger         func()
-	sw              sourceengine.Client
+	coverCache      *sourcecover.Cache
 	viewSyncer      ViewSyncer
 	trackerProgress TrackerProgressSetter
 }
 
 // NewHandler constructs a Handler bound to a series.Service, an auto-converge
 // trigger (called after a successful provider re-rank to re-evaluate upgrades
-// immediately — M5; other routes do not use it), and a sourceengine.Client
+// immediately — M5; other routes do not use it), and a sourcecover.Cache
 // (used by the per-provider cover proxy endpoint to fetch cover images from
-// the engine host — see ProviderCover).
-func NewHandler(svc *seriessvc.Service, trigger func(), sw sourceengine.Client) *Handler {
-	return &Handler{svc: svc, trigger: trigger, sw: sw}
+// the engine host, disk-cached and fail-fast bounded — see ProviderCover and
+// GAP-085).
+func NewHandler(svc *seriessvc.Service, trigger func(), coverCache *sourcecover.Cache) *Handler {
+	return &Handler{svc: svc, trigger: trigger, coverCache: coverCache}
 }
 
 // List handles GET /api/series.

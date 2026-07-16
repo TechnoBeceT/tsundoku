@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -37,6 +38,7 @@ import (
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourcecover"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -180,6 +182,27 @@ func registerRoutes(
 	authed.GET("/owner/me", ownerH.Me)
 	sse.RegisterRoutes(authed, hub)
 
+	// coverCache (GAP-085) is the shared disk-cache-first, fail-fast wrapper
+	// around an engine-host cover fetch — restores the disk-cache-first
+	// behaviour Suwayomi's own thumbnail cache had, which the P2 engine swap
+	// dropped for these two proxies (see internal/sourcecover's package doc).
+	// It is shared between BOTH engine-fed cover proxies (the per-provider
+	// metadata cover below, and the Discover/Search source cover further down)
+	// so a burst across either surface queues through the SAME bounded pool.
+	// Rooted under a "source-covers" subdirectory of Engine.RuntimeDir,
+	// mirroring apkStore's own "apkcache" subdirectory of the same root (both
+	// are Tsundoku-owned durable caches of engine-fed artifacts, never an
+	// engine-host data directory — Tsundoku launches no engine-host process of
+	// its own). Deliberately NOT the library series cover cache
+	// (series.Service.CoverBytes, WithCoverFetcher below) — that endpoint was
+	// already disk-cached and is untouched.
+	coverCache := sourcecover.NewCache(
+		sourcecover.New(filepath.Join(cfg.Engine.RuntimeDir, "source-covers")),
+		engineClient,
+		sourcecover.DefaultConcurrency,
+		sourcecover.DefaultDeadline,
+	)
+
 	// Library (series) API. The service owns the Ent client and the storage root
 	// so the recategorize path can move folders on disk in lockstep with the DB.
 	// seriesSvc is shared: reused by both the series handler and the imports
@@ -206,7 +229,7 @@ func registerRoutes(
 	// WithTrackerProgressSetter wires the QCAT-242 "set reading progress to N"
 	// tracker force-set (SetReadingProgress) — a THIRD, independent hook the
 	// same trackerSyncSvc instance also satisfies.
-	seriesH := seriesh.NewHandler(seriesSvc, trigger, engineClient).
+	seriesH := seriesh.NewHandler(seriesSvc, trigger, coverCache).
 		WithViewSyncer(trackerSyncSvc).
 		WithTrackerProgressSetter(trackerSyncSvc)
 	authed.GET("/series", seriesH.List)
@@ -366,7 +389,7 @@ func registerRoutes(
 		// hot reload); 0 disables the search cache at runtime.
 		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
 	).WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
-	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, engineClient)
+	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, coverCache)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)

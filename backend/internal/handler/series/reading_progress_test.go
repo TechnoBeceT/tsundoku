@@ -68,7 +68,7 @@ func newReadingProgressEnv(t *testing.T) *readingProgressEnv {
 	authSvc := auth.NewService(testSecret)
 	svc := seriessvc.NewService(client, storage, 14)
 	ft := &fakeTrackerProgressSetter{}
-	h := handler.NewHandler(svc, func() {}, sourceenginefake.New()).WithTrackerProgressSetter(ft)
+	h := handler.NewHandler(svc, func() {}, newCoverCache(t, sourceenginefake.New())).WithTrackerProgressSetter(ft)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler

@@ -27,8 +27,20 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourcecover"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
+
+// newCoverCache builds a throwaway sourcecover.Cache over a fresh t.TempDir(),
+// wrapping sw — shared by every env builder in this package that constructs a
+// series Handler but does not itself exercise the cover-cache's caching/
+// fail-fast behaviour (TestProviderCover_* below covers that directly). Using
+// sourcecover.DefaultDeadline/DefaultConcurrency here mirrors production
+// wiring (routes.go) exactly, so these tests never depend on cache internals.
+func newCoverCache(t *testing.T, sw *sourceenginefake.Client) *sourcecover.Cache {
+	t.Helper()
+	return sourcecover.NewCache(sourcecover.New(t.TempDir()), sw, sourcecover.DefaultConcurrency, sourcecover.DefaultDeadline)
+}
 
 // coverSourceID is the fixed numeric engine source id every cover-proxy test
 // seeds its SeriesProvider with (see seedWithCover) — a "linked" (live)
@@ -75,7 +87,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	sw := sourceenginefake.New()
 	svc := seriessvc.NewService(client, storage, 14).WithCoverFetcher(sw)
 	triggered := new(int)
-	h := handler.NewHandler(svc, func() { *triggered++ }, sw)
+	h := handler.NewHandler(svc, func() { *triggered++ }, newCoverCache(t, sw))
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler

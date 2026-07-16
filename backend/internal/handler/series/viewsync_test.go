@@ -85,7 +85,7 @@ func newViewSyncEnv(t *testing.T, viewSyncer handler.ViewSyncer) *viewSyncEnv {
 	storage := t.TempDir()
 	authSvc := auth.NewService(testSecret)
 	svc := seriessvc.NewService(client, storage, 14)
-	h := handler.NewHandler(svc, func() {}, sourceenginefake.New())
+	h := handler.NewHandler(svc, func() {}, newCoverCache(t, sourceenginefake.New()))
 	if viewSyncer != nil {
 		h = h.WithViewSyncer(viewSyncer)
 	}

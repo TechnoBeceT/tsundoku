@@ -12,27 +12,27 @@ import (
 	"github.com/technobecet/tsundoku/internal/handler/sourcefilter"
 	"github.com/technobecet/tsundoku/internal/imports"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
-	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourcecover"
 )
 
 // Handler holds the dependencies for the imports HTTP handlers.
 // All business logic lives in imports.Service and series.Service; this handler
 // is thin — it binds, validates, calls the service, and renders the DTO.
 type Handler struct {
-	svc     *imports.Service
-	series  *seriessvc.Service
-	trigger func()
-	sw      sourceengine.Client
+	svc        *imports.Service
+	series     *seriessvc.Service
+	trigger    func()
+	coverCache *sourcecover.Cache
 }
 
 // NewHandler constructs a Handler bound to an imports.Service, a series.Service
 // (to render SeriesDetailDTO after Adopt), an auto-converge trigger (called
 // after a successful adopt to kick an immediate download/upgrade cycle — M5),
-// and a sourceengine.Client (used by SourceCover to proxy a source-manga cover
-// image through the engine host — same role as series.Handler's `sw`, see
-// ProviderCover).
-func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func(), sw sourceengine.Client) *Handler {
-	return &Handler{svc: svc, series: series, trigger: trigger, sw: sw}
+// and a sourcecover.Cache (used by SourceCover to proxy a source-manga cover
+// image through the engine host, disk-cached and fail-fast bounded — same
+// role as series.Handler's `coverCache`, see ProviderCover and GAP-085).
+func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func(), coverCache *sourcecover.Cache) *Handler {
+	return &Handler{svc: svc, series: series, trigger: trigger, coverCache: coverCache}
 }
 
 // Sources handles GET /api/sources.
@@ -52,12 +52,24 @@ func (h *Handler) Sources(c echo.Context) error {
 // thumbnailUrl. An open-CDN source (e.g. Asura) tolerates the browser fetching
 // that URL directly, but a Cloudflare/hotlink-protected source (e.g. The
 // Blank) 403s a raw browser request — the card renders blank. This mirrors
-// series.Handler.ProviderCover (the SAME coverproxy.StreamEngine primitive):
-// it re-fetches the image through the engine host, whose outbound HTTP client
-// carries the source's cf_clearance, then streams the bytes back same-origin
-// so the SPA's cookie session covers auth with a plain <img src> — no header
-// needed. A malformed :sourceId or a blank ?url= is a 400; an engine fetch
-// failure is a 502 (never a false 200).
+// series.Handler.ProviderCover (the SAME coverproxy.StreamEngineCached
+// primitive): it re-fetches the image through the engine host, whose outbound
+// HTTP client carries the source's cf_clearance, then streams the bytes back
+// same-origin so the SPA's cookie session covers auth with a plain <img src>
+// — no header needed. A malformed :sourceId or a blank ?url= is a 400; an
+// engine fetch failure is a 502; a cold fetch that cannot resolve within the
+// fail-fast deadline is a 504 (never a false 200, never a held connection).
+//
+// GAP-085: a Discover/library grid renders ~15 covers at once. Before this
+// cache existed EVERY render re-fetched EVERY cover LIVE from the engine host
+// (SourceCalls.image() on the engine host is cacheless), and that burst was
+// enough to trip Cloudflare's per-source rate-limiting on a protected source
+// — each slow re-solve held a same-origin connection open, saturating the
+// browser's per-host connection cap and hanging the whole SPA. Routing
+// through coverCache (internal/sourcecover) fetches each (sourceID, url) at
+// most once ever (see the package doc for why no TTL is needed) and bounds
+// any genuine cold miss with a fail-fast deadline + bounded concurrency, so a
+// burst can never reproduce that hang.
 func (h *Handler) SourceCover(c echo.Context) error {
 	sourceID, err := parseSourceID(c.Param("sourceId"))
 	if err != nil {
@@ -67,7 +79,7 @@ func (h *Handler) SourceCover(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return coverproxy.StreamEngine(c, h.sw, sourceID, url)
+	return coverproxy.StreamEngineCached(c, h.coverCache, sourceID, url)
 }
 
 // Search handles GET /api/search.

@@ -24,6 +24,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourcecover"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
@@ -211,15 +212,19 @@ func makeChapters(urlPrefix string, n int) []sourceengine.Chapter {
 
 // testEnv bundles the wired Echo app, a valid token, and helper methods.
 type testEnv struct {
-	e         *echo.Echo
-	token     string
-	client    *fakeEngineClient
-	triggered *int
+	e          *echo.Echo
+	token      string
+	client     *fakeEngineClient
+	coverCache *sourcecover.Cache
+	triggered  *int
 }
 
 // newTestEnv wires a full Echo with the imports routes behind RequireOwner,
 // backing imports.Service with fc (sourceengine.Client). The series.Service is
-// backed by a real testdb (needed for Adopt round-trips).
+// backed by a real testdb (needed for Adopt round-trips). SourceCover is
+// backed by a sourcecover.Cache wrapping the SAME fc, over a fresh
+// t.TempDir() — using sourcecover.DefaultDeadline/DefaultConcurrency mirrors
+// production wiring (routes.go) exactly.
 func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 	t.Helper()
 
@@ -230,8 +235,9 @@ func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 	importsSvc := imports.NewService(fc, ing, db, "", 30*time.Second, nil)
 	seriesSvc := seriessvc.NewService(db, "", 14)
 
+	coverCache := sourcecover.NewCache(sourcecover.New(t.TempDir()), fc, sourcecover.DefaultConcurrency, sourcecover.DefaultDeadline)
 	triggered := new(int)
-	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ }, fc)
+	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ }, coverCache)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -250,7 +256,7 @@ func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 		t.Fatalf("Issue token: %v", err)
 	}
 
-	return &testEnv{e: e, token: token, client: fc, triggered: triggered}
+	return &testEnv{e: e, token: token, client: fc, coverCache: coverCache, triggered: triggered}
 }
 
 // do issues an authenticated request.
