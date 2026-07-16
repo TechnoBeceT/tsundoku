@@ -23,6 +23,8 @@ const (
 	FieldName = "name"
 	// FieldURL holds the string denoting the url field in the database.
 	FieldURL = "url"
+	// FieldWebURL holds the string denoting the web_url field in the database.
+	FieldWebURL = "web_url"
 	// FieldProviderUploadDate holds the string denoting the provider_upload_date field in the database.
 	FieldProviderUploadDate = "provider_upload_date"
 	// FieldProviderIndex holds the string denoting the provider_index field in the database.
@@ -58,6 +60,7 @@ var Columns = []string{
 	FieldNumber,
 	FieldName,
 	FieldURL,
+	FieldWebURL,
 	FieldProviderUploadDate,
 	FieldProviderIndex,
 	FieldPageCount,
@@ -82,6 +85,8 @@ var (
 	DefaultName string
 	// DefaultURL holds the default value on creation for the "url" field.
 	DefaultURL string
+	// DefaultWebURL holds the default value on creation for the "web_url" field.
+	DefaultWebURL string
 	// DefaultProviderIndex holds the default value on creation for the "provider_index" field.
 	DefaultProviderIndex int
 	// DefaultAttempts holds the default value on creation for the "attempts" field.
@@ -123,6 +128,11 @@ func ByName(opts ...sql.OrderTermOption) OrderOption {
 // ByURL orders the results by the url field.
 func ByURL(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldURL, opts...).ToFunc()
+}
+
+// ByWebURL orders the results by the web_url field.
+func ByWebURL(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldWebURL, opts...).ToFunc()
 }
 
 // ByProviderUploadDate orders the results by the provider_upload_date field.

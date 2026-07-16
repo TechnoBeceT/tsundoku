@@ -17,9 +17,16 @@ import (
 // ProviderIndex is the position in the provider's chapter list and is used for
 // ordering when numeric chapter numbers are absent or ambiguous.
 type FetchedChapter struct {
-	Number        *float64
-	Name          string
-	URL           string
+	Number *float64
+	Name   string
+	URL    string
+	// WebURL is the fully-qualified, browser-clickable chapter URL (Mihon's
+	// HttpSource.getChapterUrl, surfaced end-to-end as
+	// sourceengine.Chapter.RealURL) — feeds Komga's ComicInfo <Web> field
+	// (disk.RenderMeta.WebURL). Distinct from URL (the source-relative
+	// addressing key) — never used for identity/dedup. "" when the source
+	// could not resolve one.
+	WebURL        string
 	ProviderIndex int
 	PageCount     *int
 	UploadDate    *time.Time
@@ -126,6 +133,7 @@ func ingestProviderChapter(
 		SetNillableNumber(fc.Number).
 		SetName(fc.Name).
 		SetURL(fc.URL).
+		SetWebURL(fc.WebURL).
 		SetProviderIndex(fc.ProviderIndex).
 		SetNillableProviderUploadDate(fc.UploadDate).
 		SetNillablePageCount(fc.PageCount).
@@ -191,6 +199,7 @@ func applyProviderChapterUpdate(
 		SetNillableNumber(fc.Number).
 		SetName(fc.Name).
 		SetURL(fc.URL).
+		SetWebURL(fc.WebURL).
 		SetProviderIndex(fc.ProviderIndex).
 		SetNillableProviderUploadDate(fc.UploadDate).
 		SetNillablePageCount(fc.PageCount)

@@ -34,6 +34,8 @@ type SeriesProvider struct {
 	Language string `json:"language,omitempty"`
 	// URL holds the value of the "url" field.
 	URL string `json:"url,omitempty"`
+	// WebURL holds the value of the "web_url" field.
+	WebURL string `json:"web_url,omitempty"`
 	// Title holds the value of the "title" field.
 	Title string `json:"title,omitempty"`
 	// Metadata holds the value of the "metadata" field.
@@ -122,7 +124,7 @@ func (*SeriesProvider) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case seriesprovider.FieldSuwayomiID, seriesprovider.FieldFlags, seriesprovider.FieldImportance:
 			values[i] = new(sql.NullInt64)
-		case seriesprovider.FieldProvider, seriesprovider.FieldProviderName, seriesprovider.FieldScanlator, seriesprovider.FieldLanguage, seriesprovider.FieldURL, seriesprovider.FieldTitle, seriesprovider.FieldStatus, seriesprovider.FieldCoverURL:
+		case seriesprovider.FieldProvider, seriesprovider.FieldProviderName, seriesprovider.FieldScanlator, seriesprovider.FieldLanguage, seriesprovider.FieldURL, seriesprovider.FieldWebURL, seriesprovider.FieldTitle, seriesprovider.FieldStatus, seriesprovider.FieldCoverURL:
 			values[i] = new(sql.NullString)
 		case seriesprovider.FieldCreatedAt, seriesprovider.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -190,6 +192,12 @@ func (_m *SeriesProvider) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field url", values[i])
 			} else if value.Valid {
 				_m.URL = value.String
+			}
+		case seriesprovider.FieldWebURL:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field web_url", values[i])
+			} else if value.Valid {
+				_m.WebURL = value.String
 			}
 		case seriesprovider.FieldTitle:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -321,6 +329,9 @@ func (_m *SeriesProvider) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("url=")
 	builder.WriteString(_m.URL)
+	builder.WriteString(", ")
+	builder.WriteString("web_url=")
+	builder.WriteString(_m.WebURL)
 	builder.WriteString(", ")
 	builder.WriteString("title=")
 	builder.WriteString(_m.Title)

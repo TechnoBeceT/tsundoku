@@ -76,6 +76,20 @@ func (_c *ProviderChapterCreate) SetNillableURL(v *string) *ProviderChapterCreat
 	return _c
 }
 
+// SetWebURL sets the "web_url" field.
+func (_c *ProviderChapterCreate) SetWebURL(v string) *ProviderChapterCreate {
+	_c.mutation.SetWebURL(v)
+	return _c
+}
+
+// SetNillableWebURL sets the "web_url" field if the given value is not nil.
+func (_c *ProviderChapterCreate) SetNillableWebURL(v *string) *ProviderChapterCreate {
+	if v != nil {
+		_c.SetWebURL(*v)
+	}
+	return _c
+}
+
 // SetProviderUploadDate sets the "provider_upload_date" field.
 func (_c *ProviderChapterCreate) SetProviderUploadDate(v time.Time) *ProviderChapterCreate {
 	_c.mutation.SetProviderUploadDate(v)
@@ -236,6 +250,10 @@ func (_c *ProviderChapterCreate) defaults() {
 		v := providerchapter.DefaultURL
 		_c.mutation.SetURL(v)
 	}
+	if _, ok := _c.mutation.WebURL(); !ok {
+		v := providerchapter.DefaultWebURL
+		_c.mutation.SetWebURL(v)
+	}
 	if _, ok := _c.mutation.ProviderIndex(); !ok {
 		v := providerchapter.DefaultProviderIndex
 		_c.mutation.SetProviderIndex(v)
@@ -267,6 +285,9 @@ func (_c *ProviderChapterCreate) check() error {
 	}
 	if _, ok := _c.mutation.URL(); !ok {
 		return &ValidationError{Name: "url", err: errors.New(`ent: missing required field "ProviderChapter.url"`)}
+	}
+	if _, ok := _c.mutation.WebURL(); !ok {
+		return &ValidationError{Name: "web_url", err: errors.New(`ent: missing required field "ProviderChapter.web_url"`)}
 	}
 	if _, ok := _c.mutation.ProviderIndex(); !ok {
 		return &ValidationError{Name: "provider_index", err: errors.New(`ent: missing required field "ProviderChapter.provider_index"`)}
@@ -330,6 +351,10 @@ func (_c *ProviderChapterCreate) createSpec() (*ProviderChapter, *sqlgraph.Creat
 	if value, ok := _c.mutation.URL(); ok {
 		_spec.SetField(providerchapter.FieldURL, field.TypeString, value)
 		_node.URL = value
+	}
+	if value, ok := _c.mutation.WebURL(); ok {
+		_spec.SetField(providerchapter.FieldWebURL, field.TypeString, value)
+		_node.WebURL = value
 	}
 	if value, ok := _c.mutation.ProviderUploadDate(); ok {
 		_spec.SetField(providerchapter.FieldProviderUploadDate, field.TypeTime, value)

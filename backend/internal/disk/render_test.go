@@ -342,6 +342,95 @@ func TestRenderChapterMangaAndCount(t *testing.T) {
 	}
 }
 
+// TestRenderChapterWebURL is the realUrl round-trip proof: ComicInfo.Web must
+// come from Meta.WebURL (the fully-qualified, browser-clickable chapter URL)
+// — NEVER Meta.URL (the source-relative ADDRESSING url). URL and WebURL are
+// set to deliberately DIFFERENT values here so a regression that reverts to
+// the old (buggy) `ci.Web = m.URL` behavior fails loudly instead of
+// coincidentally passing.
+func TestRenderChapterWebURL(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	num := 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "ja",
+			SeriesTitle: "Web URL Series",
+			Category:    "Manga",
+			Number:      &num,
+			MaxChapter:  &num,
+			ChapterKey:  "1",
+			URL:         "/chapter/abc", // addressing url — must NEVER land in ComicInfo.Web
+			WebURL:      "https://mangadex.org/chapter/abc-real",
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+
+	filename, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	cbzPath := filepath.Join(storage, "Manga", "Web URL Series", filename)
+	ci, err := disk.ReadComicInfoFromCBZ(cbzPath)
+	if err != nil {
+		t.Fatalf("ReadComicInfoFromCBZ: %v", err)
+	}
+	if ci == nil {
+		t.Fatal("ReadComicInfoFromCBZ returned nil")
+	}
+	if ci.Web != "https://mangadex.org/chapter/abc-real" {
+		t.Errorf("ComicInfo.Web = %q, want the WebURL value %q (never the addressing URL %q)",
+			ci.Web, "https://mangadex.org/chapter/abc-real", "/chapter/abc")
+	}
+}
+
+// TestRenderChapterWebURLEmpty verifies ComicInfo.Web is omitted (empty) when
+// Meta.WebURL is "" — even when Meta.URL (the addressing key) is set. Proves
+// the fallback is "" (omitempty), never a silent fallback onto the addressing
+// URL.
+func TestRenderChapterWebURLEmpty(t *testing.T) {
+	t.Parallel()
+
+	storage := t.TempDir()
+	num := 1.0
+	req := disk.RenderRequest{
+		Storage: storage,
+		Meta: disk.RenderMeta{
+			Provider:    "mangadex",
+			Language:    "ja",
+			SeriesTitle: "No Web URL Series",
+			Category:    "Manga",
+			Number:      &num,
+			MaxChapter:  &num,
+			ChapterKey:  "1",
+			URL:         "/chapter/abc",
+			WebURL:      "",
+		},
+		Pages: []fetcher.PageImage{{Data: []byte{0x00}, Ext: "jpg"}},
+	}
+
+	filename, err := disk.RenderChapter(req)
+	if err != nil {
+		t.Fatalf("RenderChapter: %v", err)
+	}
+
+	cbzPath := filepath.Join(storage, "Manga", "No Web URL Series", filename)
+	ci, err := disk.ReadComicInfoFromCBZ(cbzPath)
+	if err != nil {
+		t.Fatalf("ReadComicInfoFromCBZ: %v", err)
+	}
+	if ci == nil {
+		t.Fatal("ReadComicInfoFromCBZ returned nil")
+	}
+	if ci.Web != "" {
+		t.Errorf("ComicInfo.Web = %q, want empty (must never fall back to the addressing URL %q)", ci.Web, "/chapter/abc")
+	}
+}
+
 // TestBuildProviderOrderDedup verifies that buildProviderOrder deduplicates
 // providers, keeping the entry with higher importance. This exercises the
 // "already seen" branch in the dedup loop.

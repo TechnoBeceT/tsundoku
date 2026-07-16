@@ -817,6 +817,60 @@ func TestIngest_AddSeries_SeriesProviderURL(t *testing.T) {
 	}
 }
 
+// TestIngest_AddSeries_WebURL is the realUrl round-trip proof: the manga's
+// realUrl (sourceengine.MangaDetails.RealURL) lands on SeriesProvider.WebURL,
+// and each chapter's realUrl (sourceengine.Chapter.RealURL) lands on the
+// corresponding ProviderChapter.WebURL — both distinct from their sibling URL
+// (addressing) fields, which keep storing the source-relative key.
+func TestIngest_AddSeries_WebURL(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		sourceID       int64 = 92
+		mangaURL             = "/manga/web-url-proof"
+		canonicalTitle       = "Web URL Proof"
+		mangaRealURL         = "https://source.example/manga/web-url-proof"
+		chapterRealURL       = "https://source.example/manga/web-url-proof/ch/1"
+	)
+
+	chapters := []sourceengine.Chapter{
+		{
+			Name:    "Chapter 1",
+			Number:  1,
+			URL:     chapterURL(1),
+			RealURL: chapterRealURL,
+		},
+	}
+	fc := enginefake.New(
+		enginefake.WithChapters(sourceID, mangaURL, chapters),
+		enginefake.WithMangaDetails(sourceID, mangaURL, sourceengine.MangaDetails{
+			Title:   canonicalTitle,
+			RealURL: mangaRealURL,
+		}),
+	)
+	ing := ingest.NewIngest(fc, client)
+	if _, err := ing.AddSeries(ctx, sourceID, mangaURL, canonicalTitle, ""); err != nil {
+		t.Fatalf("AddSeries: %v", err)
+	}
+
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.WebURL != mangaRealURL {
+		t.Errorf("SeriesProvider.WebURL: got %q, want %q", sp.WebURL, mangaRealURL)
+	}
+	if sp.URL != mangaURL {
+		t.Errorf("SeriesProvider.URL: got %q, want %q (addressing url must be unaffected)", sp.URL, mangaURL)
+	}
+
+	pc := client.ProviderChapter.Query().Where(entproviderchapter.SeriesProviderID(sp.ID)).OnlyX(ctx)
+	if pc.WebURL != chapterRealURL {
+		t.Errorf("ProviderChapter.WebURL: got %q, want %q", pc.WebURL, chapterRealURL)
+	}
+	if pc.URL != chapterURL(1) {
+		t.Errorf("ProviderChapter.URL: got %q, want %q (addressing url must be unaffected)", pc.URL, chapterURL(1))
+	}
+}
+
 // TestIngest_AddSeries_SourceLinkRendersEndToEnd is the end-to-end proof that
 // ingest WRITES SeriesProvider.URL (this file) and series.GetSeries's
 // sourceLinks READS it (internal/series/dto.go). Uses the real series.Service

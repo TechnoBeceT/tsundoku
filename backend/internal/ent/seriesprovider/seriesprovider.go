@@ -29,6 +29,8 @@ const (
 	FieldLanguage = "language"
 	// FieldURL holds the string denoting the url field in the database.
 	FieldURL = "url"
+	// FieldWebURL holds the string denoting the web_url field in the database.
+	FieldWebURL = "web_url"
 	// FieldTitle holds the string denoting the title field in the database.
 	FieldTitle = "title"
 	// FieldMetadata holds the string denoting the metadata field in the database.
@@ -97,6 +99,7 @@ var Columns = []string{
 	FieldScanlator,
 	FieldLanguage,
 	FieldURL,
+	FieldWebURL,
 	FieldTitle,
 	FieldMetadata,
 	FieldStatus,
@@ -127,6 +130,8 @@ var (
 	DefaultLanguage string
 	// DefaultURL holds the default value on creation for the "url" field.
 	DefaultURL string
+	// DefaultWebURL holds the default value on creation for the "web_url" field.
+	DefaultWebURL string
 	// DefaultTitle holds the default value on creation for the "title" field.
 	DefaultTitle string
 	// DefaultMetadata holds the default value on creation for the "metadata" field.
@@ -192,6 +197,11 @@ func ByLanguage(opts ...sql.OrderTermOption) OrderOption {
 // ByURL orders the results by the url field.
 func ByURL(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldURL, opts...).ToFunc()
+}
+
+// ByWebURL orders the results by the web_url field.
+func ByWebURL(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldWebURL, opts...).ToFunc()
 }
 
 // ByTitle orders the results by the title field.

@@ -39,13 +39,17 @@ data class MangaDetailsDto(
     val realUrl: String?,
 )
 
-/** A chapter of a manga — addressed by its source-relative [url]. */
+/**
+ * A chapter of a manga — addressed by its source-relative [url]. See [MangaEntryDto] for the
+ * [url] (addressing) vs [realUrl] (browser-clickable) distinction — the same rule applies here.
+ */
 data class ChapterDto(
     val url: String,
     val name: String,
     val number: Float,
     val scanlator: String?,
     val uploadDate: Long,
+    val realUrl: String?,
 )
 
 /**

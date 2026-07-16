@@ -69,8 +69,17 @@ type RenderMeta struct {
 	// UploadDate is when the provider published this chapter.
 	UploadDate *time.Time
 
-	// URL is the provider-supplied canonical URL for this chapter.
+	// URL is the provider-supplied canonical URL for this chapter. This is the
+	// source-relative ADDRESSING url — NEVER render it into ComicInfo.Web; see
+	// WebURL for the browser-clickable one.
 	URL string
+
+	// WebURL is the fully-qualified, browser-clickable chapter URL (Mihon's
+	// HttpSource.getChapterUrl, stored as ProviderChapter.web_url at ingest).
+	// This is what feeds ComicInfo.Web (Komga's "read online" link) — distinct
+	// from URL above. "" when unresolved (the field is simply omitted from
+	// ComicInfo).
+	WebURL string
 
 	// Author is the series author (for ComicInfo Writer field).
 	Author string

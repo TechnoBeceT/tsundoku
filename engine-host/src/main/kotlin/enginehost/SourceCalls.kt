@@ -112,7 +112,7 @@ object SourceCalls {
                     // BEFORE recognition runs — mirrors Chapter.kt:172. Deprecated upstream, but
                     // still honored so a source relying on it isn't silently broken here.
                     http?.prepareNewChapter(chapter, seed)
-                    chapter.toChapterDto(mangaTitle)
+                    chapter.toChapterDto(mangaTitle, http)
                 },
             )
         }
@@ -224,7 +224,10 @@ object SourceCalls {
      *    whitespace-only scanlator never drifts against Tsundoku's EqualFold provider matching.
      * `prepareNewChapter` (I1) runs BEFORE this, in [chapters], since it needs the SManga seed.
      */
-    private fun SChapter.toChapterDto(mangaTitle: String): ChapterDto {
+    private fun SChapter.toChapterDto(
+        mangaTitle: String,
+        http: HttpSource?,
+    ): ChapterDto {
         val recognizedNumber = ChapterRecognition.parseChapterNumber(mangaTitle, name, chapter_number.toDouble())
         return ChapterDto(
             url = url,
@@ -232,6 +235,7 @@ object SourceCalls {
             number = recognizedNumber.toFloat(),
             scanlator = scanlator?.ifBlank { null }?.trim(),
             uploadDate = date_upload,
+            realUrl = http?.let { runCatching { it.getChapterUrl(this) }.getOrNull() },
         )
     }
 }

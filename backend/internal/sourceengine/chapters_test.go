@@ -24,8 +24,8 @@ func TestChapters_Success(t *testing.T) {
 		}
 		writeJSON(t, w, http.StatusOK, map[string]any{
 			"chapters": []map[string]any{
-				{"url": "/manga/1/ch/1", "name": "Chapter 1", "number": 1.0, "scanlator": "Reset Scans", "uploadDate": int64(1700000000000)},
-				{"url": "/manga/1/ch/2", "name": "Chapter 2", "number": 2.0, "scanlator": nil, "uploadDate": int64(0)},
+				{"url": "/manga/1/ch/1", "name": "Chapter 1", "number": 1.0, "scanlator": "Reset Scans", "uploadDate": int64(1700000000000), "realUrl": "https://source.test/manga/1/ch/1"},
+				{"url": "/manga/1/ch/2", "name": "Chapter 2", "number": 2.0, "scanlator": nil, "uploadDate": int64(0), "realUrl": nil},
 			},
 		})
 	}))
@@ -36,8 +36,8 @@ func TestChapters_Success(t *testing.T) {
 		t.Fatalf("Chapters: %v", err)
 	}
 	want := []sourceengine.Chapter{
-		{URL: "/manga/1/ch/1", Name: "Chapter 1", Number: 1.0, Scanlator: "Reset Scans", UploadDate: 1700000000000},
-		{URL: "/manga/1/ch/2", Name: "Chapter 2", Number: 2.0, Scanlator: "", UploadDate: 0},
+		{URL: "/manga/1/ch/1", Name: "Chapter 1", Number: 1.0, Scanlator: "Reset Scans", UploadDate: 1700000000000, RealURL: "https://source.test/manga/1/ch/1"},
+		{URL: "/manga/1/ch/2", Name: "Chapter 2", Number: 2.0, Scanlator: "", UploadDate: 0, RealURL: ""},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Chapters = %+v, want %+v", got, want)

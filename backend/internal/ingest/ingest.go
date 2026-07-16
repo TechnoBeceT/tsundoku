@@ -322,6 +322,11 @@ func (i *Ingest) upsertSeriesProvider(
 	}
 	srcTitle := meta.Title
 	cover := meta.ThumbnailURL
+	// webURL is the fully-qualified, browser-clickable manga URL (distinct
+	// from the url PARAMETER above, which is the source-relative addressing
+	// key) — stored so an adopted series' "View on source" link and Komga's
+	// ComicInfo <Web> field work without a live engine call.
+	webURL := meta.RealURL
 
 	provider := providerKey(sourceID)
 
@@ -354,7 +359,7 @@ func (i *Ingest) upsertSeriesProvider(
 		update := i.db.SeriesProvider.UpdateOne(existing).
 			SetScanlator(scanlator).
 			SetURL(url)
-		applyOptionalSeriesProviderFields(update, srcTitle, cover, providerName)
+		applyOptionalSeriesProviderFields(update, srcTitle, cover, webURL, providerName)
 		updated, updateErr := update.Save(ctx)
 		if updateErr != nil {
 			// Defensive path: reachable only on DB connection loss mid-operation.
@@ -371,6 +376,7 @@ func (i *Ingest) upsertSeriesProvider(
 		SetTitle(srcTitle).
 		SetCoverURL(cover).
 		SetURL(url).
+		SetWebURL(webURL).
 		// importance=0 is the schema default; multi-source ranking is M3/M4.
 		Save(ctx)
 	if createErr != nil {
@@ -381,21 +387,24 @@ func (i *Ingest) upsertSeriesProvider(
 	return created, nil
 }
 
-// applyOptionalSeriesProviderFields guards the MangaDetails-sourced
+// applyOptionalSeriesProviderFields guards the four MangaDetails-sourced
 // SeriesProvider.Update fields that must NEVER be blanked by a transient
-// empty engine response: title/cover are only set when non-empty (a blank
-// MangaDetails hiccup must not overwrite a previously-stored good value),
-// and providerName only when a Sources() lookup actually resolved one (a
-// transient failure yields "" and must not clobber a stored name).
+// empty engine response: title/cover/webURL are only set when non-empty (a
+// blank MangaDetails hiccup must not overwrite a previously-stored good
+// value), and providerName only when a Sources() lookup actually resolved
+// one (a transient failure yields "" and must not clobber a stored name).
 // Extracted from upsertSeriesProvider's update branch to keep that
 // function's cyclomatic complexity within the fleet lint budget (§2 DRY is a
 // side benefit, not the primary reason).
-func applyOptionalSeriesProviderFields(update *ent.SeriesProviderUpdateOne, srcTitle, cover, providerName string) {
+func applyOptionalSeriesProviderFields(update *ent.SeriesProviderUpdateOne, srcTitle, cover, webURL, providerName string) {
 	if srcTitle != "" {
 		update.SetTitle(srcTitle)
 	}
 	if cover != "" {
 		update.SetCoverURL(cover)
+	}
+	if webURL != "" {
+		update.SetWebURL(webURL)
 	}
 	if providerName != "" {
 		update.SetProviderName(providerName)
@@ -672,6 +681,7 @@ func mapToFetchedChapters(chs []sourceengine.Chapter, scanlator string) []chapte
 			Number: num,
 			Name:   ch.Name,
 			URL:    ch.URL,
+			WebURL: ch.RealURL,
 			// Reversed: the raw slice is newest-first (index 0 = newest), so the
 			// oldest chapter (the LAST element) must get index 0 to match
 			// Suwayomi's sourceOrder convention — see the doc comment above.

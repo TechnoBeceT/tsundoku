@@ -85,7 +85,8 @@ type MangaDetails struct {
 // Chapter is one chapter of a manga, keyed by its source-relative URL.
 type Chapter struct {
 	// URL is the source-relative chapter URL — the stable key for this
-	// chapter (NEVER an engine-assigned id).
+	// chapter (NEVER an engine-assigned id). This is the ADDRESSING url, NOT
+	// a clickable browser link — see RealURL.
 	URL string `json:"url"`
 	// Name is the chapter's display name (e.g. "Chapter 1").
 	Name string `json:"name"`
@@ -97,6 +98,11 @@ type Chapter struct {
 	// UploadDate is the chapter's publication date as milliseconds since the
 	// Unix epoch; 0 when the source omits it.
 	UploadDate int64 `json:"uploadDate"`
+	// RealURL is the fully-qualified, browser-clickable URL for this chapter
+	// (Mihon's HttpSource.getChapterUrl) — feeds Komga's ComicInfo <Web>
+	// field. Distinct from URL — never used for addressing. "" when the
+	// engine host could not resolve one.
+	RealURL string `json:"realUrl"`
 }
 
 // Page is one page of a chapter. The image address is the SOURCE's own page

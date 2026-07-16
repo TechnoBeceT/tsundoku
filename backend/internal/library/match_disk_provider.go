@@ -306,6 +306,7 @@ func (s *Service) relabelOverlap(ctx context.Context, row *ent.Series, diskSP, n
 			ChapterKey:          pc.ChapterKey,
 			UploadDate:          pc.ProviderUploadDate,
 			URL:                 pc.URL,
+			WebURL:              pc.WebURL,
 			Importance:          newSP.Importance,
 			SeriesProviderTitle: newSP.Title,
 		}
