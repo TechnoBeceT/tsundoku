@@ -233,12 +233,12 @@ describe('useSeriesDetail — matchDiskProvider', () => {
     const { refresh, matchDiskProvider } = useSeriesDetail('series-1')
     await refresh()
 
-    await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, importance: 1, scanlator: '' })
+    await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1, scanlator: '' })
 
     const postCall = calls.find(c => c.path === '/api/series/{id}/providers/{providerId}/match')
     expect(postCall).toBeDefined()
     expect(postCall!.params).toEqual({ id: 'series-1', providerId: 'disk-provider-1' })
-    expect(postCall!.body).toEqual({ source: 'src-1', mangaId: 42, importance: 1, scanlator: '' })
+    expect(postCall!.body).toEqual({ source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1, scanlator: '' })
   })
 
   it('reseeds series directly from the response on success, without a second GET', async () => {
@@ -247,7 +247,7 @@ describe('useSeriesDetail — matchDiskProvider', () => {
     expect(series.value?.providers[0]?.linked).toBe(false)
 
     const getCountBefore = calls.filter(c => c.method === 'GET' && c.path === '/api/series/{id}').length
-    const ok = await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, importance: 1 })
+    const ok = await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
 
     expect(ok).toBe(true)
     expect(series.value?.providers).toHaveLength(1)
@@ -263,7 +263,7 @@ describe('useSeriesDetail — matchDiskProvider', () => {
     const { series, error, refresh, matchDiskProvider } = useSeriesDetail('series-1')
     await refresh()
 
-    const ok = await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, importance: 1 })
+    const ok = await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
 
     expect(ok).toBe(false)
     expect(error.value).toBe('match failed')
@@ -276,7 +276,7 @@ describe('useSeriesDetail — matchDiskProvider', () => {
     await refresh()
     expect(matchBusy.value).toBe(false)
 
-    const promise = matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, importance: 1 })
+    const promise = matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
     expect(matchBusy.value).toBe(true)
     await promise
 

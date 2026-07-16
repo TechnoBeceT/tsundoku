@@ -1,9 +1,9 @@
 /**
  * durationConversion — shared DurationValue ↔ integer-seconds/minutes
- * mappers, extracted so useSuwayomiSettings.ts and
- * useFlareSolverrSettings.ts (both of which map a backend field typed as a
- * plain integer unit onto the screen's friendly `{ value, unit }` picker)
- * never re-derive the same four conversions (§2 DRY).
+ * mappers, extracted so every settings composable that maps a backend field
+ * typed as a plain integer unit onto the screen's friendly `{ value, unit }`
+ * picker (e.g. useFlareSolverrSettings.ts) never re-derives the same four
+ * conversions (§2 DRY).
  */
 import type { DurationValue } from '~/components/screens/settings.types'
 

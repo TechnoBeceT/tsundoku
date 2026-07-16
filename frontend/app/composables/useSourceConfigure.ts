@@ -50,7 +50,10 @@ export interface DisplayRow extends ConfigRow {
 /** One resolved provider to adopt, in best-first order. */
 export interface ProviderRef {
   source: string
+  /** DEPRECATED, unused by the backend — see SearchCandidate.mangaId. */
   mangaId: number
+  /** Source-relative manga URL the backend addresses this manga by (P2 Suwayomi-removal). */
+  url: string
   scanlator: string
 }
 
@@ -327,11 +330,16 @@ export function useSourceConfigure(opts: {
     order.value = full
   }
 
-  /** Selected rows resolved to `{source, mangaId, scanlator}`, best-first. */
+  /** Selected rows resolved to `{source, mangaId, url, scanlator}`, best-first. */
   const orderedProviders = computed<ProviderRef[]>(() =>
     orderedKeys.value.map((k) => {
       const row = configRows.value.find(r => r.key === k)!
-      return { source: row.candidate.source, mangaId: row.candidate.mangaId, scanlator: row.scanlatorParam }
+      return {
+        source: row.candidate.source,
+        mangaId: row.candidate.mangaId,
+        url: row.candidate.url,
+        scanlator: row.scanlatorParam,
+      }
     }),
   )
 

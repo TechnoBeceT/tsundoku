@@ -23,6 +23,9 @@ export function mapCandidate(dto: SearchCandidateDTO): SearchCandidate {
     sourceName: dto.sourceName,
     lang: dto.lang,
     mangaId: dto.mangaId,
+    // The engine host addresses a manga by URL, not mangaId (P2 Suwayomi-removal)
+    // — every adopt/add-source/match request must carry this back.
+    url: dto.url,
     title: dto.title,
     thumbnailUrl: dto.thumbnailUrl,
   }

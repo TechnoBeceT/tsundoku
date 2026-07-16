@@ -56,8 +56,10 @@ type ProviderDTO = components['schemas']['Provider']
 export interface MatchDiskProviderPayload {
   /** Suwayomi source ID to attach. */
   source: string
-  /** Suwayomi-internal manga identifier within that source. */
+  /** DEPRECATED, unused by the backend — see SearchCandidate.mangaId. */
   mangaId: number
+  /** Source-relative manga URL the backend addresses this manga by (P2 Suwayomi-removal). */
+  url: string
   /** Priority to assign the newly-linked provider (higher = preferred). */
   importance: number
   /** Scanlation group to track; "" (or omitted) = all chapters from the source. */

@@ -5,11 +5,11 @@ import '../../assets/css/tokens/settings.css'
 
 /**
  * Stories for the extension "Configure" dialog. The dialog is presentation-only
- * (open + groups + §16 state in, change/toggle-enabled out), so every state is a
- * pure fixture: loaded (all variants across two language sources, one of which
- * is disabled), loading, error, empty, a per-row saving spinner, and the
- * per-language enable/disable toggle's own busy/error states. Flip the theme
- * toolbar for dark/light.
+ * (open + groups + §16 state in, change out), so every state is a pure
+ * fixture: loaded (all variants across two language sources), loading, error,
+ * empty, and a per-row saving spinner. The per-language enable/disable toggle
+ * is RETIRED — the engine host has no such concept. Flip the theme toolbar
+ * for dark/light.
  */
 const meta = {
   title: 'Settings/ExtensionPreferencesDialog',
@@ -23,18 +23,13 @@ const meta = {
     error: null,
     savingKey: null,
     saveError: null,
-    enablingKey: null,
-    enableError: null,
   },
 } satisfies Meta<typeof ExtensionPreferencesDialog>
 
 export default meta
 type Story = StoryObj<typeof meta>
 
-/**
- * Loaded — every control variant across two language sources. The second
- * (Japanese) source is DISABLED, so its enable/disable Switch renders off.
- */
+/** Loaded — every control variant across two language sources. */
 export const Loaded: Story = {}
 
 /** The initial load is in flight. */
@@ -44,7 +39,7 @@ export const Loading: Story = {
 
 /** A load failure. */
 export const LoadError: Story = {
-  args: { groups: [], error: 'Suwayomi was unreachable' },
+  args: { groups: [], error: 'The engine host was unreachable' },
 }
 
 /** An extension with no configurable preferences. */
@@ -54,20 +49,10 @@ export const Empty: Story = {
 
 /** §16 — a per-row write is in flight (the Data saver switch on src-en). */
 export const Saving: Story = {
-  args: { savingKey: 'src-en:0' },
+  args: { savingKey: 'src-en:dataSaver_en' },
 }
 
 /** §16 — a write failed; the error banners at the top of the dialog. */
 export const SaveError: Story = {
-  args: { saveError: 'Suwayomi rejected the change' },
-}
-
-/** The disabled language's enable/disable Switch write is in flight. */
-export const TogglingEnabled: Story = {
-  args: { enablingKey: 'src-ja' },
-}
-
-/** §16 — an enable/disable write failed; the error banners at the top. */
-export const ToggleEnabledError: Story = {
-  args: { enableError: 'Suwayomi rejected the change' },
+  args: { saveError: 'The engine host rejected the change' },
 }

@@ -328,8 +328,8 @@ describe('useScanLibrary', () => {
     calls = []
 
     await importWithMatches('/library/Manga/Foo', [
-      { source: 'src-1', mangaId: 42, scanlator: '' },
-      { source: 'src-2', mangaId: 7, scanlator: 'Asura Scans' },
+      { source: 'src-1', mangaId: 42, url: '/manga/42', scanlator: '' },
+      { source: 'src-2', mangaId: 7, url: '/manga/7', scanlator: 'Asura Scans' },
     ])
 
     const importCall = calls.find(c => c.path === '/api/library/import')
@@ -337,8 +337,8 @@ describe('useScanLibrary', () => {
     expect(importCall!.body).toEqual({
       path: '/library/Manga/Foo',
       matches: [
-        { source: 'src-1', mangaId: 42, scanlator: '' },
-        { source: 'src-2', mangaId: 7, scanlator: 'Asura Scans' },
+        { source: 'src-1', mangaId: 42, url: '/manga/42', scanlator: '' },
+        { source: 'src-2', mangaId: 7, url: '/manga/7', scanlator: 'Asura Scans' },
       ],
     })
   })

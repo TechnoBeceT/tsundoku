@@ -10,8 +10,7 @@ type Group = components['schemas']['SourcePreferencesGroup']
 
 /** A Switch preference (currently on). */
 export const switchPref: Preference = {
-  type: 'SwitchPreference',
-  position: 0,
+  type: 'SwitchPreferenceCompat',
   key: 'dataSaver_en',
   title: 'Data saver',
   summary: 'Load smaller, lower-quality images',
@@ -24,7 +23,6 @@ export const switchPref: Preference = {
 /** A List preference (single choice). */
 export const listPref: Preference = {
   type: 'ListPreference',
-  position: 1,
   key: 'thumbnailQuality_en',
   title: 'Thumbnail quality',
   summary: '',
@@ -37,7 +35,6 @@ export const listPref: Preference = {
 /** A MultiSelectList preference (subset selected). */
 export const multiPref: Preference = {
   type: 'MultiSelectListPreference',
-  position: 2,
   key: 'contentRating_en',
   title: 'Content rating',
   summary: 'Which ratings to include',
@@ -50,7 +47,6 @@ export const multiPref: Preference = {
 /** An EditText preference (currently empty). */
 export const editPref: Preference = {
   type: 'EditTextPreference',
-  position: 3,
   key: 'blockedGroups_en',
   title: 'Blocked groups',
   summary: 'Comma-separated scanlation groups to hide',
@@ -60,19 +56,18 @@ export const editPref: Preference = {
   entryValues: [],
 }
 
-/** One source's group covering all four control variants (enabled). */
+/** One source's group covering all four control variants. */
 export const preferenceGroup: Group = {
   sourceId: 'src-en',
   sourceName: 'MangaDex',
   lang: 'en',
-  enabled: true,
   preferences: [switchPref, listPref, multiPref, editPref],
 }
 
 /**
- * A two-language grouping (an extension backs one source per language) — the
- * second language is DISABLED, so stories + Vitest exercise the per-language
- * enable/disable Switch without a backend.
+ * A two-language grouping (an extension backs one source per language) — so
+ * stories + Vitest exercise a dialog rendering more than one source group
+ * without a backend.
  */
 export const preferenceGroups: Group[] = [
   preferenceGroup,
@@ -80,7 +75,6 @@ export const preferenceGroups: Group[] = [
     sourceId: 'src-ja',
     sourceName: 'MangaDex',
     lang: 'ja',
-    enabled: false,
-    preferences: [{ ...switchPref, position: 0, currentValue: false }],
+    preferences: [{ ...switchPref, currentValue: false }],
   },
 ]

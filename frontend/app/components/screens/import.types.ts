@@ -29,8 +29,17 @@ export interface SearchCandidate {
   sourceName: string
   /** Content language of the source (e.g. "en"). */
   lang: string
-  /** Suwayomi-internal manga identifier within the source. */
+  /** Suwayomi-internal manga identifier within the source (DEPRECATED, unused
+   *  by the backend since the P2 Suwayomi-removal cutover — kept for display/
+   *  cache-key purposes only; `url` is the real identity the backend addresses
+   *  a manga by, see below). */
   mangaId: number
+  /**
+   * Source-relative manga URL the engine host addresses this manga by (P2
+   * Suwayomi-removal). Every adopt/add-source/match request MUST send this
+   * back to the backend — `mangaId` alone no longer resolves a manga.
+   */
+  url: string
   /** Manga display title as returned by the source. */
   title: string
   /** Cover image URL, or "" → the initial-letter placeholder. */
@@ -64,8 +73,12 @@ export interface ChapterInspect {
 export interface AdoptProvider {
   /** Suwayomi source ID to adopt this series from. */
   source: string
-  /** Suwayomi-internal manga identifier within that source. */
+  /** Suwayomi-internal manga identifier within that source (DEPRECATED, unused
+   *  by the backend — see SearchCandidate.mangaId). Kept for wire compat. */
   mangaId: number
+  /** Source-relative manga URL the engine host addresses this manga by (P2
+   *  Suwayomi-removal) — REQUIRED for the backend to resolve the manga. */
+  url: string
   /** Priority weight — higher = preferred metadata/download source. */
   importance: number
   /**

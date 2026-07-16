@@ -12,7 +12,6 @@ import {
   repos,
   settingsCategories,
   sourcesSettings,
-  suwayomiConfig,
   systemInfo,
   upgradeStepsInProgress,
 } from '../../fixtures/settings'
@@ -33,7 +32,6 @@ const baseProps = {
   system: systemInfo,
   categories: settingsCategories,
   engine: engineInfo,
-  suwayomi: suwayomiConfig,
   flareSolverr: flareSolverrConfig,
   extensions: installedExtensions,
   availableExtensions,
@@ -46,7 +44,7 @@ const meta = {
   title: 'Screens/Settings',
   component: Settings,
   parameters: { layout: 'fullscreen' },
-  // The screen's required props (library/system/engine/suwayomi/…); the interactive
+  // The screen's required props (library/system/engine/flareSolverr/…); the interactive
   // stories pass these via the withPane wrapper, so this default satisfies the
   // CSF3 story typing (baseProps covers exactly the required set).
   args: baseProps,
@@ -90,8 +88,8 @@ export const Engine: Story = {
   render: () => withPane('engine', { upgradeSteps: upgradeStepsInProgress, upgrading: true }),
 }
 
-/** Suwayomi server config — read-only DB + SOCKS (off) + FlareSolverr (on). */
-export const SuwayomiConfig: Story = {
+/** Server config pane — the Tsundoku-owned FlareSolverr card (on). */
+export const ServerConfig: Story = {
   render: () => withPane('suwayomi'),
 }
 

@@ -119,7 +119,7 @@ describe('MatchSourceDialog', () => {
     await wrapper.findAll('button').find(b => b.text() === 'Attach sources')!.trigger('click')
 
     expect(wrapper.emitted('confirm')).toEqual([[
-      searchResults[0]!.candidates.map(c => ({ source: c.source, mangaId: c.mangaId, scanlator: '' })),
+      searchResults[0]!.candidates.map(c => ({ source: c.source, mangaId: c.mangaId, scanlator: '', url: c.url })),
     ]])
   })
 

@@ -1,24 +1,23 @@
 /**
  * useFlareSolverrSettings — GET/PATCH against /api/flaresolverr/settings
- * (QCAT-238, Tsundoku-owned FlareSolverr config — a SEPARATE endpoint from
- * useSuwayomiSettings.ts).
+ * (QCAT-238, Tsundoku-owned FlareSolverr config — its own endpoint, distinct
+ * from any Suwayomi-proxied settings the engine host might expose).
  *
  * Pins:
  *   1. GET maps the flat FlareSolverrSettings DTO onto the screen's
  *      FlareSolverrConfig, including the field renames (sessionName→session,
  *      asResponseFallback→fallback) and unit conversions (timeout seconds →
  *      DurationValue{unit:'s'}, sessionTtl minutes → DurationValue{unit:'m'}).
- *   2. save() PATCHes /api/flaresolverr/settings (NOT /api/suwayomi/settings)
- *      with the full config mapped back to the wire shape, and drives
- *      flareSolverrSave through idle → saving → success.
+ *   2. save() PATCHes /api/flaresolverr/settings with the full config mapped
+ *      back to the wire shape, and drives flareSolverrSave through
+ *      idle → saving → success.
  *   3. A save error surfaces the backend's { message } verbatim and does not
  *      clobber the still-loaded config.
  *
- * Non-vacuous: if the composable still pointed at /api/suwayomi/settings (a
- * copy-paste of useSuwayomiSettings.ts), the mocked GET/PATCH below — which
- * only answer /api/flaresolverr/settings — would return { data: null }, and
- * the config would stay at its all-default seed instead of the fixture's
- * `enabled: true` value.
+ * Non-vacuous: if the composable pointed at the wrong endpoint, the mocked
+ * GET/PATCH below — which only answer /api/flaresolverr/settings — would
+ * return { data: null }, and the config would stay at its all-default seed
+ * instead of the fixture's `enabled: true` value.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useFlareSolverrSettings } from './useFlareSolverrSettings'

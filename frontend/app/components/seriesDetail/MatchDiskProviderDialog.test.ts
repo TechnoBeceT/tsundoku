@@ -144,6 +144,7 @@ describe('MatchDiskProviderDialog', () => {
       mangaId: firstCandidate.mangaId,
       scanlator: scanlatorBreakdown[0]!.scanlator,
       importance: 3,
+      url: firstCandidate.url,
     }]])
   })
 
@@ -169,6 +170,7 @@ describe('MatchDiskProviderDialog', () => {
       mangaId: firstCandidate.mangaId,
       scanlator: '',
       importance: 1,
+      url: firstCandidate.url,
     }]])
   })
 
@@ -184,6 +186,7 @@ describe('MatchDiskProviderDialog', () => {
       mangaId: firstCandidate.mangaId,
       scanlator: '',
       importance: 1,
+      url: firstCandidate.url,
     }]])
   })
 

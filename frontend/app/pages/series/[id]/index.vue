@@ -303,7 +303,7 @@ function onPickCandidate(payload: { source: string, mangaId: number }): void {
   void linkLoadBreakdown(payload.source, payload.mangaId)
 }
 
-async function onMatchProviderConfirm(payload: { source: string, mangaId: number, scanlator: string, importance: number }): Promise<void> {
+async function onMatchProviderConfirm(payload: { source: string, mangaId: number, url: string, scanlator: string, importance: number }): Promise<void> {
   if (!matchTargetId.value) return
   const ok = await matchDiskProvider(matchTargetId.value, payload)
   if (ok) matchProviderOpen.value = false

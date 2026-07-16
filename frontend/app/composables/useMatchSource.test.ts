@@ -147,6 +147,7 @@ describe('useMatchSource', () => {
           mangaId: 42,
           title: 'Solo Leveling',
           thumbnailUrl: 'https://example.com/thumb.jpg',
+          url: 'https://mangadex.org/title/42',
         }],
       },
     ])
@@ -294,8 +295,8 @@ describe('useMatchSource', () => {
       const { batchAddProviders } = useMatchSource('series-1')
 
       const providers = [
-        { source: 'src-1', mangaId: 42, scanlator: '' },
-        { source: 'src-2', mangaId: 7, scanlator: 'Asura Scans' },
+        { source: 'src-1', mangaId: 42, url: '/manga/42', scanlator: '' },
+        { source: 'src-2', mangaId: 7, url: '/manga/7', scanlator: 'Asura Scans' },
       ]
       const result = await batchAddProviders(providers)
 
@@ -309,7 +310,7 @@ describe('useMatchSource', () => {
       nextBatchAddOk = false
       const { error, batchAddProviders } = useMatchSource('series-1')
 
-      const result = await batchAddProviders([{ source: 'src-1', mangaId: 42, scanlator: '' }])
+      const result = await batchAddProviders([{ source: 'src-1', mangaId: 42, url: '/manga/42', scanlator: '' }])
 
       expect(result).toBeNull()
       expect(error.value).toBe('add failed')
@@ -319,7 +320,7 @@ describe('useMatchSource', () => {
       const { saving, batchAddProviders } = useMatchSource('series-1')
       expect(saving.value).toBe(false)
 
-      const promise = batchAddProviders([{ source: 'src-1', mangaId: 42, scanlator: '' }])
+      const promise = batchAddProviders([{ source: 'src-1', mangaId: 42, url: '/manga/42', scanlator: '' }])
       expect(saving.value).toBe(true)
       await promise
 

@@ -253,6 +253,7 @@ const submit = (): void => {
     providers: reviewRows.value.map(s => ({
       source: s.row.candidate.source,
       mangaId: s.row.candidate.mangaId,
+      url: s.row.candidate.url,
       importance: s.importance,
       scanlator: s.row.scanlatorParam,
     })),
