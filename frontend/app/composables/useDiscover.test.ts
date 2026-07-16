@@ -58,7 +58,8 @@ vi.mock('~/utils/api/client', () => ({
               lang: 'en',
               mangaId: 42,
               title: 'Vinland Saga',
-              url: 'https://mangadex.org/title/42',
+              url: '/title/42',
+              realUrl: 'https://mangadex.org/title/42',
               thumbnailUrl: 'https://mangadex.org/covers/42/cover.jpg',
               // Search/Browse are lightweight — author/artist/description are
               // empty until loadDetails() forces the fetchManga mutation.
@@ -103,6 +104,15 @@ describe('useDiscover – candidate metadata mapping', () => {
     expect(c.author).toBe('')
     expect(c.description).toBe('')
   })
+
+  it('carries realUrl (the browser-clickable View-on-source link) straight off the DTO, distinct from the addressing url', async () => {
+    const { result } = useDiscover()
+    await vi.waitFor(() => expect(result.value.manga.length).toBe(1))
+
+    const c = result.value.manga[0]!
+    expect(c.url).toBe('/title/42')
+    expect(c.realUrl).toBe('https://mangadex.org/title/42')
+  })
 })
 
 describe('useDiscover – loadDetails (on-demand rich hover details)', () => {
@@ -129,7 +139,7 @@ describe('useDiscover – loadDetails (on-demand rich hover details)', () => {
 
     await loadDetails(result.value.manga[0]!)
 
-    expect(detailsCalls).toContainEqual({ query: { url: 'https://mangadex.org/title/42' } })
+    expect(detailsCalls).toContainEqual({ query: { url: '/title/42' } })
   })
 
   it('caches by mangaId — a second loadDetails call for the same candidate does not re-fetch', async () => {

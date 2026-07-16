@@ -24,9 +24,15 @@ type Candidate struct {
 	MangaID int
 	// Title is the raw title as returned by the source.
 	Title string
-	// URL is the provider-canonical URL for this manga (powers the
-	// "View on source" external link); empty when the source omits it.
+	// URL is the provider-canonical ADDRESSING url for this manga — what every
+	// adopt/add-source/match request sends back to identify it. NOT a
+	// clickable browser link; see RealURL.
 	URL string
+	// RealURL is the fully-qualified, browser-clickable URL for this manga
+	// (Mihon's HttpSource.getMangaUrl); powers the "View on source" external
+	// link. Distinct from URL — never used for addressing. Empty when the
+	// engine host could not resolve one.
+	RealURL string
 	// ThumbnailURL is the Tsundoku-relative cover proxy path
 	// ("/api/sources/{source}/manga/{mangaId}/cover"), or "" when the source
 	// provided no thumbnail at all (see thumbnailProxyPath in service.go).

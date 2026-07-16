@@ -663,7 +663,11 @@ func TestService_Search_CandidateFields(t *testing.T) {
 			{ID: 1, Name: "Source One", Lang: "en"},
 		},
 		searchResults: map[int64]sourceengine.SearchResult{
-			1: {Manga: []sourceengine.MangaEntry{{Title: "Attack on Titan", ThumbnailURL: "http://thumb.test/img.jpg"}}},
+			1: {Manga: []sourceengine.MangaEntry{{
+				Title:        "Attack on Titan",
+				ThumbnailURL: "http://thumb.test/img.jpg",
+				RealURL:      "https://source.test/manga/attack-on-titan",
+			}}},
 		},
 	}
 	svc := newService(fc)
@@ -694,6 +698,43 @@ func TestService_Search_CandidateFields(t *testing.T) {
 	const wantThumbnail = "http://thumb.test/img.jpg"
 	if c.ThumbnailURL != wantThumbnail {
 		t.Errorf("Candidate.ThumbnailURL: got %q, want %q (raw engine-host thumbnail URL, no proxy indirection)", c.ThumbnailURL, wantThumbnail)
+	}
+}
+
+// TestService_Search_CandidateFields_RealURL is the realUrl round-trip proof
+// for Search (split out from TestService_Search_CandidateFields to keep that
+// function's cyclomatic complexity within the fleet lint budget): the
+// browser-clickable "View on source" link is carried straight off
+// sourceengine.MangaEntry.RealURL onto SearchCandidateDTO.RealURL, distinct
+// from the addressing URL.
+func TestService_Search_CandidateFields_RealURL(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Source One", Lang: "en"},
+		},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{
+				Title:        "Attack on Titan",
+				ThumbnailURL: "http://thumb.test/img.jpg",
+				RealURL:      "https://source.test/manga/attack-on-titan",
+			}}},
+		},
+	}
+	svc := newService(fc)
+
+	got, err := svc.Search(context.Background(), "Attack on Titan", nil)
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	if len(got) == 0 || len(got[0].Candidates) == 0 {
+		t.Fatal("expected at least one group and candidate")
+	}
+	c := got[0].Candidates[0]
+	const wantRealURL = "https://source.test/manga/attack-on-titan"
+	if c.RealURL != wantRealURL {
+		t.Errorf("Candidate.RealURL: got %q, want %q (the browser-clickable View-on-source link, distinct from the addressing url)", c.RealURL, wantRealURL)
 	}
 }
 
@@ -773,8 +814,8 @@ func TestService_Browse_Popular(t *testing.T) {
 		popularResults: map[int64]sourceengine.SearchResult{
 			1: {
 				Manga: []sourceengine.MangaEntry{
-					{Title: "Solo Leveling", URL: "/manga/1", ThumbnailURL: "http://t/1"},
-					{Title: "Omniscient Reader", URL: "/manga/2"}, // ThumbnailURL omitted
+					{Title: "Solo Leveling", URL: "/manga/1", ThumbnailURL: "http://t/1", RealURL: "https://source.test/manga/solo-leveling"},
+					{Title: "Omniscient Reader", URL: "/manga/2"}, // ThumbnailURL + RealURL omitted
 				},
 				HasNextPage: true,
 			},
@@ -805,9 +846,19 @@ func TestService_Browse_Popular(t *testing.T) {
 	if c0.ThumbnailURL != wantThumbnail {
 		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want %q", c0.ThumbnailURL, wantThumbnail)
 	}
+	// realUrl is the browser-clickable "View on source" link, distinct from
+	// the addressing url.
+	const wantRealURL = "https://source.test/manga/solo-leveling"
+	if c0.RealURL != wantRealURL {
+		t.Errorf("Browse candidate[0].RealURL: got %q, want %q", c0.RealURL, wantRealURL)
+	}
 	// Omitted thumbnail → empty string.
 	if got.Manga[1].ThumbnailURL != "" {
 		t.Errorf("Browse candidate[1].ThumbnailURL: got %q, want empty", got.Manga[1].ThumbnailURL)
+	}
+	// Omitted realUrl → empty string too.
+	if got.Manga[1].RealURL != "" {
+		t.Errorf("Browse candidate[1].RealURL: got %q, want empty", got.Manga[1].RealURL)
 	}
 }
 
@@ -932,6 +983,7 @@ func TestService_MangaDetails_OK(t *testing.T) {
 				Artist:      "Jang Sung-rak",
 				Description: "A weak hunter gains power.",
 				Genres:      []string{"Action", "Fantasy"},
+				RealURL:     "https://source.test/manga/solo-leveling",
 			},
 		},
 	}
@@ -953,6 +1005,9 @@ func TestService_MangaDetails_OK(t *testing.T) {
 	}
 	if len(got.Genres) != 2 || got.Genres[0] != "Action" || got.Genres[1] != "Fantasy" {
 		t.Errorf("MangaDetails: Genres = %v, want [Action Fantasy]", got.Genres)
+	}
+	if got.RealURL != "https://source.test/manga/solo-leveling" {
+		t.Errorf("MangaDetails: RealURL = %q, want %q", got.RealURL, "https://source.test/manga/solo-leveling")
 	}
 }
 

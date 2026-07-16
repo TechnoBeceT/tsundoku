@@ -709,6 +709,68 @@ func TestIngest_AddSeries_SeriesProviderTitle(t *testing.T) {
 	}
 }
 
+// TestIngest_AddSeries_SeriesProviderEmptyMetaKeepsExisting is the
+// self-healer proof: a re-ingest whose MangaDetails response comes back with
+// a BLANK Title and ThumbnailURL (a transient engine hiccup that still
+// returns 200) must NOT blank the previously-stored good Title/CoverURL —
+// mirrors the pre-existing providerName != "" guard (TestIngest_
+// AddSeries_ProviderNameUnresolved's create-path sibling), extended to the
+// update path for title/cover.
+func TestIngest_AddSeries_SeriesProviderEmptyMetaKeepsExisting(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	const (
+		sourceID       int64 = 91
+		mangaURL             = "/manga/empty-meta-guard"
+		canonicalTitle       = "Empty Meta Guard"
+		sourceTitle          = "Empty Meta Guard (Source)"
+		sourceCover          = "https://engine.test/cover/91.jpg"
+	)
+
+	// ── Create path: a good title/cover is stored ─────────────────────────
+	fc := enginefake.New(
+		enginefake.WithChapters(sourceID, mangaURL, makeChapters(1)),
+		enginefake.WithMangaDetails(sourceID, mangaURL, sourceengine.MangaDetails{
+			Title:        sourceTitle,
+			ThumbnailURL: sourceCover,
+		}),
+	)
+	ing := ingest.NewIngest(fc, client)
+	if _, err := ing.AddSeries(ctx, sourceID, mangaURL, canonicalTitle, ""); err != nil {
+		t.Fatalf("first AddSeries: %v", err)
+	}
+
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Title != sourceTitle {
+		t.Fatalf("SeriesProvider.Title after create: got %q, want %q", sp.Title, sourceTitle)
+	}
+	if sp.CoverURL != sourceCover {
+		t.Fatalf("SeriesProvider.CoverURL after create: got %q, want %q", sp.CoverURL, sourceCover)
+	}
+
+	// ── Update path: a blank MangaDetails response must NOT blank either field ──
+	fc2 := enginefake.New(
+		enginefake.WithChapters(sourceID, mangaURL, makeChapters(1)),
+		enginefake.WithMangaDetails(sourceID, mangaURL, sourceengine.MangaDetails{Title: "", ThumbnailURL: ""}),
+	)
+	ing2 := ingest.NewIngest(fc2, client)
+	if _, err := ing2.AddSeries(ctx, sourceID, mangaURL, canonicalTitle, ""); err != nil {
+		t.Fatalf("second AddSeries (empty meta): %v", err)
+	}
+
+	sp = client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Title != sourceTitle {
+		t.Errorf("SeriesProvider.Title after empty-meta re-add: got %q, want %q (must NOT be blanked)", sp.Title, sourceTitle)
+	}
+	if sp.CoverURL != sourceCover {
+		t.Errorf("SeriesProvider.CoverURL after empty-meta re-add: got %q, want %q (must NOT be blanked)", sp.CoverURL, sourceCover)
+	}
+	if n := len(client.SeriesProvider.Query().AllX(ctx)); n != 1 {
+		t.Errorf("SeriesProvider count: got %d, want 1 (idempotent)", n)
+	}
+}
+
 // TestIngest_AddSeries_SeriesProviderURL is the CRUX test for the
 // URL-addressed migration: it proves SeriesProvider.URL is set from the url
 // ARGUMENT passed into AddSeries — never derived from the MangaDetails

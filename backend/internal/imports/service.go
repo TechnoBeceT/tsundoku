@@ -224,6 +224,7 @@ func newCandidateFromEntry(src sourceengine.Source, m sourceengine.MangaEntry) C
 		MangaID:      0,
 		Title:        m.Title,
 		URL:          m.URL,
+		RealURL:      m.RealURL,
 		ThumbnailURL: m.ThumbnailURL,
 		Genres:       []string{},
 	}
@@ -241,6 +242,7 @@ func newCandidateFromDetails(src sourceengine.Source, m sourceengine.MangaDetail
 		MangaID:      0,
 		Title:        m.Title,
 		URL:          m.URL,
+		RealURL:      m.RealURL,
 		ThumbnailURL: m.ThumbnailURL,
 		Author:       m.Author,
 		Artist:       m.Artist,
@@ -270,6 +272,7 @@ func newSearchCandidateDTO(c Candidate) SearchCandidateDTO {
 		MangaID:      c.MangaID,
 		Title:        c.Title,
 		URL:          c.URL,
+		RealURL:      c.RealURL,
 		ThumbnailURL: c.ThumbnailURL,
 		Author:       c.Author,
 		Artist:       c.Artist,

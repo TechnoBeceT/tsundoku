@@ -30,7 +30,8 @@ const make = (c: Partial<DiscoverCandidate> & Pick<DiscoverCandidate, 'mangaId' 
   sourceName: 'MangaDex',
   lang: 'en',
   thumbnailUrl: cover(c.mangaId),
-  url: `https://mangadex.org/title/${c.mangaId}`,
+  url: `/title/${c.mangaId}`,
+  realUrl: `https://mangadex.org/title/${c.mangaId}`,
   ...c,
 })
 

@@ -77,6 +77,9 @@ function mapCandidate(dto: SearchCandidateDTO): DiscoverCandidate {
     // sourceCoverProxyUrl's doc comment.
     thumbnailUrl: sourceCoverProxyUrl(dto.source, dto.thumbnailUrl),
     url: dto.url,
+    // Browser-clickable "View on source" link — distinct from `url`, which
+    // is the addressing key the backend requires back.
+    realUrl: dto.realUrl,
     description: dto.description,
     genres: dto.genres,
     author: dto.author,

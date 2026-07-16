@@ -32,11 +32,20 @@ type Source struct {
 // URL, never an opaque id.
 type MangaEntry struct {
 	// URL is the source-relative manga URL — the stable key for this manga.
+	// This is the ADDRESSING url (what every request sends back to identify
+	// the manga), NOT a clickable browser link — see RealURL.
 	URL string `json:"url"`
 	// Title is the manga's display title.
 	Title string `json:"title"`
 	// ThumbnailURL is the cover image URL; "" when the source omits it.
 	ThumbnailURL string `json:"thumbnailUrl"`
+	// RealURL is the fully-qualified, browser-clickable URL for this manga
+	// (Mihon's HttpSource.getMangaUrl) — powers the "View on source" external
+	// link. Distinct from URL: URL is source-relative addressing that may not
+	// even be an absolute URL for every source; RealURL is always meant to
+	// open in a browser. "" when the engine host could not resolve one (a
+	// non-HttpSource source, or a source whose request-building throws).
+	RealURL string `json:"realUrl"`
 }
 
 // SearchResult is one page of a search or catalogue-browse listing.
@@ -49,7 +58,8 @@ type SearchResult struct {
 
 // MangaDetails is the full metadata for one manga, keyed by URL.
 type MangaDetails struct {
-	// URL is the source-relative manga URL.
+	// URL is the source-relative manga URL. This is the ADDRESSING url, NOT a
+	// clickable browser link — see RealURL.
 	URL string `json:"url"`
 	// Title is the manga's display title.
 	Title string `json:"title"`
@@ -66,6 +76,10 @@ type MangaDetails struct {
 	Status string `json:"status"`
 	// ThumbnailURL is the cover image URL; "" when the source omits it.
 	ThumbnailURL string `json:"thumbnailUrl"`
+	// RealURL is the fully-qualified, browser-clickable URL for this manga
+	// (Mihon's HttpSource.getMangaUrl) — see MangaEntry.RealURL's doc comment
+	// for the distinction from URL. "" when unresolved.
+	RealURL string `json:"realUrl"`
 }
 
 // Chapter is one chapter of a manga, keyed by its source-relative URL.

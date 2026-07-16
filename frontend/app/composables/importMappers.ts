@@ -33,6 +33,9 @@ export function mapCandidate(dto: SearchCandidateDTO): SearchCandidate {
     // The engine host addresses a manga by URL, not mangaId (P2 Suwayomi-removal)
     // — every adopt/add-source/match request must carry this back.
     url: dto.url,
+    // The browser-clickable "View on source" link — distinct from `url` above,
+    // never sent back to the backend.
+    realUrl: dto.realUrl,
     title: dto.title,
     thumbnailUrl: sourceCoverProxyUrl(dto.source, dto.thumbnailUrl),
   }

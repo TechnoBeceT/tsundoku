@@ -45,7 +45,7 @@ object SourceCalls {
         runBlocking {
             val result = source.getSearchManga(page, query, FilterList())
             SearchResponse(
-                manga = result.mangas.map { it.toEntryDto() },
+                manga = result.mangas.map { it.toEntryDto(source) },
                 hasNextPage = result.hasNextPage,
             )
         }
@@ -58,7 +58,7 @@ object SourceCalls {
         runBlocking {
             val cat = source as? CatalogueSource ?: error("Source ${source.name} is not a CatalogueSource")
             val result = cat.getPopularManga(page)
-            SearchResponse(result.mangas.map { it.toEntryDto() }, result.hasNextPage)
+            SearchResponse(result.mangas.map { it.toEntryDto(source) }, result.hasNextPage)
         }
 
     /** Browse the source's latest-updates catalogue; returns url-addressed manga entries. */
@@ -69,7 +69,7 @@ object SourceCalls {
         runBlocking {
             val cat = source as? CatalogueSource ?: error("Source ${source.name} is not a CatalogueSource")
             val result = cat.getLatestUpdates(page)
-            SearchResponse(result.mangas.map { it.toEntryDto() }, result.hasNextPage)
+            SearchResponse(result.mangas.map { it.toEntryDto(source) }, result.hasNextPage)
         }
 
     /** Fetch full manga details for a source-relative url. */
@@ -80,7 +80,7 @@ object SourceCalls {
         runBlocking {
             val seed = SManga.create().apply { this.url = url }
             val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = true, fetchChapters = false)
-            update.manga.toDetailsDto(url)
+            update.manga.toDetailsDto(url, source)
         }
 
     /**
@@ -173,19 +173,35 @@ object SourceCalls {
             bytes to contentType
         }
 
-    private fun SManga.toEntryDto() = MangaEntryDto(url = url, title = title, thumbnailUrl = thumbnail_url)
+    /**
+     * Resolves the fully-qualified, browser-clickable url for [manga] via
+     * [HttpSource.getMangaUrl] — the "realUrl" the DTOs carry alongside the source-relative
+     * addressing [SManga.url]. Only an [HttpSource] exposes this call; any other [Source]
+     * (or a source whose request-building throws, e.g. a malformed seed url) yields null,
+     * never a thrown exception into the RPC handler.
+     */
+    private fun realMangaUrl(
+        source: Source,
+        manga: SManga,
+    ): String? = (source as? HttpSource)?.let { http -> runCatching { http.getMangaUrl(manga) }.getOrNull() }
 
-    private fun SManga.toDetailsDto(requestedUrl: String) =
-        MangaDetailsDto(
-            url = url.ifBlank { requestedUrl },
-            title = title,
-            author = author,
-            artist = artist,
-            description = description,
-            genres = getGenres().orEmpty(),
-            status = statusLabel(status),
-            thumbnailUrl = thumbnail_url,
-        )
+    private fun SManga.toEntryDto(source: Source) =
+        MangaEntryDto(url = url, title = title, thumbnailUrl = thumbnail_url, realUrl = realMangaUrl(source, this))
+
+    private fun SManga.toDetailsDto(
+        requestedUrl: String,
+        source: Source,
+    ) = MangaDetailsDto(
+        url = url.ifBlank { requestedUrl },
+        title = title,
+        author = author,
+        artist = artist,
+        description = description,
+        genres = getGenres().orEmpty(),
+        status = statusLabel(status),
+        thumbnailUrl = thumbnail_url,
+        realUrl = realMangaUrl(source, this),
+    )
 
     /**
      * Maps a raw extension [SChapter] to the wire [ChapterDto], applying the THREE Suwayomi

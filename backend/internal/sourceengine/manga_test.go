@@ -26,6 +26,7 @@ func TestMangaDetails_Success(t *testing.T) {
 			"genres":       []string{"Action", "Adventure"},
 			"status":       "ONGOING",
 			"thumbnailUrl": "https://x/cover.jpg",
+			"realUrl":      "https://example-source.test/manga/one-piece",
 		})
 	}))
 	defer srv.Close()
@@ -43,6 +44,7 @@ func TestMangaDetails_Success(t *testing.T) {
 		Genres:       []string{"Action", "Adventure"},
 		Status:       "ONGOING",
 		ThumbnailURL: "https://x/cover.jpg",
+		RealURL:      "https://example-source.test/manga/one-piece",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("MangaDetails = %+v, want %+v", got, want)

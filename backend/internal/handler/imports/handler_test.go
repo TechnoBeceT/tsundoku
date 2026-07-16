@@ -509,7 +509,7 @@ func TestSearch_JSONShape(t *testing.T) {
 	}
 	body := rec.Body.String()
 	// Verify camelCase keys that the OpenAPI schema requires.
-	for _, key := range []string{`"sourceName"`, `"mangaId"`, `"thumbnailUrl"`} {
+	for _, key := range []string{`"sourceName"`, `"mangaId"`, `"thumbnailUrl"`, `"realUrl"`} {
 		if !strings.Contains(body, key) {
 			t.Errorf("Search shape: body missing key %q: %s", key, body)
 		}
@@ -569,7 +569,7 @@ func TestBrowse_OK_FullRoundTrip(t *testing.T) {
 	}
 
 	// Verify the camelCase keys the OpenAPI schema requires are present on the wire.
-	assertBodyHasKeys(t, rec.Body.String(), `"url"`, `"hasNextPage"`, `"page"`, `"thumbnailUrl"`)
+	assertBodyHasKeys(t, rec.Body.String(), `"url"`, `"realUrl"`, `"hasNextPage"`, `"page"`, `"thumbnailUrl"`)
 }
 
 // assertBodyHasKeys asserts the response body contains each of the given JSON

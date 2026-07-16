@@ -29,9 +29,17 @@ type SearchCandidateDTO struct {
 	MangaID int `json:"mangaId"`
 	// Title is the manga's display title as returned by the source.
 	Title string `json:"title"`
-	// URL is the provider-canonical URL for this manga; powers the "View on
-	// source" external link. Empty string when the source does not provide one.
+	// URL is the provider-canonical ADDRESSING url for this manga — what
+	// every adopt/add-source/match request must send back to identify it.
+	// NOT a clickable browser link; see RealURL for that. Empty string when
+	// the source does not provide one.
 	URL string `json:"url"`
+	// RealURL is the fully-qualified, browser-clickable URL for this manga
+	// (Mihon's HttpSource.getMangaUrl) — powers the "View on source" external
+	// link. Distinct from URL: URL is the addressing key sent back to the
+	// backend, RealURL is only ever meant to be opened in a browser. Empty
+	// string when the engine host could not resolve one.
+	RealURL string `json:"realUrl"`
 	// ThumbnailURL is Tsundoku's OWN cover-proxy path
 	// ("/api/sources/{source}/manga/{mangaId}/cover"), never Suwayomi's raw
 	// (Suwayomi-relative) thumbnail URL — rendering that directly against

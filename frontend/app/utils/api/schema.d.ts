@@ -2430,8 +2430,21 @@ export interface components {
             mangaId: number;
             /** @description Manga display title as returned by the source. */
             title: string;
-            /** @description Provider-canonical URL for this manga (powers the "View on source" link); empty string when not provided. */
+            /**
+             * @description Provider-canonical ADDRESSING url for this manga — what every adopt/
+             *     add-source/match request must send back to identify it. NOT a
+             *     clickable browser link; see realUrl for that. Empty string when not
+             *     provided.
+             */
             url: string;
+            /**
+             * @description Fully-qualified, browser-clickable URL for this manga (Mihon's
+             *     HttpSource.getMangaUrl); powers the "View on source" external link.
+             *     Distinct from url (the addressing key) — never send this back to
+             *     the backend. Empty string when the engine host could not resolve
+             *     one.
+             */
+            realUrl: string;
             /**
              * @description The engine host's own resolved cover image URL, used verbatim (directly
              *     fetchable). Empty string when the source provided no thumbnail at all.

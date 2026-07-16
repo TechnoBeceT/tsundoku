@@ -196,7 +196,7 @@ describe('Import — adopt() with per-scanlator rows', () => {
  * guard: a group whose `title` differs from its first candidate's `title`.
  */
 describe('Import — blanked-title adopt fallback uses the group title', () => {
-  const groupTitleCand: SearchCandidate = { source: 'gt1', sourceName: 'MangaDex', lang: 'en', mangaId: 501, url: '/manga/501', title: 'First Candidate Title', thumbnailUrl: '' }
+  const groupTitleCand: SearchCandidate = { source: 'gt1', sourceName: 'MangaDex', lang: 'en', mangaId: 501, url: '/manga/501', realUrl: '', title: 'First Candidate Title', thumbnailUrl: '' }
   const groupWithDistinctTitle: SearchGroup = { title: 'Canonical Group Title', candidates: [groupTitleCand] }
 
   it('falls back to the group title (not the first candidate title) when the Series-title input is cleared', async () => {
@@ -247,10 +247,10 @@ describe('Import — blanked-title adopt fallback uses the group title', () => {
 // search titles — the real owner-reported scenario the tray fixes. Comix
 // (candB) is returned by BOTH searches (same source:mangaId), proving the
 // tray's cross-group dedupe.
-const candA: SearchCandidate = { source: 's1', sourceName: 'Comic Asura', lang: 'en', mangaId: 1, url: '/manga/1', title: 'The Blood of the Butterfly', thumbnailUrl: '' }
-const candB: SearchCandidate = { source: 's2', sourceName: 'Comix', lang: 'en', mangaId: 2, url: '/manga/2', title: 'The Blood of the Butterfly', thumbnailUrl: '' }
-const candC: SearchCandidate = { source: 's9', sourceName: 'MangaDex', lang: 'en', mangaId: 9, url: '/manga/9', title: 'Some Other Manga', thumbnailUrl: '' }
-const candD: SearchCandidate = { source: 's3', sourceName: 'KaliScan', lang: 'en', mangaId: 3, url: '/manga/3', title: 'Blood and Butterflies', thumbnailUrl: '' }
+const candA: SearchCandidate = { source: 's1', sourceName: 'Comic Asura', lang: 'en', mangaId: 1, url: '/manga/1', realUrl: '', title: 'The Blood of the Butterfly', thumbnailUrl: '' }
+const candB: SearchCandidate = { source: 's2', sourceName: 'Comix', lang: 'en', mangaId: 2, url: '/manga/2', realUrl: '', title: 'The Blood of the Butterfly', thumbnailUrl: '' }
+const candC: SearchCandidate = { source: 's9', sourceName: 'MangaDex', lang: 'en', mangaId: 9, url: '/manga/9', realUrl: '', title: 'Some Other Manga', thumbnailUrl: '' }
+const candD: SearchCandidate = { source: 's3', sourceName: 'KaliScan', lang: 'en', mangaId: 3, url: '/manga/3', realUrl: '', title: 'Blood and Butterflies', thumbnailUrl: '' }
 
 const g1: SearchGroup = { title: 'The Blood of the Butterfly', candidates: [candA, candB] }
 const g2: SearchGroup = { title: 'Some Other Manga', candidates: [candC] }

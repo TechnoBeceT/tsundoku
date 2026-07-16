@@ -37,9 +37,17 @@ export interface SearchCandidate {
   /**
    * Source-relative manga URL the engine host addresses this manga by (P2
    * Suwayomi-removal). Every adopt/add-source/match request MUST send this
-   * back to the backend — `mangaId` alone no longer resolves a manga.
+   * back to the backend — `mangaId` alone no longer resolves a manga. NOT a
+   * clickable browser link; see `realUrl` for that.
    */
   url: string
+  /**
+   * Fully-qualified, browser-clickable URL for this manga (Mihon's
+   * `getMangaUrl`) — the "View on source" external link target. Distinct
+   * from `url`: never send this back to the backend. "" when the source
+   * could not resolve one.
+   */
+  realUrl: string
   /** Manga display title as returned by the source. */
   title: string
   /** Cover image URL, or "" → the initial-letter placeholder. */

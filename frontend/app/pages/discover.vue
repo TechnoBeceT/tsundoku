@@ -58,11 +58,16 @@ function openImport(candidate: DiscoverCandidate): void {
   })
 }
 
-/** Opens a candidate's provider-canonical link in a new tab (noopener). Lives in
- *  the script (not an inline template handler) so `window` resolves to the DOM
- *  global rather than a template binding. `isHttpUrl` blocks non-http(s) schemes. */
+/** Opens a candidate's browser-clickable "View on source" link (`realUrl`,
+ *  NOT the source-relative addressing `url`) in a new tab (noopener). Lives
+ *  in the script (not an inline template handler) so `window` resolves to
+ *  the DOM global rather than a template binding. `isHttpUrl` blocks
+ *  non-http(s) schemes — `realUrl` still comes from untrusted upstream data,
+ *  same as `url` before it. In practice DiscoverCard only emits this event
+ *  when `realUrl` is already truthy (the link is hidden otherwise), but the
+ *  guard stays as defense-in-depth. */
 function openSourceLink(candidate: DiscoverCandidate): void {
-  if (isHttpUrl(candidate.url)) window.open(candidate.url, '_blank', 'noopener')
+  if (isHttpUrl(candidate.realUrl)) window.open(candidate.realUrl, '_blank', 'noopener')
 }
 
 /** Debounce window for the hover-details fetch — long enough that scrubbing

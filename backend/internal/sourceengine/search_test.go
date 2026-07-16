@@ -15,8 +15,8 @@ import (
 func searchResponseBody() map[string]any {
 	return map[string]any{
 		"manga": []map[string]any{
-			{"url": "/manga/1", "title": "One Piece", "thumbnailUrl": "https://x/cover.jpg"},
-			{"url": "/manga/2", "title": "Naruto", "thumbnailUrl": nil},
+			{"url": "/manga/1", "title": "One Piece", "thumbnailUrl": "https://x/cover.jpg", "realUrl": "https://example-source.test/manga/one-piece"},
+			{"url": "/manga/2", "title": "Naruto", "thumbnailUrl": nil, "realUrl": nil},
 		},
 		"hasNextPage": true,
 	}
@@ -25,8 +25,8 @@ func searchResponseBody() map[string]any {
 func wantSearchResult() sourceengine.SearchResult {
 	return sourceengine.SearchResult{
 		Manga: []sourceengine.MangaEntry{
-			{URL: "/manga/1", Title: "One Piece", ThumbnailURL: "https://x/cover.jpg"},
-			{URL: "/manga/2", Title: "Naruto", ThumbnailURL: ""},
+			{URL: "/manga/1", Title: "One Piece", ThumbnailURL: "https://x/cover.jpg", RealURL: "https://example-source.test/manga/one-piece"},
+			{URL: "/manga/2", Title: "Naruto", ThumbnailURL: "", RealURL: ""},
 		},
 		HasNextPage: true,
 	}
