@@ -78,12 +78,12 @@ describe('MatchDiskProviderDialog', () => {
     }
   })
 
-  it('selecting a candidate emits pickCandidate with its source and mangaId', async () => {
+  it('selecting a candidate emits pickCandidate with its source, mangaId, and url', async () => {
     const wrapper = mountDialog()
     await wrapper.find('.group').trigger('click')
     await wrapper.find(`[aria-label="Toggle ${firstCandidate.sourceName}"]`).trigger('click')
 
-    expect(wrapper.emitted('pickCandidate')).toEqual([[{ source: firstCandidate.source, mangaId: firstCandidate.mangaId }]])
+    expect(wrapper.emitted('pickCandidate')).toEqual([[{ source: firstCandidate.source, mangaId: firstCandidate.mangaId, url: firstCandidate.url }]])
   })
 
   it('deselecting the chosen candidate hides the breakdown section again', async () => {
@@ -102,8 +102,8 @@ describe('MatchDiskProviderDialog', () => {
     await wrapper.find(`[aria-label="Toggle ${secondCandidate.sourceName}"]`).trigger('click')
 
     expect(wrapper.emitted('pickCandidate')).toEqual([
-      [{ source: firstCandidate.source, mangaId: firstCandidate.mangaId }],
-      [{ source: secondCandidate.source, mangaId: secondCandidate.mangaId }],
+      [{ source: firstCandidate.source, mangaId: firstCandidate.mangaId, url: firstCandidate.url }],
+      [{ source: secondCandidate.source, mangaId: secondCandidate.mangaId, url: secondCandidate.url }],
     ])
   })
 

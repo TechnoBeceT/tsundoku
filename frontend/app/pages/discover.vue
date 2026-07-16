@@ -19,8 +19,9 @@
  *   @set-type        → setType(type)
  *   @page            → loadPage(n)
  *   @retry           → retry()
- *   @inspect         → navigateTo /import?source=&mangaId=&title= (Task 6 reads these)
- *   @adopt           → navigateTo /import?source=&mangaId=&title= (same hand-off)
+ *   @inspect         → navigateTo /import?source=&mangaId=&url=&title= (Task 6 reads these;
+ *                      `url` is REQUIRED for the seeded inspect to fire, P2 Suwayomi-removal)
+ *   @adopt           → navigateTo /import?source=&mangaId=&url=&title= (same hand-off)
  *   @open-source-link → window.open external tab (noopener)
  *   @hover           → debounced loadDetails(candidate) — forces Suwayomi to
  *                      fetch the hovered card's rich metadata (author/artist/
@@ -51,6 +52,7 @@ function openImport(candidate: DiscoverCandidate): void {
     query: {
       source: candidate.source,
       mangaId: String(candidate.mangaId),
+      url: candidate.url,
       title: candidate.title,
     },
   })

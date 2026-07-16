@@ -35,7 +35,8 @@
  *
  * loadDetails(candidate) FORCES Suwayomi to fetch full metadata
  * (author/artist/description/genres) for one candidate via
- * `GET /api/sources/{sourceId}/manga/{mangaId}/details` — Search/Browse only
+ * `GET /api/sources/{sourceId}/manga/{mangaId}/details?url=` (`url` is
+ * REQUIRED, P2 Suwayomi-removal) — Search/Browse only
  * ever return the lightweight fields, so the hover preview stays empty until
  * this is called. It is on-demand and cached: a mangaId whose details already
  * loaded (or are currently loading) is a no-op, so repeatedly hovering the
@@ -170,7 +171,10 @@ export function useDiscover() {
     detailsInFlight.add(key)
     try {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/details', {
-        params: { path: { sourceId: candidate.source, mangaId: candidate.mangaId } },
+        params: {
+          path: { sourceId: candidate.source, mangaId: candidate.mangaId },
+          query: { url: candidate.url },
+        },
       })
       if (res.error || !res.data) return // non-fatal: leave the fallback text
       const dto = res.data

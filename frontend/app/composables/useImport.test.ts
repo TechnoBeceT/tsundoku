@@ -15,13 +15,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { apiClient } from '~/utils/api/client'
 import { useImport } from './useImport'
 
-interface Call { method: string, path: string, query?: unknown }
+interface Call { method: string, path: string, query?: unknown, params?: unknown }
 let calls: Call[] = []
 
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
-    GET: vi.fn().mockImplementation((path: string, opts?: { params?: { query?: Record<string, unknown> } }) => {
-      calls.push({ method: 'GET', path, query: opts?.params?.query })
+    GET: vi.fn().mockImplementation((path: string, opts?: { params?: { query?: Record<string, unknown>, path?: Record<string, unknown> } }) => {
+      calls.push({ method: 'GET', path, query: opts?.params?.query, params: opts?.params?.path })
       return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
     }),
     POST: vi.fn().mockImplementation((path: string) => {
@@ -96,6 +96,30 @@ describe('useImport', () => {
   })
 })
 
+describe('useImport — inspect (Stage 2 chapter-count preview)', () => {
+  it('inspect({source, mangaId, url}) GETs the chapters endpoint with ?url= (P2 Suwayomi-removal — the backend 400s without it)', async () => {
+    // Re-assert the default GET mock explicitly (self-contained — an earlier
+    // test in this file overrides apiClient.GET's mockImplementation and
+    // there is no restoreMocks/clearMocks between tests, so this test cannot
+    // rely on the module-level default still being in effect by file order).
+    vi.mocked(apiClient.GET).mockImplementation((path: string, opts?: { params?: { query?: Record<string, unknown>, path?: Record<string, unknown> } }) => {
+      calls.push({ method: 'GET', path, query: opts?.params?.query, params: opts?.params?.path })
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    })
+
+    const { inspect } = useImport()
+    calls = []
+
+    await inspect({ source: 'src-1', mangaId: 42, url: 'https://mangadex.org/title/42' })
+
+    const inspectCalls = calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/chapters')
+    expect(inspectCalls).toContainEqual(expect.objectContaining({
+      query: { url: 'https://mangadex.org/title/42' },
+      params: { sourceId: 'src-1', mangaId: 42 },
+    }))
+  })
+})
+
 describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => {
   it('fetches every candidate in parallel and maps the DTO scanlators onto the screen type, keyed by source:mangaId', async () => {
     const breakdownGet = vi.fn((sourceId: string) => {
@@ -116,8 +140,8 @@ describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => 
         error: null,
       })
     })
-    vi.mocked(apiClient.GET).mockImplementation((path: string, opts?: { params?: { path?: { sourceId: string, mangaId: number } } }) => {
-      calls.push({ method: 'GET', path })
+    vi.mocked(apiClient.GET).mockImplementation((path: string, opts?: { params?: { path?: { sourceId: string, mangaId: number }, query?: { url?: string } } }) => {
+      calls.push({ method: 'GET', path, query: opts?.params?.query, params: opts?.params?.path })
       if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') {
         return breakdownGet(opts!.params!.path!.sourceId)
       }
@@ -125,7 +149,10 @@ describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => 
     })
 
     const { breakdowns, loadBreakdowns } = useImport()
-    await loadBreakdowns([{ source: 'src-1', mangaId: 1 }, { source: 'src-2', mangaId: 2 }])
+    await loadBreakdowns([
+      { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' },
+      { source: 'src-2', mangaId: 2, url: 'https://src-2.example/title/2' },
+    ])
 
     expect(breakdownGet).toHaveBeenCalledTimes(2)
     expect(breakdowns.value['src-1:1']).toEqual([
@@ -133,6 +160,11 @@ describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => 
       { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
     ])
     expect(breakdowns.value['src-2:2']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
+    // Every breakdown fetch carries the candidate's url query (P2 Suwayomi-removal —
+    // the backend 400s without it).
+    const breakdownCalls = calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
+    expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-1.example/title/1' } }))
+    expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-2.example/title/2' } }))
   })
 
   it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
@@ -147,7 +179,7 @@ describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => 
     })
 
     const { loadBreakdowns } = useImport()
-    const candidate = { source: 'src-1', mangaId: 1 }
+    const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' }
     await loadBreakdowns([candidate])
     expect(breakdownGet).toHaveBeenCalledTimes(1)
 
@@ -164,7 +196,7 @@ describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => 
     })
 
     const { breakdowns, error, loadBreakdowns } = useImport()
-    const candidate = { source: 'src-1', mangaId: 1 }
+    const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' }
     await loadBreakdowns([candidate])
 
     expect(breakdowns.value['src-1:1']).toBeNull()

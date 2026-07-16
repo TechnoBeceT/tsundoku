@@ -16,7 +16,8 @@
  *      {path, matches} in the body (Slice P — was a single fixed-importance
  *      `match`).
  *   7. loadBreakdowns(candidates) fetches every candidate's per-scanlator
- *      breakdown in parallel and caches it by `source:mangaId` (Slice P,
+ *      breakdown in parallel (each fetch carrying the candidate's `?url=`,
+ *      required by the backend) and caches it by `source:mangaId` (Slice P,
  *      copied from `useMatchSource.loadBreakdowns`).
  *   8. loadSources() GETs /api/sources once and maps via mapSource (drives the
  *      page-level "Limit matches to:" filter chips).
@@ -360,20 +361,24 @@ describe('useScanLibrary', () => {
       calls = []
 
       await loadBreakdowns([
-        { source: 'src-1', mangaId: 1 } as never,
-        { source: 'src-2', mangaId: 2 } as never,
+        { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never,
+        { source: 'src-2', mangaId: 2, url: 'https://src-2.example/title/2' } as never,
       ])
 
       const breakdownCalls = calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
       expect(breakdownCalls.length).toBe(2)
       expect(breakdowns.value['src-1:1']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
       expect(breakdowns.value['src-2:2']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
+      // Every breakdown fetch carries the candidate's url query (P2 Suwayomi-removal
+      // — the backend 400s without it).
+      expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-1.example/title/1' } }))
+      expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-2.example/title/2' } }))
     })
 
     it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
       const { loadBreakdowns } = mountScanLibrary()
       calls = []
-      const candidate = { source: 'src-1', mangaId: 1 } as never
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
 
       await loadBreakdowns([candidate])
       expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
@@ -389,7 +394,7 @@ describe('useScanLibrary', () => {
         return Promise.resolve({ data: null, error: { message: 'upstream failure' }, response: new Response(null, { status: 502 }) })
       })
       calls = []
-      const candidate = { source: 'src-1', mangaId: 1 } as never
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
 
       await loadBreakdowns([candidate])
       expect(breakdowns.value['src-1:1']).toBeNull()

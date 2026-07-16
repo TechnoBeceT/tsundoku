@@ -101,7 +101,7 @@ const emit = defineEmits<{
   /** Run a search for `q`, optionally restricted to the given source IDs. */
   search: [payload: { q: string, sources: string[] }]
   /** Fetch the chapter list for one candidate (Stage 2 inspect). */
-  inspect: [payload: { source: string, mangaId: number }]
+  inspect: [payload: { source: string, mangaId: number, url: string }]
   /** Fetch the per-scanlator breakdown for every candidate in the picked group (Stage 2 entry). */
   loadBreakdowns: [candidates: SearchCandidate[]]
   /** Submit the adopt request (Stage 3). */
@@ -215,7 +215,7 @@ const onConfigureTray = (): void => {
 const onInspect = (c: SearchCandidate): void => {
   inspectKey.value = candKey(c)
   inspecting.value = true
-  emit('inspect', { source: c.source, mangaId: c.mangaId })
+  emit('inspect', { source: c.source, mangaId: c.mangaId, url: c.url })
 }
 
 // ---- Stage 3: review + adopt -----------------------------------------------

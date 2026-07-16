@@ -54,7 +54,8 @@ import { collapseUntaggedScanlator } from '~/utils/scanlator'
  *
  * Emits `update:open` (v-model), `search` (`{ q, sources }` — the trimmed
  * query plus the optional source-ID filter from the chip row), `pickCandidate`
- * (the chosen source's `{source, mangaId}`, to trigger the breakdown fetch),
+ * (the chosen source's `{source, mangaId, url}`, to trigger the breakdown
+ * fetch — `url` is REQUIRED by the breakdown endpoint, P2 Suwayomi-removal),
  * and `confirm` (the final `{source, mangaId, url, scanlator, importance}` to
  * POST — `url` is the manga identity the backend actually addresses, P2
  * Suwayomi-removal; `mangaId` is kept only for wire compat).
@@ -104,7 +105,7 @@ const emit = defineEmits<{
   /** Run a search for the trimmed query, optionally restricted to the given source IDs. */
   'search': [payload: { q: string, sources: string[] }]
   /** A candidate source was picked — load its scanlator breakdown. */
-  'pickCandidate': [payload: { source: string, mangaId: number }]
+  'pickCandidate': [payload: { source: string, mangaId: number, url: string }]
   /** Link the chosen source/scanlator at the given priority. */
   'confirm': [payload: { source: string, mangaId: number, url: string, scanlator: string, importance: number }]
 }>()
@@ -197,7 +198,7 @@ function toggleCandidate(key: string): void {
   const candidate = pickedGroup.value?.candidates.find(c => candKey(c) === key)
   if (candidate) {
     breakdownRequestedFor.value = key
-    emit('pickCandidate', { source: candidate.source, mangaId: candidate.mangaId })
+    emit('pickCandidate', { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url })
   }
 }
 

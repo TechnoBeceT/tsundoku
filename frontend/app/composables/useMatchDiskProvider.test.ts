@@ -11,8 +11,8 @@
  *   2. search()'s stale-response guard: a slower, earlier request must never
  *      overwrite `groups` after a faster, later one already landed.
  *   3. search() failure sets `error` and leaves `groups` empty, never throws.
- *   4. loadBreakdown(source, mangaId) GETs the breakdown endpoint and maps
- *      `scanlators` via `mapScanlatorCoverage`.
+ *   4. loadBreakdown(source, mangaId, url) GETs the breakdown endpoint with
+ *      `?url=` and maps `scanlators` via `mapScanlatorCoverage`.
  *   5. loadBreakdown() failure resolves `breakdown` to null WITHOUT touching
  *      `error` (informational coverage, not a hard match failure) and never
  *      throws.
@@ -202,12 +202,17 @@ describe('useMatchDiskProvider', () => {
     expect(groups.value).toEqual([])
   })
 
-  it('loadBreakdown(source, mangaId) GETs the breakdown endpoint and maps scanlators', async () => {
+  it('loadBreakdown(source, mangaId, url) GETs the breakdown endpoint with ?url= and maps scanlators', async () => {
     const { breakdown, loadBreakdown } = useMatchDiskProvider()
 
-    await loadBreakdown('src-1', 42)
+    await loadBreakdown('src-1', 42, 'https://mangadex.org/title/42')
 
-    expect(calls).toContainEqual({ method: 'GET', path: '/api/sources/{sourceId}/manga/{mangaId}/breakdown', query: undefined, params: { sourceId: 'src-1', mangaId: 42 } })
+    expect(calls).toContainEqual({
+      method: 'GET',
+      path: '/api/sources/{sourceId}/manga/{mangaId}/breakdown',
+      query: { url: 'https://mangadex.org/title/42' },
+      params: { sourceId: 'src-1', mangaId: 42 },
+    })
     expect(breakdown.value).toEqual([
       { scanlator: 'Reset Scans', count: 60, ranges: '1-60' },
       { scanlator: 'Asura Scans', count: 30, ranges: '61-90' },
@@ -218,7 +223,7 @@ describe('useMatchDiskProvider', () => {
     nextBreakdownOk = false
     const { breakdown, error, loadBreakdown } = useMatchDiskProvider()
 
-    await loadBreakdown('src-1', 42)
+    await loadBreakdown('src-1', 42, 'https://mangadex.org/title/42')
 
     expect(breakdown.value).toBeNull()
     expect(error.value).toBeNull()
@@ -228,7 +233,7 @@ describe('useMatchDiskProvider', () => {
     const { breakdownLoading, loadBreakdown } = useMatchDiskProvider()
     expect(breakdownLoading.value).toBe(false)
 
-    const promise = loadBreakdown('src-1', 42)
+    const promise = loadBreakdown('src-1', 42, 'https://mangadex.org/title/42')
     expect(breakdownLoading.value).toBe(true)
     await promise
 

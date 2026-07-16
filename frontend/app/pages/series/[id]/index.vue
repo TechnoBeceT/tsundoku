@@ -299,8 +299,8 @@ function openMatchProvider(providerId: string): void {
   matchProviderOpen.value = true
 }
 
-function onPickCandidate(payload: { source: string, mangaId: number }): void {
-  void linkLoadBreakdown(payload.source, payload.mangaId)
+function onPickCandidate(payload: { source: string, mangaId: number, url: string }): void {
+  void linkLoadBreakdown(payload.source, payload.mangaId, payload.url)
 }
 
 async function onMatchProviderConfirm(payload: { source: string, mangaId: number, url: string, scanlator: string, importance: number }): Promise<void> {

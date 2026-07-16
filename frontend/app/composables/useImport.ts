@@ -7,26 +7,29 @@
  *
  * Wizard actions:
  *   search({q, sources})  → GET /api/search?q=&sources=<csv> → searchResults
- *   inspect({source, mangaId}) → GET /api/sources/{sourceId}/manga/{mangaId}/chapters
+ *   inspect({source, mangaId, url}) → GET /api/sources/{sourceId}/manga/{mangaId}/chapters?url=
  *   adopt(req)            → POST /api/series → exposes newSeriesId for page navigation
  *
- * Discover hand-off: if the page is opened with ?source=&mangaId=&title= query
- * params (from the Discover screen), useImport defensively reads them and
- * pre-seeds an inspect call so Stage 2 already has the chapter list. All three
- * params are optional and ignored when absent or malformed.
+ * Discover hand-off: if the page is opened with ?source=&mangaId=&url=&title=
+ * query params (from the Discover screen), useImport defensively reads them
+ * and pre-seeds an inspect call so Stage 2 already has the chapter list. All
+ * four params are optional and ignored when absent or malformed — `url` is
+ * REQUIRED for the seeded inspect to fire (P2 Suwayomi-removal: the backend
+ * 400s without it), so a hand-off missing it simply skips the seed.
  *
  * DTO → screen type notes (all fields map 1:1 between generated DTOs and the
  * import.types.ts screen types — explicit mappers avoid implicit DTO leakage):
  *   Source:          id / name / lang       ← Source
- *   SearchCandidate: source / sourceName / lang / mangaId / title / thumbnailUrl
- *                    ← SearchCandidate (url is in DTO but not in screen type)
+ *   SearchCandidate: source / sourceName / lang / mangaId / url / title /
+ *                    thumbnailUrl            ← SearchCandidate
  *   SearchGroup:     title / candidates     ← SearchGroup
  *   ChapterInspect:  number / name          ← ChapterInspect
  *
  * loadBreakdowns(candidates) fetches the per-scanlator chapter-coverage
- * breakdown (`GET /api/sources/{sourceId}/manga/{mangaId}/breakdown`) for each
- * given (source, mangaId) pair IN PARALLEL — powers the Configure stage's
- * auto-split of a source into per-scanlator rows (`Import.vue`). Mirrors
+ * breakdown (`GET /api/sources/{sourceId}/manga/{mangaId}/breakdown?url=`) for
+ * each given (source, mangaId, url) candidate IN PARALLEL — powers the
+ * Configure stage's auto-split of a source into per-scanlator rows
+ * (`Import.vue`). Mirrors
  * `useDiscover.loadDetails`'s on-demand cache/in-flight-guard pattern, keyed by
  * `source:mangaId`: `breakdowns` is a PERMANENT cache (both a successful result
  * — the mapped `ScanlatorCoverage[]` — and a failure — `null`, so `Import.vue`
@@ -71,11 +74,15 @@ export function useImport() {
   const route = useRoute()
   const rawSource = route.query.source
   const rawMangaId = route.query.mangaId
+  const rawUrl = route.query.url
 
   // Guard: values can be string | string[] | undefined — only accept plain strings.
   const seedSource: string | null = typeof rawSource === 'string' ? rawSource : null
   const seedMangaIdNum = typeof rawMangaId === 'string' ? Number(rawMangaId) : Number.NaN
   const seedMangaId: number | null = Number.isNaN(seedMangaIdNum) ? null : seedMangaIdNum
+  // Required for the seeded inspect() call — no fallback resolution by mangaId
+  // alone (P2 Suwayomi-removal), so a hand-off without it simply skips the seed.
+  const seedUrl: string | null = typeof rawUrl === 'string' && rawUrl !== '' ? rawUrl : null
 
   // ---- Wizard state ----------------------------------------------------------
   const sources = ref<Source[]>([])
@@ -153,13 +160,16 @@ export function useImport() {
   }
 
   // ---- inspect ---------------------------------------------------------------
-  async function inspect(payload: { source: string; mangaId: number }): Promise<void> {
+  async function inspect(payload: { source: string; mangaId: number; url: string }): Promise<void> {
     error.value = ''
     // Reset so the Import component shows its "loading" state until data arrives.
     inspectChapters.value = null
     try {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/chapters', {
-        params: { path: { sourceId: payload.source, mangaId: payload.mangaId } },
+        params: {
+          path: { sourceId: payload.source, mangaId: payload.mangaId },
+          query: { url: payload.url },
+        },
       })
       if (res.error || !res.data) {
         throw new Error(res.error ? res.error.message : 'Failed to load chapters')
@@ -179,7 +189,7 @@ export function useImport() {
    * otherwise swallowed (non-fatal; `Import.vue` renders that source as a
    * single unsplit row).
    */
-  async function loadBreakdowns(candidates: { source: string, mangaId: number }[]): Promise<void> {
+  async function loadBreakdowns(candidates: { source: string, mangaId: number, url: string }[]): Promise<void> {
     const toFetch = candidates.filter((c) => {
       const key = breakdownKey(c.source, c.mangaId)
       return !(key in breakdowns.value) && !breakdownsInFlight.has(key)
@@ -190,7 +200,10 @@ export function useImport() {
       const key = breakdownKey(c.source, c.mangaId)
       try {
         const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
-          params: { path: { sourceId: c.source, mangaId: c.mangaId } },
+          params: {
+            path: { sourceId: c.source, mangaId: c.mangaId },
+            query: { url: c.url },
+          },
         })
         breakdowns.value = {
           ...breakdowns.value,
@@ -231,8 +244,8 @@ export function useImport() {
   void loadInitial()
 
   // Optionally seed an inspect from the Discover hand-off.
-  if (seedSource !== null && seedMangaId !== null) {
-    void inspect({ source: seedSource, mangaId: seedMangaId })
+  if (seedSource !== null && seedMangaId !== null && seedUrl !== null) {
+    void inspect({ source: seedSource, mangaId: seedMangaId, url: seedUrl })
   }
 
   return {

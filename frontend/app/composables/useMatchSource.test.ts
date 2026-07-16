@@ -10,8 +10,10 @@
  *      never re-fetches on a second call.
  *   2. search() failure sets `error` and leaves `groups` empty, never throws.
  *   3. loadBreakdowns(candidates) fetches every candidate's per-scanlator
- *      breakdown in parallel, caches by `source:mangaId`, and never touches
- *      `error` on a per-candidate failure (mirrors `useImport.loadBreakdowns`).
+ *      breakdown in parallel (each fetch carrying the candidate's `?url=`,
+ *      required by the backend), caches by `source:mangaId`, and never
+ *      touches `error` on a per-candidate failure (mirrors
+ *      `useImport.loadBreakdowns`).
  *   4. batchAddProviders(providers) POSTs /api/series/{id}/providers/batch
  *      with the exact {providers} body and resolves the fresh SeriesDetail
  *      (Slice P — the batch counterpart of the retired single `addProvider`).
@@ -228,8 +230,8 @@ describe('useMatchSource', () => {
           error: null,
         })
       })
-      vi.mocked(apiClient.GET).mockImplementation((path: string, opts?: { params?: { path?: { sourceId: string, mangaId: number } } }) => {
-        calls.push({ method: 'GET', path })
+      vi.mocked(apiClient.GET).mockImplementation((path: string, opts?: { params?: { path?: { sourceId: string, mangaId: number }, query?: { url?: string } } }) => {
+        calls.push({ method: 'GET', path, query: opts?.params?.query })
         if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') {
           return breakdownGet(opts!.params!.path!.sourceId)
         }
@@ -238,8 +240,8 @@ describe('useMatchSource', () => {
 
       const { breakdowns, loadBreakdowns } = useMatchSource('series-1')
       await loadBreakdowns([
-        { source: 'src-1', mangaId: 1 } as never,
-        { source: 'src-2', mangaId: 2 } as never,
+        { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never,
+        { source: 'src-2', mangaId: 2, url: 'https://src-2.example/title/2' } as never,
       ])
 
       expect(breakdownGet).toHaveBeenCalledTimes(2)
@@ -248,6 +250,11 @@ describe('useMatchSource', () => {
         { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
       ])
       expect(breakdowns.value['src-2:2']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
+      // Every breakdown fetch carries the candidate's url query (P2 Suwayomi-removal
+      // — the backend 400s without it).
+      const breakdownCalls = calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
+      expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-1.example/title/1' } }))
+      expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-2.example/title/2' } }))
     })
 
     it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
@@ -262,7 +269,7 @@ describe('useMatchSource', () => {
       })
 
       const { loadBreakdowns } = useMatchSource('series-1')
-      const candidate = { source: 'src-1', mangaId: 1 } as never
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
       expect(breakdownGet).toHaveBeenCalledTimes(1)
 
@@ -279,7 +286,7 @@ describe('useMatchSource', () => {
       })
 
       const { breakdowns, error, loadBreakdowns } = useMatchSource('series-1')
-      const candidate = { source: 'src-1', mangaId: 1 } as never
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
 
       expect(breakdowns.value['src-1:1']).toBeNull()

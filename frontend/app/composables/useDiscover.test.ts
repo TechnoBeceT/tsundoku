@@ -11,7 +11,7 @@
  * vi.mock is hoisted by Vitest's transform so the mock is in place before
  * useDiscover.ts is evaluated, regardless of import order in this file.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useDiscover } from './useDiscover'
 
 // Typed via the initial implementation (not `vi.fn().mockImplementation(...)`)
@@ -37,9 +37,12 @@ const detailsGetMock = vi.fn(() =>
   }),
 )
 
+interface DetailsCall { query?: { url?: string } }
+let detailsCalls: DetailsCall[] = []
+
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
-    GET: vi.fn().mockImplementation((path: string) => {
+    GET: vi.fn().mockImplementation((path: string, opts?: { params?: { query?: { url?: string } } }) => {
       if (path === '/api/sources') {
         return Promise.resolve({
           data: [{ id: 'src-1', name: 'MangaDex', lang: 'en' }],
@@ -71,6 +74,7 @@ vi.mock('~/utils/api/client', () => ({
         })
       }
       if (path === '/api/sources/{sourceId}/manga/{mangaId}/details') {
+        detailsCalls.push({ query: opts?.params?.query })
         return detailsGetMock()
       }
       return Promise.resolve({ data: null, error: null })
@@ -100,6 +104,10 @@ describe('useDiscover – candidate metadata mapping', () => {
 })
 
 describe('useDiscover – loadDetails (on-demand rich hover details)', () => {
+  beforeEach(() => {
+    detailsCalls = []
+  })
+
   it('merges the returned author/artist/description/genres into the matching candidate', async () => {
     const { result, loadDetails } = useDiscover()
     await vi.waitFor(() => expect(result.value.manga.length).toBe(1))
@@ -111,6 +119,15 @@ describe('useDiscover – loadDetails (on-demand rich hover details)', () => {
     expect(c.artist).toBe('Makoto Yukimura')
     expect(c.description).toBe("A Viking's saga.")
     expect(c.genres).toEqual(['Action', 'Historical'])
+  })
+
+  it('sends the candidate url as the ?url= query (P2 Suwayomi-removal — the backend 400s without it)', async () => {
+    const { result, loadDetails } = useDiscover()
+    await vi.waitFor(() => expect(result.value.manga.length).toBe(1))
+
+    await loadDetails(result.value.manga[0]!)
+
+    expect(detailsCalls).toContainEqual({ query: { url: 'https://mangadex.org/title/42' } })
   })
 
   it('caches by mangaId — a second loadDetails call for the same candidate does not re-fetch', async () => {
