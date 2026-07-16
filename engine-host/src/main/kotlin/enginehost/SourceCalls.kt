@@ -10,6 +10,7 @@ package enginehost
  */
 
 import enginehost.vendor.ChapterRecognition
+import enginehost.vendor.ChapterSanitizer.sanitize
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
@@ -180,14 +181,22 @@ object SourceCalls {
         )
 
     /**
-     * Maps a raw extension [SChapter] to the wire [ChapterDto], applying the two Suwayomi
-     * Chapter.kt post-processing steps engine-host must mirror (C1/I2 in the P2 mapper audit):
+     * Maps a raw extension [SChapter] to the wire [ChapterDto], applying the THREE Suwayomi
+     * Chapter.kt post-processing steps engine-host must mirror (C1/C2/I2 in the P2 mapper audit):
      *  - [ChapterRecognition.parseChapterNumber] (C1): derives a real chapter number from the
      *    chapter NAME when the extension left `chapter_number` at Mihon's -1 "unset" sentinel (or
      *    Suwayomi's own -2 "hidden" sentinel is passed through unchanged) — this is what keeps a
      *    number-less source keyed by NUMBER instead of NAME downstream in Tsundoku, so it dedups
      *    and sorts correctly against every other source. The result is a Double/float DECIMAL
      *    (e.g. 10.5 for "Chapter 10.5") and is never rounded — fractional chapters must survive.
+     *  - [ChapterSanitizer.sanitize] (C2): strips the manga title + surrounding separator/
+     *    whitespace chars from the chapter name (Chapter.kt:177, `chapter.name = chapter.name
+     *    .sanitize(...)`) — e.g. "One Piece - Chapter 5" -> "Chapter 5" for a title "One Piece",
+     *    so Tsundoku's displayed chapter name matches Suwayomi's, not the raw source name.
+     *    🔴 ORDER IS LOAD-BEARING: this runs AFTER parseChapterNumber, which needs the RAW,
+     *    unsanitized name — sanitize can strip text the recognizer keys off (e.g. the manga
+     *    title itself, when it embeds a number) and would change the recognized number if run
+     *    first. Mirrors Chapter.kt:171-183 exactly; do not reorder.
      *  - scanlator blank/whitespace normalization (I2): `ifBlank { null }?.trim()`, so a padded or
      *    whitespace-only scanlator never drifts against Tsundoku's EqualFold provider matching.
      * `prepareNewChapter` (I1) runs BEFORE this, in [chapters], since it needs the SManga seed.
@@ -196,7 +205,7 @@ object SourceCalls {
         val recognizedNumber = ChapterRecognition.parseChapterNumber(mangaTitle, name, chapter_number.toDouble())
         return ChapterDto(
             url = url,
-            name = name,
+            name = name.sanitize(mangaTitle),
             number = recognizedNumber.toFloat(),
             scanlator = scanlator?.ifBlank { null }?.trim(),
             uploadDate = date_upload,

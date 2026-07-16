@@ -50,4 +50,20 @@ class ChapterRecognitionTest {
     fun `nameless chapter with no number falls back to -1`() {
         assertEquals(-1.0, ChapterRecognition.parseChapterNumber("", "Special Announcement", -1.0))
     }
+
+    @Test
+    fun `hidden chapter sentinel -2 wins over name recognition`() {
+        // Suwayomi's -2.0 "hidden chapter" sentinel is checked by the early-out
+        // (chapterNumber == -2.0 || chapterNumber > -1.0) and must pass through UNCHANGED, even
+        // though "Chapter 5" would otherwise be recognized as 5.0 — the sentinel must win.
+        assertEquals(-2.0, ChapterRecognition.parseChapterNumber("Teach Me First!", "Chapter 5", -2.0))
+    }
+
+    @Test
+    fun `sanitize does not disturb fractional chapter recognition`() {
+        // Recognition must run on the RAW name (before ChapterSanitizer.sanitize strips the
+        // title) — this proves the fractional-chapter feature still works against a name shaped
+        // like the sanitize call site actually passes in (SourceCalls.toChapterDto).
+        assertEquals(10.5, ChapterRecognition.parseChapterNumber("My Series", "My Series - Chapter 10.5", -1.0))
+    }
 }
