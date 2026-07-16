@@ -203,21 +203,29 @@ func mapLinks(links []metadata.Link) []LinkDTO {
 	return out
 }
 
-// sourceLinks appends one LinkDTO per SeriesProvider carrying a non-empty URL
-// (the scanlation/aggregator site the series was actually adopted from — e.g.
-// Asura, Comix) onto the metadata-engine merged links, so the rich card's LINKS
-// row surfaces the real library sources alongside MAL/AniList/MangaUpdates/etc.
-// The label reuses ProviderLabel (provider_name, falling back to the raw
+// sourceLinks appends one LinkDTO per real-source SeriesProvider onto the
+// metadata-engine merged links, so the rich card's LINKS row surfaces the
+// library's actual sources (Asura, Comix, …) alongside MAL/AniList/MangaUpdates/
+// etc. The label reuses ProviderLabel (provider_name, falling back to the raw
 // provider id) — the same label the providers list already shows — NOT
 // SeriesProvider.Title, which is that source's per-manga title (usually just
 // the series title again) and would make a poor link label.
 //
-// DEDUP: a provider URL that already appears among existing (case-insensitive
-// exact match) is skipped, so a source a metadata provider also lists isn't
-// doubled. providers must be the series' already-eager-loaded Edges.Providers
-// (every caller — GetSeries — loads it for ProviderDTO already), so this adds
-// zero extra queries. existing is returned untouched (still non-nil) when no
-// provider qualifies.
+// The link points at the provider's WebURL — the fully-qualified,
+// browser-clickable page (Suwayomi's realUrl) — NEVER the source-relative
+// addressing URL (e.g. "/605z7-teach-me-first"), which is not a working link.
+// A real source whose WebURL has not resolved yet emits an empty link URL: the
+// FE LinkChip scheme-guards it and renders an inert/greyed pill rather than a
+// broken link. A provider with no addressing URL at all (a disk-origin/unlinked
+// row — no real source, nothing to link to) contributes nothing.
+//
+// DEDUP: a resolved WebURL that already appears among existing (case-insensitive
+// exact match) links is skipped, so a source a metadata provider also lists
+// isn't doubled; an unresolved (empty) WebURL never dedups, so several greyed
+// sources can coexist. providers must be the series' already-eager-loaded
+// Edges.Providers (every caller — GetSeries — loads it for ProviderDTO already),
+// so this adds zero extra queries. existing is returned untouched (still
+// non-nil) when no provider qualifies.
 func sourceLinks(providers []*ent.SeriesProvider, existing []LinkDTO) []LinkDTO {
 	seen := make(map[string]struct{}, len(existing))
 	for _, l := range existing {
@@ -226,15 +234,19 @@ func sourceLinks(providers []*ent.SeriesProvider, existing []LinkDTO) []LinkDTO 
 
 	out := existing
 	for _, p := range providers {
+		// No addressing URL ⇒ a disk-origin/unlinked row with no real source.
 		if p.URL == "" {
 			continue
 		}
-		key := strings.ToLower(p.URL)
-		if _, dup := seen[key]; dup {
-			continue
+		// Dedup only a resolved WebURL — empty (greyed) ones never merge.
+		if p.WebURL != "" {
+			key := strings.ToLower(p.WebURL)
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
 		}
-		seen[key] = struct{}{}
-		out = append(out, LinkDTO{Label: ProviderLabel(p), URL: p.URL})
+		out = append(out, LinkDTO{Label: ProviderLabel(p), URL: p.WebURL})
 	}
 	return out
 }

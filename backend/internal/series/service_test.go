@@ -275,12 +275,13 @@ func TestGetSeriesReturnsDetail(t *testing.T) {
 }
 
 // TestGetSeriesLinksIncludeSourceLinks verifies the detail DTO's Links field
-// merges the metadata-engine links with the library's actual SOURCE links
-// (SeriesProvider.URL — the scanlation/aggregator site each provider was
-// adopted from), deduping a source URL a metadata link already lists
-// (case-insensitive exact match) and leaving a provider with no URL out
-// entirely. A deduped source keeps the METADATA link's label (metadata links
-// come first; sourceLinks only appends what isn't already present).
+// merges the metadata-engine links with the library's actual SOURCE links. The
+// source link is the provider's WEB_URL (the browser-clickable realUrl), NEVER
+// the source-relative addressing URL: a deduped source (its web_url already
+// listed by a metadata link, case-insensitive) keeps the METADATA label; a real
+// source with an unresolved (empty) web_url still emits a link with an empty URL
+// (the FE greys it); and a provider with no addressing URL at all (disk-origin/
+// unlinked, no real source) contributes nothing.
 func TestGetSeriesLinksIncludeSourceLinks(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
@@ -291,27 +292,40 @@ func TestGetSeriesLinksIncludeSourceLinks(t *testing.T) {
 		SetCategoryID(catID(ctx, client, "Manga")).
 		SetLinks([]metadata.Link{
 			{Label: "MyAnimeList", URL: "https://myanimelist.net/manga/1"},
-			// Deliberately the SAME site as the "flame" provider below, differing
-			// only by case — proves the dedup is case-insensitive.
+			// Deliberately the SAME site as the "flame" provider's web_url below,
+			// differing only by case — proves the dedup is case-insensitive.
 			{Label: "Flame Scans", URL: "HTTPS://FLAME.example/delta"},
 		}).
 		SaveX(ctx)
 
+	// flame: a source-relative addressing url plus a web_url that dups the
+	// metadata "Flame Scans" link above (differing only by case).
 	client.SeriesProvider.Create().
 		SetSeriesID(s.ID).
 		SetProvider("flame").
 		SetProviderName("Flame Scans").
-		SetURL("https://flame.example/delta"). // dup of the metadata link above
+		SetURL("/delta").
+		SetWebURL("https://flame.example/delta").
 		SetImportance(10).
 		SaveX(ctx)
 	client.SeriesProvider.Create().
 		SetSeriesID(s.ID).
 		SetProvider("asura").
 		SetProviderName("Asura Scans").
-		SetURL("https://asura.example/delta").
+		SetURL("/delta").
+		SetWebURL("https://asura.example/delta").
 		SetImportance(5).
 		SaveX(ctx)
-	// A provider with no URL (e.g. a disk-origin/unlinked row) contributes no link.
+	// A real source whose web_url has not resolved yet: still a link, but with an
+	// empty URL so the FE LinkChip greys it (never falls back to the addressing url).
+	client.SeriesProvider.Create().
+		SetSeriesID(s.ID).
+		SetProvider("toon").
+		SetProviderName("WebToon").
+		SetURL("/delta"). // has a real source, but no web_url yet
+		SetImportance(3).
+		SaveX(ctx)
+	// A provider with no addressing URL (a disk-origin/unlinked row) contributes no link.
 	client.SeriesProvider.Create().
 		SetSeriesID(s.ID).
 		SetProvider("disk-import").
@@ -327,9 +341,10 @@ func TestGetSeriesLinksIncludeSourceLinks(t *testing.T) {
 	if got.Links == nil {
 		t.Fatalf("GetSeries: Links must be non-nil")
 	}
-	// 2 metadata links + 1 new source link (asura) = 3; flame's URL is a dup.
-	if len(got.Links) != 3 {
-		t.Fatalf("GetSeries: want 3 links (2 metadata + 1 deduped source), got %d: %+v", len(got.Links), got.Links)
+	// 2 metadata links + asura (new) + toon (greyed, empty url) = 4; flame's
+	// web_url dups the metadata link.
+	if len(got.Links) != 4 {
+		t.Fatalf("GetSeries: want 4 links (2 metadata + asura + greyed toon), got %d: %+v", len(got.Links), got.Links)
 	}
 
 	byURL := map[string]string{}
@@ -339,17 +354,26 @@ func TestGetSeriesLinksIncludeSourceLinks(t *testing.T) {
 		byURL[key] = l.Label
 		occurrences[key]++
 	}
-	if _, ok := byURL["https://myanimelist.net/manga/1"]; !ok {
-		t.Errorf("GetSeries: missing metadata link MyAnimeList: %+v", got.Links)
+	// url → expected label. "" is the greyed WebToon source (real source, no
+	// web_url yet — a link with an empty URL, NEVER the addressing url "/delta").
+	// flame keeps its METADATA label because sourceLinks only appends what a
+	// metadata link doesn't already carry (dedup on the resolved web_url).
+	wantLabels := map[string]string{
+		"https://myanimelist.net/manga/1": "MyAnimeList",
+		"https://flame.example/delta":     "Flame Scans",
+		"https://asura.example/delta":     "Asura Scans",
+		"":                                "WebToon",
 	}
-	if label := byURL["https://flame.example/delta"]; label != "Flame Scans" {
-		t.Errorf("GetSeries: flame link should keep its metadata label (deduped), got %q", label)
+	for url, label := range wantLabels {
+		if gotLabel := byURL[url]; gotLabel != label {
+			t.Errorf("GetSeries: link %q want label %q, got %q: %+v", url, label, gotLabel, got.Links)
+		}
 	}
 	if occurrences["https://flame.example/delta"] != 1 {
-		t.Errorf("GetSeries: flame URL should appear exactly once (deduped), got %d: %+v", occurrences["https://flame.example/delta"], got.Links)
+		t.Errorf("GetSeries: flame web_url should appear exactly once (deduped), got %d: %+v", occurrences["https://flame.example/delta"], got.Links)
 	}
-	if label := byURL["https://asura.example/delta"]; label != "Asura Scans" {
-		t.Errorf("GetSeries: want asura source link with label 'Asura Scans', got %q", label)
+	if _, leaked := byURL["/delta"]; leaked {
+		t.Errorf("GetSeries: addressing url '/delta' must never appear as a link: %+v", got.Links)
 	}
 }
 

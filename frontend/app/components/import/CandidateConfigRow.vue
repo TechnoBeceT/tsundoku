@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import CoverImage from '../ui/CoverImage.vue'
 import ReorderControl from '../ui/ReorderControl.vue'
 import Spinner from '../ui/Spinner.vue'
 import ChapterInspectList from './ChapterInspectList.vue'
+import { safeHttpUrl } from '../../utils/safeUrl'
 import type { MoveDirection } from '../ui/controls.types'
 import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
 
@@ -39,7 +41,7 @@ import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
  * coverage line. Left unset, the row renders exactly as before — the two
  * match surfaces never pass these.
  */
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   /** The candidate this row represents. */
   candidate: SearchCandidate
   /** Whether this candidate is selected for adoption. */
@@ -85,6 +87,12 @@ const emit = defineEmits<{
   /** Re-rank this candidate: -1 = up (raise), 1 = down (lower). */
   move: [direction: MoveDirection]
 }>()
+
+// The source name links to the candidate's browser-clickable realUrl, opening
+// in a new tab. Scheme-guarded via the shared safeHttpUrl (untrusted upstream
+// source data) → undefined when there is no valid link, so the name renders as
+// plain, non-clickable text instead of the source-relative addressing url.
+const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 </script>
 
 <template>
@@ -119,7 +127,14 @@ const emit = defineEmits<{
         </span>
 
         <span class="cand__meta">
-          <span class="cand__source">{{ candidate.sourceName }}</span>
+          <a
+            v-if="sourceHref"
+            class="cand__source cand__source--link"
+            :href="sourceHref"
+            target="_blank"
+            rel="noopener noreferrer"
+          >{{ candidate.sourceName }}</a>
+          <span v-else class="cand__source">{{ candidate.sourceName }}</span>
           <span v-if="scanlator" class="cand__scanlator">{{ scanlator }}</span>
           <span class="cand__lang">{{ candidate.lang.toUpperCase() }}</span>
           <span v-if="coverageUnavailable" class="cand__coverage cand__coverage--muted">Coverage unavailable</span>
@@ -261,6 +276,26 @@ const emit = defineEmits<{
   font-weight: var(--weight-bold);
   color: var(--text);
   overflow-wrap: anywhere;
+}
+
+/* When a browser-clickable realUrl exists the source name becomes a link
+   (new tab); it stays visually identical until hover, then reads as a link. */
+.cand__source--link {
+  text-decoration: none;
+  width: fit-content;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.cand__source--link:hover {
+  color: var(--accentBright);
+  text-decoration: underline;
+}
+
+.cand__source--link:focus-visible {
+  outline: none;
+  color: var(--accentBright);
+  text-decoration: underline;
 }
 
 .cand__lang {

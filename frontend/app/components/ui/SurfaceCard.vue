@@ -55,6 +55,12 @@ defineProps<{
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  /* The head owns the rhythm before the body — moved here off `.surface-card__sub`
+     so a TITLE-ONLY card (e.g. the Series-Detail Trackers section, whose header
+     carries the "Reset progress / Sync now" actions) is never flush against its
+     content. When a sub IS present its own bottom margin is dropped, so this 8px
+     stays the single, identical head→body gap in both cases. */
+  margin-bottom: 8px;
 }
 
 .surface-card__title {
@@ -68,11 +74,11 @@ defineProps<{
 .surface-card__sub {
   font-size: 12.5px;
   color: var(--faint);
-  margin: 2px 0 8px;
+  /* No bottom margin — the head now owns the head→body rhythm (see above), so
+     the gap is identical whether or not a sub is present. */
+  margin: 2px 0 0;
 }
 
-/* When the title stands alone (no sub) the 8px sub-margin is gone, so the head
-   carries its own bottom rhythm before the body. */
 .surface-card__heading {
   min-width: 0;
 }
