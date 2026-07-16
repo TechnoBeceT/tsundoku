@@ -112,6 +112,37 @@ func TestCache_Get_EngineErrorIsNotCached(t *testing.T) {
 	}
 }
 
+// TestCache_Get_EmptyBodyNotCached proves a successful fetch with a
+// ZERO-LENGTH body (a transient upstream hiccup) is never persisted either —
+// mirrors TestCache_Get_EngineErrorIsNotCached, but for the "err == nil, data
+// empty" case. Caching an empty body would poison the cache FOREVER: every
+// later HIT would serve that empty body, permanently breaking the cover with
+// no self-heal until the source's ?v= URL changes.
+func TestCache_Get_EmptyBodyNotCached(t *testing.T) {
+	engine := &countingEngine{}
+	cache := sourcecover.NewCache(sourcecover.New(t.TempDir()), engine, sourcecover.DefaultConcurrency, sourcecover.DefaultDeadline)
+
+	data, _, err := cache.Get(context.Background(), 1, "https://source.example/empty.jpg")
+	if err != nil {
+		t.Fatalf("Get: unexpected error: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("Get: data = %q, want empty", data)
+	}
+
+	data, _, err = cache.Get(context.Background(), 1, "https://source.example/empty.jpg")
+	if err != nil {
+		t.Fatalf("second Get: unexpected error: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("second Get: data = %q, want empty", data)
+	}
+
+	if got := engine.callCount(); got != 2 {
+		t.Errorf("Get: engine called %d times across two empty-body attempts, want 2 (an empty body must not be cached)", got)
+	}
+}
+
 // blockingEngine is a sourcecover.Engine whose Image call blocks until ctx is
 // done and then returns ctx.Err() — modelling the real sourceengine
 // httpClient's genuine context-aware behaviour (its underlying net/http

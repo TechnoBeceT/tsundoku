@@ -113,6 +113,18 @@ func (c *Cache) Get(ctx context.Context, sourceID int64, url string) (data []byt
 		return nil, "", err
 	}
 
+	// A successful fetch with a ZERO-LENGTH body is a transient upstream
+	// hiccup, not a real (if empty) image. Caching it would poison the cache
+	// FOREVER: every later HIT would serve that empty body, permanently
+	// breaking the cover with no self-heal until the source's ?v= URL
+	// changes. Skip the write so the next render re-fetches; the empty body
+	// still returns here unchanged, so the browser's <img> onerror falls
+	// back to the placeholder exactly as it would for any other empty
+	// response.
+	if len(data) == 0 {
+		return data, ext, nil
+	}
+
 	// Best-effort: the fetched bytes already answer this request regardless
 	// of whether the cache write lands (mirrors series.fetchAndCacheCover's
 	// identical "a cache that cannot persist must not break the page" stance
