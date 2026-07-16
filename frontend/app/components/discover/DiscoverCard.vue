@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import Tag from '../ui/Tag.vue'
 import DiscoverHoverPreview from './DiscoverHoverPreview.vue'
-import { isHttpUrl } from '../../utils/safeUrl'
+import { safeHttpUrl } from '../../utils/safeUrl'
 import type { DiscoverCandidate } from '../screens/discover.types'
 
 /**
@@ -53,11 +53,11 @@ const emit = defineEmits<{
 // The big faint placeholder letter behind a cover (first char, uppercased).
 const initial = (title: string): string => (title.trim()[0] ?? '?').toUpperCase()
 
-// The "View on source" href — the browser-clickable realUrl, scheme-guarded
-// (mirrors LinkChip's safeHref) since it comes from untrusted upstream
-// source data. undefined (never rendered) for a missing or non-http(s) value
-// — deliberately never falls back to the source-relative addressing `url`.
-const safeSourceUrl = computed(() => (isHttpUrl(props.candidate.realUrl) ? props.candidate.realUrl : undefined))
+// The "View on source" href — the browser-clickable realUrl, scheme-guarded via
+// the shared safeHttpUrl since it comes from untrusted upstream source data.
+// undefined (never rendered) for a missing or non-http(s) value — deliberately
+// never falls back to the source-relative addressing `url`.
+const safeSourceUrl = computed(() => safeHttpUrl(props.candidate.realUrl))
 
 // "View on source" notifies the parent but does NOT preventDefault — the real
 // `<a target="_blank">` still opens the source in a new tab (Bug-1 fix). Stop

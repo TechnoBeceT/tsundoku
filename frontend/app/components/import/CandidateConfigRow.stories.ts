@@ -24,6 +24,9 @@ type Story = StoryObj<typeof meta>
 
 const candidate = searchResults[0]!.candidates[0]!
 const noCover = searchResults[0]!.candidates[2]!
+// Same candidate but with no resolvable browser link — the source name renders
+// as plain, non-clickable text (never the source-relative addressing url).
+const noSourceLink = { ...candidate, realUrl: '' }
 
 /** Selected, rank 1 (preferred) — the rank stepper is shown, up disabled. */
 export const Selected: Story = {
@@ -57,6 +60,23 @@ export const SelectedMidRank: Story = {
 export const Unselected: Story = {
   args: {
     candidate: noCover,
+    selected: false,
+    rank: 0,
+    canUp: false,
+    canDown: false,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+  },
+}
+
+/**
+ * No resolvable realUrl — the source name is plain text, not a link (the
+ * source-relative addressing url is NEVER used as a fallback href).
+ */
+export const NoSourceLink: Story = {
+  args: {
+    candidate: noSourceLink,
     selected: false,
     rank: 0,
     canUp: false,
