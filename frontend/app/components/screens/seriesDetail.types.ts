@@ -19,8 +19,12 @@ export type ChapterState =
   | 'permanently_failed'
   | 'superseded'
 
-/** Per-provider health: current, gone stale, or erroring on last refresh. */
-export type ProviderHealth = 'ok' | 'stale' | 'erroring'
+/**
+ * Per-provider health: current, gone stale, erroring on last refresh, or
+ * `unavailable` — the source's Suwayomi extension is no longer installed in the
+ * engine (uninstalled/removed), so nothing can fetch from it.
+ */
+export type ProviderHealth = 'ok' | 'stale' | 'erroring' | 'unavailable'
 
 /**
  * Chapter — one row in the chapter table. Identity is `chapterKey` (never the

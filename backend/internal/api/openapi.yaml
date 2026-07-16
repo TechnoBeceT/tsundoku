@@ -386,8 +386,12 @@ components:
           description: Priority/quality rank — higher is preferred.
         health:
           type: string
-          enum: [ok, stale, erroring]
-          description: Computed source health within this series.
+          enum: [ok, stale, erroring, unavailable]
+          description: >-
+            Computed source health within this series. `unavailable` means the
+            source's extension is no longer loaded in the engine (it was
+            uninstalled/removed) — reinstall the extension or remove the source.
+            It dominates `erroring`/`stale` (there is nothing to fetch from).
         chaptersBehind:
           type: integer
           description: How many of the series' chapters this source lacks (informational).
@@ -1354,7 +1358,7 @@ components:
               example: 9
         sources:
           type: object
-          required: [total, prefsCaptured]
+          required: [total, prefsCaptured, reached, failed, failedSources]
           properties:
             total:
               type: integer
@@ -1364,6 +1368,20 @@ components:
               type: integer
               description: How many of those sources have at least one captured preference.
               example: 5
+            reached:
+              type: integer
+              description: How many sources' last preference read succeeded (a source may be reached yet carry zero non-default preferences).
+              example: 7
+            failed:
+              type: integer
+              description: How many sources' last preference read errored (a real gap).
+              example: 1
+            failedSources:
+              type: array
+              description: Names of the sources whose last preference read errored (source name, falling back to the source id). Empty when none failed.
+              items:
+                type: string
+              example: ["Comix"]
         gaps:
           type: array
           description: |
@@ -1371,7 +1389,7 @@ components:
             "3 extensions not cached"). Empty when nothing is outstanding.
           items:
             type: string
-          example: ["3 extensions not cached", "2 sources without captured preferences"]
+          example: ["3 extensions not cached", "1 sources' preferences could not be read: Comix"]
 
     System:
       type: object
@@ -4616,7 +4634,7 @@ paths:
     get:
       operationId: getLibraryHealth
       summary: Library source-health scan
-      description: Returns every series that has at least one stale or erroring source.
+      description: Returns every series that has at least one stale, erroring, or unavailable source.
       tags:
         - series
       security:

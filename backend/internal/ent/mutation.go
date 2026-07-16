@@ -31,6 +31,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -64,6 +65,7 @@ const (
 	TypeSourceEvent        = "SourceEvent"
 	TypeSourceMetric       = "SourceMetric"
 	TypeSourcePreference   = "SourcePreference"
+	TypeSourceSeedState    = "SourceSeedState"
 	TypeSuwayomiSyncState  = "SuwayomiSyncState"
 	TypeTrackBinding       = "TrackBinding"
 	TypeTrackerConnection  = "TrackerConnection"
@@ -15833,6 +15835,720 @@ func (m *SourcePreferenceMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SourcePreferenceMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown SourcePreference edge %s", name)
+}
+
+// SourceSeedStateMutation represents an operation that mutates the SourceSeedState nodes in the graph.
+type SourceSeedStateMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *uuid.UUID
+	source_id     *int64
+	addsource_id  *int64
+	source_name   *string
+	prefs_read_ok *bool
+	last_error    *string
+	prefs_read_at *time.Time
+	created_at    *time.Time
+	updated_at    *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*SourceSeedState, error)
+	predicates    []predicate.SourceSeedState
+}
+
+var _ ent.Mutation = (*SourceSeedStateMutation)(nil)
+
+// sourceseedstateOption allows management of the mutation configuration using functional options.
+type sourceseedstateOption func(*SourceSeedStateMutation)
+
+// newSourceSeedStateMutation creates new mutation for the SourceSeedState entity.
+func newSourceSeedStateMutation(c config, op Op, opts ...sourceseedstateOption) *SourceSeedStateMutation {
+	m := &SourceSeedStateMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceSeedState,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceSeedStateID sets the ID field of the mutation.
+func withSourceSeedStateID(id uuid.UUID) sourceseedstateOption {
+	return func(m *SourceSeedStateMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceSeedState
+		)
+		m.oldValue = func(ctx context.Context) (*SourceSeedState, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceSeedState.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceSeedState sets the old SourceSeedState of the mutation.
+func withSourceSeedState(node *SourceSeedState) sourceseedstateOption {
+	return func(m *SourceSeedStateMutation) {
+		m.oldValue = func(context.Context) (*SourceSeedState, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceSeedStateMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceSeedStateMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceSeedState entities.
+func (m *SourceSeedStateMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceSeedStateMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceSeedStateMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceSeedState.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourceSeedStateMutation) SetSourceID(i int64) {
+	m.source_id = &i
+	m.addsource_id = nil
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourceSeedStateMutation) SourceID() (r int64, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourceSeedState entity.
+// If the SourceSeedState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceSeedStateMutation) OldSourceID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// AddSourceID adds i to the "source_id" field.
+func (m *SourceSeedStateMutation) AddSourceID(i int64) {
+	if m.addsource_id != nil {
+		*m.addsource_id += i
+	} else {
+		m.addsource_id = &i
+	}
+}
+
+// AddedSourceID returns the value that was added to the "source_id" field in this mutation.
+func (m *SourceSeedStateMutation) AddedSourceID() (r int64, exists bool) {
+	v := m.addsource_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourceSeedStateMutation) ResetSourceID() {
+	m.source_id = nil
+	m.addsource_id = nil
+}
+
+// SetSourceName sets the "source_name" field.
+func (m *SourceSeedStateMutation) SetSourceName(s string) {
+	m.source_name = &s
+}
+
+// SourceName returns the value of the "source_name" field in the mutation.
+func (m *SourceSeedStateMutation) SourceName() (r string, exists bool) {
+	v := m.source_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceName returns the old "source_name" field's value of the SourceSeedState entity.
+// If the SourceSeedState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceSeedStateMutation) OldSourceName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceName: %w", err)
+	}
+	return oldValue.SourceName, nil
+}
+
+// ResetSourceName resets all changes to the "source_name" field.
+func (m *SourceSeedStateMutation) ResetSourceName() {
+	m.source_name = nil
+}
+
+// SetPrefsReadOk sets the "prefs_read_ok" field.
+func (m *SourceSeedStateMutation) SetPrefsReadOk(b bool) {
+	m.prefs_read_ok = &b
+}
+
+// PrefsReadOk returns the value of the "prefs_read_ok" field in the mutation.
+func (m *SourceSeedStateMutation) PrefsReadOk() (r bool, exists bool) {
+	v := m.prefs_read_ok
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPrefsReadOk returns the old "prefs_read_ok" field's value of the SourceSeedState entity.
+// If the SourceSeedState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceSeedStateMutation) OldPrefsReadOk(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPrefsReadOk is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPrefsReadOk requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPrefsReadOk: %w", err)
+	}
+	return oldValue.PrefsReadOk, nil
+}
+
+// ResetPrefsReadOk resets all changes to the "prefs_read_ok" field.
+func (m *SourceSeedStateMutation) ResetPrefsReadOk() {
+	m.prefs_read_ok = nil
+}
+
+// SetLastError sets the "last_error" field.
+func (m *SourceSeedStateMutation) SetLastError(s string) {
+	m.last_error = &s
+}
+
+// LastError returns the value of the "last_error" field in the mutation.
+func (m *SourceSeedStateMutation) LastError() (r string, exists bool) {
+	v := m.last_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastError returns the old "last_error" field's value of the SourceSeedState entity.
+// If the SourceSeedState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceSeedStateMutation) OldLastError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastError: %w", err)
+	}
+	return oldValue.LastError, nil
+}
+
+// ResetLastError resets all changes to the "last_error" field.
+func (m *SourceSeedStateMutation) ResetLastError() {
+	m.last_error = nil
+}
+
+// SetPrefsReadAt sets the "prefs_read_at" field.
+func (m *SourceSeedStateMutation) SetPrefsReadAt(t time.Time) {
+	m.prefs_read_at = &t
+}
+
+// PrefsReadAt returns the value of the "prefs_read_at" field in the mutation.
+func (m *SourceSeedStateMutation) PrefsReadAt() (r time.Time, exists bool) {
+	v := m.prefs_read_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPrefsReadAt returns the old "prefs_read_at" field's value of the SourceSeedState entity.
+// If the SourceSeedState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceSeedStateMutation) OldPrefsReadAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPrefsReadAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPrefsReadAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPrefsReadAt: %w", err)
+	}
+	return oldValue.PrefsReadAt, nil
+}
+
+// ClearPrefsReadAt clears the value of the "prefs_read_at" field.
+func (m *SourceSeedStateMutation) ClearPrefsReadAt() {
+	m.prefs_read_at = nil
+	m.clearedFields[sourceseedstate.FieldPrefsReadAt] = struct{}{}
+}
+
+// PrefsReadAtCleared returns if the "prefs_read_at" field was cleared in this mutation.
+func (m *SourceSeedStateMutation) PrefsReadAtCleared() bool {
+	_, ok := m.clearedFields[sourceseedstate.FieldPrefsReadAt]
+	return ok
+}
+
+// ResetPrefsReadAt resets all changes to the "prefs_read_at" field.
+func (m *SourceSeedStateMutation) ResetPrefsReadAt() {
+	m.prefs_read_at = nil
+	delete(m.clearedFields, sourceseedstate.FieldPrefsReadAt)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *SourceSeedStateMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *SourceSeedStateMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the SourceSeedState entity.
+// If the SourceSeedState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceSeedStateMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *SourceSeedStateMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceSeedStateMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceSeedStateMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceSeedState entity.
+// If the SourceSeedState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceSeedStateMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceSeedStateMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourceSeedStateMutation builder.
+func (m *SourceSeedStateMutation) Where(ps ...predicate.SourceSeedState) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceSeedStateMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceSeedStateMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceSeedState, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceSeedStateMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceSeedStateMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceSeedState).
+func (m *SourceSeedStateMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceSeedStateMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.source_id != nil {
+		fields = append(fields, sourceseedstate.FieldSourceID)
+	}
+	if m.source_name != nil {
+		fields = append(fields, sourceseedstate.FieldSourceName)
+	}
+	if m.prefs_read_ok != nil {
+		fields = append(fields, sourceseedstate.FieldPrefsReadOk)
+	}
+	if m.last_error != nil {
+		fields = append(fields, sourceseedstate.FieldLastError)
+	}
+	if m.prefs_read_at != nil {
+		fields = append(fields, sourceseedstate.FieldPrefsReadAt)
+	}
+	if m.created_at != nil {
+		fields = append(fields, sourceseedstate.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourceseedstate.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceSeedStateMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourceseedstate.FieldSourceID:
+		return m.SourceID()
+	case sourceseedstate.FieldSourceName:
+		return m.SourceName()
+	case sourceseedstate.FieldPrefsReadOk:
+		return m.PrefsReadOk()
+	case sourceseedstate.FieldLastError:
+		return m.LastError()
+	case sourceseedstate.FieldPrefsReadAt:
+		return m.PrefsReadAt()
+	case sourceseedstate.FieldCreatedAt:
+		return m.CreatedAt()
+	case sourceseedstate.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceSeedStateMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourceseedstate.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourceseedstate.FieldSourceName:
+		return m.OldSourceName(ctx)
+	case sourceseedstate.FieldPrefsReadOk:
+		return m.OldPrefsReadOk(ctx)
+	case sourceseedstate.FieldLastError:
+		return m.OldLastError(ctx)
+	case sourceseedstate.FieldPrefsReadAt:
+		return m.OldPrefsReadAt(ctx)
+	case sourceseedstate.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case sourceseedstate.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceSeedState field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceSeedStateMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourceseedstate.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourceseedstate.FieldSourceName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceName(v)
+		return nil
+	case sourceseedstate.FieldPrefsReadOk:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPrefsReadOk(v)
+		return nil
+	case sourceseedstate.FieldLastError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastError(v)
+		return nil
+	case sourceseedstate.FieldPrefsReadAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPrefsReadAt(v)
+		return nil
+	case sourceseedstate.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case sourceseedstate.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceSeedState field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceSeedStateMutation) AddedFields() []string {
+	var fields []string
+	if m.addsource_id != nil {
+		fields = append(fields, sourceseedstate.FieldSourceID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceSeedStateMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourceseedstate.FieldSourceID:
+		return m.AddedSourceID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceSeedStateMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourceseedstate.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSourceID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceSeedState numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceSeedStateMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourceseedstate.FieldPrefsReadAt) {
+		fields = append(fields, sourceseedstate.FieldPrefsReadAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceSeedStateMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceSeedStateMutation) ClearField(name string) error {
+	switch name {
+	case sourceseedstate.FieldPrefsReadAt:
+		m.ClearPrefsReadAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceSeedState nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceSeedStateMutation) ResetField(name string) error {
+	switch name {
+	case sourceseedstate.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourceseedstate.FieldSourceName:
+		m.ResetSourceName()
+		return nil
+	case sourceseedstate.FieldPrefsReadOk:
+		m.ResetPrefsReadOk()
+		return nil
+	case sourceseedstate.FieldLastError:
+		m.ResetLastError()
+		return nil
+	case sourceseedstate.FieldPrefsReadAt:
+		m.ResetPrefsReadAt()
+		return nil
+	case sourceseedstate.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case sourceseedstate.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceSeedState field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceSeedStateMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceSeedStateMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceSeedStateMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceSeedStateMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceSeedStateMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceSeedStateMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceSeedStateMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceSeedState unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceSeedStateMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceSeedState edge %s", name)
 }
 
 // SuwayomiSyncStateMutation represents an operation that mutates the SuwayomiSyncState nodes in the graph.

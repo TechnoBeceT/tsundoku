@@ -62,6 +62,14 @@
   --sd-hl-erroring-bg: rgba(244, 63, 94, 0.15);
   --sd-hl-erroring-dot: #fb7185;
 
+  /* unavailable — slate: the source's extension is no longer installed in the
+     engine (it was uninstalled/removed). Deliberately a distinct, inert tone —
+     not amber/rose — because the source is GONE, not merely behind or erroring;
+     the fix is to reinstall the extension or remove the source. */
+  --sd-hl-unavailable-fg: #cbd5e1;
+  --sd-hl-unavailable-bg: rgba(100, 116, 139, 0.22);
+  --sd-hl-unavailable-dot: #94a3b8;
+
   /* ---- Header stat accents ---------------------------------------------- */
   /* "On disk" count — emerald (matches the downloaded state). */
   --sd-stat-disk: #34d399;

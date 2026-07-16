@@ -47,6 +47,8 @@ const hasBehind = computed(() => props.source.chaptersBehind > 0)
     <span class="source__synced">{{ syncedLabel }}</span>
     <span v-if="hasBehind" class="source__behind">· {{ source.chaptersBehind }} behind</span>
     <div v-if="source.lastError" class="source__error">{{ source.lastError }}</div>
+    <!-- The extension-gone hint: the badge says the state, this says what to do. -->
+    <div v-if="source.health === 'unavailable'" class="source__hint">Extension not installed — reinstall or remove.</div>
   </div>
 </template>
 
@@ -89,5 +91,14 @@ const hasBehind = computed(() => props.source.chaptersBehind > 0)
   font-size: var(--text-xs);
   color: var(--sd-hl-erroring-fg);
   word-break: break-word;
+}
+
+/* "Extension gone" hint — tinted with the unavailable health token to match its
+   badge. Full-width so it sits on its own line under the source meta. */
+.source__hint {
+  flex-basis: 100%;
+  margin-top: 3px;
+  font-size: var(--text-xs);
+  color: var(--sd-hl-unavailable-fg);
 }
 </style>

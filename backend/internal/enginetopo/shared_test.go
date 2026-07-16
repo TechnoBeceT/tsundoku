@@ -29,3 +29,19 @@ func seedProvider(ctx context.Context, t *testing.T, client *ent.Client, title, 
 		SetSuwayomiID(suwayomiID).
 		SaveX(ctx)
 }
+
+// seedNamedProvider creates a Series + one SeriesProvider carrying a display
+// provider_name (the human-readable name SeedSourcePreferences stores on the
+// SourceSeedState row), keyed by the numeric provider source id.
+func seedNamedProvider(ctx context.Context, t *testing.T, client *ent.Client, title, provider, name string) {
+	t.Helper()
+	s := client.Series.Create().
+		SetTitle(title).
+		SetSlug(disk.Slugify(title)).
+		SaveX(ctx)
+	client.SeriesProvider.Create().
+		SetSeries(s).
+		SetProvider(provider).
+		SetProviderName(name).
+		SaveX(ctx)
+}

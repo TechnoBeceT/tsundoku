@@ -30,6 +30,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -111,6 +112,7 @@ func checkColumn(t, c string) error {
 			sourceevent.Table:        sourceevent.ValidColumn,
 			sourcemetric.Table:       sourcemetric.ValidColumn,
 			sourcepreference.Table:   sourcepreference.ValidColumn,
+			sourceseedstate.Table:    sourceseedstate.ValidColumn,
 			suwayomisyncstate.Table:  suwayomisyncstate.ValidColumn,
 			trackbinding.Table:       trackbinding.ValidColumn,
 			trackerconnection.Table:  trackerconnection.ValidColumn,

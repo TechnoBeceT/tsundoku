@@ -424,6 +424,30 @@ var (
 			},
 		},
 	}
+	// SourceSeedStatesColumns holds the columns for the "source_seed_states" table.
+	SourceSeedStatesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeInt64},
+		{Name: "source_name", Type: field.TypeString, Default: ""},
+		{Name: "prefs_read_ok", Type: field.TypeBool, Default: false},
+		{Name: "last_error", Type: field.TypeString, Default: ""},
+		{Name: "prefs_read_at", Type: field.TypeTime, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourceSeedStatesTable holds the schema information for the "source_seed_states" table.
+	SourceSeedStatesTable = &schema.Table{
+		Name:       "source_seed_states",
+		Columns:    SourceSeedStatesColumns,
+		PrimaryKey: []*schema.Column{SourceSeedStatesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "sourceseedstate_source_id",
+				Unique:  true,
+				Columns: []*schema.Column{SourceSeedStatesColumns[1]},
+			},
+		},
+	}
 	// SuwayomiSyncStatesColumns holds the columns for the "suwayomi_sync_states" table.
 	SuwayomiSyncStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -533,6 +557,7 @@ var (
 		SourceEventsTable,
 		SourceMetricsTable,
 		SourcePreferencesTable,
+		SourceSeedStatesTable,
 		SuwayomiSyncStatesTable,
 		TrackBindingsTable,
 		TrackerConnectionsTable,

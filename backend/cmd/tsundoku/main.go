@@ -272,7 +272,8 @@ func main() {
 	// safe — it shares no mutable state with the one constructed by
 	// registerRoutes; this follows the M5 precedent for a second
 	// ingest.NewIngestWithGate.
-	healthSvc := series.NewServiceWithStaleGrace(entClient, cfg.Storage.Folder, settingsSvc.StaleGraceDays)
+	healthSvc := series.NewServiceWithStaleGrace(entClient, cfg.Storage.Folder, settingsSvc.StaleGraceDays).
+		WithSourceLister(sourceengine.NewSourceLister(engineClient))
 
 	// Wire the metadata engine's "set a library source's own cover" pick
 	// (metadatasvc.Service.SetCover, kind=="source"): it needs the engine-host

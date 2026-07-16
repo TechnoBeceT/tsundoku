@@ -1,25 +1,29 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import type { ProviderHealth } from '../screens/seriesDetail.types'
+
 /**
  * HealthBadge — a labelled pill + dot for a provider's source-health state.
  *
  * Tints itself from the existing `--sd-hl-<health>-{fg,bg,dot}` health tokens
  * (in `tokens/seriesDetail.css`, theme-independent). Mirrors `StatusBadge`'s
- * shape but for the three provider-health states.
+ * shape but for the provider-health states.
  *
- *   - `health` (required): 'ok' | 'stale' | 'erroring'
- *     → labelled Healthy / Stale / Erroring (prototype wording).
+ *   - `health` (required): 'ok' | 'stale' | 'erroring' | 'unavailable'
+ *     → labelled Healthy / Stale / Erroring / Unavailable. `unavailable` means
+ *     the source's Suwayomi extension is no longer installed in the engine.
  */
 const props = defineProps<{
   /** The provider health to render — drives both the label and the colour. */
-  health: 'ok' | 'stale' | 'erroring'
+  health: ProviderHealth
 }>()
 
-const LABELS: Record<'ok' | 'stale' | 'erroring', string> = {
+const LABELS: Record<ProviderHealth, string> = {
   ok: 'Healthy',
   stale: 'Stale',
   erroring: 'Erroring',
+  unavailable: 'Unavailable',
 }
 
 const label = computed(() => LABELS[props.health])

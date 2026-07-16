@@ -946,7 +946,7 @@ export interface paths {
         };
         /**
          * Library source-health scan
-         * @description Returns every series that has at least one stale or erroring source.
+         * @description Returns every series that has at least one stale, erroring, or unavailable source.
          */
         get: operations["getLibraryHealth"];
         put?: never;
@@ -2148,10 +2148,10 @@ export interface components {
             /** @description Priority/quality rank — higher is preferred. */
             importance: number;
             /**
-             * @description Computed source health within this series.
+             * @description Computed source health within this series. `unavailable` means the source's extension is no longer loaded in the engine (it was uninstalled/removed) — reinstall the extension or remove the source. It dominates `erroring`/`stale` (there is nothing to fetch from).
              * @enum {string}
              */
-            health: "ok" | "stale" | "erroring";
+            health: "ok" | "stale" | "erroring" | "unavailable";
             /** @description How many of the series' chapters this source lacks (informational). */
             chaptersBehind: number;
             /**
@@ -2650,13 +2650,30 @@ export interface components {
                  * @example 5
                  */
                 prefsCaptured: number;
+                /**
+                 * @description How many sources' last preference read succeeded (a source may be reached yet carry zero non-default preferences).
+                 * @example 7
+                 */
+                reached: number;
+                /**
+                 * @description How many sources' last preference read errored (a real gap).
+                 * @example 1
+                 */
+                failed: number;
+                /**
+                 * @description Names of the sources whose last preference read errored (source name, falling back to the source id). Empty when none failed.
+                 * @example [
+                 *       "Comix"
+                 *     ]
+                 */
+                failedSources: string[];
             };
             /**
              * @description Human-readable notes naming what is still outstanding (e.g.
              *     "3 extensions not cached"). Empty when nothing is outstanding.
              * @example [
              *       "3 extensions not cached",
-             *       "2 sources without captured preferences"
+             *       "1 sources' preferences could not be read: Comix"
              *     ]
              */
             gaps: string[];

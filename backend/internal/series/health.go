@@ -15,6 +15,12 @@ const (
 	HealthStale = "stale"
 	// HealthErroring means the last refresh of this source failed.
 	HealthErroring = "erroring"
+	// HealthUnavailable means the provider's source is no longer loaded in the
+	// engine — its extension was uninstalled/removed, so nothing can fetch from
+	// it. This is a DOMINANT fact (a missing extension outranks a stored
+	// last_error or staleness): the fix is to reinstall the extension or remove
+	// the source, not to wait for the next sweep.
+	HealthUnavailable = "unavailable"
 )
 
 // ProviderHealth is the computed, read-only health of one source within a series.
@@ -51,6 +57,13 @@ type ProviderHealthInput struct {
 	// completed series is excluded from health: its status is forced to
 	// HealthOK (it is done, not broken), never stale or erroring.
 	Completed bool
+	// SourceUnavailable is true when this is a LIVE provider (a real engine
+	// source) whose numeric source id is no longer among the engine's
+	// currently-loaded sources — i.e. its extension was uninstalled. It is set
+	// ONLY when the caller could positively confirm the loaded-source set
+	// (fail-safe: a transient engine hiccup leaves it false so the whole library
+	// never flips to "unavailable"). See ComputeProviderHealth for its precedence.
+	SourceUnavailable bool
 }
 
 // providerMaxNumber returns the maximum non-nil Number across chs, or nil if
@@ -101,7 +114,10 @@ func isStale(seriesMax *float64, providerMax *float64, newestChapterAt *time.Tim
 
 // ComputeProviderHealth derives one source's health from already-loaded data.
 // now and graceDays are passed in so the result is deterministic and testable.
-// Status precedence: erroring > stale > ok.
+// Status precedence: completed(ok) > unavailable > erroring > stale > ok. A
+// completed series is done, not broken, so it wins even over a missing
+// extension; below that, a source whose extension is gone is the dominant fact
+// (there is nothing to error or fall behind FROM) and outranks last_error/stale.
 func ComputeProviderHealth(in ProviderHealthInput, now time.Time, graceDays int) ProviderHealth {
 	h := ProviderHealth{Status: HealthOK}
 
@@ -122,6 +138,13 @@ func ComputeProviderHealth(in ProviderHealthInput, now time.Time, graceDays int)
 	// A completed series is done, not broken: surface the informational fields
 	// but never escalate to stale/erroring. One rule, reused by every caller.
 	if in.Completed {
+		return h
+	}
+
+	// A missing extension outranks every failure/staleness signal below: the
+	// source cannot be refreshed at all, so last_error/stale are moot.
+	if in.SourceUnavailable {
+		h.Status = HealthUnavailable
 		return h
 	}
 

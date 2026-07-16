@@ -218,6 +218,7 @@ func registerRoutes(
 	// reconcile below is the other. trackerSyncSvc satisfies both hooks.
 	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays).
 		WithCoverFetcher(engineClient).
+		WithSourceLister(sourceengine.NewSourceLister(engineClient)).
 		WithProgressPusher(trackerSyncSvc)
 	// WithViewSyncer wires the detail-open tracker reconcile: opening a series'
 	// detail page fires a detached, best-effort syncsvc.Service.SyncOnView IN

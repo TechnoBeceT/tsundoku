@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -79,14 +80,33 @@ func TestTopologyStatus_EmptyIsZeroedResponse(t *testing.T) {
 		t.Errorf("body %s: want \"gaps\":[]", got)
 	}
 
+	// failedSources must serialize as [] not null.
+	if got := rec.Body.String(); !strings.Contains(got, `"failedSources":[]`) {
+		t.Errorf("body %s: want \"failedSources\":[]", got)
+	}
+
 	var dto handler.TopologyStatusDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	want := handler.TopologyStatusDTO{Gaps: []string{}}
-	if dto.Repos != want.Repos || dto.Extensions != want.Extensions ||
-		dto.Sources != want.Sources || len(dto.Gaps) != 0 {
-		t.Errorf("empty DB DTO = %+v, want all-zero counts + empty gaps", dto)
+	assertZeroTopologyDTO(t, dto)
+}
+
+// assertZeroTopologyDTO proves every count on the DTO is zero and both slices
+// (gaps, failedSources) are empty non-nil. Extracted so the empty-response test
+// body stays within the cyclop gate; SourceCountsDTO carries a slice, so it is
+// compared with reflect.DeepEqual rather than ==.
+func assertZeroTopologyDTO(t *testing.T, dto handler.TopologyStatusDTO) {
+	t.Helper()
+	// The zero response: every count 0, both slices empty NON-NIL (so they
+	// serialize as [] not null). reflect.DeepEqual distinguishes []string{} from
+	// nil, which is exactly the non-null guarantee under test.
+	want := handler.TopologyStatusDTO{
+		Gaps:    []string{},
+		Sources: handler.SourceCountsDTO{FailedSources: []string{}},
+	}
+	if !reflect.DeepEqual(dto, want) {
+		t.Errorf("empty DB DTO = %+v, want all-zero counts + empty non-nil slices %+v", dto, want)
 	}
 }
 
@@ -105,9 +125,14 @@ func TestTopologyStatus_CountsAndGaps(t *testing.T) {
 
 	c.SourcePreference.Create().SetSourceID(123).SetKey("lang").SetValue("en").SaveX(ctx)
 
+	// Seed-state: source 123 read OK, source 456 read FAILED (named) → reached=1,
+	// failed=1, failedSources=["Asura Scans"].
+	c.SourceSeedState.Create().SetSourceID(123).SetSourceName("Comix").SetPrefsReadOk(true).SaveX(ctx)
+	c.SourceSeedState.Create().SetSourceID(456).SetSourceName("Asura Scans").SetPrefsReadOk(false).SetLastError("boom").SaveX(ctx)
+
 	// Two live sources (123, 456).
 	s1 := c.Series.Create().SetTitle("Solo Leveling").SetSlug("solo-leveling").SaveX(ctx)
-	c.SeriesProvider.Create().SetSeries(s1).SetProvider("123").SetSuwayomiID(42).SetURL("https://a.test/m").SaveX(ctx)
+	c.SeriesProvider.Create().SetSeries(s1).SetProvider("123").SetSuwayomiID(42).SaveX(ctx)
 	s2 := c.Series.Create().SetTitle("Omniscient Reader").SetSlug("omniscient-reader").SaveX(ctx)
 	c.SeriesProvider.Create().SetSeries(s2).SetProvider("456").SetSuwayomiID(43).SaveX(ctx)
 
@@ -130,17 +155,29 @@ func TestTopologyStatus_CountsAndGaps(t *testing.T) {
 		{"extensions.cached", dto.Extensions.Cached, 1},
 		{"sources.total", dto.Sources.Total, 2},
 		{"sources.prefsCaptured", dto.Sources.PrefsCaptured, 1},
+		{"sources.reached", dto.Sources.Reached, 1},
+		{"sources.failed", dto.Sources.Failed, 1},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %d, want %d", tc.name, tc.got, tc.want)
 		}
 	}
 
-	// Gaps: 2 extensions uncached, 1 source without prefs.
+	if len(dto.Sources.FailedSources) != 1 || dto.Sources.FailedSources[0] != "Asura Scans" {
+		t.Errorf("failedSources = %v, want [Asura Scans]", dto.Sources.FailedSources)
+	}
+
+	// Gaps: 2 extensions uncached, 1 source whose read FAILED (named). The old
+	// "sources without captured preferences" note is GONE.
 	assertGaps(t, dto.Gaps,
 		"2 extensions not cached",
-		"1 sources without captured preferences",
+		"1 sources' preferences could not be read: Asura Scans",
 	)
+	for _, g := range dto.Gaps {
+		if strings.Contains(g, "without captured preferences") {
+			t.Errorf("stale gap note still present: %q", g)
+		}
+	}
 }
 
 // assertGaps proves dto.Gaps holds exactly the wanted notes (order-independent).

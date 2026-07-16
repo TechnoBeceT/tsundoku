@@ -65,7 +65,35 @@ const erroringSource = (over: Partial<Provider>): Provider => ({
   ...over,
 })
 
-/** Several sick series with a mix of stale + erroring sources. */
+// An unavailable source: its Suwayomi extension was uninstalled, so the engine
+// no longer lists its source id. No last_error and no staleness — the source is
+// simply GONE (it used to show a misleading "Healthy · supplies 0"). Mirrors the
+// real prod "Manga Ball" case.
+const unavailableSource = (over: Partial<Provider>): Provider => ({
+  id: 'prov-gone',
+  provider: '8842194512033120017',
+  providerName: 'Manga Ball',
+  mangaId: 15,
+  linked: true,
+  chapterCount: 0,
+  feedCount: 0,
+  feedRanges: '',
+  hasFeed: false,
+  fractionalCount: 0,
+  fractionalChapters: [],
+  ignoreFractional: false,
+  scanlator: '',
+  language: 'en',
+  importance: 10,
+  health: 'unavailable',
+  chaptersBehind: 0,
+  newestChapterAt: null,
+  lastSyncedAt: daysAgo(20),
+  lastError: '',
+  ...over,
+})
+
+/** Several sick series with a mix of stale, erroring + unavailable sources. */
 export const sickSeries: SeriesHealth[] = [
   {
     id: 'series-1',
@@ -130,4 +158,15 @@ export const sickSeries: SeriesHealth[] = [
       }),
     ],
   },
+  {
+    id: 'series-5',
+    title: 'The Greatest Estate Developer',
+    slug: 'greatest-estate-developer',
+    // Flagged solely because its only live source's extension was uninstalled
+    // (the backend lists only the sick source — here, the gone one).
+    sources: [unavailableSource({ id: 's5-a' })],
+  },
 ]
+
+/** The lone unavailable source (extension uninstalled) — for focused stories. */
+export const unavailableSourceRow: Provider = unavailableSource({ id: 'gone-1' })

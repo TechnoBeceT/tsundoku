@@ -55,6 +55,22 @@ export const Erroring: Story = {
   },
 }
 
+/**
+ * An unavailable source: its Suwayomi extension was uninstalled, so the engine
+ * no longer lists it — the distinct slate "Unavailable" badge plus the
+ * "Extension not installed — reinstall or remove" hint. No last-error and no
+ * behind count (the source is gone, not erroring or behind).
+ */
+export const Unavailable: Story = {
+  args: {
+    provider: { ...richSeries.providers[2]!, health: 'unavailable', lastError: '', chaptersBehind: 0, chapterCount: 0 },
+    rank: 3,
+    preferred: false,
+    canUp: true,
+    canDown: false,
+  },
+}
+
 /** Saving: reorder + remove disabled while a mutation is in flight. */
 export const Saving: Story = {
   args: {

@@ -2,10 +2,10 @@
  * Prop/data types for the Library Health screen (`GET /api/health`).
  *
  * Health is the "what needs attention" view: the backend response only carries
- * series that have at least one `stale` or `erroring` source (completed series
- * are treated as healthy and never appear). Each entry lists ONLY that series'
- * unhealthy sources — reusing the per-source `Provider` shape from the Series
- * Detail screen so the badge/sync/error fields render identically.
+ * series that have at least one `stale`, `erroring`, or `unavailable` source
+ * (completed series are treated as healthy and never appear). Each entry lists
+ * ONLY that series' unhealthy sources — reusing the per-source `Provider` shape
+ * from the Series Detail screen so the badge/sync/error fields render identically.
  *
  * Kept in this `.ts` (never exported from a `.vue`) so stories and fixtures can
  * import it freely; the screen stays presentation-only and never touches the

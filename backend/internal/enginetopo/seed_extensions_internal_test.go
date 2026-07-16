@@ -37,6 +37,76 @@ func TestCappedReader_ErrorsPastCapWithoutTruncating(t *testing.T) {
 	}
 }
 
+// TestRepoURLResolution covers repoBaseURL / indexURLFor / apkURLFor across every
+// stored repo-URL shape the engine hands us: an index-FILE URL (index.pb — THE PROD
+// REGRESSION CASE — and index.min.json), a bare repo directory (with and without a
+// trailing slash), and a nested path. Deriving the base directory first is what
+// makes an index-file URL resolve to "<base>/index.min.json" instead of the old
+// ".../index.pb/index.min.json" 404.
+func TestRepoURLResolution(t *testing.T) {
+	tests := []struct {
+		name      string
+		repoURL   string
+		wantBase  string
+		wantIndex string
+		wantAPK   string
+	}{
+		{
+			// THE PROD REGRESSION CASE: the engine stores the repo's index FILE URL
+			// (keiyoushi uses the protobuf index.pb); the base is ".../repo".
+			name:      "index.pb file url",
+			repoURL:   "https://x/repo/index.pb",
+			wantBase:  "https://x/repo",
+			wantIndex: "https://x/repo/index.min.json",
+			wantAPK:   "https://x/repo/apk/a.apk",
+		},
+		{
+			name:      "index.min.json file url",
+			repoURL:   "https://x/repo/index.min.json",
+			wantBase:  "https://x/repo",
+			wantIndex: "https://x/repo/index.min.json",
+			wantAPK:   "https://x/repo/apk/a.apk",
+		},
+		{
+			name:      "bare repo directory",
+			repoURL:   "https://x/repo",
+			wantBase:  "https://x/repo",
+			wantIndex: "https://x/repo/index.min.json",
+			wantAPK:   "https://x/repo/apk/a.apk",
+		},
+		{
+			name:      "bare repo directory trailing slash",
+			repoURL:   "https://x/repo/",
+			wantBase:  "https://x/repo",
+			wantIndex: "https://x/repo/index.min.json",
+			wantAPK:   "https://x/repo/apk/a.apk",
+		},
+		{
+			name:      "nested path index file",
+			repoURL:   "https://x/a/b/repo/index.pb",
+			wantBase:  "https://x/a/b/repo",
+			wantIndex: "https://x/a/b/repo/index.min.json",
+			wantAPK:   "https://x/a/b/repo/apk/a.apk",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repoBaseURL(tt.repoURL); got != tt.wantBase {
+				t.Errorf("repoBaseURL(%q) = %q, want %q", tt.repoURL, got, tt.wantBase)
+			}
+			if got := repoBaseFor(tt.repoURL); got != tt.wantBase {
+				t.Errorf("repoBaseFor(%q) = %q, want %q", tt.repoURL, got, tt.wantBase)
+			}
+			if got := indexURLFor(tt.repoURL); got != tt.wantIndex {
+				t.Errorf("indexURLFor(%q) = %q, want %q", tt.repoURL, got, tt.wantIndex)
+			}
+			if got := apkURLFor(tt.repoURL, "a.apk"); got != tt.wantAPK {
+				t.Errorf("apkURLFor(%q, a.apk) = %q, want %q", tt.repoURL, got, tt.wantAPK)
+			}
+		})
+	}
+}
+
 // TestDownloadAndCache_OversizedBodyErrorsAndCachesNothing proves the .apk size
 // ceiling end-to-end: a body larger than maxBytes makes downloadAndCache return
 // an error and leaves NOTHING in the cache (cache.Put drops its temp file on the

@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sort"
 	"strconv"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	entsourcepreference "github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	entsourceseedstate "github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
@@ -61,12 +64,9 @@ type PreferenceSeedResult struct {
 // matching the ratified TrackerConnection plaintext-secrets model; this
 // function does not attempt to detect or skip password-shaped preferences.
 func SeedSourcePreferences(ctx context.Context, client sourceengine.Client, db *ent.Client) (PreferenceSeedResult, error) {
-	providers, err := db.SeriesProvider.Query().
-		Unique(true).
-		Select(entseriesprovider.FieldProvider).
-		Strings(ctx)
+	providers, nameByProvider, err := distinctProvidersWithNames(ctx, db)
 	if err != nil {
-		return PreferenceSeedResult{}, fmt.Errorf("enginetopo.SeedSourcePreferences: query providers: %w", err)
+		return PreferenceSeedResult{}, err
 	}
 
 	var result PreferenceSeedResult
@@ -77,12 +77,17 @@ func SeedSourcePreferences(ctx context.Context, client sourceengine.Client, db *
 			// nothing to seed from, and not a failure.
 			continue
 		}
+		name := nameByProvider[provider]
 
 		prefs, err := client.Preferences(ctx, sourceID)
 		if err != nil {
 			slog.WarnContext(ctx, "enginetopo: Preferences failed, skipping source",
 				"source_id", sourceID, "err", err)
 			result.SkippedSources++
+			// Record the READ FAILURE so the topology status can positively report
+			// this source's preferences could not be read (a real gap), distinct
+			// from a source that was reached but had nothing to capture.
+			recordSeedState(ctx, db, sourceID, name, false, err.Error())
 			continue
 		}
 
@@ -105,9 +110,47 @@ func SeedSourcePreferences(ctx context.Context, client sourceengine.Client, db *
 			}
 			result.Seeded++
 		}
+
+		// The READ succeeded (independent of how many prefs existed or whether any
+		// individual pref-row write above failed) — record ok=true and clear any
+		// prior read error, so a previously-failed source self-heals on re-run.
+		recordSeedState(ctx, db, sourceID, name, true, "")
 	}
 
 	return result, nil
+}
+
+// distinctProvidersWithNames loads provider + provider_name distinct in ONE
+// query (no N+1 per-source name lookup) and returns the DETERMINISTIC iteration
+// order plus a provider→name map. Rows are sorted by (provider, provider_name)
+// and folded first-write-wins, so a provider that carries diverging
+// provider_name values across its SeriesProvider rows resolves to a STABLE name
+// (the lexicographically smallest), never the nondeterministic last row Postgres
+// happened to return.
+func distinctProvidersWithNames(ctx context.Context, db *ent.Client) ([]string, map[string]string, error) {
+	rows, err := db.SeriesProvider.Query().
+		Unique(true).
+		Select(entseriesprovider.FieldProvider, entseriesprovider.FieldProviderName).
+		All(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("enginetopo.SeedSourcePreferences: query providers: %w", err)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Provider != rows[j].Provider {
+			return rows[i].Provider < rows[j].Provider
+		}
+		return rows[i].ProviderName < rows[j].ProviderName
+	})
+	nameByProvider := make(map[string]string, len(rows))
+	providers := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if _, seen := nameByProvider[r.Provider]; seen {
+			continue // first-write-wins over the sorted order (stable name pick).
+		}
+		nameByProvider[r.Provider] = r.ProviderName
+		providers = append(providers, r.Provider)
+	}
+	return providers, nameByProvider, nil
 }
 
 // encodePreferenceValue converts a decoded sourceengine.Preference's untyped
@@ -219,4 +262,54 @@ func upsertSourcePreference(ctx context.Context, db *ent.Client, sourceID int64,
 		SetValue(value).
 		SetValueType(valueType).
 		Exec(ctx)
+}
+
+// recordSeedState upserts the per-source SourceSeedState row (best-effort: an
+// upsert error is logged and swallowed, never aborting the pass nor blocking the
+// SourcePreference writes — the seed's core job cannot depend on this bookkeeping
+// row). It centralizes the log-and-continue handling for both the read-failure
+// and read-success call sites.
+func recordSeedState(ctx context.Context, db *ent.Client, sourceID int64, name string, ok bool, readErr string) {
+	if err := upsertSourceSeedState(ctx, db, sourceID, name, ok, readErr); err != nil {
+		slog.WarnContext(ctx, "enginetopo: failed to persist source seed-state",
+			"source_id", sourceID, "err", err)
+	}
+}
+
+// upsertSourceSeedState writes one SourceSeedState row per source recording the
+// last preference-READ outcome: creates it the first time, overwrites it
+// thereafter. Like upsertSourcePreference over its unique index, SourceSeedState
+// is keyed by a single-column unique index on source_id, so this is a plain
+// query-then-write, not a generated ON CONFLICT upsert.
+//
+// On a successful read (ok=true) it stamps prefs_read_at=now and CLEARS
+// last_error (self-healing — a previously-failed source flips ok=false→true with
+// an empty error). On a failed read (ok=false) it sets last_error and leaves
+// prefs_read_at UNCHANGED, preserving the last-good read time.
+func upsertSourceSeedState(ctx context.Context, db *ent.Client, sourceID int64, name string, ok bool, readErr string) error {
+	existing, err := db.SourceSeedState.Query().
+		Where(entsourceseedstate.SourceID(sourceID)).
+		Only(ctx)
+	if ent.IsNotFound(err) {
+		create := db.SourceSeedState.Create().
+			SetSourceID(sourceID).
+			SetSourceName(name).
+			SetPrefsReadOk(ok).
+			SetLastError(readErr)
+		if ok {
+			create = create.SetPrefsReadAt(time.Now())
+		}
+		return create.Exec(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("query existing source seed-state: %w", err)
+	}
+	update := db.SourceSeedState.UpdateOneID(existing.ID).
+		SetSourceName(name).
+		SetPrefsReadOk(ok).
+		SetLastError(readErr)
+	if ok {
+		update = update.SetPrefsReadAt(time.Now())
+	}
+	return update.Exec(ctx)
 }

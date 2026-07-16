@@ -25,6 +25,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -524,6 +525,34 @@ func init() {
 	sourcepreferenceDescID := sourcepreferenceFields[0].Descriptor()
 	// sourcepreference.DefaultID holds the default value on creation for the id field.
 	sourcepreference.DefaultID = sourcepreferenceDescID.Default.(func() uuid.UUID)
+	sourceseedstateFields := schema.SourceSeedState{}.Fields()
+	_ = sourceseedstateFields
+	// sourceseedstateDescSourceName is the schema descriptor for source_name field.
+	sourceseedstateDescSourceName := sourceseedstateFields[2].Descriptor()
+	// sourceseedstate.DefaultSourceName holds the default value on creation for the source_name field.
+	sourceseedstate.DefaultSourceName = sourceseedstateDescSourceName.Default.(string)
+	// sourceseedstateDescPrefsReadOk is the schema descriptor for prefs_read_ok field.
+	sourceseedstateDescPrefsReadOk := sourceseedstateFields[3].Descriptor()
+	// sourceseedstate.DefaultPrefsReadOk holds the default value on creation for the prefs_read_ok field.
+	sourceseedstate.DefaultPrefsReadOk = sourceseedstateDescPrefsReadOk.Default.(bool)
+	// sourceseedstateDescLastError is the schema descriptor for last_error field.
+	sourceseedstateDescLastError := sourceseedstateFields[4].Descriptor()
+	// sourceseedstate.DefaultLastError holds the default value on creation for the last_error field.
+	sourceseedstate.DefaultLastError = sourceseedstateDescLastError.Default.(string)
+	// sourceseedstateDescCreatedAt is the schema descriptor for created_at field.
+	sourceseedstateDescCreatedAt := sourceseedstateFields[6].Descriptor()
+	// sourceseedstate.DefaultCreatedAt holds the default value on creation for the created_at field.
+	sourceseedstate.DefaultCreatedAt = sourceseedstateDescCreatedAt.Default.(func() time.Time)
+	// sourceseedstateDescUpdatedAt is the schema descriptor for updated_at field.
+	sourceseedstateDescUpdatedAt := sourceseedstateFields[7].Descriptor()
+	// sourceseedstate.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourceseedstate.DefaultUpdatedAt = sourceseedstateDescUpdatedAt.Default.(func() time.Time)
+	// sourceseedstate.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourceseedstate.UpdateDefaultUpdatedAt = sourceseedstateDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourceseedstateDescID is the schema descriptor for id field.
+	sourceseedstateDescID := sourceseedstateFields[0].Descriptor()
+	// sourceseedstate.DefaultID holds the default value on creation for the id field.
+	sourceseedstate.DefaultID = sourceseedstateDescID.Default.(func() uuid.UUID)
 	suwayomisyncstateFields := schema.SuwayomiSyncState{}.Fields()
 	_ = suwayomisyncstateFields
 	// suwayomisyncstateDescLastError is the schema descriptor for last_error field.

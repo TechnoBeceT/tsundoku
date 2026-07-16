@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import UnhealthySourceRow from './UnhealthySourceRow.vue'
-import { sickSeries } from '../../fixtures/libraryHealth'
+import { sickSeries, unavailableSourceRow } from '../../fixtures/libraryHealth'
 // Load the Series Detail health-badge tokens directly: index.css does not @import
 // them yet (a coordinator wires that line to avoid parallel-worker conflicts), so
 // the side-effect import keeps every story rendering with the real health palette.
@@ -34,4 +34,13 @@ export const Stale: Story = {
 /** A source that has never synced ("never synced" label) and is behind. */
 export const NeverSynced: Story = {
   args: { source: sickSeries[2]!.sources[1]! },
+}
+
+/**
+ * An unavailable source: the Suwayomi extension was uninstalled, so the engine
+ * no longer lists it — distinct slate badge + the "reinstall or remove" hint,
+ * no last-error and no behind count.
+ */
+export const Unavailable: Story = {
+  args: { source: unavailableSourceRow },
 }

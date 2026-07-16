@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	entsourcepreference "github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	entsourceseedstate "github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
@@ -253,5 +254,218 @@ func TestSeedSourcePreferences_SkipsNonNumericProvider(t *testing.T) {
 	}
 	if c := fc.CallCount("Preferences"); c != 0 {
 		t.Errorf("Preferences called %d times for a disk-origin provider, want 0", c)
+	}
+	// A disk-origin provider gets NO seed-state row (it is skipped before the read).
+	if n := client.SourceSeedState.Query().CountX(ctx); n != 0 {
+		t.Errorf("SourceSeedState rows = %d, want 0 for a disk-origin provider", n)
+	}
+}
+
+// seedState fetches the single SourceSeedState row for a source id (fails the
+// test if absent).
+func seedState(ctx context.Context, t *testing.T, client *ent.Client, sourceID int64) *ent.SourceSeedState {
+	t.Helper()
+	return client.SourceSeedState.Query().
+		Where(entsourceseedstate.SourceID(sourceID)).
+		OnlyX(ctx)
+}
+
+// wantSeedState is the expected SourceSeedState shape asserted by assertSeedState.
+type wantSeedState struct {
+	ok        bool
+	readAtSet bool
+	lastErr   string
+	name      string
+}
+
+// assertSeedState checks one SourceSeedState row against want, reported per
+// field. Extracted so the multi-source test bodies stay within the cyclop gate.
+func assertSeedState(t *testing.T, got *ent.SourceSeedState, want wantSeedState) {
+	t.Helper()
+	if got.PrefsReadOk != want.ok {
+		t.Errorf("source %d prefs_read_ok = %t, want %t", got.SourceID, got.PrefsReadOk, want.ok)
+	}
+	if (got.PrefsReadAt != nil) != want.readAtSet {
+		t.Errorf("source %d prefs_read_at set = %t, want %t", got.SourceID, got.PrefsReadAt != nil, want.readAtSet)
+	}
+	if got.LastError != want.lastErr {
+		t.Errorf("source %d last_error = %q, want %q", got.SourceID, got.LastError, want.lastErr)
+	}
+	if got.SourceName != want.name {
+		t.Errorf("source %d source_name = %q, want %q", got.SourceID, got.SourceName, want.name)
+	}
+}
+
+// TestSeedSourcePreferences_RecordsPerSourceReadOutcome proves the SourceSeedState
+// bookkeeping across the three distinct read outcomes in ONE pass:
+//   - (a) a source with a set preference → prefs_read_ok=true, pref captured,
+//     prefs_read_at non-nil, source_name stored;
+//   - (b) a source whose read errors → prefs_read_ok=false, last_error set,
+//     SkippedSources bumped, prefs_read_at nil (the read never succeeded);
+//   - (c) a reached source with zero/all-default prefs → prefs_read_ok=true,
+//     zero SourcePreference rows, but STILL a SourceSeedState row (the benign-empty
+//     case the old missing-count could not distinguish from a real failure).
+func TestSeedSourcePreferences_RecordsPerSourceReadOutcome(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	seedNamedProvider(ctx, t, client, "Solo Leveling", "42", "Comix")                      // (a)
+	seedNamedProvider(ctx, t, client, "Omniscient Reader", "10", "Asura Scans")            // (b)
+	seedNamedProvider(ctx, t, client, "The Beginning After The End", "77", "Weeb Central") // (c)
+
+	fc := &prefsErrClient{
+		Client: sourceenginefake.New(
+			sourceenginefake.WithPreferences(42, []sourceengine.Preference{
+				{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: true},
+			}),
+			// Source 77 answers with an UNSET preference → zero SourcePreference
+			// rows, but the read itself SUCCEEDED (ok=true).
+			sourceenginefake.WithPreferences(77, []sourceengine.Preference{
+				{Type: sourceengine.PreferenceEditText, Key: "username", CurrentValue: nil},
+			}),
+		),
+		errBySource: map[int64]error{10: errors.New("source offline")},
+	}
+
+	result, err := enginetopo.SeedSourcePreferences(ctx, fc, client)
+	if err != nil {
+		t.Fatalf("SeedSourcePreferences: %v", err)
+	}
+	if result.Seeded != 1 {
+		t.Errorf("Seeded = %d, want 1 (only source 42's nsfw)", result.Seeded)
+	}
+	if result.SkippedSources != 1 {
+		t.Errorf("SkippedSources = %d, want 1 (source 10)", result.SkippedSources)
+	}
+
+	// (a) reached + captured; (b) read failed; (c) reached but empty (still a row).
+	assertSeedState(t, seedState(ctx, t, client, 42), wantSeedState{ok: true, readAtSet: true, lastErr: "", name: "Comix"})
+	assertSeedState(t, seedState(ctx, t, client, 10), wantSeedState{ok: false, readAtSet: false, lastErr: "source offline", name: "Asura Scans"})
+	assertSeedState(t, seedState(ctx, t, client, 77), wantSeedState{ok: true, readAtSet: true, lastErr: "", name: "Weeb Central"})
+	if n := client.SourcePreference.Query().Where(entsourcepreference.SourceID(77)).CountX(ctx); n != 0 {
+		t.Errorf("source 77 SourcePreference rows = %d, want 0 (benign-empty)", n)
+	}
+}
+
+// TestSeedSourcePreferences_SeedStateSelfHeals proves a source whose read FAILED
+// on the first pass flips to ok=true with a cleared last_error once it succeeds
+// on a later pass — the same row updated in place (idempotent, at most one row).
+func TestSeedSourcePreferences_SeedStateSelfHeals(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	seedNamedProvider(ctx, t, client, "Solo Leveling", "55", "Comix")
+
+	// The source has a real preference, but the wrapper makes the READ error on
+	// the first pass; clearing the injected error lets the second pass succeed.
+	fc := &prefsErrClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(55, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: true},
+		})),
+		errBySource: map[int64]error{55: errors.New("boom")},
+	}
+	if _, err := enginetopo.SeedSourcePreferences(ctx, fc, client); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	first := seedState(ctx, t, client, 55)
+	if first.PrefsReadOk || first.LastError != "boom" {
+		t.Fatalf("first pass seed-state = %+v, want ok=false, error=boom", first)
+	}
+
+	// Second pass: the source now answers cleanly.
+	delete(fc.errBySource, 55)
+	if _, err := enginetopo.SeedSourcePreferences(ctx, fc, client); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+
+	rows := client.SourceSeedState.Query().Where(entsourceseedstate.SourceID(55)).AllX(ctx)
+	if len(rows) != 1 {
+		t.Fatalf("got %d seed-state rows for source 55, want exactly 1 (upsert, not duplicate)", len(rows))
+	}
+	healed := rows[0]
+	if healed.ID != first.ID {
+		t.Error("second pass created a NEW seed-state row instead of updating the existing one")
+	}
+	if !healed.PrefsReadOk || healed.LastError != "" || healed.PrefsReadAt == nil {
+		t.Errorf("healed seed-state = %+v, want ok=true, no error, read_at set", healed)
+	}
+}
+
+// TestSeedSourcePreferences_DeterministicSourceName PINS the L3 stable-name pick:
+// when the SAME numeric source appears across SeriesProvider rows with DIVERGING
+// provider_name values, the recorded SourceSeedState.source_name is the
+// DETERMINISTIC choice (lexicographically smallest), never the nondeterministic
+// last row Postgres returned. Regressing to last-write-wins or flipping the
+// comparator would fail this.
+func TestSeedSourcePreferences_DeterministicSourceName(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	// Two live rows for the SAME numeric source "42", names out of sorted order.
+	seedNamedProvider(ctx, t, client, "Solo Leveling", "42", "Zeta Name")
+	seedNamedProvider(ctx, t, client, "Omniscient Reader", "42", "Alpha Name")
+
+	fc := sourceenginefake.New(sourceenginefake.WithPreferences(42, []sourceengine.Preference{
+		{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: true},
+	}))
+
+	if _, err := enginetopo.SeedSourcePreferences(ctx, fc, client); err != nil {
+		t.Fatalf("SeedSourcePreferences: %v", err)
+	}
+
+	// Exactly one seed-state row, its name the lexicographically smallest.
+	rows := client.SourceSeedState.Query().Where(entsourceseedstate.SourceID(42)).AllX(ctx)
+	if len(rows) != 1 {
+		t.Fatalf("got %d seed-state rows for source 42, want exactly 1", len(rows))
+	}
+	if rows[0].SourceName != "Alpha Name" {
+		t.Errorf("source_name = %q, want %q (deterministic smallest, not last-write-wins)", rows[0].SourceName, "Alpha Name")
+	}
+}
+
+// TestSeedSourcePreferences_SeedStateWriteFailureIsNonFatal PINS the best-effort
+// contract: if the SourceSeedState upsert itself fails, the seed's CORE job is
+// unaffected. It forces ONLY the seed-state write to fail — by DROPping the
+// source_seed_states table out from under the pass while source_preferences is
+// intact — then asserts (a) SeedSourcePreferences returns nil error, (b) the
+// SourcePreference rows for a successful source are STILL written, (c) the
+// Seeded/SkippedSources counts are intact. Removing the log-and-continue guard
+// (propagating the upsert error) would fail this test.
+func TestSeedSourcePreferences_SeedStateWriteFailureIsNonFatal(t *testing.T) {
+	ctx := context.Background()
+	client, db := testdb.NewWithSQL(t)
+
+	seedNamedProvider(ctx, t, client, "Solo Leveling", "42", "Comix")           // read OK, has a pref
+	seedNamedProvider(ctx, t, client, "Omniscient Reader", "10", "Asura Scans") // read errors
+
+	fc := &prefsErrClient{
+		Client: sourceenginefake.New(sourceenginefake.WithPreferences(42, []sourceengine.Preference{
+			{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: true},
+		})),
+		errBySource: map[int64]error{10: errors.New("source offline")},
+	}
+
+	// Remove the seed-state table so EVERY SourceSeedState upsert errors, while the
+	// source_preferences table (the seed's real output) stays writable.
+	if _, err := db.ExecContext(ctx, `DROP TABLE source_seed_states`); err != nil {
+		t.Fatalf("DROP TABLE source_seed_states: %v", err)
+	}
+
+	result, err := enginetopo.SeedSourcePreferences(ctx, fc, client)
+	if err != nil {
+		t.Fatalf("SeedSourcePreferences returned error despite best-effort seed-state write: %v", err)
+	}
+	if result.Seeded != 1 {
+		t.Errorf("Seeded = %d, want 1 (source 42's nsfw still written)", result.Seeded)
+	}
+	if result.SkippedSources != 1 {
+		t.Errorf("SkippedSources = %d, want 1 (source 10)", result.SkippedSources)
+	}
+
+	// The core output — source 42's preference — must be present regardless of the
+	// seed-state write failure.
+	rows := client.SourcePreference.Query().Where(entsourcepreference.SourceID(42)).AllX(ctx)
+	if len(rows) != 1 || rows[0].Key != "nsfw" || rows[0].Value != "true" {
+		t.Errorf("source 42 SourcePreference rows = %+v, want exactly 1 (nsfw=true)", rows)
 	}
 }
