@@ -9,6 +9,9 @@ package enginehost
  * blocking HttpServer threads.
  */
 
+import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -108,9 +111,17 @@ object SourceCalls {
         }
 
     /**
-     * Fetch the raw image bytes + content type for a page, reconstructing the source's exact
-     * Page(url, imageUrl). If imageUrl is absent, resolve it via getImageUrl (Suwayomi's
-     * getTrueImageUrl pattern) — this covers sources whose page.url is an intermediate HTML page.
+     * Fetch the raw image bytes + content type for a page or a cover, distinguished by [pageUrl]:
+     * blank = COVER, non-blank = reader PAGE.
+     *
+     * Reader pages reconstruct the source's exact Page(url, imageUrl) and go through
+     * [HttpSource.getImage], resolving imageUrl first via getImageUrl (Suwayomi's getTrueImageUrl
+     * pattern) when absent — this covers sources whose page.url is an intermediate HTML page.
+     *
+     * Covers are fetched with a PLAIN GET of [imageUrl] via the source's own client + headers
+     * (so the CloudflareInterceptor still supplies cf_clearance), deliberately bypassing
+     * [HttpSource.imageRequest] — some extensions override imageRequest to validate a reader-page
+     * URL shape (e.g. "The Blank"), and a cover URL never matches that shape.
      */
     fun image(
         source: Source,
@@ -120,9 +131,18 @@ object SourceCalls {
         runBlocking {
             val http = source as? HttpSource
                 ?: error("Source ${source.name} is not an HttpSource; cannot fetch image bytes")
-            val page = Page(index = 0, url = pageUrl, imageUrl = imageUrl)
-            if (page.imageUrl == null) page.imageUrl = http.getImageUrl(page)
-            val response = http.getImage(page)
+            val response =
+                if (pageUrl.isBlank()) {
+                    val coverUrl = imageUrl ?: error("cover fetch: imageUrl is required when pageUrl is blank")
+                    val request = GET(coverUrl, http.headers)
+                    http.client
+                        .newCachelessCallWithProgress(request, Page(index = 0, url = "", imageUrl = coverUrl))
+                        .awaitSuccess()
+                } else {
+                    val page = Page(index = 0, url = pageUrl, imageUrl = imageUrl)
+                    if (page.imageUrl == null) page.imageUrl = http.getImageUrl(page)
+                    http.getImage(page)
+                }
             val contentType = response.header("Content-Type") ?: "application/octet-stream"
             val bytes = response.body.bytes()
             bytes to contentType
