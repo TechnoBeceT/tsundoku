@@ -28,7 +28,7 @@ func TestBadRequest(t *testing.T) {
 }
 
 // TestUpstream verifies Upstream maps an upstream failure to a 502 echo.HTTPError
-// whose message is prefixed with "suwayomi: " and carries the wrapped error text.
+// whose message is prefixed with "engine: " and carries the wrapped error text.
 func TestUpstream(t *testing.T) {
 	err := httperr.Upstream(errors.New("connection refused"))
 
@@ -39,7 +39,7 @@ func TestUpstream(t *testing.T) {
 	if he.Code != http.StatusBadGateway {
 		t.Errorf("Upstream code: got %d, want %d", he.Code, http.StatusBadGateway)
 	}
-	if he.Message != "suwayomi: connection refused" {
-		t.Errorf("Upstream message: got %v, want %q", he.Message, "suwayomi: connection refused")
+	if he.Message != "engine: connection refused" {
+		t.Errorf("Upstream message: got %v, want %q", he.Message, "engine: connection refused")
 	}
 }

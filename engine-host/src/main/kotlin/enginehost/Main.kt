@@ -9,7 +9,8 @@ package enginehost
  *
  * Bootstraps just enough of Suwayomi's AndroidCompat runtime to load real Mihon extensions and
  * answer source calls — NO Suwayomi server, NO database, NO GraphQL. The bootstrap sequence is the
- * minimal subset of ServerSetup.applicationSetup(): Android main-loop, config registration,
+ * minimal subset of ServerSetup.applicationSetup(): locale pin, single-instance lock, uncaught-
+ * exception handler, BouncyCastle provider registration, Android main-loop, config registration,
  * Koin/Injekt modules (createAppModule + androidCompatModule + configManagerModule + an
  * ApplicationDirs binding + the KCEF InitBrowserHandler), AndroidCompatInitializer, then startApp.
  *
@@ -26,6 +27,7 @@ import eu.kanade.tachiyomi.App
 import eu.kanade.tachiyomi.createAppModule
 import eu.kanade.tachiyomi.network.NetworkHelper
 import io.github.oshai.kotlinlogging.KotlinLogging
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.cef.network.CefCookieManager
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
@@ -45,6 +47,13 @@ import xyz.nulldev.ts.config.CONFIG_PREFIX
 import xyz.nulldev.ts.config.GlobalConfigManager
 import xyz.nulldev.ts.config.configManagerModule
 import java.io.File
+import java.io.IOException
+import java.io.RandomAccessFile
+import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
+import java.nio.channels.OverlappingFileLockException
+import java.security.Security
+import java.util.Locale
 
 private val logger = KotlinLogging.logger {}
 
@@ -76,11 +85,118 @@ private class LooperThread : Thread() {
     }
 }
 
+// Held for the process lifetime — closing either releases the OS-level lock, so these two must
+// never go out of scope / get GC'd early. See acquireSingleInstanceLock.
+private var instanceLockChannel: FileChannel? = null
+private var instanceLock: FileLock? = null
+
+/**
+ * Single-instance guard for [dataRoot] — mirrors Suwayomi's `handleAppMutex()`
+ * (`server/util/AppMutex.kt:70-92`), which HTTP-probes Suwayomi's own `/api/v1/settings/about`
+ * endpoint to detect a second instance. Engine-host has no equivalent HTTP endpoint reachable this
+ * early in boot (the RPC server hasn't started yet), so the mechanism here is a plain advisory OS
+ * file lock instead — same intent (stop two engine-host processes racing on the same [dataRoot]'s
+ * extensions working-set and RPC port), different implementation. Fails fast with a clear error if
+ * another PROCESS already holds the lock; on success the lock is held (never released) for the life
+ * of the process.
+ *
+ * The lock is an advisory BEST-EFFORT guard, not a correctness invariant. On a filesystem whose OS
+ * lock manager is unavailable — classically NFS mounted without a running lock daemon
+ * (`rpc.lockd`/`statd`), which the owner's prod library uses — `FileChannel.tryLock()` (or even
+ * opening the lock file's channel) throws [IOException] ("No locks available", ENOLCK) rather than
+ * returning null. In that case engine-host logs a warning and CONTINUES WITHOUT the lock rather than
+ * crashing on boot: under the single-owner homelab threat model exactly one instance runs by
+ * construction, so refusing to start because the filesystem cannot lock is strictly worse than
+ * booting unprotected — and NFS-without-lockd is a common mount (GAP-087).
+ */
+internal fun acquireSingleInstanceLock(dataRoot: File) {
+    val lockFile = File(dataRoot, ".enginehost.lock")
+
+    val channel =
+        try {
+            RandomAccessFile(lockFile, "rw").channel
+        } catch (e: IOException) {
+            // Opening the lock channel itself can fail on a lock-unsupported mount — degrade, not crash.
+            logger.warn(e) {
+                "Could not open the single-instance lock file ${lockFile.absolutePath} " +
+                    "(the filesystem may not support locking) — continuing without single-instance protection"
+            }
+            return
+        }
+
+    val lock =
+        try {
+            // Returns null (rather than throwing) when another PROCESS holds a conflicting lock;
+            // throws OverlappingFileLockException when this same JVM already holds one, and
+            // IOException when the filesystem's lock manager is unavailable (NFS-without-lockd).
+            channel.tryLock()
+        } catch (e: OverlappingFileLockException) {
+            // Double-invocation inside this same JVM: a lock is already held by the earlier call, so
+            // single-instance is already satisfied. Drop this redundant channel and continue.
+            logger.warn(e) {
+                "Single-instance lock on ${lockFile.absolutePath} is already held by this process — continuing"
+            }
+            closeQuietly(channel)
+            return
+        } catch (e: IOException) {
+            // Lock manager unavailable (NFS without lockd / ENOLCK) — degrade, not crash (GAP-087).
+            logger.warn(e) {
+                "Could not acquire the single-instance lock on ${lockFile.absolutePath} " +
+                    "(the filesystem may not support locking) — continuing without single-instance protection"
+            }
+            closeQuietly(channel)
+            return
+        }
+
+    if (lock == null) {
+        // A DIFFERENT process holds the lock: a genuine second instance — refuse to start.
+        closeQuietly(channel)
+        error(
+            "Another engine-host instance already holds the lock on ${lockFile.absolutePath} " +
+                "— refusing to start (two instances sharing one data dir would corrupt the extensions working-set).",
+        )
+    }
+    instanceLockChannel = channel
+    instanceLock = lock
+}
+
+/** Close [channel], swallowing a secondary [IOException] so cleanup never masks the original failure. */
+private fun closeQuietly(channel: FileChannel) {
+    try {
+        channel.close()
+    } catch (e: IOException) {
+        logger.warn(e) { "Failed to close the single-instance lock channel during cleanup" }
+    }
+}
+
 /** Stand up the AndroidCompat runtime on a plain JVM. Returns the app data dir. */
 fun bootstrapAndroidCompat(dataRoot: File): ApplicationDirs {
+    // Suwayomi ServerSetup.kt:381-384 (fixes Suwayomi-Server issue #119): Mihon's source-ID
+    // hashing lowercases strings, and a non-English JVM default locale (classically Turkish, where
+    // "I".lowercase() != "i") can make that hash diverge from the value it was computed under
+    // elsewhere — a prod library's stored source ids would silently mismatch on reconcile. Must
+    // run before ANY source/extension code executes, hence first line of bootstrap.
+    Locale.setDefault(Locale.ENGLISH)
+
     // Point every Suwayomi dir-resolver (ApplicationRootDir + ConfigManager) at our temp root.
     System.setProperty("$CONFIG_PREFIX.server.rootDir", dataRoot.absolutePath)
     dataRoot.mkdirs()
+
+    // Single-instance guard (B10) — must run once dataRoot exists, before anything else touches it.
+    acquireSingleInstanceLock(dataRoot)
+
+    // Suwayomi ServerSetup.kt:226-228: without this, an exception thrown on a background thread
+    // (e.g. inside a GlobalScope.launch the network/source stack spins up) vanishes silently
+    // instead of being logged.
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        logger.error(throwable) { "unhandled exception on thread '${thread.name}'" }
+    }
+
+    // Suwayomi ServerSetup.kt:504-505: AES/CBC/PKCS7Padding provider at least one real Mihon
+    // extension (zh.copymanga) needs for image-URL decryption; without it, loading/using that
+    // class of source fails opaquely deep inside the extension's own code. bcprov-jdk18on already
+    // rides the runtime classpath transitively (via suwayomi:server) — no new dependency needed.
+    Security.addProvider(BouncyCastleProvider())
 
     // Android main loop (Handler/Looper the network + webview stacks expect).
     LooperThread().apply { isDaemon = true }.start()

@@ -113,7 +113,7 @@ func (s *Service) dedupDriftedPairs(ctx context.Context, row *ent.Series) (merge
 // unlinked row has any matching twin.
 func (s *Service) findDriftedPair(ctx context.Context, providers []*ent.SeriesProvider, skip map[uuid.UUID]bool) (disk, live *ent.SeriesProvider, feedPresent bool, err error) {
 	for _, d := range providers {
-		if d.SuwayomiID != 0 || skip[d.ID] {
+		if series.IsLinkedProvider(d) || skip[d.ID] {
 			continue
 		}
 		twin, feed, pErr := s.pickTwin(ctx, d, providers)
@@ -135,7 +135,7 @@ func (s *Service) findDriftedPair(ctx context.Context, providers []*ent.SeriesPr
 func (s *Service) pickTwin(ctx context.Context, disk *ent.SeriesProvider, providers []*ent.SeriesProvider) (*ent.SeriesProvider, bool, error) {
 	var emptyTwin *ent.SeriesProvider
 	for _, l := range providers {
-		if l.SuwayomiID == 0 || !scanlatorMatches(l.Scanlator, disk.Scanlator) {
+		if !series.IsLinkedProvider(l) || !scanlatorMatches(l.Scanlator, disk.Scanlator) {
 			continue
 		}
 		if !providerNameMatches(disk.Provider, l.ProviderName) {
@@ -192,16 +192,17 @@ func scanlatorMatches(a, b string) bool {
 }
 
 // matchingUnlinkedDiskProvider returns the unlinked disk-origin provider
-// (suwayomi_id == 0) in providers whose identity name matches liveDisplayName
-// (providerNameMatches) AND whose scanlator equals scanlator, or nil when none
-// qualifies. This is how a disk import — which stores the display NAME in the
-// provider field (suwayomi_id == 0) — is recognised as the same physical source
-// a live ingest just attached, which stores the numeric source id in provider
-// and the display name in provider_name (suwayomi_id != 0). Matching lets the
-// two be folded into one row instead of drifting apart (see mergeDiskIntoLive).
+// (fails series.IsLinkedProvider) in providers whose identity name matches
+// liveDisplayName (providerNameMatches) AND whose scanlator equals scanlator,
+// or nil when none qualifies. This is how a disk import — which stores the
+// display NAME in the provider field (non-numeric, so IsLinkedProvider is
+// false) — is recognised as the same physical source a live ingest just
+// attached, which stores the numeric source id in provider and the display
+// name in provider_name (IsLinkedProvider true). Matching lets the two be
+// folded into one row instead of drifting apart (see mergeDiskIntoLive).
 func matchingUnlinkedDiskProvider(providers []*ent.SeriesProvider, liveDisplayName, scanlator string) *ent.SeriesProvider {
 	for _, p := range providers {
-		if p.SuwayomiID != 0 {
+		if series.IsLinkedProvider(p) {
 			continue
 		}
 		if !scanlatorMatches(p.Scanlator, scanlator) {

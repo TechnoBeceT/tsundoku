@@ -1,12 +1,14 @@
 // Package refresh_test exercises the M5 discovery sweep against an ephemeral
-// Postgres (testdb) and an in-process fake suwayomi.Client — no JVM, no network.
+// Postgres (testdb) and the shared sourceengine/fake.Client — no JVM, no
+// network. This is the P2 (Suwayomi-removal) port of the original
+// suwayomi.Client-backed suite onto the URL-addressed engine-host client.
 package refresh_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sync"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,118 +21,57 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	enginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
-// fakeClient implements suwayomi.Client. Only FetchChapters is exercised by the
-// refresh sweep; the rest satisfy the interface. chaptersByManga maps a Suwayomi
-// manga id to the chapter list returned by FetchChapters; failManga forces an
-// error for a given manga id (to test partial-failure resilience).
-type fakeClient struct {
-	chaptersByManga map[int][]suwayomi.Chapter
-	failManga       map[int]bool
+// num is a small readability convenience for chapter-number literals;
+// sourceengine.Chapter.Number itself is a plain (non-pointer) float64.
+func num(n float64) float64 { return n }
 
-	// fetchMu guards fetchCalls, which counts FetchChapters invocations per manga
-	// id so a test can prove the per-sweep (source, manga) dedup (Task A). The
-	// sweep fetches groups in parallel, so the counter must be mutex-guarded.
-	fetchMu    sync.Mutex
-	fetchCalls map[int]int
+// providerKey mirrors internal/ingest's private providerKey helper: the
+// string form of a numeric engine-host source id, as stored in
+// SeriesProvider.Provider. Kept local to the test package (black-box tests
+// cannot reach the unexported helper).
+func providerKey(sourceID int64) string {
+	return strconv.FormatInt(sourceID, 10)
 }
 
-func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
-func (f *fakeClient) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
-	return nil, nil
-}
-func (f *fakeClient) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
-	return suwayomi.BrowseResult{}, nil
-}
-func (f *fakeClient) FetchChapters(_ context.Context, mangaID int) ([]suwayomi.Chapter, error) {
-	f.fetchMu.Lock()
-	if f.fetchCalls == nil {
-		f.fetchCalls = make(map[int]int)
-	}
-	f.fetchCalls[mangaID]++
-	f.fetchMu.Unlock()
-	if f.failManga[mangaID] {
-		return nil, errors.New("source offline")
-	}
-	return f.chaptersByManga[mangaID], nil
-}
-
-// fetchCount returns how many times FetchChapters was called for mangaID.
-func (f *fakeClient) fetchCount(mangaID int) int {
-	f.fetchMu.Lock()
-	defer f.fetchMu.Unlock()
-	return f.fetchCalls[mangaID]
-}
-func (f *fakeClient) MangaChapters(context.Context, int) ([]suwayomi.Chapter, error) {
-	return nil, nil
-}
-func (f *fakeClient) MangaMeta(context.Context, int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (f *fakeClient) FetchMangaDetails(context.Context, int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (f *fakeClient) ChapterPages(context.Context, int) ([]string, error)       { return nil, nil }
-func (f *fakeClient) PageBytes(context.Context, string) ([]byte, string, error) { return nil, "", nil }
-func (f *fakeClient) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {
-	return suwayomi.SuwayomiSettings{}, nil
-}
-func (f *fakeClient) SetServerSettings(context.Context, suwayomi.SuwayomiSettingsPatch) error {
-	return nil
-}
-func (f *fakeClient) Extensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
-func (f *fakeClient) SetExtensionState(context.Context, string, suwayomi.ExtensionAction) error {
-	return nil
-}
-func (f *fakeClient) FetchExtensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
-func (f *fakeClient) ExtensionRepos(context.Context) ([]string, error)              { return nil, nil }
-func (f *fakeClient) SetExtensionRepos(context.Context, []string) error             { return nil }
-func (f *fakeClient) SourcePreferences(context.Context, string) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
-}
-func (f *fakeClient) SetSourcePreference(context.Context, string, int, suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
-}
-func (f *fakeClient) ExtensionSources(context.Context, string) ([]suwayomi.Source, error) {
-	return nil, nil
-}
-func (f *fakeClient) SetSourceEnabled(context.Context, string, bool) error { return nil }
-
-// num returns a pointer to a float64 chapter number (Suwayomi's wire shape).
-func num(n float64) *float64 { return &n }
-
-// newSvc builds a refresh.Service over the given client + fake.
-func newSvc(t *testing.T, db *ent.Client, fc *fakeClient) *refresh.Service {
+// newSvc builds a refresh.Service over the given db + fake client, with a
+// PRIVATE, uncached ingest.Ingest (mirrors production: refresh never reads the
+// interactive chapter cache — see refresh.NewService's doc comment).
+func newSvc(t *testing.T, db *ent.Client, fc *enginefake.Client) *refresh.Service {
 	t.Helper()
-	ingest := suwayomi.NewIngest(fc, db)
-	return refresh.NewService(db, ingest, sse.NewHub(), settings.Static{Concurrency: 4}, nil)
+	ing := ingest.NewIngest(fc, db)
+	return refresh.NewService(db, ing, sse.NewHub(), settings.Static{Concurrency: 4}, nil)
 }
 
-// seedMonitoredSeries creates a monitored series with one provider (suwayomiID),
-// no chapters yet. Returns the series provider id for later assertions.
-func seedMonitoredSeries(t *testing.T, ctx context.Context, db *ent.Client, title, provider string, suwayomiID int) (*ent.Series, *ent.SeriesProvider) {
+// seedMonitoredSeries creates a monitored series with one provider
+// (provider = stringified sourceID, url = mangaURL), no chapters yet. Returns
+// the series + series provider for later assertions.
+func seedMonitoredSeries(t *testing.T, ctx context.Context, db *ent.Client, title string, sourceID int64, mangaURL string) (*ent.Series, *ent.SeriesProvider) {
 	t.Helper()
 	// Slug MUST equal disk.Slugify(title): AddSeries upserts the series by that
 	// slug, so a mismatch would make refresh create a SECOND series and the
 	// provider assertions below would read an empty row.
 	s := db.Series.Create().SetTitle(title).SetSlug(disk.Slugify(title)).SetMonitored(true).SaveX(ctx)
-	sp := db.SeriesProvider.Create().SetSeries(s).SetProvider(provider).SetSuwayomiID(suwayomiID).SetImportance(10).SaveX(ctx)
+	sp := db.SeriesProvider.Create().SetSeries(s).SetProvider(providerKey(sourceID)).SetURL(mangaURL).SetImportance(10).SaveX(ctx)
 	return s, sp
 }
 
 func TestRefreshAll_DiscoversNewChapters(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
-		77: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}},
-	}}
-	_, sp := seedMonitoredSeries(t, ctx, db, "alpha", "mangadex", 77)
+	const sourceID, mangaURL = 77, "/manga/alpha"
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{
+		{Number: num(1), URL: "u1"},
+	}))
+	_, sp := seedMonitoredSeries(t, ctx, db, "alpha", sourceID, mangaURL)
 
 	// First sweep: discovers chapter 1.
 	res, err := newSvc(t, db, fc).RefreshAll(ctx)
@@ -149,7 +90,10 @@ func TestRefreshAll_DiscoversNewChapters(t *testing.T) {
 	}
 
 	// Source publishes chapter 2.
-	fc.chaptersByManga[77] = append(fc.chaptersByManga[77], suwayomi.Chapter{ID: 2, Index: 1, Number: num(2), URL: "u2"})
+	fc = enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{
+		{Number: num(1), URL: "u1"},
+		{Number: num(2), URL: "u2"},
+	}))
 	res2, err := newSvc(t, db, fc).RefreshAll(ctx)
 	if err != nil {
 		t.Fatalf("RefreshAll 2: %v", err)
@@ -174,30 +118,31 @@ func TestRefreshAll_BypassesInteractiveChapterCache(t *testing.T) {
 	db := testdb.New(t)
 
 	const (
-		provider = "mangadex"
-		mangaID  = 77
+		sourceID int64 = 77
+		mangaURL       = "/manga/cached-series"
 	)
 	// Client (upstream truth) currently offers chapters 1 AND 2.
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
-		mangaID: {
-			{ID: 1, Index: 0, Number: num(1), URL: "u1"},
-			{ID: 2, Index: 1, Number: num(2), URL: "u2"},
-		},
-	}}
-	seedMonitoredSeries(t, ctx, db, "cached-series", provider, mangaID)
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{
+		{Number: num(1), URL: "u1"},
+		{Number: num(2), URL: "u2"},
+	}))
+	seedMonitoredSeries(t, ctx, db, "cached-series", sourceID, mangaURL)
 
 	// Pre-seed the SHARED interactive cache with a STALE 1-chapter list under the
-	// exact key refresh would use if it read the cache (sourceID = provider name).
-	cache := suwayomi.NewChapterCacheConst(time.Hour)
-	if _, err := cache.Get(ctx, provider, mangaID, func() ([]suwayomi.Chapter, error) {
-		return []suwayomi.Chapter{{ID: 1, Index: 0, Number: num(1), URL: "u1"}}, nil
+	// exact key refresh would use if it read the cache — including the series'
+	// own title ("cached-series", matching seedMonitoredSeries below), since the
+	// cache key is now (sourceID, url, mangaTitle) and refresh would look up
+	// its own series title, never "".
+	cache := ingest.NewChapterCacheConst(time.Hour)
+	if _, err := cache.Get(ctx, sourceID, mangaURL, "cached-series", func() ([]sourceengine.Chapter, error) {
+		return []sourceengine.Chapter{{Number: num(1), URL: "u1"}}, nil
 	}); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
 
 	// Build the sweep with a cache-bearing ingest (mirrors production wiring).
-	ingest := suwayomi.NewIngestWithGate(fc, db, cache, nil)
-	svc := refresh.NewService(db, ingest, sse.NewHub(), settings.Static{Concurrency: 4}, nil)
+	ing := ingest.NewIngestWithGate(fc, db, cache, nil)
+	svc := refresh.NewService(db, ing, sse.NewHub(), settings.Static{Concurrency: 4}, nil)
 
 	res, err := svc.RefreshAll(ctx)
 	if err != nil {
@@ -208,8 +153,8 @@ func TestRefreshAll_BypassesInteractiveChapterCache(t *testing.T) {
 		t.Fatalf("NewChapters = %d, want 2 (refresh must fetch fresh, not read the stale cache)", res.NewChapters)
 	}
 	// A real client fetch ran (a cache hit would leave this at 0).
-	if got := fc.fetchCount(mangaID); got != 1 {
-		t.Fatalf("FetchChapters called %d times, want 1 (fresh uncached fetch)", got)
+	if got := fc.CallCount("Chapters"); got != 1 {
+		t.Fatalf("Chapters called %d times, want 1 (fresh uncached fetch)", got)
 	}
 	if n := db.Chapter.Query().CountX(ctx); n != 2 {
 		t.Fatalf("chapter count = %d, want 2", n)
@@ -219,10 +164,11 @@ func TestRefreshAll_BypassesInteractiveChapterCache(t *testing.T) {
 func TestRefreshAll_SkipsUnmonitored(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{99: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}}}}
+	const sourceID, mangaURL = 99, "/manga/beta"
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{{Number: num(1), URL: "u1"}}))
 
 	s := db.Series.Create().SetTitle("beta").SetSlug("beta").SetMonitored(false).SaveX(ctx)
-	db.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(99).SaveX(ctx)
+	db.SeriesProvider.Create().SetSeries(s).SetProvider(providerKey(sourceID)).SetURL(mangaURL).SaveX(ctx)
 
 	res, err := newSvc(t, db, fc).RefreshAll(ctx)
 	if err != nil {
@@ -236,35 +182,72 @@ func TestRefreshAll_SkipsUnmonitored(t *testing.T) {
 	}
 }
 
-func TestRefreshAll_SkipsUnknownSuwayomiID(t *testing.T) {
+// TestRefreshAll_SkipsDiskOriginProvider proves a provider whose Provider
+// column does NOT parse as a numeric source id (the disk-reconciler's
+// display-name identity, e.g. "Other") is skipped — no fetch attempted, not
+// counted as refreshed or errored — mirroring the old "unknown suwayomi_id"
+// skip this replaces.
+func TestRefreshAll_SkipsDiskOriginProvider(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{}}
+	fc := enginefake.New()
 
 	s := db.Series.Create().SetTitle("gamma").SetSlug("gamma").SetMonitored(true).SaveX(ctx)
-	// suwayomi_id defaults to 0 (unknown) — provider must be skipped, no fetch.
-	db.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SaveX(ctx)
+	// A disk-origin provider stores a display name, not a numeric id — must be
+	// skipped, no fetch.
+	db.SeriesProvider.Create().SetSeries(s).SetProvider("Other").SaveX(ctx)
 
 	res, err := newSvc(t, db, fc).RefreshAll(ctx)
 	if err != nil {
 		t.Fatalf("RefreshAll: %v", err)
 	}
 	if res.ProvidersRefreshed != 0 || res.Errors != 0 {
-		t.Errorf("res = %+v, want providers=0 errors=0 (unknown id skipped, not failed)", res)
+		t.Errorf("res = %+v, want providers=0 errors=0 (disk-origin skipped, not failed)", res)
 	}
 }
 
+// TestRefreshAll_SkipsUnknownURL proves a provider with a numeric source id but
+// no stored URL (the DB backfill hasn't reached it yet) is skipped the same
+// way — there is nothing to fetch.
+func TestRefreshAll_SkipsUnknownURL(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	fc := enginefake.New()
+
+	s := db.Series.Create().SetTitle("delta-unknown").SetSlug("delta-unknown").SetMonitored(true).SaveX(ctx)
+	db.SeriesProvider.Create().SetSeries(s).SetProvider(providerKey(55)).SaveX(ctx) // url left ""
+
+	res, err := newSvc(t, db, fc).RefreshAll(ctx)
+	if err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+	if res.ProvidersRefreshed != 0 || res.Errors != 0 {
+		t.Errorf("res = %+v, want providers=0 errors=0 (unknown url skipped, not failed)", res)
+	}
+}
+
+// TestRefreshAll_PartialFailureContinues proves one failing source-manga
+// doesn't stop the sweep from refreshing the rest. fake.Client's WithError is
+// global (every Chapters call fails), so this drives the per-provider partial
+// failure via partialFailClient — a thin wrapper that fails ONLY the "bad"
+// manga's fetch and delegates everything else to a real fake.Client.
 func TestRefreshAll_PartialFailureContinues(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{
-		chaptersByManga: map[int][]suwayomi.Chapter{10: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}}},
-		failManga:       map[int]bool{20: true},
-	}
-	seedMonitoredSeries(t, ctx, db, "ok", "src-ok", 10)
-	seedMonitoredSeries(t, ctx, db, "bad", "src-bad", 20)
+	const (
+		okSource, okURL   = 10, "/manga/ok"
+		badSource, badURL = 20, "/manga/bad"
+	)
+	fc := enginefake.New(enginefake.WithChapters(okSource, okURL, []sourceengine.Chapter{{Number: num(1), URL: "u1"}}))
+	failing := &partialFailClient{Client: fc, failURL: badURL}
 
-	res, err := newSvc(t, db, fc).RefreshAll(ctx)
+	seedMonitoredSeries(t, ctx, db, "ok", okSource, okURL)
+	seedMonitoredSeries(t, ctx, db, "bad", badSource, badURL)
+
+	ing := ingest.NewIngest(failing, db)
+	svc := refresh.NewService(db, ing, sse.NewHub(), settings.Static{Concurrency: 4}, nil)
+
+	res, err := svc.RefreshAll(ctx)
 	if err != nil {
 		t.Fatalf("RefreshAll must return nil error on partial failure, got %v", err)
 	}
@@ -273,13 +256,31 @@ func TestRefreshAll_PartialFailureContinues(t *testing.T) {
 	}
 }
 
+// partialFailClient wraps a sourceengine.Client and forces Chapters to fail
+// for exactly one url, succeeding (delegating) for every other call — used to
+// drive the per-provider partial-failure path without failing every source in
+// the sweep (unlike fake.Client's global WithError).
+type partialFailClient struct {
+	sourceengine.Client
+	failURL string
+}
+
+func (p *partialFailClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
+	if url == p.failURL {
+		return nil, errors.New("source offline")
+	}
+	return p.Client.Chapters(ctx, sourceID, url, mangaTitle)
+}
+
 func TestRefreshAll_PreservesImportance_And_NeverDeletes(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
-		5: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}, {ID: 2, Index: 1, Number: num(2), URL: "u2"}},
-	}}
-	_, sp := seedMonitoredSeries(t, ctx, db, "delta", "mangadex", 5) // importance 10
+	const sourceID, mangaURL = 5, "/manga/delta"
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{
+		{Number: num(1), URL: "u1"},
+		{Number: num(2), URL: "u2"},
+	}))
+	_, sp := seedMonitoredSeries(t, ctx, db, "delta", sourceID, mangaURL) // importance 10
 
 	if _, err := newSvc(t, db, fc).RefreshAll(ctx); err != nil {
 		t.Fatalf("first RefreshAll: %v", err)
@@ -288,7 +289,9 @@ func TestRefreshAll_PreservesImportance_And_NeverDeletes(t *testing.T) {
 	db.SeriesProvider.UpdateOne(sp).SetImportance(50).ExecX(ctx)
 
 	// Source DROPS chapter 2 from its listing (never-delete must keep it).
-	fc.chaptersByManga[5] = fc.chaptersByManga[5][:1]
+	fc = enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{
+		{Number: num(1), URL: "u1"},
+	}))
 	if _, err := newSvc(t, db, fc).RefreshAll(ctx); err != nil {
 		t.Fatalf("second RefreshAll: %v", err)
 	}
@@ -311,13 +314,12 @@ func TestRefreshAll_PreservesImportance_And_NeverDeletes(t *testing.T) {
 func TestRefreshAll_EmitsSSEEvents(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
-		42: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}},
-	}}
-	seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
+	const sourceID, mangaURL = 42, "/manga/echo"
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{{Number: num(1), URL: "u1"}}))
+	seedMonitoredSeries(t, ctx, db, "echo", sourceID, mangaURL)
 
 	hub := sse.NewHub()
-	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), hub, settings.Static{Concurrency: 4}, nil)
+	svc := refresh.NewService(db, ingest.NewIngest(fc, db), hub, settings.Static{Concurrency: 4}, nil)
 
 	// Subscribe before the sweep so both buffered events are captured.
 	events, unsub := hub.Subscribe()
@@ -372,10 +374,9 @@ func TestRefreshAll_EmitsSSEEvents(t *testing.T) {
 func TestRefreshAll_PersistsSyncStateOnSuccess(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
-		42: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}},
-	}}
-	_, sp := seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
+	const sourceID, mangaURL = 42, "/manga/echo"
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{{Number: num(1), URL: "u1"}}))
+	_, sp := seedMonitoredSeries(t, ctx, db, "echo", sourceID, mangaURL)
 
 	// No sync-state row should exist before the sweep.
 	if n := db.SuwayomiSyncState.Query().CountX(ctx); n != 0 {
@@ -400,11 +401,9 @@ func TestRefreshAll_PersistsSyncStateOnSuccess(t *testing.T) {
 func TestRefreshAll_PersistsSyncStateOnFailure(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{
-		chaptersByManga: map[int][]suwayomi.Chapter{},
-		failManga:       map[int]bool{42: true},
-	}
-	_, sp := seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
+	const sourceID, mangaURL = 42, "/manga/echo"
+	fc := enginefake.New(enginefake.WithError("Chapters", errors.New("source offline")))
+	_, sp := seedMonitoredSeries(t, ctx, db, "echo", sourceID, mangaURL)
 
 	svc := newSvc(t, db, fc)
 	if _, err := svc.RefreshAll(ctx); err != nil {
@@ -429,8 +428,9 @@ func TestRefreshAll_PersistsSyncStateOnFailure(t *testing.T) {
 func TestRefreshAll_SkipsCompleted(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{42: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}}}}
-	s, _ := seedMonitoredSeries(t, ctx, db, "done", "mangadex", 42)
+	const sourceID, mangaURL = 42, "/manga/done"
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{{Number: num(1), URL: "u1"}}))
+	s, _ := seedMonitoredSeries(t, ctx, db, "done", sourceID, mangaURL)
 
 	// Mark completed → swept count is 0.
 	db.Series.UpdateOneID(s.ID).SetCompleted(true).ExecX(ctx)
@@ -462,12 +462,20 @@ func TestRefreshAll_SkipsCompleted(t *testing.T) {
 func TestRefreshAll_SkipsGatedProvider(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
-		10: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}}, // blocked source
-		20: {{ID: 2, Index: 0, Number: num(1), URL: "u2"}}, // available source
-	}}
-	blockedSeries, _ := seedMonitoredSeries(t, ctx, db, "blocked-series", "BlockedSource", 10)
-	seedMonitoredSeries(t, ctx, db, "ok-series", "OkSource", 20)
+	const (
+		blockedSource, blockedURL = 10, "/manga/blocked"
+		okSource, okURL           = 20, "/manga/ok"
+	)
+	fc := enginefake.New(
+		enginefake.WithChapters(blockedSource, blockedURL, []sourceengine.Chapter{{Number: num(1), URL: "u1"}}),
+		enginefake.WithChapters(okSource, okURL, []sourceengine.Chapter{{Number: num(1), URL: "u2"}}),
+		enginefake.WithSources([]sourceengine.Source{
+			{ID: blockedSource, Name: "BlockedSource"},
+			{ID: okSource, Name: "OkSource"},
+		}),
+	)
+	blockedSeries := createSeriesWithProvider(t, ctx, db, "blocked-series", blockedSource, blockedURL, "BlockedSource")
+	createSeriesWithProvider(t, ctx, db, "ok-series", okSource, okURL, "OkSource")
 
 	// Pre-trip the breaker for "BlockedSource" only.
 	db.SourceCircuitState.Create().
@@ -477,7 +485,7 @@ func TestRefreshAll_SkipsGatedProvider(t *testing.T) {
 		SaveX(ctx)
 
 	gate := sourcegate.NewService(db, settings.Static{SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour})
-	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), sse.NewHub(), settings.Static{Concurrency: 4}, gate)
+	svc := refresh.NewService(db, ingest.NewIngest(fc, db), sse.NewHub(), settings.Static{Concurrency: 4}, gate)
 
 	res, err := svc.RefreshAll(ctx)
 	if err != nil {
@@ -498,18 +506,34 @@ func TestRefreshAll_SkipsGatedProvider(t *testing.T) {
 	}
 }
 
+// createSeriesWithProvider seeds a monitored series whose SINGLE provider also
+// carries providerName — needed for TestRefreshAll_SkipsGatedProvider, whose
+// gate key is the provider's DISPLAY name (see refresh.sourceKey), not the raw
+// numeric provider id seedMonitoredSeries stores.
+func createSeriesWithProvider(t *testing.T, ctx context.Context, db *ent.Client, title string, sourceID int64, mangaURL, providerName string) *ent.Series {
+	t.Helper()
+	s := db.Series.Create().SetTitle(title).SetSlug(disk.Slugify(title)).SetMonitored(true).SaveX(ctx)
+	db.SeriesProvider.Create().
+		SetSeries(s).
+		SetProvider(providerKey(sourceID)).
+		SetProviderName(providerName).
+		SetURL(mangaURL).
+		SetImportance(10).
+		SaveX(ctx)
+	return s
+}
+
 // TestRefreshAll_GateAvailableRunsNormally proves that with NO breaker row at
 // all (the common case), the gate never interferes with a normal sweep.
 func TestRefreshAll_GateAvailableRunsNormally(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
-		42: {{ID: 1, Index: 0, Number: num(1), URL: "u1"}},
-	}}
-	seedMonitoredSeries(t, ctx, db, "echo", "mangadex", 42)
+	const sourceID, mangaURL = 42, "/manga/echo"
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{{Number: num(1), URL: "u1"}}))
+	seedMonitoredSeries(t, ctx, db, "echo", sourceID, mangaURL)
 
 	gate := sourcegate.NewService(db, settings.Static{SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour})
-	svc := refresh.NewService(db, suwayomi.NewIngest(fc, db), sse.NewHub(), settings.Static{Concurrency: 4}, gate)
+	svc := refresh.NewService(db, ingest.NewIngest(fc, db), sse.NewHub(), settings.Static{Concurrency: 4}, gate)
 
 	res, err := svc.RefreshAll(ctx)
 	if err != nil {
@@ -522,33 +546,32 @@ func TestRefreshAll_GateAvailableRunsNormally(t *testing.T) {
 
 // TestRefreshAll_DedupsScanlatorProviders proves Task A: a series followed under
 // THREE scanlator-providers of the SAME (source, manga) triggers exactly ONE
-// upstream FetchChapters in a sweep, and every provider still ingests only its
+// upstream Chapters call in a sweep, and every provider still ingests only its
 // own scanlator's chapters from that single fetch.
 func TestRefreshAll_DedupsScanlatorProviders(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	// One manga (id 77) whose feed carries three scanlators; one FetchChapters
+	const sourceID, mangaURL = 77, "/manga/multi"
+	// One manga whose feed carries three scanlators; one Chapters call
 	// returns ALL of them.
-	fc := &fakeClient{chaptersByManga: map[int][]suwayomi.Chapter{
-		77: {
-			{ID: 1, Index: 0, Number: num(1), URL: "u1", Scanlator: "Alpha"},
-			{ID: 2, Index: 1, Number: num(2), URL: "u2", Scanlator: "Alpha"},
-			{ID: 3, Index: 2, Number: num(3), URL: "u3", Scanlator: "Beta"},
-			{ID: 4, Index: 3, Number: num(4), URL: "u4", Scanlator: "Gamma"},
-		},
-	}}
+	fc := enginefake.New(enginefake.WithChapters(sourceID, mangaURL, []sourceengine.Chapter{
+		{Number: num(1), URL: "u1", Scanlator: "Alpha"},
+		{Number: num(2), URL: "u2", Scanlator: "Alpha"},
+		{Number: num(3), URL: "u3", Scanlator: "Beta"},
+		{Number: num(4), URL: "u4", Scanlator: "Gamma"},
+	}))
 
 	s := db.Series.Create().SetTitle("multi").SetSlug(disk.Slugify("multi")).SetMonitored(true).SaveX(ctx)
-	spA := db.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(77).SetScanlator("Alpha").SetImportance(30).SaveX(ctx)
-	spB := db.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(77).SetScanlator("Beta").SetImportance(20).SaveX(ctx)
-	spC := db.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(77).SetScanlator("Gamma").SetImportance(10).SaveX(ctx)
+	spA := db.SeriesProvider.Create().SetSeries(s).SetProvider(providerKey(sourceID)).SetURL(mangaURL).SetScanlator("Alpha").SetImportance(30).SaveX(ctx)
+	spB := db.SeriesProvider.Create().SetSeries(s).SetProvider(providerKey(sourceID)).SetURL(mangaURL).SetScanlator("Beta").SetImportance(20).SaveX(ctx)
+	spC := db.SeriesProvider.Create().SetSeries(s).SetProvider(providerKey(sourceID)).SetURL(mangaURL).SetScanlator("Gamma").SetImportance(10).SaveX(ctx)
 
 	res, err := newSvc(t, db, fc).RefreshAll(ctx)
 	if err != nil {
 		t.Fatalf("RefreshAll: %v", err)
 	}
-	if got := fc.fetchCount(77); got != 1 {
-		t.Fatalf("FetchChapters called %d times for manga 77, want 1 (per-sweep dedup)", got)
+	if got := fc.CallCount("Chapters"); got != 1 {
+		t.Fatalf("Chapters called %d times, want 1 (per-sweep dedup)", got)
 	}
 	if res.ProvidersRefreshed != 3 || res.NewChapters != 4 {
 		t.Errorf("res = %+v, want providers=3 new=4", res)

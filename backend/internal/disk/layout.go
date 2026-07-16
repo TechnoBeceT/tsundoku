@@ -69,8 +69,17 @@ type RenderMeta struct {
 	// UploadDate is when the provider published this chapter.
 	UploadDate *time.Time
 
-	// URL is the provider-supplied canonical URL for this chapter.
+	// URL is the provider-supplied canonical URL for this chapter. This is the
+	// source-relative ADDRESSING url — NEVER render it into ComicInfo.Web; see
+	// WebURL for the browser-clickable one.
 	URL string
+
+	// WebURL is the fully-qualified, browser-clickable chapter URL (Mihon's
+	// HttpSource.getChapterUrl, stored as ProviderChapter.web_url at ingest).
+	// This is what feeds ComicInfo.Web (Komga's "read online" link) — distinct
+	// from URL above. "" when unresolved (the field is simply omitted from
+	// ComicInfo).
+	WebURL string
 
 	// Author is the series author (for ComicInfo Writer field).
 	Author string
@@ -130,7 +139,7 @@ func GenerateCBZFilename(m RenderMeta) string {
 		lang = "[" + strings.ToLower(m.Language) + "]"
 	}
 
-	chapterStr := buildChapterStr(m.Number, m.MaxChapter)
+	chapterStr := buildChapterStr(m.Number, m.MaxChapter, m.ChapterKey)
 	chapTitle := buildChapTitle(m.ChapterName)
 
 	// Strip parentheses from the series title.
@@ -158,9 +167,21 @@ func buildProviderToken(label, scanlator string) string {
 }
 
 // buildChapterStr formats the chapter number with zero-padded integer part.
-func buildChapterStr(number, maxChapter *float64) string {
+//
+// When number is nil (an un-numbered chapter — the case NormalizeChapterKey
+// falls back to a NAME-derived chapter_key for), it returns a filesystem-safe
+// disambiguator derived from chapterKey INSTEAD of an empty string — see
+// chapterKeyToken. Before this fix a nil number always produced an EMPTY
+// chapterStr, so every un-numbered chapter whose ChapterName ALSO read as a
+// redundant "Chapter N" label (isTitleChapter, which empties buildChapTitle
+// too) rendered as the exact SAME filename — e.g. every chapter of a
+// 20-chapter series all became "[Provider][lang] The Blank .cbz", and each
+// render silently overwrote the previous one (the confirmed 20-chapters-into-
+// 1-file data-loss bug). Numbered chapters are completely UNCHANGED by this —
+// this branch only ever runs when number is nil.
+func buildChapterStr(number, maxChapter *float64, chapterKey string) string {
 	if number == nil {
-		return ""
+		return chapterKeyToken(chapterKey)
 	}
 	chapterStr := chapter.FormatChapterNumber(*number)
 	if maxChapter == nil {
@@ -172,6 +193,26 @@ func buildChapterStr(number, maxChapter *float64) string {
 		parts[0] = "0" + parts[0]
 	}
 	return strings.Join(parts, ".")
+}
+
+// chapterKeyToken derives a short, filesystem-safe disambiguator from a
+// number-less chapter's chapter_key (NormalizeChapterKey's "name:<slug>"
+// form). The DB's UNIQUE(series_id, chapter_key) constraint already
+// guarantees that two chapters sharing a key ARE the same chapter (the
+// chapter-identity invariant), so the key itself is sufficient to keep every
+// genuinely-DISTINCT number-less chapter's filename distinct too — there is
+// no need to re-derive anything from the raw chapter name. The "name:" prefix
+// is stripped as filename noise (replaceInvalidPathCharacters, run later on
+// the whole assembled name, still sanitizes whatever the slug leaves behind);
+// an "unnumbered" fallback covers the defensive empty-key case so the token
+// returned here is never blank (an empty token would silently reproduce the
+// pre-fix collision for that one chapter).
+func chapterKeyToken(chapterKey string) string {
+	token := strings.TrimPrefix(chapterKey, "name:")
+	if token == "" {
+		return "unnumbered"
+	}
+	return token
 }
 
 // buildChapTitle wraps a chapter name in parentheses, replacing inner parens

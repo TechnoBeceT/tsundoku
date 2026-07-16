@@ -23,33 +23,33 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/settings"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
 const testSecret = "sources-handler-test-secret"
 
-// fakeClient is a minimal suwayomi.Client for the warm-up path (embeds the
-// interface, overrides only Sources + Browse). browsed (when non-nil) is closed
-// on the first Browse call so a test can confirm the detached background WarmAll
-// actually ran after the handler returned 202.
+// fakeClient is a minimal sourceengine.Client for the warm-up path (embeds the
+// interface, overrides only Sources + Popular). warmed (when non-nil) is closed
+// on the first Popular call so a test can confirm the detached background
+// WarmAll actually ran after the handler returned 202.
 type fakeClient struct {
-	suwayomi.Client
-	sources    []suwayomi.Source
+	sourceengine.Client
+	sources    []sourceengine.Source
 	sourcesErr error
 
-	browseOnce sync.Once
-	browsed    chan struct{}
+	warmOnce sync.Once
+	warmed   chan struct{}
 }
 
-func (f *fakeClient) Sources(context.Context) ([]suwayomi.Source, error) {
+func (f *fakeClient) Sources(context.Context) ([]sourceengine.Source, error) {
 	return f.sources, f.sourcesErr
 }
-func (f *fakeClient) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
-	if f.browsed != nil {
-		f.browseOnce.Do(func() { close(f.browsed) })
+func (f *fakeClient) Popular(context.Context, int64, int) (sourceengine.SearchResult, error) {
+	if f.warmed != nil {
+		f.warmOnce.Do(func() { close(f.warmed) })
 	}
-	return suwayomi.BrowseResult{}, nil
+	return sourceengine.SearchResult{}, nil
 }
 
 type testEnv struct {
@@ -60,9 +60,9 @@ type testEnv struct {
 
 // newTestEnv stands up an Echo with the two source routes behind RequireOwner, a
 // metrics + warm-up service over a fresh testdb, and a valid owner Bearer token.
-// The fake Suwayomi client is provided by the caller so warm-up behaviour can be
-// steered per test.
-func newTestEnv(t *testing.T, fc suwayomi.Client) *testEnv {
+// The fake engine-host client is provided by the caller so warm-up behaviour can
+// be steered per test.
+func newTestEnv(t *testing.T, fc sourceengine.Client) *testEnv {
 	t.Helper()
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
@@ -132,14 +132,14 @@ func TestMetrics_Unauthorized(t *testing.T) {
 
 // TestWarmup_OK proves POST returns 202 + {started:true} IMMEDIATELY (the pass
 // runs detached in the background) and that the background WarmAll then actually
-// warms the sources (the fake's Browse fires within a bounded wait).
+// warms the sources (the fake's Popular fires within a bounded wait).
 func TestWarmup_OK(t *testing.T) {
 	fc := &fakeClient{
-		sources: []suwayomi.Source{
-			{ID: "a", Name: "A", Lang: "en"},
-			{ID: "b", Name: "B", Lang: "en"},
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "A", Lang: "en"},
+			{ID: 2, Name: "B", Lang: "en"},
 		},
-		browsed: make(chan struct{}),
+		warmed: make(chan struct{}),
 	}
 	env := newTestEnv(t, fc)
 	rec := env.do(http.MethodPost, "/api/sources/warmup")
@@ -154,9 +154,9 @@ func TestWarmup_OK(t *testing.T) {
 		t.Errorf("started = %v, want true", got.Started)
 	}
 
-	// The detached WarmAll must actually run: its first Browse fires promptly.
+	// The detached WarmAll must actually run: its first Popular fires promptly.
 	select {
-	case <-fc.browsed:
+	case <-fc.warmed:
 	case <-time.After(2 * time.Second):
 		t.Fatal("background WarmAll did not warm any source within 2s of the 202")
 	}

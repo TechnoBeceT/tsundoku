@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,8 +27,26 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourcecover"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
+
+// newCoverCache builds a throwaway sourcecover.Cache over a fresh t.TempDir(),
+// wrapping sw — shared by every env builder in this package that constructs a
+// series Handler but does not itself exercise the cover-cache's caching/
+// fail-fast behaviour (TestProviderCover_* below covers that directly). Using
+// sourcecover.DefaultDeadline/DefaultConcurrency here mirrors production
+// wiring (routes.go) exactly, so these tests never depend on cache internals.
+func newCoverCache(t *testing.T, sw *sourceenginefake.Client) *sourcecover.Cache {
+	t.Helper()
+	return sourcecover.NewCache(sourcecover.New(t.TempDir()), sw, sourcecover.DefaultConcurrency, sourcecover.DefaultDeadline)
+}
+
+// coverSourceID is the fixed numeric engine source id every cover-proxy test
+// seeds its SeriesProvider with (see seedWithCover) — a "linked" (live)
+// provider under the P2 identity model, so series.ProviderSourceID resolves it
+// and the cover fetch reaches sourceenginefake.Client.Image.
+const coverSourceID int64 = 1
 
 // catID resolves a seeded default category's id by name (testdb seeds them).
 func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
@@ -36,103 +55,6 @@ func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
 		panic(err)
 	}
 	return id
-}
-
-// fakeSuwayomiClient is a minimal suwayomi.Client implementation for tests.
-// Only PageBytes is exercised by the cover handlers; all other methods return
-// zero values so they can be implemented with the interface without noise.
-type fakeSuwayomiClient struct {
-	// pageBytes, when set, is called by PageBytes instead of the default stub.
-	pageBytes func(ctx context.Context, url string) ([]byte, string, error)
-	// calls counts EVERY Suwayomi call the server makes through this client.
-	// It is the source-call budget the "no source ping" proofs assert against
-	// (see TestDetailMakesNoSourceCalls). Tests drive requests sequentially, so a
-	// plain counter is safe.
-	calls int
-}
-
-func (f *fakeSuwayomiClient) Sources(ctx context.Context) ([]suwayomi.Source, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) Browse(ctx context.Context, sourceID string, t suwayomi.BrowseType, page int) (suwayomi.BrowseResult, error) {
-	f.calls++
-	return suwayomi.BrowseResult{}, nil
-}
-func (f *fakeSuwayomiClient) FetchChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) MangaChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) ChapterPages(ctx context.Context, chapterID int) ([]string, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) MangaMeta(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
-	f.calls++
-	return suwayomi.Manga{}, nil
-}
-func (f *fakeSuwayomiClient) FetchMangaDetails(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
-	f.calls++
-	return suwayomi.Manga{}, nil
-}
-func (f *fakeSuwayomiClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
-	f.calls++
-	if f.pageBytes != nil {
-		return f.pageBytes(ctx, pageURL)
-	}
-	return nil, "", errors.New("PageBytes: not configured")
-}
-func (f *fakeSuwayomiClient) ServerSettings(ctx context.Context) (suwayomi.SuwayomiSettings, error) {
-	f.calls++
-	return suwayomi.SuwayomiSettings{}, nil
-}
-func (f *fakeSuwayomiClient) SetServerSettings(ctx context.Context, patch suwayomi.SuwayomiSettingsPatch) error {
-	f.calls++
-	return nil
-}
-func (f *fakeSuwayomiClient) Extensions(ctx context.Context) ([]suwayomi.Extension, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) SetExtensionState(ctx context.Context, pkgName string, action suwayomi.ExtensionAction) error {
-	f.calls++
-	return nil
-}
-func (f *fakeSuwayomiClient) FetchExtensions(ctx context.Context) ([]suwayomi.Extension, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) ExtensionRepos(ctx context.Context) ([]string, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) SetExtensionRepos(ctx context.Context, repos []string) error {
-	f.calls++
-	return nil
-}
-func (f *fakeSuwayomiClient) SourcePreferences(ctx context.Context, sourceID string) ([]suwayomi.SourcePreference, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) SetSourcePreference(ctx context.Context, sourceID string, position int, value suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) ExtensionSources(ctx context.Context, pkgName string) ([]suwayomi.Source, error) {
-	f.calls++
-	return nil, nil
-}
-func (f *fakeSuwayomiClient) SetSourceEnabled(ctx context.Context, sourceID string, enabled bool) error {
-	f.calls++
-	return nil
 }
 
 const testSecret = "series-handler-test-secret"
@@ -146,24 +68,26 @@ type testEnv struct {
 	mangaID   uuid.UUID
 	manhwaID  uuid.UUID
 	triggered *int
-	sw        *fakeSuwayomiClient
+	sw        *sourceenginefake.Client
 }
 
 // newTestEnv stands up a fully-wired Echo: the series routes registered behind
 // RequireOwner (so the 401 proofs exercise the real middleware), a series.Service
 // over a fresh testdb client and a t.TempDir() storage root, and a valid owner
-// Bearer token minted from the same auth secret. A fakeSuwayomiClient is wired
-// for the cover proxy endpoints; set env.sw.pageBytes to control PageBytes behaviour.
+// Bearer token minted from the same auth secret. A sourceengine/fake.Client is
+// wired for the cover proxy endpoints — configure it with sourceenginefake.
+// WithCoverImage / WithError (an Option is just a func(*Client), so it can be
+// applied directly to env.sw at any point in a test, not only at construction).
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 
 	client := testdb.New(t)
 	storage := t.TempDir()
 	authSvc := auth.NewService(testSecret)
-	sw := &fakeSuwayomiClient{}
+	sw := sourceenginefake.New()
 	svc := seriessvc.NewService(client, storage, 14).WithCoverFetcher(sw)
 	triggered := new(int)
-	h := handler.NewHandler(svc, func() { *triggered++ }, sw)
+	h := handler.NewHandler(svc, func() { *triggered++ }, newCoverCache(t, sw))
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -1148,25 +1072,29 @@ func seedWithCover(ctx context.Context, t *testing.T, env *testEnv, coverURL str
 	s := env.client.Series.Create().
 		SetTitle("Cover Test").SetSlug("cover-test").SetCategoryID(catID(ctx, env.client, "Manga")).
 		SaveX(ctx)
+	// Provider is the numeric engine source id (coverSourceID) — a "linked" live
+	// provider, so series.ProviderSourceID resolves and the cover fetch reaches
+	// env.sw.Image (a disk-origin display-name Provider would instead hit the
+	// ErrCoverFetchFailed disk-origin fallback — see TestSeriesCover_DiskOriginProviderIs502).
 	p := env.client.SeriesProvider.Create().
-		SetSeriesID(s.ID).SetProvider("testprov").SetImportance(10).SetCoverURL(coverURL).
+		SetSeriesID(s.ID).SetProvider(strconv.FormatInt(coverSourceID, 10)).SetImportance(10).SetCoverURL(coverURL).
 		SaveX(ctx)
 	return s.ID, p.ID
 }
 
 // TestSeriesCover_OK seeds a series whose metadata provider has a cover_url, wires
-// the fake client to return PNG bytes, and asserts GET /api/series/:id/cover
-// returns 200 with Content-Type image/png and the correct body.
+// the fake engine to return PNG bytes for that (sourceID, coverURL) pair, and
+// asserts GET /api/series/:id/cover returns 200 with Content-Type image/png and
+// the correct body.
 func TestSeriesCover_OK(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47} // PNG magic
-	env.sw.pageBytes = func(_ context.Context, _ string) ([]byte, string, error) {
-		return pngBytes, "png", nil
-	}
+	const coverURL = "/api/v1/manga/1/cover"
+	sourceenginefake.WithCoverImage(coverSourceID, coverURL, pngBytes, "png")(env.sw)
 
-	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	seriesID, _ := seedWithCover(ctx, t, env, coverURL)
 	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SeriesCover OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -1202,13 +1130,11 @@ func TestSeriesCover_NotFound(t *testing.T) {
 	}
 }
 
-// TestSeriesCover_PageBytesFail asserts a Suwayomi fetch failure yields 502.
+// TestSeriesCover_PageBytesFail asserts an engine-host fetch failure yields 502.
 func TestSeriesCover_PageBytesFail(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	env.sw.pageBytes = func(_ context.Context, _ string) ([]byte, string, error) {
-		return nil, "", errors.New("suwayomi down")
-	}
+	sourceenginefake.WithError("Image", errors.New("engine down"))(env.sw)
 	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
 	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", "")
 	if rec.Code != http.StatusBadGateway {
@@ -1223,11 +1149,10 @@ func TestProviderCover_OK(t *testing.T) {
 	ctx := context.Background()
 
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47}
-	env.sw.pageBytes = func(_ context.Context, _ string) ([]byte, string, error) {
-		return pngBytes, "png", nil
-	}
+	const coverURL = "/api/v1/manga/2/cover"
+	sourceenginefake.WithCoverImage(coverSourceID, coverURL, pngBytes, "png")(env.sw)
 
-	seriesID, provID := seedWithCover(ctx, t, env, "/api/v1/manga/2/cover")
+	seriesID, provID := seedWithCover(ctx, t, env, coverURL)
 	target := "/api/series/" + seriesID.String() + "/providers/" + provID.String() + "/cover"
 	rec := env.do(http.MethodGet, target, "")
 	if rec.Code != http.StatusOK {
@@ -1235,6 +1160,31 @@ func TestProviderCover_OK(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
 		t.Errorf("ProviderCover OK: Content-Type want image/png, got %q", ct)
+	}
+}
+
+// TestProviderCover_DiskOriginProviderIs502 proves a disk-origin provider
+// (Provider is a display NAME, not a numeric engine source id) has no engine
+// source to fetch its cover from — ProviderCoverURL reports ErrCoverFetchFailed,
+// mapped to 502, the same failure shape a live fetch error produces.
+func TestProviderCover_DiskOriginProviderIs502(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	if err := os.MkdirAll(disk.SeriesDir(env.storage, "Manga", "Disk Origin Cover"), 0o750); err != nil {
+		t.Fatalf("mkdir series dir: %v", err)
+	}
+	s := env.client.Series.Create().
+		SetTitle("Disk Origin Cover").SetSlug("disk-origin-cover").SetCategoryID(catID(ctx, env.client, "Manga")).
+		SaveX(ctx)
+	p := env.client.SeriesProvider.Create().
+		SetSeriesID(s.ID).SetProvider("Some Scanlation Group").SetImportance(10).
+		SetCoverURL("/api/v1/manga/9/cover").
+		SaveX(ctx)
+
+	target := "/api/series/" + s.ID.String() + "/providers/" + p.ID.String() + "/cover"
+	rec := env.do(http.MethodGet, target, "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("ProviderCover (disk-origin): want 502, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 

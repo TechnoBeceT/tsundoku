@@ -34,6 +34,8 @@ const mangaDex: SearchCandidate = {
   sourceName: 'MangaDex',
   lang: 'en',
   mangaId: 1001,
+  url: '/manga/1001/solo-leveling',
+  realUrl: 'https://mangadex.org/manga/1001/solo-leveling',
   title: 'Solo Leveling',
   thumbnailUrl: cover(1001),
 }
@@ -43,6 +45,8 @@ const asuraScans: SearchCandidate = {
   sourceName: 'Asura Scans',
   lang: 'en',
   mangaId: 1002,
+  url: '/manga/1002/solo-leveling',
+  realUrl: 'https://asurascans.example/manga/1002/solo-leveling',
   title: 'Solo Leveling',
   thumbnailUrl: cover(1002),
 }
@@ -52,6 +56,8 @@ const manganato: SearchCandidate = {
   sourceName: 'Manganato',
   lang: 'en',
   mangaId: 1003,
+  url: '/manga/1003/solo-leveling',
+  realUrl: 'https://manganato.example/manga/1003/solo-leveling',
   title: 'Solo Leveling',
   thumbnailUrl: '',
 }
@@ -61,6 +67,8 @@ const comix: SearchCandidate = {
   sourceName: 'Comix',
   lang: 'en',
   mangaId: 2001,
+  url: '/manga/2001/omniscient-reader',
+  realUrl: 'https://comix.example/manga/2001/omniscient-reader',
   title: 'Omniscient Reader',
   thumbnailUrl: cover(2001),
 }

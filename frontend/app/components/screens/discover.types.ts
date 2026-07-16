@@ -44,8 +44,18 @@ export interface DiscoverCandidate {
   title: string
   /** Cover image URL, or "" → the initial-letter placeholder. */
   thumbnailUrl: string
-  /** Provider-canonical URL — the "View on source ↗" external link target. */
+  /**
+   * Provider-canonical ADDRESSING url the engine host identifies this manga
+   * by. NOT a clickable browser link — see `realUrl` for the "View on
+   * source ↗" external link target.
+   */
   url: string
+  /**
+   * Fully-qualified, browser-clickable URL for this manga (Mihon's
+   * `getMangaUrl`) — the "View on source ↗" external link target. "" when
+   * the source could not resolve one (the link is hidden in that case).
+   */
+  realUrl?: string
   /** Subtle "In library" marker when this manga is already adopted. */
   inLibrary?: boolean
   /** Synopsis shown in the hover preview popup, when the source provides one. */

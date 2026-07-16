@@ -19,36 +19,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entharvestedextension "github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	entharvestedrepo "github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
-
-// seedClient embeds the seed_url_test fakeClient (a full suwayomi.Client stub)
-// and overrides only the three methods SeedExtensions exercises, so the ~25
-// interface stubs are reused (DRY) rather than re-declared.
-type seedClient struct {
-	*fakeClient
-	repos    []string
-	exts     []suwayomi.Extension
-	sources  map[string][]suwayomi.Source
-	reposErr error
-	extsErr  error
-	srcErr   map[string]error
-}
-
-func (s *seedClient) ExtensionRepos(context.Context) ([]string, error) {
-	return s.repos, s.reposErr
-}
-
-func (s *seedClient) Extensions(context.Context) ([]suwayomi.Extension, error) {
-	return s.exts, s.extsErr
-}
-
-func (s *seedClient) ExtensionSources(_ context.Context, pkgName string) ([]suwayomi.Source, error) {
-	if err, ok := s.srcErr[pkgName]; ok {
-		return nil, err
-	}
-	return s.sources[pkgName], nil
-}
 
 // stubResp is one canned HTTP response body for the httpGet stub.
 type stubResp struct {
@@ -93,15 +66,18 @@ func hexSHA(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// installedExt builds an installed Extension from the given repo.
-func installedExt(pkg, repo string, versionCode int) suwayomi.Extension {
-	return suwayomi.Extension{
+// installedExt builds an installed Extension from the given repo, with
+// sources embedded directly (the engine host reports them on the same
+// Extensions() response — no separate lookup call).
+func installedExt(pkg, repo string, versionCode int64, sources ...sourceengine.Source) sourceengine.Extension {
+	return sourceengine.Extension{
 		PkgName:     pkg,
 		Name:        pkg,
 		VersionName: "1.0.0",
 		VersionCode: versionCode,
-		Repo:        repo,
+		RepoURL:     &repo,
 		IsInstalled: true,
+		Sources:     sources,
 	}
 }
 
@@ -123,18 +99,14 @@ func TestSeedExtensions_HappyPath(t *testing.T) {
 		apkURL:   {status: 200, body: apkBytes},
 	}}
 
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		repos:      []string{repo},
-		exts: []suwayomi.Extension{
-			installedExt("pkg.one", repo, 5),
+	client := sourceenginefake.New(
+		sourceenginefake.WithRepos([]string{repo}),
+		sourceenginefake.WithExtensions([]sourceengine.Extension{
+			installedExt("pkg.one", repo, 5, sourceengine.Source{ID: 111}, sourceengine.Source{ID: 222}),
 			// A non-installed (available) extension must be ignored entirely.
-			{PkgName: "pkg.available", Repo: repo, IsInstalled: false},
-		},
-		sources: map[string][]suwayomi.Source{
-			"pkg.one": {{ID: "111"}, {ID: "222"}},
-		},
-	}
+			{PkgName: "pkg.available", RepoURL: strPtr(repo), IsInstalled: false},
+		}),
+	)
 
 	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
 	if err != nil {
@@ -158,6 +130,10 @@ func TestSeedExtensions_HappyPath(t *testing.T) {
 		t.Error("non-installed extension was persisted, want ignored")
 	}
 }
+
+// strPtr is a small pointer-literal helper for building sourceengine.Extension
+// RepoURL fixtures.
+func strPtr(s string) *string { return &s }
 
 // assertResult fails unless the seed Result matches want exactly.
 func assertResult(t *testing.T, got, want enginetopo.Result) {
@@ -220,15 +196,13 @@ func TestSeedExtensions_RepoIndexFailureIsGap(t *testing.T) {
 		},
 	}
 
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		repos:      []string{repoA, repoB},
-		exts: []suwayomi.Extension{
-			installedExt("pkg.one", repoA, 1),
+	client := sourceenginefake.New(
+		sourceenginefake.WithRepos([]string{repoA, repoB}),
+		sourceenginefake.WithExtensions([]sourceengine.Extension{
+			installedExt("pkg.one", repoA, 1, sourceengine.Source{ID: 1}),
 			installedExt("pkg.two", repoB, 1),
-		},
-		sources: map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
-	}
+		}),
+	)
 
 	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
 	if err != nil {
@@ -261,12 +235,10 @@ func TestSeedExtensions_IdempotentSecondRun(t *testing.T) {
 		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":1}]`)},
 		"https://repo.test/repo/apk/one.apk":    {status: 200, body: []byte("APK")},
 	}}
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		repos:      []string{repo},
-		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 1)},
-		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
-	}
+	client := sourceenginefake.New(
+		sourceenginefake.WithRepos([]string{repo}),
+		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 1, sourceengine.Source{ID: 1})}),
+	)
 
 	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
 	if err != nil {
@@ -309,12 +281,10 @@ func TestSeedExtensions_RecordsIndexVersionNotInstalled(t *testing.T) {
 		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":7}]`)},
 		"https://repo.test/repo/apk/one.apk":    {status: 200, body: apkBytes},
 	}}
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		repos:      []string{repo},
-		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 3)},
-		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "9"}}},
-	}
+	client := sourceenginefake.New(
+		sourceenginefake.WithRepos([]string{repo}),
+		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 3, sourceengine.Source{ID: 9})}),
+	)
 
 	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
 	if err != nil {
@@ -345,12 +315,10 @@ func TestSeedExtensions_ReDownloadsWhenFileMissing(t *testing.T) {
 		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":1}]`)},
 		"https://repo.test/repo/apk/one.apk":    {status: 200, body: []byte("APK")},
 	}}
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		repos:      []string{repo},
-		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 1)},
-		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
-	}
+	client := sourceenginefake.New(
+		sourceenginefake.WithRepos([]string{repo}),
+		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 1, sourceengine.Source{ID: 1})}),
+	)
 
 	if _, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get); err != nil {
 		t.Fatalf("first SeedExtensions: %v", err)
@@ -392,12 +360,10 @@ func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
 		indexURL: {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":3}]`)},
 		apkURL:   {status: 200, body: []byte("APK-V3")},
 	}}
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		repos:      []string{repo},
-		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 3)},
-		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
-	}
+	client := sourceenginefake.New(
+		sourceenginefake.WithRepos([]string{repo}),
+		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 3, sourceengine.Source{ID: 1})}),
+	)
 
 	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
 	if err != nil {
@@ -407,7 +373,10 @@ func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
 
 	// The owner upgrades the extension: the installed version overtakes the cached
 	// index version (3 → 5), and the repo now advertises the new build.
-	client.exts = []suwayomi.Extension{installedExt("pkg.one", repo, 5)}
+	client = sourceenginefake.New(
+		sourceenginefake.WithRepos([]string{repo}),
+		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 5, sourceengine.Source{ID: 1})}),
+	)
 	stub.routes[indexURL] = stubResp{status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":5}]`)}
 	stub.routes[apkURL] = stubResp{status: 200, body: []byte("APK-V5")}
 
@@ -459,12 +428,10 @@ func TestSeedExtensions_IndexLagsInstalledNoLoop(t *testing.T) {
 		"https://repo.test/repo/index.min.json": {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":90}]`)},
 		"https://repo.test/repo/apk/one.apk":    {status: 200, body: []byte("APK-V90")},
 	}}
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		repos:      []string{repo},
-		exts:       []suwayomi.Extension{installedExt("pkg.one", repo, 100)},
-		sources:    map[string][]suwayomi.Source{"pkg.one": {{ID: "1"}}},
-	}
+	client := sourceenginefake.New(
+		sourceenginefake.WithRepos([]string{repo}),
+		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 100, sourceengine.Source{ID: 1})}),
+	)
 
 	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
 	if err != nil {
@@ -506,10 +473,7 @@ func TestSeedExtensions_ListReposErrorAborts(t *testing.T) {
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
 
-	client := &seedClient{
-		fakeClient: &fakeClient{},
-		reposErr:   errors.New("engine down"),
-	}
+	client := sourceenginefake.New(sourceenginefake.WithError("Repos", errors.New("engine down")))
 	stub := &stubHTTP{}
 
 	if _, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get); err == nil {

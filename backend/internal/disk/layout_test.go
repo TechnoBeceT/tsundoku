@@ -167,10 +167,18 @@ func TestGenerateCBZFilename(t *testing.T) {
 				Number:      nil,
 				ChapterName: "The Only Chapter",
 				MaxChapter:  nil,
+				// A real caller always sets ChapterKey from the chapter's own
+				// identity (chapter.NormalizeChapterKey) — for a nil Number that is
+				// the "name:<slug>" form. Item 4 (disk-collision guard): with nil
+				// Number, chapterStr is no longer empty — it now carries a
+				// chapterKey-derived disambiguator so two distinct number-less
+				// chapters can never collide onto the same filename (see
+				// TestGenerateCBZFilename_UnnumberedChaptersDistinctKeys).
+				ChapterKey: "name:the-only-chapter",
 			},
-			// No number, name is not "Chapter X", so it appears in parens
-			// With nil Number and nil MaxChapter, chapterStr is empty
-			wantSuffix: "[mangadex][en] One Shot (The Only Chapter).cbz",
+			// No number, name is not "Chapter X" so it still appears in parens;
+			// the trailing token is the chapterKey-derived disambiguator.
+			wantSuffix: "[mangadex][en] One Shot (The Only Chapter) the-only-chapter.cbz",
 		},
 		{
 			name: "chapter name parens become brackets",

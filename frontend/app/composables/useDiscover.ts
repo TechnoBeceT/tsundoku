@@ -35,7 +35,8 @@
  *
  * loadDetails(candidate) FORCES Suwayomi to fetch full metadata
  * (author/artist/description/genres) for one candidate via
- * `GET /api/sources/{sourceId}/manga/{mangaId}/details` — Search/Browse only
+ * `GET /api/sources/{sourceId}/manga/{mangaId}/details?url=` (`url` is
+ * REQUIRED, P2 Suwayomi-removal) — Search/Browse only
  * ever return the lightweight fields, so the hover preview stays empty until
  * this is called. It is on-demand and cached: a mangaId whose details already
  * loaded (or are currently loading) is a no-op, so repeatedly hovering the
@@ -51,6 +52,7 @@
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
+import { sourceCoverProxyUrl } from '~/utils/sourceCover'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { BrowseResult, BrowseType, DiscoverCandidate, DiscoverSource } from '~/components/screens/discover.types'
 
@@ -70,8 +72,14 @@ function mapCandidate(dto: SearchCandidateDTO): DiscoverCandidate {
     lang: dto.lang,
     mangaId: dto.mangaId,
     title: dto.title,
-    thumbnailUrl: dto.thumbnailUrl,
+    // Routed through the backend's source-cover proxy (not the raw source
+    // URL) so Cloudflare/hotlink-protected sources render — see
+    // sourceCoverProxyUrl's doc comment.
+    thumbnailUrl: sourceCoverProxyUrl(dto.source, dto.thumbnailUrl),
     url: dto.url,
+    // Browser-clickable "View on source" link — distinct from `url`, which
+    // is the addressing key the backend requires back.
+    realUrl: dto.realUrl,
     description: dto.description,
     genres: dto.genres,
     author: dto.author,
@@ -170,7 +178,10 @@ export function useDiscover() {
     detailsInFlight.add(key)
     try {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/details', {
-        params: { path: { sourceId: candidate.source, mangaId: candidate.mangaId } },
+        params: {
+          path: { sourceId: candidate.source, mangaId: candidate.mangaId },
+          query: { url: candidate.url },
+        },
       })
       if (res.error || !res.data) return // non-fatal: leave the fallback text
       const dto = res.data

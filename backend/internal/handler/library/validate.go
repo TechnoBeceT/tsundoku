@@ -23,21 +23,35 @@ type importBody struct {
 	Matches []providerRefBody `json:"matches,omitempty"`
 }
 
-// providerRefBody is one owner-chosen Suwayomi source to attach at import
+// providerRefBody is one owner-chosen engine-host source to attach at import
 // time (POST /api/library/import's "matches" list entries) — mirrors
 // library.ProviderRef on the wire. Unlike the old singular matchBody it
 // carries no importance: library.AddProviders assigns importances itself,
 // below the series' existing providers (decision E).
+//
+// MangaID + URL (P2 Suwayomi-removal, slice 3b): MangaID is KEPT, additive
+// only, so the not-yet-updated frontend still typechecks; the backend reads
+// URL (the source-relative manga URL the engine host addresses this manga
+// by) instead.
 type providerRefBody struct {
-	Source    string `json:"source"`
+	Source string `json:"source"`
+	// MangaID is UNUSED by the backend — retained for FE wire compatibility
+	// only (prefer URL).
 	MangaID   int    `json:"mangaId"`
+	URL       string `json:"url"`
 	Scanlator string `json:"scanlator"`
 }
 
 // addProviderBody is the wire shape for POST /api/series/:id/providers.
+//
+// MangaID + URL: see providerRefBody's doc comment — the same additive
+// carry-both-fields rule applies.
 type addProviderBody struct {
-	Source     string `json:"source"`
+	Source string `json:"source"`
+	// MangaID is UNUSED by the backend — retained for FE wire compatibility
+	// only (prefer URL).
 	MangaID    int    `json:"mangaId"`
+	URL        string `json:"url"`
 	Importance int    `json:"importance"`
 	// Scanlator selects which scanlation group's chapters this provider
 	// tracks; optional, "" means "all chapters from this source".
@@ -85,8 +99,8 @@ func validatePath(raw string) (string, error) {
 // validateImportBody validates the POST /api/library/import body: path is
 // required (non-blank); matches is OPTIONAL — an empty/absent list is a
 // valid import-only request (no attach) — but each present entry requires a
-// non-empty source and a positive mangaId (delegates to
-// validateProviderRef; scanlator is unconstrained, "" = all scanlators).
+// non-empty source and a non-empty url (delegates to validateProviderRef;
+// scanlator is unconstrained, "" = all scanlators).
 func validateImportBody(body importBody) error {
 	if strings.TrimSpace(body.Path) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "path is required")
@@ -100,10 +114,10 @@ func validateImportBody(body importBody) error {
 }
 
 // validateAddProviderBody validates the POST /api/series/:id/providers body:
-// a non-empty source, a positive mangaId, and an importance >= 1. Scanlator
+// a non-empty source, a non-empty url, and an importance >= 1. Scanlator
 // is optional (no format constraint — "" means "all chapters").
 func validateAddProviderBody(body addProviderBody) error {
-	if err := validateProviderRef(providerRefBody{Source: body.Source, MangaID: body.MangaID, Scanlator: body.Scanlator}); err != nil {
+	if err := validateProviderRef(providerRefBody{Source: body.Source, URL: body.URL, Scanlator: body.Scanlator}); err != nil {
 		return err
 	}
 	if body.Importance < 1 {
@@ -112,18 +126,26 @@ func validateAddProviderBody(body addProviderBody) error {
 	return nil
 }
 
-// validateProviderRef is the shared source/mangaId validation reused by both
+// validateProviderRef is the shared source/url validation reused by both
 // validateImportBody's matches list entries and validateAddProviderBody (§2
-// DRY — every source-attach body shares the identical source/mangaId shape).
-// It deliberately does NOT check importance: library.ProviderRef (the
-// matches-list shape) carries none — AddProviders assigns it — while
-// addProviderBody's importance is checked separately by its caller.
+// DRY — every source-attach body shares the identical source/url shape).
+//
+// P2 Suwayomi-removal judgment call (slice 3b): url is validated as merely
+// non-empty (trimmed), NOT via pkg/urlx.IsAbsoluteHTTP. The stored manga/
+// chapter urls in this URL-addressed model are SOURCE-RELATIVE (e.g.
+// "/manga/x/chapter-1", mirroring what internal/sourceengine.MangaEntry.URL /
+// internal/ingest.Ingest.AddSeries actually expect) — requiring an ABSOLUTE
+// http(s) URL here would reject every legitimate value. This deliberately
+// does NOT check importance: library.ProviderRef (the matches-list shape)
+// carries none — AddProviders assigns it — while addProviderBody's importance
+// is checked separately by its caller. mangaId is no longer checked (the
+// backend ignores it — see providerRefBody's doc comment).
 func validateProviderRef(m providerRefBody) error {
 	if strings.TrimSpace(m.Source) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "source is required")
 	}
-	if m.MangaID <= 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "mangaId must be > 0")
+	if strings.TrimSpace(m.URL) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "url is required")
 	}
 	return nil
 }
@@ -132,7 +154,7 @@ func validateProviderRef(m providerRefBody) error {
 // body: providers must be non-empty (else there is nothing to attach — mirrors
 // library.ErrNoProviders, which the service would otherwise have to surface
 // for a request the handler could reject up front) and each entry is checked
-// via the shared validateProviderRef (§2 DRY — same source/mangaId shape as
+// via the shared validateProviderRef (§2 DRY — same source/url shape as
 // the matches list and the single-attach body).
 func validateProviderRefs(providers []providerRefBody) error {
 	if len(providers) == 0 {

@@ -8,14 +8,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entharvestedextension "github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	entharvestedrepo "github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // Result reports what a SeedExtensions pass did.
@@ -39,13 +38,14 @@ type Result struct {
 // recovered later even if the upstream repo is offline.
 //
 // Flow:
-//  1. client.ExtensionRepos → upsert one HarvestedRepo row per URL.
+//  1. client.Repos → upsert one HarvestedRepo row per URL.
 //  2. client.Extensions → for each INSTALLED extension: resolve its .apk download
 //     URL AND version from its repo's index.min.json (fetched via httpGet),
-//     download the .apk bytes (httpGet), cache.Put them, read its source ids
-//     (client.ExtensionSources), and upsert a HarvestedExtension row whose
-//     version_code + apk_sha256 describe the cached bytes (the index entry's own
-//     version, not the possibly-older installed version) with apk_cached=true.
+//     download the .apk bytes (httpGet), cache.Put them, and upsert a
+//     HarvestedExtension row whose version_code + apk_sha256 describe the cached
+//     bytes (the index entry's own version, not the possibly-older installed
+//     version) with apk_cached=true. The extension's source ids come straight
+//     off ext.Sources (embedded on the wire — no separate lookup call).
 //
 // It is idempotent: an extension whose row is apk_cached=true AND whose cache
 // FILE is present is skipped (no index fetch, no download, no Put) and does NOT
@@ -61,14 +61,14 @@ type Result struct {
 // unable to proceed.
 func SeedExtensions(
 	ctx context.Context,
-	client suwayomi.Client,
+	client sourceengine.Client,
 	db *ent.Client,
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
 ) (Result, error) {
 	var res Result
 
-	repoURLs, err := client.ExtensionRepos(ctx)
+	repoURLs, err := client.Repos(ctx)
 	if err != nil {
 		return res, fmt.Errorf("enginetopo.SeedExtensions: list repos: %w", err)
 	}
@@ -89,10 +89,10 @@ func SeedExtensions(
 		if !ext.IsInstalled {
 			continue
 		}
-		cached, err := seedOneExtension(ctx, client, db, cache, indexes, httpGet, ext)
+		cached, err := seedOneExtension(ctx, db, cache, indexes, httpGet, ext)
 		if err != nil {
 			slog.WarnContext(ctx, "enginetopo: could not cache extension apk, recording gap",
-				"pkg_name", ext.PkgName, "repo", ext.Repo, "version_code", ext.VersionCode, "err", err)
+				"pkg_name", ext.PkgName, "repo", repoURLOf(ext), "version_code", ext.VersionCode, "err", err)
 			recordGap(ctx, db, ext)
 			res.Gaps++
 			continue
@@ -103,6 +103,17 @@ func SeedExtensions(
 	}
 
 	return res, nil
+}
+
+// repoURLOf resolves an extension's repo URL, guarding sourceengine's nullable
+// RepoURL (nil when the extension is not associated with a configured repo,
+// e.g. sideloaded) down to "" — the "no repo" sentinel every caller below
+// (isAlreadyCached, recordGap, indexResolver.resolve) already expects.
+func repoURLOf(ext sourceengine.Extension) string {
+	if ext.RepoURL == nil {
+		return ""
+	}
+	return *ext.RepoURL
 }
 
 // seedOneExtension caches one installed extension's .apk and upserts its
@@ -116,22 +127,21 @@ func SeedExtensions(
 // gap-recording — live HERE; the actual caching work is delegated to the shared
 // recordInstalledExtension core (which the live write-through also drives via the
 // exported RecordInstalledExtension), so there is exactly one copy of the
-// resolve→download→cache→read-sources→upsert logic.
+// resolve→download→cache→upsert logic.
 func seedOneExtension(
 	ctx context.Context,
-	client suwayomi.Client,
 	db *ent.Client,
 	cache *apkcache.Store,
 	indexes *indexResolver,
 	httpGet func(url string) (*http.Response, error),
-	ext suwayomi.Extension,
+	ext sourceengine.Extension,
 ) (cached bool, err error) {
 	if already, err := isAlreadyCached(ctx, db, cache, ext); err != nil {
 		return false, err
 	} else if already {
 		return false, nil
 	}
-	if err := recordInstalledExtension(ctx, client, db, cache, indexes, httpGet, ext); err != nil {
+	if err := recordInstalledExtension(ctx, db, cache, indexes, httpGet, ext); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -159,13 +169,12 @@ func seedOneExtension(
 // versions.)
 func RecordInstalledExtension(
 	ctx context.Context,
-	client suwayomi.Client,
 	db *ent.Client,
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
-	ext suwayomi.Extension,
+	ext sourceengine.Extension,
 ) error {
-	return recordInstalledExtension(ctx, client, db, cache, newIndexResolver(httpGet), httpGet, ext)
+	return recordInstalledExtension(ctx, db, cache, newIndexResolver(httpGet), httpGet, ext)
 }
 
 // recordInstalledExtension is the resolver-injected caching core shared by the
@@ -177,14 +186,14 @@ func RecordInstalledExtension(
 // per-pass index memoisation.
 func recordInstalledExtension(
 	ctx context.Context,
-	client suwayomi.Client,
 	db *ent.Client,
 	cache *apkcache.Store,
 	indexes *indexResolver,
 	httpGet func(url string) (*http.Response, error),
-	ext suwayomi.Extension,
+	ext sourceengine.Extension,
 ) error {
-	apkURL, indexVersion, err := indexes.resolve(ext.Repo, ext.PkgName)
+	repoURL := repoURLOf(ext)
+	apkURL, indexVersion, err := indexes.resolve(repoURL, ext.PkgName)
 	if err != nil {
 		return err
 	}
@@ -194,18 +203,13 @@ func recordInstalledExtension(
 		return err
 	}
 
-	sources, err := client.ExtensionSources(ctx, ext.PkgName)
-	if err != nil {
-		return fmt.Errorf("read extension sources: %w", err)
-	}
-
 	row := extensionRow{
 		pkgName:              ext.PkgName,
-		repoURL:              ext.Repo,
+		repoURL:              repoURL,
 		versionCode:          indexVersion,
-		installedVersionCode: ext.VersionCode,
+		installedVersionCode: int(ext.VersionCode),
 		versionName:          ext.VersionName,
-		sourceIDs:            sourceIDs(sources),
+		sourceIDs:            sourceIDs(ext.Sources),
 		apkSHA256:            sha,
 		apkCached:            true,
 	}
@@ -304,7 +308,7 @@ func downloadAndCache(
 // and an anti-ban hazard. Keying on installed-version equality re-caches exactly
 // once per installed-version change and never loops, regardless of whether the
 // repo index leads or lags the installed version.
-func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store, ext suwayomi.Extension) (bool, error) {
+func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store, ext sourceengine.Extension) (bool, error) {
 	existing, err := db.HarvestedExtension.Query().
 		Where(entharvestedextension.PkgName(ext.PkgName)).
 		Only(ctx)
@@ -316,20 +320,18 @@ func isAlreadyCached(ctx context.Context, db *ent.Client, cache *apkcache.Store,
 	}
 	return existing.ApkCached &&
 		cache.Exists(ext.PkgName, existing.VersionCode) &&
-		existing.InstalledVersionCode == ext.VersionCode, nil
+		existing.InstalledVersionCode == int(ext.VersionCode), nil
 }
 
-// sourceIDs converts the Suwayomi sources an extension provides into the int64
-// ids stored on the row. Source.ID is a 64-bit integer serialised as a string;
-// an unparseable id is skipped (never fails the whole extension).
-func sourceIDs(sources []suwayomi.Source) []int64 {
-	ids := make([]int64, 0, len(sources))
-	for _, s := range sources {
-		id, err := strconv.ParseInt(s.ID, 10, 64)
-		if err != nil {
-			continue
-		}
-		ids = append(ids, id)
+// sourceIDs copies the stable source ids an extension provides. sourceengine
+// already reports them as int64 on Extension.Sources (one Source struct per
+// language the extension supports) — a plain field copy, unlike the retired
+// Suwayomi GraphQL shape, which serialised a 64-bit id as a string that had to
+// be parsed (and a parse failure silently skipped).
+func sourceIDs(sources []sourceengine.Source) []int64 {
+	ids := make([]int64, len(sources))
+	for i, s := range sources {
+		ids[i] = s.ID
 	}
 	return ids
 }
@@ -389,12 +391,12 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 // cached, marking apk_cached=false so the gap is visible in the store. It is
 // best-effort: a failure to record the gap is logged and swallowed (the pass
 // must not abort because it could not persist a gap marker).
-func recordGap(ctx context.Context, db *ent.Client, ext suwayomi.Extension) {
+func recordGap(ctx context.Context, db *ent.Client, ext sourceengine.Extension) {
 	row := extensionRow{
 		pkgName:              ext.PkgName,
-		repoURL:              ext.Repo,
-		versionCode:          ext.VersionCode,
-		installedVersionCode: ext.VersionCode,
+		repoURL:              repoURLOf(ext),
+		versionCode:          int(ext.VersionCode),
+		installedVersionCode: int(ext.VersionCode),
 		versionName:          ext.VersionName,
 		apkCached:            false,
 	}

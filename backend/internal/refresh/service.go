@@ -1,13 +1,14 @@
 // Package refresh implements the M5 discovery sweep: the recurring poll that
 // re-fetches every monitored series' chapter list across all its providers to
-// discover new releases. It is pure orchestration over the M2 ingest engine —
-// it invents no new data mapping.
+// discover new releases. It is pure orchestration over the engine-agnostic
+// ingest engine (internal/ingest) — it invents no new data mapping.
 //
-// The sweep is UPSERT-ONLY (it reuses suwayomi.Ingest.AddSeries) so it honors
-// the never-auto-delete invariant: a chapter that disappears from a source
-// listing on a later poll leaves its ProviderChapter row (and any rendered CBZ)
-// untouched. Re-fetch never resets SeriesProvider.importance — only the create
-// path sets it — so an owner re-rank survives every subsequent sweep.
+// The sweep is UPSERT-ONLY (it reuses ingest.Ingest.AddSeriesWithChapters) so
+// it honors the never-auto-delete invariant: a chapter that disappears from a
+// source listing on a later poll leaves its ProviderChapter row (and any
+// rendered CBZ) untouched. Re-fetch never resets SeriesProvider.importance —
+// only the create path sets it — so an owner re-rank survives every
+// subsequent sweep.
 package refresh
 
 import (
@@ -15,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,9 +27,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entsuwayomisyncstate "github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
+	"github.com/technobecet/tsundoku/internal/ingest"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // Concurrency supplies the runtime-tunable parallel-refetch bound. RefreshAll
@@ -44,21 +47,26 @@ type Concurrency interface {
 // RefreshAll on a schedule (job.Runner.StartRefresh) or on demand.
 type Service struct {
 	client      *ent.Client
-	ingest      *suwayomi.Ingest
+	ingest      *ingest.Ingest
 	hub         *sse.Hub
 	concurrency Concurrency
 	gate        *sourcegate.Service
 }
 
-// NewService constructs a Service. concurrency supplies the runtime-tunable
-// parallel-refetch bound, read at the start of every sweep (hot reload). gate
-// is the source-politeness circuit-breaker + delay (internal/sourcegate),
-// consulted per provider before re-fetching it — see RefreshAll. gate may be
-// nil (no gate configured): every gate-consulting call site treats a nil gate
-// as "always available, no delay" (today's pre-politeness behaviour), so
-// passing nil is a safe default for callers that do not need the gate.
-func NewService(client *ent.Client, ingest *suwayomi.Ingest, hub *sse.Hub, concurrency Concurrency, gate *sourcegate.Service) *Service {
-	return &Service{client: client, ingest: ingest, hub: hub, concurrency: concurrency, gate: gate}
+// NewService constructs a Service. ingestSvc is refresh's OWN ingest instance —
+// production wires it with a PRIVATE ChapterCache (see cmd/tsundoku/main.go):
+// refresh never reads that cache (it always fetches fresh via
+// FetchChaptersUncached), so a private instance keeps this slice from touching
+// the SHARED cache other interactive callers use. concurrency supplies the
+// runtime-tunable parallel-refetch bound, read at the start of every sweep
+// (hot reload). gate is the source-politeness circuit-breaker + delay
+// (internal/sourcegate), consulted per provider before re-fetching it — see
+// RefreshAll. gate may be nil (no gate configured): every gate-consulting call
+// site treats a nil gate as "always available, no delay" (today's
+// pre-politeness behaviour), so passing nil is a safe default for callers that
+// do not need the gate.
+func NewService(client *ent.Client, ingestSvc *ingest.Ingest, hub *sse.Hub, concurrency Concurrency, gate *sourcegate.Service) *Service {
+	return &Service{client: client, ingest: ingestSvc, hub: hub, concurrency: concurrency, gate: gate}
 }
 
 // RefreshResult summarises one sweep. SeriesRefreshed counts the monitored
@@ -73,11 +81,11 @@ type RefreshResult struct {
 }
 
 // RefreshAll sweeps every monitored series. For each of its providers (with a
-// known suwayomi_id) it re-runs suwayomi.Ingest.AddSeries under bounded
-// concurrency, discovering new chapters. Per-provider failures are logged and
-// skipped (partial success). A hard error is returned only if the initial
-// monitored-series query fails. Emits refresh.start before and refresh.done
-// after the sweep.
+// numeric, URL-addressed source) it re-runs ingest.Ingest.AddSeriesWithChapters
+// under bounded concurrency, discovering new chapters. Per-provider failures
+// are logged and skipped (partial success). A hard error is returned only if
+// the initial monitored-series query fails. Emits refresh.start before and
+// refresh.done after the sweep.
 func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	seriesList, err := s.client.Series.Query().
 		// Skip completed series: a finished series has no new chapters, so polling
@@ -142,7 +150,7 @@ type refreshProvider struct {
 	provider   string
 	providerID uuid.UUID
 	// scanlator is the STORED scanlator of this SeriesProvider row (set at
-	// create time — see suwayomi.Ingest.upsertSeriesProvider). It MUST be
+	// create time — see ingest.Ingest.upsertSeriesProvider). It MUST be
 	// passed back into AddSeriesWithChapters so a re-ingest updates this SAME
 	// row instead of find-or-creating a fresh scanlator=="" one: ingest keys
 	// SeriesProvider on (series, provider, scanlator), and a mismatched
@@ -150,40 +158,48 @@ type refreshProvider struct {
 	scanlator string
 }
 
-// refreshGroup is every provider that shares ONE (physical source, manga): they
-// are satisfied by a single upstream FetchChapters, then ingested per scanlator.
+// refreshGroup is every provider that shares ONE (physical source, manga URL):
+// they are satisfied by a single upstream Chapters call, then ingested per
+// scanlator.
 type refreshGroup struct {
-	sourceID  string
-	mangaID   int
+	sourceID  int64
+	url       string
 	sourceKey string
 	providers []refreshProvider
 }
 
 // buildRefreshGroups flattens every monitored series' providers into groups keyed
-// by (provider source id, suwayomi manga id), skipping a provider whose
-// suwayomi_id is unknown (0 — cannot fetch). A whole group whose physical source
-// is currently cooled down by the source-politeness gate is dropped (a tripped
-// source is excluded from the sweep entirely this cycle, mirroring the download
-// dispatcher's candidacy exclusion). Extracted from RefreshAll to keep its
-// cyclomatic complexity low.
+// by (numeric source id, manga url), skipping a provider whose Provider column
+// does not parse as a numeric source id (a disk-origin row — never had a live
+// source attached, so there is nothing to fetch) or whose URL is unknown. A
+// whole group whose physical source is currently cooled down by the
+// source-politeness gate is dropped (a tripped source is excluded from the
+// sweep entirely this cycle, mirroring the download dispatcher's candidacy
+// exclusion). Extracted from RefreshAll to keep its cyclomatic complexity low.
 func (s *Service) buildRefreshGroups(ctx context.Context, seriesList []*ent.Series, now time.Time) []refreshGroup {
 	type key struct {
-		source  string
-		mangaID int
+		source int64
+		url    string
 	}
 	byKey := make(map[key]*refreshGroup)
 	var order []key
 	for _, sr := range seriesList {
 		for _, p := range sr.Edges.Providers {
-			if p.SuwayomiID == 0 {
-				slog.WarnContext(ctx, "refresh: skipping provider with unknown suwayomi_id",
+			sourceID, ok := parseProviderSourceID(p.Provider)
+			if !ok {
+				slog.WarnContext(ctx, "refresh: skipping provider with non-numeric provider id (disk-origin)",
 					"series", sr.Title, "provider", p.Provider)
 				continue
 			}
-			k := key{source: p.Provider, mangaID: p.SuwayomiID}
+			if p.URL == "" {
+				slog.WarnContext(ctx, "refresh: skipping provider with unknown url",
+					"series", sr.Title, "provider", p.Provider)
+				continue
+			}
+			k := key{source: sourceID, url: p.URL}
 			grp, ok := byKey[k]
 			if !ok {
-				grp = &refreshGroup{sourceID: p.Provider, mangaID: p.SuwayomiID, sourceKey: sourceKey(p)}
+				grp = &refreshGroup{sourceID: sourceID, url: p.URL, sourceKey: sourceKey(p)}
 				byKey[k] = grp
 				order = append(order, k)
 			}
@@ -198,12 +214,25 @@ func (s *Service) buildRefreshGroups(ctx context.Context, seriesList []*ent.Seri
 		grp := byKey[k]
 		if !s.gateAvailable(ctx, grp.sourceKey, now) {
 			slog.WarnContext(ctx, "refresh: skipping group — source cooled down by politeness gate",
-				"source", grp.sourceID, "manga", grp.mangaID, "source_key", grp.sourceKey)
+				"source", grp.sourceID, "url", grp.url, "source_key", grp.sourceKey)
 			continue
 		}
 		groups = append(groups, *grp)
 	}
 	return groups
+}
+
+// parseProviderSourceID parses a SeriesProvider.Provider column into the
+// numeric engine-host source id ingest.Ingest expects. A disk-origin provider
+// stores a display name (e.g. "Other" or a slug), which never parses — ok is
+// false in that case, and the caller skips the provider (there is no live
+// source to re-fetch from).
+func parseProviderSourceID(provider string) (id int64, ok bool) {
+	n, err := strconv.ParseInt(provider, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // refreshGroup fetches one source-manga's chapter list ONCE (politeness delay +
@@ -220,7 +249,10 @@ func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.T
 	// (source, manga) grouping already dedups to one fetch per sweep, so refresh
 	// gets its dedup from grouping, not the cache, and always sees new chapters —
 	// the long, hot-reloadable interactive cache TTL can never stale-out discovery.
-	raw, fetchErr := s.ingest.FetchChaptersUncached(ctx, grp.mangaID)
+	// Every provider in a group shares one physical (source, manga url), so the
+	// first provider's title feeds the engine host's chapter-number recognition
+	// for the whole group's fetch (groups are never built with zero providers).
+	raw, fetchErr := s.ingest.FetchChaptersUncached(ctx, grp.sourceID, grp.url, grp.providers[0].title)
 	if fetchErr != nil {
 		s.handleGroupFetchError(ctx, grp, fetchErr, now, mu, result)
 		return
@@ -240,7 +272,7 @@ func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, f
 		return
 	}
 	slog.ErrorContext(ctx, "refresh: group fetch failed",
-		"source", grp.sourceID, "manga", grp.mangaID, "err", fetchErr)
+		"source", grp.sourceID, "url", grp.url, "err", fetchErr)
 	s.gateRecordFailure(ctx, grp.sourceKey, fetchErr, now)
 	for _, p := range grp.providers {
 		if uerr := s.upsertSyncState(ctx, p.providerID, fetchErr); uerr != nil {
@@ -257,8 +289,8 @@ func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, f
 // chapter list via AddSeriesWithChapters (no upstream fetch, no gate) and records
 // the outcome (sync-state + counters), preserving the per-provider partial-success
 // contract and the context-cancel skip.
-func (s *Service) ingestProvider(ctx context.Context, grp refreshGroup, p refreshProvider, raw []suwayomi.Chapter, mu *sync.Mutex, result *RefreshResult) {
-	res, addErr := s.ingest.AddSeriesWithChapters(ctx, p.provider, grp.mangaID, p.title, p.scanlator, raw)
+func (s *Service) ingestProvider(ctx context.Context, grp refreshGroup, p refreshProvider, raw []sourceengine.Chapter, mu *sync.Mutex, result *RefreshResult) {
+	res, addErr := s.ingest.AddSeriesWithChapters(ctx, grp.sourceID, grp.url, p.title, p.scanlator, raw)
 
 	// Persist polling health; upsertSyncState skips on ctx-cancel.
 	if uerr := s.upsertSyncState(ctx, p.providerID, addErr); uerr != nil {

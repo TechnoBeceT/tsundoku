@@ -4,8 +4,9 @@
  *
  * Mirrors the Claude Design prototype's seed state: the M12 library knobs, the
  * five seed categories (Other protected + default), an embedded engine with an
- * upgrade available, the proxied Suwayomi SOCKS config (off) + the Tsundoku-owned
- * FlareSolverr config (on, QCAT-238 — a separate fixture), and the
+ * upgrade available, the Tsundoku-owned FlareSolverr config (on, QCAT-238 —
+ * the only card left in the "Server config" pane; the proxied Suwayomi SOCKS
+ * card was RETIRED with the P2 Suwayomi-removal backend cutover), and the
  * installed/available/repo extension sets.
  */
 import type {
@@ -18,7 +19,6 @@ import type {
   SettingsCategory,
   SourceMetric,
   SourcesSettings,
-  SuwayomiConfig,
   SystemInfo,
   TrackerStatus,
   UpgradeStep,
@@ -73,26 +73,9 @@ export const upgradeStepsInProgress: UpgradeStep[] = [
   { label: 'Verify', status: 'pending' },
 ]
 
-/** The proxied Suwayomi server config: read-only DB, SOCKS off. */
-export const suwayomiConfig: SuwayomiConfig = {
-  database: {
-    type: 'PostgreSQL',
-    url: 'jdbc:postgresql://db:5432/suwayomi',
-    username: 'suwayomi',
-  },
-  socks: {
-    enabled: false,
-    version: '5',
-    host: '',
-    port: '1080',
-    username: '',
-    password: '',
-  },
-}
-
 /**
- * The Tsundoku-owned FlareSolverr config (QCAT-238) — a SEPARATE fixture from
- * suwayomiConfig since it is now served/saved through its own endpoint.
+ * The Tsundoku-owned FlareSolverr config (QCAT-238) — served/saved through its
+ * own endpoint, the only editable card left in the "Server config" pane.
  */
 export const flareSolverrConfig: FlareSolverrConfig = {
   enabled: true,

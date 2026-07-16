@@ -383,7 +383,10 @@ export function useScanLibrary() {
       const key = breakdownKey(c.source, c.mangaId)
       try {
         const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
-          params: { path: { sourceId: c.source, mangaId: c.mangaId } },
+          params: {
+            path: { sourceId: c.source, mangaId: c.mangaId },
+            query: { url: c.url },
+          },
         })
         breakdowns.value = {
           ...breakdowns.value,

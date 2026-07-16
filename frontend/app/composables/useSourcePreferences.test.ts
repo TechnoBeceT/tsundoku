@@ -3,10 +3,13 @@
  *
  * Pins:
  *   1. load(pkg) fetches GET …/preferences and exposes the grouped sources.
- *   2. setPreference PATCHes {sourceId, position, value} and REPLACES that
- *      source's list with the authoritative response (so positions stay fresh —
- *      the position-drift mitigation).
+ *   2. setPreference PATCHes {sourceId, key, value} (KEY-addressed — the
+ *      engine host has no stable array position to index by) and REPLACES
+ *      that source's list with the authoritative response.
  *   3. a write failure surfaces in saveError (§16) without throwing.
+ *
+ * The per-language enable/disable toggle is RETIRED (the engine host has no
+ * such concept) — do not re-add tests for it.
  *
  * Non-vacuous: if setPreference stopped applying the PATCH response, assertion 2
  * (the switch reads back false) fails; if it swallowed errors silently, 3 fails.
@@ -45,7 +48,7 @@ describe('useSourcePreferences', () => {
     })
   })
 
-  it('setPreference PATCHes and applies the refreshed list (§16)', async () => {
+  it('setPreference PATCHes by key and applies the refreshed list (§16)', async () => {
     getMock.mockResolvedValue({ data: { sources: [preferenceGroup] }, error: null })
     // The write returns the refreshed source list with the switch now OFF.
     patchMock.mockResolvedValue({
@@ -56,14 +59,14 @@ describe('useSourcePreferences', () => {
     const { groups, savingKey, load, setPreference } = useSourcePreferences()
     await load('pkg.test')
 
-    await setPreference('src-en', 0, false)
+    await setPreference('src-en', 'dataSaver_en', false)
 
     // The PATCH carried the exact write coordinates + value.
     expect(patchMock).toHaveBeenCalledWith('/api/suwayomi/extensions/{pkgName}/preferences', {
       params: { path: { pkgName: 'pkg.test' } },
-      body: { sourceId: 'src-en', position: 0, value: false },
+      body: { sourceId: 'src-en', key: 'dataSaver_en', value: false },
     })
-    // The authoritative response replaced that source's list (position stays fresh).
+    // The authoritative response replaced that source's list.
     expect(groups.value[0]!.preferences[0]!.currentValue).toBe(false)
     expect(savingKey.value).toBeNull()
   })
@@ -75,44 +78,9 @@ describe('useSourcePreferences', () => {
     const { saveError, savingKey, load, setPreference } = useSourcePreferences()
     await load('pkg.test')
 
-    await setPreference('src-en', 0, true)
+    await setPreference('src-en', 'dataSaver_en', true)
 
     expect(saveError.value).toBe('Expected change to SwitchPreferenceCompat')
     expect(savingKey.value).toBeNull()
-  })
-
-  it('setEnabled PATCHes the toggle and reseeds from the authoritative response (§16)', async () => {
-    getMock.mockResolvedValue({ data: { sources: [preferenceGroup] }, error: null })
-    patchMock.mockResolvedValue({ data: { sourceId: 'src-en', enabled: false }, error: null })
-
-    const { groups, enablingKey, load, setEnabled } = useSourcePreferences()
-    await load('pkg.test')
-    expect(groups.value[0]!.enabled).toBe(true)
-
-    await setEnabled('src-en', false)
-
-    expect(patchMock).toHaveBeenCalledWith('/api/suwayomi/sources/{sourceId}/enabled', {
-      params: { path: { sourceId: 'src-en' } },
-      body: { enabled: false },
-    })
-    // The group's `enabled` flag comes from the RE-READ response, not an
-    // optimistic flip of the request value.
-    expect(groups.value[0]!.enabled).toBe(false)
-    expect(enablingKey.value).toBeNull()
-  })
-
-  it('surfaces an enable/disable write failure in enableError without throwing', async () => {
-    getMock.mockResolvedValue({ data: { sources: [preferenceGroup] }, error: null })
-    patchMock.mockResolvedValue({ data: null, error: { message: 'suwayomi: source not found' } })
-
-    const { groups, enableError, enablingKey, load, setEnabled } = useSourcePreferences()
-    await load('pkg.test')
-
-    await setEnabled('src-en', false)
-
-    expect(enableError.value).toBe('suwayomi: source not found')
-    expect(enablingKey.value).toBeNull()
-    // A failed write must not silently flip the local state.
-    expect(groups.value[0]!.enabled).toBe(true)
   })
 })

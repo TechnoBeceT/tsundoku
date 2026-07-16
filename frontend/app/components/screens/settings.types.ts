@@ -4,15 +4,14 @@
  * These mirror the PLANNED Settings surface (see the Settings design brief):
  * a few runtime-editable Tsundoku knobs (the M12 allowlist), user-defined
  * categories, read-only engine info + the embedded-engine upgrade flow, the
- * proxied Suwayomi server config (SOCKS), the Tsundoku-owned FlareSolverr
- * config (QCAT-238), and extension/repo management. Everything is
- * presentation-only: the screen receives state via
+ * Tsundoku-owned FlareSolverr config (QCAT-238), and extension/repo
+ * management. Everything is presentation-only: the screen receives state via
  * props and emits every mutation — no fetching, routing, or stores. Kept in
  * this `.ts` (never exported from a `.vue`) so stories + fixtures import freely.
  */
 
 /** The seven settings panes, selected from the sticky sidebar nav. */
-export type SettingsPane = 'library' | 'categories' | 'engine' | 'suwayomi' | 'extensions' | 'sources' | 'trackers' | 'notifications'
+export type SettingsPane = 'library' | 'categories' | 'engine' | 'serverConfig' | 'extensions' | 'sources' | 'trackers' | 'notifications'
 
 /** NotificationPermission is this device's honest Web Push status (Notifications pane). */
 export type NotificationPermissionState = 'unsupported' | 'blocked' | 'granted' | 'default'
@@ -168,35 +167,16 @@ export interface EngineInfo {
   availableVersion: string
 }
 
-/* ---- 2d. Suwayomi server config (proxied) --------------------------------- */
+/* ---- 2d. FlareSolverr config (Tsundoku-owned) ----------------------------- */
 
-/** Read-only display of the engine's DB backend (a deploy concern). */
-export interface SuwayomiDatabaseInfo {
-  /** DB engine type, e.g. `PostgreSQL`. */
-  type: string
-  /** JDBC connection URL. */
-  url: string
-  /** DB username (the password is never exposed). */
-  username: string
-}
-
-/** Editable SOCKS-proxy config, gated behind the enable toggle. */
-export interface SocksProxyConfig {
-  /** Route source traffic through a SOCKS proxy when true. */
-  enabled: boolean
-  /** SOCKS version string (`4` or `5`). */
-  version: string
-  /** Proxy host. */
-  host: string
-  /** Proxy port (kept as a string — Suwayomi types it as `String!`). */
-  port: string
-  /** Proxy username. */
-  username: string
-  /** Proxy password (rendered masked). */
-  password: string
-}
-
-/** Editable FlareSolverr (Cloudflare-bypass) config, gated behind the toggle. */
+/**
+ * Editable FlareSolverr (Cloudflare-bypass) config, gated behind the toggle.
+ * Tsundoku-owned config served by its own endpoint (QCAT-238, 2026-07-14) —
+ * the proxied Suwayomi server-config pane (SOCKS proxy + read-only DB
+ * display) was RETIRED with the P2 Suwayomi-removal cutover (the engine host
+ * has no such passthrough endpoint); this card is the only one left in
+ * SuwayomiPane.vue.
+ */
 export interface FlareSolverrConfig {
   /** Solve Cloudflare challenges for protected sources when true. */
   enabled: boolean
@@ -210,20 +190,6 @@ export interface FlareSolverrConfig {
   sessionTtl: DurationValue
   /** Use FlareSolverr as a response-fallback path. */
   fallback: boolean
-}
-
-/**
- * The proxied Suwayomi server config (read-only DB + the editable SOCKS
- * card). FlareSolverr is deliberately NOT part of this type (QCAT-238,
- * 2026-07-14): it is Tsundoku-OWNED config served by its own endpoint, kept
- * as the standalone FlareSolverrConfig below — even though its card renders
- * alongside this one in SuwayomiPane.vue, it is wired + saved independently.
- */
-export interface SuwayomiConfig {
-  /** Read-only DB backend display. */
-  database: SuwayomiDatabaseInfo
-  /** Editable SOCKS proxy. */
-  socks: SocksProxyConfig
 }
 
 /* ---- 2e. Sources & Extensions --------------------------------------------- */

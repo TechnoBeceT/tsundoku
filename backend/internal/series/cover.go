@@ -57,22 +57,29 @@ type Cover struct {
 }
 
 // ErrCoverFetchFailed is returned by CoverBytes when the cover is not cached
-// locally AND Suwayomi cannot supply it. The HTTP handler maps it to a 502: the
-// upstream is a separate service, so its failure is a gateway error, never a
-// false 200.
+// locally AND the engine host cannot supply it — either the fetch itself
+// failed, or the metadata provider is disk-origin (no numeric engine source id
+// to fetch from at all; see fetchAndCacheCover). The HTTP handler maps it to a
+// 502: the upstream is a separate service, so its failure is a gateway error,
+// never a false 200.
 var ErrCoverFetchFailed = errors.New("cover fetch failed")
 
-// CoverFetcher is the narrow Suwayomi port CoverBytes needs — the one method of
-// suwayomi.Client that fetches image bytes. Depending on the method rather than
-// the whole client keeps the series domain free of the Suwayomi package and
-// makes the "zero calls when cached" proof trivial to assert on.
+// CoverFetcher is the narrow engine-host port CoverBytes needs — exactly
+// sourceengine.Client's own Image method, so sourceengine.Client satisfies this
+// interface directly (structural typing, no adapter). Depending on the method
+// rather than the whole client keeps the series domain free of the
+// internal/sourceengine package and makes the "zero calls when cached" proof
+// trivial to assert on.
+//
+// A cover fetch always calls Image with pageURL="" and the cover's own URL in
+// imageURL — see fetchAndCacheCover's doc comment for why.
 type CoverFetcher interface {
-	PageBytes(ctx context.Context, url string) ([]byte, string, error)
+	Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error)
 }
 
-// WithCoverFetcher attaches the Suwayomi cover fetcher and returns the service,
-// so production can wire it fluently onto either constructor. It is optional:
-// a service without one still serves a cached cover, and reports
+// WithCoverFetcher attaches the engine-host cover fetcher and returns the
+// service, so production can wire it fluently onto either constructor. It is
+// optional: a service without one still serves a cached cover, and reports
 // ErrCoverFetchFailed rather than panicking if a cold cover needs fetching.
 func (s *Service) WithCoverFetcher(f CoverFetcher) *Service {
 	s.sw = f
@@ -100,7 +107,7 @@ func (s *Service) WithCoverFetcher(f CoverFetcher) *Service {
 //     carry a (different) cover_url — that was the exact bug this precedence
 //     fixes: the provider path used to run unconditionally first and treat the
 //     pinned cover's differing source_url as a "mismatch" to invalidate.
-//  2. M10 provider path: a Suwayomi provider supplies a cover_url. The local
+//  2. M10 provider path: a provider supplies a cover_url. The local
 //     cache is VALIDATED against it (localCover re-fetches on a cover_url
 //     mismatch — a metadata-source switch or the source republishing its
 //     thumbnail) and a cold/stale cover is fetched from the source.
@@ -113,8 +120,8 @@ func (s *Service) WithCoverFetcher(f CoverFetcher) *Service {
 // fast-index (Series.cover_file + cover_source_url — one os.ReadFile, nothing
 // else; the hot path a library grid hits) and, failing that, the sidecar
 // (disk.ReadCover — the pre-index fallback, which also backfills the index so
-// the series self-heals onto the fast rung). Suwayomi is only ever reached from
-// step 2, and only when neither local rung has a valid cover.
+// the series self-heals onto the fast rung). The engine host is only ever
+// reached from step 2, and only when neither local rung has a valid cover.
 //
 // Every step that has the bytes in hand re-derives their content version and
 // re-indexes when it has drifted, so cover_version can never lie about what is on
@@ -298,9 +305,20 @@ func (s *Service) indexCover(ctx context.Context, id uuid.UUID, file, sourceURL,
 	}
 }
 
-// fetchAndCacheCover fetches the metadata provider's cover from Suwayomi once,
-// stores it in the series folder (best-effort), and returns it. Called only when
-// the local copy is absent or stale — see CoverBytes for the rule.
+// fetchAndCacheCover fetches the metadata provider's cover from the engine
+// host once, stores it in the series folder (best-effort), and returns it.
+// Called only when the local copy is absent or stale — see CoverBytes for the
+// rule.
+//
+// The fetch itself is CoverFetcher.Image(ctx, sourceID, "", meta.CoverURL) —
+// pageURL is deliberately EMPTY and the cover URL goes in the imageURL slot,
+// because the engine host's HttpSource.getImage uses page.imageUrl directly
+// and skips getImageUrl (which throws for most sources) when pageURL is blank.
+// sourceID is the metadata provider's own numeric engine source id
+// (series.ProviderSourceID, the same numeric-Provider parse IsLinkedProvider
+// uses); a disk-origin provider (Provider is a display NAME, not numeric) has
+// no engine source to fetch from at all, so that case fails the SAME way a
+// live source's fetch failure does — ErrCoverFetchFailed, never a panic.
 //
 // The returned Version is non-empty ONLY when the bytes actually landed on disk:
 // an uncached (live-proxied) cover must not carry a version, because the endpoint
@@ -314,8 +332,13 @@ func (s *Service) fetchAndCacheCover(
 	if s.sw == nil {
 		return Cover{}, fmt.Errorf("%w: no cover fetcher configured", ErrCoverFetchFailed)
 	}
+	sourceID, ok := ProviderSourceID(meta)
+	if !ok {
+		return Cover{}, fmt.Errorf("%w: series %s: metadata provider %q is disk-origin, no engine source to fetch its cover from",
+			ErrCoverFetchFailed, row.ID, meta.Provider)
+	}
 
-	data, rawExt, err := s.sw.PageBytes(ctx, meta.CoverURL)
+	data, rawExt, err := s.sw.Image(ctx, sourceID, "", meta.CoverURL)
 	if err != nil {
 		return Cover{}, fmt.Errorf("%w: series %s: %w", ErrCoverFetchFailed, row.ID, err)
 	}

@@ -6,10 +6,11 @@
  * FlareSolverrSettings DTO onto the screen's FlareSolverrConfig. Exposes
  * save() with the §16 SaveState lifecycle: idle → saving → success/error.
  *
- * This is TSUNDOKU-OWNED config (QCAT-238) — a SEPARATE endpoint from
- * useSuwayomiSettings.ts's SOCKS-proxy pane, even though the two render side
- * by side in SuwayomiPane.vue. The backend best-effort mirrors a save down to
- * Suwayomi's own settings; the frontend never talks to Suwayomi directly for
+ * This is TSUNDOKU-OWNED config (QCAT-238) — its own endpoint, distinct from
+ * the proxied Suwayomi SOCKS-proxy card that used to render alongside it in
+ * SuwayomiPane.vue (RETIRED with the P2 Suwayomi-removal backend cutover; the
+ * pane now holds only this card). The backend best-effort mirrors a save down
+ * to the engine's own settings; the frontend never talks to it directly for
  * this card.
  *
  * Field renames (API → screen):

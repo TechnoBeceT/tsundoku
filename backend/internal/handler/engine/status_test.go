@@ -85,7 +85,7 @@ func TestTopologyStatus_EmptyIsZeroedResponse(t *testing.T) {
 	}
 	want := handler.TopologyStatusDTO{Gaps: []string{}}
 	if dto.Repos != want.Repos || dto.Extensions != want.Extensions ||
-		dto.Sources != want.Sources || dto.URLs != want.URLs || len(dto.Gaps) != 0 {
+		dto.Sources != want.Sources || len(dto.Gaps) != 0 {
 		t.Errorf("empty DB DTO = %+v, want all-zero counts + empty gaps", dto)
 	}
 }
@@ -105,7 +105,7 @@ func TestTopologyStatus_CountsAndGaps(t *testing.T) {
 
 	c.SourcePreference.Create().SetSourceID(123).SetKey("lang").SetValue("en").SaveX(ctx)
 
-	// Two live sources (123, 456); 123 is url-filled, 456 is empty-but-fillable.
+	// Two live sources (123, 456).
 	s1 := c.Series.Create().SetTitle("Solo Leveling").SetSlug("solo-leveling").SaveX(ctx)
 	c.SeriesProvider.Create().SetSeries(s1).SetProvider("123").SetSuwayomiID(42).SetURL("https://a.test/m").SaveX(ctx)
 	s2 := c.Series.Create().SetTitle("Omniscient Reader").SetSlug("omniscient-reader").SaveX(ctx)
@@ -130,18 +130,15 @@ func TestTopologyStatus_CountsAndGaps(t *testing.T) {
 		{"extensions.cached", dto.Extensions.Cached, 1},
 		{"sources.total", dto.Sources.Total, 2},
 		{"sources.prefsCaptured", dto.Sources.PrefsCaptured, 1},
-		{"urls.filled", dto.URLs.Filled, 1},
-		{"urls.remaining", dto.URLs.Remaining, 1},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %d, want %d", tc.name, tc.got, tc.want)
 		}
 	}
 
-	// Gaps: 2 extensions uncached, 1 url unresolved, 1 source without prefs.
+	// Gaps: 2 extensions uncached, 1 source without prefs.
 	assertGaps(t, dto.Gaps,
 		"2 extensions not cached",
-		"1 provider urls unresolved",
 		"1 sources without captured preferences",
 	)
 }

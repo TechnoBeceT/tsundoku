@@ -28,10 +28,15 @@ type countingFetcher struct {
 	data  []byte
 	ext   string
 	err   error
+	// lastSourceID records the sourceID CoverBytes resolved and passed to
+	// Image, letting a test assert the metadata provider's numeric Provider
+	// parsed to the expected engine source id (series.ProviderSourceID).
+	lastSourceID int64
 }
 
-func (f *countingFetcher) PageBytes(context.Context, string) ([]byte, string, error) {
+func (f *countingFetcher) Image(_ context.Context, sourceID int64, _, _ string) ([]byte, string, error) {
 	f.calls.Add(1)
+	f.lastSourceID = sourceID
 	if f.err != nil {
 		return nil, "", f.err
 	}
@@ -50,7 +55,10 @@ func seedCoverSeries(ctx context.Context, t *testing.T, db *ent.Client, storage,
 }
 
 // seedCoverSeriesNoDir seeds the same series WITHOUT a folder on disk (a series
-// that has downloaded nothing yet).
+// that has downloaded nothing yet). The provider's Provider is the numeric
+// engine source id "1" — a "linked" live provider (series.ProviderSourceID) —
+// so CoverBytes' cold-fetch path actually reaches countingFetcher.Image
+// instead of hitting the disk-origin ErrCoverFetchFailed fallback.
 func seedCoverSeriesNoDir(ctx context.Context, t *testing.T, db *ent.Client, coverURL string) uuid.UUID {
 	t.Helper()
 	catID, err := category.IDByName(ctx, db, "Manga")
@@ -64,7 +72,7 @@ func seedCoverSeriesNoDir(ctx context.Context, t *testing.T, db *ent.Client, cov
 		SaveX(ctx)
 	db.SeriesProvider.Create().
 		SetSeriesID(s.ID).
-		SetProvider("src-a").
+		SetProvider("1").
 		SetImportance(10).
 		SetCoverURL(coverURL).
 		SaveX(ctx)
@@ -272,11 +280,12 @@ func TestCoverBytes_SourceURLChangeRefetchesOnce(t *testing.T) {
 		t.Fatalf("CoverBytes (warming): %v", err)
 	}
 
-	// A second, higher-importance provider takes over the metadata source: a new
-	// cover_url ⇒ the sidecar's source_url no longer matches.
+	// A second, higher-importance (numeric = linked) provider takes over the
+	// metadata source: a new cover_url ⇒ the sidecar's source_url no longer
+	// matches.
 	db.SeriesProvider.Create().
 		SetSeriesID(id).
-		SetProvider("src-b").
+		SetProvider("2").
 		SetImportance(20).
 		SetCoverURL("/thumb/b").
 		SaveX(ctx)

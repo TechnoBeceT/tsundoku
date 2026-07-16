@@ -8,10 +8,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // TestImport_RegistersDiskChaptersDownloaded proves the happy-path disk-only
@@ -97,17 +97,17 @@ func TestImportWithMatchList(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
 
-	fake := newFakeClientWithFeed(t) // returns 2 chapters keyed "1","2" for any mangaID
-	ingest := suwayomi.NewIngest(fake, client)
+	fake := newFakeClientWithFeed(t) // returns 2 chapters keyed "1","2" for any url
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
 	found, err := svc.Scan(ctx)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 
-	matches := []library.ProviderRef{{Source: "weeb", MangaID: 7, Scanlator: "Reset"}}
+	matches := []library.ProviderRef{{Source: "1", URL: "/manga/7", Scanlator: "Reset"}}
 	dto, err := svc.Import(ctx, found[0].Path, matches)
 	if err != nil {
 		t.Fatalf("import with matches: %v", err)
@@ -118,7 +118,7 @@ func TestImportWithMatchList(t *testing.T) {
 
 	ser := client.Series.Query().OnlyX(ctx)
 	weeb, err := client.SeriesProvider.Query().
-		Where(seriesprovider.SeriesID(ser.ID), seriesprovider.Provider("weeb"), seriesprovider.Scanlator("Reset")).
+		Where(seriesprovider.SeriesID(ser.ID), seriesprovider.Provider("1"), seriesprovider.Scanlator("Reset")).
 		Only(ctx)
 	if err != nil {
 		t.Fatalf("query weeb/Reset: %v", err)

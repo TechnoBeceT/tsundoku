@@ -10,14 +10,23 @@ package enginehost
  * series (killing the "wrong-series download" bug).
  */
 
-/** A manga entry in a search/browse result — addressed by its source-relative [url]. */
+/**
+ * A manga entry in a search/browse result — addressed by its source-relative [url].
+ *
+ * [url] is the ADDRESSING url: what every subsequent request sends back to identify this manga.
+ * It is source-relative and not necessarily a browser-openable link. [realUrl] is the fully-
+ * qualified, browser-clickable url (Mihon's `HttpSource.getMangaUrl`) — powers the owner-facing
+ * "View on source" external link. The two are NEVER the same thing; never fall back from one to
+ * the other.
+ */
 data class MangaEntryDto(
     val url: String,
     val title: String,
     val thumbnailUrl: String?,
+    val realUrl: String?,
 )
 
-/** Full manga details, keyed by [url]. */
+/** Full manga details, keyed by [url]. See [MangaEntryDto] for the [url] vs [realUrl] distinction. */
 data class MangaDetailsDto(
     val url: String,
     val title: String,
@@ -27,15 +36,20 @@ data class MangaDetailsDto(
     val genres: List<String>,
     val status: String,
     val thumbnailUrl: String?,
+    val realUrl: String?,
 )
 
-/** A chapter of a manga — addressed by its source-relative [url]. */
+/**
+ * A chapter of a manga — addressed by its source-relative [url]. See [MangaEntryDto] for the
+ * [url] (addressing) vs [realUrl] (browser-clickable) distinction — the same rule applies here.
+ */
 data class ChapterDto(
     val url: String,
     val name: String,
     val number: Float,
     val scanlator: String?,
     val uploadDate: Long,
+    val realUrl: String?,
 )
 
 /**
@@ -77,7 +91,14 @@ data class BrowseRequest(val sourceId: Long, val page: Int = 1)
 
 data class MangaRequest(val sourceId: Long, val url: String)
 
-data class ChaptersRequest(val sourceId: Long, val url: String)
+/**
+ * [mangaTitle] feeds [enginehost.vendor.ChapterRecognition] (the vendored Suwayomi
+ * chapter-number-recognition step SourceCalls.chapters runs before returning) — it strips the
+ * manga title from a chapter name before number-matching, so recognition is more accurate with it
+ * than without. Optional/defaulted to "" for backward compatibility; recognition still works on ""
+ * (it just skips the title-strip step).
+ */
+data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: String = "")
 
 data class PagesRequest(val sourceId: Long, val chapterUrl: String)
 

@@ -13,11 +13,10 @@
  *                           + sourcesSettings + saveSourcesSettings (warm-up +
  *                           circuit-breaker knobs, source-politeness spec)
  *   useCategories()       → settingsCategories + categoryAction + CRUD methods
- *   useSuwayomiSettings() → config + suwayomiSave + save (SOCKS proxy only)
  *   useFlareSolverrSettings() → config + flareSolverrSave + save (Tsundoku-owned,
- *                           QCAT-238 — a SEPARATE endpoint/composable from
- *                           useSuwayomiSettings, even though both cards render
- *                           in the same Suwayomi pane)
+ *                           QCAT-238 — the only card left in SuwayomiPane; the
+ *                           proxied SOCKS card/composable was RETIRED with the
+ *                           P2 Suwayomi-removal backend cutover)
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
  *                           extCheckInterval — that moved to useSettings)
  *   useSourceMetrics()    → sourceMetrics + pending/error + warmNow (Warm now)
@@ -39,8 +38,6 @@
  *                           start-upgrade is no-op)
  *   :upgrade-steps        — [] static
  *   :upgrading            — false static
- *   :suwayomi             — config from useSuwayomiSettings
- *   :suwayomi-save        — suwayomiSave from useSuwayomiSettings
  *   :flare-solverr        — config from useFlareSolverrSettings (QCAT-238)
  *   :flare-solverr-save   — flareSolverrSave from useFlareSolverrSettings
  *   :extensions           — extensions from useExtensions
@@ -80,7 +77,6 @@
  *   @set-pane                    → setPane (updates local activePane ref)
  *   @save-library                → saveLibrary
  *   @toggle-auto-identify        → saveMetadataAutoIdentify
- *   @save-suwayomi               → save (SOCKS)
  *   @save-flaresolverr           → saveFlareSolverr (QCAT-238)
  *   @add-category                → addCategory
  *   @rename-category             → renameCategory
@@ -146,13 +142,6 @@ const {
   setDefaultCategory,
   deleteCategory,
 } = useCategories()
-
-const {
-  config: suwayomi,
-  suwayomiSave,
-  pending: suwayomiPending,
-  save,
-} = useSuwayomiSettings()
 
 const {
   config: flareSolverr,
@@ -294,11 +283,11 @@ if (route.query.trackersFlash) {
 /**
  * Global loading skeleton while any primary dataset is still on its initial
  * fetch. Once all composables resolve, skeletons lift. The loading state is
- * intentionally broad (covers settings + categories + suwayomi + extensions)
+ * intentionally broad (covers settings + categories + flaresolverr + extensions)
  * so the screen does not flash partial content on first render.
  */
 const loading = computed(
-  () => settingsPending.value || categoriesPending.value || suwayomiPending.value
+  () => settingsPending.value || categoriesPending.value
     || flareSolverrPending.value || extPending.value,
 )
 </script>
@@ -317,8 +306,6 @@ const loading = computed(
       :engine="ENGINE_PLACEHOLDER"
       :upgrade-steps="[]"
       :upgrading="false"
-      :suwayomi="suwayomi"
-      :suwayomi-save="suwayomiSave"
       :flare-solverr="flareSolverr"
       :flare-solverr-save="flareSolverrSave"
       :extensions="extensions"
@@ -357,7 +344,6 @@ const loading = computed(
       @set-pane="setPane"
       @save-library="saveLibrary"
       @toggle-auto-identify="saveMetadataAutoIdentify"
-      @save-suwayomi="save"
       @save-flaresolverr="saveFlareSolverr"
       @add-category="addCategory"
       @rename-category="renameCategory"

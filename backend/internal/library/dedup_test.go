@@ -13,44 +13,44 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // fakeNamedSourceClient reuses fakeAddProviderClient's full Client surface but
-// overrides Sources so suwayomi.Ingest.resolveProviderName resolves a specific
+// overrides Sources so ingest.Ingest.resolveProviderName resolves a specific
 // display name for the attached source id — the ONLY signal that lets
 // merge-at-attach recognise a live source as the same physical source as a disk
 // import (whose provider field holds that same display name). sourceName "" =
 // unresolved, so the base fake's nil Sources already covers the empty-name case.
 type fakeNamedSourceClient struct {
 	fakeAddProviderClient
-	sourceID   string
+	sourceID   int64
 	sourceName string
-	// scanlator tags the chapters FetchChapters reports, so suwayomi.Ingest's
+	// scanlator tags the chapters Chapters reports, so ingest.Ingest's
 	// scanlator filter (which drops chapters not matching the ingest scanlator)
 	// keeps them when the merge attaches under this same scanlation group.
 	scanlator string
-	// emptyFeed makes FetchChapters report NO chapters — the source name still
+	// emptyFeed makes Chapters report NO chapters — the source name still
 	// matches a disk provider, but the live row ingests an empty feed, so
 	// merge-at-attach must fall back to the ordinary new-row path (no merge).
 	emptyFeed bool
 }
 
-func (f *fakeNamedSourceClient) Sources(ctx context.Context) ([]suwayomi.Source, error) {
-	return []suwayomi.Source{{ID: f.sourceID, Name: f.sourceName, Lang: "en"}}, nil
+func (f *fakeNamedSourceClient) Sources(ctx context.Context) ([]sourceengine.Source, error) {
+	return []sourceengine.Source{{ID: f.sourceID, Name: f.sourceName, Lang: "en"}}, nil
 }
 
-func (f *fakeNamedSourceClient) FetchChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+func (f *fakeNamedSourceClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
 	if f.emptyFeed {
 		return nil, nil
 	}
-	one, two := 1.0, 2.0
-	return []suwayomi.Chapter{
-		{ID: 101, Index: 0, Name: "Chapter 1", Number: &one, Scanlator: f.scanlator},
-		{ID: 102, Index: 1, Name: "Chapter 2", Number: &two, Scanlator: f.scanlator},
+	return []sourceengine.Chapter{
+		{URL: "/ch/1", Name: "Chapter 1", Number: 1, Scanlator: f.scanlator},
+		{URL: "/ch/2", Name: "Chapter 2", Number: 2, Scanlator: f.scanlator},
 	}, nil
 }
 
@@ -100,12 +100,12 @@ func TestAddProvider_MergesMatchingDiskProvider(t *testing.T) {
 	importOneFromFacts(t, client, facts)
 	ser := client.Series.Query().OnlyX(ctx)
 
-	fake := &fakeNamedSourceClient{sourceID: "weeb", sourceName: "mangadex", scanlator: "Alpha"}
-	ingest := suwayomi.NewIngest(fake, client)
+	fake := &fakeNamedSourceClient{sourceID: 1, sourceName: "mangadex", scanlator: "Alpha"}
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
-	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "Alpha")
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Alpha")
 	if err != nil {
 		t.Fatalf("AddProvider: %v", err)
 	}
@@ -114,8 +114,8 @@ func TestAddProvider_MergesMatchingDiskProvider(t *testing.T) {
 	}
 
 	newSP := client.SeriesProvider.Query().Where(seriesprovider.SeriesID(ser.ID)).OnlyX(ctx)
-	if newSP.Provider != "weeb" || newSP.SuwayomiID != 99 || newSP.Importance != 5 {
-		t.Fatalf("merged provider = %+v, want provider=weeb suwayomi_id=99 importance=5", newSP)
+	if newSP.Provider != "1" || newSP.Importance != 5 {
+		t.Fatalf("merged provider = %+v, want provider=1 importance=5", newSP)
 	}
 	for _, key := range []string{"1", "2"} {
 		assertChapterSatisfaction(t, client, ctx, ser.ID, key, &newSP.ID, 5)
@@ -141,12 +141,12 @@ func TestAddProvider_NoNameMatchKeepsTwoRows(t *testing.T) {
 	ser := client.Series.Query().OnlyX(ctx)
 
 	// Resolved display name "WeebCentral" != disk name "mangadex" → no merge.
-	fake := &fakeNamedSourceClient{sourceID: "weeb", sourceName: "WeebCentral"}
-	ingest := suwayomi.NewIngest(fake, client)
+	fake := &fakeNamedSourceClient{sourceID: 1, sourceName: "WeebCentral"}
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
-	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "Alpha")
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Alpha")
 	if err != nil {
 		t.Fatalf("AddProvider: %v", err)
 	}
@@ -172,13 +172,13 @@ func TestAddProvider_ScanlatorMismatchNoMerge(t *testing.T) {
 	importOneFromFacts(t, client, facts)
 	ser := client.Series.Query().OnlyX(ctx)
 
-	fake := &fakeNamedSourceClient{sourceID: "weeb", sourceName: "mangadex", scanlator: "Alpha"}
-	ingest := suwayomi.NewIngest(fake, client)
+	fake := &fakeNamedSourceClient{sourceID: 1, sourceName: "mangadex", scanlator: "Alpha"}
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
 	// Name matches but scanlator "Beta" != disk "Alpha" → no merge.
-	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "Beta")
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Beta")
 	if err != nil {
 		t.Fatalf("AddProvider: %v", err)
 	}
@@ -206,11 +206,11 @@ func TestAddProvider_EmptyLiveProviderNameNoMerge(t *testing.T) {
 	ser := client.Series.Query().OnlyX(ctx)
 
 	fake := newFakeClientWithFeed(t) // Sources() returns nil → provider_name ""
-	ingest := suwayomi.NewIngest(fake, client)
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
-	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "Alpha")
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Alpha")
 	if err != nil {
 		t.Fatalf("AddProvider: %v", err)
 	}
@@ -242,12 +242,12 @@ func TestAddProvider_EmptyLiveFeedNoMerge(t *testing.T) {
 
 	// Name matches ("mangadex") + same scanlator, but the source returns NO
 	// chapters → empty live feed.
-	fake := &fakeNamedSourceClient{sourceID: "weeb", sourceName: "mangadex", scanlator: "Alpha", emptyFeed: true}
-	ingest := suwayomi.NewIngest(fake, client)
+	fake := &fakeNamedSourceClient{sourceID: 1, sourceName: "mangadex", scanlator: "Alpha", emptyFeed: true}
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
-	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "Alpha")
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Alpha")
 	if err != nil {
 		t.Fatalf("AddProvider: %v", err)
 	}
@@ -291,10 +291,11 @@ func setupDriftedSeries(t *testing.T, client *ent.Client, storage string, import
 
 	live := client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("weeb").
+		// Provider is a numeric source id string — the live-provider marker
+		// under the new identity model (see series.IsLinkedProvider).
+		SetProvider("99").
 		SetProviderName("mangadex").
 		SetScanlator("Alpha").
-		SetSuwayomiID(99).
 		SetImportance(importance).
 		SaveX(ctx)
 	if withFeed {
@@ -352,10 +353,9 @@ func TestDedupProviders_ScanlatorCaseInsensitiveMerge(t *testing.T) {
 
 	live := client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("weeb").
+		SetProvider("99").
 		SetProviderName("mangadex").
 		SetScanlator("Reset Scans").
-		SetSuwayomiID(99).
 		SetImportance(5).
 		SaveX(ctx)
 	one, two := 1.0, 2.0
@@ -441,10 +441,9 @@ func TestDedupProviders_PrefersFeedBearingTwin(t *testing.T) {
 	// A SECOND matching linked twin (same name + scanlator) with NO feed.
 	emptyTwin := client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("weeb2").
+		SetProvider("100").
 		SetProviderName("mangadex").
 		SetScanlator("Alpha").
-		SetSuwayomiID(100).
 		SetImportance(3).
 		SaveX(ctx)
 

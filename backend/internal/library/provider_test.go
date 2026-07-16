@@ -12,29 +12,30 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
-// fakeAddProviderClient is a minimal suwayomi.Client implementation for the
-// AddProvider upgrade-flagging test: FetchChapters returns two chapters whose
+// fakeAddProviderClient is a minimal sourceengine.Client implementation for
+// the AddProvider upgrade-flagging test: Chapters returns two chapters whose
 // Number is 1 and 2 so their normalized keys ("1"/"2") match the disk fixture
-// written by writeKaizokuSeries, and MangaMeta returns a valid Manga so
-// suwayomi.Ingest.upsertSeriesProvider does not fail. All other methods are
+// written by writeKaizokuSeries, and MangaDetails returns a valid manga so
+// ingest.Ingest.upsertSeriesProvider does not fail. All other methods are
 // zero-value stubs — the interface is large but unused by this test.
 //
 // searchTitle configures Sources/Search to return one candidate manga (for
 // the MatchCandidates test, via newFakeClientWithSearch); it is left zero for
 // newFakeClientWithFeed, preserving that constructor's original empty-search
-// behavior. chapters overrides FetchChapters' fixed 2-chapter ("1","2") feed
-// when non-nil — used by the MatchDiskProvider partial-overlap test (see
+// behavior. chapters overrides Chapters' fixed 2-chapter ("1","2") feed when
+// non-nil — used by the MatchDiskProvider partial-overlap test (see
 // newFakeClientWithChapters, match_disk_provider_test.go) to simulate a real
 // source that only offers SOME of the disk-imported chapter keys.
 type fakeAddProviderClient struct {
 	searchTitle string
-	chapters    []suwayomi.Chapter
+	chapters    []sourceengine.Chapter
 }
 
 func newFakeClientWithFeed(t *testing.T) *fakeAddProviderClient {
@@ -42,94 +43,93 @@ func newFakeClientWithFeed(t *testing.T) *fakeAddProviderClient {
 	return &fakeAddProviderClient{}
 }
 
-// newFakeClientWithChapters returns a fake whose FetchChapters reports exactly
+// newFakeClientWithChapters returns a fake whose Chapters reports exactly
 // chapters (overriding the default fixed 2-chapter feed) — used to simulate a
 // real source with partial (or otherwise custom) coverage of a series.
-func newFakeClientWithChapters(t *testing.T, chapters []suwayomi.Chapter) *fakeAddProviderClient {
+func newFakeClientWithChapters(t *testing.T, chapters []sourceengine.Chapter) *fakeAddProviderClient {
 	t.Helper()
 	return &fakeAddProviderClient{chapters: chapters}
 }
 
 // newFakeClientWithSearch returns a fake whose Sources/Search report one
-// source ("weeb") carrying one manga candidate titled title — enough for
+// source (id 1) carrying one manga candidate titled title — enough for
 // imports.Service.Search to fan out and return a non-empty group.
 func newFakeClientWithSearch(t *testing.T, title string) *fakeAddProviderClient {
 	t.Helper()
 	return &fakeAddProviderClient{searchTitle: title}
 }
 
-func (f *fakeAddProviderClient) Sources(ctx context.Context) ([]suwayomi.Source, error) {
+func (f *fakeAddProviderClient) Health(ctx context.Context) (sourceengine.Health, error) {
+	return sourceengine.Health{}, nil
+}
+func (f *fakeAddProviderClient) Sources(ctx context.Context) ([]sourceengine.Source, error) {
 	if f.searchTitle == "" {
 		return nil, nil
 	}
-	return []suwayomi.Source{{ID: "weeb", Name: "Weeb Source", Lang: "en"}}, nil
+	return []sourceengine.Source{{ID: 1, Name: "Weeb Source", Lang: "en"}}, nil
 }
-func (f *fakeAddProviderClient) Search(ctx context.Context, sourceID, query string) ([]suwayomi.Manga, error) {
+func (f *fakeAddProviderClient) Search(ctx context.Context, sourceID int64, query string, page int) (sourceengine.SearchResult, error) {
 	if f.searchTitle == "" {
-		return nil, nil
+		return sourceengine.SearchResult{}, nil
 	}
-	return []suwayomi.Manga{{ID: 1, Title: f.searchTitle}}, nil
+	return sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "/manga/1", Title: f.searchTitle}}}, nil
 }
-func (f *fakeAddProviderClient) Browse(ctx context.Context, sourceID string, t suwayomi.BrowseType, page int) (suwayomi.BrowseResult, error) {
-	return suwayomi.BrowseResult{}, nil
+func (f *fakeAddProviderClient) Popular(ctx context.Context, sourceID int64, page int) (sourceengine.SearchResult, error) {
+	return sourceengine.SearchResult{}, nil
 }
-func (f *fakeAddProviderClient) FetchChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+func (f *fakeAddProviderClient) Latest(ctx context.Context, sourceID int64, page int) (sourceengine.SearchResult, error) {
+	return sourceengine.SearchResult{}, nil
+}
+func (f *fakeAddProviderClient) MangaDetails(ctx context.Context, sourceID int64, url string) (sourceengine.MangaDetails, error) {
+	return sourceengine.MangaDetails{URL: url, Title: "My Series"}, nil
+}
+func (f *fakeAddProviderClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
 	if f.chapters != nil {
 		return f.chapters, nil
 	}
-	one, two := 1.0, 2.0
-	return []suwayomi.Chapter{
-		{ID: 101, Index: 0, Name: "Chapter 1", Number: &one},
-		{ID: 102, Index: 1, Name: "Chapter 2", Number: &two},
+	return []sourceengine.Chapter{
+		{URL: "/ch/1", Name: "Chapter 1", Number: 1},
+		{URL: "/ch/2", Name: "Chapter 2", Number: 2},
 	}, nil
 }
-func (f *fakeAddProviderClient) MangaChapters(ctx context.Context, mangaID int) ([]suwayomi.Chapter, error) {
+func (f *fakeAddProviderClient) Pages(ctx context.Context, sourceID int64, chapterURL string) ([]sourceengine.Page, error) {
 	return nil, nil
 }
-func (f *fakeAddProviderClient) ChapterPages(ctx context.Context, chapterID int) ([]string, error) {
+func (f *fakeAddProviderClient) Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+	return nil, "", errors.New("Image: not configured")
+}
+func (f *fakeAddProviderClient) Preferences(ctx context.Context, sourceID int64) ([]sourceengine.Preference, error) {
 	return nil, nil
 }
-func (f *fakeAddProviderClient) MangaMeta(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{ID: mangaID, Title: "My Series"}, nil
-}
-func (f *fakeAddProviderClient) FetchMangaDetails(ctx context.Context, mangaID int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{ID: mangaID, Title: "My Series"}, nil
-}
-func (f *fakeAddProviderClient) PageBytes(ctx context.Context, pageURL string) ([]byte, string, error) {
-	return nil, "", errors.New("PageBytes: not configured")
-}
-func (f *fakeAddProviderClient) ServerSettings(ctx context.Context) (suwayomi.SuwayomiSettings, error) {
-	return suwayomi.SuwayomiSettings{}, nil
-}
-func (f *fakeAddProviderClient) SetServerSettings(ctx context.Context, patch suwayomi.SuwayomiSettingsPatch) error {
-	return nil
-}
-func (f *fakeAddProviderClient) Extensions(ctx context.Context) ([]suwayomi.Extension, error) {
+func (f *fakeAddProviderClient) SetPreferences(ctx context.Context, sourceID int64, changes map[string]any) ([]sourceengine.Preference, error) {
 	return nil, nil
 }
-func (f *fakeAddProviderClient) SetExtensionState(ctx context.Context, pkgName string, action suwayomi.ExtensionAction) error {
-	return nil
-}
-func (f *fakeAddProviderClient) FetchExtensions(ctx context.Context) ([]suwayomi.Extension, error) {
+func (f *fakeAddProviderClient) Extensions(ctx context.Context) ([]sourceengine.Extension, error) {
 	return nil, nil
 }
-func (f *fakeAddProviderClient) ExtensionRepos(ctx context.Context) ([]string, error) {
+func (f *fakeAddProviderClient) InstallExtension(ctx context.Context, pkgName, apkURL string) ([]sourceengine.Extension, error) {
 	return nil, nil
 }
-func (f *fakeAddProviderClient) SetExtensionRepos(ctx context.Context, repos []string) error {
-	return nil
-}
-func (f *fakeAddProviderClient) SourcePreferences(ctx context.Context, sourceID string) ([]suwayomi.SourcePreference, error) {
+func (f *fakeAddProviderClient) RefreshExtensions(ctx context.Context) ([]sourceengine.Extension, error) {
 	return nil, nil
 }
-func (f *fakeAddProviderClient) SetSourcePreference(ctx context.Context, sourceID string, position int, value suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
+func (f *fakeAddProviderClient) UpdateExtension(ctx context.Context, pkgName string) ([]sourceengine.Extension, error) {
 	return nil, nil
 }
-func (f *fakeAddProviderClient) ExtensionSources(ctx context.Context, pkgName string) ([]suwayomi.Source, error) {
+func (f *fakeAddProviderClient) UninstallExtension(ctx context.Context, pkgName string) ([]sourceengine.Extension, error) {
 	return nil, nil
 }
-func (f *fakeAddProviderClient) SetSourceEnabled(ctx context.Context, sourceID string, enabled bool) error {
-	return nil
+func (f *fakeAddProviderClient) Repos(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeAddProviderClient) SetRepos(ctx context.Context, repos []string) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeAddProviderClient) SetFlareSolverr(ctx context.Context, patch sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
+	return sourceengine.FlareSolverrConfig{}, nil
+}
+func (f *fakeAddProviderClient) SetSocks(ctx context.Context, patch sourceengine.SocksPatch) (sourceengine.SocksConfig, error) {
+	return sourceengine.SocksConfig{}, nil
 }
 
 // diskScanFirst wraps disk.ScanLibrary and returns the first (and, for this
@@ -169,13 +169,13 @@ func TestAddProvider_AttachesSourceAndFlagsUpgrade(t *testing.T) {
 	importOneFromFacts(t, client, facts) // helper wrapping disk.ReconcileOne
 	ser := client.Series.Query().OnlyX(ctx)
 
-	// fake suwayomi client returns one manga + a matching chapter feed for source "weeb"
-	fake := newFakeClientWithFeed(t) // returns 2 chapters keyed "1","2" for mangaID 99
-	ingest := suwayomi.NewIngest(fake, client)
+	// fake engine-host client returns one manga + a matching chapter feed for source "1"
+	fake := newFakeClientWithFeed(t) // returns 2 chapters keyed "1","2" for any url
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
-	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "")
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "")
 	if err != nil {
 		t.Fatalf("AddProvider: %v", err)
 	}
@@ -185,6 +185,43 @@ func TestAddProvider_AttachesSourceAndFlagsUpgrade(t *testing.T) {
 
 	assertUpgradesFlagged(t, ctx, client, 2)
 	assertAddProviderErrors(t, ctx, svc, ser.ID)
+}
+
+// TestAddProvider_LinkedThroughRealIngest is the P2 slice 3c regression proof:
+// a provider attached through the REAL ingest.Ingest.AddSeries (not a
+// hand-constructed row) must report Linked==true and the series must report
+// NeedsSource==false. Before this slice, internal/ingest never set
+// SeriesProvider.SuwayomiID on a newly-created row, so the old
+// `SuwayomiID != 0` discriminator always read false for a freshly-adopted
+// live source — this closes exactly that gap by exercising the real
+// service→ingest chain (mirrors library.AddProvider/imports.Service.Adopt),
+// not a fixture that hand-sets SuwayomiID.
+func TestAddProvider_LinkedThroughRealIngest(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	// A bare series with NO providers at all — the "needs a source" case.
+	ser := client.Series.Create().SetTitle("Fresh Series").SetSlug("fresh-series").SaveX(ctx)
+
+	fake := newFakeClientWithFeed(t) // returns 2 chapters keyed "1","2" for any url
+	ingestSvc := ingest.NewIngest(fake, client)
+	seriesSvc := series.NewService(client, storage, 14)
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
+
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "")
+	if err != nil {
+		t.Fatalf("AddProvider: %v", err)
+	}
+	if dto.NeedsSource {
+		t.Errorf("SeriesDetailDTO.NeedsSource = true, want false (a real live source was just attached)")
+	}
+	if len(dto.Providers) != 1 {
+		t.Fatalf("providers = %d, want 1", len(dto.Providers))
+	}
+	if p := dto.Providers[0]; !p.Linked {
+		t.Errorf("provider Linked = false, want true (provider=%q was attached via the real ingest chain)", p.Provider)
+	}
 }
 
 // TestAddProvider_ScanlatorAware verifies that AddProvider treats the same
@@ -205,16 +242,17 @@ func TestAddProvider_ScanlatorAware(t *testing.T) {
 	ser := client.Series.Query().OnlyX(ctx)
 
 	fake := newFakeClientWithFeed(t)
-	ingest := suwayomi.NewIngest(fake, client)
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 
-	// Attach "weeb" twice under two different scanlators, with different
-	// importances. Neither call should be rejected as a duplicate.
-	if _, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 5, "Alpha Scans"); err != nil {
+	// Attach "1" twice under two different scanlators, with different
+	// importances, both for the same manga (mangaID 99 → url "/manga/99").
+	// Neither call should be rejected as a duplicate.
+	if _, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Alpha Scans"); err != nil {
 		t.Fatalf("AddProvider (Alpha Scans): %v", err)
 	}
-	dto, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 3, "Beta Scans")
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 3, "Beta Scans")
 	if err != nil {
 		t.Fatalf("AddProvider (Beta Scans): %v", err)
 	}
@@ -225,7 +263,7 @@ func TestAddProvider_ScanlatorAware(t *testing.T) {
 	rows := client.SeriesProvider.Query().AllX(ctx)
 	gotImportance := make(map[string]int, len(rows))
 	for _, sp := range rows {
-		if sp.Provider == "weeb" {
+		if sp.Provider == "1" {
 			gotImportance[sp.Scanlator] = sp.Importance
 		}
 	}
@@ -237,7 +275,7 @@ func TestAddProvider_ScanlatorAware(t *testing.T) {
 	}
 
 	// Re-adding the exact same (source, scanlator) pair is still rejected.
-	if _, err := svc.AddProvider(ctx, ser.ID, "weeb", 99, 9, "Alpha Scans"); !errors.Is(err, library.ErrProviderAlreadyPresent) {
+	if _, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 9, "Alpha Scans"); !errors.Is(err, library.ErrProviderAlreadyPresent) {
 		t.Fatalf("want ErrProviderAlreadyPresent on duplicate (source, scanlator), got %v", err)
 	}
 }
@@ -265,10 +303,10 @@ func assertUpgradesFlagged(t *testing.T, ctx context.Context, client *ent.Client
 // already-present provider, and targeting an unknown series id.
 func assertAddProviderErrors(t *testing.T, ctx context.Context, svc *library.Service, seriesID uuid.UUID) {
 	t.Helper()
-	if _, err := svc.AddProvider(ctx, seriesID, "weeb", 99, 5, ""); !errors.Is(err, library.ErrProviderAlreadyPresent) {
+	if _, err := svc.AddProvider(ctx, seriesID, "1", "/manga/99", 5, ""); !errors.Is(err, library.ErrProviderAlreadyPresent) {
 		t.Fatalf("want ErrProviderAlreadyPresent on duplicate add, got %v", err)
 	}
-	if _, err := svc.AddProvider(ctx, uuid.New(), "weeb", 99, 5, ""); !errors.Is(err, library.ErrSeriesNotFound) {
+	if _, err := svc.AddProvider(ctx, uuid.New(), "1", "/manga/99", 5, ""); !errors.Is(err, library.ErrSeriesNotFound) {
 		t.Fatalf("want ErrSeriesNotFound on unknown series, got %v", err)
 	}
 }

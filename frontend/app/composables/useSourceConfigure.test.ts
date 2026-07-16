@@ -15,8 +15,8 @@ describe('useSourceConfigure', () => {
     expect(c.selectedCount.value).toBe(2)
     expect(onLoad).toHaveBeenCalledOnce()
     expect(c.orderedProviders.value).toEqual<ProviderRef[]>([
-      { source: 'a', mangaId: 1, scanlator: '' },
-      { source: 'b', mangaId: 2, scanlator: '' },
+      { source: 'a', mangaId: 1, url: '', scanlator: '' },
+      { source: 'b', mangaId: 2, url: '', scanlator: '' },
     ])
   })
 
@@ -51,7 +51,7 @@ describe('useSourceConfigure', () => {
     c.toggleCand('a:1:Reset')
     expect(c.selectedCount.value).toBe(1)
     expect(c.orderedProviders.value).toEqual<ProviderRef[]>([
-      { source: 'a', mangaId: 1, scanlator: 'Reset' },
+      { source: 'a', mangaId: 1, url: '', scanlator: 'Reset' },
     ])
     const rows = c.displayRows.value
     expect(rows.find(r => r.key === 'a:1:Reset')?.selected).toBe(true)
@@ -72,7 +72,7 @@ describe('useSourceConfigure', () => {
     await nextTick()
     expect(c.displayRows.value.filter(r => r.key.startsWith('a:1')).every(r => !r.selected)).toBe(true)
     expect(c.selectedCount.value).toBe(1)
-    expect(c.orderedProviders.value).toEqual<ProviderRef[]>([{ source: 'b', mangaId: 2, scanlator: '' }])
+    expect(c.orderedProviders.value).toEqual<ProviderRef[]>([{ source: 'b', mangaId: 2, url: '', scanlator: '' }])
   })
 
   it('a 0/1-scanlator breakdown does not deselect — no split, selection unchanged', async () => {
@@ -108,7 +108,7 @@ describe('useSourceConfigure', () => {
     const c = useSourceConfigure({ breakdowns, onLoadBreakdowns: vi.fn() })
     c.enterConfigure([cand('a', 1, 'Comix')])
     breakdowns.value = { 'a:1': [{ scanlator: 'Comix', count: 100, ranges: '1-100' }] }
-    expect(c.orderedProviders.value).toEqual<ProviderRef[]>([{ source: 'a', mangaId: 1, scanlator: '' }])
+    expect(c.orderedProviders.value).toEqual<ProviderRef[]>([{ source: 'a', mangaId: 1, url: '', scanlator: '' }])
   })
 
   it('moveCand reorders and orderedProviders follows', () => {
@@ -116,7 +116,7 @@ describe('useSourceConfigure', () => {
     const c = useSourceConfigure({ breakdowns, onLoadBreakdowns: vi.fn() })
     c.enterConfigure([cand('a', 1), cand('b', 2)])
     c.moveCand('b:2', -1)
-    expect(c.orderedProviders.value[0]).toEqual({ source: 'b', mangaId: 2, scanlator: '' })
+    expect(c.orderedProviders.value[0]).toEqual({ source: 'b', mangaId: 2, url: '', scanlator: '' })
   })
 
   it('tray: addGroup accumulates, isGroupAdded reflects, configureTray seeds', () => {

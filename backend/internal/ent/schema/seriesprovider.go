@@ -32,6 +32,14 @@ func (SeriesProvider) Fields() []ent.Field {
 		field.String("scanlator").Default(""),
 		field.String("language").Default(""),
 		field.String("url").Default(""),
+		// web_url is the fully-qualified, browser-clickable URL for this manga
+		// (Mihon's HttpSource.getMangaUrl, surfaced end-to-end as
+		// sourceengine.MangaEntry/MangaDetails.RealURL). Distinct from url (the
+		// source-relative ADDRESSING key every request sends back) — web_url is
+		// only ever meant to be opened in a browser (Komga ComicInfo <Web>,
+		// "View on source" links for an adopted series). "" when the engine host
+		// could not resolve one. Additive + defaulted ⇒ zero-data migration.
+		field.String("web_url").Default(""),
 		field.String("title").Default(""),
 		field.Bool("metadata").Default(false),
 		field.String("status").Default(""),

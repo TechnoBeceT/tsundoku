@@ -98,7 +98,7 @@ func (s *Service) attachRefs(ctx context.Context, seriesID uuid.UUID, refs []Pro
 	var attached []string
 	var last series.SeriesDetailDTO
 	for i, ref := range refs {
-		dto, err := s.AddProvider(ctx, seriesID, ref.Source, ref.MangaID, importances[i], ref.Scanlator)
+		dto, err := s.AddProvider(ctx, seriesID, ref.Source, ref.URL, importances[i], ref.Scanlator)
 		if err != nil {
 			return series.SeriesDetailDTO{}, fmt.Errorf("attach %s (scanlator %q) failed after attaching %v: %w",
 				ref.Source, ref.Scanlator, attached, err)

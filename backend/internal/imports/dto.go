@@ -29,9 +29,17 @@ type SearchCandidateDTO struct {
 	MangaID int `json:"mangaId"`
 	// Title is the manga's display title as returned by the source.
 	Title string `json:"title"`
-	// URL is the provider-canonical URL for this manga; powers the "View on
-	// source" external link. Empty string when the source does not provide one.
+	// URL is the provider-canonical ADDRESSING url for this manga — what
+	// every adopt/add-source/match request must send back to identify it.
+	// NOT a clickable browser link; see RealURL for that. Empty string when
+	// the source does not provide one.
 	URL string `json:"url"`
+	// RealURL is the fully-qualified, browser-clickable URL for this manga
+	// (Mihon's HttpSource.getMangaUrl) — powers the "View on source" external
+	// link. Distinct from URL: URL is the addressing key sent back to the
+	// backend, RealURL is only ever meant to be opened in a browser. Empty
+	// string when the engine host could not resolve one.
+	RealURL string `json:"realUrl"`
 	// ThumbnailURL is Tsundoku's OWN cover-proxy path
 	// ("/api/sources/{source}/manga/{mangaId}/cover"), never Suwayomi's raw
 	// (Suwayomi-relative) thumbnail URL — rendering that directly against
@@ -48,6 +56,20 @@ type SearchCandidateDTO struct {
 	// the source provides none) so the wire value is "[]" not null.
 	Genres []string `json:"genres"`
 }
+
+// BrowseType selects which of a source's catalog listings Browse fetches. It
+// is a local (imports-owned) type — P2 Suwayomi-removal repointed Browse onto
+// internal/sourceengine.Client, which exposes Popular/Latest as SEPARATE
+// methods rather than one Browse(type) call, so this type has no client-side
+// counterpart; Service.Browse dispatches on it internally.
+type BrowseType string
+
+const (
+	// BrowsePopular fetches a source's most-popular listing.
+	BrowsePopular BrowseType = "POPULAR"
+	// BrowseLatest fetches a source's latest-updated listing.
+	BrowseLatest BrowseType = "LATEST"
+)
 
 // BrowseResultDTO is one page of a source's catalog browse (Popular/Latest).
 // Unlike the grouped search response, browse is single-source and returns a flat
@@ -86,16 +108,26 @@ type ChapterInspectDTO struct {
 // Importance controls the provider priority for this series: higher number =
 // higher priority (Tsundoku convention). Callers are responsible for assigning
 // unique importances across the providers in a single AdoptRequest.
+//
+// MangaID + URL (P2 Suwayomi-removal, slice 3b): the backend is now
+// URL-addressed (internal/sourceengine + internal/ingest) — URL is what the
+// service actually uses to fetch the manga. MangaID is KEPT, additive-only,
+// so the not-yet-updated frontend (slice 3b-FE repoints it) still typechecks
+// against the OpenAPI-generated client; the backend no longer reads it.
 type AdoptProvider struct {
-	// Source is the Suwayomi source ID (e.g. "mangadex").
+	// Source is the engine-host source ID, stringified (e.g. "2").
 	Source string
-	// MangaID is the Suwayomi-internal manga identifier within Source.
+	// MangaID is UNUSED by the backend (prefer URL) — retained only for FE
+	// wire compatibility until slice 3b-FE switches to URL.
 	MangaID int
+	// URL is the source-relative manga URL the engine host addresses this
+	// manga by (internal/sourceengine.Client.Chapters/MangaDetails).
+	URL string `json:"url"`
 	// Importance is the provider rank for this series (higher = better).
 	Importance int
 	// Scanlator selects which scanlation group's chapters this provider
 	// tracks; "" means "all chapters from this source" (see
-	// suwayomi.Ingest.AddSeries). Optional.
+	// ingest.Ingest.AddSeries). Optional.
 	Scanlator string `json:"scanlator"`
 }
 

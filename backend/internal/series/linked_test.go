@@ -5,13 +5,15 @@ import (
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
 // TestProviderDTO_LinkedAndChapterCount proves the Match backend's ProviderDTO
-// fields: Linked is false for a disk-origin provider (suwayomi_id == 0 — an
-// unlinked/unknown group the owner can Match to a real source) and true for a
-// real ingested provider (suwayomi_id != 0); ChapterCount reports how many of
+// fields: Linked is false for a disk-origin provider (Provider is a display
+// NAME, not numeric — an unlinked/unknown group the owner can Match to a real
+// source) and true for a real ingested provider (Provider is a numeric source
+// id string — see series.IsLinkedProvider); ChapterCount reports how many of
 // the series' chapters this provider currently satisfies
 // (Chapter.satisfied_by_provider_id), computed with no extra query. HasFeed
 // (the FE↔BE dedup-parity fix) is true only for the provider carrying a
@@ -30,13 +32,14 @@ func TestProviderDTO_LinkedAndChapterCount(t *testing.T) {
 		SetProvider("mangadex").
 		SetScanlator("Alpha").
 		SetImportance(1).
-		// SuwayomiID left at its zero-value default (0) — the disk-origin marker.
+		// Provider is a non-numeric display name — the disk-origin marker
+		// under the new identity model (see series.IsLinkedProvider).
 		SaveX(ctx)
 
 	realSP := db.SeriesProvider.Create().
 		SetSeriesID(s.ID).
-		SetProvider("weeb").
-		SetSuwayomiID(42).
+		// Provider is a numeric source id string — the live-provider marker.
+		SetProvider("42").
 		SetImportance(5).
 		SaveX(ctx)
 
@@ -65,7 +68,7 @@ func TestProviderDTO_LinkedAndChapterCount(t *testing.T) {
 
 	disk := byID[diskSP.ID.String()]
 	if disk.Linked {
-		t.Errorf("disk-origin provider Linked = true, want false (suwayomi_id=0)")
+		t.Errorf("disk-origin provider Linked = true, want false (provider=%q is not numeric)", diskSP.Provider)
 	}
 	if disk.ChapterCount != 2 {
 		t.Errorf("disk-origin provider ChapterCount = %d, want 2", disk.ChapterCount)
@@ -76,12 +79,33 @@ func TestProviderDTO_LinkedAndChapterCount(t *testing.T) {
 
 	real := byID[realSP.ID.String()]
 	if !real.Linked {
-		t.Errorf("real provider Linked = false, want true (suwayomi_id=42)")
+		t.Errorf("real provider Linked = false, want true (provider=%q is numeric)", realSP.Provider)
 	}
 	if real.ChapterCount != 1 {
 		t.Errorf("real provider ChapterCount = %d, want 1", real.ChapterCount)
 	}
 	if !real.HasFeed {
 		t.Errorf("real provider HasFeed = false, want true (has a ProviderChapter feed row)")
+	}
+}
+
+// TestProviderSourceID proves the numeric-id parse the cover-fetch chain
+// relies on: a live provider's Provider ("42") resolves to (42, true); a
+// disk-origin provider's Provider (a display name) resolves to (0, false);
+// surrounding whitespace is trimmed before parsing, mirroring IsLinkedProvider.
+func TestProviderSourceID(t *testing.T) {
+	live := &ent.SeriesProvider{Provider: "42"}
+	if id, ok := series.ProviderSourceID(live); !ok || id != 42 {
+		t.Errorf("ProviderSourceID(%q) = (%d, %v), want (42, true)", live.Provider, id, ok)
+	}
+
+	padded := &ent.SeriesProvider{Provider: "  7  "}
+	if id, ok := series.ProviderSourceID(padded); !ok || id != 7 {
+		t.Errorf("ProviderSourceID(%q) = (%d, %v), want (7, true)", padded.Provider, id, ok)
+	}
+
+	diskOrigin := &ent.SeriesProvider{Provider: "Asura Scans"}
+	if id, ok := series.ProviderSourceID(diskOrigin); ok || id != 0 {
+		t.Errorf("ProviderSourceID(%q) = (%d, %v), want (0, false)", diskOrigin.Provider, id, ok)
 	}
 }

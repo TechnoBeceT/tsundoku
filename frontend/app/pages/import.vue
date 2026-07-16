@@ -11,7 +11,7 @@
  *
  * Emit wiring:
  *   @search         → search({ q, sources })
- *   @inspect        → inspect({ source, mangaId })
+ *   @inspect        → inspect({ source, mangaId, url })
  *   @load-breakdowns → loadBreakdowns(candidates) — Stage 2 entry, per-scanlator
  *                      auto-split coverage (fetched in parallel, cached, per-
  *                      source failures non-fatal — see useImport's doc comment).

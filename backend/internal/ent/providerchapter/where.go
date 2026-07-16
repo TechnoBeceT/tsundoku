@@ -81,6 +81,11 @@ func URL(v string) predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldEQ(FieldURL, v))
 }
 
+// WebURL applies equality check predicate on the "web_url" field. It's identical to WebURLEQ.
+func WebURL(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldWebURL, v))
+}
+
 // ProviderUploadDate applies equality check predicate on the "provider_upload_date" field. It's identical to ProviderUploadDateEQ.
 func ProviderUploadDate(v time.Time) predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldEQ(FieldProviderUploadDate, v))
@@ -379,6 +384,71 @@ func URLEqualFold(v string) predicate.ProviderChapter {
 // URLContainsFold applies the ContainsFold predicate on the "url" field.
 func URLContainsFold(v string) predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldContainsFold(FieldURL, v))
+}
+
+// WebURLEQ applies the EQ predicate on the "web_url" field.
+func WebURLEQ(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEQ(FieldWebURL, v))
+}
+
+// WebURLNEQ applies the NEQ predicate on the "web_url" field.
+func WebURLNEQ(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNEQ(FieldWebURL, v))
+}
+
+// WebURLIn applies the In predicate on the "web_url" field.
+func WebURLIn(vs ...string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldIn(FieldWebURL, vs...))
+}
+
+// WebURLNotIn applies the NotIn predicate on the "web_url" field.
+func WebURLNotIn(vs ...string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNotIn(FieldWebURL, vs...))
+}
+
+// WebURLGT applies the GT predicate on the "web_url" field.
+func WebURLGT(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGT(FieldWebURL, v))
+}
+
+// WebURLGTE applies the GTE predicate on the "web_url" field.
+func WebURLGTE(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldGTE(FieldWebURL, v))
+}
+
+// WebURLLT applies the LT predicate on the "web_url" field.
+func WebURLLT(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLT(FieldWebURL, v))
+}
+
+// WebURLLTE applies the LTE predicate on the "web_url" field.
+func WebURLLTE(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldLTE(FieldWebURL, v))
+}
+
+// WebURLContains applies the Contains predicate on the "web_url" field.
+func WebURLContains(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldContains(FieldWebURL, v))
+}
+
+// WebURLHasPrefix applies the HasPrefix predicate on the "web_url" field.
+func WebURLHasPrefix(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldHasPrefix(FieldWebURL, v))
+}
+
+// WebURLHasSuffix applies the HasSuffix predicate on the "web_url" field.
+func WebURLHasSuffix(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldHasSuffix(FieldWebURL, v))
+}
+
+// WebURLEqualFold applies the EqualFold predicate on the "web_url" field.
+func WebURLEqualFold(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldEqualFold(FieldWebURL, v))
+}
+
+// WebURLContainsFold applies the ContainsFold predicate on the "web_url" field.
+func WebURLContainsFold(v string) predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldContainsFold(FieldWebURL, v))
 }
 
 // ProviderUploadDateEQ applies the EQ predicate on the "provider_upload_date" field.

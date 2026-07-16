@@ -8,29 +8,30 @@ import (
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
-// TestProviderDTOMangaID proves that ProviderDTO exposes the per-source Suwayomi
-// manga ID so the frontend can fetch coverage breakdowns on demand. A linked
-// provider (suwayomi_id != 0) carries its numeric ID; an unlinked disk-origin
-// provider (suwayomi_id == 0) carries 0.
+// TestProviderDTOMangaID proves ProviderDTO.MangaID is ALWAYS 0 regardless of
+// whether the provider is linked (live) or disk-origin (P2 Suwayomi-removal:
+// the url-addressed engine host has no per-manga numeric id equivalent to the
+// retired SuwayomiID column — the field is retained only for FE wire
+// compatibility, never read as meaningful; see ProviderDTO's doc comment).
+// Linked itself is still a real, live signal — series.IsLinkedProvider, keyed
+// off whether SeriesProvider.Provider parses as a numeric source id.
 func TestProviderDTOMangaID(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 
 	s := db.Series.Create().SetTitle("MangaID Test Series").SetSlug("mangaid-test-series").SaveX(ctx)
 
-	// Unlinked disk-origin provider (suwayomi_id = 0).
+	// Unlinked disk-origin provider (Provider is a non-numeric display name).
 	diskSP := db.SeriesProvider.Create().
 		SetSeriesID(s.ID).
 		SetProvider("disk-provider").
 		SetImportance(1).
-		// SuwayomiID left at its zero-value default (0).
 		SaveX(ctx)
 
-	// Linked provider with suwayomi_id = 42.
+	// Linked provider (Provider is a numeric source id string).
 	linkedSP := db.SeriesProvider.Create().
 		SetSeriesID(s.ID).
-		SetProvider("suwayomi-source").
-		SetSuwayomiID(42).
+		SetProvider("42").
 		SetImportance(5).
 		SaveX(ctx)
 
@@ -46,15 +47,19 @@ func TestProviderDTOMangaID(t *testing.T) {
 		byID[p.ID] = p
 	}
 
-	// Verify the unlinked disk-origin provider has MangaID = 0.
 	disk := byID[diskSP.ID.String()]
+	if disk.Linked {
+		t.Errorf("disk-origin provider Linked = true, want false")
+	}
 	if disk.MangaID != 0 {
 		t.Errorf("unlinked disk provider MangaID = %d, want 0", disk.MangaID)
 	}
 
-	// Verify the linked provider has MangaID = 42.
 	linked := byID[linkedSP.ID.String()]
-	if linked.MangaID != 42 {
-		t.Errorf("linked provider MangaID = %d, want 42", linked.MangaID)
+	if !linked.Linked {
+		t.Errorf("linked provider Linked = false, want true")
+	}
+	if linked.MangaID != 0 {
+		t.Errorf("linked provider MangaID = %d, want 0 (always 0 — see ProviderDTO doc comment)", linked.MangaID)
 	}
 }

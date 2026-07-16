@@ -1,24 +1,30 @@
-// Package warmup keeps anti-bot (Cloudflare-protected) Suwayomi sources warm.
+// Package warmup keeps anti-bot (Cloudflare-protected) engine-host sources
+// warm.
 //
 // Such sources are slow ONLY on a cold session: the first request forces a
 // headless-browser challenge solve (10-60s) whose clearance is then cached with a
-// TTL. Periodically hitting a slow source with a cheap Browse call refreshes that
+// TTL. Periodically hitting a slow source with a cheap Popular call refreshes that
 // clearance, so interactive search stays fast. The warm-up pass is driven by
 // job.Runner.StartWarmup; it records each warm as a metrics sample and stamps
 // last_warmed_at.
+//
+// P2 Suwayomi-removal (slice 4): this package now targets
+// internal/sourceengine.Client (the URL-addressed engine host) instead of
+// suwayomi.Client — see sources.go's doc comment for the exclusion-rule
+// consequences of that move.
 package warmup
 
 import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/metrics"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // sessionWarmTTL is how long a warmed anti-bot session is trusted before WarmSlow
@@ -36,12 +42,12 @@ type SlowThreshold interface {
 	WarmupSlowThresholdMs(ctx context.Context) int
 }
 
-// Service runs anti-bot session warm-up passes over the Suwayomi source set. It
-// holds the Suwayomi client (whose BaseURL() targets the active embedded or
-// external instance), the metrics store (source of the slow/never-measured
+// Service runs anti-bot session warm-up passes over the engine-host source
+// set. It holds the engine-host client (internal/sourceengine, targeting the
+// running engine host), the metrics store (source of the slow/never-measured
 // signal and sink for each warm's sample), and the slow-threshold provider.
 type Service struct {
-	client  suwayomi.Client
+	client  sourceengine.Client
 	metrics *metrics.Service
 	slow    SlowThreshold
 	gate    *sourcegate.Service
@@ -53,16 +59,16 @@ type Service struct {
 // gate-consulting call site treats a nil gate as "always available, no
 // delay" (today's pre-politeness behaviour), so passing nil is a safe
 // default for callers that do not need the gate.
-func NewService(client suwayomi.Client, m *metrics.Service, slow SlowThreshold, gate *sourcegate.Service) *Service {
+func NewService(client sourceengine.Client, m *metrics.Service, slow SlowThreshold, gate *sourcegate.Service) *Service {
 	return &Service{client: client, metrics: m, slow: slow, gate: gate}
 }
 
 // WarmAll warms EVERY enabled online source (the seed pass). It uses the SAME
-// source set Search fans out to — all sources minus Suwayomi's built-in Local
-// source and any the owner disabled (imports.EnabledOnlineSources, §2 DRY).
-// Returns the number of sources warmed successfully.
+// source set imports.Search fans out to, minus this package's own known-broken
+// exclusion (enabledOnlineSources, sources.go). Returns the number of sources
+// warmed successfully.
 func (s *Service) WarmAll(ctx context.Context) (int, error) {
-	sources, err := imports.EnabledOnlineSources(ctx, s.client)
+	sources, err := enabledOnlineSources(ctx, s.client)
 	if err != nil {
 		return 0, err
 	}
@@ -80,7 +86,7 @@ func (s *Service) WarmAll(ctx context.Context) (int, error) {
 // once so every source is judged against the same clock. Returns the number of
 // sources warmed successfully.
 func (s *Service) WarmSlow(ctx context.Context) (int, error) {
-	sources, err := imports.EnabledOnlineSources(ctx, s.client)
+	sources, err := enabledOnlineSources(ctx, s.client)
 	if err != nil {
 		return 0, err
 	}
@@ -91,9 +97,9 @@ func (s *Service) WarmSlow(ctx context.Context) (int, error) {
 	threshold := s.slow.WarmupSlowThresholdMs(ctx)
 	now := time.Now()
 
-	slow := make([]suwayomi.Source, 0, len(sources))
+	slow := make([]sourceengine.Source, 0, len(sources))
 	for _, src := range sources {
-		m := snap[src.ID]
+		m := snap[sourceIDString(src.ID)]
 		if metrics.IsSlow(m, threshold) || metrics.IsStaleWarm(m, sessionWarmTTL, now) {
 			slow = append(slow, src)
 		}
@@ -101,11 +107,11 @@ func (s *Service) WarmSlow(ctx context.Context) (int, error) {
 	return s.warmSources(ctx, slow), nil
 }
 
-// warmSources warms each source SERIALLY (they bottleneck at Suwayomi's single
-// embedded WebView anyway, and serial access is less bot-like). A per-source
-// failure is logged and skipped so one bad source never aborts the pass; only
-// successful warms are counted.
-func (s *Service) warmSources(ctx context.Context, sources []suwayomi.Source) int {
+// warmSources warms each source SERIALLY (they bottleneck at the engine host's
+// single embedded WebView anyway, and serial access is less bot-like). A
+// per-source failure is logged and skipped so one bad source never aborts the
+// pass; only successful warms are counted.
+func (s *Service) warmSources(ctx context.Context, sources []sourceengine.Source) int {
 	warmed := 0
 	for _, src := range sources {
 		if err := s.warmOne(ctx, src); err != nil {
@@ -118,16 +124,17 @@ func (s *Service) warmSources(ctx context.Context, sources []suwayomi.Source) in
 	return warmed
 }
 
-// warmOne warms a single source with the cheapest call that refreshes its anti-bot
-// session — Browse(POPULAR, page 1). It first checks the source-politeness gate
-// (a cooled-down source is skipped entirely, returning a descriptive error so
-// warmSources logs + skips it without a wasted Browse call — repeatedly warming
-// a source that is already tripped would only prolong the block), then enforces
-// the politeness delay, then records the timing + outcome as a metrics sample
-// regardless of success (a slow/failed warm is itself signal), then stamps
-// last_warmed_at ONLY on success (a failed warm did not actually warm the
-// session). Returns the Browse (or gate) error so warmSources can skip + log it.
-func (s *Service) warmOne(ctx context.Context, src suwayomi.Source) error {
+// warmOne warms a single source with the cheapest call that refreshes its
+// anti-bot session — Popular(page 1). It first checks the source-politeness
+// gate (a cooled-down source is skipped entirely, returning a descriptive
+// error so warmSources logs + skips it without a wasted Popular call —
+// repeatedly warming a source that is already tripped would only prolong the
+// block), then enforces the politeness delay, then records the timing +
+// outcome as a metrics sample regardless of success (a slow/failed warm is
+// itself signal), then stamps last_warmed_at ONLY on success (a failed warm
+// did not actually warm the session). Returns the Popular (or gate) error so
+// warmSources can skip + log it.
+func (s *Service) warmOne(ctx context.Context, src sourceengine.Source) error {
 	key := sourceKey(src)
 	if !s.gateAvailable(ctx, key, time.Now()) {
 		return errGateCooldown
@@ -135,15 +142,16 @@ func (s *Service) warmOne(ctx context.Context, src suwayomi.Source) error {
 	s.gateWait(ctx, key)
 
 	start := time.Now()
-	_, err := s.client.Browse(ctx, src.ID, suwayomi.BrowsePopular, 1)
+	_, err := s.client.Popular(ctx, src.ID, 1)
 	now := time.Now()
-	s.metrics.Record(ctx, src.ID, src.Name, now.Sub(start), err)
+	sid := sourceIDString(src.ID)
+	s.metrics.Record(ctx, sid, src.Name, now.Sub(start), err)
 	if err != nil {
 		s.gateRecordFailure(ctx, key, err, now)
 		return err
 	}
 	s.gateRecordSuccess(ctx, key)
-	if serr := s.metrics.SetWarmed(ctx, src.ID, src.Name, now); serr != nil {
+	if serr := s.metrics.SetWarmed(ctx, sid, src.Name, now); serr != nil {
 		// Best-effort: the source WAS warmed even if the stamp write failed.
 		slog.WarnContext(ctx, "warmup: set last_warmed_at failed",
 			"source", src.ID, "err", serr)
@@ -157,11 +165,20 @@ func (s *Service) warmOne(ctx context.Context, src suwayomi.Source) error {
 var errGateCooldown = errors.New("warmup: source cooled down by politeness gate")
 
 // sourceKey returns the physical-source identity used to key the
-// source-politeness gate for a Suwayomi Source: its trimmed display name. It
-// mirrors download.canonicalSourceKey / refresh.sourceKey — kept as a small
+// source-politeness gate for an engine-host Source: its trimmed display name.
+// It mirrors download.canonicalSourceKey / refresh.sourceKey — kept as a small
 // local copy rather than a cross-package import.
-func sourceKey(src suwayomi.Source) string {
+func sourceKey(src sourceengine.Source) string {
 	return strings.TrimSpace(src.Name)
+}
+
+// sourceIDString renders an engine-host numeric source id as the wire string
+// form used to key metrics rows (metrics.Service is keyed by SourceMetric.
+// source_id, a String field) — mirrors imports.sourceIDString /
+// internal/ingest.providerKey (kept as a small local copy rather than a
+// cross-package import).
+func sourceIDString(id int64) string {
+	return strconv.FormatInt(id, 10)
 }
 
 // gateAvailable reports whether sourceKey's circuit-breaker currently permits

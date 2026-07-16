@@ -2,16 +2,26 @@
 # entrypoint.sh — start the engine-host + the Tsundoku Go server as an
 # unprivileged PUID/PGID user.
 #
-# P1 (Suwayomi removed): this image runs the JVM extension-host (engine-host) as
-# the source engine and the Go server alongside it. The engine-host uses OFF-SCREEN
-# KCEF (Chromium) for WebView sources, so there is NO Xvfb / no X DISPLAY — the old
-# embedded-Suwayomi X11 dance is gone.
+# Suwayomi is gone (P1+P2 complete): this image runs the JVM extension-host
+# (engine-host) as the source engine and the Go server alongside it.
 #
-# SUPERVISION: THIS ENTRYPOINT supervises the engine-host in P1 — a background loop
-# restarts it if it dies while the container runs (the Go server does NOT own the
-# host process: it runs in EXTERNAL Suwayomi mode and owns no child). Having the Go
-# ProcessManager own the host in embedded mode is P2 (the Go<->host RPC repoint).
-# The Go server is the foreground process; when it exits the container stops.
+# XVFB + DBUS ARE REQUIRED (reverted from the earlier "no Xvfb" assumption): the
+# engine-host uses KCEF (Chromium) for WebView sources, and CEF's Aura/Ozone
+# platform layer fails to initialize without a real or virtual X display and a
+# D-Bus session — even with `--off-screen-rendering-enabled --disable-gpu`
+# (confirmed live: "Failed to connect to the bus" / "The platform failed to
+# initialize" / "ContentMainRun failed with exit code 1", then every
+# WebView-gated source times out and 502s). Upstream Suwayomi-Server runs its
+# bundled Chromium under Xvfb for the same reason. Both are started below,
+# BEFORE the engine-host, and DISPLAY is exported so the engine-host's JVM (and
+# its Chromium children) inherit it across the PUID/PGID user switch (gosu
+# preserves the environment) and across every supervised restart.
+#
+# SUPERVISION: this entrypoint owns the engine-host process — a background loop
+# restarts it if it dies while the container runs. The Go server does NOT own
+# the host process: it is a pure HTTP client that connects to it over
+# localhost:7777 via TSUNDOKU_ENGINE_URL (see internal/sourceengine). The Go
+# server is the foreground process; when it exits the container stops.
 #
 # "$@" is forwarded to the Go binary.
 set -e
@@ -21,6 +31,21 @@ PGID=${PGID:-0}
 ENGINE_HOST_BIN=/app/engine-host/bin/tsundoku-engine-host
 ENGINE_DATA=${TSUNDOKU_ENGINE_DATA:-/config/engine}
 ENGINE_PORT=${TSUNDOKU_ENGINE_PORT:-7777}
+
+# ── Start a system D-Bus + a virtual X display for CEF/Aura ──────────────────
+# Both run for the container's whole lifetime (not tied to any one engine-host
+# restart). `set -e` is active but neither failure should abort boot — dbus or
+# Xvfb already running (a container restart re-using state) or briefly
+# unavailable is not fatal, so each step is guarded with `|| true`. `-nolisten
+# tcp` keeps the virtual display off the network; `-fork` daemonizes dbus so
+# this script continues without waiting on it.
+mkdir -p /run/dbus
+if [ ! -S /run/dbus/system_bus_socket ]; then
+    dbus-daemon --system --fork || echo "entrypoint: WARNING: dbus-daemon failed to start" >&2
+fi
+
+Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
+export DISPLAY=:99
 
 # ── Seed the BUNDLED KCEF (Chromium) runtime ─────────────────────────────────
 # The image bakes a pre-downloaded Chromium at $ENGINE_KCEF_BUNDLE. CEFManager

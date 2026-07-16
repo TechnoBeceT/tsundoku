@@ -9,6 +9,7 @@
  * that DTO onto the shared `import.types` screen types, so neither
  * composable re-implements the same mapping (§2 DRY).
  */
+import { sourceCoverProxyUrl } from '~/utils/sourceCover'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '~/components/screens/import.types'
 
@@ -16,15 +17,27 @@ type SearchCandidateDTO = components['schemas']['SearchCandidate']
 type SearchGroupDTO = components['schemas']['SearchGroup']
 type ScanlatorCoverageDTO = components['schemas']['ScanlatorCoverage']
 
-/** Maps one backend SearchCandidate DTO onto the shared screen type. */
+/**
+ * Maps one backend SearchCandidate DTO onto the shared screen type. Every
+ * caller of this mapper (useImport, useMatchSource, useMatchDiskProvider,
+ * useScanLibrary) picks up the source-cover proxy for free from this one spot
+ * (§2 DRY) — see sourceCoverProxyUrl's doc comment for why the raw
+ * thumbnailUrl is never used directly.
+ */
 export function mapCandidate(dto: SearchCandidateDTO): SearchCandidate {
   return {
     source: dto.source,
     sourceName: dto.sourceName,
     lang: dto.lang,
     mangaId: dto.mangaId,
+    // The engine host addresses a manga by URL, not mangaId (P2 Suwayomi-removal)
+    // — every adopt/add-source/match request must carry this back.
+    url: dto.url,
+    // The browser-clickable "View on source" link — distinct from `url` above,
+    // never sent back to the backend.
+    realUrl: dto.realUrl,
     title: dto.title,
-    thumbnailUrl: dto.thumbnailUrl,
+    thumbnailUrl: sourceCoverProxyUrl(dto.source, dto.thumbnailUrl),
   }
 }
 

@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -25,10 +26,10 @@ import (
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
 	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
-	suwayomih "github.com/technobecet/tsundoku/internal/handler/suwayomi"
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	trackersh "github.com/technobecet/tsundoku/internal/handler/trackers"
 	"github.com/technobecet/tsundoku/internal/imports"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
@@ -37,9 +38,10 @@ import (
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourcecover"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
@@ -61,9 +63,9 @@ import (
 //   - /api/search                                  — multi-source manga search (RequireOwner).
 //   - /api/sources/:sourceId/browse                — per-source Popular/Latest catalog browse (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/chapters — chapter preview (RequireOwner).
-//   - /api/sources/:sourceId/manga/:mangaId/cover    — source-manga cover proxy (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/details  — on-demand rich manga details (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/breakdown — per-scanlator chapter coverage breakdown (RequireOwner).
+//   - /api/sources/:sourceId/cover                 — source-manga cover proxy, re-fetched via the engine host so protected sources render (RequireOwner).
 //   - /api/series (GET)                            — library list (RequireOwner).
 //   - /api/series (POST)                           — adopt / import manga (RequireOwner).
 //   - /api/series/:id (GET)                        — library detail (RequireOwner).
@@ -99,8 +101,6 @@ import (
 //   - /api/push/subscriptions (POST)               — upsert this device's Web Push subscription (RequireOwner).
 //   - /api/push/subscriptions (DELETE)             — remove this device's Web Push subscription (RequireOwner).
 //   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
-//   - /api/suwayomi/settings (GET)                  — read Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
-//   - /api/suwayomi/settings (PATCH)                — partial-update Suwayomi FlareSolverr/SOCKS settings (RequireOwner).
 //   - /api/flaresolverr/settings (GET)              — read Tsundoku-owned FlareSolverr settings (RequireOwner).
 //   - /api/flaresolverr/settings (PATCH)            — partial-update + best-effort mirror to Suwayomi (RequireOwner).
 //   - /api/suwayomi/extensions (GET)                — list Suwayomi extensions (RequireOwner).
@@ -151,12 +151,12 @@ func registerRoutes(
 	authSvc *auth.Service,
 	hub *sse.Hub,
 	ownerH *owner.Handler,
-	suwayomiClient suwayomi.Client,
+	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
 	warmupSvc *warmup.Service,
 	gate *sourcegate.Service,
-	chapterCache *suwayomi.ChapterCache,
+	chapterCache *ingest.ChapterCache,
 	metaSvc *metadatasvc.Service,
 	trackerRegistry *tracker.Registry,
 	trackerConnectSvc *connect.Service,
@@ -182,20 +182,42 @@ func registerRoutes(
 	authed.GET("/owner/me", ownerH.Me)
 	sse.RegisterRoutes(authed, hub)
 
+	// coverCache (GAP-085) is the shared disk-cache-first, fail-fast wrapper
+	// around an engine-host cover fetch — restores the disk-cache-first
+	// behaviour Suwayomi's own thumbnail cache had, which the P2 engine swap
+	// dropped for these two proxies (see internal/sourcecover's package doc).
+	// It is shared between BOTH engine-fed cover proxies (the per-provider
+	// metadata cover below, and the Discover/Search source cover further down)
+	// so a burst across either surface queues through the SAME bounded pool.
+	// Rooted under a "source-covers" subdirectory of Engine.RuntimeDir,
+	// mirroring apkStore's own "apkcache" subdirectory of the same root (both
+	// are Tsundoku-owned durable caches of engine-fed artifacts, never an
+	// engine-host data directory — Tsundoku launches no engine-host process of
+	// its own). Deliberately NOT the library series cover cache
+	// (series.Service.CoverBytes, WithCoverFetcher below) — that endpoint was
+	// already disk-cached and is untouched.
+	coverCache := sourcecover.NewCache(
+		sourcecover.New(filepath.Join(cfg.Engine.RuntimeDir, "source-covers")),
+		engineClient,
+		sourcecover.DefaultConcurrency,
+		sourcecover.DefaultDeadline,
+	)
+
 	// Library (series) API. The service owns the Ent client and the storage root
 	// so the recategorize path can move folders on disk in lockstep with the DB.
 	// seriesSvc is shared: reused by both the series handler and the imports
 	// handler (to render SeriesDetailDTO after Adopt).
-	// WithCoverFetcher lets the series cover endpoint fall back to Suwayomi when a
-	// series' cover is not yet cached in its library folder (it caches it there on
-	// that first fetch, and never pings the source for it again).
+	// WithCoverFetcher lets the series cover endpoint fall back to the engine
+	// host (P2 slice 4: repointed off suwayomiClient) when a series' cover is
+	// not yet cached in its library folder (it caches it there on that first
+	// fetch, and never pings the source for it again).
 	// WithProgressPusher wires the reading-triggered tracker push: marking a
 	// chapter read in the reader (series.SetProgress) fires a detached,
 	// best-effort syncsvc push, gated by the auto_update_track setting. This is
 	// the "live on read" half of the trigger model (QCAT-234); the detail-open
 	// reconcile below is the other. trackerSyncSvc satisfies both hooks.
 	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays).
-		WithCoverFetcher(suwayomiClient).
+		WithCoverFetcher(engineClient).
 		WithProgressPusher(trackerSyncSvc)
 	// WithViewSyncer wires the detail-open tracker reconcile: opening a series'
 	// detail page fires a detached, best-effort syncsvc.Service.SyncOnView IN
@@ -207,7 +229,7 @@ func registerRoutes(
 	// WithTrackerProgressSetter wires the QCAT-242 "set reading progress to N"
 	// tracker force-set (SetReadingProgress) — a THIRD, independent hook the
 	// same trackerSyncSvc instance also satisfies.
-	seriesH := seriesh.NewHandler(seriesSvc, trigger, suwayomiClient).
+	seriesH := seriesh.NewHandler(seriesSvc, trigger, coverCache).
 		WithViewSyncer(trackerSyncSvc).
 		WithTrackerProgressSetter(trackerSyncSvc)
 	authed.GET("/series", seriesH.List)
@@ -295,34 +317,30 @@ func registerRoutes(
 	systemH := systemh.NewHandler(cfg)
 	authed.GET("/system", systemH.Get)
 
-	// Suwayomi server-settings proxy (FlareSolverr + SOCKS). The handler holds
-	// the Suwayomi client directly and proxies its server-global settings; no
-	// Tsundoku state is involved.
-	// settingsSvc is passed as the durable ConfigWriter so a PATCH captures the
-	// owner's just-applied FlareSolverr/SOCKS values into Tsundoku's settings
-	// overlay (best-effort write-through — the opposite of the boot seed's
-	// gap-fill: an explicit owner edit overwrites).
-	suwayomiSettingsH := suwayomih.NewHandler(suwayomiClient, settingsSvc)
-	authed.GET("/suwayomi/settings", suwayomiSettingsH.Get)
-	authed.PATCH("/suwayomi/settings", suwayomiSettingsH.Update)
-
 	// Tsundoku-owned FlareSolverr settings (QCAT-238): a runtime setting on
-	// settingsSvc, NOT read from Suwayomi. PATCH best-effort mirrors down to
-	// Suwayomi's own settings via the same suwayomiClient the proxy above
-	// uses, so the two never fall out of sync while Suwayomi still exists.
-	flareSolverrH := flaresolverrh.NewHandler(settingsSvc, suwayomiClient)
+	// settingsSvc, NOT read from Suwayomi/the engine. PATCH best-effort mirrors
+	// down to the engine host via engineClient.SetFlareSolverr (P2 slice 6: the
+	// obsolete Suwayomi settings-proxy this used to mirror through is deleted —
+	// the engine host has no readable config, so its GET half was already
+	// impossible; SOCKS runtime-push stays deferred to reconcile-on-boot, a
+	// later slice).
+	flareSolverrH := flaresolverrh.NewHandler(settingsSvc, engineClient)
 	authed.GET("/flaresolverr/settings", flareSolverrH.Get)
 	authed.PATCH("/flaresolverr/settings", flareSolverrH.Update)
 
-	// Suwayomi extension (Sources & Extensions) management. Like the settings
-	// proxy, the handler holds the Suwayomi client directly and proxies its
-	// extension GraphQL surface; no Tsundoku state is involved.
-	// db/cache/http.Get are the durable engine-topology store: an install/update/
-	// uninstall or repo change is written through to the HarvestedExtension/
-	// HarvestedRepo rows + the shared apk cache immediately (best-effort), so the
-	// store never lags a live owner change. apkStore is the SAME cache the boot
-	// seed writes and the /internal apk-serving route reads.
-	extensionsH := extensionsh.NewHandler(suwayomiClient, client, apkStore, http.Get)
+	// Sources & Extensions management (P2 Suwayomi-removal slice 5: repointed
+	// onto the engine host). Like the settings proxy, the handler holds the
+	// engine client directly and proxies its extension surface; no Tsundoku
+	// state is involved. db/cache/http.Get are the durable engine-topology
+	// store: an install/update/uninstall or repo change is written through to
+	// the HarvestedExtension/HarvestedRepo rows + the shared apk cache
+	// immediately (best-effort), so the store never lags a live owner change.
+	// apkStore is the SAME cache the boot seed writes and the /internal
+	// apk-serving route reads. The extension icon proxy + the per-language
+	// source enable/disable toggle are RETIRED: sourceengine has no
+	// PageBytes-shaped fetch (the FE renders iconUrl directly) and no
+	// server-side "disabled source" concept to proxy.
+	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
@@ -330,10 +348,8 @@ func registerRoutes(
 	authed.POST("/suwayomi/extensions/:pkgName/install", extensionsH.Install)
 	authed.POST("/suwayomi/extensions/:pkgName/update", extensionsH.Update)
 	authed.DELETE("/suwayomi/extensions/:pkgName", extensionsH.Uninstall)
-	authed.GET("/suwayomi/extensions/:pkgName/icon", extensionsH.Icon)
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", extensionsH.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", extensionsH.SetPreference)
-	authed.PATCH("/suwayomi/sources/:sourceId/enabled", extensionsH.SetSourceEnabled)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.
@@ -356,35 +372,38 @@ func registerRoutes(
 	authed.POST("/downloads/run", downloadsH.Run)
 
 	// Imports (discovery + adoption) API. The ingest is built here so it shares
-	// the same Ent client as the rest of the application; a single suwayomiClient
-	// value is threaded in from main.
+	// the same Ent client as the rest of the application. P2 Suwayomi-removal
+	// (slice 3b): imports + library now share the engine-agnostic
+	// internal/ingest.Ingest, targeting engineClient (internal/sourceengine) —
+	// neither package imports internal/suwayomi any more (slice 8 deleted the
+	// package entirely).
 	// Anti-ban de-amplification: the ingest routes its adopt/attach fetch through
 	// the shared source-politeness gate (Task B) and the shared chapter cache
 	// (Task C2 — the SAME instance the imports coverage paths use, so a
 	// coverage→configure→adopt session fetches a source-manga once). imports uses
 	// NewServiceWithCaches so its coverage + Search paths are cached too (C1/C2).
-	ingest := suwayomi.NewIngestWithGate(suwayomiClient, client, chapterCache, gate)
+	ingestSvc := ingest.NewIngestWithGate(engineClient, client, chapterCache, gate)
 	importsSvc := imports.NewServiceWithCaches(
-		suwayomiClient, ingest, client, cfg.Storage.Folder, cfg.Suwayomi.SearchTimeout, metricsSvc, chapterCache,
+		engineClient, ingestSvc, client, cfg.Storage.Folder, cfg.Engine.SearchTimeout, metricsSvc, chapterCache,
 		// Search-cache TTL read per Get from the settings overlay (jobs.search_cache_ttl,
 		// hot reload); 0 disables the search cache at runtime.
 		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
 	).WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
-	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, suwayomiClient)
+	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, coverCache)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)
-	authed.GET("/sources/:sourceId/manga/:mangaId/cover", importsH.MangaCover)
 	authed.GET("/sources/:sourceId/manga/:mangaId/details", importsH.Details)
 	authed.GET("/sources/:sourceId/manga/:mangaId/breakdown", importsH.Breakdown)
+	authed.GET("/sources/:sourceId/cover", importsH.SourceCover)
 	authed.POST("/series", importsH.Adopt)
 
 	// Library-import (on-disk scan + adopt-without-redownload) API. Reuses the
 	// SAME ingest/importsSvc/seriesSvc instances constructed above — no double
 	// construction — plus the shared trigger, storage root, and SSE hub (the
 	// async scan streams scan.start/scan.progress/scan.done over it).
-	librarySvc := library.NewService(client, ingest, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub).
+	librarySvc := library.NewService(client, ingestSvc, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub).
 		WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
 	libraryH := libraryh.NewHandler(librarySvc)
 	authed.POST("/library/scan", libraryH.Scan)
@@ -400,7 +419,7 @@ func registerRoutes(
 	authed.POST("/library/dedup-providers", libraryH.DedupAllProviders)
 
 	// Engine-topology endpoints. apkStore is the SHARED apk byte cache constructed
-	// once in main.go (rooted under the Suwayomi runtime dir) and also handed to
+	// once in main.go (rooted under the engine runtime dir) and also handed to
 	// the boot-time topology seed goroutine — construct-once, so the seed writes
 	// to and this handler serves from the same bytes.
 	//   - The owner-facing GET /api/engine/topology-status readout (IN the OpenAPI

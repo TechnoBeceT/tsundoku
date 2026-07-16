@@ -113,6 +113,20 @@ func (_u *ProviderChapterUpdate) SetNillableURL(v *string) *ProviderChapterUpdat
 	return _u
 }
 
+// SetWebURL sets the "web_url" field.
+func (_u *ProviderChapterUpdate) SetWebURL(v string) *ProviderChapterUpdate {
+	_u.mutation.SetWebURL(v)
+	return _u
+}
+
+// SetNillableWebURL sets the "web_url" field if the given value is not nil.
+func (_u *ProviderChapterUpdate) SetNillableWebURL(v *string) *ProviderChapterUpdate {
+	if v != nil {
+		_u.SetWebURL(*v)
+	}
+	return _u
+}
+
 // SetProviderUploadDate sets the "provider_upload_date" field.
 func (_u *ProviderChapterUpdate) SetProviderUploadDate(v time.Time) *ProviderChapterUpdate {
 	_u.mutation.SetProviderUploadDate(v)
@@ -344,6 +358,9 @@ func (_u *ProviderChapterUpdate) sqlSave(ctx context.Context) (_node int, err er
 	if value, ok := _u.mutation.URL(); ok {
 		_spec.SetField(providerchapter.FieldURL, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.WebURL(); ok {
+		_spec.SetField(providerchapter.FieldWebURL, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.ProviderUploadDate(); ok {
 		_spec.SetField(providerchapter.FieldProviderUploadDate, field.TypeTime, value)
 	}
@@ -517,6 +534,20 @@ func (_u *ProviderChapterUpdateOne) SetURL(v string) *ProviderChapterUpdateOne {
 func (_u *ProviderChapterUpdateOne) SetNillableURL(v *string) *ProviderChapterUpdateOne {
 	if v != nil {
 		_u.SetURL(*v)
+	}
+	return _u
+}
+
+// SetWebURL sets the "web_url" field.
+func (_u *ProviderChapterUpdateOne) SetWebURL(v string) *ProviderChapterUpdateOne {
+	_u.mutation.SetWebURL(v)
+	return _u
+}
+
+// SetNillableWebURL sets the "web_url" field if the given value is not nil.
+func (_u *ProviderChapterUpdateOne) SetNillableWebURL(v *string) *ProviderChapterUpdateOne {
+	if v != nil {
+		_u.SetWebURL(*v)
 	}
 	return _u
 }
@@ -781,6 +812,9 @@ func (_u *ProviderChapterUpdateOne) sqlSave(ctx context.Context) (_node *Provide
 	}
 	if value, ok := _u.mutation.URL(); ok {
 		_spec.SetField(providerchapter.FieldURL, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.WebURL(); ok {
+		_spec.SetField(providerchapter.FieldWebURL, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ProviderUploadDate(); ok {
 		_spec.SetField(providerchapter.FieldProviderUploadDate, field.TypeTime, value)

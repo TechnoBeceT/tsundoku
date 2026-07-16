@@ -21,12 +21,14 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
+	enginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
 
@@ -620,54 +622,6 @@ func TestRunner_Trigger_Coalesces(t *testing.T) {
 	}
 }
 
-// fakeSuwayomi is a minimal suwayomi.Client returning one chapter for any manga,
-// used to prove StartRefresh discovers chapters and then triggers a download.
-type fakeSuwayomi struct{}
-
-func (fakeSuwayomi) Sources(context.Context) ([]suwayomi.Source, error) { return nil, nil }
-func (fakeSuwayomi) Search(context.Context, string, string) ([]suwayomi.Manga, error) {
-	return nil, nil
-}
-func (fakeSuwayomi) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
-	return suwayomi.BrowseResult{}, nil
-}
-func (fakeSuwayomi) FetchChapters(context.Context, int) ([]suwayomi.Chapter, error) {
-	n := 1.0
-	return []suwayomi.Chapter{{ID: 1, Index: 0, Number: &n, URL: "u1"}}, nil
-}
-func (fakeSuwayomi) MangaChapters(context.Context, int) ([]suwayomi.Chapter, error) { return nil, nil }
-func (fakeSuwayomi) MangaMeta(context.Context, int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (fakeSuwayomi) FetchMangaDetails(context.Context, int) (suwayomi.Manga, error) {
-	return suwayomi.Manga{}, nil
-}
-func (fakeSuwayomi) ChapterPages(context.Context, int) ([]string, error)       { return nil, nil }
-func (fakeSuwayomi) PageBytes(context.Context, string) ([]byte, string, error) { return nil, "", nil }
-func (fakeSuwayomi) ServerSettings(context.Context) (suwayomi.SuwayomiSettings, error) {
-	return suwayomi.SuwayomiSettings{}, nil
-}
-func (fakeSuwayomi) SetServerSettings(context.Context, suwayomi.SuwayomiSettingsPatch) error {
-	return nil
-}
-func (fakeSuwayomi) Extensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
-func (fakeSuwayomi) SetExtensionState(context.Context, string, suwayomi.ExtensionAction) error {
-	return nil
-}
-func (fakeSuwayomi) FetchExtensions(context.Context) ([]suwayomi.Extension, error) { return nil, nil }
-func (fakeSuwayomi) ExtensionRepos(context.Context) ([]string, error)              { return nil, nil }
-func (fakeSuwayomi) SetExtensionRepos(context.Context, []string) error             { return nil }
-func (fakeSuwayomi) SourcePreferences(context.Context, string) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
-}
-func (fakeSuwayomi) SetSourcePreference(context.Context, string, int, suwayomi.PreferenceValue) ([]suwayomi.SourcePreference, error) {
-	return nil, nil
-}
-func (fakeSuwayomi) ExtensionSources(context.Context, string) ([]suwayomi.Source, error) {
-	return nil, nil
-}
-func (fakeSuwayomi) SetSourceEnabled(context.Context, string, bool) error { return nil }
-
 // TestRunner_StartRefresh_DiscoversAndDownloads verifies the refresh ticker
 // re-fetches a monitored series (creating a wanted chapter) and then triggers a
 // download cycle that drains it — end to end.
@@ -678,12 +632,17 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 	storage := t.TempDir()
 	hub := sse.NewHub()
 
-	// Monitored series + provider with a known suwayomi_id, NO chapters yet.
+	// Monitored series + provider, URL-addressed at a numeric source id, NO
+	// chapters yet — the sourceengine fake below is configured to return one
+	// chapter for exactly this (sourceID, url) pair.
+	const discSourceID, discURL = 99, "/manga/disc-series"
 	s := client.Series.Create().SetTitle("Disc Series").SetSlug("disc-series").SetMonitored(true).SaveX(ctx)
-	client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetSuwayomiID(42).SetImportance(10).SaveX(ctx)
+	client.SeriesProvider.Create().SetSeries(s).SetProvider("99").SetURL(discURL).SetImportance(10).SaveX(ctx)
 
-	fc := fakeSuwayomi{}
-	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, settings.Static{Concurrency: 2}, nil)
+	fc := enginefake.New(enginefake.WithChapters(discSourceID, discURL, []sourceengine.Chapter{
+		{Number: 1, URL: "u1"},
+	}))
+	refreshSvc := refresh.NewService(client, ingest.NewIngest(fc, client), hub, settings.Static{Concurrency: 2}, nil)
 
 	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour, Refresh: 100 * time.Millisecond})
@@ -706,38 +665,10 @@ func TestRunner_StartRefresh_DiscoversAndDownloads(t *testing.T) {
 	}
 }
 
-// extCheckFake is a suwayomi.Client double used exclusively by
-// TestRunner_StartExtensionCheck_FetchesAndBroadcasts. It embeds the Client
-// interface (nil — any method other than FetchExtensions would panic, but
-// StartExtensionCheck only calls FetchExtensions) and overrides FetchExtensions
-// to return a deterministic extension list and count its calls.
-type extCheckFake struct {
-	suwayomi.Client
-	mu    sync.Mutex
-	calls int
-}
-
-func (f *extCheckFake) FetchExtensions(_ context.Context) ([]suwayomi.Extension, error) {
-	f.mu.Lock()
-	f.calls++
-	f.mu.Unlock()
-	return []suwayomi.Extension{
-		{HasUpdate: true},
-		{HasUpdate: true},
-		{HasUpdate: false},
-	}, nil
-}
-
-func (f *extCheckFake) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.calls
-}
-
 // TestRunner_StartExtensionCheck_FetchesAndBroadcasts verifies that
-// StartExtensionCheck calls FetchExtensions and broadcasts an extensions.checked
-// SSE event with updatesAvailable equal to the count of extensions whose
-// HasUpdate field is true.
+// StartExtensionCheck calls RefreshExtensions and broadcasts an
+// extensions.checked SSE event with updatesAvailable equal to the count of
+// extensions whose HasUpdate field is true.
 func TestRunner_StartExtensionCheck_FetchesAndBroadcasts(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -748,13 +679,17 @@ func TestRunner_StartExtensionCheck_FetchesAndBroadcasts(t *testing.T) {
 	events, unsub := hub.Subscribe()
 	defer unsub()
 
-	swFake := &extCheckFake{}
+	engineFake := enginefake.New(enginefake.WithExtensions([]sourceengine.Extension{
+		{HasUpdate: true},
+		{HasUpdate: true},
+		{HasUpdate: false},
+	}))
 
 	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
 	// Short ExtCheck so the job fires quickly in the test.
 	r := job.NewRunner(d, client, hub, storage, settings.Static{ExtCheck: 20 * time.Millisecond})
 
-	r.StartExtensionCheck(ctx, swFake)
+	r.StartExtensionCheck(ctx, engineFake)
 
 	// Wait for the extensions.checked SSE event and verify its payload.
 	deadline := time.After(3 * time.Second)
@@ -774,12 +709,12 @@ func TestRunner_StartExtensionCheck_FetchesAndBroadcasts(t *testing.T) {
 			if p.UpdatesAvailable != 2 {
 				t.Fatalf("updatesAvailable = %d, want 2", p.UpdatesAvailable)
 			}
-			if swFake.callCount() == 0 {
-				t.Error("FetchExtensions was never called")
+			if engineFake.CallCount("RefreshExtensions") == 0 {
+				t.Error("RefreshExtensions was never called")
 			}
 			return
 		case <-deadline:
-			t.Fatalf("timed out waiting for extensions.checked; FetchExtensions called %d time(s)", swFake.callCount())
+			t.Fatalf("timed out waiting for extensions.checked; RefreshExtensions called %d time(s)", engineFake.CallCount("RefreshExtensions"))
 		}
 	}
 }
@@ -797,8 +732,11 @@ func TestStartRefresh_BroadcastsHealthSummary(t *testing.T) {
 	events, unsub := hub.Subscribe()
 	defer unsub()
 
-	fc := fakeSuwayomi{}
-	refreshSvc := refresh.NewService(client, suwayomi.NewIngest(fc, client), hub, settings.Static{Concurrency: 2}, nil)
+	// No series/provider is seeded here — this test only asserts that
+	// StartRefresh's health.summary broadcast fires after a sweep, so an empty
+	// (unconfigured) sourceengine fake is enough; the sweep itself has nothing
+	// to discover.
+	refreshSvc := refresh.NewService(client, ingest.NewIngest(enginefake.New(), client), hub, settings.Static{Concurrency: 2}, nil)
 
 	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Refresh: 50 * time.Millisecond})
@@ -832,24 +770,24 @@ func TestStartRefresh_BroadcastsHealthSummary(t *testing.T) {
 	}
 }
 
-// warmupFake is a suwayomi.Client double for the warm-up seed-at-boot test. It
-// returns one enabled online source and counts + signals every Browse call (the
-// actual warm), so the test can prove the seed pass fires PROMPTLY after
-// StartWarmup rather than only after the first interval elapses. It embeds the
-// Client interface so any unrelated method is a nil-panic (StartWarmup's warm
-// path only calls Sources + Browse).
+// warmupFake is a sourceengine.Client double for the warm-up seed-at-boot
+// test. It returns one enabled online source and counts + signals every
+// Popular call (the actual warm), so the test can prove the seed pass fires
+// PROMPTLY after StartWarmup rather than only after the first interval
+// elapses. It embeds the Client interface so any unrelated method is a
+// nil-panic (StartWarmup's warm path only calls Sources + Popular).
 type warmupFake struct {
-	suwayomi.Client
+	sourceengine.Client
 	mu      sync.Mutex
 	browses int
 	fired   chan struct{}
 }
 
-func (f *warmupFake) Sources(context.Context) ([]suwayomi.Source, error) {
-	return []suwayomi.Source{{ID: "warm-1", Name: "Warm One", Lang: "en"}}, nil
+func (f *warmupFake) Sources(context.Context) ([]sourceengine.Source, error) {
+	return []sourceengine.Source{{ID: 1, Name: "Warm One", Lang: "en"}}, nil
 }
 
-func (f *warmupFake) Browse(context.Context, string, suwayomi.BrowseType, int) (suwayomi.BrowseResult, error) {
+func (f *warmupFake) Popular(context.Context, int64, int) (sourceengine.SearchResult, error) {
 	f.mu.Lock()
 	first := f.browses == 0
 	f.browses++
@@ -857,7 +795,7 @@ func (f *warmupFake) Browse(context.Context, string, suwayomi.BrowseType, int) (
 	if first {
 		close(f.fired) // signal the first (seed) warm exactly once
 	}
-	return suwayomi.BrowseResult{}, nil
+	return sourceengine.SearchResult{}, nil
 }
 
 // TestRunner_StartWarmup_SeedsAtBoot proves StartWarmup runs the seed (WarmAll)

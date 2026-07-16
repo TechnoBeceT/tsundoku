@@ -19,8 +19,9 @@
  *   @set-type        → setType(type)
  *   @page            → loadPage(n)
  *   @retry           → retry()
- *   @inspect         → navigateTo /import?source=&mangaId=&title= (Task 6 reads these)
- *   @adopt           → navigateTo /import?source=&mangaId=&title= (same hand-off)
+ *   @inspect         → navigateTo /import?source=&mangaId=&url=&title= (Task 6 reads these;
+ *                      `url` is REQUIRED for the seeded inspect to fire, P2 Suwayomi-removal)
+ *   @adopt           → navigateTo /import?source=&mangaId=&url=&title= (same hand-off)
  *   @open-source-link → window.open external tab (noopener)
  *   @hover           → debounced loadDetails(candidate) — forces Suwayomi to
  *                      fetch the hovered card's rich metadata (author/artist/
@@ -51,16 +52,22 @@ function openImport(candidate: DiscoverCandidate): void {
     query: {
       source: candidate.source,
       mangaId: String(candidate.mangaId),
+      url: candidate.url,
       title: candidate.title,
     },
   })
 }
 
-/** Opens a candidate's provider-canonical link in a new tab (noopener). Lives in
- *  the script (not an inline template handler) so `window` resolves to the DOM
- *  global rather than a template binding. `isHttpUrl` blocks non-http(s) schemes. */
+/** Opens a candidate's browser-clickable "View on source" link (`realUrl`,
+ *  NOT the source-relative addressing `url`) in a new tab (noopener). Lives
+ *  in the script (not an inline template handler) so `window` resolves to
+ *  the DOM global rather than a template binding. `isHttpUrl` blocks
+ *  non-http(s) schemes — `realUrl` still comes from untrusted upstream data,
+ *  same as `url` before it. In practice DiscoverCard only emits this event
+ *  when `realUrl` is already truthy (the link is hidden otherwise), but the
+ *  guard stays as defense-in-depth. */
 function openSourceLink(candidate: DiscoverCandidate): void {
-  if (isHttpUrl(candidate.url)) window.open(candidate.url, '_blank', 'noopener')
+  if (isHttpUrl(candidate.realUrl)) window.open(candidate.realUrl, '_blank', 'noopener')
 }
 
 /** Debounce window for the hover-details fetch — long enough that scrubbing

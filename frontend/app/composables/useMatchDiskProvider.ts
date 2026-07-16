@@ -20,10 +20,11 @@
  * guard a superseded response could land after a later one and silently
  * overwrite `groups`.
  *
- * loadBreakdown(source, mangaId) fetches
- * `GET /api/sources/{sourceId}/manga/{mangaId}/breakdown` (the same endpoint
- * `useImport.loadBreakdowns` uses for the Adopt wizard's auto-split, and the
- * same `mapScanlatorCoverage` mapper) for the ONE candidate the owner picked.
+ * loadBreakdown(source, mangaId, url) fetches
+ * `GET /api/sources/{sourceId}/manga/{mangaId}/breakdown?url=` (the same
+ * endpoint `useImport.loadBreakdowns` uses for the Adopt wizard's auto-split,
+ * and the same `mapScanlatorCoverage` mapper) for the ONE candidate the owner
+ * picked.
  * Unlike `useImport`'s permanent multi-candidate cache, this dialog only ever
  * has one candidate selected at a time, so `breakdown` is a single ref that a
  * new `loadBreakdown` call simply replaces; a failure resolves `null` (never
@@ -116,12 +117,15 @@ export function useMatchDiskProvider() {
    * "all chapters" fallback) and does NOT touch `error` (this is informational
    * coverage, not a hard failure of the match flow itself).
    */
-  async function loadBreakdown(source: string, mangaId: number): Promise<void> {
+  async function loadBreakdown(source: string, mangaId: number, url: string): Promise<void> {
     breakdownLoading.value = true
     breakdown.value = null
     try {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
-        params: { path: { sourceId: source, mangaId } },
+        params: {
+          path: { sourceId: source, mangaId },
+          query: { url },
+        },
       })
       breakdown.value = res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage)
     }

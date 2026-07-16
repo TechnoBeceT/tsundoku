@@ -1,10 +1,15 @@
 // Package download_test — end-to-end broken-image reliability proof.
 //
 // This is the dispatcher-level guarantee behind the owner's "never save a chapter
-// with a missing/broken panel" invariant: with the REAL, validating suwayomi.Fetcher
-// wired in, a multi-page chapter whose middle page is a truncated image fails the
-// WHOLE attempt cleanly — the chapter never reaches downloaded, NO CBZ is written,
-// and the source is bumped so the existing per-source retry drives a later attempt.
+// with a missing/broken panel" invariant: with the REAL, validating
+// sourceengine.Fetcher wired in, a multi-page chapter whose middle page is a
+// truncated image fails the WHOLE attempt cleanly — the chapter never reaches
+// downloaded, NO CBZ is written, and the source is bumped so the existing
+// per-source retry drives a later attempt.
+//
+// Ported from the retired suwayomi-era internal/download/brokenimage_test.go
+// (GAP-083) onto the P2 engine-host Fetcher — same guarantee, different
+// transport.
 // Requires Docker (via testcontainers).
 package download_test
 
@@ -24,26 +29,26 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
-// brokenPageClient is a minimal suwayomi.Client that serves a fixed page list, one
-// of whose pages is broken. It embeds the Client interface (nil) so only the two
-// methods the Fetcher calls need real bodies; any other method would panic, proving
-// the Fetcher touches nothing else.
+// brokenPageClient is a minimal sourceengine.Client that serves a fixed page
+// list, one of whose pages is broken. It embeds the Client interface (nil) so
+// only the two methods the Fetcher calls need real bodies; any other method
+// would panic, proving the Fetcher touches nothing else.
 type brokenPageClient struct {
-	suwayomi.Client
-	pages    []string
+	sourceengine.Client
+	pages    []sourceengine.Page
 	pageData map[string][]byte
 }
 
-func (b *brokenPageClient) ChapterPages(_ context.Context, _ int) ([]string, error) {
+func (b *brokenPageClient) Pages(_ context.Context, _ int64, _ string) ([]sourceengine.Page, error) {
 	return b.pages, nil
 }
 
-func (b *brokenPageClient) PageBytes(_ context.Context, url string) ([]byte, string, error) {
-	return b.pageData[url], "jpg", nil
+func (b *brokenPageClient) Image(_ context.Context, _ int64, pageURL, _ string) ([]byte, string, error) {
+	return b.pageData[pageURL], "image/jpeg", nil
 }
 
 // encodeTestJPEG returns a real, fully-decodable 2x2 JPEG.
@@ -68,23 +73,27 @@ func TestRunOnce_BrokenPage_ChapterFailsNoCBZ(t *testing.T) {
 	storage := mustTempDir(t)
 
 	s := client.Series.Create().SetTitle("Broken Panel").SetSlug("broken-panel").SaveX(ctx)
-	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("src").SetImportance(10).SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("7").SetImportance(10).SaveX(ctx)
 	pc := client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("c1").
-		SetURL("https://src/c1").SetProviderIndex(0).SaveX(ctx)
+		SetURL("/ch/c1").SetProviderIndex(0).SaveX(ctx)
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("c1").SaveX(ctx)
 
 	good := encodeTestJPEG(t)
 	broken := good[:12] // valid magic, truncated body → fails full decode
 	bc := &brokenPageClient{
-		pages: []string{"u0", "u1", "u2"},
+		pages: []sourceengine.Page{
+			{Index: 0, URL: "u0"},
+			{Index: 1, URL: "u1"}, // the broken middle page
+			{Index: 2, URL: "u2"},
+		},
 		pageData: map[string][]byte{
 			"u0": good,
-			"u1": broken, // the broken middle page
+			"u1": broken,
 			"u2": good,
 		},
 	}
 
-	d := download.New(client, suwayomi.NewFetcher(bc), sse.NewHub(),
+	d := download.New(client, sourceengine.NewFetcher(bc), sse.NewHub(),
 		download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 
 	if _, err := d.RunOnce(ctx); err != nil {

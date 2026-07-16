@@ -7,32 +7,32 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/handler/coverproxy"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/handler/sourcefilter"
 	"github.com/technobecet/tsundoku/internal/imports"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/sourcecover"
 )
 
 // Handler holds the dependencies for the imports HTTP handlers.
 // All business logic lives in imports.Service and series.Service; this handler
-// is thin — it binds, validates, calls the service, and renders the DTO. sw is
-// held directly (cover-proxy style, like handler/series and handler/suwayomi)
-// so MangaCover can stream a source-manga thumbnail without a Tsundoku service
-// round-trip.
+// is thin — it binds, validates, calls the service, and renders the DTO.
 type Handler struct {
-	svc     *imports.Service
-	series  *seriessvc.Service
-	trigger func()
-	sw      suwayomi.Client
+	svc        *imports.Service
+	series     *seriessvc.Service
+	trigger    func()
+	coverCache *sourcecover.Cache
 }
 
 // NewHandler constructs a Handler bound to an imports.Service, a series.Service
 // (to render SeriesDetailDTO after Adopt), an auto-converge trigger (called
 // after a successful adopt to kick an immediate download/upgrade cycle — M5),
-// and a suwayomi.Client (used by MangaCover to proxy a source-manga thumbnail).
-func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func(), sw suwayomi.Client) *Handler {
-	return &Handler{svc: svc, series: series, trigger: trigger, sw: sw}
+// and a sourcecover.Cache (used by SourceCover to proxy a source-manga cover
+// image through the engine host, disk-cached and fail-fast bounded — same
+// role as series.Handler's `coverCache`, see ProviderCover and GAP-085).
+func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func(), coverCache *sourcecover.Cache) *Handler {
+	return &Handler{svc: svc, series: series, trigger: trigger, coverCache: coverCache}
 }
 
 // Sources handles GET /api/sources.
@@ -44,6 +44,42 @@ func (h *Handler) Sources(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, out)
+}
+
+// SourceCover handles GET /api/sources/:sourceId/cover?url=<thumbnailUrl>.
+//
+// Discover/Search cards render a source-manga cover straight from the DTO's
+// thumbnailUrl. An open-CDN source (e.g. Asura) tolerates the browser fetching
+// that URL directly, but a Cloudflare/hotlink-protected source (e.g. The
+// Blank) 403s a raw browser request — the card renders blank. This mirrors
+// series.Handler.ProviderCover (the SAME coverproxy.StreamEngineCached
+// primitive): it re-fetches the image through the engine host, whose outbound
+// HTTP client carries the source's cf_clearance, then streams the bytes back
+// same-origin so the SPA's cookie session covers auth with a plain <img src>
+// — no header needed. A malformed :sourceId or a blank ?url= is a 400; an
+// engine fetch failure is a 502; a cold fetch that cannot resolve within the
+// fail-fast deadline is a 504 (never a false 200, never a held connection).
+//
+// GAP-085: a Discover/library grid renders ~15 covers at once. Before this
+// cache existed EVERY render re-fetched EVERY cover LIVE from the engine host
+// (SourceCalls.image() on the engine host is cacheless), and that burst was
+// enough to trip Cloudflare's per-source rate-limiting on a protected source
+// — each slow re-solve held a same-origin connection open, saturating the
+// browser's per-host connection cap and hanging the whole SPA. Routing
+// through coverCache (internal/sourcecover) fetches each (sourceID, url) at
+// most once ever (see the package doc for why no TTL is needed) and bounds
+// any genuine cold miss with a fail-fast deadline + bounded concurrency, so a
+// burst can never reproduce that hang.
+func (h *Handler) SourceCover(c echo.Context) error {
+	sourceID, err := parseSourceID(c.Param("sourceId"))
+	if err != nil {
+		return err
+	}
+	url, err := parseCoverURL(c.QueryParam("url"))
+	if err != nil {
+		return err
+	}
+	return coverproxy.StreamEngineCached(c, h.coverCache, sourceID, url)
 }
 
 // Search handles GET /api/search.
@@ -66,19 +102,30 @@ func (h *Handler) Search(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// InspectChapters handles GET /api/sources/:sourceId/manga/:mangaId/chapters.
+// InspectChapters handles GET /api/sources/:sourceId/manga/:mangaId/chapters?url=&title=.
 //
-// It parses :mangaId as an integer (non-integer → 400) and returns the live
-// chapter list as []ChapterInspectDTO. :sourceId is passed to the service for
-// routing context (currently unused by the service implementation).
+// P2 Suwayomi-removal (slice 3b): the backend is URL-addressed — it requires a
+// REQUIRED ?url query param (the source-relative manga URL) and returns the
+// live chapter list as []ChapterInspectDTO. :mangaId stays in the route (FE
+// compat) but is bound/ignored; a request that only sends :mangaId (the
+// not-yet-updated frontend) gets a clean 400 until slice 3b-FE sends ?url=.
+//
+// ?title= is OPTIONAL free text (the manga's display title, e.g. from a
+// Discover candidate the caller already has in hand) — passing it improves
+// the engine host's chapter-number recognition AND lets this preview populate
+// the SAME shared chapter-cache entry a later Adopt for the same manga will
+// hit (see imports.Service.fetchChapters's doc comment). Omitting it is safe
+// (recognition still runs, just without the title-strip step); no validation
+// beyond trimming, since it feeds a display heuristic, not an identity key.
 func (h *Handler) InspectChapters(c echo.Context) error {
-	mangaID, err := parseMangaID(c.Param("mangaId"))
+	sourceID := c.Param("sourceId")
+	url, err := parseChapterURL(c.QueryParam("url"))
 	if err != nil {
 		return err
 	}
-	sourceID := c.Param("sourceId")
+	title := parseOptionalTitle(c.QueryParam("title"))
 
-	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, mangaID)
+	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, url, title)
 	if err != nil {
 		return err
 	}
@@ -112,26 +159,29 @@ func (h *Handler) Browse(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// Details handles GET /api/sources/:sourceId/manga/:mangaId/details.
+// Details handles GET /api/sources/:sourceId/manga/:mangaId/details?url=.
 //
 // It FORCES a live details fetch from the upstream source (via
-// imports.Service.MangaDetails → suwayomi.Client.FetchMangaDetails) and
+// imports.Service.MangaDetails → sourceengine.Client.MangaDetails) and
 // returns the enriched candidate as a SearchCandidateDTO — the same shape
 // Search/Browse return, so the frontend Discover hover preview can merge it
 // straight into an already-rendered candidate. Call this ON DEMAND for one
 // hovered manga at a time; never for every row of a search/browse page.
 //
-// An unknown :sourceId maps to 404 (mirrors Browse); any other failure is a
-// genuine upstream Suwayomi problem and maps to 502 (mirrors the cover-proxy
-// error mapping in cover.go), so a source outage never surfaces as a false 200.
+// P2 Suwayomi-removal (slice 3b): requires a REQUIRED ?url query param (see
+// InspectChapters's doc comment for the same :mangaId-kept-but-ignored /
+// ?url=-required transition). An unknown :sourceId maps to 404 (mirrors
+// Browse); any other failure is a genuine upstream source problem and maps to
+// 502 (mirrors the cover-proxy error mapping in cover.go), so a source outage
+// never surfaces as a false 200.
 func (h *Handler) Details(c echo.Context) error {
 	sourceID := c.Param("sourceId")
-	mangaID, err := parseMangaID(c.Param("mangaId"))
+	url, err := parseChapterURL(c.QueryParam("url"))
 	if err != nil {
 		return err
 	}
 
-	out, err := h.svc.MangaDetails(c.Request().Context(), sourceID, mangaID)
+	out, err := h.svc.MangaDetails(c.Request().Context(), sourceID, url)
 	if err != nil {
 		if errors.Is(err, imports.ErrSourceNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")
@@ -141,22 +191,28 @@ func (h *Handler) Details(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// Breakdown handles GET /api/sources/:sourceId/manga/:mangaId/breakdown.
+// Breakdown handles GET /api/sources/:sourceId/manga/:mangaId/breakdown?url=&title=.
 //
-// It fetches the live chapter feed for (sourceId, mangaId) and groups it by
+// It fetches the live chapter feed for (sourceId, url) and groups it by
 // scanlator, returning a SourceBreakdownDTO so the adopt UI can auto-split a
-// source into per-scanlator rows with counts + display ranges. An unknown
-// :sourceId maps to 404 (mirrors Details); any other failure is a genuine
-// upstream Suwayomi problem and maps to 502 via the shared httperr.Upstream
-// (mirrors Details), so a source outage never surfaces as a false 200.
+// source into per-scanlator rows with counts + display ranges.
+//
+// P2 Suwayomi-removal (slice 3b): requires a REQUIRED ?url query param (see
+// InspectChapters's doc comment for the transition). ?title= is OPTIONAL —
+// same free-text/cache-sharing contract as InspectChapters's (see its doc
+// comment). An unknown :sourceId maps to 404 (mirrors Details); any other
+// failure is a genuine upstream source problem and maps to 502 via the shared
+// httperr.Upstream (mirrors Details), so a source outage never surfaces as a
+// false 200.
 func (h *Handler) Breakdown(c echo.Context) error {
 	sourceID := c.Param("sourceId")
-	mangaID, err := parseMangaID(c.Param("mangaId"))
+	url, err := parseChapterURL(c.QueryParam("url"))
 	if err != nil {
 		return err
 	}
+	title := parseOptionalTitle(c.QueryParam("title"))
 
-	out, err := h.svc.SourceBreakdown(c.Request().Context(), sourceID, mangaID)
+	out, err := h.svc.SourceBreakdown(c.Request().Context(), sourceID, url, title)
 	if err != nil {
 		if errors.Is(err, imports.ErrSourceNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")
@@ -196,6 +252,7 @@ func (h *Handler) Adopt(c echo.Context) error {
 		providers[i] = imports.AdoptProvider{
 			Source:     p.Source,
 			MangaID:    p.MangaID,
+			URL:        p.URL,
 			Importance: p.Importance,
 			Scanlator:  p.Scanlator,
 		}

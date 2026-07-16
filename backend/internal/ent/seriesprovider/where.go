@@ -91,6 +91,11 @@ func URL(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldEQ(FieldURL, v))
 }
 
+// WebURL applies equality check predicate on the "web_url" field. It's identical to WebURLEQ.
+func WebURL(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEQ(FieldWebURL, v))
+}
+
 // Title applies equality check predicate on the "title" field. It's identical to TitleEQ.
 func Title(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldEQ(FieldTitle, v))
@@ -539,6 +544,71 @@ func URLEqualFold(v string) predicate.SeriesProvider {
 // URLContainsFold applies the ContainsFold predicate on the "url" field.
 func URLContainsFold(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldContainsFold(FieldURL, v))
+}
+
+// WebURLEQ applies the EQ predicate on the "web_url" field.
+func WebURLEQ(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEQ(FieldWebURL, v))
+}
+
+// WebURLNEQ applies the NEQ predicate on the "web_url" field.
+func WebURLNEQ(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldNEQ(FieldWebURL, v))
+}
+
+// WebURLIn applies the In predicate on the "web_url" field.
+func WebURLIn(vs ...string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldIn(FieldWebURL, vs...))
+}
+
+// WebURLNotIn applies the NotIn predicate on the "web_url" field.
+func WebURLNotIn(vs ...string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldNotIn(FieldWebURL, vs...))
+}
+
+// WebURLGT applies the GT predicate on the "web_url" field.
+func WebURLGT(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldGT(FieldWebURL, v))
+}
+
+// WebURLGTE applies the GTE predicate on the "web_url" field.
+func WebURLGTE(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldGTE(FieldWebURL, v))
+}
+
+// WebURLLT applies the LT predicate on the "web_url" field.
+func WebURLLT(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldLT(FieldWebURL, v))
+}
+
+// WebURLLTE applies the LTE predicate on the "web_url" field.
+func WebURLLTE(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldLTE(FieldWebURL, v))
+}
+
+// WebURLContains applies the Contains predicate on the "web_url" field.
+func WebURLContains(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldContains(FieldWebURL, v))
+}
+
+// WebURLHasPrefix applies the HasPrefix predicate on the "web_url" field.
+func WebURLHasPrefix(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldHasPrefix(FieldWebURL, v))
+}
+
+// WebURLHasSuffix applies the HasSuffix predicate on the "web_url" field.
+func WebURLHasSuffix(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldHasSuffix(FieldWebURL, v))
+}
+
+// WebURLEqualFold applies the EqualFold predicate on the "web_url" field.
+func WebURLEqualFold(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEqualFold(FieldWebURL, v))
+}
+
+// WebURLContainsFold applies the ContainsFold predicate on the "web_url" field.
+func WebURLContainsFold(v string) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldContainsFold(FieldWebURL, v))
 }
 
 // TitleEQ applies the EQ predicate on the "title" field.

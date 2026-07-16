@@ -853,6 +853,7 @@ func buildRenderMeta(ch *ent.Chapter, pc *ent.ProviderChapter, sp *ent.SeriesPro
 		ChapterKey:          pc.ChapterKey,
 		UploadDate:          pc.ProviderUploadDate,
 		URL:                 pc.URL,
+		WebURL:              pc.WebURL,
 		Importance:          sp.Importance,
 		SeriesProviderTitle: sp.Title,
 	}

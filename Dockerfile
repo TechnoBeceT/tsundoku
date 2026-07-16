@@ -87,11 +87,19 @@ RUN set -e; \
 FROM eclipse-temurin:21-jre-noble
 # tini -> reaps zombies + forwards signals (the Go server + engine-host are children).
 # gosu -> drop privileges. curl -> HEALTHCHECK. The lib* set is the Chromium runtime
-# KCEF needs for OFF-SCREEN rendering — NO Xvfb (windowless_rendering_enabled removes
-# the X-display requirement that the old embedded-Suwayomi stage needed).
+# KCEF needs. xvfb + dbus-x11/dbus -> CEF/Aura still requires a real (or virtual) X
+# display and a D-Bus session even with `--off-screen-rendering-enabled
+# --disable-gpu`: without them Chromium's Aura/Ozone platform layer fails to
+# initialize ("The platform failed to initialize. Exiting." / "ContentMainRun failed
+# with exit code 1"), so every WebView-gated source (Comix et al.) hangs until the
+# 2-minute timeout and 502s. Upstream Suwayomi-Server runs its bundled Chromium under
+# Xvfb for the same reason — the earlier "NO Xvfb, windowless_rendering_enabled
+# removes the X-display requirement" assumption in this stage was wrong and is
+# reverted here (entrypoint.sh starts Xvfb + dbus before launching engine-host).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         tini gosu curl \
+        xvfb dbus-x11 dbus \
         libxss1 libxext6 libxrender1 libxcomposite1 libxdamage1 \
         libxkbcommon0 libxtst6 libxcursor1 libxi6 libxrandr2 libx11-6 libxcb1 \
         libglib2.0-0t64 libnss3 libdbus-1-3 libpango-1.0-0 \
@@ -111,14 +119,17 @@ RUN chmod +x /app/entrypoint.sh
 
 # Container defaults. The engine-host owns its extension working-set (installed
 # APKs + prefs) on the /config volume; KCEF is enabled (off-screen). The Go server
-# runs in EXTERNAL Suwayomi mode so it never tries to spawn the removed embedded
-# Suwayomi (the Go<->host repoint is P2 — see engine-host/RPC-CONTRACT.md).
+# is a PURE CLIENT of the engine-host over localhost (P2 repoint complete — Suwayomi
+# is gone): the entrypoint starts the host on TSUNDOKU_ENGINE_PORT (7777) and the Go
+# server connects to it via TSUNDOKU_ENGINE_URL. TSUNDOKU_ENGINE_RUNTIMEDIR roots the
+# Go-side extension-.apk byte cache on the persistent /config volume.
 ENV TSUNDOKU_STORAGE_FOLDER=/series \
     TSUNDOKU_ENGINE_DATA=/config/engine \
     TSUNDOKU_ENGINE_PORT=7777 \
     TSUNDOKU_ENGINE_KCEF=true \
     ENGINE_KCEF_BUNDLE=/app/kcef-runtime/bin/kcef \
-    TSUNDOKU_SUWAYOMI_EXTERNALURL=http://127.0.0.1:7777
+    TSUNDOKU_ENGINE_URL=http://localhost:7777 \
+    TSUNDOKU_ENGINE_RUNTIMEDIR=/config/engine-cache
 
 # 9833 = Tsundoku HTTP (API + SPA); 7777 = engine-host RPC (internal).
 EXPOSE 9833

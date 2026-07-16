@@ -150,6 +150,20 @@ func (_u *SeriesProviderUpdate) SetNillableURL(v *string) *SeriesProviderUpdate 
 	return _u
 }
 
+// SetWebURL sets the "web_url" field.
+func (_u *SeriesProviderUpdate) SetWebURL(v string) *SeriesProviderUpdate {
+	_u.mutation.SetWebURL(v)
+	return _u
+}
+
+// SetNillableWebURL sets the "web_url" field if the given value is not nil.
+func (_u *SeriesProviderUpdate) SetNillableWebURL(v *string) *SeriesProviderUpdate {
+	if v != nil {
+		_u.SetWebURL(*v)
+	}
+	return _u
+}
+
 // SetTitle sets the "title" field.
 func (_u *SeriesProviderUpdate) SetTitle(v string) *SeriesProviderUpdate {
 	_u.mutation.SetTitle(v)
@@ -464,6 +478,9 @@ func (_u *SeriesProviderUpdate) sqlSave(ctx context.Context) (_node int, err err
 	if value, ok := _u.mutation.URL(); ok {
 		_spec.SetField(seriesprovider.FieldURL, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.WebURL(); ok {
+		_spec.SetField(seriesprovider.FieldWebURL, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Title(); ok {
 		_spec.SetField(seriesprovider.FieldTitle, field.TypeString, value)
 	}
@@ -775,6 +792,20 @@ func (_u *SeriesProviderUpdateOne) SetURL(v string) *SeriesProviderUpdateOne {
 func (_u *SeriesProviderUpdateOne) SetNillableURL(v *string) *SeriesProviderUpdateOne {
 	if v != nil {
 		_u.SetURL(*v)
+	}
+	return _u
+}
+
+// SetWebURL sets the "web_url" field.
+func (_u *SeriesProviderUpdateOne) SetWebURL(v string) *SeriesProviderUpdateOne {
+	_u.mutation.SetWebURL(v)
+	return _u
+}
+
+// SetNillableWebURL sets the "web_url" field if the given value is not nil.
+func (_u *SeriesProviderUpdateOne) SetNillableWebURL(v *string) *SeriesProviderUpdateOne {
+	if v != nil {
+		_u.SetWebURL(*v)
 	}
 	return _u
 }
@@ -1122,6 +1153,9 @@ func (_u *SeriesProviderUpdateOne) sqlSave(ctx context.Context) (_node *SeriesPr
 	}
 	if value, ok := _u.mutation.URL(); ok {
 		_spec.SetField(seriesprovider.FieldURL, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.WebURL(); ok {
+		_spec.SetField(seriesprovider.FieldWebURL, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Title(); ok {
 		_spec.SetField(seriesprovider.FieldTitle, field.TypeString, value)

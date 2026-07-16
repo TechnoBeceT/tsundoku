@@ -509,7 +509,7 @@ func TestAddProvidersHandler(t *testing.T) {
 func testAddProvidersUnauthorized(t *testing.T) {
 	env := newEnv(t)
 	path := "/api/series/" + uuid.New().String() + "/providers/batch"
-	rec := env.doUnauth("POST", path, `{"providers":[{"source":"weeb","mangaId":1}]}`)
+	rec := env.doUnauth("POST", path, `{"providers":[{"source":"weeb","url":"/manga/1"}]}`)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("unauth = %d, want 401", rec.Code)
 	}
@@ -533,7 +533,7 @@ func testAddProvidersSuccess(t *testing.T) {
 	}
 	ser := env.client.Series.Query().OnlyX(ctx)
 
-	body := `{"providers":[{"source":"weebA","mangaId":91},{"source":"weebB","mangaId":92}]}`
+	body := `{"providers":[{"source":"2","url":"/manga/91"},{"source":"3","url":"/manga/92"}]}`
 	rec := env.do("POST", "/api/series/"+ser.ID.String()+"/providers/batch", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("batch attach = %d, want 200 (%s)", rec.Code, rec.Body.String())
@@ -564,7 +564,7 @@ func testAddProvidersDuplicate(t *testing.T) {
 		SetSeriesID(ser.ID).SetProvider("weebA").SetScanlator("").SetImportance(1).
 		SaveX(ctx)
 
-	body := `{"providers":[{"source":"weebA","mangaId":91}]}`
+	body := `{"providers":[{"source":"weebA","url":"/manga/91"}]}`
 	rec := env.do("POST", "/api/series/"+ser.ID.String()+"/providers/batch", body)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("duplicate provider: want 409, got %d (%s)", rec.Code, rec.Body.String())
@@ -574,7 +574,7 @@ func testAddProvidersDuplicate(t *testing.T) {
 func testAddProvidersUnknownSeries(t *testing.T) {
 	env := newEnv(t)
 	path := "/api/series/" + uuid.New().String() + "/providers/batch"
-	rec := env.do("POST", path, `{"providers":[{"source":"weebA","mangaId":91}]}`)
+	rec := env.do("POST", path, `{"providers":[{"source":"weebA","url":"/manga/91"}]}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown series: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}

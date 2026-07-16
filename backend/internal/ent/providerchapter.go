@@ -29,6 +29,8 @@ type ProviderChapter struct {
 	Name string `json:"name,omitempty"`
 	// URL holds the value of the "url" field.
 	URL string `json:"url,omitempty"`
+	// WebURL holds the value of the "web_url" field.
+	WebURL string `json:"web_url,omitempty"`
 	// ProviderUploadDate holds the value of the "provider_upload_date" field.
 	ProviderUploadDate *time.Time `json:"provider_upload_date,omitempty"`
 	// ProviderIndex holds the value of the "provider_index" field.
@@ -78,7 +80,7 @@ func (*ProviderChapter) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case providerchapter.FieldProviderIndex, providerchapter.FieldPageCount, providerchapter.FieldSuwayomiChapterID, providerchapter.FieldAttempts:
 			values[i] = new(sql.NullInt64)
-		case providerchapter.FieldChapterKey, providerchapter.FieldName, providerchapter.FieldURL, providerchapter.FieldLastError:
+		case providerchapter.FieldChapterKey, providerchapter.FieldName, providerchapter.FieldURL, providerchapter.FieldWebURL, providerchapter.FieldLastError:
 			values[i] = new(sql.NullString)
 		case providerchapter.FieldProviderUploadDate, providerchapter.FieldNextAttemptAt:
 			values[i] = new(sql.NullTime)
@@ -135,6 +137,12 @@ func (_m *ProviderChapter) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field url", values[i])
 			} else if value.Valid {
 				_m.URL = value.String
+			}
+		case providerchapter.FieldWebURL:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field web_url", values[i])
+			} else if value.Valid {
+				_m.WebURL = value.String
 			}
 		case providerchapter.FieldProviderUploadDate:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -238,6 +246,9 @@ func (_m *ProviderChapter) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("url=")
 	builder.WriteString(_m.URL)
+	builder.WriteString(", ")
+	builder.WriteString("web_url=")
+	builder.WriteString(_m.WebURL)
 	builder.WriteString(", ")
 	if v := _m.ProviderUploadDate; v != nil {
 		builder.WriteString("provider_upload_date=")

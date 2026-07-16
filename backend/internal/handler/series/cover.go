@@ -106,14 +106,25 @@ func coverETag(version string) string {
 }
 
 // ProviderCover streams the cover image for a specific provider. The cover_url
-// stored on that SeriesProvider is fetched from Suwayomi. Returns 404 when the
-// provider has no cover or does not belong to the series, 502 on a Suwayomi
-// fetch failure.
+// stored on that SeriesProvider is fetched from the engine host, addressed by
+// the provider's own numeric engine source id (series.Service.ProviderCoverURL
+// resolves both). Returns 404 when the provider has no cover or does not
+// belong to the series, 502 on an engine fetch failure (including a
+// disk-origin provider, which has no engine source to fetch from at all —
+// see ProviderCoverURL's doc comment), 504 when a cold fetch cannot be
+// resolved within the fail-fast deadline.
 //
-// GOTCHA: this one is NOT cached on disk (only the SERIES cover is). It is the
-// metadata-source picker's thumbnail — a handful per detail page, not 52 per
-// grid render — and a provider the series does not display has no obvious file
-// to own in the series folder.
+// GAP-085: this endpoint is now disk-cached indefinitely, keyed by
+// (sourceID, cover_url) — see internal/sourcecover's package doc — and a
+// cache MISS is bounded by a fail-fast deadline + bounded concurrency (the
+// SAME sourcecover.Cache instance the Discover/Search source-cover proxy
+// uses, handler/imports.SourceCover) so this endpoint can never hold a
+// same-origin connection open past the deadline even under a burst. It used
+// to be uncached (this is the metadata-source picker's thumbnail — a handful
+// per detail page, not 52 per grid render), but a cold-uncached fetch on a
+// Cloudflare-protected source was just as capable of contributing to the
+// same-origin connection pile-up as the Discover grid, so it gets the same
+// safety net.
 func (h *Handler) ProviderCover(c echo.Context) error {
 	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
@@ -123,9 +134,9 @@ func (h *Handler) ProviderCover(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	coverURL, err := h.svc.ProviderCoverURL(c.Request().Context(), id, providerID)
+	coverURL, sourceID, err := h.svc.ProviderCoverURL(c.Request().Context(), id, providerID)
 	if err != nil {
 		return mapServiceError(err)
 	}
-	return coverproxy.Stream(c, h.sw, coverURL)
+	return coverproxy.StreamEngineCached(c, h.coverCache, sourceID, coverURL)
 }

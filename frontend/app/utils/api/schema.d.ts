@@ -836,9 +836,13 @@ export interface paths {
         /**
          * Preview a manga's chapter list
          * @description Triggers a live chapter-list fetch from the source and returns a lightweight
-         *     preview as []ChapterInspect. This contacts the upstream provider and
-         *     populates Suwayomi's internal chapter cache — use before adopting to
-         *     confirm the chapter count.
+         *     preview as []ChapterInspect. This contacts the upstream provider — use
+         *     before adopting to confirm the chapter count.
+         *
+         *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
+         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     path is kept for route-shape compatibility but is IGNORED. A request
+         *     with no `url` gets 400.
          */
         get: operations["inspectChapters"];
         put?: never;
@@ -858,13 +862,18 @@ export interface paths {
         };
         /**
          * On-demand rich manga details
-         * @description FORCES Suwayomi to fetch full metadata (author/artist/genre/description)
-         *     for this manga from its upstream source, then returns the enriched
-         *     candidate in the same shape as Search/Browse. Suwayomi's Search/Browse
-         *     results are lightweight (title/cover/url only) — call this once per
-         *     manga a Discover card is hovered to fill in the rich fields; never for
-         *     every row of a search/browse page (each call is a real request to the
-         *     source).
+         * @description FORCES the engine host to fetch full metadata (author/artist/genre/
+         *     description) for this manga from its upstream source, then returns
+         *     the enriched candidate in the same shape as Search/Browse. Search/
+         *     Browse results are lightweight (title/cover/url only) — call this
+         *     once per manga a Discover card is hovered to fill in the rich fields;
+         *     never for every row of a search/browse page (each call is a real
+         *     request to the source).
+         *
+         *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
+         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     path is kept for route-shape compatibility but is IGNORED. A request
+         *     with no `url` gets 400.
          */
         get: operations["getMangaDetails"];
         put?: never;
@@ -887,6 +896,11 @@ export interface paths {
          * @description Fetches the live chapter feed for this source-manga and groups it by scanlator,
          *     returning per-group counts and display ranges — powers the adopt UI's auto-split
          *     of a source into per-scanlator rows, each adoptable with its own importance.
+         *
+         *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
+         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     path is kept for route-shape compatibility but is IGNORED. A request
+         *     with no `url` gets 400.
          */
         get: operations["getSourceBreakdown"];
         put?: never;
@@ -897,7 +911,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sources/{sourceId}/manga/{mangaId}/cover": {
+    "/api/sources/{sourceId}/cover": {
         parameters: {
             query?: never;
             header?: never;
@@ -905,14 +919,16 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Source-manga cover image
-         * @description Streams a Discover/Search candidate's cover image, proxied from Suwayomi's
-         *     own REST thumbnail endpoint. The image is returned as a binary blob. Returns
-         *     502 when Suwayomi fails to fetch it. This is a same-origin, authed proxy —
-         *     it exists because a source's raw GraphQL thumbnailUrl is Suwayomi-relative
-         *     and 404s if rendered directly against Tsundoku's own origin.
+         * Source-manga cover proxy
+         * @description Streams a source-manga cover image, re-fetched through the engine host
+         *     (mirrors getProviderCover's coverproxy.StreamEngine primitive).
+         *     Discover/Search cards otherwise point an <img> straight at the raw
+         *     thumbnailUrl, which a Cloudflare/hotlink-protected source rejects with
+         *     a 403 to a plain browser request; the engine host's outbound HTTP
+         *     client already carries that source's cf_clearance. Returns 502 when
+         *     the engine fetch fails.
          */
-        get: operations["getMangaCover"];
+        get: operations["getSourceCover"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1463,37 +1479,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/suwayomi/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Read Suwayomi FlareSolverr/SOCKS settings
-         * @description Returns the FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of the
-         *     active Suwayomi's server-global settings. A pure passthrough — Tsundoku
-         *     stores none of these values. An upstream Suwayomi failure is a 502.
-         */
-        get: operations["getSuwayomiSettings"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Suwayomi FlareSolverr/SOCKS settings
-         * @description Applies a PARTIAL update of the FlareSolverr + SOCKS subset: only the
-         *     provided fields are sent to Suwayomi, so no unset setting is clobbered.
-         *     The settings are RE-READ after the write and returned so the caller sees
-         *     the persisted values without a refetch (§16). A validation failure
-         *     (bad SOCKS version/port, malformed URL, empty body) is a 400; an upstream
-         *     Suwayomi failure is a 502.
-         */
-        patch: operations["updateSuwayomiSettings"];
-        trace?: never;
-    };
     "/api/flaresolverr/settings": {
         parameters: {
             query?: never;
@@ -1505,9 +1490,9 @@ export interface paths {
          * Read Tsundoku-owned FlareSolverr settings
          * @description Returns Tsundoku's OWN FlareSolverr (Cloudflare-bypass) settings — a
          *     runtime setting on Tsundoku's settings overlay (QCAT-238), NOT read
-         *     from Suwayomi and NOT an env var. Reuses the same shape as the
-         *     Suwayomi-proxy FlareSolverr group so a client can rebind from one
-         *     endpoint to the other with no field changes.
+         *     from the download engine and NOT an env var. Reuses the same shape as
+         *     the retired Suwayomi settings-proxy's FlareSolverr group so a client
+         *     can rebind from one endpoint to the other with no field changes.
          */
         get: operations["getFlareSolverrSettings"];
         put?: never;
@@ -1520,10 +1505,9 @@ export interface paths {
          * @description Applies a PARTIAL update to Tsundoku's own FlareSolverr settings
          *     (only the provided fields change; an empty body is a 400). On
          *     success, the full resulting state is ALSO best-effort mirrored down
-         *     to Suwayomi's own settings (via the same Suwayomi settings proxy) so
-         *     Suwayomi's source-scraping stays in sync while Suwayomi still
-         *     exists — a Suwayomi-down mirror failure is logged and NEVER fails
-         *     this request, since the Tsundoku save already persisted. The
+         *     to the engine host's own FlareSolverr config so its source-scraping
+         *     stays in sync — an engine-down mirror failure is logged and NEVER
+         *     fails this request, since the Tsundoku save already persisted. The
          *     settings are RE-READ after the write and returned so the caller sees
          *     the persisted values without a refetch (§16).
          */
@@ -1667,59 +1651,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/suwayomi/extensions/{pkgName}/icon": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Extension icon image
-         * @description Streams the extension's icon image, proxied from Suwayomi. Suwayomi's own
-         *     iconUrl is a cross-origin URL the browser cannot load directly, so this
-         *     endpoint looks the extension up by pkgName among Extensions() and streams
-         *     that entry's own reported icon (Suwayomi's REST icon path, confirmed live:
-         *     "/api/v1/extension/icon/{apkFileName}") as a binary blob. Returns 404 when
-         *     pkgName is unknown, 502 when Suwayomi fails to fetch the icon.
-         */
-        get: operations["getExtensionIcon"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/suwayomi/sources/{sourceId}/enabled": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Toggle a source's per-language enable/disable state
-         * @description Writes the CLIENT-CONVENTION enable/disable flag for one source (Suwayomi
-         *     has no server-side "disabled source" concept — the flag lives in a
-         *     per-source metadata key). Disabling hides the source from Tsundoku's
-         *     Discover/Search/Browse source lists but does NOT stop refreshing a series
-         *     already adopted from it, and does NOT delete the flag on re-enable.
-         *     Applies the write then RE-READS the authoritative state (§16 round-trip).
-         *     A blank sourceId or a missing `enabled` field is a 400; a sourceId absent
-         *     from the post-write re-read is a 404; any upstream Suwayomi failure
-         *     (the write or the re-read) is a 502.
-         */
-        patch: operations["setSourceEnabled"];
-        trace?: never;
-    };
     "/api/suwayomi/extensions/{pkgName}/preferences": {
         parameters: {
             query?: never;
@@ -1729,11 +1660,12 @@ export interface paths {
         };
         /**
          * List an extension's per-source preferences
-         * @description Resolves the extension's sources (one per language) and returns each
-         *     source's configurable preferences, grouped by source. A pure passthrough —
-         *     Tsundoku stores none of this. Preferences are POSITION-indexed for writes;
-         *     the FE must use a fresh read's positions and never cache them. A blank
-         *     pkgName is a 400; any upstream Suwayomi failure is a 502.
+         * @description Resolves the extension's sources (one per language, embedded on the
+         *     extension itself) and returns each source's configurable preferences,
+         *     grouped by source. A pure passthrough — Tsundoku stores none of this.
+         *     Preferences are KEY-addressed for writes (see the PATCH operation). A
+         *     blank pkgName is a 400; an unknown pkgName is a 404; any upstream
+         *     engine failure is a 502.
          */
         get: operations["getExtensionPreferences"];
         put?: never;
@@ -1742,13 +1674,13 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Write one source preference by position
-         * @description Writes a single preference (identified by sourceId + position) and returns
-         *     the FULL refreshed preference list for that source (§16 round-trip — the FE
-         *     re-derives fresh positions from it). value's JSON type must match the
-         *     variant at that position (boolean → CheckBox/Switch, string → List/EditText,
-         *     array → MultiSelectList); a mismatch or an out-of-range position is a 400.
-         *     Any upstream Suwayomi failure is a 502.
+         * Write one source preference by key
+         * @description Writes a single preference (identified by sourceId + key) and returns
+         *     the FULL refreshed preference list for that source (§16 round-trip).
+         *     value's JSON type must match the variant at that key (boolean →
+         *     CheckBox/Switch, string → List/EditText, array → MultiSelectList); a
+         *     mismatch or an unknown key is a 400. Any upstream engine failure is a
+         *     502.
          */
         patch: operations["setExtensionPreference"];
         trace?: never;
@@ -2498,12 +2430,24 @@ export interface components {
             mangaId: number;
             /** @description Manga display title as returned by the source. */
             title: string;
-            /** @description Provider-canonical URL for this manga (powers the "View on source" link); empty string when not provided. */
+            /**
+             * @description Provider-canonical ADDRESSING url for this manga — what every adopt/
+             *     add-source/match request must send back to identify it. NOT a
+             *     clickable browser link; see realUrl for that. Empty string when not
+             *     provided.
+             */
             url: string;
             /**
-             * @description Tsundoku's own cover-proxy path ("/api/sources/{source}/manga/{mangaId}/cover"),
-             *     never Suwayomi's raw thumbnail URL. Empty string when the source provided no
-             *     thumbnail at all.
+             * @description Fully-qualified, browser-clickable URL for this manga (Mihon's
+             *     HttpSource.getMangaUrl); powers the "View on source" external link.
+             *     Distinct from url (the addressing key) — never send this back to
+             *     the backend. Empty string when the engine host could not resolve
+             *     one.
+             */
+            realUrl: string;
+            /**
+             * @description The engine host's own resolved cover image URL, used verbatim (directly
+             *     fetchable). Empty string when the source provided no thumbnail at all.
              */
             thumbnailUrl: string;
             /** @description Manga's writing credit; empty string when not provided. */
@@ -2539,10 +2483,12 @@ export interface components {
             scanlator: string;
         };
         AdoptProvider: {
-            /** @description Suwayomi source ID (e.g. "mangadex"). */
+            /** @description Engine-host source ID, stringified (e.g. "2"). */
             source: string;
-            /** @description Suwayomi-internal manga identifier within the source. */
+            /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
+            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            url?: string;
             /** @description Provider rank for this series (higher = preferred). */
             importance: number;
             /**
@@ -2705,24 +2651,12 @@ export interface components {
                  */
                 prefsCaptured: number;
             };
-            urls: {
-                /**
-                 * @description SeriesProvider rows whose url is resolved.
-                 * @example 40
-                 */
-                filled: number;
-                /**
-                 * @description Live SeriesProvider rows still missing a url (the backfill's remaining candidate set).
-                 * @example 12
-                 */
-                remaining: number;
-            };
             /**
              * @description Human-readable notes naming what is still outstanding (e.g.
              *     "3 extensions not cached"). Empty when nothing is outstanding.
              * @example [
              *       "3 extensions not cached",
-             *       "12 provider urls unresolved"
+             *       "2 sources without captured preferences"
              *     ]
              */
             gaps: string[];
@@ -2944,15 +2878,6 @@ export interface components {
              */
             url: string;
         };
-        /**
-         * @description The FlareSolverr (Cloudflare-bypass) + SOCKS-proxy subset of Suwayomi's
-         *     server-global settings, proxied verbatim from the active Suwayomi (embed
-         *     or external). Tsundoku stores none of these values.
-         */
-        SuwayomiSettings: {
-            flareSolverr: components["schemas"]["FlareSolverrSettings"];
-            socksProxy: components["schemas"]["SocksProxySettings"];
-        };
         FlareSolverrSettings: {
             /** @description Toggles the FlareSolverr Cloudflare-bypass proxy. */
             enabled: boolean;
@@ -2976,37 +2901,6 @@ export interface components {
             /** @description Use FlareSolverr only as a fallback for blocked requests. */
             asResponseFallback: boolean;
         };
-        SocksProxySettings: {
-            /** @description Toggles routing source traffic through the SOCKS proxy. */
-            enabled: boolean;
-            /**
-             * @description SOCKS protocol version (4 or 5).
-             * @example 5
-             * @enum {integer}
-             */
-            version: 4 | 5;
-            /** @description Proxy hostname or IP. */
-            host: string;
-            /**
-             * @description Proxy port (numeric string; Suwayomi types it as a String).
-             * @example 1080
-             */
-            port: string;
-            /** @description Optional proxy username. */
-            username: string;
-            /** @description Optional proxy password. */
-            password: string;
-        };
-        /**
-         * @description A PARTIAL update of the FlareSolverr + SOCKS subset. Both groups and every
-         *     field within them are optional: an omitted group or field is left
-         *     untouched, so no unset setting is clobbered. At least one field must be
-         *     present (an empty body is a 400).
-         */
-        SuwayomiSettingsUpdate: {
-            flareSolverr?: components["schemas"]["FlareSolverrUpdate"];
-            socksProxy?: components["schemas"]["SocksProxyUpdate"];
-        };
         /** @description Partial FlareSolverr group; omitted fields are untouched. */
         FlareSolverrUpdate: {
             enabled?: boolean;
@@ -3019,25 +2913,13 @@ export interface components {
             sessionTtl?: number;
             asResponseFallback?: boolean;
         };
-        /** @description Partial SOCKS-proxy group; omitted fields are untouched. */
-        SocksProxyUpdate: {
-            enabled?: boolean;
-            /**
-             * @description SOCKS protocol version (4 or 5).
-             * @enum {integer}
-             */
-            version?: 4 | 5;
-            host?: string;
-            /** @description Numeric string in 1..65535. */
-            port?: string;
-            username?: string;
-            password?: string;
-        };
         /**
-         * @description A Suwayomi extension (a Tachiyomi/Mihon source plugin), proxied verbatim
-         *     from the active Suwayomi (embed or external). Tsundoku stores none of
-         *     this. The identity is pkgName (there is no numeric id); the install/nsfw/
-         *     obsolete flags use Suwayomi's isInstalled/isNsfw/isObsolete naming.
+         * @description An extension (a Tachiyomi/Mihon source plugin), proxied verbatim from
+         *     the engine host. Tsundoku stores none of this. The identity is
+         *     pkgName (there is no numeric id); the install/nsfw flags use the
+         *     engine host's isInstalled/isNsfw naming. iconUrl is the engine host's
+         *     own reported icon image URL, served AS-IS (no same-origin proxy —
+         *     the FE renders it directly).
          */
         Extension: {
             /**
@@ -3065,18 +2947,36 @@ export interface components {
              * @example 42
              */
             versionCode: number;
-            /** @description Tsundoku same-origin icon proxy path ("/api/suwayomi/extensions/{pkgName}/icon"), not Suwayomi's own raw (cross-origin) icon URL. */
+            /** @description The engine host's own reported icon image URL, served as-is. */
             iconUrl: string;
-            /** @description Source repo URL this extension came from; "" when null. */
-            repo: string;
+            /** @description Source repo URL this extension came from; null when not associated with a repo (e.g. sideloaded). */
+            repoUrl: string | null;
             /** @description Whether the extension is currently installed. */
             isInstalled: boolean;
             /** @description Whether an installed extension has a newer version available. */
             hasUpdate: boolean;
             /** @description Whether the extension is flagged not-safe-for-work. */
             isNsfw: boolean;
-            /** @description Whether the extension is orphaned (no longer in any repo). */
-            isObsolete: boolean;
+            /** @description The content sources this extension provides (one per language it supports) — the set the per-source preferences endpoint resolves against. */
+            sources: components["schemas"]["ExtensionSource"][];
+        };
+        /** @description One content source an extension provides. */
+        ExtensionSource: {
+            /**
+             * @description The source's stable numeric identifier, as a decimal string.
+             * @example 2499283573021220255
+             */
+            id: string;
+            /**
+             * @description Human-readable source name.
+             * @example MangaDex
+             */
+            name: string;
+            /**
+             * @description BCP-47 language tag the source reports.
+             * @example en
+             */
+            lang: string;
         };
         /** @description The configured extension repo URL list. */
         ExtensionRepos: {
@@ -3097,24 +2997,22 @@ export interface components {
             repos: string[];
         };
         /**
-         * @description One configurable preference of a Suwayomi source (a Tachiyomi/Mihon
-         *     source setting), flattened from the GraphQL Preference union. Read `type`
-         *     first: it decides how `currentValue`/`default` are typed —
-         *     CheckBoxPreference/SwitchPreference are booleans, ListPreference/
-         *     EditTextPreference are strings (List also carries entries/entryValues),
-         *     MultiSelectListPreference are string arrays. `position` is the 0-based
-         *     array index and is the ONLY write selector; it must come from a FRESH read
-         *     (the array order can shift server-side — never cache positions).
+         * @description One configurable preference of a source (a Tachiyomi/Mihon source
+         *     setting). Read `type` first: it decides how `currentValue`/`default`
+         *     are typed — CheckBoxPreference/SwitchPreferenceCompat are booleans,
+         *     ListPreference/EditTextPreference are strings (List also carries
+         *     entries/entryValues), MultiSelectListPreference are string arrays.
+         *     `key` is the ONLY write selector (KEY-addressed, not position-indexed
+         *     — the engine host's write is keyed, unlike the retired Suwayomi
+         *     position-indexed shape).
          */
         SourcePreference: {
             /**
-             * @description The union variant (Suwayomi __typename).
+             * @description The union variant (the androidx.preference class simpleName).
              * @enum {string}
              */
-            type: "CheckBoxPreference" | "SwitchPreference" | "ListPreference" | "MultiSelectListPreference" | "EditTextPreference";
-            /** @description 0-based array index — the (position-indexed) write selector. */
-            position: number;
-            /** @description Source-internal preference key ("" when null). */
+            type: "CheckBoxPreference" | "SwitchPreferenceCompat" | "ListPreference" | "MultiSelectListPreference" | "EditTextPreference";
+            /** @description Source-internal preference key — the write selector. */
             key: string;
             /** @description Human-readable label ("" when null). */
             title: string;
@@ -3132,35 +3030,21 @@ export interface components {
             /** @description Stored option values matching entries by index (List/MultiSelect only; [] otherwise). */
             entryValues: string[];
         };
-        /** @description One source's preferences within a grouped extension response (one source per language). */
+        /**
+         * @description One source's preferences within a grouped extension response (one
+         *     source per language). The per-language enable/disable toggle is
+         *     RETIRED (sourceengine has no server-side "disabled source" concept
+         *     to proxy).
+         */
         SourcePreferencesGroup: {
-            /** @description The Suwayomi source id (the write body's sourceId). */
+            /** @description The engine host source id (the write body's sourceId). */
             sourceId: string;
             /** @description Human-readable source name. */
             sourceName: string;
             /** @description BCP-47 language tag. */
             lang: string;
-            /**
-             * @description The per-language enable/disable toggle. A disabled source is hidden
-             *     from Tsundoku's Discover/Search/Browse source lists but keeps
-             *     updating any series already adopted from it. Toggled via
-             *     PATCH /api/suwayomi/sources/{sourceId}/enabled.
-             */
-            enabled: boolean;
             /** @description This source's configurable preferences, in array order. */
             preferences: components["schemas"]["SourcePreference"][];
-        };
-        /** @description The authoritative per-language enable/disable state, re-read after a write (§16 round-trip). */
-        SourceEnabled: {
-            /** @description The Suwayomi source id. */
-            sourceId: string;
-            /** @description The enable/disable state as re-read after the write. */
-            enabled: boolean;
-        };
-        /** @description Set the per-language enable/disable state for one source. */
-        SetSourceEnabledRequest: {
-            /** @description The new enable/disable state. */
-            enabled: boolean;
         };
         /** @description An extension's per-source preferences, grouped by the (per-language) source they belong to. */
         SourcePreferencesBySource: {
@@ -3168,16 +3052,16 @@ export interface components {
             sources: components["schemas"]["SourcePreferencesGroup"][];
         };
         /**
-         * @description Write one source preference by POSITION. `value`'s JSON type must match the
-         *     variant at that position (boolean → CheckBox/Switch, string → List/EditText,
-         *     array of strings → MultiSelectList) — a mismatch is a 400. position must be
-         *     taken from a fresh read (positions can shift server-side).
+         * @description Write one source preference by KEY. `value`'s JSON type must match the
+         *     variant at that key (boolean → CheckBox/Switch, string → List/EditText,
+         *     array of strings → MultiSelectList) — a mismatch is a 400. An unknown
+         *     key is also a 400.
          */
         SetSourcePreferenceRequest: {
-            /** @description The Suwayomi source id the preference belongs to. */
+            /** @description The engine host source id the preference belongs to. */
             sourceId: string;
-            /** @description 0-based array index of the preference to write. */
-            position: number;
+            /** @description The source-internal preference key to write. */
+            key: string;
             /** @description New value — a boolean, a string, or an array of strings (by variant). */
             value: (boolean | string | string[]) | null;
         };
@@ -3209,16 +3093,18 @@ export interface components {
             alreadyInDb: boolean;
         };
         /**
-         * @description Identifies one Suwayomi source+manga+scanlator to attach to a series.
+         * @description Identifies one engine-host source+manga+scanlator to attach to a series.
          *     Carries no importance — the batch attach (library.AddProviders)
          *     assigns importances itself, each strictly below the series' existing
          *     providers (decision E), in list order.
          */
         ProviderRef: {
-            /** @description Suwayomi source ID the chosen candidate came from. */
+            /** @description Engine-host source ID, stringified, the chosen candidate came from. */
             source: string;
-            /** @description Suwayomi-internal manga identifier within that source. */
+            /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
+            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            url?: string;
             /**
              * @description Selects which scanlation group's chapters this provider tracks; omit or send ""
              *     for "all chapters from this source". The same source may be attached again
@@ -3278,12 +3164,14 @@ export interface components {
             /** @description The sources to attach, best-first. */
             providers: components["schemas"]["ProviderRef"][];
         };
-        /** @description Attaches an additional Suwayomi source to an existing series. */
+        /** @description Attaches an additional engine-host source to an existing series; also reused by the Match-disk-provider endpoint (attaches a real source to an unlinked disk-origin provider group). */
         AddProviderRequest: {
-            /** @description Suwayomi source ID the chosen candidate came from. */
+            /** @description Engine-host source ID, stringified, the chosen candidate came from. */
             source: string;
-            /** @description Suwayomi-internal manga identifier within that source. */
+            /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
+            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            url?: string;
             /** @description Provider importance to assign (higher number = higher priority). */
             importance: number;
             /**
@@ -5366,12 +5254,17 @@ export interface operations {
     };
     inspectChapters: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                url?: string;
+                /** @description Optional manga display title (e.g. from an already-fetched Discover candidate). Improves the engine host's chapter-number recognition and lets this preview share its cache entry with a later Adopt for the same manga+title (see the mangaTitle-keyed discovery chapter cache). Omitting it is safe; recognition still runs, just without the title-strip step. */
+                title?: string;
+            };
             header?: never;
             path: {
-                /** @description Suwayomi source ID. */
+                /** @description Engine-host source ID, stringified. */
                 sourceId: string;
-                /** @description Suwayomi-internal manga identifier (integer). */
+                /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use the url query param instead. */
                 mangaId: number;
             };
             cookie?: never;
@@ -5387,7 +5280,7 @@ export interface operations {
                     "application/json": components["schemas"]["ChapterInspect"][];
                 };
             };
-            /** @description Non-integer mangaId. */
+            /** @description Missing url. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5409,12 +5302,15 @@ export interface operations {
     };
     getMangaDetails: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                url?: string;
+            };
             header?: never;
             path: {
-                /** @description Suwayomi source ID. */
+                /** @description Engine-host source ID, stringified. */
                 sourceId: string;
-                /** @description Suwayomi-internal manga identifier (integer). */
+                /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use the url query param instead. */
                 mangaId: number;
             };
             cookie?: never;
@@ -5430,7 +5326,7 @@ export interface operations {
                     "application/json": components["schemas"]["SearchCandidate"];
                 };
             };
-            /** @description Non-integer mangaId. */
+            /** @description Missing url. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5457,7 +5353,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Suwayomi failed to fetch the manga details. */
+            /** @description The engine host failed to fetch the manga details. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -5470,12 +5366,17 @@ export interface operations {
     };
     getSourceBreakdown: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                url?: string;
+                /** @description Optional manga display title (e.g. from an already-fetched Discover candidate). Improves the engine host's chapter-number recognition and lets this preview share its cache entry with a later Adopt for the same manga+title (see the mangaTitle-keyed discovery chapter cache). Omitting it is safe; recognition still runs, just without the title-strip step. */
+                title?: string;
+            };
             header?: never;
             path: {
-                /** @description Suwayomi source ID. */
+                /** @description Engine-host source ID, stringified. */
                 sourceId: string;
-                /** @description Suwayomi-internal manga identifier (integer). */
+                /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use the url query param instead. */
                 mangaId: number;
             };
             cookie?: never;
@@ -5491,7 +5392,7 @@ export interface operations {
                     "application/json": components["schemas"]["SourceBreakdown"];
                 };
             };
-            /** @description Non-integer mangaId. */
+            /** @description Missing url. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5518,7 +5419,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Suwayomi failed to fetch the chapter feed. */
+            /** @description The engine host failed to fetch the chapter feed. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -5529,15 +5430,16 @@ export interface operations {
             };
         };
     };
-    getMangaCover: {
+    getSourceCover: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The raw cover/thumbnail URL to re-fetch (as returned by Search/Browse's SearchCandidate.thumbnailUrl). */
+                url: string;
+            };
             header?: never;
             path: {
-                /** @description Suwayomi source ID (accepted for route symmetry; not used to resolve the thumbnail). */
+                /** @description Engine-host source ID, stringified decimal int64. */
                 sourceId: string;
-                /** @description Suwayomi-internal manga identifier (integer). */
-                mangaId: number;
             };
             cookie?: never;
         };
@@ -5552,7 +5454,7 @@ export interface operations {
                     "image/*": string;
                 };
             };
-            /** @description Non-integer mangaId. */
+            /** @description Malformed sourceId, or missing/blank url. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5570,7 +5472,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Suwayomi failed to fetch the cover image. */
+            /** @description The engine host failed to fetch the cover image. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -6522,95 +6424,6 @@ export interface operations {
             };
         };
     };
-    getSuwayomiSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The current FlareSolverr + SOCKS settings. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuwayomiSettings"];
-                };
-            };
-            /** @description Missing or invalid Bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Suwayomi was unreachable or returned a GraphQL error. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    updateSuwayomiSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SuwayomiSettingsUpdate"];
-            };
-        };
-        responses: {
-            /** @description Settings updated. Returns the refreshed FlareSolverr + SOCKS settings. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuwayomiSettings"];
-                };
-            };
-            /** @description A validation failure (bad SOCKS version/port, malformed URL, or empty body). */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Missing or invalid Bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Suwayomi was unreachable or returned a GraphQL error. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     getFlareSolverrSettings: {
         parameters: {
             query?: never;
@@ -6653,7 +6466,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Settings updated (and best-effort mirrored to Suwayomi). Returns the refreshed FlareSolverr settings. */
+            /** @description Settings updated (and best-effort mirrored to the engine host). Returns the refreshed FlareSolverr settings. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6997,128 +6810,6 @@ export interface operations {
             };
         };
     };
-    getExtensionIcon: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description The extension package name (its identity). */
-                pkgName: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The icon image bytes. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "image/*": string;
-                };
-            };
-            /** @description A blank pkgName. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Missing or invalid Bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description No extension with that pkgName. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Suwayomi was unreachable, returned a GraphQL error, or failed to fetch the icon. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    setSourceEnabled: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description The Suwayomi source id. */
-                sourceId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetSourceEnabledRequest"];
-            };
-        };
-        responses: {
-            /** @description The authoritative enable/disable state after the write. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SourceEnabled"];
-                };
-            };
-            /** @description A blank sourceId, invalid JSON body, or a missing `enabled` field. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Missing or invalid Bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The source was absent from the post-write re-read. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Suwayomi was unreachable or returned a GraphQL error. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     getExtensionPreferences: {
         parameters: {
             query?: never;
@@ -7158,7 +6849,16 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            /** @description No extension with that pkgName. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host was unreachable or returned an error. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -7194,7 +6894,7 @@ export interface operations {
                     "application/json": components["schemas"]["SourcePreference"][];
                 };
             };
-            /** @description A validation failure (blank sourceId, missing/negative or out-of-range position, or a value whose type doesn't match the variant). */
+            /** @description A validation failure (blank/non-numeric sourceId, blank key, an unknown key, or a value whose type doesn't match the variant). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -7212,7 +6912,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            /** @description The engine host was unreachable or returned an error. */
             502: {
                 headers: {
                     [name: string]: unknown;

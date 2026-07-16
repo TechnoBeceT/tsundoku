@@ -195,6 +195,7 @@ var (
 		{Name: "number", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "numeric"}},
 		{Name: "name", Type: field.TypeString, Default: ""},
 		{Name: "url", Type: field.TypeString, Default: ""},
+		{Name: "web_url", Type: field.TypeString, Default: ""},
 		{Name: "provider_upload_date", Type: field.TypeTime, Nullable: true},
 		{Name: "provider_index", Type: field.TypeInt, Default: 0},
 		{Name: "page_count", Type: field.TypeInt, Nullable: true},
@@ -212,7 +213,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "provider_chapters_series_providers_provider_chapters",
-				Columns:    []*schema.Column{ProviderChaptersColumns[12]},
+				Columns:    []*schema.Column{ProviderChaptersColumns[13]},
 				RefColumns: []*schema.Column{SeriesProvidersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -221,7 +222,7 @@ var (
 			{
 				Name:    "providerchapter_series_provider_id_chapter_key",
 				Unique:  true,
-				Columns: []*schema.Column{ProviderChaptersColumns[12], ProviderChaptersColumns[1]},
+				Columns: []*schema.Column{ProviderChaptersColumns[13], ProviderChaptersColumns[1]},
 			},
 		},
 	}
@@ -310,6 +311,7 @@ var (
 		{Name: "scanlator", Type: field.TypeString, Default: ""},
 		{Name: "language", Type: field.TypeString, Default: ""},
 		{Name: "url", Type: field.TypeString, Default: ""},
+		{Name: "web_url", Type: field.TypeString, Default: ""},
 		{Name: "title", Type: field.TypeString, Default: ""},
 		{Name: "metadata", Type: field.TypeBool, Default: false},
 		{Name: "status", Type: field.TypeString, Default: ""},
@@ -329,7 +331,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "series_providers_series_providers",
-				Columns:    []*schema.Column{SeriesProvidersColumns[16]},
+				Columns:    []*schema.Column{SeriesProvidersColumns[17]},
 				RefColumns: []*schema.Column{SeriesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},

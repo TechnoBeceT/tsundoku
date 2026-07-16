@@ -6,47 +6,50 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // This file (preferences.go) holds the per-source preference endpoints of the
 // extension-management proxy — the "Configure" gear for an installed extension.
 // Like the rest of the package it is a PURE passthrough: no Tsundoku state; the
-// preferences live on whichever Suwayomi the client targets.
+// preferences live on the engine host.
 //
-// POSITION-INDEXED CAUTION: a preference is written by its 0-based array position
-// (Suwayomi offers no key-indexed write). The array order can shift server-side,
-// so the FE must ALWAYS use the freshly-returned list after each write and never
-// cache positions across renders. The PATCH handler re-reads the source's
-// preferences immediately before the write to resolve the variant at the target
-// position (needed to send the correct typed value), and returns the refreshed
-// list from the write's own payload (§16 round-trip).
+// KEY-ADDRESSED (QCAT-253, P2 Suwayomi-removal slice 5): a preference write is
+// now addressed by its stable KEY, not a 0-based array position — the retired
+// Suwayomi shape required a fresh read before every write to resolve the
+// current position (the array order could shift server-side); the engine
+// host's SetPreferences has no such caveat.
 
 // Preferences handles GET /api/suwayomi/extensions/:pkgName/preferences. It
-// resolves the extension's sources (one per language) and returns each source's
-// configurable preferences grouped by source. A blank pkgName is a 400; any
-// upstream Suwayomi failure (resolving sources or reading a source's preferences)
-// is a 502.
+// resolves the extension's sources (embedded on Extensions()'s own response —
+// no separate lookup call, unlike the retired Suwayomi shape) and returns each
+// source's configurable preferences grouped by source. A blank pkgName is a
+// 400; an unknown pkgName is a 404; any upstream engine failure is a 502.
 func (h *Handler) Preferences(c echo.Context) error {
 	pkgName, err := validatePkgName(c.Param("pkgName"))
 	if err != nil {
 		return err
 	}
 	ctx := c.Request().Context()
-	sources, err := h.sw.ExtensionSources(ctx, pkgName)
+	exts, err := h.sw.Extensions(ctx)
 	if err != nil {
 		return httperr.Upstream(err)
 	}
-	groups := make([]SourcePreferencesGroupDTO, 0, len(sources))
-	for _, s := range sources {
-		prefs, err := h.sw.SourcePreferences(ctx, s.ID)
+	ext, ok := findExtension(exts, pkgName)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "extension not found")
+	}
+
+	groups := make([]SourcePreferencesGroupDTO, 0, len(ext.Sources))
+	for _, s := range ext.Sources {
+		prefs, err := h.sw.Preferences(ctx, s.ID)
 		if err != nil {
 			return httperr.Upstream(err)
 		}
 		groups = append(groups, SourcePreferencesGroupDTO{
-			SourceID:    s.ID,
+			SourceID:    formatSourceID(s.ID),
 			SourceName:  s.Name,
 			Lang:        s.Lang,
-			Enabled:     !s.Disabled,
 			Preferences: toSourcePreferenceDTOs(prefs),
 		})
 	}
@@ -54,13 +57,13 @@ func (h *Handler) Preferences(c echo.Context) error {
 }
 
 // SetPreference handles PATCH /api/suwayomi/extensions/:pkgName/preferences with a
-// {sourceId, position, value} body. It re-reads the source's preferences to
-// resolve the variant at position (so the value is sent as the correct type),
-// writes the one preference, and returns the FULL refreshed list from the write's
-// payload (§16 round-trip — the FE re-derives fresh positions from it). A
-// validation failure (blank sourceId, missing/negative position, out-of-range
-// position, or a value whose type doesn't match the variant) is a 400; any
-// upstream Suwayomi failure is a 502.
+// {sourceId, key, value} body. It re-reads the source's preferences to resolve
+// the variant at that key (so the value is coerced to the correct JSON-native
+// type), writes the one preference via a single-key SetPreferences batch, and
+// returns the FULL refreshed list from the write's payload (§16 round-trip). A
+// validation failure (blank/unparseable sourceId, blank key, an unknown key, or
+// a value whose type doesn't match the variant) is a 400; any upstream engine
+// failure is a 502.
 func (h *Handler) SetPreference(c echo.Context) error {
 	if _, err := validatePkgName(c.Param("pkgName")); err != nil {
 		return err
@@ -69,73 +72,41 @@ func (h *Handler) SetPreference(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return httperr.BadRequest("invalid request body")
 	}
-	sourceID, position, err := validatePreferenceUpdate(req)
+	sourceID, key, err := validatePreferenceUpdate(req)
 	if err != nil {
 		return err
 	}
 	ctx := c.Request().Context()
 
-	// Read the current list to resolve the variant at this position — the write
-	// must send the one typed field matching that variant. This also turns an
-	// out-of-range position into a clean 400 instead of Suwayomi's raw
-	// "Index: N, Size: M" 502.
-	prefs, err := h.sw.SourcePreferences(ctx, sourceID)
+	// Read the current list to resolve the variant at this key — the write must
+	// send the correctly-typed value. This also turns an unknown key into a
+	// clean 400 instead of the engine host's raw "unknown preference key" 502.
+	prefs, err := h.sw.Preferences(ctx, sourceID)
 	if err != nil {
 		return httperr.Upstream(err)
 	}
-	if position >= len(prefs) {
-		return httperr.BadRequest("position out of range")
+	pref, ok := findPreferenceByKey(prefs, key)
+	if !ok {
+		return httperr.BadRequest("unknown preference key")
 	}
-	value, err := coercePreferenceValue(prefs[position].Type, req.Value)
+	value, err := coercePreferenceValue(pref.Type, req.Value)
 	if err != nil {
 		return err
 	}
 
-	refreshed, err := h.sw.SetSourcePreference(ctx, sourceID, position, value)
+	refreshed, err := h.sw.SetPreferences(ctx, sourceID, map[string]any{key: value})
 	if err != nil {
 		return httperr.Upstream(err)
 	}
 	return c.JSON(http.StatusOK, toSourcePreferenceDTOs(refreshed))
 }
 
-// SetSourceEnabled handles PATCH /api/suwayomi/sources/:sourceId/enabled with a
-// {enabled} body — the per-language enable/disable toggle behind the
-// Configure dialog's per-source Switch. Disabling hides the source from
-// Tsundoku's Discover/Search/Browse source lists (internal/imports); it does
-// NOT stop refreshing a series already adopted from it and does NOT delete
-// the source's isEnabled meta on re-enable (see suwayomi.Client.
-// SetSourceEnabled). Applies the write then RE-READS via Sources for the
-// authoritative post-write state (§16 round-trip). A blank :sourceId or a
-// missing/non-boolean `enabled` field is a 400; any upstream Suwayomi failure
-// (the write or the re-read) is a 502; a sourceId absent from the re-read
-// list (the source vanished between the write and the read) is a 404.
-func (h *Handler) SetSourceEnabled(c echo.Context) error {
-	sourceID, err := validateSourceID(c.Param("sourceId"))
-	if err != nil {
-		return err
-	}
-	var req SourceEnabledUpdateRequest
-	if err := c.Bind(&req); err != nil {
-		return httperr.BadRequest("invalid request body")
-	}
-	enabled, err := validateSourceEnabledUpdate(req)
-	if err != nil {
-		return err
-	}
-	ctx := c.Request().Context()
-
-	if err := h.sw.SetSourceEnabled(ctx, sourceID, enabled); err != nil {
-		return httperr.Upstream(err)
-	}
-
-	sources, err := h.sw.Sources(ctx)
-	if err != nil {
-		return httperr.Upstream(err)
-	}
-	for _, s := range sources {
-		if s.ID == sourceID {
-			return c.JSON(http.StatusOK, SourceEnabledDTO{SourceID: s.ID, Enabled: !s.Disabled})
+// findPreferenceByKey returns the preference in prefs whose Key matches key.
+func findPreferenceByKey(prefs []sourceengine.Preference, key string) (sourceengine.Preference, bool) {
+	for _, p := range prefs {
+		if p.Key == key {
+			return p, true
 		}
 	}
-	return echo.NewHTTPError(http.StatusNotFound, "source not found")
+	return sourceengine.Preference{}, false
 }

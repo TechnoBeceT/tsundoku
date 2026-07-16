@@ -18,6 +18,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
 
 // fakeViewSyncer is a handler/series.ViewSyncer test double recording every
@@ -84,7 +85,7 @@ func newViewSyncEnv(t *testing.T, viewSyncer handler.ViewSyncer) *viewSyncEnv {
 	storage := t.TempDir()
 	authSvc := auth.NewService(testSecret)
 	svc := seriessvc.NewService(client, storage, 14)
-	h := handler.NewHandler(svc, func() {}, &fakeSuwayomiClient{})
+	h := handler.NewHandler(svc, func() {}, newCoverCache(t, sourceenginefake.New()))
 	if viewSyncer != nil {
 		h = h.WithViewSyncer(viewSyncer)
 	}

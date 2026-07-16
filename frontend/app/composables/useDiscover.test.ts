@@ -11,7 +11,7 @@
  * vi.mock is hoisted by Vitest's transform so the mock is in place before
  * useDiscover.ts is evaluated, regardless of import order in this file.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useDiscover } from './useDiscover'
 
 // Typed via the initial implementation (not `vi.fn().mockImplementation(...)`)
@@ -37,9 +37,12 @@ const detailsGetMock = vi.fn(() =>
   }),
 )
 
+interface DetailsCall { query?: { url?: string } }
+let detailsCalls: DetailsCall[] = []
+
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
-    GET: vi.fn().mockImplementation((path: string) => {
+    GET: vi.fn().mockImplementation((path: string, opts?: { params?: { query?: { url?: string } } }) => {
       if (path === '/api/sources') {
         return Promise.resolve({
           data: [{ id: 'src-1', name: 'MangaDex', lang: 'en' }],
@@ -55,8 +58,9 @@ vi.mock('~/utils/api/client', () => ({
               lang: 'en',
               mangaId: 42,
               title: 'Vinland Saga',
-              url: 'https://mangadex.org/title/42',
-              thumbnailUrl: '/api/sources/src-1/manga/42/cover',
+              url: '/title/42',
+              realUrl: 'https://mangadex.org/title/42',
+              thumbnailUrl: 'https://mangadex.org/covers/42/cover.jpg',
               // Search/Browse are lightweight — author/artist/description are
               // empty until loadDetails() forces the fetchManga mutation.
               author: '',
@@ -71,6 +75,7 @@ vi.mock('~/utils/api/client', () => ({
         })
       }
       if (path === '/api/sources/{sourceId}/manga/{mangaId}/details') {
+        detailsCalls.push({ query: opts?.params?.query })
         return detailsGetMock()
       }
       return Promise.resolve({ data: null, error: null })
@@ -84,7 +89,7 @@ vi.mock('~/utils/api/client', () => ({
 }))
 
 describe('useDiscover – candidate metadata mapping', () => {
-  it('carries the proxy thumbnailUrl onto DiscoverCandidate (rich fields arrive via loadDetails, not Browse)', async () => {
+  it('routes thumbnailUrl through the source-cover proxy (protected sources 403 a raw <img src>)', async () => {
     const { result } = useDiscover()
 
     // init() resolves the source list and page 1 asynchronously; wait for the
@@ -93,13 +98,28 @@ describe('useDiscover – candidate metadata mapping', () => {
     await vi.waitFor(() => expect(result.value.manga.length).toBe(1))
 
     const c = result.value.manga[0]!
-    expect(c.thumbnailUrl).toBe('/api/sources/src-1/manga/42/cover')
+    expect(c.thumbnailUrl).toBe(
+      `/api/sources/src-1/cover?url=${encodeURIComponent('https://mangadex.org/covers/42/cover.jpg')}`,
+    )
     expect(c.author).toBe('')
     expect(c.description).toBe('')
+  })
+
+  it('carries realUrl (the browser-clickable View-on-source link) straight off the DTO, distinct from the addressing url', async () => {
+    const { result } = useDiscover()
+    await vi.waitFor(() => expect(result.value.manga.length).toBe(1))
+
+    const c = result.value.manga[0]!
+    expect(c.url).toBe('/title/42')
+    expect(c.realUrl).toBe('https://mangadex.org/title/42')
   })
 })
 
 describe('useDiscover – loadDetails (on-demand rich hover details)', () => {
+  beforeEach(() => {
+    detailsCalls = []
+  })
+
   it('merges the returned author/artist/description/genres into the matching candidate', async () => {
     const { result, loadDetails } = useDiscover()
     await vi.waitFor(() => expect(result.value.manga.length).toBe(1))
@@ -111,6 +131,15 @@ describe('useDiscover – loadDetails (on-demand rich hover details)', () => {
     expect(c.artist).toBe('Makoto Yukimura')
     expect(c.description).toBe("A Viking's saga.")
     expect(c.genres).toEqual(['Action', 'Historical'])
+  })
+
+  it('sends the candidate url as the ?url= query (P2 Suwayomi-removal — the backend 400s without it)', async () => {
+    const { result, loadDetails } = useDiscover()
+    await vi.waitFor(() => expect(result.value.manga.length).toBe(1))
+
+    await loadDetails(result.value.manga[0]!)
+
+    expect(detailsCalls).toContainEqual({ query: { url: '/title/42' } })
   })
 
   it('caches by mangaId — a second loadDetails call for the same candidate does not re-fetch', async () => {

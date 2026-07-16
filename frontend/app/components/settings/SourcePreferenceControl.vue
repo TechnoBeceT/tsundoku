@@ -13,15 +13,15 @@ type Preference = components['schemas']['SourcePreference']
 /**
  * SourcePreferenceControl — one row of the extension "Configure" dialog: a
  * source preference rendered as the control its `type` dictates:
- *   - CheckBoxPreference / SwitchPreference → a Toggle (commits on flip)
- *   - ListPreference                        → a SelectField (commits on select)
- *   - MultiSelectListPreference             → a checkbox group (commits on toggle)
- *   - EditTextPreference                    → a TextField (commits on Enter/blur)
+ *   - CheckBoxPreference / SwitchPreferenceCompat → a Toggle (commits on flip)
+ *   - ListPreference                              → a SelectField (commits on select)
+ *   - MultiSelectListPreference                   → a checkbox group (commits on toggle)
+ *   - EditTextPreference                          → a TextField (commits on Enter/blur)
  *
  * Toggles/selects commit immediately; the text field commits on Enter or blur
  * (never per-keystroke). Every commit emits `change` with the new value and the
- * preference's POSITION — the parent writes it and swaps in the refreshed list,
- * so positions never go stale (§16).
+ * preference's KEY — the parent writes it and swaps in the refreshed list, so
+ * the dialog always reflects the engine host's authoritative state (§16).
  *
  *   - `preference`: the preference to render.
  *   - `sourceId`: the owning source id (echoed in the change payload).
@@ -40,18 +40,18 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   /** A committed edit — carries the new value + the write coordinates. */
-  'change': [payload: { sourceId: string, position: number, value: SourcePreferenceValue }]
+  'change': [payload: { sourceId: string, key: string, value: SourcePreferenceValue }]
 }>()
 
 function commit(value: SourcePreferenceValue): void {
-  emit('change', { sourceId: props.sourceId, position: props.preference.position, value })
+  emit('change', { sourceId: props.sourceId, key: props.preference.key, value })
 }
 
 // The accessible label for the control (falls back to the key when untitled).
 const controlLabel = computed(() => props.preference.title || props.preference.key)
 
 const isBool = computed(() =>
-  props.preference.type === 'CheckBoxPreference' || props.preference.type === 'SwitchPreference')
+  props.preference.type === 'CheckBoxPreference' || props.preference.type === 'SwitchPreferenceCompat')
 const isList = computed(() => props.preference.type === 'ListPreference')
 const isMulti = computed(() => props.preference.type === 'MultiSelectListPreference')
 const isText = computed(() => props.preference.type === 'EditTextPreference')

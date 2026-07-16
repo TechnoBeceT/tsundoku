@@ -15,10 +15,11 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
-	"github.com/technobecet/tsundoku/internal/suwayomi"
 )
 
 // setupMatchFixture writes a 2-chapter Kaizoku-style disk series, imports it
@@ -42,12 +43,12 @@ func setupMatchFixture(t *testing.T, client *ent.Client, storage string) (*ent.S
 }
 
 // newMatchService builds a library.Service wired for MatchDiskProvider tests:
-// a fake Suwayomi client (via newFakeClientWithFeed/newFakeClientWithChapters)
-// backing a real suwayomi.Ingest, and a real series.Service.
-func newMatchService(client *ent.Client, storage string, fake suwayomi.Client) *library.Service {
-	ingest := suwayomi.NewIngest(fake, client)
+// a fake engine-host client (via newFakeClientWithFeed/newFakeClientWithChapters)
+// backing a real ingest.Ingest, and a real series.Service.
+func newMatchService(client *ent.Client, storage string, fake sourceengine.Client) *library.Service {
+	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	return library.NewService(client, ingest, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	return library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
 }
 
 // TestMatchDiskProvider_RepointsChaptersNoUpgradeFlagged is THE no-redownload
@@ -66,7 +67,7 @@ func TestMatchDiskProvider_RepointsChaptersNoUpgradeFlagged(t *testing.T) {
 	fake := newFakeClientWithFeed(t) // 2 chapters keyed "1"/"2", matching the disk fixture
 	svc := newMatchService(client, storage, fake)
 
-	dto, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "weeb", 99, "", 5)
+	dto, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5)
 	if err != nil {
 		t.Fatalf("MatchDiskProvider: %v", err)
 	}
@@ -75,8 +76,8 @@ func TestMatchDiskProvider_RepointsChaptersNoUpgradeFlagged(t *testing.T) {
 	}
 
 	newSP := client.SeriesProvider.Query().Where(seriesprovider.SeriesID(ser.ID)).OnlyX(ctx)
-	if newSP.Provider != "weeb" || newSP.Importance != 5 {
-		t.Fatalf("new provider = %+v, want provider=weeb importance=5", newSP)
+	if newSP.Provider != "1" || newSP.Importance != 5 {
+		t.Fatalf("new provider = %+v, want provider=1 importance=5", newSP)
 	}
 
 	for _, key := range []string{"1", "2"} {
@@ -196,7 +197,7 @@ func TestMatchDiskProvider_RenamesCBZAndDeletesDiskProvider(t *testing.T) {
 	fake := newFakeClientWithFeed(t)
 	svc := newMatchService(client, storage, fake)
 
-	if _, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "weeb", 99, "", 5); err != nil {
+	if _, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5); err != nil {
 		t.Fatalf("MatchDiskProvider: %v", err)
 	}
 
@@ -234,13 +235,12 @@ func TestMatchDiskProvider_PartialOverlapKeepsLeftoverChapterSafe(t *testing.T) 
 
 	ser, diskSP := setupMatchFixture(t, client, storage)
 
-	one := 1.0
-	fake := newFakeClientWithChapters(t, []suwayomi.Chapter{
-		{ID: 101, Index: 0, Name: "Chapter 1", Number: &one},
+	fake := newFakeClientWithChapters(t, []sourceengine.Chapter{
+		{URL: "/ch/1", Name: "Chapter 1", Number: 1},
 	})
 	svc := newMatchService(client, storage, fake)
 
-	dto, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "weeb", 99, "", 5)
+	dto, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5)
 	if err != nil {
 		t.Fatalf("MatchDiskProvider: %v", err)
 	}
@@ -271,15 +271,14 @@ func TestMatchDiskProvider_NewChaptersEnterWanted(t *testing.T) {
 
 	ser, diskSP := setupMatchFixture(t, client, storage)
 
-	one, two, three := 1.0, 2.0, 3.0
-	fake := newFakeClientWithChapters(t, []suwayomi.Chapter{
-		{ID: 101, Index: 0, Name: "Chapter 1", Number: &one},
-		{ID: 102, Index: 1, Name: "Chapter 2", Number: &two},
-		{ID: 103, Index: 2, Name: "Chapter 3", Number: &three},
+	fake := newFakeClientWithChapters(t, []sourceengine.Chapter{
+		{URL: "/ch/1", Name: "Chapter 1", Number: 1},
+		{URL: "/ch/2", Name: "Chapter 2", Number: 2},
+		{URL: "/ch/3", Name: "Chapter 3", Number: 3},
 	})
 	svc := newMatchService(client, storage, fake)
 
-	if _, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "weeb", 99, "", 5); err != nil {
+	if _, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5); err != nil {
 		t.Fatalf("MatchDiskProvider: %v", err)
 	}
 
@@ -291,8 +290,9 @@ func TestMatchDiskProvider_NewChaptersEnterWanted(t *testing.T) {
 
 // TestMatchDiskProvider_NotADiskProviderRejected asserts the guard: matching
 // against a SeriesProvider that is already a real, linked source
-// (suwayomi_id != 0) is rejected with ErrNotADiskProvider — Match only
-// operates on unlinked disk-origin groups.
+// (series.IsLinkedProvider true — Provider parses as a numeric source id) is
+// rejected with ErrNotADiskProvider — Match only operates on unlinked
+// disk-origin groups.
 func TestMatchDiskProvider_NotADiskProviderRejected(t *testing.T) {
 	storage := t.TempDir()
 	client := testdb.New(t)
@@ -301,15 +301,15 @@ func TestMatchDiskProvider_NotADiskProviderRejected(t *testing.T) {
 	ser, _ := setupMatchFixture(t, client, storage)
 	linked := client.SeriesProvider.Create().
 		SetSeriesID(ser.ID).
-		SetProvider("already-real").
-		SetSuwayomiID(7).
+		// Provider is a numeric source id string — the live-provider marker.
+		SetProvider("7").
 		SetImportance(9).
 		SaveX(ctx)
 
 	fake := newFakeClientWithFeed(t)
 	svc := newMatchService(client, storage, fake)
 
-	_, err := svc.MatchDiskProvider(ctx, ser.ID, linked.ID, "weeb", 99, "", 5)
+	_, err := svc.MatchDiskProvider(ctx, ser.ID, linked.ID, "1", "/manga/99", "", 5)
 	if !errors.Is(err, library.ErrNotADiskProvider) {
 		t.Fatalf("want ErrNotADiskProvider, got %v", err)
 	}
@@ -328,10 +328,10 @@ func TestMatchDiskProvider_UnknownSeriesAndProviderErrors(t *testing.T) {
 	fake := newFakeClientWithFeed(t)
 	svc := newMatchService(client, storage, fake)
 
-	if _, err := svc.MatchDiskProvider(ctx, uuid.New(), diskSP.ID, "weeb", 99, "", 5); !errors.Is(err, library.ErrSeriesNotFound) {
+	if _, err := svc.MatchDiskProvider(ctx, uuid.New(), diskSP.ID, "1", "/manga/99", "", 5); !errors.Is(err, library.ErrSeriesNotFound) {
 		t.Fatalf("want ErrSeriesNotFound, got %v", err)
 	}
-	if _, err := svc.MatchDiskProvider(ctx, ser.ID, uuid.New(), "weeb", 99, "", 5); !errors.Is(err, library.ErrProviderNotInSeries) {
+	if _, err := svc.MatchDiskProvider(ctx, ser.ID, uuid.New(), "1", "/manga/99", "", 5); !errors.Is(err, library.ErrProviderNotInSeries) {
 		t.Fatalf("want ErrProviderNotInSeries, got %v", err)
 	}
 }
@@ -366,7 +366,7 @@ func TestMatchDiskProvider_RollsBackOnMidBatchDiskFailure(t *testing.T) {
 	fake := newFakeClientWithFeed(t)
 	svc := newMatchService(client, storage, fake)
 
-	_, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "weeb", 99, "", 5)
+	_, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5)
 	if err == nil {
 		t.Fatal("MatchDiskProvider: want an error from the corrupted chapter 2 file, got nil")
 	}
@@ -414,7 +414,7 @@ func TestMatchDiskProvider_RollsBackOnMidBatchDiskFailure(t *testing.T) {
 	// disk-relabel window, so this assertion also proves the window is safe.
 	assertNoUpgradesFlagged(t, ctx, client)
 
-	newSP := client.SeriesProvider.Query().Where(seriesprovider.Provider("weeb")).OnlyX(ctx)
+	newSP := client.SeriesProvider.Query().Where(seriesprovider.Provider("1")).OnlyX(ctx)
 	if newSP.Importance != 0 {
 		t.Errorf("new provider importance = %d after rollback, want 0 (parked, never elevated)", newSP.Importance)
 	}

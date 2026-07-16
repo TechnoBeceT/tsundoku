@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import Tag from '../ui/Tag.vue'
 import DiscoverHoverPreview from './DiscoverHoverPreview.vue'
+import { isHttpUrl } from '../../utils/safeUrl'
 import type { DiscoverCandidate } from '../screens/discover.types'
 
 /**
@@ -51,6 +53,12 @@ const emit = defineEmits<{
 // The big faint placeholder letter behind a cover (first char, uppercased).
 const initial = (title: string): string => (title.trim()[0] ?? '?').toUpperCase()
 
+// The "View on source" href — the browser-clickable realUrl, scheme-guarded
+// (mirrors LinkChip's safeHref) since it comes from untrusted upstream
+// source data. undefined (never rendered) for a missing or non-http(s) value
+// — deliberately never falls back to the source-relative addressing `url`.
+const safeSourceUrl = computed(() => (isHttpUrl(props.candidate.realUrl) ? props.candidate.realUrl : undefined))
+
 // "View on source" notifies the parent but does NOT preventDefault — the real
 // `<a target="_blank">` still opens the source in a new tab (Bug-1 fix). Stop
 // propagation so it doesn't also trigger the card's inspect.
@@ -97,8 +105,9 @@ const onSourceLink = (e: Event): void => {
       <div class="disc-card__foot">
         <button type="button" class="adopt-btn" @click="emit('adopt', candidate)">+ Adopt</button>
         <a
+          v-if="safeSourceUrl"
           class="source-link"
-          :href="candidate.url"
+          :href="safeSourceUrl"
           target="_blank"
           rel="noopener noreferrer"
           @click="onSourceLink"

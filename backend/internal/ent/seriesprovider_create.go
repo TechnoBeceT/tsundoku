@@ -107,6 +107,20 @@ func (_c *SeriesProviderCreate) SetNillableURL(v *string) *SeriesProviderCreate 
 	return _c
 }
 
+// SetWebURL sets the "web_url" field.
+func (_c *SeriesProviderCreate) SetWebURL(v string) *SeriesProviderCreate {
+	_c.mutation.SetWebURL(v)
+	return _c
+}
+
+// SetNillableWebURL sets the "web_url" field if the given value is not nil.
+func (_c *SeriesProviderCreate) SetNillableWebURL(v *string) *SeriesProviderCreate {
+	if v != nil {
+		_c.SetWebURL(*v)
+	}
+	return _c
+}
+
 // SetTitle sets the "title" field.
 func (_c *SeriesProviderCreate) SetTitle(v string) *SeriesProviderCreate {
 	_c.mutation.SetTitle(v)
@@ -352,6 +366,10 @@ func (_c *SeriesProviderCreate) defaults() {
 		v := seriesprovider.DefaultURL
 		_c.mutation.SetURL(v)
 	}
+	if _, ok := _c.mutation.WebURL(); !ok {
+		v := seriesprovider.DefaultWebURL
+		_c.mutation.SetWebURL(v)
+	}
 	if _, ok := _c.mutation.Title(); !ok {
 		v := seriesprovider.DefaultTitle
 		_c.mutation.SetTitle(v)
@@ -410,6 +428,9 @@ func (_c *SeriesProviderCreate) check() error {
 	}
 	if _, ok := _c.mutation.URL(); !ok {
 		return &ValidationError{Name: "url", err: errors.New(`ent: missing required field "SeriesProvider.url"`)}
+	}
+	if _, ok := _c.mutation.WebURL(); !ok {
+		return &ValidationError{Name: "web_url", err: errors.New(`ent: missing required field "SeriesProvider.web_url"`)}
 	}
 	if _, ok := _c.mutation.Title(); !ok {
 		return &ValidationError{Name: "title", err: errors.New(`ent: missing required field "SeriesProvider.title"`)}
@@ -499,6 +520,10 @@ func (_c *SeriesProviderCreate) createSpec() (*SeriesProvider, *sqlgraph.CreateS
 	if value, ok := _c.mutation.URL(); ok {
 		_spec.SetField(seriesprovider.FieldURL, field.TypeString, value)
 		_node.URL = value
+	}
+	if value, ok := _c.mutation.WebURL(); ok {
+		_spec.SetField(seriesprovider.FieldWebURL, field.TypeString, value)
+		_node.WebURL = value
 	}
 	if value, ok := _c.mutation.Title(); ok {
 		_spec.SetField(seriesprovider.FieldTitle, field.TypeString, value)

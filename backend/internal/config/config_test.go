@@ -82,8 +82,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Database.Host == "" {
 		t.Fatal("defaults not applied: Database.Host is empty")
 	}
-	if cfg.Suwayomi.Host == "" {
-		t.Fatal("defaults not applied: Suwayomi.Host is empty")
+	if cfg.Engine.URL == "" {
+		t.Fatal("defaults not applied: Engine.URL is empty")
 	}
 	if cfg.Storage.Folder == "" {
 		t.Fatal("defaults not applied: Storage.Folder is empty")
@@ -173,32 +173,6 @@ func TestDSNUsedByLoad(t *testing.T) {
 	}
 }
 
-// TestLoadEnvSuwayomiFields confirms that all SuwayomiConfig fields are
-// settable via environment variables.
-func TestLoadEnvSuwayomiFields(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")                 // required to pass validate()
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234") // required to pass validate()
-	t.Setenv("TSUNDOKU_SUWAYOMI_HOST", "suwhost")
-	t.Setenv("TSUNDOKU_SUWAYOMI_PORT", "9999")
-	t.Setenv("TSUNDOKU_SUWAYOMI_BASEPATH", "/graphql")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	s := cfg.Suwayomi
-	if s.Host != "suwhost" {
-		t.Errorf("Suwayomi.Host = %q, want %q", s.Host, "suwhost")
-	}
-	if s.Port != "9999" {
-		t.Errorf("Suwayomi.Port = %q, want %q", s.Port, "9999")
-	}
-	if s.BasePath != "/graphql" {
-		t.Errorf("Suwayomi.BasePath = %q, want %q", s.BasePath, "/graphql")
-	}
-}
-
 // TestLoadEnvStorageFolder confirms that the StorageConfig.Folder field is
 // settable via environment variable.
 func TestLoadEnvStorageFolder(t *testing.T) {
@@ -251,7 +225,7 @@ func TestValidateAcceptsValidAuthSecret(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Engine:   validEngineConfig(),
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 		Sources:  validSourcesConfig(),
 	}
@@ -263,9 +237,16 @@ func TestValidateAcceptsValidAuthSecret(t *testing.T) {
 // validSourcesConfig returns a SourcesConfig that passes validate() — the
 // fixture every "happy path" validate() test that doesn't itself exercise the
 // Sources rules threads through, so adding those rules doesn't need to touch
-// every unrelated fixture's Jobs/Suwayomi/Auth values.
+// every unrelated fixture's Jobs/Engine/Auth values.
 func validSourcesConfig() config.SourcesConfig {
 	return config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Minute, MinRequestDelay: 500 * time.Millisecond}
+}
+
+// validEngineConfig returns an EngineConfig that passes validate() — the
+// fixture every "happy path" validate() test that doesn't itself exercise the
+// Engine timeout rules threads through (mirrors validSourcesConfig).
+func validEngineConfig() config.EngineConfig {
+	return config.EngineConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute}
 }
 
 // TestLoadAuthSecretFromEnv confirms that TSUNDOKU_AUTH_SECRET is loaded and
@@ -295,200 +276,6 @@ func TestLoadRejectsWithoutAuthSecret(t *testing.T) {
 	}
 }
 
-// TestLoadSuwayomiM2Fields confirms that the M2 SuwayomiConfig fields
-// (Version, RuntimeDir, DownloadURLTemplate, StartTimeout, DownloadTimeout)
-// are readable from environment variables and that typed durations unmarshal
-// correctly.
-func TestLoadSuwayomiM2Fields(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-	t.Setenv("TSUNDOKU_SUWAYOMI_VERSION", "v9.9.9999")
-	t.Setenv("TSUNDOKU_SUWAYOMI_RUNTIMEDIR", "/tmp/suwayomi-test")
-	t.Setenv("TSUNDOKU_SUWAYOMI_DOWNLOADURLTEMPLATE", "https://example.com/%s/%s.jar")
-	t.Setenv("TSUNDOKU_SUWAYOMI_STARTTIMEOUT", "3m")
-	t.Setenv("TSUNDOKU_SUWAYOMI_DOWNLOADTIMEOUT", "10m")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	s := cfg.Suwayomi
-	if s.Version != "v9.9.9999" {
-		t.Errorf("Suwayomi.Version = %q, want %q", s.Version, "v9.9.9999")
-	}
-	if s.RuntimeDir != "/tmp/suwayomi-test" {
-		t.Errorf("Suwayomi.RuntimeDir = %q, want %q", s.RuntimeDir, "/tmp/suwayomi-test")
-	}
-	if s.DownloadURLTemplate != "https://example.com/%s/%s.jar" {
-		t.Errorf("Suwayomi.DownloadURLTemplate = %q, want %q", s.DownloadURLTemplate, "https://example.com/%s/%s.jar")
-	}
-	if s.StartTimeout != 3*time.Minute {
-		t.Errorf("Suwayomi.StartTimeout = %v, want %v", s.StartTimeout, 3*time.Minute)
-	}
-	if s.DownloadTimeout != 10*time.Minute {
-		t.Errorf("Suwayomi.DownloadTimeout = %v, want %v", s.DownloadTimeout, 10*time.Minute)
-	}
-}
-
-// TestSuwayomiDefaults confirms that Load() applies the pinned defaults for
-// all new SuwayomiConfig fields when no env vars are set. The exact values are
-// asserted so that accidental changes to pinned constants are caught.
-func TestSuwayomiDefaults(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	s := cfg.Suwayomi
-	const wantVersion = "v2.2.2100"
-	if s.Version != wantVersion {
-		t.Errorf("Suwayomi.Version default = %q, want %q", s.Version, wantVersion)
-	}
-	const wantTemplate = "https://github.com/Suwayomi/Suwayomi-Server/releases/download/%s/Suwayomi-Server-%s.jar"
-	if s.DownloadURLTemplate != wantTemplate {
-		t.Errorf("Suwayomi.DownloadURLTemplate default = %q, want %q", s.DownloadURLTemplate, wantTemplate)
-	}
-	if s.RuntimeDir == "" {
-		t.Error("Suwayomi.RuntimeDir default must not be empty")
-	}
-	if s.StartTimeout <= 0 {
-		t.Error("Suwayomi.StartTimeout default must be positive")
-	}
-	if s.DownloadTimeout <= 0 {
-		t.Error("Suwayomi.DownloadTimeout default must be positive")
-	}
-}
-
-// TestSuwayomiBaseURL confirms that BaseURL() produces the correct
-// http://host:port string from SuwayomiConfig.
-func TestSuwayomiBaseURL(t *testing.T) {
-	s := config.SuwayomiConfig{Host: "127.0.0.1", Port: "4567"}
-	got := s.BaseURL()
-	want := "http://127.0.0.1:4567"
-	if got != want {
-		t.Errorf("BaseURL() = %q, want %q", got, want)
-	}
-}
-
-// TestSuwayomiBaseURLEmbedded confirms BaseURL() returns the local
-// http://host:port when ExternalURL is blank (embedded mode). Non-vacuous:
-// setting ExternalURL would change the result (see TestSuwayomiBaseURLExternal).
-func TestSuwayomiBaseURLEmbedded(t *testing.T) {
-	s := config.SuwayomiConfig{Host: "127.0.0.1", Port: "4567"}
-	got := s.BaseURL()
-	want := "http://127.0.0.1:4567"
-	if got != want {
-		t.Errorf("BaseURL() embedded = %q, want %q", got, want)
-	}
-}
-
-// TestSuwayomiBaseURLExternal confirms BaseURL() returns the external URL
-// (overriding host:port) and trims a trailing slash for a clean path join.
-func TestSuwayomiBaseURLExternal(t *testing.T) {
-	s := config.SuwayomiConfig{
-		Host:        "127.0.0.1",
-		Port:        "4567",
-		ExternalURL: "https://suwayomi.homelab.example/",
-	}
-	got := s.BaseURL()
-	want := "https://suwayomi.homelab.example"
-	if got != want {
-		t.Errorf("BaseURL() external = %q, want %q", got, want)
-	}
-}
-
-// TestSuwayomiIsExternal confirms IsExternal() reflects whether ExternalURL
-// is set — the branch main.go uses to skip the embedded ProcessManager.
-func TestSuwayomiIsExternal(t *testing.T) {
-	if (config.SuwayomiConfig{}).IsExternal() {
-		t.Error("IsExternal() = true for blank ExternalURL, want false")
-	}
-	if !(config.SuwayomiConfig{ExternalURL: "http://x:4567"}).IsExternal() {
-		t.Error("IsExternal() = false for set ExternalURL, want true")
-	}
-}
-
-// TestValidateAcceptsExternalURL confirms a well-formed http/https external URL
-// passes validate() (and that blank — embedded mode — also passes).
-func TestValidateAcceptsExternalURL(t *testing.T) {
-	for _, raw := range []string{"", "http://localhost:4567", "https://suwayomi.example/api"} {
-		cfg := &config.Config{
-			Database: config.DatabaseConfig{Password: "somepassword"},
-			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-			Suwayomi: config.SuwayomiConfig{ExternalURL: raw, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
-			Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
-			Sources:  validSourcesConfig(),
-		}
-		if err := config.ExportValidateForTest(cfg); err != nil {
-			t.Errorf("validate() rejected ExternalURL %q, want accept: %v", raw, err)
-		}
-	}
-}
-
-// TestValidateRejectsMalformedExternalURL confirms validate() fails closed on a
-// malformed or scheme-less external URL, and that the error names the bad value.
-func TestValidateRejectsMalformedExternalURL(t *testing.T) {
-	for _, raw := range []string{"not a url", "ftp://x", "://x", "http://"} {
-		cfg := &config.Config{
-			Database: config.DatabaseConfig{Password: "somepassword"},
-			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-			Suwayomi: config.SuwayomiConfig{ExternalURL: raw},
-		}
-		err := config.ExportValidateForTest(cfg)
-		if err == nil {
-			t.Errorf("validate() accepted malformed ExternalURL %q, want reject", raw)
-			continue
-		}
-		if !strings.Contains(err.Error(), "TSUNDOKU_SUWAYOMI_EXTERNALURL") {
-			t.Errorf("error for %q should name TSUNDOKU_SUWAYOMI_EXTERNALURL, got: %v", raw, err)
-		}
-	}
-}
-
-// TestLoadEnvSuwayomiExternalURL confirms TSUNDOKU_SUWAYOMI_EXTERNALURL
-// populates SuwayomiConfig.ExternalURL and flips the resolved mode.
-func TestLoadEnvSuwayomiExternalURL(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-	t.Setenv("TSUNDOKU_SUWAYOMI_EXTERNALURL", "http://homelab:4567")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.Suwayomi.ExternalURL != "http://homelab:4567" {
-		t.Errorf("Suwayomi.ExternalURL = %q, want %q", cfg.Suwayomi.ExternalURL, "http://homelab:4567")
-	}
-	if !cfg.Suwayomi.IsExternal() {
-		t.Error("IsExternal() = false after setting TSUNDOKU_SUWAYOMI_EXTERNALURL, want true")
-	}
-	if cfg.Suwayomi.BaseURL() != "http://homelab:4567" {
-		t.Errorf("BaseURL() = %q, want %q", cfg.Suwayomi.BaseURL(), "http://homelab:4567")
-	}
-}
-
-// TestSuwayomiExternalURLDefaultBlank confirms the default is blank (embedded
-// mode) so existing deploys are byte-for-byte unchanged.
-func TestSuwayomiExternalURLDefaultBlank(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.Suwayomi.ExternalURL != "" {
-		t.Errorf("Suwayomi.ExternalURL default = %q, want empty (embedded)", cfg.Suwayomi.ExternalURL)
-	}
-	if cfg.Suwayomi.IsExternal() {
-		t.Error("IsExternal() = true by default, want false (embedded)")
-	}
-}
-
 // TestJobsConfig confirms that JobsConfig fields are read from env vars
 // and that a sane default is applied when the var is absent.
 func TestJobsConfig(t *testing.T) {
@@ -502,38 +289,6 @@ func TestJobsConfig(t *testing.T) {
 	}
 	if cfg.Jobs.DownloadInterval != 5*time.Minute {
 		t.Errorf("Jobs.DownloadInterval = %v, want %v", cfg.Jobs.DownloadInterval, 5*time.Minute)
-	}
-}
-
-// TestSuwayomiJavaPathDefault confirms that JavaPath defaults to "java"
-// when TSUNDOKU_SUWAYOMI_JAVAPATH is not set.
-func TestSuwayomiJavaPathDefault(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.Suwayomi.JavaPath != "java" {
-		t.Errorf("Suwayomi.JavaPath default = %q, want %q", cfg.Suwayomi.JavaPath, "java")
-	}
-}
-
-// TestSuwayomiJavaPathEnv confirms that TSUNDOKU_SUWAYOMI_JAVAPATH overrides
-// the default java executable path.
-func TestSuwayomiJavaPathEnv(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-	t.Setenv("TSUNDOKU_SUWAYOMI_JAVAPATH", "/usr/lib/jvm/java-26-openjdk/bin/java")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	want := "/usr/lib/jvm/java-26-openjdk/bin/java"
-	if cfg.Suwayomi.JavaPath != want {
-		t.Errorf("Suwayomi.JavaPath = %q, want %q", cfg.Suwayomi.JavaPath, want)
 	}
 }
 
@@ -625,10 +380,10 @@ func TestJobsRetryDefaults(t *testing.T) {
 	}
 }
 
-// TestSuwayomiHTTPTimeoutDefault confirms that Load() applies the 3m default for
-// the Suwayomi API-client timeout (raised from the old hardcoded 60s so that the
-// slow fetchChapterPages upstream fetch does not time out under concurrency).
-func TestSuwayomiHTTPTimeoutDefault(t *testing.T) {
+// TestEngineHTTPTimeoutDefault confirms that Load() applies the 3m default for
+// the engine-host API-client timeout (raised from the old hardcoded 60s so
+// that the slow page-image fetch does not time out under concurrency).
+func TestEngineHTTPTimeoutDefault(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
 
@@ -636,49 +391,49 @@ func TestSuwayomiHTTPTimeoutDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Suwayomi.HTTPTimeout != 3*time.Minute {
-		t.Errorf("Suwayomi.HTTPTimeout default = %v, want 3m", cfg.Suwayomi.HTTPTimeout)
+	if cfg.Engine.HTTPTimeout != 3*time.Minute {
+		t.Errorf("Engine.HTTPTimeout default = %v, want 3m", cfg.Engine.HTTPTimeout)
 	}
 }
 
-// TestSuwayomiHTTPTimeoutEnvOverride confirms TSUNDOKU_SUWAYOMI_HTTPTIMEOUT
+// TestEngineHTTPTimeoutEnvOverride confirms TSUNDOKU_ENGINE_HTTPTIMEOUT
 // overrides the default and unmarshals as a duration.
-func TestSuwayomiHTTPTimeoutEnvOverride(t *testing.T) {
+func TestEngineHTTPTimeoutEnvOverride(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-	t.Setenv("TSUNDOKU_SUWAYOMI_HTTPTIMEOUT", "90s")
+	t.Setenv("TSUNDOKU_ENGINE_HTTPTIMEOUT", "90s")
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Suwayomi.HTTPTimeout != 90*time.Second {
-		t.Errorf("Suwayomi.HTTPTimeout = %v, want 90s", cfg.Suwayomi.HTTPTimeout)
+	if cfg.Engine.HTTPTimeout != 90*time.Second {
+		t.Errorf("Engine.HTTPTimeout = %v, want 90s", cfg.Engine.HTTPTimeout)
 	}
 }
 
 // TestValidateRejectsNonPositiveHTTPTimeout confirms validate() fails closed on a
-// zero/negative Suwayomi API-client timeout, naming the offending env var.
+// zero/negative engine-host API-client timeout, naming the offending env var.
 func TestValidateRejectsNonPositiveHTTPTimeout(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 0}, // invalid
+		Engine:   config.EngineConfig{HTTPTimeout: 0, SearchTimeout: 3 * time.Minute}, // invalid
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
 		t.Fatal("expected validate error for non-positive HTTPTimeout, got nil")
 	}
-	if !strings.Contains(err.Error(), "TSUNDOKU_SUWAYOMI_HTTPTIMEOUT") {
-		t.Errorf("error should name TSUNDOKU_SUWAYOMI_HTTPTIMEOUT, got: %v", err)
+	if !strings.Contains(err.Error(), "TSUNDOKU_ENGINE_HTTPTIMEOUT") {
+		t.Errorf("error should name TSUNDOKU_ENGINE_HTTPTIMEOUT, got: %v", err)
 	}
 }
 
-// TestSuwayomiSearchTimeoutDefault confirms Load() applies the 85s default for
+// TestEngineSearchTimeoutDefault confirms Load() applies the 85s default for
 // the interactive search fan-out deadline — chosen to sit under a CDN edge's
 // ~100s cut-off so a hung Cloudflare source yields partial results, not a 524.
-func TestSuwayomiSearchTimeoutDefault(t *testing.T) {
+func TestEngineSearchTimeoutDefault(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
 
@@ -686,24 +441,24 @@ func TestSuwayomiSearchTimeoutDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Suwayomi.SearchTimeout != 85*time.Second {
-		t.Errorf("Suwayomi.SearchTimeout default = %v, want 85s", cfg.Suwayomi.SearchTimeout)
+	if cfg.Engine.SearchTimeout != 85*time.Second {
+		t.Errorf("Engine.SearchTimeout default = %v, want 85s", cfg.Engine.SearchTimeout)
 	}
 }
 
-// TestSuwayomiSearchTimeoutEnvOverride confirms TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT
+// TestEngineSearchTimeoutEnvOverride confirms TSUNDOKU_ENGINE_SEARCHTIMEOUT
 // overrides the default and unmarshals as a duration.
-func TestSuwayomiSearchTimeoutEnvOverride(t *testing.T) {
+func TestEngineSearchTimeoutEnvOverride(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-	t.Setenv("TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT", "45s")
+	t.Setenv("TSUNDOKU_ENGINE_SEARCHTIMEOUT", "45s")
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Suwayomi.SearchTimeout != 45*time.Second {
-		t.Errorf("Suwayomi.SearchTimeout = %v, want 45s", cfg.Suwayomi.SearchTimeout)
+	if cfg.Engine.SearchTimeout != 45*time.Second {
+		t.Errorf("Engine.SearchTimeout = %v, want 45s", cfg.Engine.SearchTimeout)
 	}
 }
 
@@ -713,15 +468,50 @@ func TestValidateRejectsNonPositiveSearchTimeout(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: time.Minute, SearchTimeout: 0}, // invalid
+		Engine:   config.EngineConfig{HTTPTimeout: time.Minute, SearchTimeout: 0}, // invalid
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
 		t.Fatal("expected validate error for non-positive SearchTimeout, got nil")
 	}
-	if !strings.Contains(err.Error(), "TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT") {
-		t.Errorf("error should name TSUNDOKU_SUWAYOMI_SEARCHTIMEOUT, got: %v", err)
+	if !strings.Contains(err.Error(), "TSUNDOKU_ENGINE_SEARCHTIMEOUT") {
+		t.Errorf("error should name TSUNDOKU_ENGINE_SEARCHTIMEOUT, got: %v", err)
+	}
+}
+
+// TestEngineRuntimeDirDefault confirms Load() applies a non-empty default for
+// the engine runtime dir (the extension-.apk byte cache root) when
+// TSUNDOKU_ENGINE_RUNTIMEDIR is unset — the exact path is not pinned here (it
+// carries forward the pre-existing /data/suwayomi default so an upgraded
+// deploy's volume mount keeps working; see EngineConfig.RuntimeDir's doc
+// comment) but it must never be blank.
+func TestEngineRuntimeDirDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Engine.RuntimeDir == "" {
+		t.Error("Engine.RuntimeDir default must not be empty")
+	}
+}
+
+// TestEngineRuntimeDirEnvOverride confirms TSUNDOKU_ENGINE_RUNTIMEDIR
+// overrides the default.
+func TestEngineRuntimeDirEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_ENGINE_RUNTIMEDIR", "/tmp/engine-test")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Engine.RuntimeDir != "/tmp/engine-test" {
+		t.Errorf("Engine.RuntimeDir = %q, want %q", cfg.Engine.RuntimeDir, "/tmp/engine-test")
 	}
 }
 
@@ -762,7 +552,7 @@ func TestValidateRejectsDownloadConcurrencyBelowOne(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Engine:   validEngineConfig(),
 		Jobs:     config.JobsConfig{DownloadConcurrency: 0}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
@@ -885,7 +675,7 @@ func TestValidateRejectsWarmupThresholdBelowOne(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Engine:   validEngineConfig(),
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 0}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
@@ -949,7 +739,7 @@ func TestValidateRejectsSourcesFailureThresholdBelowOne(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Engine:   validEngineConfig(),
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 		Sources:  config.SourcesConfig{FailureThreshold: 0, Cooldown: 30 * time.Minute}, // invalid
 	}
@@ -968,7 +758,7 @@ func TestValidateRejectsSourcesCooldownBelowOneMinute(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Engine:   validEngineConfig(),
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 		Sources:  config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Second}, // invalid
 	}
@@ -988,7 +778,7 @@ func TestValidateRejectsSourcesMinRequestDelayNegative(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		Engine:   validEngineConfig(),
 		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
 		Sources:  config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Minute, MinRequestDelay: -time.Second}, // invalid
 	}
@@ -1036,127 +826,6 @@ func TestLoadAppliesHealthEnvOverride(t *testing.T) {
 	}
 	if cfg.Health.StaleGraceDays != 30 {
 		t.Fatalf("Health.StaleGraceDays env override = %d, want 30", cfg.Health.StaleGraceDays)
-	}
-}
-
-// TestSuwayomiDatabaseDefaultsBlank confirms the embedded-Suwayomi DB fields
-// default to blank, preserving the current H2 behaviour (zero surprise for
-// existing deploys).
-func TestSuwayomiDatabaseDefaultsBlank(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	s := cfg.Suwayomi
-	if s.DatabaseType != "" || s.DatabaseURL != "" || s.DatabaseUsername != "" || s.DatabasePassword != "" {
-		t.Errorf("embedded-Suwayomi DB fields should default blank, got type=%q url=%q user=%q passSet=%t",
-			s.DatabaseType, s.DatabaseURL, s.DatabaseUsername, s.DatabasePassword != "")
-	}
-}
-
-// TestLoadEnvSuwayomiDatabaseFields confirms all four embedded-Suwayomi DB
-// fields are settable via environment variables.
-func TestLoadEnvSuwayomiDatabaseFields(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASETYPE", "POSTGRESQL")
-	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASEURL", "postgresql://db:5432/suwayomi")
-	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASEUSERNAME", "suwa")
-	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASEPASSWORD", "s3cr3t")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	s := cfg.Suwayomi
-	if s.DatabaseType != "POSTGRESQL" {
-		t.Errorf("DatabaseType = %q, want POSTGRESQL", s.DatabaseType)
-	}
-	if s.DatabaseURL != "postgresql://db:5432/suwayomi" {
-		t.Errorf("DatabaseURL = %q, want postgresql://db:5432/suwayomi", s.DatabaseURL)
-	}
-	if s.DatabaseUsername != "suwa" {
-		t.Errorf("DatabaseUsername = %q, want suwa", s.DatabaseUsername)
-	}
-	if s.DatabasePassword != "s3cr3t" {
-		t.Errorf("DatabasePassword = %q, want s3cr3t", s.DatabasePassword)
-	}
-}
-
-// suwayomiDBConfig builds a Config valid except for the Suwayomi DB fields under
-// test, so validate() exercises only the DB-selection rule.
-func suwayomiDBConfig(dbType, dbURL string) *config.Config {
-	return &config.Config{
-		Database: config.DatabaseConfig{Password: "somepassword"},
-		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Suwayomi: config.SuwayomiConfig{DatabaseType: dbType, DatabaseURL: dbURL, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
-		Sources:  validSourcesConfig(),
-	}
-}
-
-// TestValidateSuwayomiDatabaseAccepts confirms validate() passes for the valid
-// DB selections: blank (default H2), explicit H2 (no URL needed), and POSTGRESQL
-// with a well-formed bare postgresql:// URL.
-func TestValidateSuwayomiDatabaseAccepts(t *testing.T) {
-	cases := []struct {
-		name, dbType, dbURL string
-	}{
-		{"blank-default-h2", "", ""},
-		{"explicit-h2-no-url", "H2", ""},
-		{"postgres-valid-url", "POSTGRESQL", "postgresql://localhost:5432/suwayomi"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := config.ExportValidateForTest(suwayomiDBConfig(tc.dbType, tc.dbURL)); err != nil {
-				t.Errorf("validate() rejected %s/%q, want accept: %v", tc.dbType, tc.dbURL, err)
-			}
-		})
-	}
-}
-
-// TestValidateSuwayomiDatabaseRejects confirms validate() fails closed for an
-// unrecognised DatabaseType, POSTGRESQL with a missing URL, and POSTGRESQL with
-// a malformed URL — including a jdbc:postgresql:// value (Suwayomi adds the
-// jdbc: prefix itself, so a jdbc-prefixed value must be rejected).
-func TestValidateSuwayomiDatabaseRejects(t *testing.T) {
-	cases := []struct {
-		name, dbType, dbURL, wantVar string
-	}{
-		{"unknown-type", "MYSQL", "", "TSUNDOKU_SUWAYOMI_DATABASETYPE"},
-		{"postgres-missing-url", "POSTGRESQL", "", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
-		{"postgres-jdbc-prefixed", "POSTGRESQL", "jdbc:postgresql://h:5432/db", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
-		{"postgres-wrong-scheme", "POSTGRESQL", "http://h:5432/db", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
-		{"postgres-no-host", "POSTGRESQL", "postgresql:///db", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
-		{"postgres-garbage-url", "POSTGRESQL", "://nope", "TSUNDOKU_SUWAYOMI_DATABASEURL"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := config.ExportValidateForTest(suwayomiDBConfig(tc.dbType, tc.dbURL))
-			if err == nil {
-				t.Fatalf("validate() accepted %s/%q, want reject", tc.dbType, tc.dbURL)
-			}
-			if !strings.Contains(err.Error(), tc.wantVar) {
-				t.Errorf("error for %s/%q should name %s, got: %v", tc.dbType, tc.dbURL, tc.wantVar, err)
-			}
-		})
-	}
-}
-
-// TestLoadRejectsBadSuwayomiDatabase confirms the DB-selection rule is enforced
-// end-to-end through Load() (not just the exported validate()): a POSTGRESQL
-// type with no URL aborts startup.
-func TestLoadRejectsBadSuwayomiDatabase(t *testing.T) {
-	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
-	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
-	t.Setenv("TSUNDOKU_SUWAYOMI_DATABASETYPE", "POSTGRESQL")
-	// Deliberately omit TSUNDOKU_SUWAYOMI_DATABASEURL.
-
-	if _, err := config.Load(); err == nil {
-		t.Fatal("expected Load() to fail for POSTGRESQL without a DatabaseURL, got nil")
 	}
 }
 
@@ -1281,13 +950,81 @@ func TestTrackerConfig_MalformedPublicURLFailsClosed(t *testing.T) {
 }
 
 // TestTrackerConfig_BlankPublicURLPasses confirms a blank PublicURL is NOT
-// a validation error — it just leaves the subsystem dormant (mirrors
-// SuwayomiConfig.ExternalURL's blank-disables pattern).
+// a validation error — it just leaves the subsystem dormant.
 func TestTrackerConfig_BlankPublicURLPasses(t *testing.T) {
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "pw")
 
 	if _, err := config.Load(); err != nil {
 		t.Fatalf("Load with a blank TSUNDOKU_TRACKER_PUBLICURL: %v", err)
+	}
+}
+
+// TestEngineConfig_DefaultURL confirms Load() defaults EngineConfig.URL to the
+// engine-host's default listen address (http://localhost:7777 — confirmed
+// against engine-host/src/main/kotlin/enginehost/Main.kt's
+// TSUNDOKU_ENGINE_PORT fallback) when TSUNDOKU_ENGINE_URL is unset.
+func TestEngineConfig_DefaultURL(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Engine.URL != "http://localhost:7777" {
+		t.Fatalf("Engine.URL = %q, want %q", cfg.Engine.URL, "http://localhost:7777")
+	}
+}
+
+// TestEngineConfig_FromEnv confirms TSUNDOKU_ENGINE_URL overrides the default.
+func TestEngineConfig_FromEnv(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_ENGINE_URL", "http://engine-host:9000")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Engine.URL != "http://engine-host:9000" {
+		t.Fatalf("Engine.URL = %q, want %q", cfg.Engine.URL, "http://engine-host:9000")
+	}
+}
+
+// TestValidateAcceptsEngineURL confirms validate() accepts the default plus any
+// well-formed absolute http(s) URL.
+func TestValidateAcceptsEngineURL(t *testing.T) {
+	for _, raw := range []string{"http://localhost:7777", "https://engine.example/rpc"} {
+		cfg := &config.Config{
+			Database: config.DatabaseConfig{Password: "somepassword"},
+			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+			Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+			Sources:  validSourcesConfig(),
+			Engine:   config.EngineConfig{URL: raw, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+		}
+		if err := config.ExportValidateForTest(cfg); err != nil {
+			t.Errorf("validate() rejected Engine.URL %q, want accept: %v", raw, err)
+		}
+	}
+}
+
+// TestValidateRejectsMalformedEngineURL confirms validate() fails closed on a
+// non-empty, malformed Engine.URL, and that the error names the bad key.
+func TestValidateRejectsMalformedEngineURL(t *testing.T) {
+	for _, raw := range []string{"not-a-url", "ftp://x", "://x", "http://"} {
+		cfg := &config.Config{
+			Database: config.DatabaseConfig{Password: "somepassword"},
+			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+			Engine:   config.EngineConfig{URL: raw},
+		}
+		err := config.ExportValidateForTest(cfg)
+		if err == nil {
+			t.Errorf("validate() accepted malformed Engine.URL %q, want reject", raw)
+			continue
+		}
+		if !strings.Contains(err.Error(), "TSUNDOKU_ENGINE_URL") {
+			t.Errorf("error for %q should name TSUNDOKU_ENGINE_URL, got: %v", raw, err)
+		}
 	}
 }

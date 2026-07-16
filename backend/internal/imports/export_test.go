@@ -9,12 +9,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/technobecet/tsundoku/internal/suwayomi"
+	"github.com/technobecet/tsundoku/internal/ingest"
 )
 
 // SetChapterCacheForTest wires cache into s so its discovery paths
 // (SourceBreakdown / InspectChapters) route through it (Task C2).
-func SetChapterCacheForTest(s *Service, cache *suwayomi.ChapterCache) {
+func SetChapterCacheForTest(s *Service, cache *ingest.ChapterCache) {
 	s.chapterCache = cache
 }
 

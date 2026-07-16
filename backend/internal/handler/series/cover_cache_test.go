@@ -9,18 +9,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
+
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
 
-// countingPageBytes wires env.sw to return the given image and counts every call.
-func countingPageBytes(env *testEnv, data []byte, ext string) *atomic.Int32 {
-	var calls atomic.Int32
-	env.sw.pageBytes = func(context.Context, string) ([]byte, string, error) {
-		calls.Add(1)
-		return data, ext, nil
-	}
-	return &calls
+// seedCoverImage wires env.sw's fake engine to return data/ext for a cover
+// fetch on (coverSourceID, coverURL) — the fixed numeric provider id every
+// cover test's SeriesProvider carries (see seedWithCover). Reconfiguring it
+// mid-test (a second call with the same coverURL) simulates the source
+// republishing new art under the same (id-derived) URL.
+func seedCoverImage(env *testEnv, coverURL string, data []byte, ext string) {
+	sourceenginefake.WithCoverImage(coverSourceID, coverURL, data, ext)(env.sw)
 }
 
 // doWithHeader issues an authed GET carrying one extra header (If-None-Match).
@@ -61,8 +61,9 @@ func coverVersionOf(t *testing.T, env *testEnv, seriesID string) string {
 func TestSeriesCover_MatchingVersionIsImmutable(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	countingPageBytes(env, []byte("IMG"), "png")
-	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	const coverURL = "/api/v1/manga/1/cover"
+	seedCoverImage(env, coverURL, []byte("IMG"), "png")
+	seriesID, _ := seedWithCover(ctx, t, env, coverURL)
 
 	// Warm the cache so the series has a cached cover (and therefore a version).
 	if rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", ""); rec.Code != http.StatusOK {
@@ -94,8 +95,9 @@ func TestSeriesCover_MatchingVersionIsImmutable(t *testing.T) {
 func TestSeriesCover_UnversionedRequestIsNeverImmutable(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	countingPageBytes(env, []byte("IMG"), "png")
-	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	const coverURL = "/api/v1/manga/1/cover"
+	seedCoverImage(env, coverURL, []byte("IMG"), "png")
+	seriesID, _ := seedWithCover(ctx, t, env, coverURL)
 
 	for _, target := range []string{
 		"/api/series/" + seriesID.String() + "/cover",
@@ -121,8 +123,9 @@ func TestSeriesCover_UnversionedRequestIsNeverImmutable(t *testing.T) {
 func TestSeriesCover_ETagTracksTheCoverVersion(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	countingPageBytes(env, []byte("OLD-ART"), "jpg")
-	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	const coverURL = "/api/v1/manga/1/cover"
+	seedCoverImage(env, coverURL, []byte("OLD-ART"), "jpg")
+	seriesID, _ := seedWithCover(ctx, t, env, coverURL)
 
 	target := "/api/series/" + seriesID.String() + "/cover"
 	first := env.do(http.MethodGet, target, "")
@@ -136,7 +139,7 @@ func TestSeriesCover_ETagTracksTheCoverVersion(t *testing.T) {
 	if err := os.Remove(filepath.Join(env.storage, "Manga", "Cover Test", "cover.jpg")); err != nil {
 		t.Fatalf("remove cover file: %v", err)
 	}
-	countingPageBytes(env, []byte("NEW-ART"), "jpg")
+	seedCoverImage(env, coverURL, []byte("NEW-ART"), "jpg")
 
 	second := env.do(http.MethodGet, target, "")
 	if second.Body.String() != "NEW-ART" {
@@ -152,8 +155,9 @@ func TestSeriesCover_ETagTracksTheCoverVersion(t *testing.T) {
 func TestSeriesCover_IfNoneMatch304(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	countingPageBytes(env, []byte("IMG"), "png")
-	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	const coverURL = "/api/v1/manga/1/cover"
+	seedCoverImage(env, coverURL, []byte("IMG"), "png")
+	seriesID, _ := seedWithCover(ctx, t, env, coverURL)
 
 	target := "/api/series/" + seriesID.String() + "/cover"
 	first := env.do(http.MethodGet, target, "")
@@ -169,23 +173,25 @@ func TestSeriesCover_IfNoneMatch304(t *testing.T) {
 }
 
 // TestSeriesCover_CachedServeMakesZeroSuwayomiCalls is THE anti-ban proof at the
-// HTTP boundary: once the cover is cached, serving it again pings Suwayomi ZERO
-// times. This is the whole feature — a 52-series grid re-render costs no
-// source-ward traffic at all.
+// HTTP boundary: once the cover is cached, serving it again pings the engine
+// host ZERO more times. This is the whole feature — a 52-series grid re-render
+// costs no source-ward traffic at all. env.sw.CallCount("Image") is the fake's
+// own cumulative counter (sourceengine/fake.Client), so this asserts the count
+// stays exactly where the one permitted cold fetch left it.
 func TestSeriesCover_CachedServeMakesZeroSuwayomiCalls(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	calls := countingPageBytes(env, []byte("IMG"), "jpg")
-	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	const coverURL = "/api/v1/manga/1/cover"
+	seedCoverImage(env, coverURL, []byte("IMG"), "jpg")
+	seriesID, _ := seedWithCover(ctx, t, env, coverURL)
 
 	target := "/api/series/" + seriesID.String() + "/cover"
 	if rec := env.do(http.MethodGet, target, ""); rec.Code != http.StatusOK {
 		t.Fatalf("SeriesCover (warming): want 200, got %d", rec.Code)
 	}
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("cold serve: Suwayomi calls = %d, want 1", got)
+	if got := env.sw.CallCount("Image"); got != 1 {
+		t.Fatalf("cold serve: engine calls = %d, want 1", got)
 	}
-	calls.Store(0)
 
 	for i := range 3 {
 		rec := env.do(http.MethodGet, target, "")
@@ -197,8 +203,8 @@ func TestSeriesCover_CachedServeMakesZeroSuwayomiCalls(t *testing.T) {
 		}
 	}
 
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("ANTI-BAN PROOF FAILED: cached serves made %d Suwayomi call(s), want 0", got)
+	if got := env.sw.CallCount("Image"); got != 1 {
+		t.Fatalf("ANTI-BAN PROOF FAILED: cached serves made %d additional engine call(s), want the count to stay at 1", got)
 	}
 }
 
@@ -207,8 +213,9 @@ func TestSeriesCover_CachedServeMakesZeroSuwayomiCalls(t *testing.T) {
 func TestSeriesCover_DiskWriteFailureStillServes(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	countingPageBytes(env, []byte("IMG"), "png")
-	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
+	const coverURL = "/api/v1/manga/1/cover"
+	seedCoverImage(env, coverURL, []byte("IMG"), "png")
+	seriesID, _ := seedWithCover(ctx, t, env, coverURL)
 
 	// The series folder exists but is not writable ⇒ the cache write fails.
 	seriesDir := filepath.Join(env.storage, "Manga", "Cover Test")
@@ -228,14 +235,12 @@ func TestSeriesCover_DiskWriteFailureStillServes(t *testing.T) {
 	}
 }
 
-// TestSeriesCover_ColdFetchFailureIs502 proves a Suwayomi failure on a cold
-// cover is a gateway error, never a false 200 (errors.New keeps the import used).
+// TestSeriesCover_ColdFetchFailureIs502 proves an engine-host failure on a cold
+// cover is a gateway error, never a false 200.
 func TestSeriesCover_ColdFetchFailureIs502(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	env.sw.pageBytes = func(context.Context, string) ([]byte, string, error) {
-		return nil, "", errors.New("suwayomi down")
-	}
+	sourceenginefake.WithError("Image", errors.New("engine down"))(env.sw)
 	seriesID, _ := seedWithCover(ctx, t, env, "/api/v1/manga/1/cover")
 
 	rec := env.do(http.MethodGet, "/api/series/"+seriesID.String()+"/cover", "")

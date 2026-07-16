@@ -9,8 +9,8 @@ import (
 
 // UpdateRequest is the PATCH /api/flaresolverr/settings body. Every field is
 // an optional pointer: a nil field is left untouched, so a partial body never
-// clobbers an unset setting (mirrors handler/suwayomi's FlareSolverrUpdate —
-// same shape, same OpenAPI schema).
+// clobbers an unset setting (mirrors the retired Suwayomi settings-proxy's
+// FlareSolverrUpdate — same shape, same OpenAPI schema).
 type UpdateRequest struct {
 	Enabled            *bool   `json:"enabled"`
 	URL                *string `json:"url"`

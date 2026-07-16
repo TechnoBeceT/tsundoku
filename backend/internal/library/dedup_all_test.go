@@ -84,18 +84,19 @@ func findSeriesByTitle(t *testing.T, client *ent.Client, ctx context.Context, ti
 	return nil
 }
 
-// attachDriftedTwin creates a linked SeriesProvider ("weeb"/"mangadex"/
+// attachDriftedTwin creates a linked SeriesProvider ("99"/"mangadex"/
 // "Alpha") on seriesID carrying a non-empty ProviderChapter feed for keys
 // "1"/"2" — the same provider name + scanlator as the disk-origin row written
-// by writeKaizokuSeries, i.e. an already-drifted (disk, live) pair.
+// by writeKaizokuSeries, i.e. an already-drifted (disk, live) pair. Provider
+// is a numeric source id string — the live-provider marker under the new
+// identity model (see series.IsLinkedProvider).
 func attachDriftedTwin(t *testing.T, client *ent.Client, ctx context.Context, seriesID uuid.UUID) {
 	t.Helper()
 	live := client.SeriesProvider.Create().
 		SetSeriesID(seriesID).
-		SetProvider("weeb").
+		SetProvider("99").
 		SetProviderName("mangadex").
 		SetScanlator("Alpha").
-		SetSuwayomiID(99).
 		SetImportance(5).
 		SaveX(ctx)
 	one, two := 1.0, 2.0
