@@ -7,10 +7,12 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/handler/coverproxy"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/handler/sourcefilter"
 	"github.com/technobecet/tsundoku/internal/imports"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // Handler holds the dependencies for the imports HTTP handlers.
@@ -20,13 +22,17 @@ type Handler struct {
 	svc     *imports.Service
 	series  *seriessvc.Service
 	trigger func()
+	sw      sourceengine.Client
 }
 
 // NewHandler constructs a Handler bound to an imports.Service, a series.Service
-// (to render SeriesDetailDTO after Adopt), and an auto-converge trigger (called
-// after a successful adopt to kick an immediate download/upgrade cycle — M5).
-func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func()) *Handler {
-	return &Handler{svc: svc, series: series, trigger: trigger}
+// (to render SeriesDetailDTO after Adopt), an auto-converge trigger (called
+// after a successful adopt to kick an immediate download/upgrade cycle — M5),
+// and a sourceengine.Client (used by SourceCover to proxy a source-manga cover
+// image through the engine host — same role as series.Handler's `sw`, see
+// ProviderCover).
+func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func(), sw sourceengine.Client) *Handler {
+	return &Handler{svc: svc, series: series, trigger: trigger, sw: sw}
 }
 
 // Sources handles GET /api/sources.
@@ -38,6 +44,30 @@ func (h *Handler) Sources(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, out)
+}
+
+// SourceCover handles GET /api/sources/:sourceId/cover?url=<thumbnailUrl>.
+//
+// Discover/Search cards render a source-manga cover straight from the DTO's
+// thumbnailUrl. An open-CDN source (e.g. Asura) tolerates the browser fetching
+// that URL directly, but a Cloudflare/hotlink-protected source (e.g. The
+// Blank) 403s a raw browser request — the card renders blank. This mirrors
+// series.Handler.ProviderCover (the SAME coverproxy.StreamEngine primitive):
+// it re-fetches the image through the engine host, whose outbound HTTP client
+// carries the source's cf_clearance, then streams the bytes back same-origin
+// so the SPA's cookie session covers auth with a plain <img src> — no header
+// needed. A malformed :sourceId or a blank ?url= is a 400; an engine fetch
+// failure is a 502 (never a false 200).
+func (h *Handler) SourceCover(c echo.Context) error {
+	sourceID, err := parseSourceID(c.Param("sourceId"))
+	if err != nil {
+		return err
+	}
+	url, err := parseCoverURL(c.QueryParam("url"))
+	if err != nil {
+		return err
+	}
+	return coverproxy.StreamEngine(c, h.sw, sourceID, url)
 }
 
 // Search handles GET /api/search.

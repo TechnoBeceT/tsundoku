@@ -59,7 +59,7 @@ vi.mock('~/utils/api/client', () => ({
               mangaId: 42,
               title: 'Vinland Saga',
               url: 'https://mangadex.org/title/42',
-              thumbnailUrl: '/api/sources/src-1/manga/42/cover',
+              thumbnailUrl: 'https://mangadex.org/covers/42/cover.jpg',
               // Search/Browse are lightweight — author/artist/description are
               // empty until loadDetails() forces the fetchManga mutation.
               author: '',
@@ -88,7 +88,7 @@ vi.mock('~/utils/api/client', () => ({
 }))
 
 describe('useDiscover – candidate metadata mapping', () => {
-  it('carries the proxy thumbnailUrl onto DiscoverCandidate (rich fields arrive via loadDetails, not Browse)', async () => {
+  it('routes thumbnailUrl through the source-cover proxy (protected sources 403 a raw <img src>)', async () => {
     const { result } = useDiscover()
 
     // init() resolves the source list and page 1 asynchronously; wait for the
@@ -97,7 +97,9 @@ describe('useDiscover – candidate metadata mapping', () => {
     await vi.waitFor(() => expect(result.value.manga.length).toBe(1))
 
     const c = result.value.manga[0]!
-    expect(c.thumbnailUrl).toBe('/api/sources/src-1/manga/42/cover')
+    expect(c.thumbnailUrl).toBe(
+      `/api/sources/src-1/cover?url=${encodeURIComponent('https://mangadex.org/covers/42/cover.jpg')}`,
+    )
     expect(c.author).toBe('')
     expect(c.description).toBe('')
   })

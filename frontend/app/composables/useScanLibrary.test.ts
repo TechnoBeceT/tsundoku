@@ -458,7 +458,7 @@ describe('useScanLibrary', () => {
           lang: 'en',
           mangaId: 42,
           title: 'Test Manga',
-          thumbnailUrl: 'https://example.com/thumb.jpg',
+          thumbnailUrl: `/api/sources/src-1/cover?url=${encodeURIComponent('https://example.com/thumb.jpg')}`,
         }],
       },
     ])

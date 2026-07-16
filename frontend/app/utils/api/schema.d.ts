@@ -911,6 +911,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sources/{sourceId}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Source-manga cover proxy
+         * @description Streams a source-manga cover image, re-fetched through the engine host
+         *     (mirrors getProviderCover's coverproxy.StreamEngine primitive).
+         *     Discover/Search cards otherwise point an <img> straight at the raw
+         *     thumbnailUrl, which a Cloudflare/hotlink-protected source rejects with
+         *     a 403 to a plain browser request; the engine host's outbound HTTP
+         *     client already carries that source's cf_clearance. Returns 502 when
+         *     the engine fetch fails.
+         */
+        get: operations["getSourceCover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -5377,6 +5403,59 @@ export interface operations {
                 };
             };
             /** @description The engine host failed to fetch the chapter feed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSourceCover: {
+        parameters: {
+            query: {
+                /** @description The raw cover/thumbnail URL to re-fetch (as returned by Search/Browse's SearchCandidate.thumbnailUrl). */
+                url: string;
+            };
+            header?: never;
+            path: {
+                /** @description Engine-host source ID, stringified decimal int64. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The cover image bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description Malformed sourceId, or missing/blank url. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host failed to fetch the cover image. */
             502: {
                 headers: {
                     [name: string]: unknown;

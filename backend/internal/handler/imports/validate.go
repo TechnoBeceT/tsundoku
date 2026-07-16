@@ -58,6 +58,32 @@ func parseQuery(raw string) (string, error) {
 	return q, nil
 }
 
+// parseSourceID parses the :sourceId path param as a decimal int64 — the
+// engine-host source identity coverproxy.StreamEngine (and the underlying
+// sourceengine.Client.Image call) addresses a source by. A blank or
+// non-numeric value yields a 400 echo.HTTPError.
+func parseSourceID(raw string) (int64, error) {
+	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "sourceId must be numeric")
+	}
+	return id, nil
+}
+
+// parseCoverURL validates the REQUIRED ?url query param on SourceCover — the
+// raw thumbnail/cover URL (as returned by Search/Browse's SearchCandidate DTO)
+// the engine host is asked to re-fetch. An empty value yields a 400
+// echo.HTTPError; kept separate from parseChapterURL (same non-empty rule)
+// because the two params address conceptually different things (a manga page
+// URL vs. an image URL) and a shared name would blur that at the call site.
+func parseCoverURL(raw string) (string, error) {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return "", echo.NewHTTPError(http.StatusBadRequest, "url is required")
+	}
+	return u, nil
+}
+
 // parseBrowseType maps the ?type query parameter to an imports.BrowseType.
 // "popular" → POPULAR, "latest" → LATEST; any other value (including empty)
 // yields a 400 echo.HTTPError — type is a required closed enum.

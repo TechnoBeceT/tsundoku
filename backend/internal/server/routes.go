@@ -63,6 +63,7 @@ import (
 //   - /api/sources/:sourceId/manga/:mangaId/chapters — chapter preview (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/details  — on-demand rich manga details (RequireOwner).
 //   - /api/sources/:sourceId/manga/:mangaId/breakdown — per-scanlator chapter coverage breakdown (RequireOwner).
+//   - /api/sources/:sourceId/cover                 — source-manga cover proxy, re-fetched via the engine host so protected sources render (RequireOwner).
 //   - /api/series (GET)                            — library list (RequireOwner).
 //   - /api/series (POST)                           — adopt / import manga (RequireOwner).
 //   - /api/series/:id (GET)                        — library detail (RequireOwner).
@@ -365,13 +366,14 @@ func registerRoutes(
 		// hot reload); 0 disables the search cache at runtime.
 		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
 	).WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
-	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger)
+	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, engineClient)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", importsH.InspectChapters)
 	authed.GET("/sources/:sourceId/manga/:mangaId/details", importsH.Details)
 	authed.GET("/sources/:sourceId/manga/:mangaId/breakdown", importsH.Breakdown)
+	authed.GET("/sources/:sourceId/cover", importsH.SourceCover)
 	authed.POST("/series", importsH.Adopt)
 
 	// Library-import (on-disk scan + adopt-without-redownload) API. Reuses the

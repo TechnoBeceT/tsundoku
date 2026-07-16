@@ -52,6 +52,7 @@
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
+import { sourceCoverProxyUrl } from '~/utils/sourceCover'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { BrowseResult, BrowseType, DiscoverCandidate, DiscoverSource } from '~/components/screens/discover.types'
 
@@ -71,7 +72,10 @@ function mapCandidate(dto: SearchCandidateDTO): DiscoverCandidate {
     lang: dto.lang,
     mangaId: dto.mangaId,
     title: dto.title,
-    thumbnailUrl: dto.thumbnailUrl,
+    // Routed through the backend's source-cover proxy (not the raw source
+    // URL) so Cloudflare/hotlink-protected sources render — see
+    // sourceCoverProxyUrl's doc comment.
+    thumbnailUrl: sourceCoverProxyUrl(dto.source, dto.thumbnailUrl),
     url: dto.url,
     description: dto.description,
     genres: dto.genres,

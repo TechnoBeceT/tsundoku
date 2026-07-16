@@ -149,7 +149,7 @@ describe('useMatchDiskProvider', () => {
           lang: 'en',
           mangaId: 42,
           title: 'Solo Leveling',
-          thumbnailUrl: 'https://example.com/thumb.jpg',
+          thumbnailUrl: `/api/sources/src-1/cover?url=${encodeURIComponent('https://example.com/thumb.jpg')}`,
           url: 'https://mangadex.org/title/42',
         }],
       },

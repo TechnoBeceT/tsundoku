@@ -60,6 +60,22 @@ type fakeEngineClient struct {
 	// source-relative manga URL.
 	detailsByURL map[string]sourceengine.MangaDetails
 	detailsErrs  map[string]error
+
+	// imageData/imageExt/imageErr back Image (SourceCover) — a single
+	// configurable result/error, since the handler tests exercise one cover
+	// fetch at a time. imageCalls records every (sourceID, imageURL) pair the
+	// handler passed through, so a test can assert the exact addressing.
+	imageData  []byte
+	imageExt   string
+	imageErr   error
+	imageCalls []imageCall
+}
+
+// imageCall records one Image(...) invocation's arguments for assertion.
+type imageCall struct {
+	sourceID int64
+	pageURL  string
+	imageURL string
 }
 
 func (f *fakeEngineClient) Health(context.Context) (sourceengine.Health, error) {
@@ -128,8 +144,12 @@ func (f *fakeEngineClient) Pages(context.Context, int64, string) ([]sourceengine
 	return nil, nil
 }
 
-func (f *fakeEngineClient) Image(context.Context, int64, string, string) ([]byte, string, error) {
-	return nil, "", nil
+func (f *fakeEngineClient) Image(_ context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+	f.imageCalls = append(f.imageCalls, imageCall{sourceID: sourceID, pageURL: pageURL, imageURL: imageURL})
+	if f.imageErr != nil {
+		return nil, "", f.imageErr
+	}
+	return f.imageData, f.imageExt, nil
 }
 
 func (f *fakeEngineClient) Sources(context.Context) ([]sourceengine.Source, error) {
@@ -211,7 +231,7 @@ func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 	seriesSvc := seriessvc.NewService(db, "", 14)
 
 	triggered := new(int)
-	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ })
+	h := handler.NewHandler(importsSvc, seriesSvc, func() { *triggered++ }, fc)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -222,6 +242,7 @@ func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 	authed.GET("/sources/:sourceId/manga/:mangaId/chapters", h.InspectChapters)
 	authed.GET("/sources/:sourceId/manga/:mangaId/details", h.Details)
 	authed.GET("/sources/:sourceId/manga/:mangaId/breakdown", h.Breakdown)
+	authed.GET("/sources/:sourceId/cover", h.SourceCover)
 	authed.POST("/series", h.Adopt)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -303,6 +324,14 @@ func TestBreakdown_Unauth(t *testing.T) {
 	rec := env.doUnauth(http.MethodGet, "/api/sources/1/manga/1/breakdown?url=/manga/1")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("Breakdown unauth: want 401, got %d", rec.Code)
+	}
+}
+
+func TestSourceCover_Unauth(t *testing.T) {
+	env := newTestEnv(t, &fakeEngineClient{})
+	rec := env.doUnauth(http.MethodGet, "/api/sources/1/cover?url=https://example.com/cover.jpg")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("SourceCover unauth: want 401, got %d", rec.Code)
 	}
 }
 
@@ -817,6 +846,75 @@ func TestBreakdown_MissingURL_400(t *testing.T) {
 	rec := env.do(http.MethodGet, "/api/sources/src/manga/notanint/breakdown", "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Breakdown missing url: want 400, got %d", rec.Code)
+	}
+}
+
+// --- GET /api/sources/:sourceId/cover ------------------------------------------
+
+// TestSourceCover_OK asserts a successful cover fetch streams the engine's
+// image bytes back with the derived content type, and — critically — that the
+// handler called Image with the PARSED :sourceId (as int64) and the ?url=
+// query verbatim in the imageURL slot (pageURL empty), mirroring
+// series.Handler.ProviderCover's addressing (see coverproxy.StreamEngine's doc
+// comment for why imageURL, not pageURL, carries the cover URL).
+func TestSourceCover_OK(t *testing.T) {
+	fc := &fakeEngineClient{imageData: []byte("fake-jpeg-bytes"), imageExt: "jpg"}
+	env := newTestEnv(t, fc)
+
+	rec := env.do(http.MethodGet, "/api/sources/42/cover?url=https://example.com/cover.jpg", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SourceCover OK: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "fake-jpeg-bytes" {
+		t.Errorf("SourceCover OK: body = %q, want %q", rec.Body.String(), "fake-jpeg-bytes")
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("SourceCover OK: Content-Type = %q, want image/jpeg", ct)
+	}
+	if len(fc.imageCalls) != 1 {
+		t.Fatalf("SourceCover OK: Image called %d times, want 1", len(fc.imageCalls))
+	}
+	got := fc.imageCalls[0]
+	if got.sourceID != 42 || got.pageURL != "" || got.imageURL != "https://example.com/cover.jpg" {
+		t.Errorf("SourceCover OK: Image call = %+v, want {sourceID:42 pageURL:\"\" imageURL:https://example.com/cover.jpg}", got)
+	}
+}
+
+// TestSourceCover_BadSourceID_400 asserts a non-numeric :sourceId is a 400
+// (the sourceengine.Client.Image call requires an int64 identity).
+func TestSourceCover_BadSourceID_400(t *testing.T) {
+	env := newTestEnv(t, &fakeEngineClient{})
+	rec := env.do(http.MethodGet, "/api/sources/not-a-number/cover?url=https://example.com/cover.jpg", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("SourceCover bad sourceId: want 400, got %d", rec.Code)
+	}
+}
+
+// TestSourceCover_MissingURL_400 asserts an absent/blank ?url= is a 400 —
+// there is nothing for the engine host to re-fetch.
+func TestSourceCover_MissingURL_400(t *testing.T) {
+	env := newTestEnv(t, &fakeEngineClient{})
+	rec := env.do(http.MethodGet, "/api/sources/1/cover", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("SourceCover missing url: want 400, got %d", rec.Code)
+	}
+
+	rec = env.do(http.MethodGet, "/api/sources/1/cover?url=", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("SourceCover blank url: want 400, got %d", rec.Code)
+	}
+}
+
+// TestSourceCover_UpstreamError_502 asserts an engine-host Image failure maps
+// to 502 (mirrors TestDetails_UpstreamError_502) — a protected-source fetch
+// failure must never surface as a false 200.
+func TestSourceCover_UpstreamError_502(t *testing.T) {
+	fc := &fakeEngineClient{imageErr: errors.New("cf challenge failed")}
+	env := newTestEnv(t, fc)
+
+	rec := env.do(http.MethodGet, "/api/sources/1/cover?url=https://example.com/cover.jpg", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("SourceCover upstream error: want 502, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
