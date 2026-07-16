@@ -16,6 +16,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/metadata"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
+	"github.com/technobecet/tsundoku/internal/pkg/urlx"
 )
 
 // ChapterCounts is the per-series rollup of chapter download state used in list
@@ -211,18 +212,21 @@ func mapLinks(links []metadata.Link) []LinkDTO {
 // SeriesProvider.Title, which is that source's per-manga title (usually just
 // the series title again) and would make a poor link label.
 //
-// The link points at the provider's WebURL — the fully-qualified,
-// browser-clickable page (Suwayomi's realUrl) — NEVER the source-relative
-// addressing URL (e.g. "/605z7-teach-me-first"), which is not a working link.
-// A real source whose WebURL has not resolved yet emits an empty link URL: the
-// FE LinkChip scheme-guards it and renders an inert/greyed pill rather than a
-// broken link. A provider with no addressing URL at all (a disk-origin/unlinked
-// row — no real source, nothing to link to) contributes nothing.
+// The link PREFERS the provider's WebURL — the fully-qualified,
+// browser-clickable page (the source's realUrl) — and FALLS BACK to the
+// addressing URL, which for many sources is ITSELF an absolute browser URL
+// (e.g. Asura's "https://asura.example/manga/.."). Only a genuinely
+// source-relative addressing URL (e.g. "/605z7-teach-me-first") is not a
+// working link, and the FE LinkChip scheme-guards THAT case into an
+// inert/greyed pill rather than a broken link. (WebURL-only was wrong: a source
+// whose addressing URL is already absolute would render a greyed dead pill even
+// though a perfectly good link exists — the source-link end-to-end test pins
+// this.) A provider with no addressing URL at all (a disk-origin/unlinked row —
+// no real source, nothing to link to) contributes nothing.
 //
-// DEDUP: a resolved WebURL that already appears among existing (case-insensitive
-// exact match) links is skipped, so a source a metadata provider also lists
-// isn't doubled; an unresolved (empty) WebURL never dedups, so several greyed
-// sources can coexist. providers must be the series' already-eager-loaded
+// DEDUP: a link URL that already appears among existing (case-insensitive exact
+// match) links is skipped, so a source a metadata provider also lists isn't
+// doubled. providers must be the series' already-eager-loaded
 // Edges.Providers (every caller — GetSeries — loads it for ProviderDTO already),
 // so this adds zero extra queries. existing is returned untouched (still
 // non-nil) when no provider qualifies.
@@ -238,15 +242,25 @@ func sourceLinks(providers []*ent.SeriesProvider, existing []LinkDTO) []LinkDTO 
 		if p.URL == "" {
 			continue
 		}
-		// Dedup only a resolved WebURL — empty (greyed) ones never merge.
-		if p.WebURL != "" {
-			key := strings.ToLower(p.WebURL)
+		// Prefer the fully-qualified browser WebURL (realUrl); fall back to the
+		// addressing URL ONLY when it is itself an absolute http(s) URL (many
+		// sources store a full browser URL there, e.g. Asura). A source-relative
+		// addressing URL (e.g. "/delta") is NOT a working link, so it stays an
+		// empty (greyed) pill — never emitted as an href.
+		linkURL := p.WebURL
+		if linkURL == "" && urlx.IsAbsoluteHTTP(p.URL) {
+			linkURL = p.URL
+		}
+		// Dedup a resolved link URL — empty (greyed) ones never merge, so several
+		// unresolved sources can coexist.
+		if linkURL != "" {
+			key := strings.ToLower(linkURL)
 			if _, dup := seen[key]; dup {
 				continue
 			}
 			seen[key] = struct{}{}
 		}
-		out = append(out, LinkDTO{Label: ProviderLabel(p), URL: p.WebURL})
+		out = append(out, LinkDTO{Label: ProviderLabel(p), URL: linkURL})
 	}
 	return out
 }
