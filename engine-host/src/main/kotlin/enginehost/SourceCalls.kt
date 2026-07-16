@@ -23,6 +23,25 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.runBlocking
 
+/**
+ * Reads a possibly-uninitialized `lateinit` [SManga] String field, yielding [fallback] instead of
+ * throwing when a details parser legitimately left it unset. A details parser builds a FRESH SManga
+ * and only sets the fields it cares about; in the normal Mihon/Suwayomi flow the identity fields
+ * (`url`, `title`) are already known, so a parser may never assign them — reading such a `lateinit`
+ * throws [UninitializedPropertyAccessException]. Mirrors Suwayomi's `Manga.updateMangaDatabase`,
+ * which wraps every parser-return field read in the same guard and falls back to the known identity
+ * rather than surfacing the exception (which reaches Tsundoku as an ingest-breaking HTTP 502).
+ */
+private inline fun lateinitOr(
+    fallback: String,
+    read: () -> String,
+): String =
+    try {
+        read()
+    } catch (_: UninitializedPropertyAccessException) {
+        fallback
+    }
+
 /** Human-readable label for Mihon's integer manga-status codes. */
 private fun statusLabel(status: Int): String =
     when (status) {
@@ -80,6 +99,11 @@ object SourceCalls {
         runBlocking {
             val seed = SManga.create().apply { this.url = url }
             val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = true, fetchChapters = false)
+            // A details parser returns a fresh SManga and may never set the `lateinit` identity `url`
+            // (already known in the normal Mihon/Suwayomi flow). Re-seed it with the requested url —
+            // the requested url IS the identity — so the toDetailsDto url read AND getMangaUrl below
+            // cannot throw UninitializedPropertyAccessException (the Flame Comics / Manhuascan.us 502).
+            update.manga.url = url
             update.manga.toDetailsDto(url, source)
         }
 
@@ -193,7 +217,10 @@ object SourceCalls {
         source: Source,
     ) = MangaDetailsDto(
         url = url.ifBlank { requestedUrl },
-        title = title,
+        // `title` is also a lateinit — a details parser that omits it would throw identically to the
+        // `url` case, so read it defensively and fall back to "" (Suwayomi's own fallback; Tsundoku's
+        // canonical series title is set on the Go side and is never sourced from this field).
+        title = lateinitOr("") { title },
         author = author,
         artist = artist,
         description = description,
