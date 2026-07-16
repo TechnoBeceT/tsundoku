@@ -87,11 +87,19 @@ RUN set -e; \
 FROM eclipse-temurin:21-jre-noble
 # tini -> reaps zombies + forwards signals (the Go server + engine-host are children).
 # gosu -> drop privileges. curl -> HEALTHCHECK. The lib* set is the Chromium runtime
-# KCEF needs for OFF-SCREEN rendering — NO Xvfb (windowless_rendering_enabled removes
-# the X-display requirement that the old embedded-Suwayomi stage needed).
+# KCEF needs. xvfb + dbus-x11/dbus -> CEF/Aura still requires a real (or virtual) X
+# display and a D-Bus session even with `--off-screen-rendering-enabled
+# --disable-gpu`: without them Chromium's Aura/Ozone platform layer fails to
+# initialize ("The platform failed to initialize. Exiting." / "ContentMainRun failed
+# with exit code 1"), so every WebView-gated source (Comix et al.) hangs until the
+# 2-minute timeout and 502s. Upstream Suwayomi-Server runs its bundled Chromium under
+# Xvfb for the same reason — the earlier "NO Xvfb, windowless_rendering_enabled
+# removes the X-display requirement" assumption in this stage was wrong and is
+# reverted here (entrypoint.sh starts Xvfb + dbus before launching engine-host).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         tini gosu curl \
+        xvfb dbus-x11 dbus \
         libxss1 libxext6 libxrender1 libxcomposite1 libxdamage1 \
         libxkbcommon0 libxtst6 libxcursor1 libxi6 libxrandr2 libx11-6 libxcb1 \
         libglib2.0-0t64 libnss3 libdbus-1-3 libpango-1.0-0 \
