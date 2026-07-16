@@ -47,6 +47,7 @@ import xyz.nulldev.ts.config.CONFIG_PREFIX
 import xyz.nulldev.ts.config.GlobalConfigManager
 import xyz.nulldev.ts.config.configManagerModule
 import java.io.File
+import java.io.IOException
 import java.io.RandomAccessFile
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
@@ -96,22 +97,60 @@ private var instanceLock: FileLock? = null
  * early in boot (the RPC server hasn't started yet), so the mechanism here is a plain advisory OS
  * file lock instead — same intent (stop two engine-host processes racing on the same [dataRoot]'s
  * extensions working-set and RPC port), different implementation. Fails fast with a clear error if
- * another instance already holds the lock; on success the lock is held (never released) for the
- * life of the process.
+ * another PROCESS already holds the lock; on success the lock is held (never released) for the life
+ * of the process.
+ *
+ * The lock is an advisory BEST-EFFORT guard, not a correctness invariant. On a filesystem whose OS
+ * lock manager is unavailable — classically NFS mounted without a running lock daemon
+ * (`rpc.lockd`/`statd`), which the owner's prod library uses — `FileChannel.tryLock()` (or even
+ * opening the lock file's channel) throws [IOException] ("No locks available", ENOLCK) rather than
+ * returning null. In that case engine-host logs a warning and CONTINUES WITHOUT the lock rather than
+ * crashing on boot: under the single-owner homelab threat model exactly one instance runs by
+ * construction, so refusing to start because the filesystem cannot lock is strictly worse than
+ * booting unprotected — and NFS-without-lockd is a common mount (GAP-087).
  */
-private fun acquireSingleInstanceLock(dataRoot: File) {
+internal fun acquireSingleInstanceLock(dataRoot: File) {
     val lockFile = File(dataRoot, ".enginehost.lock")
-    val channel = RandomAccessFile(lockFile, "rw").channel
+
+    val channel =
+        try {
+            RandomAccessFile(lockFile, "rw").channel
+        } catch (e: IOException) {
+            // Opening the lock channel itself can fail on a lock-unsupported mount — degrade, not crash.
+            logger.warn(e) {
+                "Could not open the single-instance lock file ${lockFile.absolutePath} " +
+                    "(the filesystem may not support locking) — continuing without single-instance protection"
+            }
+            return
+        }
+
     val lock =
         try {
             // Returns null (rather than throwing) when another PROCESS holds a conflicting lock;
-            // throws only when this same JVM already holds one (double-invocation guard below).
+            // throws OverlappingFileLockException when this same JVM already holds one, and
+            // IOException when the filesystem's lock manager is unavailable (NFS-without-lockd).
             channel.tryLock()
         } catch (e: OverlappingFileLockException) {
-            null
+            // Double-invocation inside this same JVM: a lock is already held by the earlier call, so
+            // single-instance is already satisfied. Drop this redundant channel and continue.
+            logger.warn(e) {
+                "Single-instance lock on ${lockFile.absolutePath} is already held by this process — continuing"
+            }
+            closeQuietly(channel)
+            return
+        } catch (e: IOException) {
+            // Lock manager unavailable (NFS without lockd / ENOLCK) — degrade, not crash (GAP-087).
+            logger.warn(e) {
+                "Could not acquire the single-instance lock on ${lockFile.absolutePath} " +
+                    "(the filesystem may not support locking) — continuing without single-instance protection"
+            }
+            closeQuietly(channel)
+            return
         }
+
     if (lock == null) {
-        channel.close()
+        // A DIFFERENT process holds the lock: a genuine second instance — refuse to start.
+        closeQuietly(channel)
         error(
             "Another engine-host instance already holds the lock on ${lockFile.absolutePath} " +
                 "— refusing to start (two instances sharing one data dir would corrupt the extensions working-set).",
@@ -119,6 +158,15 @@ private fun acquireSingleInstanceLock(dataRoot: File) {
     }
     instanceLockChannel = channel
     instanceLock = lock
+}
+
+/** Close [channel], swallowing a secondary [IOException] so cleanup never masks the original failure. */
+private fun closeQuietly(channel: FileChannel) {
+    try {
+        channel.close()
+    } catch (e: IOException) {
+        logger.warn(e) { "Failed to close the single-instance lock channel during cleanup" }
+    }
 }
 
 /** Stand up the AndroidCompat runtime on a plain JVM. Returns the app data dir. */
