@@ -50,7 +50,40 @@ func (s *Service) SyncNow(ctx context.Context, seriesID uuid.UUID) ([]*ent.Track
 		}
 		out = append(out, updated)
 	}
-	return out, nil
+	return s.reconcileSeriesCompletion(ctx, seriesID, out), nil
+}
+
+// reconcileSeriesCompletion fans a cross-tracker READ-completion out to every
+// binding when the just-synced set shows any binding read-complete (see
+// seriesReadCompleted) — the PULL-side mirror of PushProgress's push-side
+// anyCompleted fan-out. Completion propagation (CompleteSeries) used to fire
+// ONLY from the push side (PushProgress/UpdateTrack/retry), so a tracker that
+// only ever reports completion on a PULL — MangaUpdates, which reports no
+// total and can therefore NEVER auto-complete on a push — stayed stranded on
+// its Reading list while its siblings (pulled as completed) showed completed.
+// Firing the same fan-out from SyncNow closes that gap: once any sibling is
+// pulled read-complete, MangaUpdates is moved to its Complete list too.
+//
+// Best-effort: a per-binding propagation failure is logged, never fails the
+// sync — the per-binding rows the loop already produced are durable and
+// correct. Whether it fired or not, the binding set is reloaded so the §16
+// round-trip response reflects whatever the fan-out landed (e.g. MangaUpdates
+// moved to "complete", a with-total binding's progress advanced to its total).
+func (s *Service) reconcileSeriesCompletion(ctx context.Context, seriesID uuid.UUID, synced []*ent.TrackBinding) []*ent.TrackBinding {
+	if !seriesReadCompleted(synced) {
+		return synced
+	}
+	if err := s.CompleteSeries(ctx, seriesID); err != nil {
+		slog.WarnContext(ctx, "syncsvc: SyncNow: cross-tracker completion had per-binding failures",
+			"series_id", seriesID, "err", err)
+	}
+	reloaded, err := s.client.TrackBinding.Query().Where(enttrackbinding.SeriesID(seriesID)).All(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "syncsvc: SyncNow: reload after completion reconcile failed",
+			"series_id", seriesID, "err", err)
+		return synced
+	}
+	return reloaded
 }
 
 // syncOneBinding pulls b's remote entry and converges it with the local row.

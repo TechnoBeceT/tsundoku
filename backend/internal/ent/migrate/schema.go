@@ -526,6 +526,7 @@ var (
 		{Name: "token_type", Type: field.TypeString, Default: "Bearer"},
 		{Name: "expires_at", Type: field.TypeTime, Nullable: true},
 		{Name: "username", Type: field.TypeString, Default: ""},
+		{Name: "password", Type: field.TypeString, Nullable: true, Default: ""},
 		{Name: "score_format", Type: field.TypeString, Nullable: true, Default: ""},
 		{Name: "token_expired", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime},

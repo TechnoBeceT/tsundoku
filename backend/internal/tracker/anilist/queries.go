@@ -82,10 +82,15 @@ query ($userId: Int, $mediaId: Int) {
 }`
 
 // saveEntryMutation creates a NEW MediaList entry (a bind) — AniList's
-// SaveMediaListEntry upserts by mediaId when no id is given.
+// SaveMediaListEntry upserts by mediaId when no id is given. It carries the
+// FULL first-bind field set (scoreRaw + startedAt/completedAt alongside
+// progress/status/private) so a score or reading date supplied at bind time is
+// NOT dropped until the next update — parity with Kitsu's + MAL's own bind
+// writes (STEP 5). An absent value is harmless: AniList treats a 0 scoreRaw or
+// a null FuzzyDateInput as "unset".
 const saveEntryMutation = `
-mutation ($mediaId: Int, $progress: Int, $status: MediaListStatus, $private: Boolean) {
-  SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, private: $private) {` + mediaListEntrySelection + `
+mutation ($mediaId: Int, $progress: Int, $status: MediaListStatus, $scoreRaw: Int, $startedAt: FuzzyDateInput, $completedAt: FuzzyDateInput, $private: Boolean) {
+  SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, scoreRaw: $scoreRaw, startedAt: $startedAt, completedAt: $completedAt, private: $private) {` + mediaListEntrySelection + `
   }
 }`
 

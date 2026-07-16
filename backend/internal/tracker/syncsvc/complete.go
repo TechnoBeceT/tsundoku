@@ -59,20 +59,51 @@ func (s *Service) CompleteSeries(ctx context.Context, seriesID uuid.UUID) error 
 	return errors.Join(errs...)
 }
 
+// seriesReadCompleted reports whether ANY of a series' bindings has reached
+// READ-completion — either it sits at its tracker's OWN native completed
+// status (a completed status the owner set on the tracker, or a prior
+// auto-complete, adopted onto the row by a pull — isPropagatedCompletedStatus
+// covers all four trackers, MangaUpdates' "complete" list label included), OR
+// it has read to/past its OWN reported total.
+//
+// 🔴 READ-completion means the user has READ every chapter. It is a DIFFERENT
+// axis from the local Series.completed library flag (which means
+// release/publication-complete + stop-monitoring), and this function
+// DELIBERATELY never reads that flag — cross-tracker completion keys off
+// read-completion ONLY. Completed is terminal, so an OR across bindings can
+// never wrongly regress anyone: the CompleteSeries fan-out this gates only
+// ever advances a binding to completed, never un-completes one.
+func seriesReadCompleted(bindings []*ent.TrackBinding) bool {
+	for _, b := range bindings {
+		if isPropagatedCompletedStatus(b.TrackerID, b.Status) {
+			return true
+		}
+		if b.TotalChapters > 0 && b.LastChapterRead >= float64(b.TotalChapters) {
+			return true
+		}
+	}
+	return false
+}
+
 // completeOne force-sets ONE binding to its tracker's native completed status
-// (and, when the tracker reported a total, advances progress to it), pushing
-// the change to the tracker's own account and persisting it locally. A binding
-// already at its completed status with progress already at/beyond its total is
-// a no-op (no remote call). A tracker absent from propagatedCompletedStatus is
-// skipped (nothing sensible to set). Progress is only ever ADVANCED, never
-// regressed (target is max(current, total)).
+// and lands its progress at completionProgress (the tracker's OWN total when
+// it reports one, else the current read), pushing the change to the tracker's
+// own account and persisting it locally. A binding already at its completed
+// status with progress EXACTLY at completionProgress is a no-op (no remote
+// call). A tracker absent from propagatedCompletedStatus is skipped (nothing
+// sensible to set).
 func (s *Service) completeOne(ctx context.Context, binding *ent.TrackBinding) error {
 	status, ok := propagatedCompletedStatus(binding.TrackerID)
 	if !ok {
 		return nil
 	}
 	truncated := completionProgress(binding)
-	if binding.Status == status && binding.LastChapterRead >= truncated {
+	// == (not >=): completionProgress CLAMPS to the tracker's own total when
+	// known, so an already-completed binding that overshot its total (e.g. MAL
+	// stored read 269 against its 268-chapter catalog — read > total) is NOT a
+	// no-op here; it must be corrected down to exactly 268. See
+	// completionProgress.
+	if binding.Status == status && binding.LastChapterRead == truncated {
 		return nil
 	}
 
@@ -87,13 +118,19 @@ func (s *Service) completeOne(ctx context.Context, binding *ent.TrackBinding) er
 	return s.pushAndPersistCompletion(ctx, t, token, binding, status, truncated)
 }
 
-// completionProgress is the progress a completed binding should hold: its
-// total when the tracker reports one AND it is ahead of the current read
-// (completion fills progress to the end), else the current read — never a
-// regress. Truncated to the tracker's integer wire field (mirrors pushOne).
+// completionProgress is the progress a completed binding should hold: EXACTLY
+// the tracker's OWN reported total when it reports one (>0), else the current
+// read (unknown total — keep whatever the owner has). When the total is known
+// this CLAMPS both up AND down to that total — the read a completed binding
+// stores must be that tracker's own catalog count, not a cross-tracker
+// maximum: a tracker whose catalog lists 268 chapters must store 268/268, even
+// when a sibling tracker (or the local library) read to 269. This fixes the
+// observed MAL "269/268" (read > total) desync — read=max-across-sources
+// (269) vs total=this-tracker's-catalog (268) — by landing MAL at 268/268.
+// Truncated to the tracker's integer wire field (mirrors pushOne).
 func completionProgress(binding *ent.TrackBinding) float64 {
 	target := binding.LastChapterRead
-	if binding.TotalChapters > 0 && float64(binding.TotalChapters) > target {
+	if binding.TotalChapters > 0 {
 		target = float64(binding.TotalChapters)
 	}
 	return float64(kernel.TruncateForInteger(target))

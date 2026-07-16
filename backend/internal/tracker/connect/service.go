@@ -176,7 +176,9 @@ func (s *Service) CompleteOAuth(ctx context.Context, trackerID int, callbackURL 
 	}
 
 	username, scoreFormat := s.lookupAccountInfo(ctx, t, tok)
-	return s.upsertConnection(ctx, trackerID, tok, username, scoreFormat)
+	// An OAuth login stores no password (recovery is a refresh grant or a fresh
+	// redirect, never a stored credential).
+	return s.upsertConnection(ctx, trackerID, tok, connectionMeta{username: username, scoreFormat: scoreFormat})
 }
 
 // callbackParams returns the merged OAuth callback parameters for u: the
@@ -290,7 +292,10 @@ func (s *Service) LoginCredentials(ctx context.Context, trackerID int, username,
 		return tracker.WrapUpstream(t.Key(), fmt.Errorf("connect: %s credential login: %w", t.Key(), err))
 	}
 
-	return s.upsertConnection(ctx, trackerID, tok, username, "")
+	// Store the password (only for a credential tracker) so a later reactive-401
+	// re-login can recover a dead session without a manual reconnect — see
+	// TrackerConnection.password's schema doc + account.ReloginCredentials.
+	return s.upsertConnection(ctx, trackerID, tok, connectionMeta{username: username, password: password})
 }
 
 // Logout deletes trackerID's TrackerConnection row, discarding its stored
@@ -309,14 +314,25 @@ func (s *Service) Logout(ctx context.Context, trackerID int) error {
 	return nil
 }
 
-// upsertConnection writes tok (+ username/scoreFormat) into trackerID's
-// TrackerConnection row, creating it on first login and overwriting the
-// prior token set on every subsequent one — a query-then-create/update
-// pattern (mirrors the codebase's other find-or-create call sites, e.g.
-// category.FindOrCreate) since tracker_id has no upsert-on-conflict clause
-// wired here. token_expired is explicitly cleared on every successful
-// login, since a fresh TokenSet is by definition not expired.
-func (s *Service) upsertConnection(ctx context.Context, trackerID int, tok tracker.TokenSet, username, scoreFormat string) error {
+// connectionMeta carries the non-token account fields upsertConnection
+// persists alongside a TokenSet: the display username, the AniList
+// score-format (OAuth only), and the credential password (credential-login
+// trackers only — "" everywhere else). Grouped into one struct so
+// upsertConnection keeps a small parameter list as its inputs grew.
+type connectionMeta struct {
+	username    string
+	scoreFormat string
+	password    string
+}
+
+// upsertConnection writes tok (+ meta) into trackerID's TrackerConnection row,
+// creating it on first login and overwriting the prior token set on every
+// subsequent one — a query-then-create/update pattern (mirrors the codebase's
+// other find-or-create call sites, e.g. category.FindOrCreate) since
+// tracker_id has no upsert-on-conflict clause wired here. token_expired is
+// explicitly cleared on every successful login, since a fresh TokenSet is by
+// definition not expired.
+func (s *Service) upsertConnection(ctx context.Context, trackerID int, tok tracker.TokenSet, meta connectionMeta) error {
 	existing, err := s.client.TrackerConnection.Query().
 		Where(trackerconnection.TrackerID(trackerID)).
 		Only(ctx)
@@ -328,8 +344,9 @@ func (s *Service) upsertConnection(ctx context.Context, trackerID int, tok track
 			SetAccessToken(tok.Access).
 			SetRefreshToken(tok.Refresh).
 			SetNillableExpiresAt(tok.ExpiresAt).
-			SetUsername(username).
-			SetScoreFormat(scoreFormat).
+			SetUsername(meta.username).
+			SetPassword(meta.password).
+			SetScoreFormat(meta.scoreFormat).
 			Save(ctx); cerr != nil {
 			return fmt.Errorf("connect: create tracker connection: %w", cerr)
 		}
@@ -341,8 +358,9 @@ func (s *Service) upsertConnection(ctx context.Context, trackerID int, tok track
 			SetAccessToken(tok.Access).
 			SetRefreshToken(tok.Refresh).
 			SetNillableExpiresAt(tok.ExpiresAt).
-			SetUsername(username).
-			SetScoreFormat(scoreFormat).
+			SetUsername(meta.username).
+			SetPassword(meta.password).
+			SetScoreFormat(meta.scoreFormat).
 			SetTokenExpired(false).
 			Save(ctx); uerr != nil {
 			return fmt.Errorf("connect: update tracker connection: %w", uerr)

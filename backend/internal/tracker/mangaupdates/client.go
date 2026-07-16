@@ -72,9 +72,22 @@ const (
 	providerName       = "MangaUpdates"
 )
 
+// Reauthenticator recovers a fresh MangaUpdates session token when an
+// authenticated call 401s — MangaUpdates sessions are short-lived and issue
+// no refresh grant, so the only recovery is a fresh username/password login.
+// It is injected (SetReauthenticator) rather than built in because the
+// re-login needs the stored account credentials + a place to persist the new
+// token, both of which live in the ent-touching orchestration layer this
+// ent-free client must not import (the closure is wired in cmd/tsundoku/main.go
+// over account.ReloginCredentials).
+type Reauthenticator func(ctx context.Context) (token string, err error)
+
 // Client implements tracker.Tracker against MangaUpdates' REST API.
 type Client struct {
 	http *http.Client
+	// reauth, when set, re-logins on a 401 for an authenticated call and lets
+	// the request retry once with a fresh session token — see sendAuthed.
+	reauth Reauthenticator
 }
 
 // compile-time assert: Client satisfies the tracker.Tracker contract plus
@@ -93,6 +106,12 @@ func New(httpClient *http.Client) *Client {
 	}
 	return &Client{http: httpClient}
 }
+
+// SetReauthenticator wires the reactive-401 re-login hook (see
+// Reauthenticator). Called once at composition time (cmd/tsundoku/main.go); a
+// nil-or-unset reauth simply disables the retry — a 401 then surfaces as
+// tracker.ErrTokenExpired for the caller to force a manual reconnect.
+func (c *Client) SetReauthenticator(reauth Reauthenticator) { c.reauth = reauth }
 
 // Key returns this tracker's stable string identity.
 func (c *Client) Key() string { return providerKey }
@@ -191,16 +210,7 @@ func (c *Client) GetEntry(ctx context.Context, token, remoteID string) (*tracker
 	}
 	reqURL := baseURL + "/lists/series/" + url.PathEscape(remoteID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		// Defensive path: reachable only with a nil context; unreachable in
-		// practice.
-		return nil, fmt.Errorf("mangaupdates: build request %s: %w", reqURL, err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := c.http.Do(req)
+	resp, err := c.sendAuthed(ctx, token, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mangaupdates: request %s: %w", reqURL, err)
 	}
@@ -208,6 +218,9 @@ func (c *Client) GetEntry(ctx context.Context, token, remoteID string) (*tracker
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, unauthorizedError(reqURL, resp)
 	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
@@ -243,11 +256,12 @@ func (c *Client) SaveEntry(ctx context.Context, token string, entry tracker.Trac
 		return tracker.TrackEntry{}, fmt.Errorf("mangaupdates: marshal add request: %w", err)
 	}
 
-	var results []listSeriesEntry
-	if err := c.doJSON(ctx, token, http.MethodPost, baseURL+"/lists/series", body, &results); err != nil {
+	// Pass out=nil: a list-WRITE tolerates ANY 2xx body (see doJSON) — see
+	// finishUpsert's doc comment for why the response is NOT decoded.
+	if err := c.doJSON(ctx, token, http.MethodPost, baseURL+"/lists/series", body, nil); err != nil {
 		return tracker.TrackEntry{}, err
 	}
-	return finishUpsert(entry, results), nil
+	return finishUpsert(entry), nil
 }
 
 // UpdateEntry writes progress to an EXISTING list entry, via POST
@@ -281,22 +295,31 @@ func (c *Client) UpdateEntry(ctx context.Context, token string, entry tracker.Tr
 		return tracker.TrackEntry{}, fmt.Errorf("mangaupdates: marshal update request: %w", err)
 	}
 
-	var results []listSeriesEntry
-	if err := c.doJSON(ctx, token, http.MethodPost, baseURL+"/lists/series/update", body, &results); err != nil {
+	// Pass out=nil: a list-WRITE tolerates ANY 2xx body (see doJSON) — see
+	// finishUpsert's doc comment for why the response is NOT decoded.
+	if err := c.doJSON(ctx, token, http.MethodPost, baseURL+"/lists/series/update", body, nil); err != nil {
 		return tracker.TrackEntry{}, err
 	}
-	return finishUpsert(entry, results), nil
+	return finishUpsert(entry), nil
 }
 
-// finishUpsert maps the first echoed row from a SaveEntry/UpdateEntry
-// response, falling back to the caller's own input when MangaUpdates
-// echoes nothing back — this keeps the caller's write from looking like it
-// silently vanished when the wire response is thinner than expected.
-func finishUpsert(entry tracker.TrackEntry, results []listSeriesEntry) tracker.TrackEntry {
-	if len(results) == 0 {
-		return entry
-	}
-	return toTrackEntry(results[0])
+// finishUpsert returns the caller's own input entry as the SaveEntry/
+// UpdateEntry result. 🔴 MangaUpdates' list-WRITE endpoints (POST
+// /lists/series + /lists/series/update) do NOT echo back the written
+// list-series row: they answer with a STATUS ENVELOPE object
+// ({"status":"success","context":{…}}) OR an empty/204 body — NEITHER of
+// which is the []listSeriesEntry array this client used to strictly decode
+// into. That decode failed on the real response shape, so the write
+// hard-failed the whole bind AND every chapter push even though the write
+// SUCCEEDED server-side (the owner's reported "add + chapter update fail,
+// mostly on MangaUpdates" bug). The fix: the write callers pass out=nil to
+// doJSON — succeeding on any 2xx, decoding nothing — and this helper returns
+// the caller's own already-populated entry (RemoteID/Status/Progress were all
+// set by the caller), so the write's result is never lost. The reference
+// ports (Mihon/Komikku/Suwayomi) likewise check the write's HTTP status and
+// never decode its body as data.
+func finishUpsert(entry tracker.TrackEntry) tracker.TrackEntry {
+	return entry
 }
 
 // DeleteEntry removes entry.RemoteID from every list it belongs to, via
@@ -333,27 +356,21 @@ func parseSeriesID(remoteID string) (int64, error) {
 
 // doJSON POSTs/PUTs body (already-marshaled JSON) to reqURL, attaching
 // Bearer token when non-empty, and decodes the JSON response into out
-// (skipped when out is nil). Any non-2xx response is reported as an error
-// carrying the status and body for diagnosability.
+// (skipped when out is nil). A 401 for an authenticated call triggers a single
+// reactive re-login + retry (see sendAuthed) and, if that cannot recover the
+// session, surfaces as tracker.ErrTokenExpired so the caller forces a
+// reconnect. Any other non-2xx response is reported as an error carrying the
+// status and body for diagnosability.
 func (c *Client) doJSON(ctx context.Context, token, method, reqURL string, body []byte, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, bytes.NewReader(body))
-	if err != nil {
-		// Defensive path: reachable only with a nil context; unreachable in
-		// practice.
-		return fmt.Errorf("mangaupdates: build request %s: %w", reqURL, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := c.http.Do(req)
+	resp, err := c.sendAuthed(ctx, token, method, reqURL, body)
 	if err != nil {
 		return fmt.Errorf("mangaupdates: request %s: %w", reqURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return unauthorizedError(reqURL, resp)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("mangaupdates: %s returned HTTP %d: %s", reqURL, resp.StatusCode, strings.TrimSpace(string(b)))
@@ -365,4 +382,61 @@ func (c *Client) doJSON(ctx context.Context, token, method, reqURL string, body 
 		return fmt.Errorf("mangaupdates: decode response %s: %w", reqURL, err)
 	}
 	return nil
+}
+
+// sendAuthed issues an authenticated request and, on a 401 for a call that
+// actually carried a token (token != "") with a Reauthenticator wired,
+// re-logins ONCE and retries with the fresh session token. It is bounded to a
+// single retry — no recursion, no loop: the re-login itself runs
+// LoginCredentials with token=="" (see LoginCredentials), which can never
+// re-enter this reauth branch. On re-login failure the original 401 response
+// is returned unread so the caller maps it to tracker.ErrTokenExpired.
+func (c *Client) sendAuthed(ctx context.Context, token, method, reqURL string, body []byte) (*http.Response, error) {
+	resp, err := c.sendOnce(ctx, token, method, reqURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusUnauthorized || token == "" || c.reauth == nil {
+		return resp, nil
+	}
+	newToken, rerr := c.reauth(ctx)
+	if rerr != nil || newToken == "" {
+		return resp, nil
+	}
+	_ = resp.Body.Close()
+	return c.sendOnce(ctx, newToken, method, reqURL, body)
+}
+
+// sendOnce builds and sends a single HTTP request: it sets Accept, attaches a
+// Content-Type only when there is a body, and a Bearer token only when token
+// is non-empty. The caller owns resp.Body.Close().
+func (c *Client) sendOnce(ctx context.Context, token, method, reqURL string, body []byte) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, reader)
+	if err != nil {
+		// Defensive path: reachable only with a nil context; unreachable in
+		// practice.
+		return nil, fmt.Errorf("mangaupdates: build request %s: %w", reqURL, err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return c.http.Do(req)
+}
+
+// unauthorizedError wraps tracker.ErrTokenExpired for a persistent 401 (either
+// no Reauthenticator was wired, or the reactive re-login could not recover the
+// session), carrying the response body for diagnosability. errors.Is lets the
+// orchestration layer flag the connection token_expired so the owner sees
+// "reconnect" instead of a silently-broken tracker.
+func unauthorizedError(reqURL string, resp *http.Response) error {
+	b, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("mangaupdates: %s unauthorized (HTTP 401): %s: %w", reqURL, strings.TrimSpace(string(b)), tracker.ErrTokenExpired)
 }

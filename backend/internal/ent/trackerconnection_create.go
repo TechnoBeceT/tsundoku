@@ -97,6 +97,20 @@ func (_c *TrackerConnectionCreate) SetNillableUsername(v *string) *TrackerConnec
 	return _c
 }
 
+// SetPassword sets the "password" field.
+func (_c *TrackerConnectionCreate) SetPassword(v string) *TrackerConnectionCreate {
+	_c.mutation.SetPassword(v)
+	return _c
+}
+
+// SetNillablePassword sets the "password" field if the given value is not nil.
+func (_c *TrackerConnectionCreate) SetNillablePassword(v *string) *TrackerConnectionCreate {
+	if v != nil {
+		_c.SetPassword(*v)
+	}
+	return _c
+}
+
 // SetScoreFormat sets the "score_format" field.
 func (_c *TrackerConnectionCreate) SetScoreFormat(v string) *TrackerConnectionCreate {
 	_c.mutation.SetScoreFormat(v)
@@ -218,6 +232,10 @@ func (_c *TrackerConnectionCreate) defaults() {
 		v := trackerconnection.DefaultUsername
 		_c.mutation.SetUsername(v)
 	}
+	if _, ok := _c.mutation.Password(); !ok {
+		v := trackerconnection.DefaultPassword
+		_c.mutation.SetPassword(v)
+	}
 	if _, ok := _c.mutation.ScoreFormat(); !ok {
 		v := trackerconnection.DefaultScoreFormat
 		_c.mutation.SetScoreFormat(v)
@@ -321,6 +339,10 @@ func (_c *TrackerConnectionCreate) createSpec() (*TrackerConnection, *sqlgraph.C
 	if value, ok := _c.mutation.Username(); ok {
 		_spec.SetField(trackerconnection.FieldUsername, field.TypeString, value)
 		_node.Username = value
+	}
+	if value, ok := _c.mutation.Password(); ok {
+		_spec.SetField(trackerconnection.FieldPassword, field.TypeString, value)
+		_node.Password = value
 	}
 	if value, ok := _c.mutation.ScoreFormat(); ok {
 		_spec.SetField(trackerconnection.FieldScoreFormat, field.TypeString, value)

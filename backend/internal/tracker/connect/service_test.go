@@ -268,6 +268,11 @@ func TestCompleteOAuth_ImplicitFlow_CreatesConnectionWithAccountInfo(t *testing.
 			if row.Username != "owner" || row.ScoreFormat != "POINT_100" {
 				t.Fatalf("row username/score_format = %q/%q, want owner/POINT_100", row.Username, row.ScoreFormat)
 			}
+			// An OAuth login never stores a password (recovery is a refresh
+			// grant / fresh redirect, never a stored credential).
+			if row.Password != "" {
+				t.Fatalf("row.Password = %q, want empty for an OAuth login", row.Password)
+			}
 		})
 	}
 }
@@ -528,6 +533,11 @@ func TestLoginCredentials_CreatesConnection(t *testing.T) {
 	}
 	if row.Username != "owner@example.test" {
 		t.Fatalf("row.Username = %q, want the owner-typed username", row.Username)
+	}
+	// STEP 4: the password is stored so a reactive-401 re-login can recover a
+	// dead MangaUpdates session (see account.ReloginCredentials).
+	if row.Password != "hunter2" {
+		t.Fatalf("row.Password = %q, want the stored credential password", row.Password)
 	}
 }
 

@@ -305,6 +305,86 @@ func TestSyncNow_ThreeWayConvergePicksMaxAcrossAllThreeSources(t *testing.T) {
 	}
 }
 
+// TestSyncNow_CrossTrackerCompletionPropagatesFromPull is the STEP-3 core
+// proof: a PULL lands read-completion on one binding (AniList pulled as
+// COMPLETED at 100/100) and the cross-tracker fan-out must move the OTHER
+// binding — MangaUpdates, which reports no total and could never
+// auto-complete on a push — to its own completed ("complete") status, WITHOUT
+// the owner touching the push side at all. Before this fix CompleteSeries
+// fired only from PushProgress/UpdateTrack/retry, so MangaUpdates stayed stuck
+// on Reading whenever completion arrived via a pull.
+func TestSyncNow_CrossTrackerCompletionPropagatesFromPull(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Pulled Complete", "pulled-complete")
+
+	seedConnection(ctx, t, client, tracker.IDAniList, "acct-anilist")
+	seedConnection(ctx, t, client, tracker.IDMangaUpdates, "acct-mu")
+	aniBinding := seedBinding(ctx, t, client, seriesID, tracker.IDAniList, "a1", 50, 100)
+	muBinding := seedBinding(ctx, t, client, seriesID, tracker.IDMangaUpdates, "m1", 50, 0)
+
+	ani := &fakeTracker{
+		id: tracker.IDAniList,
+		getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+			// The owner completed it on AniList — the pull reports COMPLETED at total.
+			return &tracker.TrackEntry{RemoteID: remoteID, Progress: 100, Status: "COMPLETED", TotalChapters: 100}, nil
+		},
+	}
+	mu := &fakeTracker{
+		id: tracker.IDMangaUpdates,
+		getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+			return &tracker.TrackEntry{RemoteID: remoteID, Progress: 50, Status: "reading"}, nil
+		},
+	}
+	svc := newServiceMulti(client, []tracker.Tracker{ani, mu}, nil, nil)
+
+	if _, err := svc.SyncNow(ctx, seriesID); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+
+	gotAni := reloadBinding(ctx, t, client, aniBinding.ID)
+	if gotAni.Status != "COMPLETED" || gotAni.LastChapterRead != 100 {
+		t.Fatalf("AniList binding = status %q / read %v, want COMPLETED / 100", gotAni.Status, gotAni.LastChapterRead)
+	}
+	gotMU := reloadBinding(ctx, t, client, muBinding.ID)
+	if gotMU.Status != "complete" {
+		t.Fatalf("MangaUpdates binding status = %q, want complete (a pulled sibling completion must fan out to it)", gotMU.Status)
+	}
+}
+
+// TestSyncNow_NoCompletionWhenNoBindingReadComplete guards the negative: a sync
+// where NO binding is read-complete must NOT fire the completion fan-out (no
+// binding is moved to completed).
+func TestSyncNow_NoCompletionWhenNoBindingReadComplete(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Still Reading", "still-reading")
+
+	seedConnection(ctx, t, client, tracker.IDAniList, "acct-anilist")
+	seedConnection(ctx, t, client, tracker.IDMangaUpdates, "acct-mu")
+	aniBinding := seedBinding(ctx, t, client, seriesID, tracker.IDAniList, "a1", 40, 100)
+	muBinding := seedBinding(ctx, t, client, seriesID, tracker.IDMangaUpdates, "m1", 40, 0)
+
+	ani := &fakeTracker{id: tracker.IDAniList, getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+		return &tracker.TrackEntry{RemoteID: remoteID, Progress: 40, Status: "CURRENT", TotalChapters: 100}, nil
+	}}
+	mu := &fakeTracker{id: tracker.IDMangaUpdates, getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+		return &tracker.TrackEntry{RemoteID: remoteID, Progress: 40, Status: "reading"}, nil
+	}}
+	svc := newServiceMulti(client, []tracker.Tracker{ani, mu}, nil, nil)
+
+	if _, err := svc.SyncNow(ctx, seriesID); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+
+	if got := reloadBinding(ctx, t, client, aniBinding.ID); got.Status == "COMPLETED" {
+		t.Fatalf("AniList binding wrongly completed (status %q); no binding was read-complete", got.Status)
+	}
+	if got := reloadBinding(ctx, t, client, muBinding.ID); got.Status == "complete" {
+		t.Fatalf("MangaUpdates binding wrongly completed (status %q); no binding was read-complete", got.Status)
+	}
+}
+
 // TestSyncNow_LocalFurthest_UnparseableOnlyReadChapterCountsAsZero proves
 // seriesLocalFurthest treats an unparseable chapter (number == -1, the
 // chapter normaliser's sentinel) as NOT counting toward the local

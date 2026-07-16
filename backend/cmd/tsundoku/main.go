@@ -58,9 +58,12 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
+	"github.com/technobecet/tsundoku/internal/tracker"
+	"github.com/technobecet/tsundoku/internal/tracker/account"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
 	"github.com/technobecet/tsundoku/internal/tracker/connect"
 	"github.com/technobecet/tsundoku/internal/tracker/kitsu"
+	"github.com/technobecet/tsundoku/internal/tracker/mangaupdates"
 	trackerproviders "github.com/technobecet/tsundoku/internal/tracker/providers"
 	"github.com/technobecet/tsundoku/internal/tracker/retry"
 	"github.com/technobecet/tsundoku/internal/tracker/syncsvc"
@@ -176,6 +179,24 @@ func main() {
 	})
 	trackerConnectSvc := connect.NewService(entClient, trackerRegistry, cfg.Tracker.PublicURL)
 	trackerBindSvc := bind.NewService(entClient, trackerRegistry, cfg.Storage.Folder)
+
+	// Reactive-401 re-login for MangaUpdates: its session token is short-lived
+	// and it issues no refresh grant, so an expired session can only be
+	// recovered by a fresh username/password login. Wire the client's
+	// Reauthenticator hook over account.ReloginCredentials (which reads the
+	// stored credentials + persists the fresh token) — the ent-touching half
+	// the ent-free client can't hold itself. A tracker that isn't the concrete
+	// mangaupdates.Client (e.g. a test fake) simply doesn't satisfy the setter,
+	// so this is a no-op there.
+	if muTracker, ok := trackerRegistry.ByID(tracker.IDMangaUpdates); ok {
+		if mu, ok := muTracker.(interface {
+			SetReauthenticator(mangaupdates.Reauthenticator)
+		}); ok {
+			mu.SetReauthenticator(func(ctx context.Context) (string, error) {
+				return account.ReloginCredentials(ctx, entClient, trackerRegistry, tracker.IDMangaUpdates)
+			})
+		}
+	}
 
 	// Phase-4c tracker SYNC subsystem (spec/trackers-sync-phase4): push/pull/
 	// update over the rule kernel (internal/tracker/sync) + the durable,

@@ -314,6 +314,76 @@ func TestClient_UpdateEntry_CompletedStatusTargetsCompleteList(t *testing.T) {
 	}
 }
 
+// muWriteResponse is one MangaUpdates list-WRITE response shape a test drives
+// the fake server to answer with — the WHOLE point of the over-decode fix is
+// that SaveEntry/UpdateEntry succeed on EVERY one of these (a status
+// envelope OBJECT, an empty 200 body, and an empty 204 body), none of which is
+// the []listSeriesEntry array the client used to strictly decode into.
+type muWriteResponse struct {
+	name       string
+	statusCode int
+	body       string
+}
+
+func muWriteResponses() []muWriteResponse {
+	return []muWriteResponse{
+		{name: "status envelope object", statusCode: http.StatusOK, body: `{"status":"success","context":{"series_id":12345}}`},
+		{name: "empty 200 body", statusCode: http.StatusOK, body: ""},
+		{name: "empty 204 body", statusCode: http.StatusNoContent, body: ""},
+	}
+}
+
+// TestClient_SaveEntry_ToleratesEnvelopeAndEmptyResponses is the STEP-2
+// regression proof for SaveEntry: MangaUpdates' bind write answers with a
+// status envelope or an empty body, NOT the series array — the client must
+// succeed on all of them and return the caller's own entry (RemoteID kept).
+func TestClient_SaveEntry_ToleratesEnvelopeAndEmptyResponses(t *testing.T) {
+	for _, tc := range muWriteResponses() {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			c := mangaupdates.New(newTestClient(t, srv))
+			saved, err := c.SaveEntry(context.Background(), "acct-token", tracker.TrackEntry{RemoteID: "12345"})
+			if err != nil {
+				t.Fatalf("SaveEntry against %s: unexpected error: %v", tc.name, err)
+			}
+			if saved.RemoteID != "12345" {
+				t.Fatalf("SaveEntry result = %+v, want the caller's own RemoteID kept", saved)
+			}
+		})
+	}
+}
+
+// TestClient_UpdateEntry_ToleratesEnvelopeAndEmptyResponses is the STEP-2
+// regression proof for UpdateEntry (the chapter-progress push): the same three
+// non-array write responses must all succeed and return the caller's entry.
+func TestClient_UpdateEntry_ToleratesEnvelopeAndEmptyResponses(t *testing.T) {
+	for _, tc := range muWriteResponses() {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			c := mangaupdates.New(newTestClient(t, srv))
+			updated, err := c.UpdateEntry(context.Background(), "acct-token", tracker.TrackEntry{RemoteID: "12345", Progress: 10})
+			if err != nil {
+				t.Fatalf("UpdateEntry against %s: unexpected error: %v", tc.name, err)
+			}
+			if updated.RemoteID != "12345" || updated.Progress != 10 {
+				t.Fatalf("UpdateEntry result = %+v, want the caller's own RemoteID/Progress kept", updated)
+			}
+		})
+	}
+}
+
 // TestClient_DeleteEntry_RequestBodyShape pins the delete endpoint — no
 // list-id URL segment — and the body: a BARE JSON array of series ids, not
 // an array of {series:{id}} objects (mirrors the reference ports'
@@ -337,6 +407,91 @@ func TestClient_DeleteEntry_RequestBodyShape(t *testing.T) {
 	}
 	if len(gotBody) != 1 || gotBody[0] != 12345 {
 		t.Fatalf("DeleteEntry body = %+v, want [12345]", gotBody)
+	}
+}
+
+// TestClient_ReactiveReloginOn401RetriesOnce is the STEP-4 core proof: an
+// authenticated call whose session token 401s triggers a single re-login (via
+// the wired Reauthenticator) and retries ONCE with the fresh token, succeeding
+// — the caller never sees the transient 401.
+func TestClient_ReactiveReloginOn401RetriesOnce(t *testing.T) {
+	var authHeaders []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		if len(authHeaders) == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success"}`))
+	}))
+	defer srv.Close()
+
+	var reloginCalls int
+	c := mangaupdates.New(newTestClient(t, srv))
+	c.SetReauthenticator(func(context.Context) (string, error) {
+		reloginCalls++
+		return "fresh-token", nil
+	})
+
+	if _, err := c.UpdateEntry(context.Background(), "stale-token", tracker.TrackEntry{RemoteID: "12345", Progress: 10}); err != nil {
+		t.Fatalf("UpdateEntry after reactive re-login: unexpected error: %v", err)
+	}
+	if reloginCalls != 1 {
+		t.Fatalf("re-login calls = %d, want exactly 1", reloginCalls)
+	}
+	if len(authHeaders) != 2 {
+		t.Fatalf("request count = %d, want 2 (original 401 + one retry)", len(authHeaders))
+	}
+	if authHeaders[0] != "Bearer stale-token" {
+		t.Fatalf("first request Authorization = %q, want the stale token", authHeaders[0])
+	}
+	if authHeaders[1] != "Bearer fresh-token" {
+		t.Fatalf("retry Authorization = %q, want the freshly re-logged-in token", authHeaders[1])
+	}
+}
+
+// TestClient_401WithoutReauthIsTokenExpired confirms a 401 with NO
+// Reauthenticator wired surfaces as tracker.ErrTokenExpired (so the
+// orchestration layer flags the connection for a manual reconnect), never a
+// generic error.
+func TestClient_401WithoutReauthIsTokenExpired(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	c := mangaupdates.New(newTestClient(t, srv))
+	_, err := c.UpdateEntry(context.Background(), "stale-token", tracker.TrackEntry{RemoteID: "12345", Progress: 10})
+	if !errors.Is(err, tracker.ErrTokenExpired) {
+		t.Fatalf("UpdateEntry 401 without reauth: err = %v, want tracker.ErrTokenExpired", err)
+	}
+}
+
+// TestClient_401ReauthFailsSurfacesTokenExpired confirms that when the reactive
+// re-login itself fails, the persistent 401 still surfaces as
+// tracker.ErrTokenExpired (bounded to one retry, no loop) — GetEntry path.
+func TestClient_401ReauthFailsSurfacesTokenExpired(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	c := mangaupdates.New(newTestClient(t, srv))
+	c.SetReauthenticator(func(context.Context) (string, error) {
+		return "", errors.New("re-login rejected")
+	})
+
+	_, err := c.GetEntry(context.Background(), "stale-token", "12345")
+	if !errors.Is(err, tracker.ErrTokenExpired) {
+		t.Fatalf("GetEntry with a failing re-login: err = %v, want tracker.ErrTokenExpired", err)
+	}
+	// One original request only — a FAILED re-login must not resend (no retry,
+	// no loop).
+	if calls != 1 {
+		t.Fatalf("request count = %d, want 1 (failed re-login must not retry)", calls)
 	}
 }
 
