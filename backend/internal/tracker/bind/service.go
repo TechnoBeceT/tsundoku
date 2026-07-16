@@ -84,10 +84,12 @@ func NewService(client *ent.Client, registry *tracker.Registry, storage string) 
 // current full binding set is then mirrored into the series' sidecar
 // (best-effort; see the package doc comment).
 //
-// private is the owner's requested visibility for a FRESHLY-created remote
-// entry (the SaveEntry branch below) — it has no effect when the manga is
-// already on the account's list (GetEntry's existing entry's own private
-// flag wins; this call never overwrites it). A tracker with no such remote
+// private is the owner's requested visibility. For a FRESHLY-created remote
+// entry it rides the SaveEntry create; for a manga ALREADY on the account's
+// list — the create is skipped — the owner's choice is STILL applied via a
+// single UpdateEntry (see applyBindPrivate), so "make it private on bind" is
+// honoured even when migrating an existing library (local choice wins over the
+// existing remote flag), not silently dropped. A tracker with no such remote
 // concept (tracker.Tracker.SupportsPrivate() == false — MAL, MangaUpdates)
 // silently ignores it, mirroring how those trackers ignore
 // TrackEntry.Private everywhere else in this package.
@@ -130,6 +132,12 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 			return nil, tracker.WrapUpstream(t.Key(), fmt.Errorf("bind: create remote entry on %s: %w", t.Key(), saveErr))
 		}
 		entry = &created
+	} else {
+		applied, aerr := s.applyBindPrivate(ctx, t, token, *entry, private)
+		if aerr != nil {
+			return nil, aerr
+		}
+		entry = &applied
 	}
 
 	binding, err := s.upsertBinding(ctx, seriesID, trackerID, remoteID, *entry)
@@ -139,6 +147,32 @@ func (s *Service) Bind(ctx context.Context, seriesID uuid.UUID, trackerID int, r
 
 	s.SyncSidecar(ctx, seriesID)
 	return binding, nil
+}
+
+// applyBindPrivate ensures an ALREADY-EXISTING remote entry reflects the
+// owner's bind-time `private` choice. Binding a manga already on the account's
+// list skips SaveEntry (the create), so without this the bind-time privacy
+// choice would be silently dropped and the existing remote entry's own flag
+// would win — surprising for an owner migrating an existing AniList/Kitsu
+// library who expects their choice to apply. When the tracker supports private
+// AND the remote's current flag differs from the requested one, it pushes a
+// single UpdateEntry carrying the chosen private (local choice wins) and
+// returns the updated entry; otherwise (unsupported, or already matching) it
+// returns the entry unchanged with no remote call. A failure IS surfaced (§16
+// — the owner explicitly asked to bind with this privacy), wrapped like the
+// other explicit bind writes; a token failure additionally flags the
+// connection expired (mirrors the SaveEntry/GetEntry paths).
+func (s *Service) applyBindPrivate(ctx context.Context, t tracker.Tracker, token string, entry tracker.TrackEntry, private bool) (tracker.TrackEntry, error) {
+	if !t.SupportsPrivate() || entry.Private == private {
+		return entry, nil
+	}
+	entry.Private = private
+	updated, err := t.UpdateEntry(ctx, token, entry)
+	if err != nil {
+		s.markExpiredOnTokenFailure(ctx, t.ID(), err)
+		return tracker.TrackEntry{}, tracker.WrapUpstream(t.Key(), fmt.Errorf("bind: apply private to existing entry on %s: %w", t.Key(), err))
+	}
+	return updated, nil
 }
 
 // Unbind removes recordID's TrackBinding row. When deleteRemote is true, it

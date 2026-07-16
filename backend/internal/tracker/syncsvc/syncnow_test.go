@@ -305,6 +305,135 @@ func TestSyncNow_ThreeWayConvergePicksMaxAcrossAllThreeSources(t *testing.T) {
 	}
 }
 
+// TestSyncNow_CrossTrackerCompletionPropagatesFromPull is the STEP-3 core
+// proof: a PULL lands read-completion on one binding (AniList pulled as
+// COMPLETED at 100/100) and the cross-tracker fan-out must move the OTHER
+// binding — MangaUpdates, which reports no total and could never
+// auto-complete on a push — to its own completed ("complete") status, WITHOUT
+// the owner touching the push side at all. Before this fix CompleteSeries
+// fired only from PushProgress/UpdateTrack/retry, so MangaUpdates stayed stuck
+// on Reading whenever completion arrived via a pull.
+func TestSyncNow_CrossTrackerCompletionPropagatesFromPull(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Pulled Complete", "pulled-complete")
+
+	seedConnection(ctx, t, client, tracker.IDAniList, "acct-anilist")
+	seedConnection(ctx, t, client, tracker.IDMangaUpdates, "acct-mu")
+	aniBinding := seedBinding(ctx, t, client, seriesID, tracker.IDAniList, "a1", 50, 100)
+	muBinding := seedBinding(ctx, t, client, seriesID, tracker.IDMangaUpdates, "m1", 50, 0)
+
+	ani := &fakeTracker{
+		id: tracker.IDAniList,
+		getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+			// The owner completed it on AniList — the pull reports COMPLETED at total.
+			return &tracker.TrackEntry{RemoteID: remoteID, Progress: 100, Status: "COMPLETED", TotalChapters: 100}, nil
+		},
+	}
+	mu := &fakeTracker{
+		id: tracker.IDMangaUpdates,
+		getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+			return &tracker.TrackEntry{RemoteID: remoteID, Progress: 50, Status: "reading"}, nil
+		},
+	}
+	svc := newServiceMulti(client, []tracker.Tracker{ani, mu}, nil, nil)
+
+	if _, err := svc.SyncNow(ctx, seriesID); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+
+	gotAni := reloadBinding(ctx, t, client, aniBinding.ID)
+	if gotAni.Status != "COMPLETED" || gotAni.LastChapterRead != 100 {
+		t.Fatalf("AniList binding = status %q / read %v, want COMPLETED / 100", gotAni.Status, gotAni.LastChapterRead)
+	}
+	gotMU := reloadBinding(ctx, t, client, muBinding.ID)
+	if gotMU.Status != "complete" {
+		t.Fatalf("MangaUpdates binding status = %q, want complete (a pulled sibling completion must fan out to it)", gotMU.Status)
+	}
+}
+
+// TestSyncNow_CompletedWithTotalDoesNotOscillateAboveOwnTotal is the STEP-3
+// oscillation regression proof: when the local library's furthest-read chapter
+// number (269) is STRICTLY ABOVE a completed with-total tracker's OWN total
+// (MAL 268), consecutive syncs must SETTLE at 268/268 and never re-push. The
+// bug: syncOneBinding let seriesLocalFurthest drag the stored value to 269
+// (pushBack pushed 269), then completeOne clamped back to 268 — two remote
+// writes every sync forever. This runs SyncNow TWICE and asserts the SECOND
+// consecutive sync issues ZERO UpdateEntry (remote write) calls. (The existing
+// SyncNow tests miss this because they all seed localFurthest=0.)
+func TestSyncNow_CompletedWithTotalDoesNotOscillateAboveOwnTotal(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Overshoot Sync", "overshoot-sync")
+	seedConnection(ctx, t, client, tracker.IDMAL, "acct-mal")
+
+	binding := seedBinding(ctx, t, client, seriesID, tracker.IDMAL, "m1", 269, 268)
+	setBindingScorePrivateStatus(ctx, t, client, binding.ID, 0, false, "completed")
+
+	// Local library read to chapter 269 — ABOVE MAL's own 268-chapter total.
+	ch := seedChapter(ctx, t, client, seriesID, chKey(269), 269)
+	markChapterRead(ctx, t, client, ch.ID, time.Now().UTC())
+
+	ft := &fakeTracker{
+		id: tracker.IDMAL,
+		getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+			// MAL reports its OWN catalog: completed at 268/268.
+			return &tracker.TrackEntry{RemoteID: remoteID, Progress: 268, Status: "completed", TotalChapters: 268}, nil
+		},
+	}
+	svc := newService(client, ft, nil, nil)
+
+	if _, err := svc.SyncNow(ctx, seriesID); err != nil {
+		t.Fatalf("SyncNow (1): %v", err)
+	}
+	writesAfterFirst := ft.updateEntryCalls
+
+	if _, err := svc.SyncNow(ctx, seriesID); err != nil {
+		t.Fatalf("SyncNow (2): %v", err)
+	}
+	if secondSyncWrites := ft.updateEntryCalls - writesAfterFirst; secondSyncWrites != 0 {
+		t.Fatalf("second consecutive SyncNow made %d remote write(s), want 0 (a settled completed with-total binding must never re-push)", secondSyncWrites)
+	}
+
+	fresh := reloadBinding(ctx, t, client, binding.ID)
+	if fresh.LastChapterRead != 268 || fresh.Status != "completed" {
+		t.Fatalf("resting binding = read %v / status %q, want 268 / completed (capped to the tracker's own total, not local's 269)", fresh.LastChapterRead, fresh.Status)
+	}
+}
+
+// TestSyncNow_NoCompletionWhenNoBindingReadComplete guards the negative: a sync
+// where NO binding is read-complete must NOT fire the completion fan-out (no
+// binding is moved to completed).
+func TestSyncNow_NoCompletionWhenNoBindingReadComplete(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Still Reading", "still-reading")
+
+	seedConnection(ctx, t, client, tracker.IDAniList, "acct-anilist")
+	seedConnection(ctx, t, client, tracker.IDMangaUpdates, "acct-mu")
+	aniBinding := seedBinding(ctx, t, client, seriesID, tracker.IDAniList, "a1", 40, 100)
+	muBinding := seedBinding(ctx, t, client, seriesID, tracker.IDMangaUpdates, "m1", 40, 0)
+
+	ani := &fakeTracker{id: tracker.IDAniList, getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+		return &tracker.TrackEntry{RemoteID: remoteID, Progress: 40, Status: "CURRENT", TotalChapters: 100}, nil
+	}}
+	mu := &fakeTracker{id: tracker.IDMangaUpdates, getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+		return &tracker.TrackEntry{RemoteID: remoteID, Progress: 40, Status: "reading"}, nil
+	}}
+	svc := newServiceMulti(client, []tracker.Tracker{ani, mu}, nil, nil)
+
+	if _, err := svc.SyncNow(ctx, seriesID); err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+
+	if got := reloadBinding(ctx, t, client, aniBinding.ID); got.Status == "COMPLETED" {
+		t.Fatalf("AniList binding wrongly completed (status %q); no binding was read-complete", got.Status)
+	}
+	if got := reloadBinding(ctx, t, client, muBinding.ID); got.Status == "complete" {
+		t.Fatalf("MangaUpdates binding wrongly completed (status %q); no binding was read-complete", got.Status)
+	}
+}
+
 // TestSyncNow_LocalFurthest_UnparseableOnlyReadChapterCountsAsZero proves
 // seriesLocalFurthest treats an unparseable chapter (number == -1, the
 // chapter normaliser's sentinel) as NOT counting toward the local

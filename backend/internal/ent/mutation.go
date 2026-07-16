@@ -18471,6 +18471,7 @@ type TrackerConnectionMutation struct {
 	token_type    *string
 	expires_at    *time.Time
 	username      *string
+	password      *string
 	score_format  *string
 	token_expired *bool
 	created_at    *time.Time
@@ -18847,6 +18848,55 @@ func (m *TrackerConnectionMutation) ResetUsername() {
 	m.username = nil
 }
 
+// SetPassword sets the "password" field.
+func (m *TrackerConnectionMutation) SetPassword(s string) {
+	m.password = &s
+}
+
+// Password returns the value of the "password" field in the mutation.
+func (m *TrackerConnectionMutation) Password() (r string, exists bool) {
+	v := m.password
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPassword returns the old "password" field's value of the TrackerConnection entity.
+// If the TrackerConnection object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TrackerConnectionMutation) OldPassword(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPassword is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPassword requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPassword: %w", err)
+	}
+	return oldValue.Password, nil
+}
+
+// ClearPassword clears the value of the "password" field.
+func (m *TrackerConnectionMutation) ClearPassword() {
+	m.password = nil
+	m.clearedFields[trackerconnection.FieldPassword] = struct{}{}
+}
+
+// PasswordCleared returns if the "password" field was cleared in this mutation.
+func (m *TrackerConnectionMutation) PasswordCleared() bool {
+	_, ok := m.clearedFields[trackerconnection.FieldPassword]
+	return ok
+}
+
+// ResetPassword resets all changes to the "password" field.
+func (m *TrackerConnectionMutation) ResetPassword() {
+	m.password = nil
+	delete(m.clearedFields, trackerconnection.FieldPassword)
+}
+
 // SetScoreFormat sets the "score_format" field.
 func (m *TrackerConnectionMutation) SetScoreFormat(s string) {
 	m.score_format = &s
@@ -19038,7 +19088,7 @@ func (m *TrackerConnectionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *TrackerConnectionMutation) Fields() []string {
-	fields := make([]string, 0, 10)
+	fields := make([]string, 0, 11)
 	if m.tracker_id != nil {
 		fields = append(fields, trackerconnection.FieldTrackerID)
 	}
@@ -19056,6 +19106,9 @@ func (m *TrackerConnectionMutation) Fields() []string {
 	}
 	if m.username != nil {
 		fields = append(fields, trackerconnection.FieldUsername)
+	}
+	if m.password != nil {
+		fields = append(fields, trackerconnection.FieldPassword)
 	}
 	if m.score_format != nil {
 		fields = append(fields, trackerconnection.FieldScoreFormat)
@@ -19089,6 +19142,8 @@ func (m *TrackerConnectionMutation) Field(name string) (ent.Value, bool) {
 		return m.ExpiresAt()
 	case trackerconnection.FieldUsername:
 		return m.Username()
+	case trackerconnection.FieldPassword:
+		return m.Password()
 	case trackerconnection.FieldScoreFormat:
 		return m.ScoreFormat()
 	case trackerconnection.FieldTokenExpired:
@@ -19118,6 +19173,8 @@ func (m *TrackerConnectionMutation) OldField(ctx context.Context, name string) (
 		return m.OldExpiresAt(ctx)
 	case trackerconnection.FieldUsername:
 		return m.OldUsername(ctx)
+	case trackerconnection.FieldPassword:
+		return m.OldPassword(ctx)
 	case trackerconnection.FieldScoreFormat:
 		return m.OldScoreFormat(ctx)
 	case trackerconnection.FieldTokenExpired:
@@ -19176,6 +19233,13 @@ func (m *TrackerConnectionMutation) SetField(name string, value ent.Value) error
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUsername(v)
+		return nil
+	case trackerconnection.FieldPassword:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPassword(v)
 		return nil
 	case trackerconnection.FieldScoreFormat:
 		v, ok := value.(string)
@@ -19256,6 +19320,9 @@ func (m *TrackerConnectionMutation) ClearedFields() []string {
 	if m.FieldCleared(trackerconnection.FieldExpiresAt) {
 		fields = append(fields, trackerconnection.FieldExpiresAt)
 	}
+	if m.FieldCleared(trackerconnection.FieldPassword) {
+		fields = append(fields, trackerconnection.FieldPassword)
+	}
 	if m.FieldCleared(trackerconnection.FieldScoreFormat) {
 		fields = append(fields, trackerconnection.FieldScoreFormat)
 	}
@@ -19278,6 +19345,9 @@ func (m *TrackerConnectionMutation) ClearField(name string) error {
 		return nil
 	case trackerconnection.FieldExpiresAt:
 		m.ClearExpiresAt()
+		return nil
+	case trackerconnection.FieldPassword:
+		m.ClearPassword()
 		return nil
 	case trackerconnection.FieldScoreFormat:
 		m.ClearScoreFormat()
@@ -19307,6 +19377,9 @@ func (m *TrackerConnectionMutation) ResetField(name string) error {
 		return nil
 	case trackerconnection.FieldUsername:
 		m.ResetUsername()
+		return nil
+	case trackerconnection.FieldPassword:
+		m.ResetPassword()
 		return nil
 	case trackerconnection.FieldScoreFormat:
 		m.ResetScoreFormat()

@@ -131,6 +131,26 @@ func (_u *TrackerConnectionUpdate) SetNillableUsername(v *string) *TrackerConnec
 	return _u
 }
 
+// SetPassword sets the "password" field.
+func (_u *TrackerConnectionUpdate) SetPassword(v string) *TrackerConnectionUpdate {
+	_u.mutation.SetPassword(v)
+	return _u
+}
+
+// SetNillablePassword sets the "password" field if the given value is not nil.
+func (_u *TrackerConnectionUpdate) SetNillablePassword(v *string) *TrackerConnectionUpdate {
+	if v != nil {
+		_u.SetPassword(*v)
+	}
+	return _u
+}
+
+// ClearPassword clears the value of the "password" field.
+func (_u *TrackerConnectionUpdate) ClearPassword() *TrackerConnectionUpdate {
+	_u.mutation.ClearPassword()
+	return _u
+}
+
 // SetScoreFormat sets the "score_format" field.
 func (_u *TrackerConnectionUpdate) SetScoreFormat(v string) *TrackerConnectionUpdate {
 	_u.mutation.SetScoreFormat(v)
@@ -247,6 +267,12 @@ func (_u *TrackerConnectionUpdate) sqlSave(ctx context.Context) (_node int, err 
 	}
 	if value, ok := _u.mutation.Username(); ok {
 		_spec.SetField(trackerconnection.FieldUsername, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Password(); ok {
+		_spec.SetField(trackerconnection.FieldPassword, field.TypeString, value)
+	}
+	if _u.mutation.PasswordCleared() {
+		_spec.ClearField(trackerconnection.FieldPassword, field.TypeString)
 	}
 	if value, ok := _u.mutation.ScoreFormat(); ok {
 		_spec.SetField(trackerconnection.FieldScoreFormat, field.TypeString, value)
@@ -380,6 +406,26 @@ func (_u *TrackerConnectionUpdateOne) SetNillableUsername(v *string) *TrackerCon
 	if v != nil {
 		_u.SetUsername(*v)
 	}
+	return _u
+}
+
+// SetPassword sets the "password" field.
+func (_u *TrackerConnectionUpdateOne) SetPassword(v string) *TrackerConnectionUpdateOne {
+	_u.mutation.SetPassword(v)
+	return _u
+}
+
+// SetNillablePassword sets the "password" field if the given value is not nil.
+func (_u *TrackerConnectionUpdateOne) SetNillablePassword(v *string) *TrackerConnectionUpdateOne {
+	if v != nil {
+		_u.SetPassword(*v)
+	}
+	return _u
+}
+
+// ClearPassword clears the value of the "password" field.
+func (_u *TrackerConnectionUpdateOne) ClearPassword() *TrackerConnectionUpdateOne {
+	_u.mutation.ClearPassword()
 	return _u
 }
 
@@ -529,6 +575,12 @@ func (_u *TrackerConnectionUpdateOne) sqlSave(ctx context.Context) (_node *Track
 	}
 	if value, ok := _u.mutation.Username(); ok {
 		_spec.SetField(trackerconnection.FieldUsername, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Password(); ok {
+		_spec.SetField(trackerconnection.FieldPassword, field.TypeString, value)
+	}
+	if _u.mutation.PasswordCleared() {
+		_spec.ClearField(trackerconnection.FieldPassword, field.TypeString)
 	}
 	if value, ok := _u.mutation.ScoreFormat(); ok {
 		_spec.SetField(trackerconnection.FieldScoreFormat, field.TypeString, value)

@@ -47,6 +47,35 @@ func TestCompleteSeries_PropagatesToAllBindings(t *testing.T) {
 	}
 }
 
+// TestCompleteSeries_ClampsReadDownToTrackerTotal is the STEP-3 read-clamp
+// proof: a binding already stored as completed but OVERSHOOTING its tracker's
+// own total (MAL read 269 against its 268-chapter catalog — the observed
+// "269/268" desync, read pushed up by a cross-tracker/local maximum) must be
+// corrected DOWN to exactly its own total (268/268) on completion, not left at
+// 269. completionProgress clamps both up and down; completeOne's == guard
+// (not >=) is what stops the overshoot from being treated as an already-done
+// no-op.
+func TestCompleteSeries_ClampsReadDownToTrackerTotal(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Overshoot", "overshoot")
+
+	seedConnection(ctx, t, client, tracker.IDMAL, "acct-mal")
+	malBinding := seedBinding(ctx, t, client, seriesID, tracker.IDMAL, "m1", 269, 268)
+	setBindingScorePrivateStatus(ctx, t, client, malBinding.ID, 0, false, "completed")
+
+	svc := newServiceMulti(client, []tracker.Tracker{&fakeTracker{id: tracker.IDMAL}}, nil, nil)
+
+	if err := svc.CompleteSeries(ctx, seriesID); err != nil {
+		t.Fatalf("CompleteSeries: %v", err)
+	}
+
+	mal := reloadBinding(ctx, t, client, malBinding.ID)
+	if mal.LastChapterRead != 268 || mal.Status != "completed" {
+		t.Fatalf("MAL binding = read %v / status %q, want 268 / completed (read clamped DOWN to the tracker's own total)", mal.LastChapterRead, mal.Status)
+	}
+}
+
 // TestUpdateTrack_OwnerCompletePropagates proves TRIGGER 1: the owner manually
 // sets ONE tracker to completed on the edit sheet, and the completion fans out
 // to the series' other trackers.

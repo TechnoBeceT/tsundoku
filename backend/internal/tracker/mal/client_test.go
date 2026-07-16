@@ -356,7 +356,7 @@ func TestClient_GetEntry_NotYetTracked(t *testing.T) {
 }
 
 // upsertTestServer builds an httptest.Server standing in for MAL's
-// my_list_status endpoint: any PUT echoes a representative myListStatus
+// my_list_status endpoint: any PATCH echoes a representative myListStatus
 // JSON body (capturing the request's form for the caller to inspect via
 // lastMethod/lastForm), any other method (DELETE) answers 200 with an
 // empty body. Shared by the Save/Update/Delete tests below.
@@ -364,7 +364,7 @@ func upsertTestServer(t *testing.T, lastMethod *string, lastForm *url.Values) *h
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*lastMethod = r.Method
-		if r.Method != http.MethodPut {
+		if r.Method != http.MethodPatch {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -375,8 +375,8 @@ func upsertTestServer(t *testing.T, lastMethod *string, lastForm *url.Values) *h
 	}))
 }
 
-// TestClient_SaveEntry_SendsPUTAndParses pins SaveEntry's upsert wire shape.
-func TestClient_SaveEntry_SendsPUTAndParses(t *testing.T) {
+// TestClient_SaveEntry_SendsPATCHAndParses pins SaveEntry's upsert wire shape.
+func TestClient_SaveEntry_SendsPATCHAndParses(t *testing.T) {
 	var lastMethod string
 	var lastForm url.Values
 	srv := upsertTestServer(t, &lastMethod, &lastForm)
@@ -389,8 +389,8 @@ func TestClient_SaveEntry_SendsPUTAndParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveEntry: %v", err)
 	}
-	if lastMethod != http.MethodPut {
-		t.Fatalf("SaveEntry issued %s, want PUT", lastMethod)
+	if lastMethod != http.MethodPatch {
+		t.Fatalf("SaveEntry issued %s, want PATCH", lastMethod)
 	}
 	assertQueryParam(t, lastForm, "status", "reading")
 	assertQueryParam(t, lastForm, "score", "7")
@@ -400,10 +400,10 @@ func TestClient_SaveEntry_SendsPUTAndParses(t *testing.T) {
 	}
 }
 
-// TestClient_UpdateEntry_SendsPUT confirms UpdateEntry issues the SAME
-// PUT-upsert call as SaveEntry (MAL has no separate list-entry id to key
+// TestClient_UpdateEntry_SendsPATCH confirms UpdateEntry issues the SAME
+// PATCH-upsert call as SaveEntry (MAL has no separate list-entry id to key
 // an update by).
-func TestClient_UpdateEntry_SendsPUT(t *testing.T) {
+func TestClient_UpdateEntry_SendsPATCH(t *testing.T) {
 	var lastMethod string
 	var lastForm url.Values
 	srv := upsertTestServer(t, &lastMethod, &lastForm)
@@ -414,8 +414,8 @@ func TestClient_UpdateEntry_SendsPUT(t *testing.T) {
 	if _, err := c.UpdateEntry(context.Background(), "acct-token", entry); err != nil {
 		t.Fatalf("UpdateEntry: %v", err)
 	}
-	if lastMethod != http.MethodPut {
-		t.Fatalf("UpdateEntry issued %s, want PUT", lastMethod)
+	if lastMethod != http.MethodPatch {
+		t.Fatalf("UpdateEntry issued %s, want PATCH", lastMethod)
 	}
 }
 

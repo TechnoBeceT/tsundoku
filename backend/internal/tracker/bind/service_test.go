@@ -37,15 +37,18 @@ type fakeTracker struct {
 
 	getEntryFn    func(ctx context.Context, token, remoteID string) (*tracker.TrackEntry, error)
 	saveEntryFn   func(ctx context.Context, token string, entry tracker.TrackEntry) (tracker.TrackEntry, error)
+	updateEntryFn func(ctx context.Context, token string, entry tracker.TrackEntry) (tracker.TrackEntry, error)
 	deleteEntryFn func(ctx context.Context, token string, entry tracker.TrackEntry) error
 	searchFn      func(ctx context.Context, token, query string) ([]tracker.TrackSearchResult, error)
 
 	getEntryCalls    int
 	saveEntryCalls   int
+	updateEntryCalls int
 	deleteEntryCalls int
 	searchCalls      int
 	lastDeleteEntry  tracker.TrackEntry
 	lastSaveEntry    tracker.TrackEntry
+	lastUpdateEntry  tracker.TrackEntry
 	lastSearchToken  string
 }
 
@@ -93,7 +96,12 @@ func (f *fakeTracker) SaveEntry(ctx context.Context, token string, entry tracker
 	return entry, nil
 }
 
-func (f *fakeTracker) UpdateEntry(_ context.Context, _ string, entry tracker.TrackEntry) (tracker.TrackEntry, error) {
+func (f *fakeTracker) UpdateEntry(ctx context.Context, token string, entry tracker.TrackEntry) (tracker.TrackEntry, error) {
+	f.updateEntryCalls++
+	f.lastUpdateEntry = entry
+	if f.updateEntryFn != nil {
+		return f.updateEntryFn(ctx, token, entry)
+	}
 	return entry, nil
 }
 
@@ -362,6 +370,67 @@ func TestBind_RegistersFreshEntryWithoutPrivateFlag(t *testing.T) {
 	}
 	if ft.lastSaveEntry.Private {
 		t.Fatalf("SaveEntry entry.Private = true, want false")
+	}
+}
+
+// TestBind_ExistingEntryAppliesRequestedPrivate is the STEP-5 proof for the
+// already-tracked path: the manga is ALREADY on the account's list (GetEntry
+// returns a non-nil entry, so SaveEntry is skipped) with private=false, and
+// the owner binds requesting private=true. The bind-time choice must still be
+// applied via a single UpdateEntry (local choice wins), and the persisted
+// binding must reflect it — not silently keep the existing remote's public
+// flag.
+func TestBind_ExistingEntryAppliesRequestedPrivate(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	row := seedBoundSeries(ctx, t, client, storage, "Existing Private Bind")
+
+	ft := &fakeTracker{
+		id:              fakeTrackerID,
+		supportsPrivate: true,
+		getEntryFn:      entryFn(tracker.TrackEntry{LibraryID: "lib-9", Status: "current", Progress: 3, Private: false}),
+	}
+	seedConnection(ctx, t, client, ft.id, "acct-token")
+	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
+
+	binding, err := svc.Bind(ctx, row.ID, ft.id, "remote-priv", true)
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if ft.saveEntryCalls != 0 {
+		t.Fatalf("SaveEntry calls = %d, want 0 (entry already exists)", ft.saveEntryCalls)
+	}
+	if ft.updateEntryCalls != 1 || !ft.lastUpdateEntry.Private {
+		t.Fatalf("UpdateEntry = calls %d / entry %+v, want 1 call carrying Private=true", ft.updateEntryCalls, ft.lastUpdateEntry)
+	}
+	if !binding.Private {
+		t.Fatalf("binding.Private = false, want true (bind-time private must apply to an existing entry)")
+	}
+}
+
+// TestBind_ExistingEntryPrivateAlreadyMatchesSkipsUpdate confirms the
+// STEP-5 apply-private path makes NO remote call when the existing entry's
+// visibility already matches the requested one (no needless write).
+func TestBind_ExistingEntryPrivateAlreadyMatchesSkipsUpdate(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	row := seedBoundSeries(ctx, t, client, storage, "Already Private Bind")
+
+	ft := &fakeTracker{
+		id:              fakeTrackerID,
+		supportsPrivate: true,
+		getEntryFn:      entryFn(tracker.TrackEntry{LibraryID: "lib-9", Status: "current", Progress: 3, Private: true}),
+	}
+	seedConnection(ctx, t, client, ft.id, "acct-token")
+	svc := bind.NewService(client, tracker.NewRegistry(ft), storage)
+
+	if _, err := svc.Bind(ctx, row.ID, ft.id, "remote-priv", true); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if ft.updateEntryCalls != 0 {
+		t.Fatalf("UpdateEntry calls = %d, want 0 (private already matches)", ft.updateEntryCalls)
 	}
 }
 

@@ -633,20 +633,24 @@ func init() {
 	trackerconnectionDescUsername := trackerconnectionFields[6].Descriptor()
 	// trackerconnection.DefaultUsername holds the default value on creation for the username field.
 	trackerconnection.DefaultUsername = trackerconnectionDescUsername.Default.(string)
+	// trackerconnectionDescPassword is the schema descriptor for password field.
+	trackerconnectionDescPassword := trackerconnectionFields[7].Descriptor()
+	// trackerconnection.DefaultPassword holds the default value on creation for the password field.
+	trackerconnection.DefaultPassword = trackerconnectionDescPassword.Default.(string)
 	// trackerconnectionDescScoreFormat is the schema descriptor for score_format field.
-	trackerconnectionDescScoreFormat := trackerconnectionFields[7].Descriptor()
+	trackerconnectionDescScoreFormat := trackerconnectionFields[8].Descriptor()
 	// trackerconnection.DefaultScoreFormat holds the default value on creation for the score_format field.
 	trackerconnection.DefaultScoreFormat = trackerconnectionDescScoreFormat.Default.(string)
 	// trackerconnectionDescTokenExpired is the schema descriptor for token_expired field.
-	trackerconnectionDescTokenExpired := trackerconnectionFields[8].Descriptor()
+	trackerconnectionDescTokenExpired := trackerconnectionFields[9].Descriptor()
 	// trackerconnection.DefaultTokenExpired holds the default value on creation for the token_expired field.
 	trackerconnection.DefaultTokenExpired = trackerconnectionDescTokenExpired.Default.(bool)
 	// trackerconnectionDescCreatedAt is the schema descriptor for created_at field.
-	trackerconnectionDescCreatedAt := trackerconnectionFields[9].Descriptor()
+	trackerconnectionDescCreatedAt := trackerconnectionFields[10].Descriptor()
 	// trackerconnection.DefaultCreatedAt holds the default value on creation for the created_at field.
 	trackerconnection.DefaultCreatedAt = trackerconnectionDescCreatedAt.Default.(func() time.Time)
 	// trackerconnectionDescUpdatedAt is the schema descriptor for updated_at field.
-	trackerconnectionDescUpdatedAt := trackerconnectionFields[10].Descriptor()
+	trackerconnectionDescUpdatedAt := trackerconnectionFields[11].Descriptor()
 	// trackerconnection.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	trackerconnection.DefaultUpdatedAt = trackerconnectionDescUpdatedAt.Default.(func() time.Time)
 	// trackerconnection.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

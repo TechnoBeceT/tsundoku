@@ -26,6 +26,8 @@ const (
 	FieldExpiresAt = "expires_at"
 	// FieldUsername holds the string denoting the username field in the database.
 	FieldUsername = "username"
+	// FieldPassword holds the string denoting the password field in the database.
+	FieldPassword = "password"
 	// FieldScoreFormat holds the string denoting the score_format field in the database.
 	FieldScoreFormat = "score_format"
 	// FieldTokenExpired holds the string denoting the token_expired field in the database.
@@ -47,6 +49,7 @@ var Columns = []string{
 	FieldTokenType,
 	FieldExpiresAt,
 	FieldUsername,
+	FieldPassword,
 	FieldScoreFormat,
 	FieldTokenExpired,
 	FieldCreatedAt,
@@ -72,6 +75,8 @@ var (
 	DefaultTokenType string
 	// DefaultUsername holds the default value on creation for the "username" field.
 	DefaultUsername string
+	// DefaultPassword holds the default value on creation for the "password" field.
+	DefaultPassword string
 	// DefaultScoreFormat holds the default value on creation for the "score_format" field.
 	DefaultScoreFormat string
 	// DefaultTokenExpired holds the default value on creation for the "token_expired" field.
@@ -122,6 +127,11 @@ func ByExpiresAt(opts ...sql.OrderTermOption) OrderOption {
 // ByUsername orders the results by the username field.
 func ByUsername(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUsername, opts...).ToFunc()
+}
+
+// ByPassword orders the results by the password field.
+func ByPassword(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPassword, opts...).ToFunc()
 }
 
 // ByScoreFormat orders the results by the score_format field.

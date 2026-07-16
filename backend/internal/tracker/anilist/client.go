@@ -255,6 +255,10 @@ func (c *Client) fetchMediaListEntry(ctx context.Context, token string, viewerID
 			return nil, nil
 		}
 		return nil, fmt.Errorf("anilist: HTTP 404: %s", strings.TrimSpace(string(body)))
+	case http.StatusUnauthorized:
+		// Expired/revoked implicit token — surface tracker.ErrTokenExpired (see
+		// do()'s own 401 branch for the rationale).
+		return nil, fmt.Errorf("anilist: HTTP 401: %s: %w", strings.TrimSpace(string(body)), tracker.ErrTokenExpired)
 	default:
 		return nil, fmt.Errorf("anilist: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
@@ -269,10 +273,13 @@ func (c *Client) SaveEntry(ctx context.Context, token string, entry tracker.Trac
 		return tracker.TrackEntry{}, fmt.Errorf("anilist: invalid remote id %q: %w", entry.RemoteID, err)
 	}
 	vars := map[string]any{
-		"mediaId":  mediaID,
-		"progress": int(entry.Progress),
-		"status":   entry.Status,
-		"private":  entry.Private,
+		"mediaId":     mediaID,
+		"progress":    int(entry.Progress),
+		"status":      entry.Status,
+		"scoreRaw":    int(entry.Score),
+		"startedAt":   timeToFuzzyDateInput(entry.StartDate),
+		"completedAt": timeToFuzzyDateInput(entry.FinishDate),
+		"private":     entry.Private,
 	}
 	var data saveEntryData
 	if err := c.do(ctx, token, saveEntryMutation, vars, &data); err != nil {
@@ -428,6 +435,14 @@ func (c *Client) do(ctx context.Context, token, query string, vars map[string]an
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("anilist: read response: %w", err)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		// AniList's implicit token was revoked/expired. AniList issues no
+		// refresh grant, so there is no automatic recovery — surface
+		// tracker.ErrTokenExpired so the orchestration layer flags the
+		// connection token_expired (re-auth needed) instead of a silent hard
+		// fail (STEP 4 / gap-report guidance).
+		return fmt.Errorf("anilist: HTTP 401: %s: %w", strings.TrimSpace(string(body)), tracker.ErrTokenExpired)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("anilist: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

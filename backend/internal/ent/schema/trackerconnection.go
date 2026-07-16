@@ -54,6 +54,24 @@ func (TrackerConnection) Fields() []ent.Field {
 		field.Time("expires_at").Optional().Nillable(),
 		// username is the account's tracker username (display / confirmation).
 		field.String("username").Default(""),
+		// password is the account's tracker PASSWORD — stored ONLY for a
+		// credential-login tracker (MangaUpdates) that issues no refresh grant
+		// and whose short-lived session token can only be recovered by a fresh
+		// LoginCredentials call. It is the stored half of the reactive-401
+		// re-login (see internal/tracker/account.ReloginCredentials): when
+		// MangaUpdates 401s a session, the client re-logins with this + username
+		// and retries once, instead of leaving the tracker silently dead until a
+		// manual reconnect. "" for every OAuth tracker (MAL/AniList — they store
+		// a refresh token / re-auth via redirect, never a password) and for a
+		// credential tracker the owner connected before this field existed
+		// (they simply won't auto-recover until the next manual login).
+		//
+		// SECURITY: stored PLAINTEXT at rest under the same single-owner homelab
+		// threat model as access_token above (Suwayomi stores tracker
+		// credentials the same way). .Sensitive() so it never leaks through the
+		// generated String()/log path or JSON serialization; at-rest encryption
+		// is a future hardening, not a v1 requirement.
+		field.String("password").Optional().Sensitive().Default(""),
 		// score_format is the AniList account score format
 		// (POINT_100/POINT_10/POINT_10_DECIMAL/POINT_5/POINT_3); "" for trackers
 		// that do not expose one.

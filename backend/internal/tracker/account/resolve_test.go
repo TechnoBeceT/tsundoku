@@ -22,8 +22,11 @@ import (
 type fakeTracker struct {
 	id        int
 	refreshFn func(ctx context.Context, refresh string) (tracker.TokenSet, error)
+	loginFn   func(ctx context.Context, username, password string) (tracker.TokenSet, error)
 
 	refreshCalls int
+	loginCalls   int
+	lastLogin    [2]string // {username, password} of the last LoginCredentials call
 }
 
 func (f *fakeTracker) Key() string           { return "fake" }
@@ -62,7 +65,21 @@ func (f *fakeTracker) UpdateEntry(_ context.Context, _ string, entry tracker.Tra
 }
 func (f *fakeTracker) DeleteEntry(context.Context, string, tracker.TrackEntry) error { return nil }
 
-var _ tracker.Tracker = (*fakeTracker)(nil)
+// LoginCredentials makes fakeTracker satisfy tracker.CredentialLogin so it can
+// stand in for MangaUpdates in the ReloginCredentials tests.
+func (f *fakeTracker) LoginCredentials(ctx context.Context, username, password string) (tracker.TokenSet, error) {
+	f.loginCalls++
+	f.lastLogin = [2]string{username, password}
+	if f.loginFn != nil {
+		return f.loginFn(ctx, username, password)
+	}
+	return tracker.TokenSet{}, nil
+}
+
+var (
+	_ tracker.Tracker         = (*fakeTracker)(nil)
+	_ tracker.CredentialLogin = (*fakeTracker)(nil)
+)
 
 const fakeTrackerID = 950
 

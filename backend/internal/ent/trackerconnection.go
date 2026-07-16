@@ -30,6 +30,8 @@ type TrackerConnection struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	// Username holds the value of the "username" field.
 	Username string `json:"username,omitempty"`
+	// Password holds the value of the "password" field.
+	Password string `json:"-"`
 	// ScoreFormat holds the value of the "score_format" field.
 	ScoreFormat string `json:"score_format,omitempty"`
 	// TokenExpired holds the value of the "token_expired" field.
@@ -50,7 +52,7 @@ func (*TrackerConnection) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case trackerconnection.FieldTrackerID:
 			values[i] = new(sql.NullInt64)
-		case trackerconnection.FieldAccessToken, trackerconnection.FieldRefreshToken, trackerconnection.FieldTokenType, trackerconnection.FieldUsername, trackerconnection.FieldScoreFormat:
+		case trackerconnection.FieldAccessToken, trackerconnection.FieldRefreshToken, trackerconnection.FieldTokenType, trackerconnection.FieldUsername, trackerconnection.FieldPassword, trackerconnection.FieldScoreFormat:
 			values[i] = new(sql.NullString)
 		case trackerconnection.FieldExpiresAt, trackerconnection.FieldCreatedAt, trackerconnection.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -113,6 +115,12 @@ func (_m *TrackerConnection) assignValues(columns []string, values []any) error 
 				return fmt.Errorf("unexpected type %T for field username", values[i])
 			} else if value.Valid {
 				_m.Username = value.String
+			}
+		case trackerconnection.FieldPassword:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field password", values[i])
+			} else if value.Valid {
+				_m.Password = value.String
 			}
 		case trackerconnection.FieldScoreFormat:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -191,6 +199,8 @@ func (_m *TrackerConnection) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("username=")
 	builder.WriteString(_m.Username)
+	builder.WriteString(", ")
+	builder.WriteString("password=<sensitive>")
 	builder.WriteString(", ")
 	builder.WriteString("score_format=")
 	builder.WriteString(_m.ScoreFormat)

@@ -233,8 +233,8 @@ func (c *Client) GetEntry(ctx context.Context, token, remoteID string) (*tracker
 }
 
 // SaveEntry creates a tracking entry for entry.RemoteID. MAL's
-// my_list_status endpoint UPSERTS on PUT, so this is the same wire call as
-// UpdateEntry.
+// my_list_status endpoint UPSERTS on the list-update verb, so this is the
+// same wire call as UpdateEntry.
 func (c *Client) SaveEntry(ctx context.Context, token string, entry tracker.TrackEntry) (tracker.TrackEntry, error) {
 	return c.upsertEntry(ctx, token, entry)
 }
@@ -246,8 +246,11 @@ func (c *Client) UpdateEntry(ctx context.Context, token string, entry tracker.Tr
 	return c.upsertEntry(ctx, token, entry)
 }
 
-// upsertEntry is the shared PUT .../my_list_status call behind both
-// SaveEntry and UpdateEntry.
+// upsertEntry is the shared PATCH .../my_list_status call behind both
+// SaveEntry and UpdateEntry. MAL DOCUMENTS the list-update endpoint as PATCH
+// (it tolerates PUT in practice, which this client used to send); PATCH is
+// the correct verb and MAL answers it with HTTP 200 carrying the updated
+// my_list_status, exactly like the PUT it accepted.
 func (c *Client) upsertEntry(ctx context.Context, token string, entry tracker.TrackEntry) (tracker.TrackEntry, error) {
 	if entry.RemoteID == "" {
 		return tracker.TrackEntry{}, fmt.Errorf("mal: entry requires a remote id")
@@ -262,7 +265,7 @@ func (c *Client) upsertEntry(ctx context.Context, token string, entry tracker.Tr
 	reqURL := apiBaseURL + "/manga/" + url.PathEscape(entry.RemoteID) + "/my_list_status"
 
 	var status myListStatus
-	if err := c.doForm(ctx, token, http.MethodPut, reqURL, form, &status); err != nil {
+	if err := c.doForm(ctx, token, http.MethodPatch, reqURL, form, &status); err != nil {
 		return tracker.TrackEntry{}, err
 	}
 	// MAL's PUT .../my_list_status response carries only the my_list_status
