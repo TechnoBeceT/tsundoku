@@ -130,7 +130,13 @@ func (s *Service) syncOneBinding(ctx context.Context, b *ent.TrackBinding) (*ent
 	// regress" into "regress whenever local happens to be behind the last
 	// sync," the exact bug this three-way chain exists to prevent.
 	converged := kernel.Converge(kernel.Converge(localFurthest, b.LastChapterRead), remote.Progress)
-	truncated := float64(kernel.TruncateForInteger(converged))
+	// truncated is what this binding STORES + PUSHES; converged (uncapped) is
+	// what marks the local library read below. On a COMPLETED with-total
+	// binding, cap it to the tracker's OWN total so seriesLocalFurthest (which
+	// can exceed a single tracker's catalog when a sibling or the local library
+	// read further) never drags it above that total — see
+	// capCompletedToRemoteTotal.
+	truncated := capCompletedToRemoteTotal(b.TrackerID, float64(kernel.TruncateForInteger(converged)), remote)
 
 	upd := applyRemoteFields(b.Update().
 		SetLastChapterRead(truncated).

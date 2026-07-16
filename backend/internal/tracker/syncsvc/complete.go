@@ -118,6 +118,31 @@ func (s *Service) completeOne(ctx context.Context, binding *ent.TrackBinding) er
 	return s.pushAndPersistCompletion(ctx, t, token, binding, status, truncated)
 }
 
+// capCompletedToRemoteTotal caps progress at the tracker's OWN reported total
+// when the remote entry is COMPLETED and reports a total (>0) — SyncNow's
+// stored/pushed value for a completed with-total binding. It exists so the
+// pull-side up-push (syncOneBinding) and the completion clamp-down
+// (completeOne/completionProgress) AGREE on a SINGLE resting target — the
+// tracker's own total — instead of oscillating: without it, seriesLocalFurthest
+// (which can exceed one tracker's catalog when a sibling or the local library
+// read further, e.g. local 269 vs MAL's 268-chapter total) dragged the stored
+// value to 269 every sync, pushBack pushed 269, then completeOne clamped back
+// to 268 — two redundant remote writes forever. Capping here makes pushBack AND
+// completeOne no-ops once settled.
+//
+// It only ever caps DOWNWARD (progress > total) and ONLY for a COMPLETED
+// binding — an ongoing/reading series is left untouched (its tracker's total
+// may simply lag the real release count, and capping a legitimate higher read
+// down to a stale total would lose progress). A tracker that reports no total
+// (MangaUpdates, total 0) or is not at its completed status is returned
+// unchanged (isCompletedStatus is false for MangaUpdates regardless).
+func capCompletedToRemoteTotal(trackerID int, progress float64, remote *tracker.TrackEntry) float64 {
+	if remote.TotalChapters > 0 && isCompletedStatus(trackerID, remote.Status) && progress > float64(remote.TotalChapters) {
+		return float64(remote.TotalChapters)
+	}
+	return progress
+}
+
 // completionProgress is the progress a completed binding should hold: EXACTLY
 // the tracker's OWN reported total when it reports one (>0), else the current
 // read (unknown total — keep whatever the owner has). When the total is known
