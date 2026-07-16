@@ -29,6 +29,14 @@ dependencies {
     // JCEF types (CefCookieManager) referenced by the KCEF cookie-seed handler. compileOnly:
     // the actual classes ride Suwayomi server's runtime classpath. Pinned to Suwayomi's libs.
     compileOnly("org.jetbrains.intellij.deps.jcef:jcef:144.0.15-g72717cf-chromium-144.0.7559.172-api-1.21-262-b37")
+    // BouncyCastleProvider (Main.kt bootstrap, B22 in the P2 bootstrap-hardening audit): the JCE
+    // provider at least one real Mihon extension (zh.copymanga) needs for image-URL decryption.
+    // compileOnly, same reasoning as the JCEF dep above: bcprov-jdk18on already rides Suwayomi
+    // server's RUNTIME classpath transitively (confirmed via `./gradlew dependencies
+    // --configuration runtimeClasspath`) — this only makes the already-present class visible to
+    // the compiler, it does not add a new runtime artifact. Version pinned to what's actually
+    // resolved there.
+    compileOnly("org.bouncycastle:bcprov-jdk18on:1.84")
     // androidx.preference stubs + injekt live in AndroidCompat/server; injekt used to resolve CustomContext.
     implementation("com.github.null2264:injekt-koin:ee267b2e27")
     runtimeOnly("ch.qos.logback:logback-classic:1.5.34")

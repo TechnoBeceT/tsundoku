@@ -99,8 +99,15 @@ object SourceCalls {
             val seed = SManga.create().apply { this.url = url; title = mangaTitle }
             val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = false, fetchChapters = true)
             val http = source as? HttpSource
+            // A7 (P2 mapper audit): a source can return the same chapter url twice — dedup BEFORE
+            // any other processing, mirroring Chapter.kt:150's `chapters.distinctBy { it.url }`.
+            // Keeps the FIRST occurrence (distinctBy's own order guarantee), so this never reorders
+            // the list. Low-impact self-healer: chapter_key collapse absorbs most duplicates
+            // downstream anyway, but an un-deduped list skews Go's `ProviderIndex` (the ordering
+            // fallback for unnumbered chapters) by counting the duplicate.
+            val uniqueChapters = update.chapters.distinctBy { it.url }
             ChaptersResponse(
-                update.chapters.map { chapter ->
+                uniqueChapters.map { chapter ->
                     // I1: a source may override prepareNewChapter to set fields (name/number)
                     // BEFORE recognition runs — mirrors Chapter.kt:172. Deprecated upstream, but
                     // still honored so a source relying on it isn't silently broken here.
