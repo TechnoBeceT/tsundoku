@@ -8,6 +8,7 @@ import {
   shouldPrepend,
   centeredPage,
   finishedChapterIds,
+  atBottomOfLastChapter,
   pruneSeenBelow,
   trimTrailingFailures,
   scrollAfterReflow,
@@ -404,6 +405,21 @@ function runScroll(): void {
       emittedFinished.add(id)
       emit('chapter-finished', id)
     }
+  }
+
+  // The LAST chapter's end-divider can never cross the viewport top (only a 1px
+  // tail sentinel follows it), so `finishedChapterIds` can never fire for it — see
+  // `atBottomOfLastChapter`. Detect its genuine completion here instead: the
+  // scroller at its TRUE bottom, with the final chapter actually holding pages.
+  // Routed through the SAME `emittedFinished` de-dupe as every other finish, so it
+  // emits once per session (and re-arms on a fresh `scrollRequest` token). This is
+  // a read-only observation — no DOM reflow — so it needs no anchor bracket.
+  const lastChapter = props.mountedChapters.at(-1)
+  if (lastChapter
+    && atBottomOfLastChapter(!hasNext.value, visiblePages(lastChapter) > 0, el.scrollTop, el.clientHeight, el.scrollHeight)
+    && !emittedFinished.has(lastChapter.id)) {
+    emittedFinished.add(lastChapter.id)
+    emit('chapter-finished', lastChapter.id)
   }
 }
 

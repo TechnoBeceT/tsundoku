@@ -66,6 +66,12 @@ function stubClientHeight(el: HTMLElement, height: number): void {
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: height })
 }
 
+/** Stubs a fixed scrollHeight (happy-dom has no real layout) — the total scrollable
+ *  content height the last-chapter true-bottom check reasons over. */
+function stubScrollHeight(el: HTMLElement, height: number): void {
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, value: height })
+}
+
 /** Stubs every `[data-page]` element as stacked `pageHeight`-tall blocks, in
  *  document order — gives `centeredPage()` real geometry to reason over. The
  *  stub is SCROLL-AWARE: `runScroll`/`contentTop` both read `getBoundingClientRect
@@ -563,6 +569,81 @@ describe('ReaderStrip — chapter-finished (Fix 1: a below->above TRANSITION, no
   })
 })
 
+describe('ReaderStrip — chapter-finished for the LAST chapter (true bottom of scroll, not a divider crossing)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('emits chapter-finished for the final chapter once it is scrolled to the true bottom, once only', () => {
+    // The last chapter's end-divider can never cross the viewport top (only a 1px
+    // tail sentinel follows it), so `finishedChapterIds` never finishes it — this
+    // is the geometrically-real completion signal the bug was missing. ch-A is the
+    // only (hence last) chapter, so hasNext is false.
+    const wrapper = mount(ReaderStrip, {
+      props: { ...base, chapters: [chA], mountedChapters: [chA] },
+    })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+    stubClientHeight(container, 600)
+    stubScrollHeight(container, 5000) // true bottom scrollTop = 5000 - 600 = 4400
+
+    // Short of the bottom — not finished yet.
+    container.scrollTop = 4000
+    container.dispatchEvent(new Event('scroll')) // fresh instance → runs immediately
+    vi.advanceTimersByTime(200)
+    expect(wrapper.emitted('chapter-finished')).toBeUndefined()
+
+    // At the true bottom — the last chapter finishes.
+    container.scrollTop = 4400
+    container.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(200)
+    // Still at the bottom on a later scroll tick — must NOT re-emit (emittedFinished).
+    container.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(200)
+
+    expect(wrapper.emitted('chapter-finished')).toHaveLength(1)
+    expect(wrapper.emitted('chapter-finished')![0]).toEqual(['ch-A'])
+  })
+
+  it('does NOT finish the bottom of a NON-final mounted window (a next chapter still exists)', () => {
+    // Mounted [ch-A] but the full list has ch-B after it → hasNext is true, so
+    // reaching the bottom of the current window is just the append seam, not a
+    // finish. Only `finishedChapterIds`' transition may finish a non-final chapter.
+    const wrapper = mount(ReaderStrip, {
+      props: { ...base, chapters: [chA, chB], mountedChapters: [chA] },
+    })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+    stubClientHeight(container, 600)
+    stubScrollHeight(container, 5000)
+
+    container.scrollTop = 4400 // true bottom of what's mounted
+    container.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(200)
+
+    expect(wrapper.emitted('chapter-finished')).toBeUndefined()
+  })
+
+  it('does NOT finish a last chapter with zero visible pages (mirrors the visiblePages===0 skip)', () => {
+    // chZ has pageCount 0 → nothing to finish even at the bottom.
+    const wrapper = mount(ReaderStrip, {
+      props: { ...base, chapters: [chZ], mountedChapters: [chZ] },
+    })
+    const container = wrapper.find('.strip').element as HTMLElement
+    makeScrollable(container, 0)
+    stubRect(container, 0)
+    stubClientHeight(container, 600)
+    stubScrollHeight(container, 400) // shorter than the viewport → "at bottom" geometrically
+
+    container.scrollTop = 0
+    container.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(200)
+
+    expect(wrapper.emitted('chapter-finished')).toBeUndefined()
+  })
+})
+
 describe('ReaderStrip — CRITICAL: a head-prepend must not instantly mark the prepended chapter finished (Fix 1)', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
@@ -580,6 +661,14 @@ describe('ReaderStrip — CRITICAL: a head-prepend must not instantly mark the p
     const container = wrapper.find('.strip').element as HTMLElement
     makeScrollable(container, 2000)
     stubRect(container, 0)
+    // The reader is mid-strip (scrollTop 2000), NOT at the bottom: stub a realistic
+    // clientHeight/scrollHeight so the last-chapter true-bottom check reads correctly
+    // (2000 + 600 = 2600, well short of 6000). Without these, happy-dom's default 0/0
+    // geometry makes any scrollTop trivially satisfy "scrollTop + clientHeight >=
+    // scrollHeight", falsely finishing the final mounted chapter — physically
+    // impossible in a real browser, where scrollTop + clientHeight <= scrollHeight.
+    stubClientHeight(container, 600)
+    stubScrollHeight(container, 6000)
     // ch-B's divider is still BELOW the reader — not yet reached.
     stubRect(wrapper.find('[data-divider-id="ch-B"]').element, 3000)
 
