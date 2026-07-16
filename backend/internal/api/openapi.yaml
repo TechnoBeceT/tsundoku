@@ -5538,8 +5538,8 @@ paths:
         has captured into its own durable store — harvested extension repos,
         extensions and how many have their .apk bytes cached for offline recovery,
         the library's live-source universe and how many sources have their
-        preferences captured, and how many SeriesProvider urls are resolved vs.
-        still fillable. Every number is computed from DB counts alone (no engine
+        preferences captured, and how many sources' preferences were read
+        successfully vs. failed. Every number is computed from DB counts alone (no engine
         call), so a fresh install with nothing adopted is a valid all-zero 200,
         not an error. `gaps` carries human-readable notes naming what is still
         outstanding (empty when nothing is).
