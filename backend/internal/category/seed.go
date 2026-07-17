@@ -47,12 +47,26 @@ var defaultCategories = []defaultCategory{
 //   - NormalizeSortOrder — sort_order values are contiguous and unique, repairing
 //     the deployed collisions that broke the frontend reorder swap (F3).
 func EnsureDefaults(ctx context.Context, client *ent.Client) error {
+	// A deleted non-protected default must STAY deleted across restarts. Load the
+	// owner's tombstone set once so a re-seed skips any default they removed. The
+	// protected "Other" fallback is never tombstoned (tombstoneDefault refuses it)
+	// AND is re-checked below regardless, so the fallback can never vanish.
+	deleted, err := loadDeletedDefaults(ctx, client)
+	if err != nil {
+		return err
+	}
+
 	for _, d := range defaultCategories {
 		exists, err := client.Category.Query().Where(entcategory.Name(d.name)).Exist(ctx)
 		if err != nil {
 			return fmt.Errorf("category.EnsureDefaults: check %q: %w", d.name, err)
 		}
 		if exists {
+			continue
+		}
+		// Skip re-seeding a default the owner deliberately deleted — but NEVER the
+		// protected "Other" fallback, which must always be re-created if missing.
+		if !d.protected && deleted[d.name] {
 			continue
 		}
 		if err := client.Category.Create().

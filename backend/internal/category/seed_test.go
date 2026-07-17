@@ -85,6 +85,111 @@ func TestEnsureDefaultsDoesNotClobberChosenDefault(t *testing.T) {
 	}
 }
 
+// TestDeletedDefaultStaysDeletedAcrossRestart is the core bug-fix proof: once the
+// owner deletes a non-protected default (e.g. "Comic"), a subsequent EnsureDefaults
+// (every startup) must NOT re-create it — the deletion persists across restarts.
+func TestDeletedDefaultStaysDeletedAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc := category.NewService(client, t.TempDir())
+
+	// "Comic" is a non-protected, non-default, empty default → deletable.
+	comicID, err := category.IDByName(ctx, client, "Comic")
+	if err != nil {
+		t.Fatalf("IDByName(Comic): %v", err)
+	}
+	if err := svc.Delete(ctx, comicID); err != nil {
+		t.Fatalf("Delete(Comic): %v", err)
+	}
+
+	// Simulate several restarts.
+	for i := 0; i < 3; i++ {
+		if err := category.EnsureDefaults(ctx, client); err != nil {
+			t.Fatalf("EnsureDefaults restart %d: %v", i, err)
+		}
+	}
+
+	if n := client.Category.Query().Where(entcategory.Name("Comic")).CountX(ctx); n != 0 {
+		t.Fatalf("deleted default reappeared: Comic count = %d, want 0", n)
+	}
+	// The four survivors remain (Manga, Manhwa, Manhua, Other).
+	if n := client.Category.Query().CountX(ctx); n != 4 {
+		t.Fatalf("want 4 categories after deleting Comic + restarts, got %d", n)
+	}
+}
+
+// TestOtherAlwaysReEnsuredEvenAfterDelete proves the protected "Other" fallback is
+// NEVER persistently deleted: even after it is demoted (so the delete-guard allows
+// removing it) and deleted, EnsureDefaults re-creates it on the next startup. The
+// fallback can never vanish.
+func TestOtherAlwaysReEnsuredEvenAfterDelete(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc := category.NewService(client, t.TempDir())
+
+	otherID, err := category.IDByName(ctx, client, "Other")
+	if err != nil {
+		t.Fatalf("IDByName(Other): %v", err)
+	}
+	manhwaID, err := category.IDByName(ctx, client, "Manhwa")
+	if err != nil {
+		t.Fatalf("IDByName(Manhwa): %v", err)
+	}
+	// Demote Other so the is_default delete-guard no longer protects it.
+	if err := svc.SetDefault(ctx, manhwaID); err != nil {
+		t.Fatalf("SetDefault(Manhwa): %v", err)
+	}
+	if err := svc.Delete(ctx, otherID); err != nil {
+		t.Fatalf("Delete(Other): %v", err)
+	}
+
+	if err := category.EnsureDefaults(ctx, client); err != nil {
+		t.Fatalf("EnsureDefaults (restart): %v", err)
+	}
+
+	if n := client.Category.Query().Where(entcategory.Name("Other")).CountX(ctx); n != 1 {
+		t.Fatalf("Other must always be re-ensured: count = %d, want 1", n)
+	}
+}
+
+// TestBackfillSeriesIntactAfterDefaultDeleted proves that deleting a default does
+// not break the NULL-category backfill: BackfillSeries still links an unlinked
+// series to the protected "Other" fallback.
+func TestBackfillSeriesIntactAfterDefaultDeleted(t *testing.T) {
+	ctx := context.Background()
+	client, db := testdb.NewWithSQL(t)
+	svc := category.NewService(client, t.TempDir())
+
+	// Delete a default, then simulate a restart.
+	manhuaID, err := category.IDByName(ctx, client, "Manhua")
+	if err != nil {
+		t.Fatalf("IDByName(Manhua): %v", err)
+	}
+	if err := svc.Delete(ctx, manhuaID); err != nil {
+		t.Fatalf("Delete(Manhua): %v", err)
+	}
+	if err := category.EnsureDefaults(ctx, client); err != nil {
+		t.Fatalf("EnsureDefaults (restart): %v", err)
+	}
+
+	// An unlinked series must still backfill onto "Other".
+	s := client.Series.Create().SetTitle("Null Cat").SetSlug("null-cat").SaveX(ctx)
+	if _, err := db.ExecContext(ctx, `UPDATE series SET category_id = NULL WHERE id = $1`, s.ID); err != nil {
+		t.Fatalf("null the category_id: %v", err)
+	}
+	if err := category.BackfillSeries(ctx, db); err != nil {
+		t.Fatalf("BackfillSeries: %v", err)
+	}
+	got := client.Series.Query().WithCategory().OnlyX(ctx)
+	if got.Edges.Category == nil || got.Edges.Category.Name != "Other" {
+		t.Fatalf("backfill after default deleted: series category = %+v, want Other", got.Edges.Category)
+	}
+	// Manhua stayed deleted through the restart.
+	if n := client.Category.Query().Where(entcategory.Name("Manhua")).CountX(ctx); n != 0 {
+		t.Fatalf("deleted Manhua reappeared: count = %d, want 0", n)
+	}
+}
+
 // TestBackfillSeriesFromLegacyEnumColumn is the MIGRATION-SAFETY proof. It
 // simulates an existing enum-era database: a series row whose category lives in
 // the legacy `category` column (which the new Ent schema no longer defines) with

@@ -152,6 +152,16 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 		return ErrCategoryNotEmpty
 	}
 
+	// Persist the intent to delete a seeded default BEFORE the row is removed so
+	// the tombstone can never be lost (a tombstone on a still-present category is
+	// inert — EnsureDefaults only ever CREATES missing categories, never consults
+	// the tombstone for one that already exists). This is what makes a deleted
+	// default (e.g. Comic, Manhua) stay deleted across restarts instead of being
+	// re-seeded by EnsureDefaults. A no-op for user-created and "Other" names.
+	if err := tombstoneDefault(ctx, s.client, row.Name); err != nil {
+		return fmt.Errorf("category.Delete: tombstone %q: %w", row.Name, err)
+	}
+
 	if err := s.client.Category.DeleteOneID(id).Exec(ctx); err != nil {
 		// Defensive path: the row exists (confirmed above) and is empty; an error
 		// here is reachable only on a DB-level failure.
