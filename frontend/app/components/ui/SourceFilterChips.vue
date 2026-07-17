@@ -16,17 +16,19 @@
  * `Source` type, so any caller with an id+name list can drive it. It references
  * only design tokens, so it reads correctly in both themes.
  *
- * BOUNDED + INNER-SCROLLING (QCAT-230/231): with 40+ real sources an unbounded
- * `flex-wrap` cloud runs to ~20 rows — taller than a phone viewport. That
- * doesn't just look bad: in `screens/ScanLibrary.vue`'s fit-screen layout this
- * row sits `flex: none` above the `flex:1; min-height:0` staging list, so an
- * unbounded cloud claims all the available height and squeezes the list to
- * ZERO — the found-series rows render (data is fine) but have no room to show.
- * `.imp-filter` therefore caps its own height (`max-height` + `overflow-y:
- * auto`) so a long source list becomes a compact, internally-scrolling box
- * instead of dominating whichever screen/dialog hosts it — the fix lives here
- * once (§2 DRY) rather than in each of the 4 consumers (Import, ScanLibrary,
- * MatchSourceDialog, MatchDiskProviderDialog).
+ * SCROLL MODEL (QCAT-265 §2.6). Two host shapes, chosen by the caller via
+ * `bounded` (default true — every existing consumer unchanged):
+ *   - `bounded` (default): with 40+ real sources an unbounded `flex-wrap` cloud
+ *     runs to ~20 rows — taller than a phone viewport, and in a modal/dialog
+ *     (MatchSourceDialog, MatchDiskProviderDialog) it would dominate the surface.
+ *     So the cloud caps its own height (`max-height` + `overflow-y: auto`) into a
+ *     compact internally-scrolling box. This is the right shape for a MODAL, which
+ *     is bounded by nature (§2.6.2). The fix lives here once (§2 DRY).
+ *   - `bounded="false"`: NO cap, NO inner-scroll — the cloud GROWS with its
+ *     content and the DOCUMENT scrolls. The Adopt wizard (`screens/Import.vue`)
+ *     uses this INSIDE a `ui/DisclosurePanel` (QCAT-265 treatment #2, the owner's
+ *     "exclude sources … open/close that list is more smart"): a long list that is
+ *     in the way is tamed by COLLAPSING it, never by a nested scroll band.
  */
 interface ChipSource {
   /** Suwayomi source ID (string — a 64-bit int on the wire). */
@@ -35,14 +37,23 @@ interface ChipSource {
   name: string
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** The sources to render as toggle chips. */
   sources: ChipSource[]
   /** The currently-selected source IDs (v-model:selected). */
   selected: string[]
-  /** Leading label shown before the chips; defaults to "Limit to:". */
+  /** Leading label shown before the chips; defaults to "Limit to:", "" hides it. */
   label?: string
-}>()
+  /**
+   * Cap the cloud to a compact internally-scrolling box (default true — the
+   * modal/dialog shape). Set false for the disclosure host (Import), where the
+   * cloud grows and the document scrolls (QCAT-265 treatment #2).
+   */
+  bounded?: boolean
+}>(), {
+  label: 'Limit to:',
+  bounded: true,
+})
 
 const emit = defineEmits<{
   /** The selection changed — carries the new array of selected source IDs. */
@@ -57,8 +68,8 @@ const toggle = (id: string): void => {
 </script>
 
 <template>
-  <div class="imp-filter">
-    <span class="imp-filter__label">{{ label ?? 'Limit to:' }}</span>
+  <div class="imp-filter" :class="{ 'imp-filter--bounded': bounded }">
+    <span v-if="label" class="imp-filter__label">{{ label }}</span>
     <button
       v-for="s in sources"
       :key="s.id"
@@ -73,31 +84,36 @@ const toggle = (id: string): void => {
 </template>
 
 <style scoped>
-/* Bounded + internally-scrolling (see the component doc comment above): caps
- * the chip cloud to roughly 3-4 rows at any width instead of an unbounded
- * flex-wrap cloud, with the native scrollbar as the scroll affordance. */
+/* The chip cloud. Spacing on the fluid ladder (byte-identical at the 16px
+ * anchor). GROWS by default; `.imp-filter--bounded` (the modal/dialog shape)
+ * caps it into a compact internally-scrolling box (see the doc comment above). */
 .imp-filter {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 0.4375rem; /* 7px @16 — off-ladder, byte-identical rem literal */
   align-items: center;
   align-content: flex-start;
-  margin-bottom: 20px;
-  max-height: clamp(88px, 22vh, 200px);
+  margin-bottom: var(--space-2xl-tight); /* 20px @16 */
+}
+
+/* Caps the cloud to roughly 3-4 rows at any width (modal/dialog hosts), with
+ * the native scrollbar as the affordance. Import opts OUT (bounded=false). */
+.imp-filter--bounded {
+  max-height: clamp(5.5rem, 22vh, 12.5rem); /* 88px … 200px @16 */
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 4px;
+  padding-right: var(--space-2xs); /* 4px @16 — scrollbar gutter */
 }
 
 .imp-filter__label {
   font-size: var(--text-xs);
   color: var(--faint);
-  margin-right: 3px;
+  margin-right: 0.1875rem; /* 3px @16 — off-ladder, byte-identical rem literal */
   font-weight: var(--weight-semibold);
 }
 
 .imp-chip {
-  padding: 6px 12px;
+  padding: var(--space-xs-tight) var(--space-md); /* 6px 12px @16 */
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--surface2);

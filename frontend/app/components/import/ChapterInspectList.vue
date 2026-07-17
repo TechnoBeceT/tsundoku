@@ -33,15 +33,15 @@ const chapterLabel = (ch: ChapterInspect): string => {
 
 <style scoped>
 .cil {
-  margin-top: 11px;
-  padding: 11px 13px;
+  margin-top: 0.6875rem; /* 11px @16 — off-ladder, byte-identical rem literal */
+  padding: 0.6875rem 0.8125rem; /* 11px 13px @16 — off-ladder, byte-identical */
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface);
 }
 
 .cil__count {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-xs); /* 8px @16 */
   font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   text-transform: uppercase;
@@ -49,14 +49,18 @@ const chapterLabel = (ch: ChapterInspect): string => {
   color: var(--accentBright);
 }
 
+/* A fixed-max-height chapter-preview scroller (a small, deliberately bounded
+ * inner list under the row — the prototype's own inner-scroll shape, NOT a
+ * viewport-keyed letterbox; §2.6 treatment #1). max-height on rem so the box
+ * scales with the fluid root. */
 .cil__list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 4px 14px;
-  max-height: 168px;
+  grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr)); /* 200px @16 */
+  gap: var(--space-2xs) var(--space-base); /* 4px 14px @16 */
+  max-height: 10.5rem; /* 168px @16 */
   overflow-y: auto;
 }
 

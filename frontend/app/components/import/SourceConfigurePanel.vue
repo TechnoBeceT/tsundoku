@@ -82,7 +82,7 @@ const emit = defineEmits<{
 
 <style scoped>
 .scp-eyebrow {
-  margin: 0 0 11px;
+  margin: 0 0 0.6875rem; /* 11px @16 — off-ladder, byte-identical rem literal */
   font-size: var(--text-xs);
   font-weight: var(--weight-extrabold);
   text-transform: uppercase;

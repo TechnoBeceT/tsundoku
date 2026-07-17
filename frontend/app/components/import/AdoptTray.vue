@@ -61,10 +61,10 @@ const sourceWord = (n: number): string => `${n} source${n === 1 ? '' : 's'}`
 .tray {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-base); /* 14px @16 */
   flex-wrap: wrap;
-  padding: 13px 16px;
-  margin-bottom: 15px;
+  padding: 0.8125rem var(--space-lg); /* 13px 16px @16 (13px off-ladder) */
+  margin-bottom: 0.9375rem; /* 15px @16 — off-ladder, byte-identical rem literal */
   border: 1px solid var(--accent);
   border-radius: var(--radius-xl);
   background: var(--accentSoft);
@@ -94,16 +94,16 @@ const sourceWord = (n: number): string => `${n} source${n === 1 ? '' : 's'}`
 .tray__chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 0.4375rem; /* 7px @16 — off-ladder, byte-identical rem literal */
   flex: 1;
-  min-width: 200px;
+  min-width: 12.5rem; /* 200px @16 */
 }
 
 .tray__chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 6px 5px 11px;
+  gap: var(--space-xs-tight); /* 6px @16 */
+  padding: 0.3125rem var(--space-xs-tight) 0.3125rem 0.6875rem; /* 5px 6px 5px 11px @16 */
   border-radius: var(--radius-pill);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -118,14 +118,14 @@ const sourceWord = (n: number): string => `${n} source${n === 1 ? '' : 's'}`
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 17px;
-  height: 17px;
+  width: 1.0625rem; /* 17px @16 */
+  height: 1.0625rem; /* 17px @16 */
   padding: 0;
   border: none;
   border-radius: 50%;
   background: var(--surface3);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.75rem; /* 12px @16 */
   line-height: 1;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;

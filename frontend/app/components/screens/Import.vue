@@ -2,6 +2,7 @@
 import { computed, ref, toRef, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import Chip from '../ui/Chip.vue'
+import DisclosurePanel from '../ui/DisclosurePanel.vue'
 import SearchInput from '../ui/SearchInput.vue'
 import SourceFilterChips from '../ui/SourceFilterChips.vue'
 import Spinner from '../ui/Spinner.vue'
@@ -264,20 +265,18 @@ const submit = (): void => {
 
 <template>
   <div class="import">
-    <!-- Stepper: Search → Configure → Adopt — short, fixed-content, flows above
-         the bounded panel (QCAT-231: never trapped inside a fixed-height/
-         overflow-hidden ancestor). Wrapped in its own horizontal scroller as a
-         safety net for the shared <Stepper> atom (out of this sweep's scope to
-         edit) — see `.import__steps` below. -->
+    <!-- Stepper: Search → Configure → Adopt — short, fixed-content, flows in the
+         document above the panel. Wrapped in its own horizontal scroller as a
+         safety net for the shared <Stepper> atom's nowrap pills (see
+         `.import__steps` below). -->
     <div class="import__steps">
       <Stepper :steps="stepItems" :current="currentStep" orientation="horizontal" />
     </div>
 
-    <!-- QCAT-231 "fit the screen, scroll inside": everything from here down fits
-         the remaining viewport; `.import__panel` is itself a flex column whose
-         per-stage `.imp-stage__scroll` region is the ONE inner scroller, so a
-         long search-results/config-rows list never grows the whole page and the
-         Back/Next actions stay reachable without scrolling past it. -->
+    <!-- QCAT-265 GROW: the wizard grows with its content and the PAGE scrolls —
+         no letterbox, no per-stage inner-scroller. The stages flow naturally
+         inside the centred `.import__panel` card and the Back/Next actions sit at
+         the panel's own bottom. -->
     <div class="import__shell">
       <div class="import__panel">
         <!-- Error banner (search or adopt failure) -->
@@ -305,11 +304,31 @@ const submit = (): void => {
               </AppButton>
             </div>
 
-            <!-- Source filter chips -->
-            <SourceFilterChips v-model:selected="srcFilter" :sources="sources" />
+            <!-- Source filter (QCAT-265 treatment #2 — DISCLOSURE): the source
+                 list is 40+ entries in prod (a long list that is IN THE WAY of
+                 the search flow), so it collapses to a tap-to-open panel instead
+                 of an always-on ~20-row chip cloud — the owner's "exclude
+                 sources … open/close that list is more smart". Flat (no second
+                 card outline inside the panel); the chips grow when open and the
+                 page scrolls (no nested scroll band). -->
+            <DisclosurePanel
+              class="imp-filter-disclosure"
+              collapsible
+              flat
+              :default-open="false"
+              title="Limit to sources"
+              :summary="srcFilter.length ? `${srcFilter.length} selected` : ''"
+            >
+              <SourceFilterChips
+                v-model:selected="srcFilter"
+                :sources="sources"
+                :bounded="false"
+                label=""
+              />
+            </DisclosurePanel>
           </div>
 
-          <div class="imp-stage__scroll">
+          <div class="imp-stage__body">
             <!-- Searching / empty / prompt states (§16) -->
             <div v-if="searching" class="imp-loading">
               <Spinner :size="16" tone="accent" />
@@ -366,7 +385,7 @@ const submit = (): void => {
             </div>
           </div>
 
-          <div class="imp-stage__scroll">
+          <div class="imp-stage__body">
             <SourceConfigurePanel
               :rows="displayRows"
               label="Sources to adopt · use arrows to rank priority"
@@ -405,7 +424,7 @@ const submit = (): void => {
             <p class="imp-eyebrow">Sources · higher importance is preferred</p>
           </div>
 
-          <div class="imp-stage__scroll">
+          <div class="imp-stage__body">
             <ReviewSourceRow
               v-for="s in reviewRows"
               :key="s.key"
@@ -434,71 +453,56 @@ const submit = (): void => {
 </template>
 
 <style scoped>
-/* QCAT-231 "fit the screen, scroll inside": `.import` is bounded to ONE
- * viewport under the sticky 64px AppShell header (mirrors Downloads/Discover's
- * shape) and is itself a flex column. `.import__steps` is fixed-size and flows
- * naturally above; `.import__shell` takes the rest of the height and is ALSO a
- * flex column so its child `.import__panel` (and each stage's own
- * `.imp-stage__scroll` inside it) can bound + scroll internally — a long
- * search-results or config-rows list scrolls WITHIN the panel, never as an
- * infinite page, and the Back/Next actions stay reachable without hunting for
- * them below the list. Holds at every width (QCAT-230/231) — this wizard is a
- * single column at every breakpoint, so no `@media` re-bound is needed for the
- * scroll shape itself (only for spacing/wrap tweaks below).
- */
+/* The old QCAT-231 letterbox (`height: calc(100dvh - 64px)` + a flex-fill chain
+ * bounding each stage's `.imp-stage__scroll` into an inner-scroll region) was
+ * experience drift (§0.1): on a large screen the owner was working inside a small
+ * letterboxed area, and the Configure stage's config rows felt cramped in the
+ * squeezed scroll box. Stripped — no viewport-keyed height, no per-stage
+ * inner-scroll: the wizard GROWS with its content and the PAGE scrolls (QCAT-265,
+ * the GROW case for a single-column wizard). Spacing is on the fluid token ladder
+ * (byte-identical at the 16px anchor: 20px 30px sides, 20px trailing).
+ * `--app-nav-bottom` (0 on desktop) clears the phone bottom-nav so the last
+ * action/row is never occluded. */
 .import {
-  padding: 20px 30px 20px;
+  padding: var(--space-2xl-tight) var(--space-3xl)
+    calc(var(--space-2xl-tight) + var(--app-nav-bottom));
   background: var(--bg);
-  height: calc(100dvh - 64px);
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 /* ---- Stepper ---------------------------------------------------------------
- * `overflow-x: auto` is a safety net for the shared <Stepper> atom (out of
- * this sweep's scope — `app/components/ui/*`): its horizontal pills are
- * `white-space: nowrap`, so three un-abbreviated step labels can exceed a
- * narrow phone's width. Rather than let that blow out the whole page's
- * horizontal extent (QCAT-230's hard "zero horizontal overflow" gate), the
- * strip contains its own overflow and scrolls locally — a common pattern for
- * small nav/step bars, and harmless at desktop width where it never engages. */
+ * `overflow-x: auto` is a safety net for the shared <Stepper> atom: its
+ * horizontal pills are `white-space: nowrap`, so three un-abbreviated step
+ * labels can exceed a narrow phone's width. Rather than let that blow out the
+ * whole page's horizontal extent (QCAT-230's hard "zero horizontal overflow"
+ * gate), the strip contains its own overflow and scrolls locally — a common
+ * pattern for small nav/step bars, and harmless at desktop width where it never
+ * engages. (Horizontal safety only — NOT the banned vertical viewport-fit.) */
 .import__steps {
-  flex: none;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-lg); /* 16px @16 */
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
 
+/* The centred reading column. `max-width` on rem so the measure (chars/line)
+ * stays constant as the fluid root scales the type inside it. */
 .import__shell {
-  flex: 1;
-  min-height: 0;
-  max-width: 880px;
+  max-width: 55rem; /* 880px @16 */
   width: 100%;
   margin: 0 auto;
-  display: flex;
-  flex-direction: column;
 }
 
 /* ---- Panel ------------------------------------------------------------------
- * The bounded region itself: a flex column so the error banner (when present)
- * and the active stage each get their natural/allotted height, and the stage's
- * OWN `.imp-stage__scroll` (see below) is the one inner scroller. */
+ * The card the stages flow inside; grows with its content (QCAT-265). */
 .import__panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-2xl);
-  padding: 22px;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+  padding: 1.375rem; /* 22px @16 — off-ladder, byte-identical rem literal */
 }
 
 .import__error {
-  flex: none;
-  margin: 0 0 16px;
-  padding: 11px 14px;
+  margin: 0 0 var(--space-lg); /* 16px @16 */
+  padding: 0.6875rem var(--space-base); /* 11px 14px @16 */
   border-radius: var(--radius-lg);
   background: var(--danger-bg);
   border: 1px solid var(--danger-border);
@@ -507,38 +511,27 @@ const submit = (): void => {
   font-weight: var(--weight-semibold);
 }
 
-/* Each stage fills whatever height `.import__panel` has left and is itself a
- * flex column: `.imp-stage__top` (search/fields/review-head — short,
- * fixed-content) flows at its natural height, `.imp-stage__scroll` takes the
- * rest and is the ONE scroll container for that stage's list, and
- * `.imp-actions` (Back/Next) sits OUTSIDE the scroller so it's never buried
- * below a long list (mirrors Downloads' pinned "Load more"). */
-.imp-stage {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.imp-stage__top {
-  flex: none;
-}
-
-/* 🔴 min-height: 0 is the same flex-item overflow-trap PanelCard/Downloads
- * document: without it this region refuses to shrink below its content (every
- * search group / config row) and the bounded ancestors above would grow
- * instead of scrolling internally. */
-.imp-stage__scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+/* Each stage flows in the document (QCAT-265 GROW): `.imp-stage__top`
+ * (search/fields/review-head), then `.imp-stage__body` (the stage's list), then
+ * `.imp-actions` (Back/Next) at the stage's own bottom. No fixed heights, no
+ * inner scroller — the page scrolls.
+ *
+ * JUDGMENT CALL 2 (owner-review): the wizard action row GROWS with the stage
+ * rather than being pinned as a fixed viewport-bottom chrome bar (QCAT-263). The
+ * stages are moderate single-column content (a handful of source rows, not a
+ * 320-chapter list), so scroll-to-the-bottom-to-progress is the conventional,
+ * conservative form-flow shape and keeps desktop closest to the reference. A
+ * fixed chrome bar remains available if the owner wants the primary action
+ * permanently reachable on a long Configure list. */
+.imp-stage__body {
+  /* grows with content */
+  min-width: 0;
 }
 
 /* ---- Actions row ---------------------------------------------------------- */
 .imp-actions {
-  flex: none;
   display: flex;
-  margin-top: 16px;
+  margin-top: var(--space-lg); /* 16px @16 */
 }
 
 .imp-actions--start {
@@ -552,7 +545,7 @@ const submit = (): void => {
 .imp-actions__end {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm); /* 10px @16 */
 }
 
 @media (max-width: 900px) {
@@ -561,7 +554,7 @@ const submit = (): void => {
    * let the end group wrap onto its own line rather than overflow. */
   .imp-actions--between {
     flex-wrap: wrap;
-    gap: 10px;
+    gap: var(--space-sm); /* 10px @16 */
   }
 
   .imp-actions__end {
@@ -572,8 +565,8 @@ const submit = (): void => {
 /* ---- Stage 1: search ------------------------------------------------------ */
 .imp-search {
   display: flex;
-  gap: 10px;
-  margin-bottom: 15px;
+  gap: var(--space-sm); /* 10px @16 */
+  margin-bottom: 0.9375rem; /* 15px @16 — off-ladder, byte-identical rem literal */
   flex-wrap: wrap;
 }
 
@@ -582,33 +575,33 @@ const submit = (): void => {
  * wider than the panel (the flex-item overflow trap again, one level up). */
 .imp-search__field {
   flex: 1;
-  min-width: 160px;
+  min-width: 10rem; /* 160px @16 */
 }
 
 /* ---- Groups --------------------------------------------------------------- */
 .imp-groups {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md); /* 12px @16 */
 }
 
 /* ---- Stage 2: configure --------------------------------------------------- */
 .imp-fields {
   display: flex;
-  gap: 14px;
-  margin-bottom: 20px;
+  gap: var(--space-base); /* 14px @16 */
+  margin-bottom: var(--space-2xl-tight); /* 20px @16 */
   flex-wrap: wrap;
 }
 
 .imp-field {
   flex: 1;
-  min-width: 220px;
+  min-width: 13.75rem; /* 220px @16 */
   display: block;
 }
 
 .imp-field--cat {
   flex: none;
-  width: 180px;
+  width: 11.25rem; /* 180px @16 */
   min-width: 0;
 }
 
@@ -619,12 +612,12 @@ const submit = (): void => {
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--faint);
-  margin-bottom: 7px;
+  margin-bottom: 0.4375rem; /* 7px @16 — off-ladder, byte-identical rem literal */
 }
 
 .imp-input {
   width: 100%;
-  padding: 11px 14px;
+  padding: 0.6875rem var(--space-base); /* 11px 14px @16 */
   border-radius: var(--radius-lg);
   border: 1px solid var(--border2);
   background: var(--bg2);
@@ -645,7 +638,7 @@ const submit = (): void => {
 }
 
 .imp-eyebrow {
-  margin: 0 0 11px;
+  margin: 0 0 0.6875rem; /* 11px @16 — off-ladder, byte-identical rem literal */
   font-size: var(--text-xs);
   font-weight: var(--weight-extrabold);
   text-transform: uppercase;
@@ -657,8 +650,8 @@ const submit = (): void => {
 .imp-review-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--space-md); /* 12px @16 */
+  margin-bottom: var(--space-md); /* 12px @16 */
   flex-wrap: wrap;
 }
 
@@ -674,13 +667,13 @@ const submit = (): void => {
 }
 
 .imp-explainer {
-  margin-top: 16px;
+  margin-top: var(--space-lg); /* 16px @16 */
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 12px 14px;
+  padding: var(--space-md) var(--space-base); /* 12px 14px @16 */
   line-height: 1.5;
-  font-size: 12.5px;
+  font-size: 0.78125rem; /* 12.5px @16 — off-ladder, byte-identical rem literal */
   color: var(--muted);
 }
 
@@ -691,12 +684,12 @@ const submit = (): void => {
 /* ---- Notes / loading ------------------------------------------------------ */
 .imp-note {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px @16 — off-ladder, byte-identical rem literal */
   color: var(--muted);
 }
 
 .imp-note--center {
-  padding: 34px 0;
+  padding: 2.125rem 0; /* 34px @16 */
   text-align: center;
 }
 
@@ -708,22 +701,23 @@ const submit = (): void => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 40px 0;
+  gap: var(--space-sm); /* 10px @16 */
+  padding: 2.5rem 0; /* 40px @16 */
   color: var(--muted);
   font-size: var(--text-base);
 }
 
 @media (max-width: 900px) {
-  /* Reclaim horizontal room on a phone — mirrors Discover's mobile padding
-   * tightening (390px minus the desktop 30px side padding + 22px panel
-   * padding leaves very little room for the search bar/rows/Stepper). */
+  /* QCAT-261 mobile-compact: reclaim horizontal room on a phone (mirrors
+   * Discover/Downloads' mobile padding tightening) and clear the fixed phone
+   * bottom-nav so the last action/row is never occluded. Desktop unchanged. */
   .import {
-    padding: 14px 12px 14px;
+    padding: var(--space-base) var(--space-md)
+      calc(var(--space-base) + var(--app-nav-bottom)); /* 14px 12px @16 */
   }
 
   .import__panel {
-    padding: 14px;
+    padding: var(--space-base); /* 14px @16 */
   }
 }
 </style>

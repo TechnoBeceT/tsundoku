@@ -46,11 +46,11 @@ withDefaults(defineProps<{
 .row {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 11px 14px;
+  gap: 0.6875rem; /* 11px @16 — off-ladder, byte-identical rem literal */
+  padding: 0.6875rem var(--space-base); /* 11px 14px @16 */
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-xs); /* 8px @16 */
   background: var(--surface2);
 }
 
@@ -70,9 +70,9 @@ withDefaults(defineProps<{
 }
 
 .row__rank {
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
+  width: var(--control-xs); /* 22px @16 — square badge */
+  height: var(--control-xs);
+  border-radius: 0.4375rem; /* 7px @16 — off-ladder radius, byte-identical */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -91,7 +91,7 @@ withDefaults(defineProps<{
 .row__meta {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0.0625rem; /* 1px @16 */
   min-width: 0;
 }
 

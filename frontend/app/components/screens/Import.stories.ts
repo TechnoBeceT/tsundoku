@@ -130,13 +130,13 @@ export const Adopting: Story = {
 }
 
 /**
- * Real mobile viewport (QCAT-230/231) — Stage 2 (Configure) at an actual
+ * Real mobile viewport (QCAT-230/265) — Stage 2 (Configure) at an actual
  * phone-width VIEWPORT, the most crowded stage: each candidate row (select +
  * cover + source/coverage + Inspect + rank stepper) must stack instead of
  * crushing the source name into a sliver, the Stepper must not blow out the
- * page width, and the row list scrolls INSIDE the bounded panel while the
- * title/category fields + Back/Review actions stay pinned above/below it —
- * with zero horizontal overflow at any width.
+ * page width, and the whole stage GROWS with its content while the page scrolls
+ * (no letterbox, no per-stage inner-scroller) — with zero horizontal overflow at
+ * any width.
  */
 export const MobileViewport: Story = {
   args: {

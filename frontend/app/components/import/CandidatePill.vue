@@ -29,7 +29,7 @@ defineProps<{
         placeholder="initial"
         :initial="candidate.title"
         aspect="26 / 34"
-        radius="5px"
+        radius="0.3125rem"
       />
     </span>
     <span class="pill__meta">
@@ -43,15 +43,15 @@ defineProps<{
 .pill {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 11px;
+  gap: var(--space-xs); /* 8px @16 */
+  padding: var(--space-xs-tight) 0.6875rem; /* 6px 11px @16 (11px off-ladder) */
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
 
 .pill__cover {
-  width: 26px;
+  width: 1.625rem; /* 26px @16 */
   flex: none;
 }
 
@@ -67,13 +67,13 @@ defineProps<{
 }
 
 .pill__source {
-  font-size: 12.5px;
+  font-size: 0.78125rem; /* 12.5px @16 — off-ladder, byte-identical rem literal */
   font-weight: var(--weight-semibold);
   color: var(--text);
 }
 
 .pill__lang {
-  font-size: 10.5px;
+  font-size: 0.65625rem; /* 10.5px @16 — off-ladder, byte-identical rem literal */
   color: var(--faint);
 }
 </style>

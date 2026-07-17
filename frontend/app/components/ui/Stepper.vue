@@ -81,7 +81,7 @@ const decorated = computed<(StepItem & { status: StepStatus })[]>(() => {
 .stepper--h {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2xs); /* 4px @16 */
 }
 
 .stepper__line {
@@ -93,8 +93,8 @@ const decorated = computed<(StepItem & { status: StepStatus })[]>(() => {
 .hstep {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 13px;
+  gap: var(--space-xs); /* 8px @16 */
+  padding: var(--space-xs) 0.8125rem; /* 8px 13px @16 (13px off-ladder) */
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--muted);
@@ -109,8 +109,8 @@ const decorated = computed<(StepItem & { status: StepStatus })[]>(() => {
 }
 
 .hstep__num {
-  width: 21px;
-  height: 21px;
+  width: 1.3125rem; /* 21px @16 */
+  height: 1.3125rem; /* 21px @16 */
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -145,19 +145,19 @@ const decorated = computed<(StepItem & { status: StepStatus })[]>(() => {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 14px 16px;
+  padding: var(--space-base) var(--space-lg); /* 14px 16px @16 */
 }
 
 .vstep {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 0;
+  gap: var(--space-md); /* 12px @16 */
+  padding: var(--space-xs-tight) 0; /* 6px @16 */
 }
 
 .vstep__dot {
-  width: 26px;
-  height: 26px;
+  width: 1.625rem; /* 26px @16 */
+  height: 1.625rem; /* 26px @16 */
   border-radius: 50%;
   flex: none;
   display: flex;
@@ -185,7 +185,7 @@ const decorated = computed<(StepItem & { status: StepStatus })[]>(() => {
 .vstep__text {
   display: flex;
   flex-direction: column;
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px @16 — off-ladder, byte-identical rem literal */
   font-weight: var(--weight-semibold);
   color: var(--text);
 }

@@ -179,8 +179,8 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 .cand {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 11px 13px;
-  margin-bottom: 10px;
+  padding: 0.6875rem 0.8125rem; /* 11px 13px @16 — off-ladder, byte-identical */
+  margin-bottom: var(--space-sm); /* 10px @16 */
   background: var(--surface2);
   transition: all 0.15s;
 }
@@ -193,7 +193,7 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 .cand__row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md); /* 12px @16 */
 }
 
 /* Lead (select+cover+meta) grows to fill the row; trail (inspect+rank) stays
@@ -202,7 +202,7 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 .cand__lead {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md); /* 12px @16 */
   flex: 1;
   min-width: 0;
 }
@@ -210,7 +210,7 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 .cand__trail {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md); /* 12px @16 */
   flex: none;
 }
 
@@ -234,8 +234,8 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 }
 
 .check {
-  width: 22px;
-  height: 22px;
+  width: var(--control-xs); /* 22px @16 — square control */
+  height: var(--control-xs);
   border-radius: var(--radius-xs);
   border: 1.5px solid var(--border2);
   background: transparent;
@@ -254,7 +254,7 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 }
 
 .cand__cover {
-  width: 30px;
+  width: 1.875rem; /* 30px @16 */
   flex: none;
 }
 
@@ -272,7 +272,7 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 }
 
 .cand__source {
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px @16 — off-ladder, byte-identical rem literal */
   font-weight: var(--weight-bold);
   color: var(--text);
   overflow-wrap: anywhere;
@@ -312,7 +312,7 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 .cand__coverage {
   font-size: var(--text-xs);
   color: var(--faint);
-  margin-top: 1px;
+  margin-top: 0.0625rem; /* 1px @16 */
 }
 
 .cand__coverage--muted {
@@ -322,8 +322,8 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 .inspect {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 10px;
+  gap: 0.3125rem; /* 5px @16 — off-ladder, byte-identical rem literal */
+  padding: var(--space-xs-tight) var(--space-sm); /* 6px 10px @16 */
   border-radius: var(--radius-sm);
   border: 1px solid var(--border2);
   background: var(--surface);
@@ -342,15 +342,15 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 }
 
 .inspect-loading {
-  margin-top: 11px;
-  padding: 11px 13px;
+  margin-top: 0.6875rem; /* 11px @16 — off-ladder, byte-identical rem literal */
+  padding: 0.6875rem 0.8125rem; /* 11px 13px @16 — off-ladder, byte-identical */
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-sm); /* 10px @16 */
   color: var(--muted);
   font-size: var(--text-base);
 }
