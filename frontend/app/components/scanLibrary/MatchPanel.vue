@@ -228,8 +228,8 @@ function confirm(): void {
 .mp-head {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-bottom: 18px;
+  gap: 0.1875rem; /* 3px @16 */
+  margin-bottom: var(--space-xl); /* 18px @16 */
 }
 
 .mp-eyebrow {
@@ -248,11 +248,11 @@ function confirm(): void {
 }
 
 .mp-error {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-lg); /* 16px @16 */
 }
 
 .mp-subhead {
-  margin: 0 0 11px;
+  margin: 0 0 0.6875rem; /* 11px @16 */
   font-size: var(--text-sm);
   color: var(--muted);
   font-weight: var(--weight-semibold);
@@ -261,17 +261,17 @@ function confirm(): void {
 .mp-groups {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md); /* 12px @16 */
 }
 
 .mp-note {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px @16 */
   color: var(--muted);
 }
 
 .mp-note--center {
-  padding: 34px 0;
+  padding: 2.125rem 0; /* 34px @16 */
   text-align: center;
 }
 
@@ -279,15 +279,15 @@ function confirm(): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 40px 0;
+  gap: var(--space-sm); /* 10px @16 */
+  padding: 2.5rem 0; /* 40px @16 */
   color: var(--muted);
   font-size: var(--text-base);
 }
 
 .mp-actions {
   display: flex;
-  margin-top: 20px;
+  margin-top: var(--space-2xl-tight); /* 20px @16 */
 }
 
 .mp-actions--start {
@@ -301,7 +301,7 @@ function confirm(): void {
 .mp-actions__end {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm); /* 10px @16 */
 }
 
 .mp-note--loading {
@@ -313,7 +313,7 @@ function confirm(): void {
    * share one line at phone width — wrap it instead of overflowing. */
   .mp-actions--between {
     flex-wrap: wrap;
-    row-gap: 10px;
+    row-gap: var(--space-sm); /* 10px @16 */
   }
 
   .mp-actions__end {

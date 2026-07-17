@@ -110,11 +110,11 @@ const chapterLabel = computed(() => `${props.entry.chapterCount} chapter${props.
 .staging-row {
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 0.8125rem; /* 13px @16 — off-ladder, byte-identical rem literal */
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 12px 14px;
+  padding: var(--space-md) var(--space-base); /* 12px 14px @16 */
 }
 
 /* In-flight row dims + drops its buttons for the spinner (§16). */
@@ -130,22 +130,22 @@ const chapterLabel = computed(() => `${props.entry.chapterCount} chapter${props.
 .staging-row__titleline {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px @16 */
   flex-wrap: wrap;
 }
 
 .staging-row__title {
   font-weight: var(--weight-bold);
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px @16 */
   color: var(--text);
 }
 
 .staging-row__meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-xs-tight); /* 6px @16 */
   flex-wrap: wrap;
-  margin-top: 4px;
+  margin-top: var(--space-2xs); /* 4px @16 */
   font-size: var(--text-sm);
   color: var(--muted);
 }
@@ -155,14 +155,14 @@ const chapterLabel = computed(() => `${props.entry.chapterCount} chapter${props.
 }
 
 .staging-row__error {
-  margin-top: 8px;
+  margin-top: var(--space-xs); /* 8px @16 */
 }
 
 .staging-row__tail {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm); /* 10px @16 */
 }
 
 .staging-row__status {
@@ -173,7 +173,7 @@ const chapterLabel = computed(() => `${props.entry.chapterCount} chapter${props.
   flex: none;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 0.4375rem; /* 7px @16 — off-ladder, byte-identical rem literal (§5.11: 7→6 is drift) */
 }
 
 @media (max-width: 900px) {
@@ -183,7 +183,7 @@ const chapterLabel = computed(() => `${props.entry.chapterCount} chapter${props.
    * (title, category, status, 3 buttons) competing for one crushed row. */
   .staging-row {
     flex-wrap: wrap;
-    row-gap: 10px;
+    row-gap: var(--space-sm); /* 10px @16 */
   }
 
   .staging-row__body {

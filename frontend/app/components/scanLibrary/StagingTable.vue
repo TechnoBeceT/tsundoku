@@ -88,12 +88,12 @@ const skeletons = Array.from({ length: 4 }, (_, i) => i)
 
     <ErrorBanner v-if="entriesError" class="staging-table__error" :message="entriesError" :dismissible="false" />
 
-    <!-- QCAT-231 "fit the screen, scroll inside": the tab bar above stays
-         fixed and ONLY this region scrolls — a 1000-series scan's staging
-         table must scroll WITHIN the list, never grow the whole page. -->
-    <div class="staging-table__scroll">
+    <!-- QCAT-265 GROW: the table grows with its content and the PAGE scrolls —
+         the old QCAT-231 inner-scroll box (a sunk, tiny scrollable region in a
+         letterboxed card) was experience drift (§0.1). -->
+    <div class="staging-table__rows-wrap">
       <div v-if="isInitialLoad" class="staging-table__rows">
-        <Skeleton v-for="n in skeletons" :key="n" variant="row" height="68px" />
+        <Skeleton v-for="n in skeletons" :key="n" variant="row" height="4.25rem" />
       </div>
 
       <EmptyState
@@ -128,51 +128,34 @@ const skeletons = Array.from({ length: 4 }, (_, i) => i)
 </template>
 
 <style scoped>
-/* QCAT-231 "fit the screen, scroll inside": a flex column that fills
- * whatever bounded height the parent gives it (`ScanLibrary.vue`'s
- * `.sl-review-list` class, merged onto this component's root — see that
- * file's comment). Outside a bounded ancestor (a bare Storybook story with
- * no fixed-height frame) `flex: 1` on `.staging-table__scroll` simply has
- * nothing to grow into beyond its content, so the story still renders at its
- * natural height — this never breaks an unbounded story (mirrors PanelCard /
- * Downloads' documented fallback). */
+/* QCAT-265 GROW: a plain flex column that grows with its content — the tab bar,
+ * the row list, and the "Load more" button all flow at their natural height and
+ * the PAGE scrolls. The old QCAT-231 `.staging-table__scroll` inner-scroller
+ * (`flex: 1; min-height: 0; overflow-y: auto`) was experience drift (§0.1): a
+ * 1000-series scan sank into a tiny scrollable box inside a letterboxed card. */
 .staging-table {
   display: flex;
   flex-direction: column;
-  min-height: 0;
 }
 
 .staging-table__head {
-  flex: none;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-lg); /* 16px @16 */
 }
 
 .staging-table__error {
-  flex: none;
-  margin-bottom: 14px;
-}
-
-/* The ONE scroll container — `min-height: 0` is the same flex-item overflow
- * trap PanelCard/Downloads document: without it this region refuses to
- * shrink below its content (every staged row) and the bounded ancestor above
- * would grow instead of scrolling internally. */
-.staging-table__scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+  margin-bottom: var(--space-base); /* 14px @16 */
 }
 
 .staging-table__rows {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-sm); /* 10px @16 */
 }
 
 .staging-table__more {
-  flex: none;
   display: flex;
   justify-content: center;
-  margin-top: 20px;
-  padding-top: 4px;
+  margin-top: var(--space-2xl-tight); /* 20px @16 */
+  padding-top: var(--space-2xs); /* 4px @16 */
 }
 </style>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import AppButton from '../ui/AppButton.vue'
+import DisclosurePanel from '../ui/DisclosurePanel.vue'
 import ErrorBanner from '../ui/ErrorBanner.vue'
 import Stepper from '../ui/Stepper.vue'
 import MatchPanel from '../scanLibrary/MatchPanel.vue'
@@ -186,18 +187,16 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
         </section>
 
         <!-- ================= Stage: Review ================= -->
-        <!-- QCAT-231 "fit the screen, scroll inside": `.sl-stage` (review variant)
-             is a bounded flex column — see the style block below. The Match
-             sub-panel and the review body below are its only two mutually-
-             exclusive children, and EACH is responsible for its own inner
-             scroll (`.sl-match-panel` / `.sl-review-list`) rather than growing
-             the whole page (a 1000-series scan must not become an infinite
-             page, and a long cross-source match list is no different). -->
+        <!-- QCAT-265 GROW: the Review body and the Match sub-panel each flow in
+             the document at their natural height — the PAGE scrolls, nothing is
+             letterboxed to the viewport (a 1000-series scan grows the table and
+             page-scrolls; a long cross-source match list does the same). The old
+             QCAT-231 per-stage inner-scroll was experience drift (§0.1) — see the
+             style block below. -->
         <section v-else class="sl-stage">
           <!-- The Match sub-panel takes over the whole Review body while a target is set. -->
           <MatchPanel
             v-if="showMatchPanel"
-            class="sl-match-panel"
             :title="matchTitle"
             :groups="matchGroups"
             :breakdowns="matchBreakdowns"
@@ -239,20 +238,34 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
               </template>.
             </p>
 
-            <!-- Page-level "Limit matches to:" chip row — chosen once, every
-                 entry's cross-source match respects it (only when a source
-                 list was supplied). -->
-            <SourceFilterChips
+            <!-- Page-level source filter (QCAT-265 treatment #2 — DISCLOSURE):
+                 the source list is 40+ entries in prod (a long list IN THE WAY
+                 of the review flow), so it collapses to a tap-to-open panel
+                 instead of an always-on ~20-row chip cloud — the owner's
+                 "exclude sources … open/close that list is more smart". Chosen
+                 once, every entry's cross-source match respects it (only when a
+                 source list was supplied). Flat (no second card outline inside);
+                 `bounded="false"` so the chips grow when open and the page
+                 scrolls (no nested scroll band). Mirrors Import.vue. -->
+            <DisclosurePanel
               v-if="sources.length"
               class="sl-review-filter"
-              :sources="sources"
-              :selected="sourceFilter"
-              label="Limit matches to:"
-              @update:selected="emit('update:sourceFilter', $event)"
-            />
+              collapsible
+              flat
+              :default-open="false"
+              title="Limit matches to sources"
+              :summary="sourceFilter.length ? `${sourceFilter.length} selected` : ''"
+            >
+              <SourceFilterChips
+                :sources="sources"
+                :selected="sourceFilter"
+                :bounded="false"
+                label=""
+                @update:selected="emit('update:sourceFilter', $event)"
+              />
+            </DisclosurePanel>
 
             <StagingTable
-              class="sl-review-list"
               :entries="entries"
               :status-filter="statusFilter"
               :pending="pending"
@@ -274,118 +287,92 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
 </template>
 
 <style scoped>
-/* QCAT-231 "fit the screen, scroll inside": `.scan-library` is bounded to the
- * viewport under AppShell's sticky 64px header (`shell/AppShell.vue`'s `.head`
- * — untouched here), not a naturally page-growing container — a 1000-series
- * disk scan must scroll WITHIN the staging table, never as an infinite page
- * (mirrors LibraryList's `.library` / Downloads' `.downloads` shape). Holds at
- * every width (QCAT-230), including mobile — see the media query below for
- * the panel-header/row wrapping that keeps it overflow-free at phone widths. */
+/* The old QCAT-231 letterbox (`height: calc(100dvh - 64px)` + a flex-fill chain
+ * bounding `.sl-review-list` / `.sl-match-panel` into inner-scroll regions) was
+ * experience drift (§0.1): on a large screen the owner was working inside a small
+ * letterboxed area with a tiny scrollable table sunk in an empty card. Stripped —
+ * no viewport-keyed height, no per-stage inner-scroll: the wizard GROWS with its
+ * content and the PAGE scrolls (QCAT-265, the GROW case for a single-column
+ * wizard). Spacing is on the fluid token ladder (byte-identical at the 16px
+ * anchor: 24px 30px sides, 20px trailing). `--app-nav-bottom` (0 on desktop)
+ * clears the phone bottom-nav so the last action/row is never occluded. */
 .scan-library {
-  padding: 24px 30px 20px;
+  padding: var(--space-2xl) var(--space-3xl)
+    calc(var(--space-2xl-tight) + var(--app-nav-bottom));
   background: var(--bg);
-  height: calc(100dvh - 64px);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
 }
 
-/* Centered column, stretched to the full bounded height so the Stepper flows
- * at its natural size and `.scan-library__panel` below can claim the rest
- * (`min-height: 0` is the same flex-shrink override PanelCard/Downloads
- * document — without it this shell would refuse to shrink below its content
- * and the bounded parent above would grow instead of letting the panel
- * inner-scroll). */
+/* The centred reading column. `max-width` on rem so the measure stays constant
+ * as the fluid root scales the type inside it. */
 .scan-library__shell {
-  max-width: 880px;
+  max-width: 55rem; /* 880px @16 */
   width: 100%;
   margin: 0 auto;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 .scan-library__steps {
-  flex: none;
-  margin-bottom: 24px;
+  margin-bottom: var(--space-2xl); /* 24px @16 */
 }
 
-/* The bordered panel takes whatever height `.scan-library__shell` has left
- * after the Stepper and is itself a flex column, so its `section.sl-stage`
- * child can claim the remainder for the Review stage's inner-scrolling list
- * (`min-height: 0` — same trap, one level deeper again). */
+/* The bordered panel the stages flow inside; grows with its content (QCAT-265). */
 .scan-library__panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-2xl);
-  padding: 22px;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+  padding: 1.375rem; /* 22px @16 — off-ladder, byte-identical rem literal */
 }
 
 .scan-library__scan-error {
-  flex: none;
-  margin-bottom: 18px;
+  margin-bottom: var(--space-xl); /* 18px @16 */
 }
 
-/* Both `.sl-stage` variants (Scan launcher / Review) are bounded flex columns
- * filling whatever height `.scan-library__panel` has left, so the Review
- * variant's `.sl-review-list` / `.sl-match-panel` child can inner-scroll
- * (`min-height: 0`, the same trap one level deeper again). */
+/* Both `.sl-stage` variants flow in the document (QCAT-265 GROW). The Scan
+ * launcher (`--center`) centres its intro + button; the Review variant stacks
+ * head/errors/filter/table, all at natural height — the page scrolls. */
 .sl-stage {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
 }
 
 .sl-stage--center {
   align-items: center;
-  justify-content: center;
-  gap: 22px;
-  padding: 48px 20px;
+  gap: 1.375rem; /* 22px @16 — off-ladder, byte-identical rem literal */
+  padding: 3rem var(--space-2xl-tight); /* 48px 20px @16 */
   text-align: center;
 }
 
 .sl-intro {
   margin: 0;
-  max-width: 440px;
+  max-width: 27.5rem; /* 440px @16 */
   font-size: var(--text-base);
   color: var(--muted);
   line-height: 1.5;
 }
 
-/* The Review body: everything except the Match sub-panel. A flex column
- * filling `.sl-stage`, so only `.sl-review-list` (the last, growing child)
- * inner-scrolls — the head/errors/filter chips above it stay put at their
- * natural size (QCAT-231; mirrors Downloads' `.downloads__body` shape). */
+/* The Review body: everything except the Match sub-panel. A flex column that
+ * grows with its content (head/errors/filter chips/table all flow, page
+ * scrolls — QCAT-265 GROW). */
 .sl-review-body {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
 }
 
 .sl-review-head {
-  flex: none;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-lg); /* 16px @16 */
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-lg); /* 16px @16 */
 }
 
 .sl-review-head__progress {
   flex: 1;
-  min-width: 220px;
+  min-width: 13.75rem; /* 220px @16 */
 }
 
 .sl-review-head__done {
   flex: 1;
-  min-width: 160px;
+  min-width: 10rem; /* 160px @16 */
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   color: var(--muted);
@@ -395,18 +382,16 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px @16 */
 }
 
 .sl-review-head__error {
-  flex: none;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-base); /* 14px @16 */
 }
 
 .sl-batch-result {
-  flex: none;
-  margin: 0 0 14px;
-  padding: 10px 13px;
+  margin: 0 0 var(--space-base); /* 14px @16 */
+  padding: var(--space-sm) 0.8125rem; /* 10px 13px @16 — 13px off-ladder literal */
   border-radius: var(--radius-md);
   background: var(--surface2);
   border: 1px solid var(--border);
@@ -422,28 +407,7 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
 }
 
 .sl-review-filter {
-  flex: none;
-  margin-bottom: 14px;
-}
-
-/* The staging table claims the rest of `.sl-review-body`'s height and
- * inner-scrolls its own rows (StagingTable.vue implements the actual
- * scroll region — this class only supplies the bounded flex slot, the same
- * "class merges onto the child's root" technique `.sl-review-head__progress`
- * above already uses). */
-.sl-review-list {
-  flex: 1;
-  min-height: 0;
-}
-
-/* The Match sub-panel gets the WHOLE `.sl-stage` height and scrolls its own
- * content (candidate groups / the Configure-stage row list can both run
- * long) instead of growing the bounded panel past the viewport. MatchPanel's
- * own markup stays untouched — this class only bounds + scrolls its root. */
-.sl-match-panel {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+  margin-bottom: var(--space-base); /* 14px @16 */
 }
 
 @media (max-width: 900px) {

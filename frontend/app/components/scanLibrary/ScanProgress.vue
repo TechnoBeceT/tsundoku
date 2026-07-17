@@ -39,7 +39,7 @@ const label = computed(() => (known.value ? `${props.processed} / ${props.total}
 .scan-progress {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md); /* 12px @16 */
 }
 
 .scan-progress__bar {
@@ -48,7 +48,7 @@ const label = computed(() => (known.value ? `${props.processed} / ${props.total}
 
 .scan-progress__label {
   flex: none;
-  min-width: 84px;
+  min-width: 5.25rem; /* 84px @16 */
   text-align: right;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
