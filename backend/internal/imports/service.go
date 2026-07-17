@@ -403,6 +403,12 @@ func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []
 	// Group candidates by title similarity using the Task 2 matcher.
 	groups := groupCandidates(candidates)
 
+	// Rank the groups by relevance to the query so the best match is FIRST. The
+	// fan-out appends candidates in arbitrary goroutine-completion order and
+	// groupCandidates preserves that insertion order; without this sort the correct
+	// match is buried among the many (source-unranked) results the engine returns.
+	rankGroups(query, groups)
+
 	// Map []Group → []SearchGroupDTO.
 	out := make([]SearchGroupDTO, len(groups))
 	for i, grp := range groups {

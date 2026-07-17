@@ -4,6 +4,7 @@ package imports
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -226,4 +227,105 @@ func groupCandidates(in []Candidate) []Group {
 	}
 
 	return groups
+}
+
+// Relevance score tier bases. A group's score is the BEST (lowest) member score;
+// the tiers are disjoint bands so a "contains"/"prefix" match always outranks a
+// loose fuzzy match regardless of raw edit distance (a longer title that
+// contains the query is a strong match even though its edit distance is large).
+// Within a tier the fractional part is the normalised Levenshtein distance, so
+// closer matches still sort ahead of looser ones in the same tier. Lower = better.
+const (
+	scorePrefix   = 1.0 // query is a prefix of a member title (or vice-versa)
+	scoreContains = 2.0 // query is a substring of a member title (or vice-versa)
+	scoreFuzzy    = 3.0 // neither contains the other — pure fuzzy distance
+	scoreNoMatch  = 4.0 // either side normalises to empty (nothing to compare)
+)
+
+// relevanceScore rates how well a single candidate title answers the search
+// query. Both strings are normalised via normalizeTitle (reused, never
+// reimplemented); the comparison is:
+//
+//	exact normalised equality        -> 0.0            (best)
+//	one is a prefix of the other     -> [scorePrefix,   scorePrefix+1)
+//	one is a substring of the other  -> [scoreContains, scoreContains+1)
+//	otherwise (fuzzy)                -> [scoreFuzzy,     scoreFuzzy+1)
+//	either side empty                -> scoreNoMatch    (worst)
+//
+// The fractional part is the normalised Levenshtein distance (edit distance over
+// the longer length, in [0,1)), so within a tier a closer match ranks first.
+// Lower = better.
+func relevanceScore(query, title string) float64 {
+	nq, nt := normalizeTitle(query), normalizeTitle(title)
+	if nq == "" || nt == "" {
+		return scoreNoMatch
+	}
+	if nq == nt {
+		return 0.0
+	}
+
+	ra, rb := []rune(nq), []rune(nt)
+	maxLen := len(ra)
+	if len(rb) > maxLen {
+		maxLen = len(rb)
+	}
+	nd := float64(levenshtein(ra, rb)) / float64(maxLen) // in (0,1)
+
+	switch {
+	case strings.HasPrefix(nt, nq) || strings.HasPrefix(nq, nt):
+		return scorePrefix + nd
+	case strings.Contains(nt, nq) || strings.Contains(nq, nt):
+		return scoreContains + nd
+	default:
+		return scoreFuzzy + nd
+	}
+}
+
+// groupScore is a group's relevance to the query: the BEST (minimum)
+// relevanceScore across its member candidates. A single strongly-matching source
+// is enough to float a group to the top even if its other members are weaker.
+func groupScore(query string, g Group) float64 {
+	best := scoreNoMatch
+	for _, c := range g.Candidates {
+		if sc := relevanceScore(query, c.Title); sc < best {
+			best = sc
+		}
+	}
+	return best
+}
+
+// rankGroups sorts groups by relevance to query, best match first, IN PLACE.
+// Ordering (deterministic):
+//  1. best (lowest) group relevance score — see groupScore / relevanceScore;
+//  2. tiebreak: more candidates first (broader cross-source agreement);
+//  3. tiebreak: group title alphabetical (stable, reproducible ordering).
+//
+// This is the fix for the post-engine-switch regression where the engine returns
+// many more, source-unranked results and groupCandidates preserved arbitrary
+// goroutine-completion insertion order, burying the correct match. O(groups ×
+// members) scoring — fine for interactive search result sizes.
+func rankGroups(query string, groups []Group) {
+	// Pair each group with its score up front. Scoring must NOT be keyed by slice
+	// position: sort.Slice's less-func receives CURRENT positions, which move as it
+	// swaps, so a position-keyed score map would compare the wrong elements.
+	type scored struct {
+		group Group
+		score float64
+	}
+	pairs := make([]scored, len(groups))
+	for i := range groups {
+		pairs[i] = scored{group: groups[i], score: groupScore(query, groups[i])}
+	}
+	sort.SliceStable(pairs, func(i, j int) bool {
+		if pairs[i].score != pairs[j].score {
+			return pairs[i].score < pairs[j].score
+		}
+		if len(pairs[i].group.Candidates) != len(pairs[j].group.Candidates) {
+			return len(pairs[i].group.Candidates) > len(pairs[j].group.Candidates)
+		}
+		return pairs[i].group.Title < pairs[j].group.Title
+	})
+	for i := range pairs {
+		groups[i] = pairs[i].group
+	}
 }

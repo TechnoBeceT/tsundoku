@@ -287,6 +287,62 @@ func TestSearch_RecordsMetricsBatch(t *testing.T) {
 	}
 }
 
+// TestSearch_RanksBestMatchFirst proves the regression fix end-to-end: given a
+// query whose exact match is buried among many decoy results across several
+// sources (the engine returns far more, source-unranked hits than the old
+// Suwayomi client), Search returns the exact-match group FIRST regardless of the
+// arbitrary goroutine-completion order the fan-out appends candidates in.
+func TestSearch_RanksBestMatchFirst(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Alpha", Lang: "en"},
+			{ID: 2, Name: "Beta", Lang: "en"},
+			{ID: 3, Name: "Gamma", Lang: "en"},
+		},
+		searchResults: map[int64]sourceengine.SearchResult{
+			// Decoy-heavy source: many loose fuzzy hits, no exact/substring match.
+			1: {Manga: []sourceengine.MangaEntry{
+				{Title: "Berserk", URL: "/b"},
+				{Title: "Omniscient Reader", URL: "/o"},
+				{Title: "Tower of God", URL: "/t"},
+			}},
+			// A "contains the query" hit (must rank below exact, above fuzzy).
+			2: {Manga: []sourceengine.MangaEntry{
+				{Title: "Solo Leveling: Ragnarok", URL: "/slr"},
+				{Title: "Vinland Saga", URL: "/v"},
+			}},
+			// The exact match — on the LAST source, so insertion order alone would
+			// never put it first.
+			3: {Manga: []sourceengine.MangaEntry{
+				{Title: "Nano Machine", URL: "/n"},
+				{Title: "Solo Leveling", URL: "/sl"},
+			}},
+		},
+	}
+	svc := newService(fc)
+
+	groups, err := svc.Search(context.Background(), "Solo Leveling", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(groups) < 2 {
+		t.Fatalf("want several groups; got %d", len(groups))
+	}
+	if groups[0].Title != "Solo Leveling" {
+		titles := make([]string, len(groups))
+		for i, g := range groups {
+			titles[i] = g.Title
+		}
+		t.Fatalf("group[0].Title = %q, want exact match %q (full order: %v)", groups[0].Title, "Solo Leveling", titles)
+	}
+	// The "contains" match must outrank the loose fuzzy decoys (rank second).
+	if groups[1].Title != "Solo Leveling: Ragnarok" {
+		t.Errorf("group[1].Title = %q, want the contains-match %q", groups[1].Title, "Solo Leveling: Ragnarok")
+	}
+}
+
 // --- Sources tests -----------------------------------------------------------
 
 // TestService_Sources verifies that Sources maps the client list to []SourceDTO.

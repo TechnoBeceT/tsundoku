@@ -298,3 +298,90 @@ func TestGroupCandidates(t *testing.T) {
 		})
 	}
 }
+
+// grp is a tiny helper building a Group of n candidates all carrying title.
+func grp(title string, n int) Group {
+	cs := make([]Candidate, n)
+	for i := range cs {
+		cs[i] = Candidate{Title: title}
+	}
+	return Group{Title: title, Candidates: cs}
+}
+
+// TestRankGroups verifies the relevance ordering the fan-out relies on: the best
+// match must be FIRST regardless of the arbitrary insertion order groupCandidates
+// produces (the post-engine-switch regression).
+func TestRankGroups(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		query      string
+		in         []Group
+		wantTitles []string // expected group order by Title
+	}{
+		{
+			// The exact match sits LAST in insertion order; ranking must lift it
+			// first, the prefix match second, and the loose fuzzy decoy last.
+			name:  "exact match floats from last position to first",
+			query: "Solo Leveling",
+			in: []Group{
+				grp("Berserk", 1),                // fuzzy (no substring relation)
+				grp("Solo Leveling Ragnarok", 1), // prefix (contains the query)
+				grp("Solo Leveling", 1),          // exact
+			},
+			wantTitles: []string{
+				"Solo Leveling",          // exact (score 0)
+				"Solo Leveling Ragnarok", // prefix (contains the query)
+				"Berserk",                // fuzzy
+			},
+		},
+		{
+			// "contains the query" must beat a loose fuzzy near-match even though the
+			// containing title is much longer (large raw edit distance).
+			name:  "prefix/contains beats loose fuzzy",
+			query: "Solo Leveling",
+			in: []Group{
+				grp("Solr Levelng", 1),                  // fuzzy (no substring relation)
+				grp("Solo Leveling: The Side Story", 1), // contains/prefix
+			},
+			wantTitles: []string{
+				"Solo Leveling: The Side Story",
+				"Solr Levelng",
+			},
+		},
+		{
+			// Two groups tie on score (both normalise EXACTLY to the query); the one
+			// with more candidates (broader cross-source agreement) wins the tiebreak.
+			name:  "tiebreak more candidates first",
+			query: "Solo Leveling",
+			in: []Group{
+				grp("Solo Leveling", 1),  // exact, 1 candidate
+				grp("Solo Leveling!", 3), // exact (normalised), 3 candidates
+			},
+			wantTitles: []string{
+				"Solo Leveling!", // 3 candidates → ahead
+				"Solo Leveling",  // 1 candidate
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rankGroups(tc.query, tc.in)
+			got := make([]string, len(tc.in))
+			for i, g := range tc.in {
+				got[i] = g.Title
+			}
+			if len(got) != len(tc.wantTitles) {
+				t.Fatalf("got %d groups; want %d", len(got), len(tc.wantTitles))
+			}
+			for i := range got {
+				if got[i] != tc.wantTitles[i] {
+					t.Fatalf("order[%d] = %q; want %q (full order: %v)", i, got[i], tc.wantTitles[i], got)
+				}
+			}
+		})
+	}
+}
