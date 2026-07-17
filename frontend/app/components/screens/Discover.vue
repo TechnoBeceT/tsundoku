@@ -4,6 +4,7 @@ import SelectField from '../ui/SelectField.vue'
 import SegmentedToggle from '../ui/SegmentedToggle.vue'
 import AppButton from '../ui/AppButton.vue'
 import Spinner from '../ui/Spinner.vue'
+import ResponsiveGrid from '../ui/ResponsiveGrid.vue'
 import DiscoverCard from '../discover/DiscoverCard.vue'
 import type { SegmentOption } from '../ui/controls.types'
 import type { SelectOption } from '../ui/forms.types'
@@ -95,7 +96,7 @@ const loadMore = (): void => emit('page', props.result.page + 1)
 
 <template>
   <div class="discover">
-    <!-- Top: flows naturally, pinned above the scrolling grid region (QCAT-231) -->
+    <!-- Top: controls + error banner, flowing naturally above the growing grid -->
     <div class="discover__top">
       <!-- Controls: source picker + Popular/Latest toggle + caption -->
       <div class="discover__controls">
@@ -128,94 +129,84 @@ const loadMore = (): void => emit('page', props.result.page + 1)
       </div>
     </div>
 
-    <!-- Scroll region: the grid FITS THE SCREEN and scrolls INSIDE itself
-         (QCAT-231) so paging/loading never scrolls the whole page. -->
-    <div class="discover__scroll">
-      <!-- Results grid (cards + first-load skeletons share the grid) -->
-      <div class="discover__grid">
-        <DiscoverCard
-          v-for="it in items"
-          :key="`${it.source}-${it.mangaId}`"
-          :candidate="it"
-          @inspect="emit('inspect', $event)"
-          @adopt="emit('adopt', $event)"
-          @open-source-link="emit('openSourceLink', $event)"
-          @hover="emit('hover', $event)"
-        />
+    <!-- Results grid (QCAT-265 GROW: the grid GROWS with content and the page
+         scrolls — no letterbox, no inner-scroll). The ONE fluid primitive
+         (ResponsiveGrid, QCAT-259): cards + first-load skeletons share it. -->
+    <ResponsiveGrid
+      class="discover__grid"
+      min-tile="184px"
+      gap="var(--space-xl)"
+      mobile-min-tile="132px"
+      mobile-gap="var(--space-sm)"
+      :phone-columns="2"
+    >
+      <DiscoverCard
+        v-for="it in items"
+        :key="`${it.source}-${it.mangaId}`"
+        :candidate="it"
+        @inspect="emit('inspect', $event)"
+        @adopt="emit('adopt', $event)"
+        @open-source-link="emit('openSourceLink', $event)"
+        @hover="emit('hover', $event)"
+      />
 
-        <!-- First-load skeletons -->
-        <template v-if="isFirstLoad">
-          <div v-for="n in skeletons" :key="`sk-${n}`" class="disc-skel">
-            <div class="disc-skel__cover" />
-            <div class="disc-skel__foot" />
-          </div>
-        </template>
-      </div>
+      <!-- First-load skeletons -->
+      <template v-if="isFirstLoad">
+        <div v-for="n in skeletons" :key="`sk-${n}`" class="disc-skel">
+          <div class="disc-skel__cover" />
+          <div class="disc-skel__foot" />
+        </div>
+      </template>
+    </ResponsiveGrid>
 
-      <!-- Empty state -->
-      <p v-if="isEmpty" class="discover__empty">This source returned nothing for this listing.</p>
+    <!-- Empty state -->
+    <p v-if="isEmpty" class="discover__empty">This source returned nothing for this listing.</p>
 
-      <!-- Loading-more spinner row -->
-      <div v-if="isLoadingMore" class="discover__more-loading">
-        <Spinner :size="15" tone="accent" />
-        Loading more…
-      </div>
-
-      <!-- Load more -->
-      <div v-if="hasMore" class="discover__more">
-        <AppButton variant="mini" size="md" @click="loadMore">Load more</AppButton>
-      </div>
-
-      <!-- End of list -->
-      <p v-if="isEnd" class="discover__end">— End of list —</p>
+    <!-- Loading-more spinner row -->
+    <div v-if="isLoadingMore" class="discover__more-loading">
+      <Spinner :size="15" tone="accent" />
+      Loading more…
     </div>
+
+    <!-- Load more -->
+    <div v-if="hasMore" class="discover__more">
+      <AppButton variant="mini" size="md" @click="loadMore">Load more</AppButton>
+    </div>
+
+    <!-- End of list -->
+    <p v-if="isEnd" class="discover__end">— End of list —</p>
   </div>
 </template>
 
 <style scoped>
-/* QCAT-231 "fit the screen, scroll inside": `.discover` is bounded to ONE
- * viewport under the sticky 64px AppShell header (mirrors SeriesDetail's
- * `.columns` / PanelCard's `.panel` shape) and is itself a flex column —
- * `.discover__top` (controls + error banner) is fixed-size and flows
- * naturally, `.discover__scroll` takes the rest of the height and is the
- * ONE scroll container for the grid + pagination/empty/end states. This
- * replaces the old whole-page scroll, so paging through results never
- * scrolls the controls out of reach. `min-height: 0` on both the outer flex
- * container and the scrolling child is the same grid/flex overflow-trap
- * override PanelCard documents — without it the column refuses to shrink
- * below its content and the page-level scrollbar comes back. */
+/* QCAT-265 GROW: the Discover browse grid is the GROW case — the document
+ * scrolls and the grid grows with content. The old QCAT-231 letterbox
+ * (`height: calc(100dvh - 64px)` + a `flex:1 / min-height:0 / overflow-y:auto`
+ * inner-scroll region) was experience drift (§0.1): on a large screen the owner
+ * was "trying to work inside a small area". Stripped — no viewport-keyed height,
+ * no inner-scroll. The prototype's browse grid is a plain growing grid. Spacing
+ * is on the fluid token ladder (byte-identical at the 16px anchor: 24px 30px,
+ * 70px trailing). `--app-nav-bottom` (0 on desktop) clears the phone bottom-nav
+ * so the last row / Load-more is never occluded. */
 .discover {
-  padding: 24px 30px 70px;
+  padding: var(--space-2xl) var(--space-3xl)
+    calc(4.375rem + var(--app-nav-bottom)); /* 24px 30px 70px @16 */
   background: var(--bg);
-  height: calc(100dvh - 64px);
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.discover__top {
-  flex: none;
-}
-
-.discover__scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 /* ---- Controls ------------------------------------------------------------- */
 .discover__controls {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-base); /* 14px @16 */
   flex-wrap: wrap;
-  margin-bottom: 22px;
+  margin-bottom: 1.375rem; /* 22px @16 — off-ladder, byte-identical rem literal */
 }
 
 .discover__source {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 0.5625rem; /* 9px @16 — off-ladder, byte-identical rem literal */
   min-width: 0;
 }
 
@@ -226,9 +217,10 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   flex: none;
 }
 
-/* Preserve the prototype source-picker width (the native select had min-width:200px). */
+/* Preserve the prototype source-picker width (the native select had
+   min-width:200px; 12.5rem = 200px @16, now rides the fluid root). */
 .discover__select {
-  min-width: 200px;
+  min-width: 12.5rem;
 }
 
 .discover__caption {
@@ -246,7 +238,7 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   .discover__controls {
     flex-direction: column;
     align-items: stretch;
-    gap: 10px;
+    gap: var(--space-sm); /* 10px @16 */
   }
 
   .discover__source {
@@ -273,25 +265,25 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   background: var(--surface);
   border: 1px solid var(--danger-border);
   border-radius: var(--radius-xl);
-  padding: 30px;
+  padding: var(--space-3xl); /* 30px @16 */
   text-align: center;
-  margin-bottom: 18px;
+  margin-bottom: var(--space-xl); /* 18px @16 */
 }
 
 .discover__error-title {
-  margin: 0 0 6px;
+  margin: 0 0 var(--space-xs-tight); /* 6px @16 */
   color: var(--danger-text);
   font-weight: var(--weight-bold);
 }
 
 .discover__error-body {
-  margin: 0 0 14px;
+  margin: 0 0 var(--space-base); /* 14px @16 */
   font-size: var(--text-base);
   color: var(--muted);
 }
 
 .retry-btn {
-  padding: 9px 16px;
+  padding: 0.5625rem var(--space-lg); /* 9px 16px @16 — 9px off-ladder literal */
   border-radius: var(--radius-md);
   border: 1px solid var(--border2);
   background: var(--surface2);
@@ -307,25 +299,23 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   color: var(--accentBright);
 }
 
-/* ---- Grid ----------------------------------------------------------------- */
-.discover__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
-  gap: 18px;
-}
+/* ---- Grid -----------------------------------------------------------------
+ * The grid is the ONE fluid primitive (ResponsiveGrid, QCAT-259) — the template
+ * sets its props (desktop min-tile 184px byte-identical to the prototype's
+ * `minmax(184px,1fr)` at the anchor, gap 18px; ≤900px narrows to 132px/10px;
+ * ≤430px HOLDS 2 columns and grows the tiles, QCAT-263). No `grid-template`
+ * lives here anymore. DiscoverCard keeps 2 phone columns (not the library's 3)
+ * because its action foot carries TWO interactive controls (+Adopt / Source)
+ * that need more tile width than a pure-cover SeriesCard. */
 
+/* ---- COMPACT mobile density (QCAT-261) -------------------------------------
+ * Tighten the top padding + side gutters (~half) so the phone packs content
+ * densely like Komikku. `--app-nav-bottom` clears the fixed bottom-nav so the
+ * last row / Load-more is never occluded. DESKTOP (≥901px) is untouched. */
 @media (max-width: 900px) {
-  /* A narrower tile + tighter outer padding so a phone (390px and down to
-   * ~320px) still fits 2 columns instead of collapsing to 1 — the 184px
-   * desktop tile only leaves room for a single column once the 30px side
-   * padding is subtracted. */
   .discover {
-    padding: 16px 14px 60px;
-  }
-
-  .discover__grid {
-    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-    gap: 10px;
+    padding: var(--space-lg) var(--space-base)
+      calc(var(--space-lg) + var(--app-nav-bottom)); /* 16px 14px @16 + nav */
   }
 }
 
@@ -345,7 +335,7 @@ const loadMore = (): void => emit('page', props.result.page + 1)
 }
 
 .disc-skel__foot {
-  height: 33px;
+  height: 2.0625rem; /* 33px @16 — off-ladder, byte-identical rem literal */
 }
 
 @keyframes disc-pulse {
@@ -359,7 +349,7 @@ const loadMore = (): void => emit('page', props.result.page + 1)
 
 /* ---- Empty / pagination / end --------------------------------------------- */
 .discover__empty {
-  padding: 60px 0;
+  padding: 3.75rem 0; /* 60px @16 — off-ladder, byte-identical rem literal */
   margin: 0;
   text-align: center;
   color: var(--muted);
@@ -369,8 +359,8 @@ const loadMore = (): void => emit('page', props.result.page + 1)
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 26px 0;
+  gap: var(--space-sm); /* 10px @16 */
+  padding: 1.625rem 0; /* 26px @16 — off-ladder, byte-identical rem literal */
   color: var(--muted);
   font-size: var(--text-base);
 }
@@ -378,11 +368,11 @@ const loadMore = (): void => emit('page', props.result.page + 1)
 .discover__more {
   display: flex;
   justify-content: center;
-  margin-top: 26px;
+  margin-top: 1.625rem; /* 26px @16 */
 }
 
 .discover__end {
-  padding: 26px 0;
+  padding: 1.625rem 0; /* 26px @16 */
   margin: 0;
   text-align: center;
   color: var(--faint);

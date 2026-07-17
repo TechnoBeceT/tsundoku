@@ -131,12 +131,28 @@ const onSourceLink = (e: Event): void => {
  * own. The :root defs are idempotent. */
 @import '../../assets/css/tokens/discover.css';
 
+/* 🔴 §3 CONTAINER QUERY: the card is a container (`inline-size`) so its OWN
+ * WIDTH — not the viewport — drives the width-dependent sizing (title, foot
+ * controls, the placeholder glyph). A card's width is
+ * `tile = viewport × columns × ResponsiveGrid config`, which a media query
+ * structurally cannot read (§3.2): the same card renders at a ~112-137px narrow
+ * (tablet) tile, a ~141-196px 2-col phone tile, and a ≥172.6px desktop tile.
+ * `container-type: inline-size` (NEVER `size`, §3.5 — that adds full size
+ * containment and the card would collapse). Descendants query `@container
+ * disc-card` below.
+ *
+ * GAP-090 SAFE: `.disc-card` is ALREADY the containing block for the
+ * absolutely-positioned `.disc-pop` hover popup (via `position: relative`), so
+ * `container-type`'s `contain: layout` does not move it — the popup geometry is
+ * byte-identical and the hover preview is untouched. */
 .disc-card {
   position: relative;
   /* QCAT-230: grid items default to a content-size minimum — without this a
-   * narrow phone column (see Discover.vue's mobile minmax) could refuse to
+   * narrow phone column (see Discover.vue's ResponsiveGrid) could refuse to
    * shrink below the card's intrinsic content width and overflow the grid. */
   min-width: 0;
+  container-type: inline-size;
+  container-name: disc-card;
 }
 
 /* Lift the whole card above its neighbours so the popup is never covered. */
@@ -163,7 +179,7 @@ const onSourceLink = (e: Event): void => {
 }
 
 .disc-card:hover .disc-card__box {
-  transform: translateY(-4px);
+  transform: translateY(-0.25rem); /* -4px @16 */
   border-color: var(--border2);
 }
 
@@ -193,10 +209,18 @@ const onSourceLink = (e: Event): void => {
   background: var(--cover-placeholder);
 }
 
+/* 🔴 §3 width-driven PLACEHOLDER GLYPH: the big faint initial letter scales with
+ * the CARD's own width via `cqi`, capped at 3.625rem (58px @16) — so it no longer
+ * stays a fixed 58px on a narrow tile. The `40cqi` term exceeds the cap for every
+ * tile ≥145px, so EVERY desktop tile (min 172.6px) is capped at 3.625rem: at the
+ * 16px anchor that is exactly 58px — byte-identical to the old fixed `58px`, and
+ * (like every px→rem migration) it now also rides the fluid root off-anchor. On a
+ * ~112px tablet tile it drops to ~45px so it fits. A11y ratio 3.625/1.5 = 2.42
+ * ≤ 2.5 (§2.2/§3.7). */
 .disc-card__initial {
   font-family: var(--font-display);
   font-weight: var(--weight-black);
-  font-size: 58px;
+  font-size: clamp(1.5rem, 40cqi, 3.625rem); /* 24px … 58px @16 */
   color: var(--disc-initial);
 }
 
@@ -218,9 +242,9 @@ const onSourceLink = (e: Event): void => {
  * the success tone doesn't carry, so the marker frosts the cover behind it. */
 .disc-card__inlib {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  backdrop-filter: blur(4px);
+  top: var(--space-xs); /* 8px @16 */
+  left: var(--space-xs);
+  backdrop-filter: blur(4px); /* effect radius — stays raw px (§2.6 skill note) */
 }
 
 .disc-card__title-wrap {
@@ -228,12 +252,20 @@ const onSourceLink = (e: Event): void => {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 10px;
+  padding: var(--space-sm); /* 10px @16 */
 }
 
+/* 🔴 §3 width-driven TITLE: `clamp(rem-floor, cqi, rem-cap)`. The `cqi` term
+ * sizes it by the CARD's own width; the rem floor is the a11y anchor (§3.7 —
+ * user font-size preference still flows through). The 0.8125rem (13px @16) CAP
+ * is reached for every tile ≥155px, so EVERY desktop tile (min 172.6px) is
+ * capped at 0.8125rem — identical to the old `var(--text-base)` (also
+ * 0.8125rem) at EVERY desktop width, byte-identical at the 16px anchor. On a
+ * narrow tablet/phone tile it steps down toward the 0.75rem (12px) floor. A11y
+ * ratio 0.8125/0.75 = 1.083 ≤ 2.5 (§2.2). */
 .disc-card__title {
   font-weight: var(--weight-bold);
-  font-size: var(--text-base);
+  font-size: clamp(0.75rem, 4.5cqi + 0.375rem, 0.8125rem); /* 12px … 13px @16 */
   color: var(--cover-text);
   line-height: 1.22;
   display: -webkit-box;
@@ -247,7 +279,7 @@ const onSourceLink = (e: Event): void => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 11px;
+  padding: var(--space-xs) 0.6875rem; /* 8px 11px @16 — 11px off-ladder literal */
   border-top: 1px solid var(--border);
 }
 
@@ -257,7 +289,7 @@ const onSourceLink = (e: Event): void => {
   background: none;
   color: var(--accentBright);
   font-family: var(--font-sans);
-  font-size: 11.5px;
+  font-size: 0.71875rem; /* 11.5px @16 — off-ladder, byte-identical rem literal */
   font-weight: var(--weight-bold);
   cursor: pointer;
 }
@@ -265,7 +297,7 @@ const onSourceLink = (e: Event): void => {
 .source-link {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 0.1875rem; /* 3px @16 */
   font-size: var(--text-xs);
   color: var(--faint);
   text-decoration: none;
@@ -274,5 +306,28 @@ const onSourceLink = (e: Event): void => {
 
 .source-link:hover {
   color: var(--text);
+}
+
+/* 🔴 §3 NARROW-TILE step (discrete, §3.6 — the action foot has a fit FLOOR, not
+ * a curve). Fires by the CARD's OWN width: a tile ≤150px is only ever a narrow
+ * tablet column (~112-137px) or a small-phone 2-col tile (~141px at 320px).
+ * Desktop tiles are min 172.6px (min-tile 184px at the 901px root) → this NEVER
+ * fires on desktop (22.6px margin, byte-identical). It tightens the action
+ * foot's two controls (+Adopt / Source) to the badge floor and pulls the
+ * paddings in so both fit a ~112px tile without overflow. Magnitudes still ride
+ * the fluid root. */
+@container disc-card (max-width: 150px) {
+  .disc-card__title-wrap {
+    padding: var(--space-xs); /* 8px @16 */
+  }
+
+  .disc-card__foot {
+    padding: var(--space-xs) var(--space-sm); /* 8px 10px @16 */
+  }
+
+  .adopt-btn,
+  .source-link {
+    font-size: var(--text-2xs); /* 9.5px @16 — the badge floor */
+  }
 }
 </style>
