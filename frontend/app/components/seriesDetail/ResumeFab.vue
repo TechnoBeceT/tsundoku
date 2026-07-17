@@ -42,22 +42,32 @@ const emit = defineEmits<{
  * panel and never competes with its own scrollbar or a row's action buttons
  * (which live inline in the table, never at the viewport edge). z-index sits
  * above the app shell chrome (30) but below dialogs (60/61) — a FAB has no
- * business covering a modal. */
+ * business covering a modal.
+ *
+ * Offsets are the design's 30px corner inset as rem (30 ÷ 16 = 1.875rem), so the
+ * FAB scales with the fluid root. The BOTTOM offset adds `--app-nav-bottom`
+ * (base.css: 0px on desktop, 56px + safe-area ≤900px) so on a phone the FAB
+ * clears the bottom-nav bar instead of overlapping it; desktop is byte-identical
+ * because the token is 0 there. `right` needs no such clearance — the nav rail is
+ * on the LEFT (`--app-rail-left`), never the right. The rest of the raw px are
+ * migrated to tokens / byte-identical rem literals so the whole button breathes
+ * with the root on a phone (§5.16), while staying byte-identical at the 16px
+ * desktop anchor. */
 .resume-fab {
   position: fixed;
-  right: 30px;
-  bottom: 30px;
+  right: 1.875rem;
+  bottom: calc(1.875rem + var(--app-nav-bottom));
   z-index: 45;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 13px 22px 13px 18px;
+  gap: var(--space-xs);
+  padding: 0.8125rem 1.375rem 0.8125rem 1.125rem;
   border: none;
   border-radius: var(--radius-pill);
   background: linear-gradient(135deg, var(--accent), var(--accentDeep));
   color: var(--cover-text);
   font-family: var(--font-sans);
-  font-size: 13.5px;
+  font-size: 0.84375rem;
   font-weight: var(--weight-bold);
   box-shadow: var(--shadow-accent);
   cursor: pointer;

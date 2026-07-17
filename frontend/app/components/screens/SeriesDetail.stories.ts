@@ -38,7 +38,7 @@ type Story = StoryObj<typeof meta>
 // A live wrapper: the screen is props-in/emits-out, so the story owns the state
 // and applies every emitted mutation back onto the `series` prop — proving the
 // §16 success round-trip (no separate refetch).
-const interactive = (initial: SeriesDetailData) => ({
+const interactive = (initial: SeriesDetailData, resumeLabel: string | null = null) => ({
   components: { SeriesDetail },
   setup() {
     const series = reactive<SeriesDetailData>(structuredClone(initial))
@@ -57,7 +57,7 @@ const interactive = (initial: SeriesDetailData) => ({
     const onRemove = (id: string): void => {
       series.providers = series.providers.filter((p) => p.id !== id)
     }
-    return { series, categoryOptions, trackBindings, trackers, onCategory, onMonitored, onCompleted, onReorder, onRemove }
+    return { series, categoryOptions, trackBindings, trackers, resumeLabel, onCategory, onMonitored, onCompleted, onReorder, onRemove }
   },
   template: `
     <SeriesDetail
@@ -65,6 +65,7 @@ const interactive = (initial: SeriesDetailData) => ({
       :category-options="categoryOptions"
       :track-bindings="trackBindings"
       :trackers="trackers"
+      :resume-label="resumeLabel"
       @change-category="onCategory"
       @toggle-monitored="onMonitored"
       @toggle-completed="onCompleted"
@@ -101,4 +102,14 @@ export const NoCover: Story = {
 /** A library-imported unlinked disk-group alongside linked sources — the "Match to source" row action. */
 export const WithUnlinkedGroup: Story = {
   render: () => interactive(seriesWithUnlinkedGroup),
+}
+
+/**
+ * The floating `ResumeFab` ("Continue reading") pinned bottom-right. `resumeLabel`
+ * is set (the other variants leave it null, which hides the FAB), so this is the
+ * only story where the FAB actually renders — the series has downloaded chapters,
+ * so "Continue" is the sensible label.
+ */
+export const WithResume: Story = {
+  render: () => interactive(richSeries, 'Continue'),
 }
