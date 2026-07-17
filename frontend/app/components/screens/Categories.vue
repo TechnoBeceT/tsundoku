@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import BrandMark from '../ui/BrandMark.vue'
 import EmptyState from '../ui/EmptyState.vue'
 import Skeleton from '../ui/Skeleton.vue'
+import ResponsiveGrid from '../ui/ResponsiveGrid.vue'
 import CategoryShareCard from '../categories/CategoryShareCard.vue'
 import type { CategorySummary } from './types'
 
@@ -48,108 +49,107 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
 <template>
   <div class="categories">
-    <!-- Inner-scroll region (QCAT-231): the grid can grow to any number of
-         categories, so it scrolls WITHIN the bounded viewport instead of
-         growing the page — see the `.categories`/`.categories__scroll` note
-         below. -->
-    <div class="categories__scroll">
-      <!-- Loading skeletons -->
-      <div v-if="loading" class="categories__grid">
-        <div v-for="n in skeletons" :key="n" class="cat-skeleton">
-          <Skeleton variant="row" height="32px" class="cat-skeleton__line" />
-          <Skeleton height="7px" />
-        </div>
+    <!-- Loading skeletons -->
+    <ResponsiveGrid
+      v-if="loading"
+      class="categories__grid"
+      min-tile="240px"
+      gap="var(--space-lg)"
+      fill="auto-fit"
+      mobile-min-tile="150px"
+      mobile-gap="var(--space-md)"
+      :phone-columns="2"
+    >
+      <div v-for="n in skeletons" :key="n" class="cat-skeleton">
+        <Skeleton variant="row" height="2rem" class="cat-skeleton__line" />
+        <Skeleton height="0.4375rem" />
       </div>
+    </ResponsiveGrid>
 
-      <!-- Empty state -->
-      <EmptyState
-        v-else-if="categories.length === 0"
-        title="No categories defined yet."
-      >
-        <template #icon>
-          <BrandMark :size="56" tone="gradient" />
-        </template>
-      </EmptyState>
+    <!-- Empty state -->
+    <EmptyState
+      v-else-if="categories.length === 0"
+      title="No categories defined yet."
+    >
+      <template #icon>
+        <BrandMark :size="56" tone="gradient" />
+      </template>
+    </EmptyState>
 
-      <!-- Category cards -->
-      <div v-else class="categories__grid">
-        <CategoryShareCard
-          v-for="c in categories"
-          :key="c.category"
-          :name="c.category"
-          :count="c.count"
-          :share="sharePct(c.count)"
-          @open="emit('open-category', c.category)"
-        />
-      </div>
-    </div>
+    <!-- Category cards -->
+    <ResponsiveGrid
+      v-else
+      class="categories__grid"
+      min-tile="240px"
+      gap="var(--space-lg)"
+      fill="auto-fit"
+      mobile-min-tile="150px"
+      mobile-gap="var(--space-md)"
+      :phone-columns="2"
+    >
+      <CategoryShareCard
+        v-for="c in categories"
+        :key="c.category"
+        :name="c.category"
+        :count="c.count"
+        :share="sharePct(c.count)"
+        @open="emit('open-category', c.category)"
+      />
+    </ResponsiveGrid>
   </div>
 </template>
 
 <style scoped>
-/* QCAT-231 "fit the screen, scroll inside": `.categories` is bounded to the
- * viewport under AppShell's sticky 64px header (`shell/AppShell.vue`'s
- * `.head`, untouched here) and laid out as a flex column so a library with
- * many categories scrolls WITHIN the grid region instead of growing the page
- * (mirrors LibraryList's `.library`/`.library__scroll` shape — this screen has
- * no header/toolbar of its own, so the flex column is just the one scroll
- * region, but the shape stays consistent with the rest of the sweep). Holds at
- * every width, including mobile (QCAT-230) — no `@media` needed for the
- * bounding itself, only for the grid's minimum tile width below.
- */
+/* QCAT-265 GROW: the categories overview is the GROW case — the document scrolls
+ * and the grid grows with content. The old QCAT-231 letterbox (`height:
+ * calc(100dvh - 64px)` + a `flex:1 / min-height:0 / overflow-y:auto` inner-scroll
+ * region) was experience drift (§0.1): on a large screen the owner was working
+ * inside a small letterboxed area. Stripped — no viewport-keyed height, no
+ * inner-scroll. The prototype's categories grid is exactly this: a plain growing
+ * grid (`Prototype/project/Tsundoku.dc.html`, `repeat(auto-fit,minmax(240px,
+ * 1fr))`, no letterbox). Spacing is on the fluid token ladder (byte-identical at
+ * the 16px desktop anchor: 24px 30px sides, 30px trailing — the old page's 0
+ * bottom + the scroll region's 30px bottom, now one padding on the page).
+ * `--app-nav-bottom` (0 on desktop) clears the phone bottom-nav so the last row
+ * is never occluded. */
 .categories {
-  padding: 24px 30px 0;
+  padding: var(--space-2xl) var(--space-3xl)
+    calc(var(--space-3xl) + var(--app-nav-bottom));
   background: var(--bg);
-  height: calc(100dvh - 64px);
-  display: flex;
-  flex-direction: column;
 }
 
-/* The inner-scroll region. min-height: 0 is the flex-item overflow trap
- * PanelCard.vue documents: without it this region refuses to shrink below its
- * content and `.categories` would grow instead of scrolling internally. The
- * trailing padding is the breathing room after the last row. */
-.categories__scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 30px;
-}
-
-/* ---- Grid ----------------------------------------------------------------- */
-.categories__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
-}
+/* ---- Grid -----------------------------------------------------------------
+ * The grid is the ONE fluid primitive (ResponsiveGrid, QCAT-259): `auto-fit`
+ * min-tile 240px on desktop (byte-identical to the prototype's
+ * `minmax(240px,1fr)` at the anchor, gap 16px), a narrower 150px/12px floor on
+ * the ≤900px tablet band, and a HELD 2 columns growing the tiles on the phone
+ * band (≤430px, QCAT-263). The template + gap live in ResponsiveGrid; this
+ * screen only sets the props. `auto-fit` (Categories' intentional difference vs
+ * the library's `auto-fill`) collapses empty tracks so a short category list
+ * stretches its cards to fill the row rather than leaving gaps. */
 
 /* ---- Skeleton card (loading) ---------------------------------------------- */
 /* The card shell mirrors a real category card so the loading grid keeps the same
    footprint; the shimmer blocks themselves are the shared Skeleton atom. */
 .cat-skeleton {
-  padding: 19px;
+  padding: 1.1875rem; /* 19px @16 — off-ladder, byte-identical rem literal */
   border-radius: var(--radius-2xl);
   border: 1px solid var(--border);
   background: var(--surface);
 }
 
 .cat-skeleton__line {
-  margin-bottom: 15px;
+  margin-bottom: 0.9375rem; /* 15px @16 — off-ladder, byte-identical rem literal */
 }
 
-/* Below 900px, a 240px tile floor leaves very little headroom on the
- * narrowest phones (e.g. a 320px viewport has only ~260px of content width
- * after the screen padding). Tighten the padding + the tile floor so the grid
- * never crowds toward the QCAT-230 zero-horizontal-overflow line, mirroring
- * LibraryList's mobile tile floor. */
+/* ---- COMPACT mobile density (QCAT-261) -------------------------------------
+ * Tighten the top padding + side gutters (~half) so the phone packs the cards
+ * densely like Komikku. The grid's own mobile floor/gap live in ResponsiveGrid.
+ * DESKTOP (≥901px) is untouched — this block only fires ≤900px. */
 @media (max-width: 900px) {
   .categories {
-    padding: 16px 16px 0;
-  }
-
-  .categories__grid {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 12px;
+    padding: var(--space-lg) var(--space-lg)
+      calc(var(--space-lg) + var(--app-nav-bottom));
   }
 }
 </style>
