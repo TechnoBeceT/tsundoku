@@ -17,32 +17,53 @@
 withDefaults(defineProps<{
   /** Colour treatment — see the component doc above. */
   variant?: 'category' | 'language' | 'accent' | 'neutral' | 'frost'
+  /** Font-size step: `md` (default, the chip's own size) | `sm` (the shared
+   *  on-tile step down, matching `ui/Tag` size="sm" when they sit adjacent). */
+  size?: 'md' | 'sm'
 }>(), {
   variant: 'neutral',
+  size: 'md',
 })
 </script>
 
 <template>
-  <span class="chip" :class="`chip--${variant}`">
+  <span class="chip" :class="[`chip--${variant}`, `chip--size-${size}`]">
     <span v-if="$slots.icon" class="chip__icon"><slot name="icon" /></span>
     <slot />
   </span>
 </template>
 
 <style scoped>
+/* Box metrics come from the SHARED badge scale (tokens/badge.css) that this atom
+ * and `ui/Tag` both consume. DESKTOP IS BYTE-IDENTICAL to the baseline: the old
+ * raw `gap: 5px` / `padding: 2px 9px` / `bold` (700) / `line-height: 1.7` are now
+ * the `--badge-chip-*` / shared vars (same anchor px, now fluid). Chip's box
+ * legitimately DIFFERS from Tag's (9px vs 7px pad-x, 5 vs 4 gap, 700 vs 800) —
+ * those differences are preserved per-atom, not flattened. */
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 9px;
-  border-radius: var(--radius-pill);
+  gap: var(--badge-chip-gap);
+  padding: var(--badge-pad-y) var(--badge-chip-pad-x);
+  border-radius: var(--badge-radius);
   font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  line-height: 1.7;
+  font-weight: var(--badge-chip-weight);
+  line-height: var(--badge-leading);
   white-space: nowrap;
   color: var(--chip-fg);
   background: var(--chip-bg);
+}
+
+/* ---- Font-size steps ------------------------------------------------------ *
+ * `md` sits a step ABOVE Tag on the type scale by design, not drift: mixed-case
+ * labels need the extra size to match the optical weight of Tag's uppercase
+ * markers. At `sm` — the one place the two are adjacent — they share a size. */
+.chip--size-md {
+  font-size: var(--badge-font-chip);
+}
+
+.chip--size-sm {
+  font-size: var(--badge-font-sm);
 }
 
 .chip__icon {
@@ -68,11 +89,14 @@ withDefaults(defineProps<{
   backdrop-filter: blur(4px);
 }
 
+/* The mono language code pins its own size and ignores the `size` step (a
+ * 2-character code has no room to step down). Byte-identical to the baseline
+ * `10px`, now expressed as `rem` so it scales on a phone. */
 .chip--language {
   --chip-bg: var(--surface3);
   --chip-fg: var(--muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 0.625rem; /* 10px @16 */
   letter-spacing: 0.02em;
 }
 </style>

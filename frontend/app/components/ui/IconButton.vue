@@ -7,7 +7,7 @@
  *
  *   - `variant` (default 'default'): 'default' (muted, neutral hover) or
  *     'danger' (destructive — danger-tinted text + a danger hover wash).
- *   - `size` (default 'md'): 'sm' (26px) | 'md' (30px) square.
+ *   - `size` (default 'md'): 'xs' (22px) | 'sm' (26px) | 'md' (30px) square.
  *   - `disabled`: blocks interaction + dims the button.
  *   - `ariaLabel` (required): the accessible name.
  *
@@ -16,8 +16,8 @@
 withDefaults(defineProps<{
   /** Colour treatment — neutral 'default' or destructive 'danger'. */
   variant?: 'default' | 'danger'
-  /** Square size: 'sm' 26px | 'md' 30px. */
-  size?: 'sm' | 'md'
+  /** Square size: 'xs' 22px | 'sm' 26px | 'md' 30px (the `--control-*` ladder). */
+  size?: 'xs' | 'sm' | 'md'
   /** Blocks interaction + dims the control. */
   disabled?: boolean
   /** Accessible name — required since the button shows no text. */
@@ -59,14 +59,26 @@ const emit = defineEmits<{
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 
+/* ---- Sizes ---------------------------------------------------------------- *
+ * The squares ride the `--control-*` ladder (tokens/spacing.css) — same edge
+ * lengths at the 16px desktop anchor, proportional everywhere else. The old raw
+ * 22/26/30px stayed fixed while a phone shrank the label beside them ~20% (the
+ * "square stays 22px at every width" bug stated as a feature). `xs` is the INLINE
+ * ROW ACTION: `position: relative` anchors its mobile hit-area overlay below. */
+.icon-btn--xs {
+  position: relative;
+  width: var(--control-xs);
+  height: var(--control-xs);
+}
+
 .icon-btn--sm {
-  width: 26px;
-  height: 26px;
+  width: var(--control-sm);
+  height: var(--control-sm);
 }
 
 .icon-btn--md {
-  width: 30px;
-  height: 30px;
+  width: var(--control-md);
+  height: var(--control-md);
 }
 
 .icon-btn--default {
@@ -95,5 +107,27 @@ const emit = defineEmits<{
 .icon-btn:focus-visible {
   outline: none;
   box-shadow: var(--ring-focus);
+}
+
+/* On a phone the 26/30px squares are below the QCAT-230 44px touch target, so
+ * expand the tap area to 44×44 ≤900px (the icon stays centered); desktop keeps
+ * the compact squares. `xs` is EXCLUDED from PAINTING 44px (that would undo the
+ * point of a row-proportionate action) — it takes the same target from an
+ * invisible centred overlay instead. */
+@media (max-width: 900px) {
+  .icon-btn:not(.icon-btn--xs) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .icon-btn--xs::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
 }
 </style>

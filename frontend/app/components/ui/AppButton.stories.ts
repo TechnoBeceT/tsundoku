@@ -11,7 +11,7 @@ const meta = {
   component: AppButton,
   argTypes: {
     variant: { control: { type: 'select' }, options: ['primary', 'ghost', 'solid', 'mini', 'text', 'danger-ghost'] },
-    size: { control: { type: 'inline-radio' }, options: ['sm', 'md', 'lg'] },
+    size: { control: { type: 'inline-radio' }, options: ['xs', 'sm', 'md', 'lg'] },
     loading: { control: 'boolean' },
     disabled: { control: 'boolean' },
   },
@@ -45,12 +45,13 @@ export const Variants: Story = {
   }),
 }
 
-/** The three sizes of the primary button. */
+/** The size ladder — `xs` is the compact inline row action. */
 export const Sizes: Story = {
   render: () => ({
     components: { AppButton },
     template:
       '<div style="display:flex;gap:12px;align-items:center">' +
+      '<AppButton size="xs" variant="mini">Extra small</AppButton>' +
       '<AppButton size="sm">Small</AppButton>' +
       '<AppButton size="md">Medium</AppButton>' +
       '<AppButton size="lg">Large</AppButton>' +

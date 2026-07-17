@@ -16,7 +16,7 @@ const meta = {
   component: IconButton,
   argTypes: {
     variant: { control: { type: 'inline-radio' }, options: ['default', 'danger'] },
-    size: { control: { type: 'inline-radio' }, options: ['sm', 'md'] },
+    size: { control: { type: 'inline-radio' }, options: ['xs', 'sm', 'md'] },
     disabled: { control: 'boolean' },
   },
   args: { variant: 'default', size: 'md', disabled: false, ariaLabel: 'Edit' },
@@ -43,14 +43,16 @@ export const Danger: Story = {
   }),
 }
 
-/** Both variants in both sizes. */
+/** Both variants across the size ladder (`xs` is the inline row action). */
 export const Matrix: Story = {
   render: () => ({
     components: { IconButton },
     template:
       '<div style="display:flex;gap:12px;align-items:center">' +
+      `<IconButton variant="default" size="xs" aria-label="Edit">${editIcon}</IconButton>` +
       `<IconButton variant="default" size="sm" aria-label="Edit">${editIcon}</IconButton>` +
       `<IconButton variant="default" size="md" aria-label="Edit">${editIcon}</IconButton>` +
+      `<IconButton variant="danger" size="xs" aria-label="Delete">${trashIcon}</IconButton>` +
       `<IconButton variant="danger" size="sm" aria-label="Delete">${trashIcon}</IconButton>` +
       `<IconButton variant="danger" size="md" aria-label="Delete">${trashIcon}</IconButton>` +
       '</div>',

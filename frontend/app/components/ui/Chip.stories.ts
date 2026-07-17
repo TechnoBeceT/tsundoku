@@ -15,8 +15,9 @@ const meta = {
       control: { type: 'inline-radio' },
       options: ['neutral', 'category', 'language', 'accent', 'frost'],
     },
+    size: { control: { type: 'inline-radio' }, options: ['md', 'sm'] },
   },
-  args: { variant: 'neutral', default: 'Manga' },
+  args: { variant: 'neutral', size: 'md', default: 'Manga' },
 } satisfies Meta<typeof Chip>
 
 export default meta
@@ -80,6 +81,18 @@ export const WithIcon: Story = {
     setup: () => ({ args }),
     template:
       '<Chip v-bind="args"><template #icon><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg></template>Preferred</Chip>',
+  }),
+}
+
+/** The md (default) and sm font steps — sm is the shared on-tile step (badge.css). */
+export const Sizes: Story = {
+  render: () => ({
+    components: { Chip },
+    template:
+      '<div style="display:flex;align-items:center;gap:10px">' +
+      '<Chip variant="category" size="md">Manhwa</Chip>' +
+      '<Chip variant="category" size="sm">Manhwa</Chip>' +
+      '</div>',
   }),
 }
 

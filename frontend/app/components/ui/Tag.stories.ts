@@ -1,11 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import Tag from './Tag.vue'
+import Chip from './Chip.vue'
 
 /**
  * Stories for the Tag status marker. Every tone is shown with a representative
  * marker word; the on-cover tones (`success`, `frost`) are also shown over a
- * dark cover tile. Flip the Storybook theme toolbar to confirm the tones hold
- * up in both themes.
+ * dark cover tile. `Sizes` shows the md/sm font steps and `Wrapping` the
+ * long-marker wrap; `AdjacentBadgeScale` proves Tag + Chip render on ONE shared
+ * box (tokens/badge.css). Flip the Storybook theme toolbar to confirm the tones.
  */
 const meta = {
   title: 'UI/Tag',
@@ -15,8 +17,10 @@ const meta = {
       control: { type: 'inline-radio' },
       options: ['neutral', 'accent', 'success', 'warn', 'danger', 'frost'],
     },
+    size: { control: { type: 'inline-radio' }, options: ['md', 'sm'] },
+    wrap: { control: 'boolean' },
   },
-  args: { tone: 'neutral', default: 'PLANNED' },
+  args: { tone: 'neutral', size: 'md', wrap: false, default: 'PLANNED' },
 } satisfies Meta<typeof Tag>
 
 export default meta
@@ -81,6 +85,47 @@ export const Frost: Story = {
     setup: () => ({ args }),
     template:
       '<div style="display:inline-flex;padding:24px;border-radius:var(--radius-xl);background:var(--cover-placeholder)"><Tag v-bind="args"><template #icon><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg></template>PAUSED</Tag></div>',
+  }),
+}
+
+/** The md (default) and sm font steps. */
+export const Sizes: Story = {
+  render: () => ({
+    components: { Tag },
+    template:
+      '<div style="display:flex;align-items:center;gap:10px">' +
+      '<Tag tone="accent" size="md">PREFERRED</Tag>' +
+      '<Tag tone="accent" size="sm">PREFERRED</Tag>' +
+      '</div>',
+  }),
+}
+
+/** A long marker wraps to a second line in a narrow tile instead of overflowing. */
+export const Wrapping: Story = {
+  render: () => ({
+    components: { Tag },
+    template:
+      '<div style="width:96px;border:1px dashed var(--border);padding:8px">' +
+      '<Tag tone="warn" wrap>NEEDS SOURCE</Tag>' +
+      '</div>',
+  }),
+}
+
+/**
+ * The shared badge scale (tokens/badge.css): a Tag status marker and a Chip
+ * category pill sitting side by side at size="sm" render on ONE box — same
+ * padding, gap, radius, leading, weight. This is the adjacency the scale exists
+ * to make consistent (the library tile).
+ */
+export const AdjacentBadgeScale: Story = {
+  render: () => ({
+    components: { Tag, Chip },
+    template:
+      '<div style="display:inline-flex;align-items:center;gap:6px">' +
+      '<Chip variant="category" size="sm">Manhwa</Chip>' +
+      '<Tag tone="warn" size="sm">UPGRADE</Tag>' +
+      '<Tag tone="success" size="sm">DONE</Tag>' +
+      '</div>',
   }),
 }
 

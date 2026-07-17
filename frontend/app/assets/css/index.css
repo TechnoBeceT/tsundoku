@@ -7,6 +7,8 @@
 @import './tokens/color.css';
 @import './tokens/typography.css';
 @import './tokens/radius.css';
+@import './tokens/spacing.css';
+@import './tokens/badge.css';
 @import './tokens/elevation.css';
 @import './tokens/cover.css';
 @import './tokens/status.css';

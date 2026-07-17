@@ -55,14 +55,14 @@ const emit = defineEmits<{
 .tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .tab {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 14px;
+  gap: 0.4375rem; /* 7px @16 — off-ladder, byte-identical (not rounded to 6px) */
+  padding: var(--space-xs) var(--space-base); /* 8px 14px @16 */
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -94,7 +94,9 @@ const emit = defineEmits<{
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: var(--weight-extrabold);
-  padding: 1px 7px;
+  /* 1px is a deliberate hairline vertical inset (the count pill must not grow the
+   * tab's line box); the 7px inline padding rides the scale as byte-identical rem. */
+  padding: 1px 0.4375rem; /* 1px 7px @16 */
   border-radius: var(--radius-pill);
   background: var(--surface3);
   color: var(--faint);

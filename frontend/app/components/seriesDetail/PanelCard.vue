@@ -18,24 +18,45 @@
  *   - `actions`: header-right content laid out across from the title (a count
  *     pill on its own — the Chapters card — or an add button — the Sources card).
  *
- * SCROLL SHAPE (Series-Detail viewport-bounded panels): this shell is a fixed
- * header over an internally-scrolling body. `.panel` fills whatever height its
- * parent grid cell allots it and is itself a flex column; `.panel__head` stays
- * fixed size, and `.panel__content` (wrapping the default slot) takes the rest
- * of the height and scrolls on its own — the ONE scroll container both
- * ChaptersPanel and SourcesPanel get "for free" (neither sets its own
- * overflow/max-height any more). See the min-height:0 comments below — this
- * is the same flex/grid overflow trap as the Series-Detail `.columns` grid,
- * one level deeper.
+ * SCROLL SHAPE — QCAT-265 TREATMENT #1 (the BOUNDED inner-scroller). This shell
+ * is a fixed header over an internally-scrolling body: `.panel` is a flex column,
+ * `.panel__head` stays fixed size, and `.panel__content` (wrapping the default
+ * slot) takes the rest of the height and scrolls on its own — the ONE scroll
+ * container both ChaptersPanel and SourcesPanel get "for free". See the
+ * min-height:0 comments below (the flex/grid overflow trap).
+ *
+ * 🔴 THE BOUND IS CONTENT-KEYED, VIA THE `maxHeight` PROP — never viewport-keyed
+ * (§2.6.3: `calc(100dvh − …)` / `100vh` is BANNED on a content panel; it makes a
+ * user work inside a small area on a big screen). This is the treatment #1 shape
+ * for the Series-Detail Chapters + Sources panels — the ONLY place the
+ * asymmetry-AND-empty-space diagnostic fires (320 chapters beside 4 sources;
+ * §2.6.1). Pass e.g. `max-height="580px"` (the prototype's own value) to engage a
+ * real bounded inner-scroll that grows with small content and caps at the bound
+ * while the PAGE keeps growing.
+ *
+ * 🔴 DEFAULT: `maxHeight` unset ⇒ NO bound is applied, so the panel GROWS with
+ * its content (treatment #3) and current consumers are byte-unchanged. `.panel`'s
+ * `height: 100%` resolves to `auto` outside a fixed-height ancestor, so an
+ * un-bounded panel never scrolls internally by itself. A screen that today relies
+ * on a viewport-bounded PARENT (`.columns` letterbox) to engage `.panel__content`
+ * should migrate to passing `maxHeight` here instead — that is the whole point of
+ * this capability (GAP-093), and the fix that lets the letterbox be removed.
+ *
+ * For a long list that is merely IN THE WAY (not asymmetric), use the
+ * open/close `ui/DisclosurePanel` (treatment #2) instead of a bound here.
  */
 defineProps<{
   /** Panel heading shown in the divided header (omit for a header-less panel). */
   title?: string
+  /** OPTIONAL content-keyed inner-scroll bound (QCAT-265 treatment #1), e.g.
+   *  `"580px"`. Omit (the default) to GROW with content — no inner scroll. Must
+   *  be a fixed length; NEVER a viewport unit (`100dvh`/`100vh` is banned, §2.6.3). */
+  maxHeight?: string
 }>()
 </script>
 
 <template>
-  <section class="panel">
+  <section class="panel" :style="maxHeight ? { maxHeight } : undefined">
     <!-- The divided header: title + its `lead` group on the left, `actions` across
          from them on the right. Rendered only when there's something to show. -->
     <div v-if="title || $slots.lead || $slots.actions" class="panel__head">

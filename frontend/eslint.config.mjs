@@ -27,7 +27,9 @@ export default withNuxt(
     // never hand-edited (QCAT-021) — exempt it from lint so generator output
     // (index signatures etc.) doesn't fail the gate. The hand-written wrapper
     // client.ts is still linted.
-    ignores: ['app/utils/api/schema.d.ts'],
+    // `scratchpad/` is the local throwaway working dir (gitignored) — measurement
+    // spikes + reports, never shipped, so it is exempt from lint.
+    ignores: ['app/utils/api/schema.d.ts', 'scratchpad/**'],
   },
   ...tseslint.configs.recommendedTypeChecked,
   ...tseslint.configs.stylisticTypeChecked,

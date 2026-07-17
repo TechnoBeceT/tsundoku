@@ -14,7 +14,7 @@ const meta = {
   title: 'SeriesDetail/PanelCard',
   component: PanelCard,
   parameters: { layout: 'padded' },
-  argTypes: { title: { control: 'text' } },
+  argTypes: { title: { control: 'text' }, maxHeight: { control: 'text' } },
   args: { title: 'Chapters' },
   decorators: [
     () => ({ template: '<div style="width:420px"><story /></div>' }),
@@ -32,8 +32,28 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** A plain titled panel over a full-bleed body. */
+/** A plain titled panel over a full-bleed body (unbounded — grows with content). */
 export const Default: Story = {}
+
+/**
+ * QCAT-265 treatment #1 (GAP-093): a CONTENT-KEYED bounded inner-scroll. Passing
+ * `maxHeight="240px"` caps the panel and scrolls the body internally while the
+ * PAGE keeps growing — the Series-Detail Chapters/Sources shape (there `580px`).
+ * 🔴 The bound is a fixed length, NEVER a viewport unit (`100dvh` is banned).
+ */
+export const Bounded: Story = {
+  args: { title: 'Chapters', maxHeight: '240px' },
+  render: (args) => ({
+    components: { PanelCard },
+    setup: () => ({ args, rows: Array.from({ length: 40 }, (_, i) => 40 - i) }),
+    template:
+      '<PanelCard v-bind="args">'
+      + '<template #actions><span class="pill">40</span></template>'
+      + '<div v-for="n in rows" :key="n" style="padding:12px 18px;border-bottom:1px solid var(--border);color:var(--muted);font-size:var(--text-base)">Chapter {{ n }}</div>'
+      + '</PanelCard>'
+      + '<style>.pill{padding:1px 8px;border-radius:var(--radius-pill);background:var(--surface3);color:var(--muted);font-size:var(--text-xs);font-weight:var(--weight-extrabold)}</style>',
+  }),
+}
 
 /** Header-right `actions` count pill across from the title (the Chapters shape). */
 export const WithCountPill: Story = {

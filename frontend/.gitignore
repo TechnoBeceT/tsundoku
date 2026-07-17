@@ -21,6 +21,9 @@ logs
 .fleet
 .idea
 
+# Local scratchpad — measurement scripts, reports, throwaway spikes (never shipped)
+scratchpad
+
 # Local env files
 .env
 .env.*

@@ -1,0 +1,57 @@
+/* badge.css — the ONE badge scale, shared by `ui/Chip` and `ui/Tag`.
+ *
+ * WHY THIS FILE EXISTS. Tsundoku has TWO badge atoms, and that is fine — they
+ * do different jobs (`Chip` = a mixed-case metadata label: a category, a
+ * language code, a count; `Tag` = an UPPERCASE status marker: PAUSED, DONE,
+ * NEEDS SOURCE). The DRY win is that the box metrics now live in ONE place both
+ * atoms consume (QCAT-259, §5.12), and a `size` (md/sm) step both expose — so a
+ * consumer never reaches into an atom's internals to re-align the two.
+ *
+ * 🔴 DESKTOP IS BYTE-IDENTICAL (QCAT-261). Each value equals its baseline px at
+ * the 16px desktop anchor (expressed as `rem` so it now scales on a phone), so
+ * the ≥901px render is unchanged vs 2a44360. The two atoms had DIFFERENT baseline
+ * boxes, and those differences are REAL — they are preserved per-atom (via the
+ * `--badge-chip-*` / `--badge-tag-*` vars below), NOT flattened onto one value:
+ *
+ *     metric        Chip (baseline)   Tag (baseline)   shared?
+ *     pad-y         2px               2px              yes → --badge-pad-y
+ *     pad-x         9px               7px              NO  → per-atom
+ *     gap           5px               4px              NO  → per-atom
+ *     radius        pill              pill             yes → --badge-radius
+ *     line-height   1.7               1.7              yes → --badge-leading
+ *     weight        700 (bold)        800 (extrabold)  NO  → per-atom
+ *     font (md)     11px              9.5px            NO  → per-atom
+ *
+ * 🔴 The QCAT-263 "badges are too big" SIZE REDUCTION (tighter padding + leading)
+ * is DEFERRED to the library-card slice, where it is in scope and the owner
+ * reviews it visually in context. This file must NOT bake an app-wide badge
+ * shrink (an earlier draft did — Chip 9→6, weight 700→800, leading 1.7→1.35 —
+ * which was an unratified desktop restyle; reverted here).
+ *
+ * The `sm` font step and (Tag) `wrap` are ADDITIVE — a new opt-in class that does
+ * not change either atom's default (md) desktop render.
+ *
+ * Every metric is `rem` (or unitless), so a badge rides the fluid root exactly
+ * like the type around it — see tokens/spacing.css. */
+:root {
+  /* Shared box (both atoms agree at baseline). */
+  --badge-pad-y: var(--space-3xs);   /* 2px @16 */
+  --badge-radius: var(--radius-pill);
+  --badge-leading: 1.7;
+
+  /* Per-atom box (a REAL baseline difference — do not unify). Off-ladder values
+   * (9/7/5px) are byte-identical `rem` (value ÷ 16), not rounded onto a step. */
+  --badge-chip-pad-x: 0.5625rem;         /* 9px @16 */
+  --badge-tag-pad-x: 0.4375rem;          /* 7px @16 */
+  --badge-chip-gap: 0.3125rem;           /* 5px @16 */
+  --badge-tag-gap: var(--space-2xs);     /* 4px @16 */
+  --badge-chip-weight: var(--weight-bold);      /* 700 */
+  --badge-tag-weight: var(--weight-extrabold);  /* 800 */
+
+  /* Font sizes. `md` is each atom's own baseline default (byte-identical); `sm`
+   * is the ADDITIVE shared step-down both atoms take when they sit together on a
+   * small tile (a new opt-in size — it does not change either md default). */
+  --badge-font-chip: var(--text-xs);  /* 11px  @16 */
+  --badge-font-tag: var(--text-2xs);  /* 9.5px @16 */
+  --badge-font-sm: var(--text-2xs);   /* 9.5px @16 — the shared on-tile step */
+}

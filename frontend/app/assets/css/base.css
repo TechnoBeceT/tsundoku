@@ -14,6 +14,82 @@ body {
   padding: 0;
 }
 
+/* ---- Fluid root font-size (the ONE scaling anchor) ------------------------
+ * The whole "protect the design, scale the tokens" system hangs off this: the
+ * type + radius + spacing token scales are all `rem`, so they inherit whatever
+ * root size this clamp resolves to. Nothing else needs a per-breakpoint rescale.
+ *
+ * 🔴 TWO SEGMENTS, NOT ONE (QCAT-263, GAP-091). A single `clamp()` carries
+ * exactly ONE slope, and one slope cannot serve both a ~110px-wide phone band
+ * and a ~1500px-wide desktop band. A single-segment curve
+ * (`0.7423rem + 0.2886vw`) proved it by measurement: 320px→12.80px,
+ * 390px→13.00px, 414px→13.07px — **+0.27px across the ENTIRE phone range**, so a
+ * 414px phone rendered at 320px scale while wasting its extra width (owner:
+ * "when I switch small mobile to large mobile nothing changes… on large mobile it
+ * looks really small, even hard to see texts"). The fix is a dedicated, MUCH
+ * steeper PHONE segment handed off to the original desktop segment.
+ *
+ * The two segments are calibrated to MEET at 15px, so the handoff is seamless —
+ * there is no jump at the 900px breakpoint, only a change of slope:
+ *
+ *   PHONE (≤900px) — `0.4rem + 2vw`, clamped 12.48px … 15px:
+ *     320px → 12.80px   360px → 13.60px   390px → 14.20px
+ *     414px → 14.68px   430px → 15.00px (the phone cap binds from here up)
+ *     → 320→414 is **+1.88px (+14.7%)**, the visible increase QCAT-263 demands,
+ *       vs the dead +0.27px it replaces. 430–900px sits flat at the 15px cap —
+ *       legitimate because a CAP is flat by design (contrast a grid floor,
+ *       which must not be — see ResponsiveGrid / §2.8).
+ *
+ *   DESKTOP (≥900px) — `0.831rem + 0.19vw`, clamped 15px … 18px:
+ *     900px → 15.01px (≡ the phone segment's 15px cap — the seamless handoff)
+ *     1440px → 16.03px (the DESKTOP ANCHOR: every token's rem equals its
+ *                       original design px here — desktop is byte-identical,
+ *                       QCAT-261)
+ *     1920px → 16.94px   → the 18px cap binds from ~2476px, per Komikku.
+ *
+ * A11y (WCAG SC 1.4.4): each segment keeps a `rem` term beside its `vw` term so a
+ * user's browser font-size preference still flows through, and each segment's
+ * max ÷ min is 1.2× (end-to-end 12.48→18px = 1.44×) — comfortably inside the
+ * `max ≤ 2.5 × min` zoom-compliance rule.
+ *
+ * The base rule is DESKTOP and the ≤900px override is the phone segment, so this
+ * follows the app's existing `@media (max-width: 900px)` convention (QCAT-230)
+ * rather than inventing a second breakpoint. */
+html {
+  font-size: clamp(0.9375rem, 0.831rem + 0.19vw, 1.125rem);
+}
+
+@media (max-width: 900px) {
+  html {
+    font-size: clamp(0.78rem, 0.4rem + 2vw, 0.9375rem);
+  }
+}
+
+/* The two edges the app's fixed nav chrome occupies. A screen never hardcodes
+ * either — it reads these, so the chrome can move without a screen-by-screen
+ * hunt (the same fix-once rule QCAT-259 applies to the grid).
+ *
+ * `--app-nav-bottom`: height the fixed phone bottom-nav reserves (shell/BottomNav)
+ *   — 0 on tablet/desktop (the vertical rail is used instead); the bar height (+
+ *   the PWA safe-area inset) on phone. A screen adds it to its BOTTOM PADDING to
+ *   clear the bar, and a viewport-pinned action bar offsets its `bottom` by it.
+ * `--app-rail-left`: width of the fixed left nav rail (shell/AppShell, 72px) — 0
+ *   ≤900px where the rail is replaced by the bottom nav. A FULL-WIDTH
+ *   viewport-pinned bar (QCAT-263) is `position: fixed`, i.e. positioned against
+ *   the VIEWPORT and therefore blind to the rail's flex column; it reads this to
+ *   start at the content column's left edge instead of running under the rail. */
+:root {
+  --app-nav-bottom: 0px;
+  --app-rail-left: 72px;
+}
+
+@media (max-width: 900px) {
+  :root {
+    --app-nav-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    --app-rail-left: 0px;
+  }
+}
+
 body {
   background: var(--bg);
   color: var(--text);

@@ -43,16 +43,16 @@ const emit = defineEmits<{
 <style scoped>
 .seg {
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs);
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
 
 .seg__btn {
-  padding: 8px 16px;
-  border-radius: 9px;
+  padding: var(--space-xs) var(--space-lg); /* 8px 16px @16 */
+  border-radius: 0.5625rem; /* 9px @16 — off-ladder radius, byte-identical */
   border: none;
   background: transparent;
   color: var(--muted);

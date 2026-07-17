@@ -12,16 +12,26 @@
   --font-display: 'Zen Kaku Gothic New', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
-  /* Size scale (px values seen consistently in the prototype). */
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 13px;
-  --text-md: 14px;
-  --text-lg: 16px;
-  --text-xl: 19px;
-  --text-2xl: 22px;
-  --text-3xl: 27px;
-  --text-display: 52px;
+  /* Size scale — `rem`, so every `var(--text-*)` site rides the fluid root
+   * font-size (base.css `html`) and scales with the viewport. Each value is the
+   * original prototype px ÷ 16, so at the 16px desktop anchor these are byte-for-
+   * byte the old px (13px body, 11–12px labels/meta, up to the 52px wordmark);
+   * on a phone the whole scale shrinks in lockstep with the root. */
+  /* --text-2xs is the BADGE FLOOR — the smallest text the design uses, for a
+   * marker that annotates something else rather than being read as prose (the
+   * `ui/Tag` pills; the on-cover chip + unread count, QCAT-263). Do NOT reach for
+   * it for body/label copy: below `--text-xs` legibility is spent buying back
+   * space, which is only a good trade for a short marker. */
+  --text-2xs: 0.59375rem; /* 9.5px @16 */
+  --text-xs: 0.6875rem;   /* 11px @16 */
+  --text-sm: 0.75rem;     /* 12px @16 */
+  --text-base: 0.8125rem; /* 13px @16 */
+  --text-md: 0.875rem;    /* 14px @16 */
+  --text-lg: 1rem;        /* 16px @16 */
+  --text-xl: 1.1875rem;   /* 19px @16 */
+  --text-2xl: 1.375rem;   /* 22px @16 */
+  --text-3xl: 1.6875rem;  /* 27px @16 */
+  --text-display: 3.25rem; /* 52px @16 */
 
   /* Weights. */
   --weight-regular: 400;

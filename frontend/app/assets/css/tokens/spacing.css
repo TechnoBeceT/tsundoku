@@ -1,0 +1,91 @@
+/* spacing.css — the fluid spacing/size scale the design never had (the survey
+ * found hundreds of raw-px padding/margin/gap values with NO token to hook).
+ * Every step is `rem`, so it rides the single fluid root font-size (base.css
+ * `html`) and scales with the viewport in lockstep with the type + radius scales
+ * — "protect the design, scale the tokens" with ONE fluid source of truth, no
+ * per-step clamp (which would double-scale and drift out of proportion).
+ *
+ * Each value equals its comment's px at the 16px desktop anchor, so swapping a
+ * raw `18px` gap for `var(--space-xl)` is byte-identical on desktop and simply
+ * gains fluidity below/above it. The steps are named for the ACTUAL recurring
+ * values in the prototype (8/10/12/14/16/18/24/30px) — not an idealised 4px
+ * ladder the design doesn't use, which would force every migration to round
+ * (and rounding IS redesigning). */
+
+/* 🔴 CONSOLIDATION IS A DESIGN CHANGE — migrate EXACT matches only (§5.11).
+ * The `-tight` suffix names the HALF-STEP immediately BELOW `<step>`. The ladder
+ * was minted from the prototype's own recurring values, so it is deliberately
+ * non-uniform and has NO room to insert a step without renumbering every existing
+ * token (silently moving ~130 SFCs). `-tight` is the additive escape hatch: it
+ * names the in-between value without touching any existing token's meaning.
+ *
+ * WHY THESE TWO, AND ONLY THESE TWO (surveyed, not guessed — a grep of every
+ * `<style>` block):
+ *   - 6px  → the 4→8 gap (5px, 6px, 7px all cluster here). The single biggest
+ *            hole in the scale, and the one the button/badge/tab atoms hit.
+ *   - 20px → the 18→24 gap. A real ladder step.
+ *
+ * 🔴 A value that is NOT an exact ladder step (7px, 9px, 13px, 13.5px, …) must
+ * NOT be rounded onto its nearest neighbour to "adopt" a token: at the desktop
+ * anchor that MOVES REAL PIXELS, which the byte-identity mandate (QCAT-261)
+ * forbids. Either mint a surveyed step (as above) or express the off-ladder value
+ * as a byte-identical `rem` literal (value ÷ 16) so it still rides the fluid root
+ * while staying exact at 1440. Do NOT mint a token per literal — a dictionary is
+ * not a scale (§5.9). */
+:root {
+  --space-0: 0;
+  --space-3xs: 0.125rem; /* 2px  @16 */
+  --space-2xs: 0.25rem;  /* 4px  @16 */
+  --space-xs-tight: 0.375rem; /* 6px @16 */
+  --space-xs: 0.5rem;    /* 8px  @16 */
+  --space-sm: 0.625rem;  /* 10px @16 */
+  --space-md: 0.75rem;   /* 12px @16 */
+  --space-base: 0.875rem; /* 14px @16 */
+  --space-lg: 1rem;      /* 16px @16 */
+  --space-xl: 1.125rem;  /* 18px @16 */
+  --space-2xl-tight: 1.25rem; /* 20px @16 */
+  --space-2xl: 1.5rem;   /* 24px @16 */
+  --space-3xl: 1.875rem; /* 30px @16 */
+}
+
+/* ---- Square-control size ladder -------------------------------------------
+ * The edge length of a SQUARE control (`ui/IconButton`'s xs/sm/md). These live
+ * on the size scale — not as raw px — for the same reason everything else here
+ * does: an icon button that stays 30px while the text beside it shrinks 20% on a
+ * phone is the exact defect this scale exists to prevent (its own comment used
+ * to read "the square itself stays 22px at every width" — the bug as a feature).
+ *
+ * They are TOKENS rather than IconButton-private literals because they are a
+ * SHARED design constant: `IconButton size="xs"` and `AppButton size="xs"` are
+ * documented siblings that must render at ONE height so a dense row's icon and
+ * text actions read as a set. Same edge lengths at the 16px desktop anchor;
+ * proportional everywhere else.
+ *
+ * 🔴 The mobile 44px TOUCH TARGET is NOT on this ladder and must never be: a
+ * finger is a physical size, so it stays raw px and must not ride the fluid
+ * root. See IconButton/AppButton's `@media (max-width: 900px)` blocks. */
+:root {
+  --control-xs: 1.375rem; /* 22px @16 */
+  --control-sm: 1.625rem; /* 26px @16 */
+  --control-md: 1.875rem; /* 30px @16 */
+}
+
+/* ---- Touch pitch (QCAT-230) ------------------------------------------------
+ * The minimum ROW-GAP between two overlay-target controls that WRAP onto
+ * separate lines.
+ *
+ * WHY IT EXISTS. `AppButton` xs/sm and `IconButton` xs hold their 44px touch
+ * target with an INVISIBLE overlay rather than by painting a 44px slab, so a
+ * ~25px-tall control carries ~10px of hit area OVERHANGING it on each side. Two
+ * such controls facing each other across a smaller gap have OVERLAPPING targets:
+ * a tap meant for neither fires whichever paints on top. Measured live:
+ * ExtensionRow put a 9.8px ambiguous band between "Configure" and the
+ * DESTRUCTIVE "Uninstall" at 320px.
+ *
+ * 🔴 RAW PX BY DERIVATION, like the 44px it comes from: it is twice the overhang
+ * of a PHYSICAL target around a scaled control, so it must NOT ride the fluid
+ * root — as the root shrinks the control, the overhang GROWS and the required
+ * pitch grows with it. A rem pitch would shrink exactly when it is needed most. */
+:root {
+  --touch-pitch: 20px;
+}

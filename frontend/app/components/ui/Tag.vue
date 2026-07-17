@@ -16,39 +16,70 @@
 withDefaults(defineProps<{
   /** Colour treatment — see the component doc above. */
   tone?: 'neutral' | 'accent' | 'success' | 'warn' | 'danger' | 'frost'
+  /** Font-size step: `md` (default, the marker's own size) | `sm` (the shared
+   *  on-tile step down, matching `ui/Chip` size="sm" when they sit adjacent). */
+  size?: 'md' | 'sm'
+  /** Allow a long marker (e.g. "NEEDS SOURCE") to wrap to a second line in a
+   *  narrow tile, instead of forcing horizontal overflow. */
+  wrap?: boolean
 }>(), {
   tone: 'neutral',
+  size: 'md',
+  wrap: false,
 })
 </script>
 
 <template>
-  <span class="tag" :class="`tag--${tone}`">
+  <span class="tag" :class="[`tag--${tone}`, `tag--${size}`, { 'tag--wrap': wrap }]">
     <span v-if="$slots.icon" class="tag__icon"><slot name="icon" /></span>
     <slot />
   </span>
 </template>
 
 <style scoped>
+/* Box metrics come from the SHARED badge scale (tokens/badge.css) that this atom
+ * and `ui/Chip` both consume — see that file for what is shared vs per-atom.
+ * DESKTOP IS BYTE-IDENTICAL to the baseline: the old raw `padding: 2px 7px` /
+ * `gap: 4px` / `line-height: 1.7` are now the `--badge-tag-*` / shared vars (same
+ * anchor px, now fluid). Tag's box legitimately DIFFERS from Chip's (7 vs 9 pad-x,
+ * 800 vs 700 weight) — preserved per-atom, not flattened. */
 .tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: var(--radius-pill);
+  gap: var(--badge-tag-gap);
+  padding: var(--badge-pad-y) var(--badge-tag-pad-x);
+  border-radius: var(--badge-radius);
   font-family: var(--font-sans);
-  font-size: 9.5px;
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--badge-tag-weight);
   letter-spacing: 0.04em;
-  line-height: 1.7;
+  line-height: var(--badge-leading);
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--tag-fg);
   background: var(--tag-bg);
 }
 
+/* ---- Font-size steps ------------------------------------------------------ */
+.tag--md {
+  font-size: var(--badge-font-tag);
+}
+
+.tag--sm {
+  font-size: var(--badge-font-sm);
+}
+
+/* Wrapping markers align to the top so the icon sits with the FIRST line rather
+ * than floating against the middle of a two-line label. */
+.tag--wrap {
+  white-space: normal;
+  align-items: flex-start;
+  max-width: 100%;
+}
+
 .tag__icon {
   display: inline-flex;
   align-items: center;
+  flex: none;
 }
 
 /* ---- Tones (token-only) --------------------------------------------------- */
