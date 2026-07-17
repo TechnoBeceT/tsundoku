@@ -1,7 +1,7 @@
 /**
  * Shared types for the `ui/` atom kit.
  *
- * `ChapterState` is the eight-value chapter-state enum the backend's
+ * `ChapterState` is the nine-value chapter-state enum the backend's
  * `Chapter.state` carries — the single union the `StatusBadge` atom (and any
  * future atom that keys off a chapter state) maps over. Each value lines up
  * 1:1 with a `--state-<value>-{fg,bg,dot}` token triple in `tokens/status.css`.
@@ -15,3 +15,4 @@ export type ChapterState =
   | 'failed'
   | 'permanently_failed'
   | 'superseded'
+  | 'ignored'

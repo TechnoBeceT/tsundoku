@@ -79,6 +79,19 @@ type Candidate struct {
 // answered in exactly one place (§2 DRY) — and so every one of them agrees about
 // a suppressed source rather than half of them seeing it.
 func providerChaptersForKey(ctx context.Context, client *ent.Client, ch *ent.Chapter) ([]*ent.ProviderChapter, error) {
+	pcs, err := rawProviderChaptersForKey(ctx, client, ch)
+	if err != nil {
+		return nil, err
+	}
+	return dropIgnoredFractionalSources(pcs, ch), nil
+}
+
+// rawProviderChaptersForKey loads every ProviderChapter (with its SeriesProvider
+// edge) that offers ch's chapter_key within ch's series — WITHOUT the
+// ignore-fractional drop. It is the raw "who could carry this chapter" set the
+// resurrection guard turns on (providerChaptersForKey layers the drop on top of
+// it, and IsIgnorableFractional compares the two).
+func rawProviderChaptersForKey(ctx context.Context, client *ent.Client, ch *ent.Chapter) ([]*ent.ProviderChapter, error) {
 	pcs, err := client.ProviderChapter.Query().
 		Where(
 			entproviderchapter.ChapterKeyEQ(ch.ChapterKey),
@@ -91,7 +104,51 @@ func providerChaptersForKey(ctx context.Context, client *ent.Client, ch *ent.Cha
 	if err != nil {
 		return nil, fmt.Errorf("chapter: query provider chapters for chapter %s (key=%q): %w", ch.ID, ch.ChapterKey, err)
 	}
-	return dropIgnoredFractionalSources(pcs, ch), nil
+	return pcs, nil
+}
+
+// IsIgnorableFractional reports whether ch is a FRACTIONAL chapter that has at
+// least one carrier AND every one of those carriers is a source the owner flagged
+// ignore_fractional. It is the resurrection-safe condition for parking an
+// UNDOWNLOADED wanted/failed fractional in the terminal `ignored` state.
+//
+// It is the undownloaded twin of series.RemoveFractionalChapters' removable rule:
+// the SAME "at least one carrier AND every carrier ignored" guard, minus that
+// rule's "has a file" clause (these chapters are not yet downloaded). The two
+// guards it enforces are load-bearing:
+//
+//   - "every carrier ignored" is the RESURRECTION GUARD: a fractional a
+//     non-ignored source ALSO carries stays a live download target (that source
+//     would just re-fetch it), so it must NOT be parked. Only a fractional every
+//     carrier ignores is genuinely unfetchable and safe to hide.
+//   - "at least one carrier" excludes a genuinely SOURCELESS chapter (no feed
+//     carries its key): that is not an ignore decision at all — it awaits a source
+//     via ingest — so the dispatcher leaves it wanted (download.skip), never
+//     ignored.
+//
+// A whole (non-fractional) chapter, a fractional with a non-ignoring carrier, and
+// a carrier-less chapter all return false. ch must be loaded (it is — the
+// dispatcher passes the row it already holds); the carriers are loaded here.
+func IsIgnorableFractional(ctx context.Context, client *ent.Client, ch *ent.Chapter) (bool, error) {
+	if ch.Number == nil || !chapterrange.IsFractional(*ch.Number) {
+		return false, nil
+	}
+	raw, err := rawProviderChaptersForKey(ctx, client, ch)
+	if err != nil {
+		return false, err
+	}
+	if len(raw) == 0 {
+		return false, nil // sourceless — awaits ingest, not an ignore decision
+	}
+	for _, pc := range raw {
+		sp := pc.Edges.SeriesProvider
+		if sp == nil || !sp.IgnoreFractional {
+			// A non-ignoring (or, defensively, edge-less) carrier keeps the chapter a
+			// live download target — never park it.
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // dropIgnoredFractionalSources removes the sources the owner has flagged as

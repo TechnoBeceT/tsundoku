@@ -136,6 +136,7 @@ const (
 	StateFailed            State = "failed"
 	StatePermanentlyFailed State = "permanently_failed"
 	StateSuperseded        State = "superseded"
+	StateIgnored           State = "ignored"
 )
 
 func (s State) String() string {
@@ -145,7 +146,7 @@ func (s State) String() string {
 // StateValidator is a validator for the "state" field enum values. It is called by the builders before save.
 func StateValidator(s State) error {
 	switch s {
-	case StateWanted, StateDownloading, StateDownloaded, StateUpgradeAvailable, StateUpgrading, StateFailed, StatePermanentlyFailed, StateSuperseded:
+	case StateWanted, StateDownloading, StateDownloaded, StateUpgradeAvailable, StateUpgrading, StateFailed, StatePermanentlyFailed, StateSuperseded, StateIgnored:
 		return nil
 	default:
 		return fmt.Errorf("chapter: invalid enum value for state field: %q", s)

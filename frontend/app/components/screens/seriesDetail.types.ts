@@ -8,7 +8,7 @@
  */
 import type { SeriesSummary } from './types'
 
-/** The eight download states a chapter moves through (the backend state machine). */
+/** The nine download states a chapter moves through (the backend state machine). */
 export type ChapterState =
   | 'wanted'
   | 'downloading'
@@ -18,6 +18,7 @@ export type ChapterState =
   | 'failed'
   | 'permanently_failed'
   | 'superseded'
+  | 'ignored'
 
 /**
  * Per-provider health: current, gone stale, erroring on last refresh, or

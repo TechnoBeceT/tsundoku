@@ -226,7 +226,7 @@ const emit = defineEmits<{
 // on top so reading progress is visible without scrolling to the bottom.
 const sortedChapters = computed<Chapter[]>(() =>
   [...props.series.chapters]
-    .filter((c) => c.state !== 'superseded')
+    .filter((c) => c.state !== 'superseded' && c.state !== 'ignored')
     .sort(
       (a, b) => (b.number ?? 0) - (a.number ?? 0) || b.chapterKey.localeCompare(a.chapterKey),
     ),

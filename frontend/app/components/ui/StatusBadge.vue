@@ -29,6 +29,7 @@ const LABELS: Record<ChapterState, string> = {
   failed: 'Failed',
   permanently_failed: 'Failed · final',
   superseded: 'Superseded',
+  ignored: 'Ignored',
 }
 
 const label = computed(() => LABELS[props.state])

@@ -2390,7 +2390,7 @@ export interface components {
              * @description Chapter download state.
              * @enum {string}
              */
-            state: "wanted" | "downloading" | "downloaded" | "upgrade_available" | "upgrading" | "failed" | "permanently_failed" | "superseded";
+            state: "wanted" | "downloading" | "downloaded" | "upgrade_available" | "upgrading" | "failed" | "permanently_failed" | "superseded" | "ignored";
             /** @description Raw Suwayomi source-ID key (SeriesProvider.provider) of the source this chapter is ACTUALLY coming from, resolved in three steps: (1) the source that SATISFIED it (satisfied_by) — true provenance, where the file on disk came from; (2) else the highest-importance source whose FEED CARRIES this chapter_key — the source the engine is fetching from (the scheduler's own primary-source rule); (3) else empty, when NO source carries the key: nothing is fetching this chapter and the UI renders an em-dash. NOT the series' top-ranked source — that lies whenever the top source has a feed gap. Step 2 is a UI HINT, not engine state: the engine additionally excludes retry-exhausted, cooled-down, or circuit-broken sources, which this read model does not know about, so it may name a source the engine defers this cycle. A downloaded chapter whose satisfier was cleared (the owner removed that source — the CBZ is kept) also resolves via step 2 or 3. */
             provider: string;
             /** @description Human-readable source display name of the source resolved by `provider` (same three steps, same caveat); falls back to the id when unresolved, and is empty exactly when `provider` is. Shown in the UI in place of the id. */

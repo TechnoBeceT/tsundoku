@@ -498,8 +498,11 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 	var lastDownloaded *time.Time // MAX(first_downloaded_at) over non-superseded chapters
 	for i, ch := range row.Edges.Chapters {
 		chapters[i] = newChapterDTO(ch, titles[ch.ChapterKey])
-		if ch.State == entchapter.StateSuperseded {
-			continue // superseded parts are merged into their whole — not counted (mirrors chapterRollups)
+		if ch.State == entchapter.StateSuperseded || ch.State == entchapter.StateIgnored {
+			// superseded parts are merged into their whole; ignored fractionals are
+			// suppressed re-uploads — neither is counted (mirrors chapterRollups) and
+			// the FE hides both from the chapter list.
+			continue
 		}
 		counts.Total++
 		addToCounts(&counts, ch)
@@ -813,8 +816,8 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 	}
 
 	for _, r := range rows {
-		if r.State == entchapter.StateSuperseded {
-			continue // superseded parts are merged into their whole — not counted
+		if r.State == entchapter.StateSuperseded || r.State == entchapter.StateIgnored {
+			continue // superseded parts merged into their whole; ignored fractionals suppressed — neither counted
 		}
 		agg := out[r.SeriesID]
 		agg.Counts.Total += r.Count
@@ -1028,6 +1031,16 @@ func (s *Service) SetIgnoreFractional(ctx context.Context, id, providerID uuid.U
 		// this is reachable only on a DB-level failure — not forceable in a
 		// black-box test.
 		return fmt.Errorf("series.SetIgnoreFractional: update provider %s: %w", providerID, err)
+	}
+
+	// Reconcile the series' UNDOWNLOADED fractionals against the new flags: park a
+	// wanted/failed fractional whose every carrier now ignores fractionals into the
+	// terminal `ignored` state (out of the queue and the chapter list), and restore
+	// an ignored one that just regained a non-ignoring carrier back to wanted. This
+	// is a state change only (never-auto-delete); already-downloaded fractionals are
+	// untouched (their cleanup stays the explicit DedupeFiles action).
+	if err := s.reconcileIgnoredFractionals(ctx, id); err != nil {
+		return fmt.Errorf("series.SetIgnoreFractional: reconcile ignored fractionals for series %s: %w", id, err)
 	}
 	return nil
 }

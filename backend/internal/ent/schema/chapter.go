@@ -32,7 +32,7 @@ func (Chapter) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 		field.Enum("state").
-			Values("wanted", "downloading", "downloaded", "upgrade_available", "upgrading", "failed", "permanently_failed", "superseded").
+			Values("wanted", "downloading", "downloaded", "upgrade_available", "upgrading", "failed", "permanently_failed", "superseded", "ignored").
 			Default("wanted"),
 		field.UUID("satisfied_by_provider_id", uuid.UUID{}).Optional().Nillable(),
 		field.Int("satisfied_importance").Optional().Nillable(),

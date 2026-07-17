@@ -73,4 +73,12 @@
   --state-superseded-fg: #78758c;
   --state-superseded-bg: rgba(120, 117, 140, 0.14);
   --state-superseded-dot: #6b6880;
+
+  /* ignored — faint neutral: a fractional whose every carrier is set to ignore
+   * fractionals, parked out of the queue. Hidden from the Series-Detail chapter
+   * list, but the token triple stays defined so ChapterState/StatusBadge remain
+   * exhaustive and sound. */
+  --state-ignored-fg: #78758c;
+  --state-ignored-bg: rgba(120, 117, 140, 0.14);
+  --state-ignored-dot: #6b6880;
 }

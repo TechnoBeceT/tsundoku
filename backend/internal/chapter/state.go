@@ -47,11 +47,23 @@ import (
 // wanted on first discovery (ingest). permanently_failed is no longer strictly
 // terminal — it has exactly one sanctioned owner escape hatch, mirroring the
 // never-auto-delete model (a state reset is an owner action, never automatic).
+//
+// Ignored edges (fractional suppression): wanted→ignored and failed→ignored park
+// an UNDOWNLOADED fractional chapter whose EVERY carrier is a source the owner
+// flagged ignore_fractional. Left wanted, such a chapter can never download (the
+// dispatcher drops all its sources from candidacy) yet clutters the queue and the
+// chapter list forever; ignored is the terminal hidden resting state for it. This
+// is NOT a deletion — the Chapter row and every ProviderChapter feed row are kept
+// (never-auto-delete), so ignored→wanted reverses it the instant a non-ignoring
+// carrier reappears (the owner un-ticks the toggle, or adds a source). The
+// resurrection guard is EVERY-carrier-ignored: a fractional a non-ignored source
+// also carries stays wanted and downloads normally, so it never lands in ignored.
 var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	entchapter.StateWanted: {
 		entchapter.StateDownloading:       {},
 		entchapter.StatePermanentlyFailed: {}, // all sources already exhausted on entry
 		entchapter.StateSuperseded:        {}, // whole N downloaded + >=2 parts (fractional-part suppression)
+		entchapter.StateIgnored:           {}, // fractional whose every carrier ignores fractionals (see below)
 	},
 	entchapter.StateDownloading: {
 		entchapter.StateDownloaded:        {},
@@ -72,12 +84,16 @@ var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 		entchapter.StateDownloading:       {},
 		entchapter.StatePermanentlyFailed: {},
 		entchapter.StateWanted:            {}, // owner retry (clears failure fields)
+		entchapter.StateIgnored:           {}, // fractional whose every carrier ignores fractionals (see below)
 	},
 	entchapter.StatePermanentlyFailed: {
 		entchapter.StateWanted: {}, // owner reset — the single terminal escape
 	},
 	entchapter.StateSuperseded: {
 		entchapter.StateWanted: {}, // reversal: whole N gone, or setting disabled — the single escape
+	},
+	entchapter.StateIgnored: {
+		entchapter.StateWanted: {}, // reversal: a now-un-ignored carrier appeared — the single escape
 	},
 }
 

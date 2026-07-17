@@ -685,15 +685,14 @@ func (d *Dispatcher) handleNoCandidates(ctx context.Context, ch *ent.Chapter, ma
 		return fmt.Errorf("download.Dispatcher.handleNoCandidates: provider check for chapter %s: %w", ch.ID, err)
 	}
 	if !hasAny {
-		slog.WarnContext(ctx, "download.processChapter: no provider for chapter — staying wanted until ingest supplies a source",
-			"chapter_id", ch.ID,
-		)
-		d.broadcast("download.skip", DownloadEvent{
-			ChapterID: ch.ID,
-			State:     string(ch.State),
-			Error:     "no provider available for this chapter",
-		})
-		return nil
+		// hasAny is false over the ignore-fractional-DROPPED set, so two very
+		// different situations land here: a genuinely sourceless chapter (no feed
+		// carries its key), and a fractional whose EVERY carrier the owner flagged
+		// ignore_fractional. Only the latter must be parked in the terminal `ignored`
+		// state — a wanted fractional no live source will ever fetch, left wanted,
+		// clogs the queue and the chapter list forever. IsIgnorableFractional reads
+		// the RAW carrier set to tell them apart (≥1 carrier, all ignored).
+		return d.handleSourcelessChapter(ctx, ch)
 	}
 
 	exhausted, err := chapter.AllProvidersExhausted(ctx, d.client, ch.ID, maxRetries)
@@ -719,6 +718,46 @@ func (d *Dispatcher) handleNoCandidates(ctx context.Context, ch *ent.Chapter, ma
 		ChapterID: ch.ID,
 		State:     string(entchapter.StatePermanentlyFailed),
 		Error:     msg,
+	})
+	return nil
+}
+
+// handleSourcelessChapter handles a chapter that no LIVE (non-dropped) source
+// offers this cycle. It distinguishes an all-carriers-ignored FRACTIONAL — parked
+// in the terminal `ignored` state so it stops clogging the queue and the chapter
+// list — from a genuinely sourceless chapter, which stays wanted (download.skip)
+// awaiting a source via ingest.
+//
+// Parking is a STATE change, not a deletion: the Chapter row and every
+// ProviderChapter feed row are kept (never-auto-delete), so the reconcile in
+// series.SetIgnoreFractional returns the chapter to wanted the moment a
+// non-ignoring carrier reappears. Doing it here (not only in the toggle sweep) is
+// what stops a wanted/failed all-ignored fractional from re-accumulating between
+// sweeps — every download cycle drains it.
+func (d *Dispatcher) handleSourcelessChapter(ctx context.Context, ch *ent.Chapter) error {
+	ignorable, err := chapter.IsIgnorableFractional(ctx, d.client, ch)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.handleSourcelessChapter: ignorable check for chapter %s: %w", ch.ID, err)
+	}
+	if ignorable {
+		if err := chapter.SetState(ctx, d.client, ch.ID, entchapter.StateIgnored); err != nil {
+			return fmt.Errorf("download.Dispatcher.handleSourcelessChapter: transition chapter %s to ignored: %w", ch.ID, err)
+		}
+		d.broadcast("download.skip", DownloadEvent{
+			ChapterID: ch.ID,
+			State:     string(entchapter.StateIgnored),
+			Error:     "every source for this fractional chapter is set to ignore fractionals",
+		})
+		return nil
+	}
+
+	slog.WarnContext(ctx, "download.processChapter: no provider for chapter — staying wanted until ingest supplies a source",
+		"chapter_id", ch.ID,
+	)
+	d.broadcast("download.skip", DownloadEvent{
+		ChapterID: ch.ID,
+		State:     string(ch.State),
+		Error:     "no provider available for this chapter",
 	})
 	return nil
 }
