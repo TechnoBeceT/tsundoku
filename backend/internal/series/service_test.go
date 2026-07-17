@@ -239,6 +239,85 @@ func TestListSeriesPaginates(t *testing.T) {
 	}
 }
 
+// TestChapterCountsIncludeNonPositiveNumberedChapters pins that the chapter-state
+// rollup counts a chapter regardless of its NUMBER sign: a prologue/epilogue/
+// special numbered -1 (or 0, or carrying no parseable number at all) that is
+// downloaded + read must count toward Total/Downloaded exactly like any other
+// chapter, and must NOT be miscounted as Unread. `number` is a display/sort
+// field, never a filter on the read/download rollup — the counts are grouped
+// purely by (state, read), so a negative number is a valid chapter, not a
+// sentinel that drops out of the tally. Guards against a future `NumberGTE(0)`
+// (or `number >= 0`) guard leaking into either the ListSeries grouped aggregate
+// (chapterRollups) or the GetSeries per-chapter loop.
+func TestChapterCountsIncludeNonPositiveNumberedChapters(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	s := client.Series.Create().
+		SetTitle("Prologue Saga").
+		SetSlug("prologue-saga").
+		SetCategoryID(catID(ctx, client, "Manga")).
+		SaveX(ctx)
+
+	now := time.Now().UTC()
+	// Downloaded + READ, number -1 (a prologue numbered -1) — must count.
+	neg := -1.0
+	client.Chapter.Create().
+		SetSeriesID(s.ID).SetChapterKey("ch-neg1").SetNumber(neg).
+		SetState(entchapter.StateDownloaded).SetRead(true).SetReadAt(now).SaveX(ctx)
+	// Downloaded + READ, number 0 (a chapter-0 prologue) — must count.
+	zero := 0.0
+	client.Chapter.Create().
+		SetSeriesID(s.ID).SetChapterKey("ch-zero").SetNumber(zero).
+		SetState(entchapter.StateDownloaded).SetRead(true).SetReadAt(now).SaveX(ctx)
+	// Downloaded + READ, NO parseable number (name-keyed) — must count.
+	client.Chapter.Create().
+		SetSeriesID(s.ID).SetChapterKey("name:extra").
+		SetState(entchapter.StateDownloaded).SetRead(true).SetReadAt(now).SaveX(ctx)
+	// Downloaded but UNREAD, positive number — the only Unread chapter.
+	pos := 1.0
+	client.Chapter.Create().
+		SetSeriesID(s.ID).SetChapterKey("ch-1").SetNumber(pos).
+		SetState(entchapter.StateDownloaded).SetRead(false).SaveX(ctx)
+
+	// Total 4, all downloaded; exactly one (the positive unread) is Unread —
+	// the three non-positive-numbered READ chapters must NOT inflate Unread and
+	// must NOT be dropped from Total/Downloaded.
+	want := series.ChapterCounts{Total: 4, Downloaded: 4, Wanted: 0, Failed: 0, Unread: 1}
+
+	svc := series.NewService(client, t.TempDir(), 14)
+
+	// ListSeries — the grouped aggregate (chapterRollups) path.
+	list, err := svc.ListSeries(ctx, series.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+	var summary *series.SeriesSummaryDTO
+	for i := range list {
+		if list[i].Slug == "prologue-saga" {
+			summary = &list[i]
+		}
+	}
+	if summary == nil {
+		t.Fatalf("ListSeries: prologue-saga not returned")
+	}
+	if summary.ChapterCounts != want {
+		t.Fatalf("ListSeries rollup dropped/miscounted a non-positive-numbered chapter: want %+v, got %+v", want, summary.ChapterCounts)
+	}
+
+	// GetSeries — the per-chapter loop (addToCounts) path.
+	detail, err := svc.GetSeries(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if detail.ChapterCounts != want {
+		t.Fatalf("GetSeries counts dropped/miscounted a non-positive-numbered chapter: want %+v, got %+v", want, detail.ChapterCounts)
+	}
+	if len(detail.Chapters) != 4 {
+		t.Fatalf("GetSeries: want 4 chapters (incl. the -1/0/null-numbered ones), got %d", len(detail.Chapters))
+	}
+}
+
 func TestGetSeriesReturnsDetail(t *testing.T) {
 	client := testdb.New(t)
 	ctx := context.Background()
