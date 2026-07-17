@@ -218,7 +218,7 @@ const progressPct = computed(() => {
  * (13.5px @16) CAP is reached at ~179px container width, so EVERY desktop tile
  * (min-tile 186px, always ≥186px) hits the cap and renders at exactly 13.5px —
  * byte-identical to 2a44360, which used a fixed `font-size: 13.5px`. Below the
- * floor a a phone tile (~86-121px) it steps down toward the 12px floor.
+ * cap a phone tile (~86-121px) it steps down toward the 12px floor.
  * A11y ratio 0.84375/0.75 = 1.125 ≤ 2.5 (§2.2). */
 .card__title {
   font-weight: var(--weight-bold);

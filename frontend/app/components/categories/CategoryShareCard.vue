@@ -148,7 +148,9 @@ const emit = defineEmits<{
  * is only ever a held-2 phone tile (~139-194px) or a narrow tablet auto-fit tile
  * (~150px). Desktop tiles are min 225px (min-tile 240px → 15rem × the 15.008px
  * root at the 901px desktop-band bottom = 225.1px; auto-fit only grows them
- * wider) → this step NEVER fires on desktop (≥55px margin, byte-identical). It
+ * wider) → this step NEVER fires on desktop (~17px content-box margin — the
+ * container query reads the CONTENT box, and the 225.1px border-box tile minus
+ * the 19px×2 padding is ~187.1px content-box vs the 170px threshold). It
  * pulls the paddings in and drops the meta to the badge floor so the count/bar/
  * meta fit a ~139px tile without overflow. Magnitudes still ride the fluid root. */
 @container cat-card (max-width: 170px) {
