@@ -276,6 +276,40 @@ const progressPct = computed(() => {
   }
 }
 
+/* 🔴 §3 width-driven BADGES (QCAT-263). The on-cover category `Chip` and the
+ * status `Tag`s (PAUSED / DONE / NEEDS SOURCE) are CHILD ATOMS the card does not
+ * otherwise size — so at the shared badge.css scale they stay at their full
+ * DESKTOP box while the title/meta above shrink on a small tile: the one element
+ * that "didn't scale", left looking oversized/chunky on a phone or tablet tile.
+ * This is the §5.10 whole-class sweep applied WITHIN the card — sweep the badges
+ * too, not just the title/meta the card styles directly.
+ *
+ * FIX: re-key their FONT-SIZE to the CARD's own width (a `cqi` clamp, exactly like
+ * `.card__title`), and TIGHTEN the pill (leading 1.7→1.3 + padding) so it reads as
+ * a compact marker. Scoped with `:deep` to THIS card's container ONLY — `Chip` /
+ * `Tag` on every other screen keep the badge.css defaults (NO shared atom or token
+ * is touched, so other consumers are byte-identical by construction).
+ *
+ * The `cqi` caps land at ~179px, so EVERY desktop tile (grid min-tile 186px) keeps
+ * the baseline FONT-SIZE (11px chip / 9.5px tag) — a phone tile (~95-120px) steps
+ * down toward the floor. The leading + padding de-chunk is the intended QCAT-263
+ * reduction and DOES apply to desktop card badges (reported for owner sign-off).
+ * A11y cap/floor ratio 11/9 = 1.22 (chip) · 9.5/8 = 1.19 (tag), both ≤ 2.5 (§2.2). */
+.card :deep(.chip),
+.card :deep(.tag) {
+  line-height: 1.3;
+}
+
+.card :deep(.chip) {
+  font-size: clamp(0.5625rem, 3.4cqi + 0.3125rem, 0.6875rem); /* 9px … 11px @16 */
+  padding: var(--space-3xs) var(--space-xs-tight); /* 2px 6px @16 (was 2px 9px) */
+}
+
+.card :deep(.tag) {
+  font-size: clamp(0.5rem, 2.5cqi + 0.3125rem, 0.59375rem); /* 8px … 9.5px @16 */
+  padding: var(--space-3xs) var(--space-xs-tight); /* 2px 6px @16 (was 2px 7px) */
+}
+
 .card__wanted {
   color: var(--cover-text-soft);
 }
