@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import Settings from './Settings.vue'
 import type { SettingsPane } from './settings.types'
 import {
@@ -61,13 +61,15 @@ const withPane = (startPane: SettingsPane, extra: Record<string, unknown> = {}) 
   components: { Settings },
   setup() {
     const activePane = ref<SettingsPane>(startPane)
-    return { activePane, baseProps, extra }
+    // `extra` overrides `baseProps` on key collisions — mirrors the previous
+    // dual v-bind's "later wins" order (Vue rejects two bare v-bind on one element).
+    const mergedProps = computed(() => ({ ...baseProps, ...extra }))
+    return { activePane, mergedProps }
   },
   template: `
     <Settings
-      v-bind="baseProps"
+      v-bind="mergedProps"
       :active-pane="activePane"
-      v-bind="extra"
       @set-pane="activePane = $event"
     />
   `,
