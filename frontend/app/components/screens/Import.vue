@@ -275,8 +275,10 @@ const submit = (): void => {
 
     <!-- QCAT-265 GROW: the wizard grows with its content and the PAGE scrolls —
          no letterbox, no per-stage inner-scroller. The stages flow naturally
-         inside the centred `.import__panel` card and the Back/Next actions sit at
-         the panel's own bottom. -->
+         inside the centred `.import__panel` card. The per-stage action row is a
+         FULL-WIDTH SOLID CHROME BAR pinned to the viewport bottom (QCAT-263,
+         §2.6.5) — see `.imp-actions`; the screen reserves bottom padding to clear
+         it (`--imp-actions-h`). -->
     <div class="import__shell">
       <div class="import__panel">
         <!-- Error banner (search or adopt failure) -->
@@ -363,8 +365,10 @@ const submit = (): void => {
             </div>
           </div>
 
-          <div class="imp-actions imp-actions--start">
-            <AppButton variant="ghost" @click="emit('cancel')">Cancel</AppButton>
+          <div class="imp-actions">
+            <div class="imp-actions__inner imp-actions__inner--start">
+              <AppButton variant="ghost" @click="emit('cancel')">Cancel</AppButton>
+            </div>
           </div>
         </section>
 
@@ -398,17 +402,19 @@ const submit = (): void => {
             />
           </div>
 
-          <div class="imp-actions imp-actions--between">
-            <AppButton variant="ghost" @click="back">Back</AppButton>
-            <div class="imp-actions__end">
-              <span v-if="breakdownsResolving" class="imp-note imp-note--faint">Loading coverage…</span>
-              <AppButton
-                variant="primary"
-                :disabled="selectedCount === 0 || breakdownsResolving"
-                @click="toStage3"
-              >
-                Review →
-              </AppButton>
+          <div class="imp-actions">
+            <div class="imp-actions__inner imp-actions__inner--between">
+              <AppButton variant="ghost" @click="back">Back</AppButton>
+              <div class="imp-actions__end">
+                <span v-if="breakdownsResolving" class="imp-note imp-note--faint">Loading coverage…</span>
+                <AppButton
+                  variant="primary"
+                  :disabled="selectedCount === 0 || breakdownsResolving"
+                  @click="toStage3"
+                >
+                  Review →
+                </AppButton>
+              </div>
             </div>
           </div>
         </section>
@@ -440,11 +446,13 @@ const submit = (): void => {
             </p>
           </div>
 
-          <div class="imp-actions imp-actions--between">
-            <AppButton variant="ghost" @click="back">Back</AppButton>
-            <AppButton variant="primary" size="lg" :loading="adopting" @click="submit">
-              Adopt series
-            </AppButton>
+          <div class="imp-actions">
+            <div class="imp-actions__inner imp-actions__inner--between">
+              <AppButton variant="ghost" @click="back">Back</AppButton>
+              <AppButton variant="primary" size="lg" :loading="adopting" @click="submit">
+                Adopt series
+              </AppButton>
+            </div>
           </div>
         </section>
       </div>
@@ -461,11 +469,16 @@ const submit = (): void => {
  * inner-scroll: the wizard GROWS with its content and the PAGE scrolls (QCAT-265,
  * the GROW case for a single-column wizard). Spacing is on the fluid token ladder
  * (byte-identical at the 16px anchor: 20px 30px sides, 20px trailing).
- * `--app-nav-bottom` (0 on desktop) clears the phone bottom-nav so the last
- * action/row is never occluded. */
+ *
+ * The bottom padding reserves clearance for the FIXED action-bar chrome
+ * (`--imp-actions-h`, §2.6.5) PLUS `--app-nav-bottom` (0 on desktop; the phone
+ * bottom-nav on ≤900px) so the last row of any stage clears the bar and the nav.
+ * `--imp-actions-h` is a MEASURED reserve for the bar's own height (verified in
+ * Storybook: the bar is ~57px desktop / ~69px phone — see `.imp-actions`). */
 .import {
+  --imp-actions-h: 4rem; /* 64px @16 — reserve ≥ the desktop bar height */
   padding: var(--space-2xl-tight) var(--space-3xl)
-    calc(var(--space-2xl-tight) + var(--app-nav-bottom));
+    calc(var(--space-2xl-tight) + var(--app-nav-bottom) + var(--imp-actions-h));
   background: var(--bg);
 }
 
@@ -512,33 +525,61 @@ const submit = (): void => {
 }
 
 /* Each stage flows in the document (QCAT-265 GROW): `.imp-stage__top`
- * (search/fields/review-head), then `.imp-stage__body` (the stage's list), then
- * `.imp-actions` (Back/Next) at the stage's own bottom. No fixed heights, no
- * inner scroller — the page scrolls.
+ * (search/fields/review-head), then `.imp-stage__body` (the stage's list). No
+ * fixed heights, no inner scroller — the page scrolls; the actions are lifted out
+ * of the stage flow into the fixed `.imp-actions` chrome bar below.
  *
- * JUDGMENT CALL 2 (owner-review): the wizard action row GROWS with the stage
- * rather than being pinned as a fixed viewport-bottom chrome bar (QCAT-263). The
- * stages are moderate single-column content (a handful of source rows, not a
- * 320-chapter list), so scroll-to-the-bottom-to-progress is the conventional,
- * conservative form-flow shape and keeps desktop closest to the reference. A
- * fixed chrome bar remains available if the owner wants the primary action
- * permanently reachable on a long Configure list. */
+ * JUDGMENT CALL 2 (owner-ratified, QCAT-263 chrome bar): the wizard action row is
+ * a FULL-WIDTH SOLID CHROME BAR pinned to the viewport bottom — NOT an inline row
+ * that grows at each stage's own end. The owner chose this over the earlier "grow"
+ * so the primary action (Adopt / Review / Cancel) is permanently reachable without
+ * scrolling to the bottom of a long Configure list. This is a deliberate desktop
+ * change; everything else on the wizard is byte-identical at the 16px anchor. */
 .imp-stage__body {
   /* grows with content */
   min-width: 0;
 }
 
-/* ---- Actions row ---------------------------------------------------------- */
+/* ---- Actions row — fixed viewport-bottom chrome bar (§2.6.5) --------------
+ * A persistent action = SOLID viewport-bottom chrome (QCAT-263): `position:
+ * fixed`, full width, opaque surface + top hairline + a subtle upward shadow, so
+ * it reads as deliberate app chrome (NOT a translucent `position: sticky` slab
+ * that floats mid-card — "that cancel button panel acting weird"). It reads the
+ * two chrome-edge vars, never hardcoding them: `--app-rail-left` (72px desktop /
+ * 0 ≤900px) so a viewport-pinned bar starts at the content column's left edge
+ * instead of running under the nav rail, and `--app-nav-bottom` (0 desktop /
+ * bottom-nav + safe-area ≤900px) so it sits above the phone bottom-nav. z-index
+ * 40 = above content + the rail (30), below dialogs (60). The buttons ride an
+ * inner wrapper capped at the SAME `55rem` measure as `.import__shell`, centred
+ * with matching side padding, so Cancel/Back/primary line up with the panel's
+ * own edges. This is NOT a viewport-fit letterbox — the stages still GROW and the
+ * page scrolls; only the action row is fixed (§2.6.3). EXTRACTION CANDIDATE: if a
+ * second screen (Series-Detail) wants the same chrome, lift `.imp-actions` +
+ * `.imp-actions__inner` into a story-covered `ui/ActionBar.vue` (§2.7 fix-once);
+ * kept inline here while Import is the sole consumer. */
 .imp-actions {
-  display: flex;
-  margin-top: var(--space-lg); /* 16px @16 */
+  position: fixed;
+  left: var(--app-rail-left);
+  right: 0;
+  bottom: var(--app-nav-bottom);
+  z-index: 40;
+  padding: var(--space-md) var(--space-3xl); /* 12px 30px @16 — sides match .import */
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px -8px rgba(0, 0, 0, 0.28);
 }
 
-.imp-actions--start {
+.imp-actions__inner {
+  display: flex;
+  max-width: 55rem; /* 880px @16 — matches .import__shell measure */
+  margin: 0 auto;
+}
+
+.imp-actions__inner--start {
   justify-content: flex-start;
 }
 
-.imp-actions--between {
+.imp-actions__inner--between {
   justify-content: space-between;
 }
 
@@ -549,10 +590,20 @@ const submit = (): void => {
 }
 
 @media (max-width: 900px) {
+  /* Bar buttons hit the 44px touch floor on a phone → the bar is taller; reserve
+   * more clearance. Side padding tightens to match the phone `.import` padding. */
+  .import {
+    --imp-actions-h: 4.5rem; /* 72px @16 — reserve ≥ the phone bar height */
+  }
+
+  .imp-actions {
+    padding: var(--space-md) var(--space-md); /* 12px @16 — matches phone .import sides */
+  }
+
   /* `.imp-actions__end` can carry a "Loading coverage…" note beside the
    * Review button — too wide next to Back on a phone. Wrap the whole row and
    * let the end group wrap onto its own line rather than overflow. */
-  .imp-actions--between {
+  .imp-actions__inner--between {
     flex-wrap: wrap;
     gap: var(--space-sm); /* 10px @16 */
   }
@@ -710,10 +761,11 @@ const submit = (): void => {
 @media (max-width: 900px) {
   /* QCAT-261 mobile-compact: reclaim horizontal room on a phone (mirrors
    * Discover/Downloads' mobile padding tightening) and clear the fixed phone
-   * bottom-nav so the last action/row is never occluded. Desktop unchanged. */
+   * bottom-nav + the action-bar chrome so the last action/row is never
+   * occluded. Desktop unchanged. (`--imp-actions-h` bumped to 4.5rem above.) */
   .import {
     padding: var(--space-base) var(--space-md)
-      calc(var(--space-base) + var(--app-nav-bottom)); /* 14px 12px @16 */
+      calc(var(--space-base) + var(--app-nav-bottom) + var(--imp-actions-h)); /* 14px 12px @16 */
   }
 
   .import__panel {
