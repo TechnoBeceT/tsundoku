@@ -80,15 +80,15 @@ const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 11px 14px;
+  padding: 0.6875rem var(--space-base); /* 11px 14px @16 (11px off-ladder) */
 }
 
 /* ---- Failed-row extras (before the badge) --------------------------------- */
 .retry-badge {
   flex: none;
-  font-size: 10.5px;
+  font-size: 0.65625rem; /* 10.5px @16 — off-ladder, byte-identical rem literal */
   font-weight: var(--weight-bold);
-  padding: 2px 8px;
+  padding: var(--space-3xs) var(--space-xs);
   border-radius: var(--radius-pill);
   background: var(--dl-queued-bg);
   color: var(--dl-queued-text);
@@ -102,14 +102,16 @@ const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props
 
 /* ---- Expandable last-error ------------------------------------------------ */
 .dl-card__error {
-  margin-top: 9px;
-  padding-left: 53px;
+  margin-top: 0.5625rem; /* 9px @16 — off-ladder, byte-identical rem literal */
+  /* 53px = ChapterDownloadRow's cover (2.5rem) + row gap (0.8125rem), as rem so
+     the error block stays aligned under the title as the root scales. */
+  padding-left: 3.3125rem;
 }
 
 .err-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 0.4375rem; /* 7px @16 — off-ladder, byte-identical rem literal */
   max-width: 100%;
   background: none;
   border: none;
@@ -123,7 +125,7 @@ const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props
 .err-toggle__label {
   flex: none;
   font-weight: var(--weight-bold);
-  padding: 1px 6px;
+  padding: 0.0625rem var(--space-xs-tight); /* 1px 6px @16 (1px off-ladder) */
   border-radius: var(--radius-xs);
   background: var(--dl-error-pill-bg);
   color: var(--dl-failed-text);
@@ -137,11 +139,11 @@ const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props
 }
 
 .err-panel {
-  margin-top: 9px;
+  margin-top: 0.5625rem; /* 9px @16 — off-ladder, byte-identical rem literal */
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 11px 13px;
+  padding: 0.6875rem 0.8125rem; /* 11px 13px @16 — off-ladder, byte-identical */
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--muted);
@@ -150,7 +152,7 @@ const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props
 
 .err-panel__msg {
   color: var(--dl-failed-text);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-xs-tight);
   word-break: break-word;
 }
 </style>

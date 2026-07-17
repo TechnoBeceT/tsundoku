@@ -45,8 +45,8 @@ const label = computed(() =>
 .cycle {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
+  gap: var(--space-xs);
+  padding: 0.4375rem var(--space-base); /* 7px 14px @16 (7px off-ladder) */
   border-radius: var(--radius-pill);
   background: var(--surface2);
   border: 1px solid var(--border);

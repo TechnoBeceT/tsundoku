@@ -96,11 +96,11 @@ const providerLabel = computed(() => props.item.providerName || '—')
 .dl-row {
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 0.8125rem; /* 13px @16 — off-ladder, byte-identical rem literal */
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 11px 14px;
+  padding: 0.6875rem var(--space-base); /* 11px 14px @16 (11px off-ladder) */
 }
 
 /* Nested inside a card (FailedDownloadCard) — the card owns the surface. */
@@ -115,7 +115,7 @@ const providerLabel = computed(() => props.item.providerName || '—')
    placeholder, and lazy <img>. This wrapper only fixes the box width — the
    atom derives the 54px height from `aspect="40 / 54"`. */
 .dl-row__cover {
-  width: 40px;
+  width: 2.5rem; /* 40px @16 — byte-identical rem literal */
   flex: none;
 }
 
@@ -132,12 +132,12 @@ const providerLabel = computed(() => props.item.providerName || '—')
 .dl-row__titleline {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .dl-row__title {
   font-weight: var(--weight-bold);
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px @16 — off-ladder, byte-identical rem literal */
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -147,7 +147,7 @@ const providerLabel = computed(() => props.item.providerName || '—')
 .dl-row__meta {
   font-size: var(--text-sm);
   color: var(--muted);
-  margin-top: 2px;
+  margin-top: var(--space-3xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -161,7 +161,7 @@ const providerLabel = computed(() => props.item.providerName || '—')
    the dense meta line, with the TARGET emphasised — it is the source the chapter is
    converging to, which is the thing the owner is watching during a convergence wave. */
 .dl-row__arrow {
-  margin: 0 1px;
+  margin: 0 0.0625rem; /* 1px @16 — byte-identical rem literal */
 }
 
 .dl-row__target {
@@ -174,7 +174,7 @@ const providerLabel = computed(() => props.item.providerName || '—')
 .dl-row__controls {
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 0.8125rem; /* 13px @16 — off-ladder, byte-identical rem literal */
   flex: none;
 }
 
@@ -192,8 +192,10 @@ const providerLabel = computed(() => props.item.providerName || '—')
   }
 
   .dl-row__controls {
-    flex: 1 1 calc(100% - 53px);
-    margin-left: 53px;
+    /* 53px = cover (2.5rem) + row gap (0.8125rem), as rem so the indent tracks
+       the cover+gap as the root scales — keeps line 2 aligned under the title. */
+    flex: 1 1 calc(100% - 3.3125rem);
+    margin-left: 3.3125rem;
     justify-content: flex-start;
     /* Defensive: Failed rows can pack retry-badge + next-attempt + status
        badge + a retry button into this cluster — let it wrap onto a further

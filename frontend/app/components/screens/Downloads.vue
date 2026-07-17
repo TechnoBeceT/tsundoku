@@ -179,11 +179,9 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
 <template>
   <div class="downloads">
-    <!-- QCAT-231 "fit the screen, scroll inside": everything down to here is the
-         FLOWING top (tabs/cycle/run-now + the §16 result line) — short and
-         fixed-content, so it never needs to scroll and is never clipped. Only
-         `.downloads__body` below is bounded to the remaining viewport; see its
-         comment. -->
+    <!-- The flowing top: tabs/cycle/run-now + the §16 result line. Everything on
+         this screen now grows in the document (QCAT-265) — no letterbox, no
+         inner-scroll; the page itself scrolls. -->
     <div class="downloads__top">
       <!-- Top-level tabs + cycle banner + manual "Download now" trigger -->
       <div class="downloads__head">
@@ -205,16 +203,14 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
       <FormError v-if="runError" class="run-error" :message="runError" />
     </div>
 
-    <!-- QCAT-231 bounded region: fits the remaining viewport under `.downloads__top`.
-         Each tab's own toolbar (sub-tabs/search/toggle) stays fixed at the top of
-         this region (`.downloads__toolbar`) and only the row list itself
-         (`.downloads__list`) scrolls internally — so a long Failed/Queued list never
-         forces the whole page to scroll, and the toolbar above it is always in reach. -->
+    <!-- The body: each tab's toolbar (sub-tabs/search/toggle) + its row list, all
+         flowing in the document. A long Failed/Queued list grows the page (the
+         toolbar scrolls away with it) rather than scrolling inside a bounded box. -->
     <div class="downloads__body">
       <!-- Loading skeletons -->
       <div v-if="loading" class="downloads__list">
         <div class="rows">
-          <Skeleton v-for="n in skeletons" :key="n" variant="row" height="76px" />
+          <Skeleton v-for="n in skeletons" :key="n" variant="row" height="4.75rem" />
         </div>
       </div>
 
@@ -393,49 +389,28 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 </template>
 
 <style scoped>
-/* QCAT-231 "fit the screen, scroll inside": `.downloads` is a viewport-fitting
- * flex column, NOT a naturally page-scrolling container. `.downloads__top`
- * (tabs/cycle/run-now + the §16 result line) is short, fixed-content, and
- * flows at its natural height; `.downloads__body` below takes the rest of the
- * viewport and is itself bounded, so its own `.downloads__list` can inner-
- * scroll (see that rule) instead of growing the whole page. `min-height: 0` on
- * the flex column lets it actually shrink below content size — the same
- * grid/flex overflow trap documented on SeriesDetail's `.columns` /
- * PanelCard's `.panel`. Holds at every width (QCAT-230) — Downloads never
- * splits into side-by-side columns, so no mobile override is needed here
- * (contrast SeriesDetail's `.columns`, which stacks two panels).
- */
+/* The old QCAT-231 letterbox (`height: calc(100dvh - 64px)` + a flex-fill chain
+ * bounding `.downloads__body`/`.downloads__list` into an inner-scroll region)
+ * was experience drift (§0.1): on a large screen the owner was working inside a
+ * small letterboxed area. Stripped — no viewport-keyed height, no inner-scroll:
+ * the toolbar + row list flow in the document and the PAGE scrolls (QCAT-265,
+ * the GROW case for a single-column activity list). Spacing is on the fluid
+ * token ladder (byte-identical at the 16px desktop anchor: 24px 30px sides, 20px
+ * trailing). `--app-nav-bottom` (0 on desktop) clears the phone bottom-nav so
+ * the last row is never occluded. */
 .downloads {
-  display: flex;
-  flex-direction: column;
-  height: calc(100dvh - 64px);
-  min-height: 0;
-  padding: 24px 30px 20px;
+  padding: var(--space-2xl) var(--space-3xl)
+    calc(var(--space-2xl-tight) + var(--app-nav-bottom));
   background: var(--bg);
-}
-
-.downloads__top {
-  flex: none;
-}
-
-/* Bounded region under `.downloads__top`: a flex column so each tab's fixed
- * `.downloads__toolbar` (when present) stays put and only `.downloads__list`
- * scrolls. `min-height: 0` re-applies the same shrink-to-fit override one
- * level down (a flex ITEM's automatic minimum height is its content size). */
-.downloads__body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 /* ---- Tab bar + cycle banner ----------------------------------------------- */
 .downloads__head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  margin-bottom: var(--space-xl);
 }
 
 /* The cycle pill (+ the "Download now" button that follows it) sits at the far
@@ -446,64 +421,51 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
 /* ---- "Download now" result (§16) ------------------------------------------ */
 .run-note {
-  margin: -6px 0 14px;
+  margin: calc(var(--space-xs-tight) * -1) 0 var(--space-base);
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   color: var(--dl-ok-icon);
 }
 
 .run-error {
-  margin: -6px 0 14px;
+  margin: calc(var(--space-xs-tight) * -1) 0 var(--space-base);
 }
 
-/* ---- Per-tab toolbar (sub-tabs/search/toggle) — fixed above the scrolling list */
-.downloads__toolbar {
-  flex: none;
-}
-
-/* ---- The bounded, independently-scrolling row list (QCAT-231) ------------- */
-/* `flex: 1` takes whatever height `.downloads__body` has left after its
- * sibling `.downloads__toolbar` (when rendered); `min-height: 0` is the SAME
- * flex-shrink override one level deeper again — without it this region would
- * grow to fit every row instead of scrolling, and the page-level scrollbar
- * comes back (exactly the trap PanelCard's `.panel__content` documents). */
+/* ---- The row list (grows with content; the page scrolls, QCAT-265) -------- */
 .downloads__list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 4px;
+  padding-bottom: var(--space-2xs);
 }
 
 /* ---- Failed sub-head + bulk actions --------------------------------------- */
 .subhead {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-lg);
 }
 
 .subhead__actions {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 /* ---- Queued head ---------------------------------------------------------- */
 .queued-head {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-base);
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-base);
 }
 
 /* ---- Search --------------------------------------------------------------- */
 .searchbar {
-  width: 300px;
+  width: 18.75rem; /* 300px @16 — byte-identical rem literal */
   max-width: 100%;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-base);
 }
 
 .queued-head .searchbar {
@@ -514,7 +476,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 .toggle {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 0.5625rem; /* 9px @16 — off-ladder, byte-identical rem literal */
 }
 
 .toggle__label {
@@ -525,14 +487,14 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
 /* ---- Surfaced retry-error banner spacing (§16) ---------------------------- */
 .downloads__error {
-  margin-bottom: 14px;
+  margin-bottom: var(--space-base);
 }
 
 /* ---- Row list ------------------------------------------------------------- */
 .rows {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 /* ---- Progress (active rows) ----------------------------------------------- */
@@ -542,15 +504,15 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
    default) and stacks the "12 / 40" page counter beneath the bar once page totals
    are known. */
 .downloads__progress {
-  width: 90px;
+  width: 5.625rem; /* 90px @16 — byte-identical rem literal */
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .downloads__pages {
-  font-size: 10.5px;
+  font-size: 0.65625rem; /* 10.5px @16 — off-ladder, byte-identical rem literal */
   font-weight: var(--weight-bold);
   color: var(--faint);
   text-align: right;
@@ -561,7 +523,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 .downloads__more {
   display: flex;
   justify-content: center;
-  margin-top: 24px;
+  margin-top: var(--space-2xl);
 }
 
 /* ---- Upgrade tag (queued) ------------------------------------------------- */
@@ -569,16 +531,23 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 10.5px;
+  gap: var(--space-2xs);
+  font-size: 0.65625rem; /* 10.5px @16 — off-ladder, byte-identical rem literal */
   font-weight: var(--weight-extrabold);
-  padding: 2px 8px;
+  padding: var(--space-3xs) var(--space-xs);
   border-radius: var(--radius-pill);
   background: var(--dl-queued-bg);
   color: var(--dl-queued-text);
 }
 
 @media (max-width: 900px) {
+  /* QCAT-261 mobile-compact: halve the side gutters so a phone packs content
+     densely (Komikku), and clear the fixed phone bottom-nav. Desktop unchanged. */
+  .downloads {
+    padding: var(--space-lg) var(--space-lg)
+      calc(var(--space-lg) + var(--app-nav-bottom));
+  }
+
   /* `.downloads__cycle`'s `margin-left: auto` assumes a single, non-wrapped
      head row; once `.downloads__head` wraps (SegmentedTabs' own tabs already
      wrap independently — see SegmentedTabs.vue), the auto margin instead
