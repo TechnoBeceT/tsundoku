@@ -82,3 +82,25 @@ export const Grid: Story = {
       '</div>',
   }),
 }
+
+/**
+ * §3 container-query proof surface — the SAME card at six FIXED tile widths in
+ * one frame (95 / 112 / 130 / 150 / 186 / 240px). The card is now a container,
+ * so its title/badge/meta size by the TILE's width, not the viewport: a column
+ * here reads a different size than its neighbour at the SAME viewport, and each
+ * column reads the SAME size at any viewport (the container-query win, §3.2).
+ * Desktop tiles (≥186px) hit the title cap = 13.5px (byte-identical to 2a44360).
+ */
+export const TileWidths: Story = {
+  render: () => ({
+    components: { SeriesCard },
+    setup: () => ({ series: monitored, widths: [95, 112, 130, 150, 186, 240] }),
+    template:
+      '<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">' +
+      '<div v-for="w in widths" :key="w" :style="{ width: w + \'px\' }">' +
+      '<div style="font:11px monospace;color:var(--muted);margin-bottom:6px">{{ w }}px</div>' +
+      '<SeriesCard :series="series" />' +
+      '</div>' +
+      '</div>',
+  }),
+}

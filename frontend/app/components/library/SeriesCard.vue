@@ -123,6 +123,14 @@ const progressPct = computed(() => {
 </template>
 
 <style scoped>
+/* 🔴 §3 CONTAINER QUERY: the card is a container (`inline-size`) so its own
+ * WIDTH — not the viewport — drives the width-dependent sizing (title, badge,
+ * meta). A card's width is `tile = viewport × columns × grid-config`, which a
+ * media query structurally cannot read (§3.2): the same card renders at a
+ * ~95-130px phone tile (grid holds 3, grows them) and at a ≥186px desktop tile.
+ * `container-type: inline-size` (NEVER `size`, §3.5 — that adds full size
+ * containment and the card would collapse). Descendants query `@container card`
+ * below. */
 .card {
   position: relative;
   display: block;
@@ -130,15 +138,17 @@ const progressPct = computed(() => {
   padding: 0;
   text-align: left;
   cursor: pointer;
-  border-radius: 15px;
+  border-radius: 0.9375rem; /* 15px @16 — off-ladder, byte-identical rem literal */
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
   transition: transform 0.16s, border-color 0.16s, box-shadow 0.16s;
+  container-type: inline-size;
+  container-name: card;
 }
 
 .card:hover {
-  transform: translateY(-5px);
+  transform: translateY(-0.3125rem); /* -5px @16 */
   border-color: var(--border2);
   box-shadow: var(--shadow);
 }
@@ -163,19 +173,19 @@ const progressPct = computed(() => {
 
 .card__top {
   position: absolute;
-  top: 9px;
-  left: 9px;
-  right: 9px;
+  top: 0.5625rem; /* 9px @16 — off-ladder, byte-identical rem literal */
+  left: 0.5625rem;
+  right: 0.5625rem;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 6px;
+  gap: var(--space-xs-tight); /* 6px @16 */
 }
 
 .card__flags {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 0.3125rem; /* 5px @16 — off-ladder, byte-identical rem literal */
   align-items: flex-end;
 }
 
@@ -183,10 +193,10 @@ const progressPct = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
+  min-width: 1.25rem; /* 20px @16 */
+  height: 1.25rem;
+  padding: 0 var(--space-xs-tight); /* 0 6px @16 */
+  border-radius: var(--radius-md); /* 10px @16 */
   background: var(--accentBright);
   color: var(--cover-text);
   font-size: var(--text-xs);
@@ -199,16 +209,24 @@ const progressPct = computed(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 11px;
+  padding: 0.6875rem; /* 11px @16 — off-ladder, byte-identical rem literal */
 }
 
+/* 🔴 §3 width-driven TITLE: `clamp(rem-floor, cqi, rem-cap)`. The `cqi` term
+ * makes it size by the CARD's own width; the rem floor is the a11y anchor
+ * (§3.7 — user font-size preference must still flow through). The 0.84375rem
+ * (13.5px @16) CAP is reached at ~179px container width, so EVERY desktop tile
+ * (min-tile 186px, always ≥186px) hits the cap and renders at exactly 13.5px —
+ * byte-identical to 2a44360, which used a fixed `font-size: 13.5px`. Below the
+ * floor a a phone tile (~86-121px) it steps down toward the 12px floor.
+ * A11y ratio 0.84375/0.75 = 1.125 ≤ 2.5 (§2.2). */
 .card__title {
   font-weight: var(--weight-bold);
-  font-size: 13.5px;
+  font-size: clamp(0.75rem, 4.2cqi + 0.375rem, 0.84375rem); /* 12px … 13.5px @16 */
   color: var(--cover-text);
   line-height: 1.22;
-  margin-bottom: 8px;
-  min-height: 33px;
+  margin-bottom: var(--space-xs); /* 8px @16 */
+  min-height: 2.0625rem; /* 33px @16 */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -217,13 +235,13 @@ const progressPct = computed(() => {
 }
 
 .card__bar {
-  margin-bottom: 7px;
+  margin-bottom: 0.4375rem; /* 7px @16 — off-ladder, byte-identical rem literal */
 }
 
 .card__meta {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 0.5625rem; /* 9px @16 — off-ladder, byte-identical rem literal */
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   color: var(--cover-text-soft);
@@ -232,7 +250,30 @@ const progressPct = computed(() => {
 .card__downloaded {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2xs); /* 4px @16 */
+}
+
+/* 🔴 §3 NARROW-TILE step (discrete, §3.6 — meta/badge have a legibility FLOOR,
+ * not a curve). Fires by the CARD's own width: a tile ≤160px is only ever a
+ * phone held-3 tile (~86-121px). Desktop tiles are min-tile 186px → this NEVER
+ * fires on desktop (byte-identical). It tightens the meta row (drop to the
+ * 9.5px badge floor + a tighter gap) so the downloaded/wanted/failed counts fit
+ * a ~95px tile without overflow, and pulls the body padding in. The chosen STEP
+ * is width-driven (identical at a given tile width across every viewport); the
+ * magnitudes inside still ride the fluid root for the a11y font preference. */
+@container card (max-width: 160px) {
+  .card__body {
+    padding: var(--space-xs); /* 8px @16 */
+  }
+
+  .card__meta {
+    gap: var(--space-2xs); /* 4px @16 */
+    font-size: var(--text-2xs); /* 9.5px @16 — the badge floor */
+  }
+
+  .card__unread {
+    font-size: var(--text-2xs);
+  }
 }
 
 .card__wanted {
