@@ -221,13 +221,14 @@ const emit = defineEmits<{
 }>()
 
 // ---- Derived data ----------------------------------------------------------
-// Chapters ordered by number (null sorts as 0) then by stable key — matches the
-// backend's "ordered by number then chapterKey" contract.
+// Chapters ordered LATEST-FIRST by number (null sorts as 0) then by stable key
+// (reversed tiebreak to match) — Komikku/Suwayomi convention: newest chapter
+// on top so reading progress is visible without scrolling to the bottom.
 const sortedChapters = computed<Chapter[]>(() =>
   [...props.series.chapters]
     .filter((c) => c.state !== 'superseded')
     .sort(
-      (a, b) => (a.number ?? 0) - (b.number ?? 0) || a.chapterKey.localeCompare(b.chapterKey),
+      (a, b) => (b.number ?? 0) - (a.number ?? 0) || b.chapterKey.localeCompare(a.chapterKey),
     ),
 )
 
