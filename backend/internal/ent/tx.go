@@ -16,6 +16,8 @@ type Tx struct {
 	Category *CategoryClient
 	// Chapter is the client for interacting with the Chapter builders.
 	Chapter *ChapterClient
+	// DisabledSource is the client for interacting with the DisabledSource builders.
+	DisabledSource *DisabledSourceClient
 	// EtagCache is the client for interacting with the EtagCache builders.
 	EtagCache *EtagCacheClient
 	// HarvestedExtension is the client for interacting with the HarvestedExtension builders.
@@ -189,6 +191,7 @@ func (tx *Tx) Client() *Client {
 func (tx *Tx) init() {
 	tx.Category = NewCategoryClient(tx.config)
 	tx.Chapter = NewChapterClient(tx.config)
+	tx.DisabledSource = NewDisabledSourceClient(tx.config)
 	tx.EtagCache = NewEtagCacheClient(tx.config)
 	tx.HarvestedExtension = NewHarvestedExtensionClient(tx.config)
 	tx.HarvestedRepo = NewHarvestedRepoClient(tx.config)

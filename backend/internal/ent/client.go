@@ -18,6 +18,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/ent/disabledsource"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
@@ -49,6 +50,8 @@ type Client struct {
 	Category *CategoryClient
 	// Chapter is the client for interacting with the Chapter builders.
 	Chapter *ChapterClient
+	// DisabledSource is the client for interacting with the DisabledSource builders.
+	DisabledSource *DisabledSourceClient
 	// EtagCache is the client for interacting with the EtagCache builders.
 	EtagCache *EtagCacheClient
 	// HarvestedExtension is the client for interacting with the HarvestedExtension builders.
@@ -102,6 +105,7 @@ func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.Category = NewCategoryClient(c.config)
 	c.Chapter = NewChapterClient(c.config)
+	c.DisabledSource = NewDisabledSourceClient(c.config)
 	c.EtagCache = NewEtagCacheClient(c.config)
 	c.HarvestedExtension = NewHarvestedExtensionClient(c.config)
 	c.HarvestedRepo = NewHarvestedRepoClient(c.config)
@@ -216,6 +220,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		config:             cfg,
 		Category:           NewCategoryClient(cfg),
 		Chapter:            NewChapterClient(cfg),
+		DisabledSource:     NewDisabledSourceClient(cfg),
 		EtagCache:          NewEtagCacheClient(cfg),
 		HarvestedExtension: NewHarvestedExtensionClient(cfg),
 		HarvestedRepo:      NewHarvestedRepoClient(cfg),
@@ -257,6 +262,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		config:             cfg,
 		Category:           NewCategoryClient(cfg),
 		Chapter:            NewChapterClient(cfg),
+		DisabledSource:     NewDisabledSourceClient(cfg),
 		EtagCache:          NewEtagCacheClient(cfg),
 		HarvestedExtension: NewHarvestedExtensionClient(cfg),
 		HarvestedRepo:      NewHarvestedRepoClient(cfg),
@@ -306,9 +312,9 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.Category, c.Chapter, c.EtagCache, c.HarvestedExtension, c.HarvestedRepo,
-		c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush, c.ProviderChapter,
-		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.HarvestedExtension,
+		c.HarvestedRepo, c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush,
+		c.ProviderChapter, c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourcePreference,
 		c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
@@ -320,9 +326,9 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Category, c.Chapter, c.EtagCache, c.HarvestedExtension, c.HarvestedRepo,
-		c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush, c.ProviderChapter,
-		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.HarvestedExtension,
+		c.HarvestedRepo, c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush,
+		c.ProviderChapter, c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourcePreference,
 		c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
@@ -337,6 +343,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Category.mutate(ctx, m)
 	case *ChapterMutation:
 		return c.Chapter.mutate(ctx, m)
+	case *DisabledSourceMutation:
+		return c.DisabledSource.mutate(ctx, m)
 	case *EtagCacheMutation:
 		return c.EtagCache.mutate(ctx, m)
 	case *HarvestedExtensionMutation:
@@ -693,6 +701,139 @@ func (c *ChapterClient) mutate(ctx context.Context, m *ChapterMutation) (Value, 
 		return (&ChapterDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown Chapter mutation op: %q", m.Op())
+	}
+}
+
+// DisabledSourceClient is a client for the DisabledSource schema.
+type DisabledSourceClient struct {
+	config
+}
+
+// NewDisabledSourceClient returns a client for the DisabledSource from the given config.
+func NewDisabledSourceClient(c config) *DisabledSourceClient {
+	return &DisabledSourceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `disabledsource.Hooks(f(g(h())))`.
+func (c *DisabledSourceClient) Use(hooks ...Hook) {
+	c.hooks.DisabledSource = append(c.hooks.DisabledSource, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `disabledsource.Intercept(f(g(h())))`.
+func (c *DisabledSourceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.DisabledSource = append(c.inters.DisabledSource, interceptors...)
+}
+
+// Create returns a builder for creating a DisabledSource entity.
+func (c *DisabledSourceClient) Create() *DisabledSourceCreate {
+	mutation := newDisabledSourceMutation(c.config, OpCreate)
+	return &DisabledSourceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of DisabledSource entities.
+func (c *DisabledSourceClient) CreateBulk(builders ...*DisabledSourceCreate) *DisabledSourceCreateBulk {
+	return &DisabledSourceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *DisabledSourceClient) MapCreateBulk(slice any, setFunc func(*DisabledSourceCreate, int)) *DisabledSourceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &DisabledSourceCreateBulk{err: fmt.Errorf("calling to DisabledSourceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*DisabledSourceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &DisabledSourceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for DisabledSource.
+func (c *DisabledSourceClient) Update() *DisabledSourceUpdate {
+	mutation := newDisabledSourceMutation(c.config, OpUpdate)
+	return &DisabledSourceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *DisabledSourceClient) UpdateOne(_m *DisabledSource) *DisabledSourceUpdateOne {
+	mutation := newDisabledSourceMutation(c.config, OpUpdateOne, withDisabledSource(_m))
+	return &DisabledSourceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *DisabledSourceClient) UpdateOneID(id uuid.UUID) *DisabledSourceUpdateOne {
+	mutation := newDisabledSourceMutation(c.config, OpUpdateOne, withDisabledSourceID(id))
+	return &DisabledSourceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for DisabledSource.
+func (c *DisabledSourceClient) Delete() *DisabledSourceDelete {
+	mutation := newDisabledSourceMutation(c.config, OpDelete)
+	return &DisabledSourceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *DisabledSourceClient) DeleteOne(_m *DisabledSource) *DisabledSourceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *DisabledSourceClient) DeleteOneID(id uuid.UUID) *DisabledSourceDeleteOne {
+	builder := c.Delete().Where(disabledsource.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &DisabledSourceDeleteOne{builder}
+}
+
+// Query returns a query builder for DisabledSource.
+func (c *DisabledSourceClient) Query() *DisabledSourceQuery {
+	return &DisabledSourceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeDisabledSource},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a DisabledSource entity by its id.
+func (c *DisabledSourceClient) Get(ctx context.Context, id uuid.UUID) (*DisabledSource, error) {
+	return c.Query().Where(disabledsource.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *DisabledSourceClient) GetX(ctx context.Context, id uuid.UUID) *DisabledSource {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *DisabledSourceClient) Hooks() []Hook {
+	return c.hooks.DisabledSource
+}
+
+// Interceptors returns the client interceptors.
+func (c *DisabledSourceClient) Interceptors() []Interceptor {
+	return c.inters.DisabledSource
+}
+
+func (c *DisabledSourceClient) mutate(ctx context.Context, m *DisabledSourceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&DisabledSourceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&DisabledSourceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&DisabledSourceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&DisabledSourceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown DisabledSource mutation op: %q", m.Op())
 	}
 }
 
@@ -3535,17 +3676,17 @@ func (c *TrackerConnectionClient) mutate(ctx context.Context, m *TrackerConnecti
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Category, Chapter, EtagCache, HarvestedExtension, HarvestedRepo, ImportEntry,
-		LatestSeries, Owner, PendingTrackPush, ProviderChapter, PushSubscription,
-		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
-		SourceMetric, SourcePreference, SourceSeedState, SuwayomiSyncState,
-		TrackBinding, TrackerConnection []ent.Hook
+		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
+		ImportEntry, LatestSeries, Owner, PendingTrackPush, ProviderChapter,
+		PushSubscription, Series, SeriesProvider, Settings, SourceCircuitState,
+		SourceEvent, SourceMetric, SourcePreference, SourceSeedState,
+		SuwayomiSyncState, TrackBinding, TrackerConnection []ent.Hook
 	}
 	inters struct {
-		Category, Chapter, EtagCache, HarvestedExtension, HarvestedRepo, ImportEntry,
-		LatestSeries, Owner, PendingTrackPush, ProviderChapter, PushSubscription,
-		Series, SeriesProvider, Settings, SourceCircuitState, SourceEvent,
-		SourceMetric, SourcePreference, SourceSeedState, SuwayomiSyncState,
-		TrackBinding, TrackerConnection []ent.Interceptor
+		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
+		ImportEntry, LatestSeries, Owner, PendingTrackPush, ProviderChapter,
+		PushSubscription, Series, SeriesProvider, Settings, SourceCircuitState,
+		SourceEvent, SourceMetric, SourcePreference, SourceSeedState,
+		SuwayomiSyncState, TrackBinding, TrackerConnection []ent.Interceptor
 	}
 )

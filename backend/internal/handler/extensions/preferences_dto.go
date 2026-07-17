@@ -39,10 +39,14 @@ type SourcePreferenceDTO struct {
 // SourcePreferencesGroupDTO is one source's preferences within the grouped GET
 // response — a single extension backs one source per language.
 //
-// (QCAT-253, P2 Suwayomi-removal slice 5): `enabled` (the per-language
-// enable/disable toggle) is RETIRED along with PATCH
-// /api/suwayomi/sources/:sourceId/enabled — sourceengine has no server-side
-// "disabled source" concept to proxy (see handler.go's package doc).
+// `enabled` (the per-language enable/disable toggle) is resolved from Tsundoku's
+// OWN disabled-source store (internal/disabledsource), NOT the engine (the
+// internal engine has no server-side "disabled source" concept). It is the
+// inverse of a DisabledSource row: a disabled source is hidden from the
+// Discover/Search/Browse pickers (internal/imports) but keeps updating any
+// series already adopted from it. Toggled via PATCH
+// /api/sources/:sourceId/enabled; the FE hides a disabled group's preference
+// block.
 type SourcePreferencesGroupDTO struct {
 	// SourceID is the engine host source id (the write body's sourceId).
 	SourceID string `json:"sourceId"`
@@ -50,8 +54,22 @@ type SourcePreferencesGroupDTO struct {
 	SourceName string `json:"sourceName"`
 	// Lang is the source's BCP-47 language tag.
 	Lang string `json:"lang"`
+	// Enabled is the per-language enable/disable state (Tsundoku-side; the
+	// inverse of a DisabledSource row). Defaults to true when no disabled-flag
+	// store is wired.
+	Enabled bool `json:"enabled"`
 	// Preferences are this source's configurable preferences, in array order.
 	Preferences []SourcePreferenceDTO `json:"preferences"`
+}
+
+// SourceEnabledDTO is the response of PATCH /api/sources/:sourceId/enabled — the
+// authoritative per-language enable/disable state after the write (re-read from
+// Tsundoku's disabled-source store, never the request echo).
+type SourceEnabledDTO struct {
+	// SourceID is the engine host source id (stringified).
+	SourceID string `json:"sourceId"`
+	// Enabled is the enable/disable state as re-read after the write.
+	Enabled bool `json:"enabled"`
 }
 
 // SourcePreferencesBySourceDTO is the GET response: an extension's preferences

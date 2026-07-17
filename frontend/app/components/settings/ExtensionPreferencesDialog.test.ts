@@ -1,22 +1,23 @@
 /**
  * ExtensionPreferencesDialog — renders every control variant, forwards a
- * control change, and reflects the per-row saving/save-error state. The
- * per-language enable/disable Switch is RETIRED (the engine host has no such
- * concept) — do not re-add assertions for it.
+ * control change, reflects the per-row saving/save-error state, AND drives the
+ * per-language enable/disable Switch: forwarding `toggle-enabled`, collapsing a
+ * disabled group's preference block, and reflecting the enabling/enable-error
+ * state.
  *
  * The real Dialog teleports its body through reka-ui's portal (which does not
  * render in happy-dom), so it is stubbed to render its default slot inline. That
  * keeps the assertions on the dialog's OWN behaviour — grouping, wiring the
- * controls, forwarding `change`, and the busy/error surfaces — not on reka.
+ * controls, forwarding events, and the busy/error surfaces — not on reka.
  *
  * A preference's own Switch/CheckBox control is `[role="switch"]`, so tests
- * select by aria-label (a preference's is its title) rather than relying on
- * DOM order.
+ * select by aria-label (a preference's is its title, a group's enable Switch is
+ * `Enable <source> (<lang>)`) rather than relying on DOM order.
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ExtensionPreferencesDialog from './ExtensionPreferencesDialog.vue'
-import { preferenceGroup } from '../../fixtures/preferences'
+import { preferenceGroup, preferenceGroups } from '../../fixtures/preferences'
 
 // Stub reka's Dialog to render its default slot inline (no portal/teleport).
 const DialogStub = { template: '<div class="dialog-stub"><slot /></div>' }
@@ -63,5 +64,37 @@ describe('ExtensionPreferencesDialog', () => {
   it('shows the empty state when there are no groups', () => {
     const wrapper = mountDialog({ groups: [] })
     expect(wrapper.text()).toContain('No configurable preferences')
+  })
+
+  // ---- per-language enable/disable Switch (feature #1 + #2) ------------------
+
+  it('forwards toggle-enabled when a group Switch is flipped', async () => {
+    const wrapper = mountDialog() // preferenceGroup is enabled
+    await wrapper.find('[aria-label="Enable MangaDex (en)"]').trigger('click')
+    const emitted = wrapper.emitted('toggle-enabled')
+    expect(emitted).toBeTruthy()
+    // An enabled source flips to disabled.
+    expect(emitted![0]![0]).toEqual({ sourceId: 'src-en', enabled: false })
+  })
+
+  it('collapses a disabled group\'s preference block, keeping the enabled group\'s controls', () => {
+    // preferenceGroups = [en enabled (all variants), ja DISABLED (one switch)].
+    const wrapper = mountDialog({ groups: preferenceGroups })
+    // The disabled JA group shows the collapsed note, not its switch control.
+    expect(wrapper.text()).toContain('Disabled — hidden from Discover')
+    // The enabled EN group's Data saver control still renders.
+    expect(dataSaverSwitch(wrapper).exists()).toBe(true)
+    // The JA group's enable Switch itself is still present (so it can be re-enabled).
+    expect(wrapper.find('[aria-label="Enable MangaDex (ja)"]').exists()).toBe(true)
+  })
+
+  it('disables the group Switch being written (enablingKey)', () => {
+    const wrapper = mountDialog({ enablingKey: 'src-en' })
+    expect(wrapper.find('[aria-label="Enable MangaDex (en)"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('surfaces an enable/disable failure banner (enableError)', () => {
+    const wrapper = mountDialog({ enableError: 'Failed to update source' })
+    expect(wrapper.text()).toContain('Failed to update source')
   })
 })

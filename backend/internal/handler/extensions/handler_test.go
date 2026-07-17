@@ -5,6 +5,7 @@
 package extensions_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -45,17 +46,59 @@ func seededExt() sourceengine.Extension {
 type testEnv struct {
 	e     *echo.Echo
 	fake  *sourceenginefake.Client
+	store *fakeToggleStore
 	token string
 }
 
-// newTestEnv wires an Echo instance whose Handler holds fc directly (nil
-// durable store: db/cache/httpGet) — these tests exercise the pure proxy
-// behaviour; the best-effort topology write-through is covered separately
+// fakeToggleStore is an in-memory extensions.SourceToggleStore — the
+// Tsundoku-side per-source disabled-flag store — for the handler tests, so the
+// enable/disable toggle + the Preferences `enabled` field are exercised without
+// a real DB. A row's presence in disabled = disabled. Errors can be forced.
+type fakeToggleStore struct {
+	disabled map[int64]bool
+	disErr   error
+	setErr   error
+}
+
+func newFakeToggleStore() *fakeToggleStore {
+	return &fakeToggleStore{disabled: map[int64]bool{}}
+}
+
+func (f *fakeToggleStore) Disabled(_ context.Context) (map[int64]bool, error) {
+	if f.disErr != nil {
+		return nil, f.disErr
+	}
+	out := make(map[int64]bool, len(f.disabled))
+	for k, v := range f.disabled {
+		if v {
+			out[k] = true
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeToggleStore) SetEnabled(_ context.Context, sourceID int64, enabled bool) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	if enabled {
+		delete(f.disabled, sourceID)
+	} else {
+		f.disabled[sourceID] = true
+	}
+	return nil
+}
+
+// newTestEnv wires an Echo instance whose Handler holds fc directly (nil durable
+// topology store: db/cache/httpGet) plus an in-memory disabled-flag store — the
+// pure-proxy behaviour and the Tsundoku-side enable/disable toggle; the
+// best-effort topology write-through is covered separately
 // (writethrough_hook_test.go).
 func newTestEnv(t *testing.T, fc *sourceenginefake.Client) *testEnv {
 	t.Helper()
 	authSvc := auth.NewService(testSecret)
-	h := handler.NewHandler(fc, nil, nil, nil)
+	store := newFakeToggleStore()
+	h := handler.NewHandler(fc, nil, nil, nil, store)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -69,12 +112,13 @@ func newTestEnv(t *testing.T, fc *sourceenginefake.Client) *testEnv {
 	authed.DELETE("/suwayomi/extensions/:pkgName", h.Uninstall)
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", h.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", h.SetPreference)
+	authed.PATCH("/sources/:sourceId/enabled", h.SetSourceEnabled)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
 		t.Fatalf("Issue token: %v", err)
 	}
-	return &testEnv{e: e, fake: fc, token: token}
+	return &testEnv{e: e, fake: fc, store: store, token: token}
 }
 
 func (env *testEnv) do(method, target, body string) *httptest.ResponseRecorder {

@@ -25,10 +25,22 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
+// SourceToggleStore is the narrow surface the Handler needs for the TSUNDOKU-SIDE
+// per-language enable/disable toggle (the Configure dialog's per-source Switch).
+// It reads the disabled-source set (for the Preferences group `enabled` field)
+// and writes one source's state (SetSourceEnabled). *disabledsource.Service
+// satisfies it. A nil store (focused proxy tests) makes every group report
+// enabled=true and SetSourceEnabled a no-op-if-unwired path (see its doc).
+type SourceToggleStore interface {
+	Disabled(ctx context.Context) (map[int64]bool, error)
+	SetEnabled(ctx context.Context, sourceID int64, enabled bool) error
+}
+
 // Handler serves the extension-management endpoints. It holds the engine-host
 // client, plus the durable engine-topology store (Ent client + apk byte cache
 // + an httpGet for repo indexes/.apk downloads) that the best-effort
-// write-through captures every install/update/uninstall/repo change into.
+// write-through captures every install/update/uninstall/repo change into, plus
+// the Tsundoku-side per-source disabled-flag store for the enable/disable toggle.
 type Handler struct {
 	sw sourceengine.Client
 	// db and cache are the durable topology store the write-through updates. When
@@ -37,19 +49,25 @@ type Handler struct {
 	db      *ent.Client
 	cache   *apkcache.Store
 	httpGet func(url string) (*http.Response, error)
+	// disabled is the Tsundoku-side per-source enable/disable store. Nil ⇒ every
+	// group reports enabled=true and the enable/disable route is unavailable.
+	disabled SourceToggleStore
 }
 
-// NewHandler constructs a Handler bound to an engine client and the durable
+// NewHandler constructs a Handler bound to an engine client, the durable
 // engine-topology store (Ent client, apk cache, and the httpGet used to fetch
-// repo indexes + .apk bytes — http.Get in production). db/cache/httpGet may be
-// nil, which turns the write-through into a no-op (pure passthrough).
+// repo indexes + .apk bytes — http.Get in production), and the Tsundoku-side
+// per-source disabled-flag store. db/cache/httpGet may be nil, which turns the
+// write-through into a no-op (pure passthrough); disabled may be nil, which
+// makes every group enabled and disables the enable/disable route.
 func NewHandler(
 	sw sourceengine.Client,
 	db *ent.Client,
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
+	disabled SourceToggleStore,
 ) *Handler {
-	return &Handler{sw: sw, db: db, cache: cache, httpGet: httpGet}
+	return &Handler{sw: sw, db: db, cache: cache, httpGet: httpGet, disabled: disabled}
 }
 
 // List handles GET /api/suwayomi/extensions. It returns every extension

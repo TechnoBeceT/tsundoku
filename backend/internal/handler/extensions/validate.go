@@ -70,6 +70,38 @@ func validatePreferenceUpdate(req PreferenceUpdateRequest) (int64, string, error
 	return sourceID, key, nil
 }
 
+// SourceEnabledUpdateRequest is the PATCH /api/sources/:sourceId/enabled body.
+// Enabled is a pointer so a missing key is rejected rather than silently
+// defaulting to false (which would look like an owner-initiated disable).
+type SourceEnabledUpdateRequest struct {
+	// Enabled is the new per-language enable/disable state.
+	Enabled *bool `json:"enabled"`
+}
+
+// validateSourceID trims the :sourceId path param, requires it non-blank, and
+// parses it as the engine-host decimal int64 source id. A blank value or a
+// non-numeric value is a 400.
+func validateSourceID(raw string) (int64, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, httperr.BadRequest("sourceId required")
+	}
+	id, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return 0, httperr.BadRequest("sourceId must be numeric")
+	}
+	return id, nil
+}
+
+// validateSourceEnabledUpdate fail-closes the enable/disable write body: enabled
+// must be present (non-nil). It returns the requested state.
+func validateSourceEnabledUpdate(req SourceEnabledUpdateRequest) (bool, error) {
+	if req.Enabled == nil {
+		return false, httperr.BadRequest("enabled required")
+	}
+	return *req.Enabled, nil
+}
+
 // coercePreferenceValue decodes the raw request value into the correctly-typed
 // Go value for the variant at the target key: a bool for a checkbox/switch, a
 // string for a list/edittext, a string array for a multi-select — the

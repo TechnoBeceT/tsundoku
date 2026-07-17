@@ -12,6 +12,9 @@ type Category func(*sql.Selector)
 // Chapter is the predicate function for chapter builders.
 type Chapter func(*sql.Selector)
 
+// DisabledSource is the predicate function for disabledsource builders.
+type DisabledSource func(*sql.Selector)
+
 // EtagCache is the predicate function for etagcache builders.
 type EtagCache func(*sql.Selector)
 

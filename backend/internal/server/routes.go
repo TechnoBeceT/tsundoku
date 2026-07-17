@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/config"
+	"github.com/technobecet/tsundoku/internal/disabledsource"
 	"github.com/technobecet/tsundoku/internal/downloads"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
@@ -114,8 +115,8 @@ import (
 //   - /api/suwayomi/extensions/:pkgName (DELETE)    — uninstall an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/icon (GET)  — extension icon proxy (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/preferences (GET)   — per-source preferences, grouped by source (RequireOwner).
-//   - /api/suwayomi/extensions/:pkgName/preferences (PATCH) — write one preference by position (RequireOwner).
-//   - /api/suwayomi/sources/:sourceId/enabled (PATCH)        — per-language enable/disable toggle (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName/preferences (PATCH) — write one preference by key (RequireOwner).
+//   - /api/sources/:sourceId/enabled (PATCH)                — Tsundoku-side per-language enable/disable toggle (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
@@ -337,11 +338,15 @@ func registerRoutes(
 	// the HarvestedExtension/HarvestedRepo rows + the shared apk cache
 	// immediately (best-effort), so the store never lags a live owner change.
 	// apkStore is the SAME cache the boot seed writes and the /internal
-	// apk-serving route reads. The extension icon proxy + the per-language
-	// source enable/disable toggle are RETIRED: sourceengine has no
-	// PageBytes-shaped fetch (the FE renders iconUrl directly) and no
-	// server-side "disabled source" concept to proxy.
-	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get)
+	// apk-serving route reads. The extension icon proxy is RETIRED (sourceengine
+	// has no PageBytes-shaped fetch — the FE renders iconUrl directly). The
+	// per-language source enable/disable toggle is RESTORED but TSUNDOKU-SIDE:
+	// the internal engine has no server-side "disabled source" concept, so the
+	// flag is persisted in Tsundoku's OWN Postgres (disabledsource.Service, the
+	// DisabledSource entity) and applied as a picker filter in internal/imports;
+	// it is NEVER pushed to the engine (internal/enginetopo does not read it).
+	disabledSrcSvc := disabledsource.NewService(client)
+	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get, disabledSrcSvc)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
@@ -351,6 +356,7 @@ func registerRoutes(
 	authed.DELETE("/suwayomi/extensions/:pkgName", extensionsH.Uninstall)
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", extensionsH.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", extensionsH.SetPreference)
+	authed.PATCH("/sources/:sourceId/enabled", extensionsH.SetSourceEnabled)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.
@@ -389,7 +395,9 @@ func registerRoutes(
 		// Search-cache TTL read per Get from the settings overlay (jobs.search_cache_ttl,
 		// hot reload); 0 disables the search cache at runtime.
 		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
-	).WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
+	).
+		WithAutoIdentifier(metaSvc).        // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
+		WithDisabledSources(disabledSrcSvc) // hides owner-disabled sources from the Discover/Search/Browse pickers
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, coverCache)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)

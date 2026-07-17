@@ -937,6 +937,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sources/{sourceId}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Enable or disable a source (per-language toggle)
+         * @description Sets a source's TSUNDOKU-SIDE enable/disable state (the Configure
+         *     dialog's per-language Switch). Disabling hides the source from the
+         *     Discover/Search/Browse pickers so it is not offered for new
+         *     adopts/searches; it does NOT stop refreshing a series already adopted
+         *     from it, and it is NEVER pushed to the engine (a Tsundoku-only UI
+         *     flag). Applies the write then re-reads the authoritative state.
+         */
+        patch: operations["setSourceEnabled"];
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -3049,9 +3074,11 @@ export interface components {
         };
         /**
          * @description One source's preferences within a grouped extension response (one
-         *     source per language). The per-language enable/disable toggle is
-         *     RETIRED (sourceengine has no server-side "disabled source" concept
-         *     to proxy).
+         *     source per language). `enabled` is the per-language enable/disable
+         *     toggle, resolved from Tsundoku's OWN disabled-source store (the
+         *     internal engine has no such concept). A disabled source is hidden from
+         *     the Discover/Search/Browse pickers; the FE hides a disabled group's
+         *     preference block. Toggled via PATCH /api/sources/{sourceId}/enabled.
          */
         SourcePreferencesGroup: {
             /** @description The engine host source id (the write body's sourceId). */
@@ -3060,8 +3087,33 @@ export interface components {
             sourceName: string;
             /** @description BCP-47 language tag. */
             lang: string;
+            /**
+             * @description The per-language enable/disable state (Tsundoku-side). false when
+             *     the owner has disabled this source; the FE hides its preferences.
+             */
+            enabled: boolean;
             /** @description This source's configurable preferences, in array order. */
             preferences: components["schemas"]["SourcePreference"][];
+        };
+        /**
+         * @description The authoritative per-language enable/disable state after a PATCH
+         *     /api/sources/{sourceId}/enabled write (re-read from Tsundoku's
+         *     disabled-source store, never the request echo).
+         */
+        SourceEnabled: {
+            /** @description The engine host source id (stringified). */
+            sourceId: string;
+            /** @description The enable/disable state as re-read after the write. */
+            enabled: boolean;
+        };
+        /**
+         * @description The PATCH /api/sources/{sourceId}/enabled body — the new per-language
+         *     enable/disable state. `enabled` is required (an absent field is a 400,
+         *     never a silent disable).
+         */
+        SourceEnabledUpdate: {
+            /** @description The new per-language enable/disable state. */
+            enabled: boolean;
         };
         /** @description An extension's per-source preferences, grouped by the (per-language) source they belong to. */
         SourcePreferencesBySource: {
@@ -5490,6 +5542,60 @@ export interface operations {
                 };
             };
             /** @description The engine host failed to fetch the cover image. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setSourceEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Engine-host source ID, stringified decimal int64. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceEnabledUpdate"];
+            };
+        };
+        responses: {
+            /** @description The authoritative post-write enable/disable state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceEnabled"];
+                };
+            };
+            /** @description Malformed sourceId, or a missing `enabled` field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The disabled-source store read/write failed. */
             502: {
                 headers: {
                     [name: string]: unknown;

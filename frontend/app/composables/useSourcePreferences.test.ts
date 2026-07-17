@@ -8,8 +8,10 @@
  *      that source's list with the authoritative response.
  *   3. a write failure surfaces in saveError (§16) without throwing.
  *
- * The per-language enable/disable toggle is RETIRED (the engine host has no
- * such concept) — do not re-add tests for it.
+ * The per-language enable/disable toggle is also covered:
+ *   4. setEnabled PATCHes /api/sources/{sourceId}/enabled and reseeds the
+ *      group's `enabled` from the authoritative response (§16).
+ *   5. an enable/disable failure surfaces in enableError without throwing.
  *
  * Non-vacuous: if setPreference stopped applying the PATCH response, assertion 2
  * (the switch reads back false) fails; if it swallowed errors silently, 3 fails.
@@ -82,5 +84,40 @@ describe('useSourcePreferences', () => {
 
     expect(saveError.value).toBe('Expected change to SwitchPreferenceCompat')
     expect(savingKey.value).toBeNull()
+  })
+
+  it('setEnabled PATCHes the toggle and reseeds enabled from the response (§16)', async () => {
+    getMock.mockResolvedValue({ data: { sources: [preferenceGroup] }, error: null })
+    // The write returns the authoritative post-write state: disabled.
+    patchMock.mockResolvedValue({ data: { sourceId: 'src-en', enabled: false }, error: null })
+
+    const { groups, enablingKey, load, setEnabled } = useSourcePreferences()
+    await load('pkg.test')
+    expect(groups.value[0]!.enabled).toBe(true)
+
+    await setEnabled('src-en', false)
+
+    expect(patchMock).toHaveBeenCalledWith('/api/sources/{sourceId}/enabled', {
+      params: { path: { sourceId: 'src-en' } },
+      body: { enabled: false },
+    })
+    // The authoritative response drove the local flag (not the request value alone).
+    expect(groups.value[0]!.enabled).toBe(false)
+    expect(enablingKey.value).toBeNull()
+  })
+
+  it('surfaces an enable/disable failure in enableError without throwing', async () => {
+    getMock.mockResolvedValue({ data: { sources: [preferenceGroup] }, error: null })
+    patchMock.mockResolvedValue({ data: null, error: { message: 'Failed to update source' } })
+
+    const { enableError, enablingKey, groups, load, setEnabled } = useSourcePreferences()
+    await load('pkg.test')
+
+    await setEnabled('src-en', false)
+
+    expect(enableError.value).toBe('Failed to update source')
+    expect(enablingKey.value).toBeNull()
+    // The local flag is untouched on failure (no optimistic flip).
+    expect(groups.value[0]!.enabled).toBe(true)
   })
 })

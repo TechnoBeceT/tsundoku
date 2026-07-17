@@ -33,6 +33,18 @@ func (f ChapterFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, err
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ChapterMutation", m)
 }
 
+// The DisabledSourceFunc type is an adapter to allow the use of ordinary
+// function as DisabledSource mutator.
+type DisabledSourceFunc func(context.Context, *ent.DisabledSourceMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f DisabledSourceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.DisabledSourceMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.DisabledSourceMutation", m)
+}
+
 // The EtagCacheFunc type is an adapter to allow the use of ordinary
 // function as EtagCache mutator.
 type EtagCacheFunc func(context.Context, *ent.EtagCacheMutation) (ent.Value, error)

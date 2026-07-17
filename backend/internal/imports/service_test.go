@@ -414,6 +414,101 @@ func TestService_Sources_ExcludesInfinityScans(t *testing.T) {
 	}
 }
 
+// fakeDisabled is an in-memory imports.DisabledSources — the owner-disabled
+// source set — for the picker-exclusion tests.
+type fakeDisabled struct {
+	ids map[int64]bool
+	err error
+}
+
+func (f fakeDisabled) Disabled(context.Context) (map[int64]bool, error) {
+	return f.ids, f.err
+}
+
+// TestService_Sources_ExcludesDisabled proves an owner-disabled source (its id
+// in the DisabledSources set) is hidden from the Discover/Search "Limit to"
+// picker, while an enabled sibling of the same multi-language extension is kept.
+func TestService_Sources_ExcludesDisabled(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Webtoons", Lang: "en"},
+			{ID: 2, Name: "Webtoons", Lang: "id"},
+			{ID: 3, Name: "Webtoons", Lang: "th"},
+		},
+	}
+	svc := newService(fc).WithDisabledSources(fakeDisabled{ids: map[int64]bool{2: true}})
+
+	got, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Sources: got %d DTOs, want 2 (id disabled): %+v", len(got), got)
+	}
+	for _, s := range got {
+		if s.ID == "2" {
+			t.Errorf("Sources: disabled source 2 leaked into the picker: %+v", got)
+		}
+	}
+}
+
+// TestService_Sources_DisabledStoreError proves a disabled-store read failure is
+// surfaced rather than silently offering a source the owner may have disabled.
+func TestService_Sources_DisabledStoreError(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("db: disabled read failed")
+	fc := &fakeClient{sources: []sourceengine.Source{{ID: 1, Name: "MangaDex", Lang: "en"}}}
+	svc := newService(fc).WithDisabledSources(fakeDisabled{err: sentinel})
+
+	if _, err := svc.Sources(context.Background()); !errors.Is(err, sentinel) {
+		t.Errorf("Sources: err got %v, want to wrap %v", err, sentinel)
+	}
+}
+
+// TestService_Search_ExcludesDisabled proves the Search fan-out never queries an
+// owner-disabled source, EVEN when the caller names it explicitly in sourceIDs
+// (a stale/hand-crafted request) — resolveSources applies the same exclusion.
+func TestService_Search_ExcludesDisabled(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "A Source", Lang: "en"},
+			{ID: 2, Name: "B Source", Lang: "ko"},
+		},
+		searchResults: map[int64]sourceengine.SearchResult{
+			1: {Manga: []sourceengine.MangaEntry{{Title: "Tower of God"}}},
+			2: {Manga: []sourceengine.MangaEntry{{Title: "Tower of God"}}},
+		},
+	}
+	svc := newService(fc).WithDisabledSources(fakeDisabled{ids: map[int64]bool{2: true}})
+
+	// Explicitly name BOTH sources; the disabled one must still be dropped, so
+	// no candidate from source 2 can appear in any group (a leaked fan-out to
+	// source 2 would surface its "Tower of God" hit here).
+	got, err := svc.Search(context.Background(), "Tower of God", []string{"1", "2"})
+	if err != nil {
+		t.Fatalf("Search: unexpected error: %v", err)
+	}
+	seenSource1 := false
+	for _, g := range got {
+		for _, c := range g.Candidates {
+			switch c.Source {
+			case "2":
+				t.Errorf("Search returned a candidate from disabled source 2: %+v", c)
+			case "1":
+				seenSource1 = true
+			}
+		}
+	}
+	if !seenSource1 {
+		t.Fatal("Search dropped the ENABLED source 1 too — the exclusion is over-broad")
+	}
+}
+
 // --- Search tests ------------------------------------------------------------
 
 // TestService_Search_AllSources verifies that Search(query, nil) fans across

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/ent/disabledsource"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
@@ -93,6 +94,16 @@ func init() {
 	chapterDescID := chapterFields[0].Descriptor()
 	// chapter.DefaultID holds the default value on creation for the id field.
 	chapter.DefaultID = chapterDescID.Default.(func() uuid.UUID)
+	disabledsourceFields := schema.DisabledSource{}.Fields()
+	_ = disabledsourceFields
+	// disabledsourceDescCreatedAt is the schema descriptor for created_at field.
+	disabledsourceDescCreatedAt := disabledsourceFields[2].Descriptor()
+	// disabledsource.DefaultCreatedAt holds the default value on creation for the created_at field.
+	disabledsource.DefaultCreatedAt = disabledsourceDescCreatedAt.Default.(func() time.Time)
+	// disabledsourceDescID is the schema descriptor for id field.
+	disabledsourceDescID := disabledsourceFields[0].Descriptor()
+	// disabledsource.DefaultID holds the default value on creation for the id field.
+	disabledsource.DefaultID = disabledsourceDescID.Default.(func() uuid.UUID)
 	etagcacheFields := schema.EtagCache{}.Fields()
 	_ = etagcacheFields
 	// etagcacheDescEtag is the schema descriptor for etag field.

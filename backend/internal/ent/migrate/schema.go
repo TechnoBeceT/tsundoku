@@ -73,6 +73,18 @@ var (
 			},
 		},
 	}
+	// DisabledSourcesColumns holds the columns for the "disabled_sources" table.
+	DisabledSourcesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeInt64, Unique: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// DisabledSourcesTable holds the schema information for the "disabled_sources" table.
+	DisabledSourcesTable = &schema.Table{
+		Name:       "disabled_sources",
+		Columns:    DisabledSourcesColumns,
+		PrimaryKey: []*schema.Column{DisabledSourcesColumns[0]},
+	}
 	// EtagCachesColumns holds the columns for the "etag_caches" table.
 	EtagCachesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -542,6 +554,7 @@ var (
 	Tables = []*schema.Table{
 		CategoriesTable,
 		ChaptersTable,
+		DisabledSourcesTable,
 		EtagCachesTable,
 		HarvestedExtensionsTable,
 		HarvestedReposTable,

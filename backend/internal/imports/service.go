@@ -65,6 +65,15 @@ const searchFanoutPage = 1
 // the live source list (client.Sources). The HTTP handler maps it to 404.
 var ErrSourceNotFound = errors.New("source not found")
 
+// DisabledSources is the narrow read surface Service needs to hide owner-disabled
+// sources from the Discover/Search/Browse pickers. It returns the set of disabled
+// engine-host source ids (a row's presence = disabled). *disabledsource.Service
+// satisfies it; a nil DisabledSources (the plain/test constructors) means
+// "nothing is disabled" — every source is offered.
+type DisabledSources interface {
+	Disabled(ctx context.Context) (map[int64]bool, error)
+}
+
 // Service provides the import workflow over the engine-host backend: source
 // discovery, multi-source search with fuzzy grouping, and chapter inspection.
 //
@@ -93,6 +102,33 @@ type Service struct {
 	// no auto-identify (every existing NewService/NewServiceWithCaches call
 	// site is unaffected) — attach it with WithAutoIdentifier.
 	autoIdentifier AutoIdentifier
+
+	// disabled hides owner-disabled sources from the Discover/Search/Browse
+	// pickers (see excludedFromPicker). Nil ⇒ nothing is disabled (every
+	// existing NewService/NewServiceWithCaches call site is unaffected) — attach
+	// it with WithDisabledSources.
+	disabled DisabledSources
+}
+
+// WithDisabledSources attaches the per-source disabled-flag store so the
+// Discover/Search/Browse pickers hide owner-disabled sources (see
+// excludedFromPicker). It returns the receiver for chaining off a
+// NewService/NewServiceWithCaches call. A nil store is tolerated (nothing
+// disabled).
+func (s *Service) WithDisabledSources(d DisabledSources) *Service {
+	s.disabled = d
+	return s
+}
+
+// disabledSet returns the set of owner-disabled source ids, or an empty
+// (non-nil) set when no disabled-flag store is attached. A store read failure is
+// returned so the caller can surface it rather than silently offer a source the
+// owner disabled.
+func (s *Service) disabledSet(ctx context.Context) (map[int64]bool, error) {
+	if s.disabled == nil {
+		return map[int64]bool{}, nil
+	}
+	return s.disabled.Disabled(ctx)
 }
 
 // NewService constructs a Service backed by the given engine-host client.
@@ -144,17 +180,24 @@ func sourceIDString(id int64) string {
 }
 
 // Sources returns all engine-host sources as SourceDTOs, excluding any
-// known-broken source (see isBrokenSource). Unlike the pre-P2 Suwayomi client,
-// the engine host has no built-in "Local" source and no per-language
-// enable/disable toggle to filter on — see excludedFromPicker's doc comment.
+// known-broken source (isBrokenSource) AND any source the owner has DISABLED via
+// the per-language enable/disable toggle (see excludedFromPicker). A disabled
+// source is simply ABSENT from this list — the same declutter the pre-P2
+// Suwayomi client applied — so it is never offered in the Discover picker or the
+// Search "Limit to" filters. The engine host has no built-in "Local" source, so
+// that pre-P2 exclusion no longer applies.
 func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 	srcs, err := s.client.Sources(ctx)
 	if err != nil {
 		return nil, err
 	}
+	disabled, err := s.disabledSet(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]SourceDTO, 0, len(srcs))
 	for _, src := range srcs {
-		if excludedFromPicker(src) {
+		if excludedFromPicker(src, disabled) {
 			continue
 		}
 		out = append(out, SourceDTO{ID: sourceIDString(src.ID), Name: src.Name, Lang: src.Lang})
@@ -172,21 +215,18 @@ func isBrokenSource(src sourceengine.Source) bool {
 }
 
 // excludedFromPicker reports whether src must never appear in a Discover/
-// Search/Browse source picker: currently only a known-broken source
-// (isBrokenSource).
+// Search/Browse source picker: a known-broken source (isBrokenSource) OR a
+// source the owner has DISABLED (its id is in the disabled set). Shared by
+// Sources() and resolveSources() so the two exclusion rules can never drift.
 //
-// 🔴 KNOWN GAP (P2 Suwayomi-removal, tracked for a follow-up slice): the
-// pre-migration suwayomi.Client modeled TWO extra exclusions this function no
-// longer applies — Suwayomi's built-in "Local" source (a fixed id/lang pair)
-// and a per-language owner-disable toggle (Source.Disabled, resolved from a
-// GraphQL sourceMeta "isEnabled" key). internal/sourceengine.Source carries
-// neither concept today (no Local source, no per-source enable/disable flag),
-// so both exclusions are DROPPED here, not reimplemented — reinstate them once
-// the engine host exposes an equivalent. internal/warmup keeps its OWN copy of
-// the pre-migration exclusion logic (it stays on suwayomi.Client — see
-// warmup/sources.go), so this is not a regression for the warm-up job.
-func excludedFromPicker(src sourceengine.Source) bool {
-	return isBrokenSource(src)
+// The per-language owner-disable toggle is restored TSUNDOKU-SIDE (the engine
+// host has no server-side "disabled source" concept): the disabled set comes
+// from internal/disabledsource via the DisabledSources port, read once per
+// picker call and passed in. A nil/empty set (no store attached, or nothing
+// disabled) excludes only the broken sources. The engine host also has no
+// built-in "Local" source, so that pre-P2 exclusion is intentionally absent.
+func excludedFromPicker(src sourceengine.Source, disabled map[int64]bool) bool {
+	return isBrokenSource(src) || disabled[src.ID]
 }
 
 // searchOneSource performs a single-source search against the engine-host
@@ -442,25 +482,33 @@ func (s *Service) recordSamples(ctx context.Context, samples []metrics.Sample) {
 }
 
 // resolveSources returns the source list to query: every engine-host source
-// (see excludedFromPicker), narrowed to sourceIDs when it is non-nil/non-empty.
-// When sourceIDs is non-nil and non-empty, it returns only those sources from
-// the client whose stringified IDs are in the set; otherwise it returns all
-// (non-excluded) client sources. Unknown IDs are silently dropped (the caller's
-// picker is itself built from the filtered Sources() list, so this only matters
-// for a stale/hand-crafted request).
+// EXCEPT the broken + owner-disabled ones (see excludedFromPicker), narrowed to
+// sourceIDs when it is non-nil/non-empty. When sourceIDs is non-nil and
+// non-empty, it returns only those sources from the client whose stringified IDs
+// are in the set; otherwise it returns all (non-excluded) client sources.
+// Unknown or disabled IDs are silently dropped (the caller's picker is itself
+// built from the filtered Sources() list, so this only matters for a
+// stale/hand-crafted request).
 func (s *Service) resolveSources(ctx context.Context, sourceIDs []string) ([]sourceengine.Source, error) {
 	all, err := s.client.Sources(ctx)
 	if err != nil {
 		return nil, err
 	}
+	disabled, err := s.disabledSet(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// nil want ⇒ match every id (the "no filter" case); a non-nil want is an
-	// O(1)-lookup allowlist built once, up front.
+	// O(1)-lookup allowlist built once, up front. A disabled source is dropped
+	// even when named explicitly in sourceIDs — the picker that supplies
+	// sourceIDs is itself built from the filtered Sources() list, so this only
+	// matters for a stale/hand-crafted request (same rule Sources() applies).
 	want := sourceIDSet(sourceIDs)
 
 	out := make([]sourceengine.Source, 0, len(all))
 	for _, src := range all {
-		if excludedFromPicker(src) || !want.matches(sourceIDString(src.ID)) {
+		if excludedFromPicker(src, disabled) || !want.matches(sourceIDString(src.ID)) {
 			continue
 		}
 		out = append(out, src)

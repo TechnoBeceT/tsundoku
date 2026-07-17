@@ -10,10 +10,13 @@
  * preference list with the authoritative refreshed list the PATCH returns
  * (§16) — never assuming the local copy is still correct after a write.
  *
- * The per-language enable/disable toggle is RETIRED along with it: the
- * engine host has no server-side "disabled source" concept to proxy (the
- * old `PATCH /api/suwayomi/sources/{sourceId}/enabled` endpoint is gone).
- * Do not re-add it.
+ * It also owns the per-language enable/disable toggle: PATCH
+ * /api/sources/{sourceId}/enabled hides a disabled source from Tsundoku's
+ * Discover/Search/Browse pickers without touching any series already adopted
+ * from it. This flag is TSUNDOKU-SIDE (the internal engine has no "disabled
+ * source" concept). Like setPreference, it reseeds the group's `enabled` from
+ * the authoritative response rather than optimistically flipping the local
+ * flag (§16).
  *
  * Public surface:
  *   groups        — the sources + their preferences (reactive)
@@ -21,8 +24,11 @@
  *   error         — a load failure message (or null)
  *   savingKey     — `${sourceId}:${key}` of the preference being written (or null)
  *   saveError     — a write failure message (or null)
+ *   enablingKey   — the sourceId whose enable/disable toggle is being written (or null)
+ *   enableError   — an enable/disable write failure message (or null)
  *   load(pkg)     — fetch an extension's preferences (opens the dialog session)
  *   setPreference(sourceId, key, value) — write one preference (§16)
+ *   setEnabled(sourceId, enabled) — toggle a source's enable/disable state (§16)
  *   reset()       — clear all state (on dialog close)
  */
 import { ref } from 'vue'
@@ -46,6 +52,8 @@ export function useSourcePreferences() {
   const error = ref<string | null>(null)
   const savingKey = ref<string | null>(null)
   const saveError = ref<string | null>(null)
+  const enablingKey = ref<string | null>(null)
+  const enableError = ref<string | null>(null)
 
   // The pkgName of the currently-loaded extension (the PATCH path param).
   const pkgName = ref('')
@@ -106,12 +114,41 @@ export function useSourcePreferences() {
     }
   }
 
+  /**
+   * Toggles a source's per-language enable/disable state. Drives enablingKey
+   * (the group's Switch spinner) and surfaces any failure in enableError (§16).
+   * On success applies the RE-READ enabled flag from the response, never the
+   * optimistic request value.
+   */
+  async function setEnabled(sourceId: string, enabled: boolean): Promise<void> {
+    enablingKey.value = sourceId
+    enableError.value = null
+    try {
+      const res = await apiClient.PATCH('/api/sources/{sourceId}/enabled', {
+        params: { path: { sourceId } },
+        body: { enabled },
+      })
+      if (res.error || !res.data) throw new Error(res.error?.message ?? 'Failed to update source')
+      const authoritative = res.data.enabled
+      groups.value = groups.value.map(g =>
+        g.sourceId === sourceId ? { ...g, enabled: authoritative } : g,
+      )
+      enablingKey.value = null
+    }
+    catch (e) {
+      enableError.value = e instanceof Error ? e.message : 'Failed to update source'
+      enablingKey.value = null
+    }
+  }
+
   /** Clears all state — call when the dialog closes to bound the session. */
   function reset(): void {
     groups.value = []
     error.value = null
     saveError.value = null
     savingKey.value = null
+    enablingKey.value = null
+    enableError.value = null
     pkgName.value = ''
   }
 
@@ -121,8 +158,11 @@ export function useSourcePreferences() {
     error,
     savingKey,
     saveError,
+    enablingKey,
+    enableError,
     load,
     setPreference,
+    setEnabled,
     reset,
   }
 }

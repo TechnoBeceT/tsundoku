@@ -168,8 +168,11 @@ const {
   error: prefsError,
   savingKey: prefsSavingKey,
   saveError: prefsSaveError,
+  enablingKey: prefsEnablingKey,
+  enableError: prefsEnableError,
   load: loadPreferences,
   setPreference,
+  setEnabled,
   reset: resetPreferences,
 } = useSourcePreferences()
 
@@ -289,7 +292,10 @@ function closePreferences() {
     :error="prefsError"
     :saving-key="prefsSavingKey"
     :save-error="prefsSaveError"
+    :enabling-key="prefsEnablingKey"
+    :enable-error="prefsEnableError"
     @change="setPreference($event.sourceId, $event.key, $event.value)"
+    @toggle-enabled="setEnabled($event.sourceId, $event.enabled)"
   />
 </template>
 

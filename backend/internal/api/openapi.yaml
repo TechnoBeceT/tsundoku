@@ -1879,13 +1879,16 @@ components:
       type: object
       description: |
         One source's preferences within a grouped extension response (one
-        source per language). The per-language enable/disable toggle is
-        RETIRED (sourceengine has no server-side "disabled source" concept
-        to proxy).
+        source per language). `enabled` is the per-language enable/disable
+        toggle, resolved from Tsundoku's OWN disabled-source store (the
+        internal engine has no such concept). A disabled source is hidden from
+        the Discover/Search/Browse pickers; the FE hides a disabled group's
+        preference block. Toggled via PATCH /api/sources/{sourceId}/enabled.
       required:
         - sourceId
         - sourceName
         - lang
+        - enabled
         - preferences
       properties:
         sourceId:
@@ -1897,11 +1900,46 @@ components:
         lang:
           type: string
           description: BCP-47 language tag.
+        enabled:
+          type: boolean
+          description: |
+            The per-language enable/disable state (Tsundoku-side). false when
+            the owner has disabled this source; the FE hides its preferences.
         preferences:
           type: array
           description: This source's configurable preferences, in array order.
           items:
             $ref: "#/components/schemas/SourcePreference"
+
+    SourceEnabled:
+      type: object
+      description: |
+        The authoritative per-language enable/disable state after a PATCH
+        /api/sources/{sourceId}/enabled write (re-read from Tsundoku's
+        disabled-source store, never the request echo).
+      required:
+        - sourceId
+        - enabled
+      properties:
+        sourceId:
+          type: string
+          description: The engine host source id (stringified).
+        enabled:
+          type: boolean
+          description: The enable/disable state as re-read after the write.
+
+    SourceEnabledUpdate:
+      type: object
+      description: |
+        The PATCH /api/sources/{sourceId}/enabled body — the new per-language
+        enable/disable state. `enabled` is required (an absent field is a 400,
+        never a silent disable).
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+          description: The new per-language enable/disable state.
 
     SourcePreferencesBySource:
       type: object
@@ -4625,6 +4663,60 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: The engine host failed to fetch the cover image.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/enabled:
+    patch:
+      operationId: setSourceEnabled
+      summary: Enable or disable a source (per-language toggle)
+      description: |
+        Sets a source's TSUNDOKU-SIDE enable/disable state (the Configure
+        dialog's per-language Switch). Disabling hides the source from the
+        Discover/Search/Browse pickers so it is not offered for new
+        adopts/searches; it does NOT stop refreshing a series already adopted
+        from it, and it is NEVER pushed to the engine (a Tsundoku-only UI
+        flag). Applies the write then re-reads the authoritative state.
+      tags:
+        - extensions
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Engine-host source ID, stringified decimal int64.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceEnabledUpdate"
+      responses:
+        "200":
+          description: The authoritative post-write enable/disable state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceEnabled"
+        "400":
+          description: Malformed sourceId, or a missing `enabled` field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The disabled-source store read/write failed.
           content:
             application/json:
               schema:

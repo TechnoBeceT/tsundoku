@@ -40,7 +40,7 @@ func newDurableEnv(t *testing.T, fc *sourceenginefake.Client, httpGet func(strin
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
 	authSvc := auth.NewService(testSecret)
-	h := handler.NewHandler(fc, db, cache, httpGet)
+	h := handler.NewHandler(fc, db, cache, httpGet, nil)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler

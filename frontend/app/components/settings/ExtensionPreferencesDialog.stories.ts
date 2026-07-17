@@ -6,10 +6,10 @@ import '../../assets/css/tokens/settings.css'
 /**
  * Stories for the extension "Configure" dialog. The dialog is presentation-only
  * (open + groups + §16 state in, change out), so every state is a pure
- * fixture: loaded (all variants across two language sources), loading, error,
- * empty, and a per-row saving spinner. The per-language enable/disable toggle
- * is RETIRED — the engine host has no such concept. Flip the theme toolbar
- * for dark/light.
+ * fixture: loaded (all variants across two language sources, the 2nd DISABLED
+ * so its preference block is collapsed), loading, error, empty, a per-row
+ * saving spinner, and the per-language enable/disable Switch busy + error.
+ * Flip the theme toolbar for dark/light.
  */
 const meta = {
   title: 'Settings/ExtensionPreferencesDialog',
@@ -23,14 +23,37 @@ const meta = {
     error: null,
     savingKey: null,
     saveError: null,
+    enablingKey: null,
+    enableError: null,
   },
 } satisfies Meta<typeof ExtensionPreferencesDialog>
 
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Loaded — every control variant across two language sources. */
+/**
+ * Loaded — every control variant across two language sources; the second
+ * language (JA) is DISABLED, so its preference block is collapsed to the
+ * "Disabled — hidden from Discover…" note behind an off Switch (feature #2).
+ */
 export const Loaded: Story = {}
+
+/** Both languages enabled — neither preference block is collapsed. */
+export const AllEnabled: Story = {
+  args: {
+    groups: preferenceGroups.map(g => ({ ...g, enabled: true })),
+  },
+}
+
+/** The JA source's enable/disable Switch write is in flight (spinner + disabled). */
+export const EnableToggling: Story = {
+  args: { enablingKey: 'src-ja' },
+}
+
+/** An enable/disable write failed; the error banners at the top of the dialog. */
+export const EnableError: Story = {
+  args: { enableError: 'Failed to update source' },
+}
 
 /** The initial load is in flight. */
 export const Loading: Story = {

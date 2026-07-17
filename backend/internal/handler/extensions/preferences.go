@@ -1,6 +1,8 @@
 package extensions
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -8,6 +10,11 @@ import (
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
+
+// errNoDisabledStore is surfaced (as a 502) if SetSourceEnabled runs without a
+// disabled-flag store wired — an impossible state in production (the route is
+// only registered with a store), guarded so a write never silently no-ops.
+var errNoDisabledStore = errors.New("disabled-source store not configured")
 
 // This file (preferences.go) holds the per-source preference endpoints of the
 // extension-management proxy — the "Configure" gear for an installed extension.
@@ -40,6 +47,13 @@ func (h *Handler) Preferences(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "extension not found")
 	}
 
+	// The Tsundoku-side disabled set drives each group's `enabled` flag (the FE
+	// hides a disabled group's preference block). A nil store ⇒ nothing disabled.
+	disabled, err := h.disabledSet(ctx)
+	if err != nil {
+		return err
+	}
+
 	groups := make([]SourcePreferencesGroupDTO, 0, len(ext.Sources))
 	for _, s := range ext.Sources {
 		prefs, err := h.sw.Preferences(ctx, s.ID)
@@ -50,10 +64,71 @@ func (h *Handler) Preferences(c echo.Context) error {
 			SourceID:    formatSourceID(s.ID),
 			SourceName:  s.Name,
 			Lang:        s.Lang,
+			Enabled:     !disabled[s.ID],
 			Preferences: toSourcePreferenceDTOs(prefs),
 		})
 	}
 	return c.JSON(http.StatusOK, SourcePreferencesBySourceDTO{Sources: groups})
+}
+
+// disabledSet returns the Tsundoku-side set of disabled source ids, or an empty
+// (non-nil) set when no disabled-flag store is wired. A store read failure is
+// wrapped as a 502 (the disabled flag lives in Tsundoku's DB, but a read failure
+// there is an internal upstream just like an engine failure — the group's
+// enabled state can't be resolved).
+func (h *Handler) disabledSet(ctx context.Context) (map[int64]bool, error) {
+	if h.disabled == nil {
+		return map[int64]bool{}, nil
+	}
+	set, err := h.disabled.Disabled(ctx)
+	if err != nil {
+		return nil, httperr.Upstream(err)
+	}
+	return set, nil
+}
+
+// SetSourceEnabled handles PATCH /api/sources/:sourceId/enabled with an
+// {enabled} body — the TSUNDOKU-SIDE per-language enable/disable toggle behind
+// the Configure dialog's per-source Switch. Disabling hides the source from
+// Tsundoku's Discover/Search/Browse pickers (internal/imports); it does NOT stop
+// refreshing a series already adopted from it, and it is NEVER pushed to the
+// engine (internal/enginetopo does not read this store). Applies the write then
+// RE-READS the store for the authoritative post-write state (never the request
+// echo). A blank/non-numeric :sourceId or a missing `enabled` field is a 400; a
+// store read/write failure is a 502.
+func (h *Handler) SetSourceEnabled(c echo.Context) error {
+	sourceID, err := validateSourceID(c.Param("sourceId"))
+	if err != nil {
+		return err
+	}
+	var req SourceEnabledUpdateRequest
+	if err := c.Bind(&req); err != nil {
+		return httperr.BadRequest("invalid request body")
+	}
+	enabled, err := validateSourceEnabledUpdate(req)
+	if err != nil {
+		return err
+	}
+	if h.disabled == nil {
+		// The route is only registered with a wired store in production; a nil
+		// store here means the deployment cannot persist the flag. Fail loud
+		// rather than silently accept a write that goes nowhere.
+		return httperr.Upstream(errNoDisabledStore)
+	}
+	ctx := c.Request().Context()
+
+	if err := h.disabled.SetEnabled(ctx, sourceID, enabled); err != nil {
+		return httperr.Upstream(err)
+	}
+	// Re-read the authoritative state from the store (§16 round-trip).
+	set, err := h.disabled.Disabled(ctx)
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	return c.JSON(http.StatusOK, SourceEnabledDTO{
+		SourceID: formatSourceID(sourceID),
+		Enabled:  !set[sourceID],
+	})
 }
 
 // SetPreference handles PATCH /api/suwayomi/extensions/:pkgName/preferences with a
