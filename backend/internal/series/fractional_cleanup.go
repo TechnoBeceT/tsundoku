@@ -185,6 +185,16 @@ func (s *Service) removeFractionalInTx(ctx context.Context, tx *ent.Tx, id uuid.
 	if err != nil {
 		return 0, err
 	}
+	return s.deleteRemovableTargets(ctx, tx, id, row, targets)
+}
+
+// deleteRemovableTargets deletes a resolved set of removable fractional chapters
+// (rows + CBZs) inside the caller's transaction: rows first (behind belt-and-braces
+// SQL predicates), then the files BEFORE the caller commits so a file failure rolls
+// the rows back. Shared by the selection path (RemoveFractionalChapters) and the
+// whole-series sweep (DedupeFiles' ignored-downloaded-fractional pass) so the
+// files-before-commit ordering and the delete guard live in exactly one place.
+func (s *Service) deleteRemovableTargets(ctx context.Context, tx *ent.Tx, id uuid.UUID, row *ent.Series, targets []*ent.Chapter) (int, error) {
 	if len(targets) == 0 {
 		return 0, nil
 	}
@@ -198,7 +208,7 @@ func (s *Service) removeFractionalInTx(ctx context.Context, tx *ent.Tx, id uuid.
 	// make the DELETE itself un-bypassable — it can only ever touch a downloaded,
 	// filed, numbered chapter OF THIS SERIES, whatever the caller sent. (The rule's
 	// remaining halves — fractional-ness and "every carrier ignored" — are not
-	// expressible as Ent predicates; they are enforced by selectRemovable above.)
+	// expressible as Ent predicates; they are enforced by removableFractionals above.)
 	deleted, err := tx.Chapter.Delete().Where(
 		entchapter.IDIn(ids...),
 		entchapter.SeriesID(id),
@@ -207,10 +217,10 @@ func (s *Service) removeFractionalInTx(ctx context.Context, tx *ent.Tx, id uuid.
 		entchapter.NumberNotNil(),
 	).Exec(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("series.RemoveFractionalChapters: delete chapters of series %s: %w", id, err)
+		return 0, fmt.Errorf("series: delete removable fractional chapters of series %s: %w", id, err)
 	}
 	if deleted != len(targets) {
-		return 0, fmt.Errorf("series.RemoveFractionalChapters: %d of %d selected chapters no longer matched the removable rule at delete time, nothing removed: %w",
+		return 0, fmt.Errorf("series: %d of %d removable fractional chapters no longer matched the removable rule at delete time, nothing removed: %w",
 			len(targets)-deleted, len(targets), ErrChapterNotRemovable)
 	}
 

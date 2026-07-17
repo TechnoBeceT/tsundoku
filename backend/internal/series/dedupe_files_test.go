@@ -225,3 +225,45 @@ func TestDedupeFiles_UnknownIDReturnsNotFound(t *testing.T) {
 		t.Fatalf("DedupeFiles(unknown): want ErrSeriesNotFound, got %v", err)
 	}
 }
+
+// TestDedupeFiles_RemovesIgnoredDownloadedFractionals proves DedupeFiles pass 0b
+// deletes the fractionals that were DOWNLOADED before the owner ticked
+// ignore_fractional — reusing RemoveFractionalChapters' removable rule for the whole
+// series — while the resurrection guard keeps 268.1 (also carried by non-ignored
+// Comix). Rows AND CBZs go for the removable set; 268.1's row + file survive.
+func TestDedupeFiles_RemovesIgnoredDownloadedFractionals(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	fx := seedReturnersMagic(ctx, t, db)
+	seriesDir := filepath.Join(fx.storage, "Manga", fx.series.Title)
+
+	svc := series.NewService(db, fx.storage, 14)
+	removed, err := svc.DedupeFiles(ctx, fx.series.ID)
+	if err != nil {
+		t.Fatalf("DedupeFiles: %v", err)
+	}
+
+	// Exactly the 5 all-ignored downloaded fractionals (181.5, 190.5, 221.5, 224.5,
+	// 3.1). 268.1 is NOT removable (Comix, un-ignored, also carries it).
+	if removed != 5 {
+		t.Errorf("removed = %d, want 5 (the all-ignored downloaded fractionals)", removed)
+	}
+
+	// Rows gone for the removable set, kept for 268.1 and the wholes.
+	for _, key := range []string{"181.5", "190.5", "221.5", "224.5", "3.1"} {
+		if n := db.Chapter.Query().Where(chapterKey(key)).CountX(ctx); n != 0 {
+			t.Errorf("chapter %s row still present (want deleted)", key)
+		}
+	}
+	if n := db.Chapter.Query().Where(chapterKey("268.1")).CountX(ctx); n != 1 {
+		t.Errorf("chapter 268.1 row missing (must survive — a non-ignored source carries it)")
+	}
+
+	// CBZs: removable ones gone, 268.1 and a whole kept.
+	assertFilesGone(t, seriesDir, "181.5.cbz", "190.5.cbz", "221.5.cbz", "224.5.cbz", "3.1.cbz")
+	for _, name := range []string{"268.1.cbz", "181.cbz"} {
+		if _, err := os.Stat(filepath.Join(seriesDir, name)); err != nil {
+			t.Errorf("%s must remain on disk, stat err = %v", name, err)
+		}
+	}
+}

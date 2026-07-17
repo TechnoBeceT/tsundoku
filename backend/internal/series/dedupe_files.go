@@ -31,7 +31,7 @@ import (
 var ErrDedupeMergeFailed = errors.New("dedupe-files failed while deleting a merged duplicate's CBZ")
 
 // DedupeFiles is the owner-triggered duplicate cleanup for a whole series. It runs
-// THREE passes and returns the total number of duplicates it resolved:
+// FOUR passes and returns the total number of duplicates/leftovers it resolved:
 //
 //  0. Engine-switch duplicate CHAPTER-ROW merge (see mergeEngineSwitchDuplicates):
 //     the Suwayomi→Rensaio switch keyed the SAME physical chapter twice — once as a
@@ -41,8 +41,17 @@ var ErrDedupeMergeFailed = errors.New("dedupe-files failed while deleting a merg
 //     its CBZ persist twice. This pass merges each PROVABLE pair (matched by the
 //     source chapter URL on ProviderChapter, the true identity across both ingests),
 //     keeping the name-keyed canonical and deleting the negative-numeric legacy row +
-//     its orphaned feed rows + its CBZ. This is the ONLY pass that writes DB rows, so
-//     it runs in its own transaction with files-deleted-before-commit + rollback.
+//     its orphaned feed rows + its CBZ. Runs in its own transaction with
+//     files-deleted-before-commit + rollback.
+//     0b. Ignored DOWNLOADED fractional cleanup (see removeIgnoredDownloadedFractionals):
+//     every fractional chapter that is DOWNLOADED and whose EVERY carrier now
+//     ignores fractionals — i.e. was downloaded BEFORE the owner ticked
+//     ignore_fractional on its source(s) — is deleted (row + CBZ), the whole-series
+//     counterpart of the per-chapter RemoveFractionalChapters. It reuses that
+//     endpoint's exact removable rule (fractional AND >=1 carrier AND every carrier
+//     ignored — the resurrection guard) and its files-before-commit ordering. Like
+//     pass 0 it deletes Chapter ROWs, in its own transaction, and like every
+//     deletion path it is owner-triggered, never automatic.
 //  1. For every downloaded chapter (one with a winning filename AND a number) it
 //     removes any OTHER CBZ in the series folder that shares that chapter's number,
 //     keeping the chapter's own winning filename.
@@ -63,11 +72,16 @@ var ErrDedupeMergeFailed = errors.New("dedupe-files failed while deleting a merg
 // owner's explicit POST /api/series/:id/dedupe-files ("Remove duplicate files"
 // button). The never-auto-delete invariant is intact.
 func (s *Service) DedupeFiles(ctx context.Context, id uuid.UUID) (int, error) {
-	// Pass 0 first: it mutates the DB (delete duplicate rows). The file-only sweep
-	// then loads fresh so it sees the post-merge state (no stale removed chapter).
+	// DB-mutating passes first (each in its own tx, delete rows): the file-only sweep
+	// then loads fresh so it sees the post-deletion state (no stale removed chapter).
 	merged, err := s.mergeEngineSwitchDuplicates(ctx, id)
 	if err != nil {
 		return merged, err
+	}
+	ignoredRemoved, err := s.removeIgnoredDownloadedFractionals(ctx, id)
+	dbRemoved := merged + ignoredRemoved
+	if err != nil {
+		return dbRemoved, err
 	}
 
 	ser, err := s.client.Series.Query().
@@ -77,13 +91,13 @@ func (s *Service) DedupeFiles(ctx context.Context, id uuid.UUID) (int, error) {
 		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return merged, ErrSeriesNotFound
+			return dbRemoved, ErrSeriesNotFound
 		}
-		return merged, fmt.Errorf("series.DedupeFiles: load series %s: %w", id, err)
+		return dbRemoved, fmt.Errorf("series.DedupeFiles: load series %s: %w", id, err)
 	}
 
 	categoryName := category.NameOf(ser)
-	total := merged
+	total := dbRemoved
 
 	winningRemoved, err := dedupeWinningChapters(s.storage, categoryName, ser)
 	total += winningRemoved
@@ -179,6 +193,49 @@ func (s *Service) mergeEngineSwitchDuplicates(ctx context.Context, id uuid.UUID)
 		return 0, fmt.Errorf("series.DedupeFiles: commit merge tx: %w", err)
 	}
 	return merged, nil
+}
+
+// removeIgnoredDownloadedFractionals is DedupeFiles pass 0b: it deletes every
+// DOWNLOADED fractional chapter of the series whose EVERY carrier ignores
+// fractionals (row + CBZ), reusing RemoveFractionalChapters' removable rule and its
+// files-before-commit transaction ordering — but with NO per-chapter selection: the
+// whole removable set is swept at once. This cleans the fractionals that were
+// already downloaded BEFORE the owner ticked ignore_fractional (the toggle itself
+// deletes nothing). Returns the count removed.
+//
+// 🔴 OWNER-TRIGGERED ONLY (via DedupeFiles). The resurrection guard is intact — a
+// fractional a non-ignored source also carries is NOT removable — and the feed rows
+// are kept, so un-ticking the toggle re-ingests + re-downloads it.
+func (s *Service) removeIgnoredDownloadedFractionals(ctx context.Context, id uuid.UUID) (int, error) {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("series.DedupeFiles: begin ignored-fractional tx: %w", err)
+	}
+
+	removed, err := s.removeIgnoredDownloadedFractionalsInTx(ctx, tx, id)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("series.DedupeFiles: commit ignored-fractional tx: %w", err)
+	}
+	return removed, nil
+}
+
+// removeIgnoredDownloadedFractionalsInTx is the body of
+// removeIgnoredDownloadedFractionals, run inside one transaction. The series
+// (chapters + providers + feeds) is loaded through the TX client so the removable
+// decision and the deletes share ONE snapshot. An unknown id yields
+// ErrSeriesNotFound; every other error rolls the caller's transaction back.
+func (s *Service) removeIgnoredDownloadedFractionalsInTx(ctx context.Context, tx *ent.Tx, id uuid.UUID) (int, error) {
+	row, err := loadSeriesForCleanup(ctx, tx.Client(), id)
+	if err != nil {
+		return 0, err
+	}
+	// removableFractionals already requires downloaded + filed + fractional + >=1
+	// carrier + every carrier ignored — the exact DOWNLOADED removable rule.
+	return s.deleteRemovableTargets(ctx, tx, id, row, removableFractionals(row))
 }
 
 // mergeDuplicatesInTx is the body of mergeEngineSwitchDuplicates, run inside one
