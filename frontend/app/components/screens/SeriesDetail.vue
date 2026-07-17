@@ -358,78 +358,65 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
 </template>
 
 <style scoped>
-/* QCAT-231 "fit the screen, scroll inside": `.detail` itself stays a FLOWING
- * document container (NOT fixed-height/overflow:hidden) — RichSeriesCard's
- * height is content-driven (description + tag cloud + links + stats) and can
- * exceed a single viewport, so trapping it in a bounded pane clips it (the
- * original QCAT-230 regression). `min-height` only keeps a short series from
- * leaving a visibly short page below the AppShell header (shell/AppShell.vue's
- * `.head` is a fixed 64px; its `.head`/`.rail` stay `position: sticky` through
- * this document scroll — untouched here). The card flows; only `.columns`
- * below is bounded. */
-/* A flex column so the three top-level sections — RichSeriesCard/Trackers
- * block (`.detail__top`) and the Chapters/Sources `.columns` — share ONE
- * consistent 18px gap. Previously `.detail` was a plain block: `.detail__top`
- * gave the card↔Trackers gap, but the Trackers↔columns transition had no
- * defined gap and fell back to stray spacing (the uneven rhythm the owner
- * flagged). Flex `gap` here is exact and overrides that. */
+/* `.detail` is a FLOWING document container that GROWS with its content
+ * (QCAT-265 treatment #3 — the default). No viewport-fit: the 2026-07-13
+ * `min-height: calc(100dvh − 64px)` letterbox floor was removed (GAP-093) —
+ * it was part of the experience-drift batch the owner rejected ("on a really
+ * big screen I'm trying to work inside a small area"). RichSeriesCard's height
+ * is content-driven (description + tag cloud + links + stats) and simply flows;
+ * shell/AppShell.vue owns the only legitimate viewport floor (`min-height:
+ * 100vh` on the shell, untouched here) plus the sticky 64px `.head`.
+ *
+ * A flex column so the top-level sections — the RichSeriesCard/Trackers block
+ * (`.detail__top`) and the Chapters/Sources `.columns` — share ONE consistent
+ * gap (--space-xl = the design's 18px, now fluid so it tightens on a phone). */
 .detail {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 24px 30px 70px;
+  gap: var(--space-xl);
+  padding: var(--space-2xl) var(--space-3xl) 70px;
   background: var(--bg);
-  min-height: calc(100dvh - 64px);
 }
 
 /* A flex column so RichSeriesCard and TrackersSection get a consistent gap
  * regardless of which optional siblings (the error banner) are present —
  * neither SurfaceCard-based child carries its own top/bottom margin, so
  * without this the two panels sat flush against each other (a regression
- * from the old SeriesHeader→RichSeriesCard swap). Matches `.columns`' 18px. */
+ * from the old SeriesHeader→RichSeriesCard swap). Matches `.columns`' gap. */
 .detail__top {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-xl);
 }
 
-/* ---- Two-column layout: fit-screen bounded inner-scroll (QCAT-231) -------- */
-/* Chapters gets the WIDER column — it's the panel actually scanned. Sources
- * is a bounded list (4-7 cards) and gets the narrower one. Unlike `.detail`
- * above, `.columns` IS bounded to one viewport: `height` fits it under the
- * sticky 64px AppShell header (whatever scroll position the card left it at),
- * and `min-height: 0` lets the grid ITEMS shrink below their content size (a
- * grid item's automatic min-height is its content size — without this
- * override the row, and the page with it, would refuse to shrink and the
- * page-level scrollbar would come back). Bounding the grid is all that's
- * needed to engage each panel's OWN inner-scroll: PanelCard.vue's `.panel` is
- * already `flex:1 / min-height:0 / overflow-y:auto` in its body — it just
- * needs a bounded cell to fill (see its "SCROLL SHAPE" doc comment). The
- * result: Chapters and Sources each scroll independently, so the short
- * Sources column is reachable without traversing the long Chapters list, and
- * it never sits beside a tall blank gap while Chapters keeps growing. */
+/* ---- Two-column layout: QCAT-265 treatment #1 (BOUNDED inner-scroll) ------ */
+/* Chapters gets the WIDER column — it's the panel actually scanned; Sources
+ * (4-7 cards) gets the narrower one. This is the ONE place the QCAT-265
+ * diagnostic fires (§2.6.1): ASYMMETRY (320 chapters beside 4 sources) AND
+ * EMPTY SPACE (an unbounded Sources column sits blank for thousands of px while
+ * Chapters grows). So each panel bounds ITSELF at a content-keyed
+ * `max-height: 580px` (the prototype's own value) via PanelCard's `maxHeight`
+ * prop — NOT this grid. `.columns` carries NO height and NO overflow of its
+ * own: the letterbox (`height: calc(100dvh − 64px)` here + `grid-auto-rows:
+ * calc(100dvh − 64px)` on the stacked breakpoint) is GONE. `align-items: start`
+ * (the prototype's own value) lets each panel size to its own content up to its
+ * 580px cap, so a short Sources panel never stretches to Chapters' height and
+ * leaves dead space beneath its list. The PAGE grows; each panel scrolls its
+ * own list independently. */
 .columns {
   display: grid;
   grid-template-columns: 1.7fr 1fr;
-  gap: 18px;
-  height: calc(100dvh - 64px);
-  min-height: 0;
-  /* `.detail` is now a flex column; keep the viewport-fit height from being
-   * compressed by flex-shrink. */
-  flex-shrink: 0;
+  gap: var(--space-xl);
+  align-items: start;
 }
 
 @media (max-width: 900px) {
-  /* Stacked single column. Each panel still gets its OWN bounded, inner-
-   * scrolling viewport (`grid-auto-rows`, ~one screen each) rather than
-   * growing to content — so Sources sits right after ONE bounded Chapters
-   * panel, not 320 chapter rows down (the "torture" the owner rejected the
-   * full-page-scroll model over). The page itself scrolls BETWEEN the
-   * stacked panels; each panel scrolls its OWN list. */
+  /* Below the two-column threshold the pair stacks into ONE column. Each panel
+   * KEEPS its own 580px bounded inner-scroll (from PanelCard's `maxHeight`), so
+   * Sources sits right after ONE bounded Chapters panel — not 320 chapter rows
+   * down — while the PAGE scrolls between the stacked panels. No viewport-fit. */
   .columns {
     grid-template-columns: 1fr;
-    height: auto;
-    grid-auto-rows: calc(100dvh - 64px);
   }
 }
 </style>

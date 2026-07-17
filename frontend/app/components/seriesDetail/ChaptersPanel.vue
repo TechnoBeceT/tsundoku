@@ -11,7 +11,10 @@ import type { Chapter } from '../screens/seriesDetail.types'
  * progress", carries the chapter NUMBER) up to the screen. Wraps the shared
  * PanelCard shell (divided header + full-bleed body); the count pill rides
  * the header-right `actions` slot. PanelCard itself owns the scroll
- * (`.panel__content`) — this panel does not set its own overflow/max-height.
+ * (`.panel__content`); this panel passes the QCAT-265 treatment #1
+ * `max-height="580px"` bound (the prototype's own value) so the long chapter
+ * list scrolls INTERNALLY while the page grows — the asymmetric-pair case the
+ * owner ratified (§2.6.2, "chapters and sources require inner scrolling").
  */
 defineProps<{
   /** The chapters to list, in the order they should appear (sorted upstream). */
@@ -29,7 +32,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <PanelCard title="Chapters">
+  <PanelCard title="Chapters" max-height="580px">
     <template #actions>
       <span class="count-pill">{{ total }}</span>
     </template>
@@ -45,7 +48,7 @@ const emit = defineEmits<{
 
 <style scoped>
 .count-pill {
-  padding: 1px 8px;
+  padding: 1px var(--space-xs);
   border-radius: var(--radius-pill);
   background: var(--surface3);
   color: var(--muted);

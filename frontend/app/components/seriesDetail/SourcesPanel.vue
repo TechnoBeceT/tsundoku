@@ -15,9 +15,12 @@ import type { Provider } from '../screens/seriesDetail.types'
  * `addSource`. Wraps the shared PanelCard shell: the count pill rides the
  * header-left `lead` slot (grouped with the title), the Add button the
  * header-right `actions` slot, and the provider list the full-bleed body.
- * PanelCard itself owns the scroll (`.panel__content`) — with 4-7 source
- * cards this panel used to grow unbounded and drag the whole page down with
- * it; it now scrolls internally exactly like ChaptersPanel does.
+ * PanelCard itself owns the scroll (`.panel__content`); this panel passes the
+ * QCAT-265 treatment #1 `max-height="580px"` bound (the prototype's own value)
+ * so a long source list scrolls INTERNALLY. When short (the common 4-7 cards)
+ * it simply grows to its content and never hits the bound — a bound is not a
+ * letterbox (§2.6.3). Bounding BOTH Chapters and Sources is the owner-ratified
+ * asymmetric-pair scope (§2.6.2), so neither dooms the other's reachability.
  *
  * Each row's chapter coverage comes from the provider itself (`feedCount` /
  * `feedRanges` on the series-detail response) — this panel fetches nothing and
@@ -87,7 +90,7 @@ const driftedSet = computed(() => new Set(props.driftedIds))
 </script>
 
 <template>
-  <PanelCard title="Sources">
+  <PanelCard title="Sources" max-height="580px">
     <template #lead>
       <span class="count-pill">{{ providers.length }}</span>
     </template>
@@ -151,8 +154,11 @@ const driftedSet = computed(() => new Set(props.driftedIds))
 </template>
 
 <style scoped>
+/* Off-ladder px migrated to byte-identical rem literals (value÷16) so they
+ * scale with the fluid root on a phone yet resolve to their exact design px at
+ * the desktop anchor; exact-match values use the spacing/text tokens. */
 .count-pill {
-  padding: 1px 8px;
+  padding: 1px var(--space-xs);
   border-radius: var(--radius-pill);
   background: var(--surface3);
   color: var(--muted);
@@ -161,12 +167,12 @@ const driftedSet = computed(() => new Set(props.driftedIds))
 }
 
 .panel__body {
-  padding: 12px;
+  padding: var(--space-md);
 }
 
 .panel__eyebrow {
-  margin: 2px 4px 9px;
-  font-size: 10.5px;
+  margin: var(--space-3xs) var(--space-2xs) 0.5625rem;
+  font-size: 0.65625rem;
   font-weight: var(--weight-extrabold);
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -174,9 +180,9 @@ const driftedSet = computed(() => new Set(props.driftedIds))
 }
 
 .panel__empty {
-  padding: 24px 12px;
+  padding: var(--space-2xl) var(--space-md);
   text-align: center;
-  font-size: 12.5px;
+  font-size: 0.78125rem;
   color: var(--faint);
 }
 
@@ -184,23 +190,23 @@ const driftedSet = computed(() => new Set(props.driftedIds))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin: 0 4px 10px;
-  padding: 8px 11px;
+  gap: var(--space-sm);
+  margin: 0 var(--space-2xs) var(--space-sm);
+  padding: var(--space-xs) 0.6875rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--danger-border);
   background: var(--danger-bg);
 }
 
 .dup-banner__text {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: var(--weight-bold);
   color: var(--danger-text);
 }
 
 .dup-message {
-  margin: 0 4px 10px;
-  font-size: 11.5px;
+  margin: 0 var(--space-2xs) var(--space-sm);
+  font-size: 0.71875rem;
   color: var(--muted);
 }
 </style>
