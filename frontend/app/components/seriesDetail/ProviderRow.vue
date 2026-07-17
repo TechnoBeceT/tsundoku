@@ -205,13 +205,16 @@ const rel = (iso: string | null): string => {
 </template>
 
 <style scoped>
+/* Off-ladder raw px in visible properties migrated to exact spacing tokens /
+ * byte-identical rem (value÷16) — design px at the 16px desktop anchor, fluid
+ * on a phone. */
 .source {
   display: flex;
   align-items: flex-start;
-  gap: 11px;
-  margin-bottom: 10px;
-  padding: 12px;
-  border-radius: 13px;
+  gap: 0.6875rem; /* 11px */
+  margin-bottom: var(--space-sm); /* 10px */
+  padding: var(--space-md); /* 12px */
+  border-radius: 0.8125rem; /* 13px */
   border: 1px solid var(--border);
   background: var(--surface2);
 }
@@ -224,8 +227,8 @@ const rel = (iso: string | null): string => {
 .source__namerow {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 5px;
+  gap: var(--space-xs); /* 8px */
+  margin-bottom: 0.3125rem; /* 5px */
   flex-wrap: wrap;
 }
 
@@ -238,17 +241,17 @@ const rel = (iso: string | null): string => {
 .source__meta {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 8px;
+  gap: 0.4375rem; /* 7px */
+  margin-bottom: var(--space-xs); /* 8px */
   flex-wrap: wrap;
-  font-size: 11.5px;
+  font-size: 0.71875rem; /* 11.5px */
   color: var(--muted);
 }
 
 .source__healthrow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
   flex-wrap: wrap;
 }
 
@@ -260,10 +263,10 @@ const rel = (iso: string | null): string => {
 .source__coverage {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
   flex-wrap: wrap;
-  margin-bottom: 8px;
-  font-size: 11.5px;
+  margin-bottom: var(--space-xs); /* 8px */
+  font-size: 0.71875rem; /* 11.5px */
 }
 
 /* What the SOURCE offers — the headline number, so it can't be misread as the
@@ -288,14 +291,14 @@ const rel = (iso: string | null): string => {
 .source__fractional {
   display: flex;
   align-items: baseline;
-  gap: 7px;
+  gap: 0.4375rem; /* 7px */
   flex-wrap: wrap;
-  margin-bottom: 7px;
-  padding: 5px 9px;
+  margin-bottom: 0.4375rem; /* 7px */
+  padding: 0.3125rem 0.5625rem; /* 5px 9px */
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface3);
-  font-size: 11.5px;
+  font-size: 0.71875rem; /* 11.5px */
 }
 
 .source__fractional-count {
@@ -313,35 +316,35 @@ const rel = (iso: string | null): string => {
 .source__fractional-toggle {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 0.5625rem; /* 9px */
   cursor: pointer;
 }
 
 .source__fractional-label {
-  font-size: 11.5px;
+  font-size: 0.71875rem; /* 11.5px */
   color: var(--text);
 }
 
 .source__fractional-note {
-  margin-top: 4px;
-  margin-bottom: 8px;
-  font-size: 10.5px;
+  margin-top: var(--space-2xs); /* 4px */
+  margin-bottom: var(--space-xs); /* 8px */
+  font-size: 0.65625rem; /* 10.5px */
   line-height: 1.4;
   color: var(--faint);
 }
 
 .source__times {
   display: flex;
-  gap: 14px;
+  gap: var(--space-base); /* 14px */
   flex-wrap: wrap;
-  margin-top: 8px;
-  font-size: 10.5px;
+  margin-top: var(--space-xs); /* 8px */
+  font-size: 0.65625rem; /* 10.5px */
   color: var(--faint);
 }
 
 .source__error {
-  margin-top: 8px;
-  padding: 6px 9px;
+  margin-top: var(--space-xs); /* 8px */
+  padding: var(--space-xs-tight) 0.5625rem; /* 6px 9px */
   border-radius: var(--radius-sm);
   border: 1px solid var(--danger-border);
   background: var(--danger-bg);
@@ -352,9 +355,9 @@ const rel = (iso: string | null): string => {
 }
 
 .source__unlinked-note {
-  margin-top: 6px;
-  margin-bottom: 8px;
-  font-size: 11.5px;
+  margin-top: var(--space-xs-tight); /* 6px */
+  margin-bottom: var(--space-xs); /* 8px */
+  font-size: 0.71875rem; /* 11.5px */
   line-height: 1.4;
   color: var(--muted);
 }
@@ -362,28 +365,28 @@ const rel = (iso: string | null): string => {
 /* The "extension gone" hint — tinted with the unavailable health token so it
    reads as the same "needs action" state as its badge. */
 .source__unavailable-note {
-  margin-top: 6px;
-  font-size: 11.5px;
+  margin-top: var(--space-xs-tight); /* 6px */
+  font-size: 0.71875rem; /* 11.5px */
   line-height: 1.4;
   color: var(--sd-hl-unavailable-fg);
 }
 
 .source__actions {
   display: flex;
-  gap: 8px;
-  margin-top: 9px;
+  gap: var(--space-xs); /* 8px */
+  margin-top: 0.5625rem; /* 9px */
 }
 
 .btn-remove,
 .btn-match {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
+  gap: 0.3125rem; /* 5px */
+  padding: 0.3125rem var(--space-sm); /* 5px 10px */
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: transparent;
-  font-size: 11.5px;
+  font-size: 0.71875rem; /* 11.5px */
   font-weight: var(--weight-bold);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;

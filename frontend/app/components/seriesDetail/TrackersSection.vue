@@ -428,23 +428,26 @@ function onResetConfirm(chapter: number): void {
 </template>
 
 <style scoped>
+/* Off-ladder raw px in visible properties migrated to exact spacing tokens /
+ * byte-identical rem (value÷16) — design px at the 16px desktop anchor, fluid
+ * on a phone. */
 .trackers__error {
-  margin-bottom: 14px;
+  margin-bottom: var(--space-base); /* 14px */
 }
 
 .trackers__bound {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-sm); /* 10px */
 }
 
 .trackers__bound + .trackers__add,
 .trackers__bound + :deep(.empty) {
-  margin-top: 16px;
+  margin-top: var(--space-lg); /* 16px */
 }
 
 .trackers__add-heading {
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-sm); /* 10px */
   font-family: var(--font-display);
   font-weight: var(--weight-bold);
   font-size: var(--text-base);
@@ -452,10 +455,10 @@ function onResetConfirm(chapter: number): void {
 }
 
 .trackers__empty {
-  margin: 10px 0 0;
-  padding: 10px 0;
+  margin: var(--space-sm) 0 0; /* 10px */
+  padding: var(--space-sm) 0; /* 10px */
   text-align: center;
-  font-size: 13px;
+  font-size: var(--text-base); /* 13px */
   color: var(--muted);
 }
 
@@ -467,7 +470,7 @@ function onResetConfirm(chapter: number): void {
 }
 
 .add-row + .add-row {
-  margin-top: 8px;
+  margin-top: var(--space-xs); /* 8px */
 }
 
 .add-row__head {
@@ -475,7 +478,7 @@ function onResetConfirm(chapter: number): void {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 11px 14px;
+  padding: 0.6875rem var(--space-base); /* 11px 14px */
   border: none;
   background: transparent;
   color: var(--text);
@@ -491,21 +494,21 @@ function onResetConfirm(chapter: number): void {
 .add-row__name {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
   font-weight: var(--weight-semibold);
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px */
 }
 
 .add-row__panel {
-  padding: 0 14px 14px;
+  padding: 0 var(--space-base) var(--space-base); /* 14px */
   border-top: 1px solid var(--border);
 }
 
 .add-row__searchbar {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
   align-items: center;
-  margin-top: 12px;
+  margin-top: var(--space-md); /* 12px */
 }
 
 .add-row__search {
@@ -519,15 +522,15 @@ function onResetConfirm(chapter: number): void {
 }
 
 .add-row__error {
-  margin-top: 10px;
+  margin-top: var(--space-sm); /* 10px */
 }
 
 .track-results {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-  max-height: 320px;
+  gap: var(--space-xs); /* 8px */
+  margin-top: var(--space-sm); /* 10px */
+  max-height: 320px; /* deliberate scroll bound (§2.6) — raw px, not scaled */
   overflow-y: auto;
 }
 

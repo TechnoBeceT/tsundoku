@@ -237,17 +237,26 @@ function submitEdit(): void {
 </template>
 
 <style scoped>
+/* `container-type: inline-size` makes this row's own width the query signal
+ * (§3.2): the row is cramped by the PANEL it sits in, not the viewport, so the
+ * stack threshold must fire on the ROW's width — a viewport media query gating a
+ * parent-sized row is a fix that cannot fire (§5.10, the documented
+ * TrackerBindingRow scar). No visual effect on desktop. */
 .track-bound__group {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
 }
 
+/* Off-ladder raw px migrated to byte-identical rem (value÷16) / exact spacing
+ * tokens so they resolve to their design px at the 16px desktop anchor yet scale
+ * with the fluid root on a phone. */
 .track-bound__row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: var(--space-md); /* 12px */
+  padding: var(--space-md) var(--space-base); /* 12px 14px */
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -262,7 +271,7 @@ function submitEdit(): void {
 .track-bound__tracker {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 0.3125rem; /* 5px */
   margin: 0;
   font-size: var(--text-xs);
   font-weight: var(--weight-extrabold);
@@ -272,27 +281,27 @@ function submitEdit(): void {
 }
 
 .track-bound__title {
-  margin: 2px 0 0;
+  margin: 0.125rem 0 0; /* 2px */
   font-weight: var(--weight-semibold);
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px */
   color: var(--text);
   overflow-wrap: anywhere;
 }
 
 .track-bound__meta {
-  margin: 2px 0 0;
+  margin: 0.125rem 0 0; /* 2px */
   font-size: var(--text-sm);
   color: var(--muted);
 }
 
 .track-bound__error {
-  margin-top: 6px;
+  margin-top: var(--space-xs-tight); /* 6px */
 }
 
 .track-bound__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
   flex: none;
 }
 
@@ -300,9 +309,9 @@ function submitEdit(): void {
 .track-edit {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 6px;
-  padding: 14px;
+  gap: var(--space-md); /* 12px */
+  margin-top: var(--space-xs-tight); /* 6px */
+  padding: var(--space-base); /* 14px */
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface2);
@@ -314,7 +323,7 @@ function submitEdit(): void {
 
 .track-edit__row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm); /* 10px */
 }
 
 .track-edit__row > * {
@@ -325,7 +334,7 @@ function submitEdit(): void {
 .track-edit__field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-xs-tight); /* 6px */
 }
 
 .track-edit__field--inline {
@@ -345,7 +354,21 @@ function submitEdit(): void {
 .track-edit__actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
+}
+
+/* Small-mobile stack: when the ROW itself is too narrow to hold the text block
+ * beside the actions, the body collapses toward zero and crushes the title to
+ * one-word-per-line (measured: 5.6 lines at a ~246px row / 320px phone). Stack
+ * the text full-width on top with the actions as a full-width row beneath. The
+ * bound is the row's OWN width (container query), so it fires on the real page
+ * regardless of viewport — measured to stay a comfortable ≤2 lines at 414px
+ * (owner's "fits" width) and stack below it. */
+@container (max-width: 320px) {
+  .track-bound__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 @media (max-width: 900px) {
@@ -353,6 +376,14 @@ function submitEdit(): void {
    * squeeze on a phone — stack them full-width (QCAT-230/231). */
   .track-edit__row {
     flex-direction: column;
+  }
+
+  /* IconButton's mobile 44px hit overlay overhangs a sub-44px square, so the
+   * Refresh icon's overlay would spill onto the DESTRUCTIVE "Unbind" button as
+   * the root shrinks the visible squares. `--touch-pitch` (raw px — a finger is
+   * physical) keeps a clean gap before it so no tap lands ambiguously (§7). */
+  .track-bound__actions {
+    gap: var(--touch-pitch);
   }
 }
 </style>

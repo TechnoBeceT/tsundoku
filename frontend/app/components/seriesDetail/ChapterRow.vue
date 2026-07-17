@@ -114,11 +114,14 @@ const resumeLine = (): string => {
 </template>
 
 <style scoped>
+/* Off-ladder raw px in visible properties migrated to exact spacing tokens /
+ * byte-identical rem (value÷16) — design px at the 16px desktop anchor, fluid
+ * on a phone. */
 .chapter {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 11px 18px;
+  gap: var(--space-md); /* 12px */
+  padding: 0.6875rem var(--space-xl); /* 11px 18px */
   border-bottom: 1px solid var(--border);
   transition: opacity 0.15s;
 }
@@ -132,8 +135,8 @@ const resumeLine = (): string => {
 .chapter__num-cell {
   display: flex;
   align-items: center;
-  gap: 5px;
-  width: 40px;
+  gap: 0.3125rem; /* 5px */
+  width: 2.5rem; /* 40px */
   flex: none;
 }
 
@@ -147,8 +150,8 @@ const resumeLine = (): string => {
 /* Unread indicator — a chapter that has never been opened at all (distinct
  * from "partially read", which shows the resume line instead). */
 .chapter__dot {
-  width: 6px;
-  height: 6px;
+  width: 0.375rem; /* 6px */
+  height: 0.375rem; /* 6px */
   flex-shrink: 0;
   border-radius: var(--radius-pill);
   background: var(--accent);
@@ -160,9 +163,9 @@ const resumeLine = (): string => {
 }
 
 .chapter__resume {
-  margin-top: 2px;
+  margin-top: 0.125rem; /* 2px */
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 0.65625rem; /* 10.5px */
   font-weight: var(--weight-bold);
   color: var(--accentBright);
 }
@@ -171,18 +174,18 @@ const resumeLine = (): string => {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 13.5px;
+  font-size: 0.84375rem; /* 13.5px */
   font-weight: var(--weight-semibold);
   color: var(--text);
 }
 
 .chapter__file {
-  margin-top: 2px;
+  margin-top: 0.125rem; /* 2px */
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 0.65625rem; /* 10.5px */
   color: var(--faint);
 }
 
@@ -199,7 +202,7 @@ const resumeLine = (): string => {
 .chapter__controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md); /* 12px */
   flex: none;
 }
 
@@ -220,15 +223,22 @@ const resumeLine = (): string => {
      * including `margin-left` never exceeds the row's content width —
      * `flex: 1 0 100%` + a separate margin would overflow by the margin
      * amount instead. flex-shrink:1 (the "1" in the shorthand) is a safety
-     * margin for subpixel rounding, not load-bearing on its own. */
-    flex: 1 1 calc(100% - 52px);
+     * margin for subpixel rounding, not load-bearing on its own. The 3.25rem
+     * indent (52px @16 = num-cell 2.5rem + gap 0.75rem) is rem so it stays
+     * aligned under the name as the fluid root shrinks both on a phone. */
+    flex: 1 1 calc(100% - 3.25rem);
     /* Align under the name, not the number gutter. */
-    margin-left: 52px;
+    margin-left: 3.25rem; /* 52px */
     justify-content: flex-start;
     /* Defensive: on the narrowest phones a long badge label ("Failed ·
      * final") beside a page-count can still be tight — let the cluster
      * itself wrap rather than overflow horizontally. */
     flex-wrap: wrap;
+    /* IconButton's mobile 44px hit overlay overhangs the sub-44px "Set as
+     * current progress" square; keep a `--touch-pitch` gap (raw px — a finger
+     * is physical) so the overlay can't spill onto the adjacent "Read" button
+     * and land an ambiguous tap on the (confirm-guarded) progress reset (§7). */
+    column-gap: var(--touch-pitch);
   }
 }
 </style>

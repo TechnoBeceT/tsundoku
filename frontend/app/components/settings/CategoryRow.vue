@@ -175,6 +175,10 @@ const emit = defineEmits<{
 
   .cat-actions {
     margin-left: 0;
+    /* IconButton's mobile 44px hit overlay overhangs the sub-44px Rename square;
+     * keep a `--touch-pitch` gap (raw px — a finger is physical) so it can't
+     * spill onto the adjacent DESTRUCTIVE Delete and land an ambiguous tap (§7). */
+    gap: var(--touch-pitch);
   }
 }
 </style>

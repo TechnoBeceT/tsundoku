@@ -291,9 +291,12 @@ const hasBadges = computed(
  * `@media (max-width: 900px)` block at the end of this file, which forces
  * this SAME single-column shape (the one the `SingleColumn` story renders)
  * regardless of the `layout` prop. */
+/* Off-ladder raw px in visible properties migrated to exact spacing tokens /
+ * byte-identical rem (value÷16) so they equal their design px at the 16px
+ * desktop anchor yet scale with the fluid root on a phone. */
 .rich {
   display: flex;
-  gap: 24px;
+  gap: var(--space-2xl); /* 24px */
   max-width: 100%;
   flex-direction: var(--rich-direction, row);
   align-items: var(--rich-align, stretch);
@@ -302,7 +305,7 @@ const hasBadges = computed(
 .rich--singleColumn {
   --rich-direction: column;
   --rich-align: stretch;
-  --rich-cover-width: 190px;
+  --rich-cover-width: 11.875rem; /* 190px */
   --rich-cover-align: center;
   --rich-stats-cols: repeat(2, minmax(0, 1fr));
   --rich-cat-margin: 0;
@@ -312,7 +315,7 @@ const hasBadges = computed(
 .rich__cover {
   position: relative;
   flex: none;
-  width: var(--rich-cover-width, 208px);
+  width: var(--rich-cover-width, 13rem); /* 208px */
   max-width: 100%;
   /* align-self:flex-start stops the cover column stretching to the (taller) text
      column's height — otherwise this bordered box grows past the CoverImage's
@@ -333,8 +336,8 @@ const hasBadges = computed(
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 11px 12px;
+  gap: 0.4375rem; /* 7px */
+  padding: 0.6875rem var(--space-md); /* 11px 12px */
   border: none;
   background: var(--cover-frost);
   backdrop-filter: blur(4px);
@@ -365,7 +368,7 @@ const hasBadges = computed(
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-lg); /* 16px */
 }
 
 /* Title block (left) + management toolbar (top-right). flex-wrap lets the
@@ -377,7 +380,7 @@ const hasBadges = computed(
   display: flex;
   align-items: flex-start;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-md); /* 12px */
 }
 
 .rich__titleblock {
@@ -386,7 +389,7 @@ const hasBadges = computed(
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
 }
 
 /* A flex row so a future "metadata source" button can sit left of Delete. */
@@ -394,7 +397,7 @@ const hasBadges = computed(
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
 }
 
 .rich__title {
@@ -423,20 +426,20 @@ const hasBadges = computed(
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
 }
 
 /* ---- Credits -------------------------------------------------------------- */
 .rich__credits {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
 }
 
 .rich__credit {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-xs); /* 8px */
   font-size: var(--text-sm);
   line-height: 1.4;
 }
@@ -445,12 +448,12 @@ const hasBadges = computed(
   flex: none;
   align-self: center;
   color: var(--faint);
-  font-size: 14px;
+  font-size: var(--text-md); /* 14px */
 }
 
 .rich__credit-label {
   flex: none;
-  min-width: 46px;
+  min-width: 2.875rem; /* 46px */
   font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   letter-spacing: var(--tracking-label);
@@ -467,15 +470,15 @@ const hasBadges = computed(
 .rich__links {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 16px;
+  gap: var(--space-sm); /* 10px */
+  padding-top: var(--space-lg); /* 16px */
   border-top: 1px solid var(--border);
 }
 
 .rich__links-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 0.4375rem; /* 7px */
   font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   letter-spacing: var(--tracking-label);
@@ -487,9 +490,9 @@ const hasBadges = computed(
 .rich__footer {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-lg); /* 16px */
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: var(--space-lg); /* 16px */
   border-top: 1px solid var(--border);
 }
 
@@ -499,11 +502,11 @@ const hasBadges = computed(
 .rich__stats {
   display: grid;
   grid-template-columns: var(--rich-stats-cols, repeat(5, minmax(0, 1fr)));
-  gap: 10px;
+  gap: var(--space-sm); /* 10px */
 }
 
 .rich__stat {
-  padding: 11px 13px;
+  padding: 0.6875rem 0.8125rem; /* 11px 13px */
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--surface2);
@@ -513,19 +516,19 @@ const hasBadges = computed(
 .rich__controls {
   display: flex;
   align-items: center;
-  gap: 22px;
+  gap: 1.375rem; /* 22px */
   flex-wrap: wrap;
 }
 
 .rich__control {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 0.6875rem; /* 11px */
 }
 
 .rich__control--category {
   margin-left: var(--rich-cat-margin, auto);
-  gap: 9px;
+  gap: 0.5625rem; /* 9px */
   cursor: pointer;
 }
 
@@ -562,7 +565,7 @@ const hasBadges = computed(
   .rich {
     --rich-direction: column;
     --rich-align: stretch;
-    --rich-cover-width: 190px;
+    --rich-cover-width: 11.875rem; /* 190px */
     --rich-cover-align: center;
     --rich-stats-cols: repeat(2, minmax(0, 1fr));
     --rich-cat-margin: 0;
