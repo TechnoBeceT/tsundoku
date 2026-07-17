@@ -1,5 +1,29 @@
 import type { SeriesSummary } from '../screens/types'
 
+/**
+ * The library grid's boolean toggle-filters, applied on top of the category tab
+ * + search. Mirrors the backend `LibraryFilters` DTO so the persisted view state
+ * round-trips 1:1. All default false ⇒ the whole library shows.
+ */
+export interface LibraryFilters {
+  /** Only series with ≥1 downloaded chapter. */
+  downloaded: boolean
+  /** Only series with ≥1 unread downloaded chapter. */
+  unread: boolean
+  /** Only series the owner marked finished. */
+  completed: boolean
+  /** Only series with no live download source (every provider disk-origin). */
+  needsSource: boolean
+}
+
+/** The all-off filter state — the default view (whole library). */
+export const NO_FILTERS: LibraryFilters = {
+  downloaded: false,
+  unread: false,
+  completed: false,
+  needsSource: false,
+}
+
 /** Case-insensitive, trimmed title search. A blank query matches everything. */
 export function searchSeries(items: SeriesSummary[], query: string): SeriesSummary[] {
   const q = query.trim().toLowerCase()
@@ -20,6 +44,25 @@ export function filterByCategory(items: SeriesSummary[], category: string | null
  */
 export function filterNeedsSource(items: SeriesSummary[], active: boolean): SeriesSummary[] {
   return active ? items.filter((s) => s.needsSource) : items
+}
+
+/**
+ * Apply the boolean toggle-filters. Each active toggle NARROWS (logical AND) —
+ * every inactive one is a pass-through. Reads only the present DTO fields
+ * (chapterCounts / completed / needsSource), so no new backend data is required.
+ */
+export function applyFilters(items: SeriesSummary[], f: LibraryFilters): SeriesSummary[] {
+  let out = items
+  if (f.downloaded) out = out.filter((s) => s.chapterCounts.downloaded > 0)
+  if (f.unread) out = out.filter((s) => s.chapterCounts.unread > 0)
+  if (f.completed) out = out.filter((s) => s.completed)
+  if (f.needsSource) out = out.filter((s) => s.needsSource)
+  return out
+}
+
+/** True when any toggle-filter is active (drives the "no matches" empty state). */
+export function anyFilterActive(f: LibraryFilters): boolean {
+  return f.downloaded || f.unread || f.completed || f.needsSource
 }
 
 /**

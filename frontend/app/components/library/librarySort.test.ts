@@ -103,4 +103,21 @@ describe('sortSeries', () => {
     expect(sortSeries(items, 'unread', 'desc').map((s) => s.id)).toEqual(['d', 'a', 'b', 'c', 'e'])
     expect(sortSeries(items, 'unread', 'asc').map((s) => s.id)).toEqual(['b', 'c', 'e', 'a', 'd'])
   })
+
+  it('total (chapterCounts.total) orders correctly in both directions', () => {
+    // total: e=4 < b=8 < a=10 < d=12 < c=20.
+    expect(sortSeries(items, 'total', 'asc').map((s) => s.id)).toEqual(['e', 'b', 'a', 'd', 'c'])
+    expect(sortSeries(items, 'total', 'desc').map((s) => s.id)).toEqual(['c', 'd', 'a', 'b', 'e'])
+  })
+
+  it('random is a stable permutation for a fixed seed', () => {
+    // Same seed ⇒ identical order across calls — the load-bearing property: the
+    // Random order must NOT reshuffle when an unrelated input (search/filter)
+    // changes and the kernel re-runs.
+    const s1 = sortSeries(items, 'random', 'asc', 42).map((s) => s.id)
+    const s2 = sortSeries(items, 'random', 'asc', 42).map((s) => s.id)
+    expect(s1).toEqual(s2)
+    // It is a permutation of the input (nothing dropped or duplicated).
+    expect([...s1].sort()).toEqual(['a', 'b', 'c', 'd', 'e'])
+  })
 })

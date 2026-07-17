@@ -13,12 +13,16 @@
  * the whole library is in memory. At ~86 series today it is one request; the
  * design scales to the ~1000 the Kaizoku migration will reach.
  */
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { SeriesSummary, CategorySummary } from '~/components/screens/types'
 import { sortSeries, type SortKey, type SortDir } from '~/components/library/librarySort'
-import { searchSeries, filterByCategory, filterNeedsSource, countMatchesElsewhere } from '~/components/library/libraryFilter'
+import {
+  searchSeries, filterByCategory, applyFilters, countMatchesElsewhere,
+  NO_FILTERS, type LibraryFilters,
+} from '~/components/library/libraryFilter'
+import { useLibraryPrefs } from '~/composables/useLibraryPrefs'
 
 type SeriesSummaryDTO = components['schemas']['SeriesSummary']
 type CategoryDTO = components['schemas']['Category']
@@ -81,10 +85,21 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
   const searchQuery = ref('')
   const sortKey = ref<SortKey>('title')
   const sortDir = ref<SortDir>('asc')
-  // "Needs source" filter (handover 2026-07-13#15): narrows the in-memory grid
-  // to series with no live download source, independent of category/search/sort
-  // and of cover state. Off by default so the library still shows everything.
-  const needsSourceOnly = ref(false)
+  // The boolean toggle-filters (Downloaded / Unread / Completed / Needs source).
+  // All off by default so the whole library shows; each narrows the in-memory
+  // grid, independent of category/search/sort. Persisted with the sort (below).
+  const filters = ref<LibraryFilters>({ ...NO_FILTERS })
+  // Random-sort shuffle seed — a stable per-shuffle value so the Random order
+  // doesn't reshuffle when an unrelated input (search/filter) changes. Bumped
+  // only when the sort transitions INTO 'random' (see setSort).
+  const randomSeed = ref(0)
+
+  // Server-side persistence of {sortKey, sortDir, filters} — best-effort (§16):
+  // a failed load keeps the defaults, a failed save is swallowed. `hydrated`
+  // gates saving until the loaded prefs have been applied, so we never clobber
+  // stored prefs with the pre-load defaults.
+  const prefsApi = useLibraryPrefs()
+  let hydrated = false
 
   // Fetch one page of /api/series at the given offset (no category filter — the
   // whole library is loaded, then filtered in memory).
@@ -103,10 +118,20 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
     pending.value = true
     error.value = null
     try {
-      const [firstPage, catRes] = await Promise.all([
+      const [firstPage, catRes, prefs] = await Promise.all([
         fetchSeriesPage(0),
         apiClient.GET('/api/categories'),
+        prefsApi.load(),
       ])
+
+      // Apply the persisted view state (sort + filters) before the first render.
+      // Best-effort: prefs is null on any load failure → keep the defaults.
+      if (prefs) {
+        sortKey.value = prefs.sortKey
+        sortDir.value = prefs.sortDir
+        filters.value = { ...NO_FILTERS, ...prefs.filters }
+      }
+      hydrated = true
 
       if (firstPage.error || !firstPage.data) throw new Error('Failed to load library')
 
@@ -155,12 +180,13 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
   // input ref change, ZERO refetch.
   const series = computed(() =>
     sortSeries(
-      filterNeedsSource(
+      applyFilters(
         searchSeries(filterByCategory(allSeries.value, activeCategory.value), searchQuery.value),
-        needsSourceOnly.value,
+        filters.value,
       ),
       sortKey.value,
       sortDir.value,
+      randomSeed.value,
     ),
   )
 
@@ -179,13 +205,26 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
   }
 
   function setSort(key: SortKey, dir: SortDir): void {
+    // Freshly picking Random shuffles; a mere direction flip on an already-random
+    // sort just reverses the existing order (no reshuffle).
+    if (key === 'random' && sortKey.value !== 'random') randomSeed.value += 1
     sortKey.value = key
     sortDir.value = dir
   }
 
-  function setNeedsSourceOnly(active: boolean): void {
-    needsSourceOnly.value = active
+  function setFilters(next: LibraryFilters): void {
+    filters.value = next
   }
+
+  // Persist the view state whenever the sort or filters change — best-effort,
+  // debounced (§16). Gated on `hydrated` so applying the loaded prefs on mount
+  // doesn't immediately echo a save (and never clobbers stored prefs with the
+  // pre-load defaults). randomSeed is intentionally NOT persisted — the shuffle
+  // is ephemeral; only the fact that Random is the active key survives.
+  watch([sortKey, sortDir, filters], () => {
+    if (!hydrated) return
+    prefsApi.save({ sortKey: sortKey.value, sortDir: sortDir.value, filters: filters.value })
+  }, { deep: true })
 
   // Widen to every category so an in-category search can escape to a library-wide one.
   function searchEverywhere(): void {
@@ -203,12 +242,12 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
     searchQuery,
     sortKey,
     sortDir,
-    needsSourceOnly,
+    filters,
     matchesElsewhere,
     setCategory,
     setSearch,
     setSort,
-    setNeedsSourceOnly,
+    setFilters,
     searchEverywhere,
     reload: loadAll,
   }

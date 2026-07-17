@@ -426,6 +426,8 @@ func registerRoutes(
 	authed.POST("/series/:id/providers/:providerId/match", libraryH.MatchDiskProvider)
 	authed.POST("/series/:id/providers/dedup", libraryH.DedupProviders)
 	authed.POST("/library/dedup-providers", libraryH.DedupAllProviders)
+	authed.GET("/library/prefs", libraryH.GetPrefs)
+	authed.PUT("/library/prefs", libraryH.PutPrefs)
 
 	// Engine-topology endpoints. apkStore is the SHARED apk byte cache constructed
 	// once in main.go (rooted under the engine runtime dir) and also handed to

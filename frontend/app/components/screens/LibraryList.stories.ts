@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/vue3'
 import { computed, ref } from 'vue'
 import LibraryList from './LibraryList.vue'
 import type { SortKey, SortDir } from '../library/librarySort'
-import { filterNeedsSource } from '../library/libraryFilter'
+import { applyFilters, NO_FILTERS, type LibraryFilters } from '../library/libraryFilter'
 import { categories, seriesPage } from '../../fixtures/series'
 
 /**
@@ -16,16 +16,16 @@ const meta = {
   title: 'Screens/LibraryList',
   component: LibraryList,
   parameters: { layout: 'fullscreen' },
-  // series/categories/search/sort/needsSourceOnly/matchesElsewhere are required
-  // props; the interactive story passes its own via the render template, so
-  // these defaults only satisfy the CSF3 story typing.
+  // series/categories/search/sort/filters/matchesElsewhere are required props;
+  // the interactive story passes its own via the render template, so these
+  // defaults only satisfy the CSF3 story typing.
   args: {
     series: seriesPage,
     categories,
     search: '',
     sortKey: 'title',
     sortDir: 'asc',
-    needsSourceOnly: false,
+    filters: { ...NO_FILTERS },
     matchesElsewhere: 0,
   },
 } satisfies Meta<typeof LibraryList>
@@ -46,7 +46,7 @@ export const Default: Story = {
       const search = ref('')
       const sortKey = ref<SortKey>('title')
       const sortDir = ref<SortDir>('asc')
-      const needsSourceOnly = ref(false)
+      const filters = ref<LibraryFilters>({ ...NO_FILTERS })
 
       const inCategory = computed(() =>
         activeCategory.value == null
@@ -59,7 +59,7 @@ export const Default: Story = {
           ? inCategory.value
           : inCategory.value.filter((s) => s.title.toLowerCase().includes(q.value)),
       )
-      const page = computed(() => filterNeedsSource(searched.value, needsSourceOnly.value))
+      const page = computed(() => applyFilters(searched.value, filters.value))
       const matchesElsewhere = computed(() =>
         q.value === ''
           ? 0
@@ -75,13 +75,16 @@ export const Default: Story = {
         sortKey.value = p.key
         sortDir.value = p.dir
       }
+      const onFilters = (f: LibraryFilters): void => {
+        filters.value = f
+      }
       const onWiden = (): void => {
         activeCategory.value = null
       }
 
       return {
-        activeCategory, search, sortKey, sortDir, needsSourceOnly,
-        page, matchesElsewhere, categories, onFilter, onSort, onWiden,
+        activeCategory, search, sortKey, sortDir, filters,
+        page, matchesElsewhere, categories, onFilter, onSort, onFilters, onWiden,
       }
     },
     template: `
@@ -91,11 +94,12 @@ export const Default: Story = {
         :active-category="activeCategory"
         :matches-elsewhere="matchesElsewhere"
         v-model:search="search"
-        v-model:needs-source-only="needsSourceOnly"
+        :filters="filters"
         :sort-key="sortKey"
         :sort-dir="sortDir"
         @filter="onFilter"
         @update:sort="onSort"
+        @update:filters="onFilters"
         @search-everywhere="onWiden"
       />
     `,
@@ -147,14 +151,14 @@ export const Loading: Story = {
   },
 }
 
-/** The "Needs source" filter is active and nothing in view lacks a source. */
-export const NeedsSourceEmpty: Story = {
+/** A toggle-filter is active and nothing in view matches it. */
+export const FilteredEmpty: Story = {
   args: {
     series: [],
     categories,
     activeCategory: null,
     search: '',
-    needsSourceOnly: true,
+    filters: { ...NO_FILTERS, needsSource: true },
     matchesElsewhere: 0,
   },
 }
@@ -168,7 +172,7 @@ export const NeedsSourceActive: Story = {
     categories,
     activeCategory: null,
     search: '',
-    needsSourceOnly: true,
+    filters: { ...NO_FILTERS, needsSource: true },
     matchesElsewhere: 0,
   },
 }

@@ -11,7 +11,7 @@
  *   @filter               → setCategory (null = "All" tab)
  *   @update:search        → setSearch (in-memory narrow, no refetch)
  *   @update:sort          → setSort (in-memory re-sort, no refetch)
- *   @update:needsSourceOnly → setNeedsSourceOnly (in-memory narrow, no refetch)
+ *   @update:filters       → setFilters (in-memory narrow, no refetch)
  *   @searchEverywhere     → searchEverywhere (widen an in-category search to All)
  *
  * §16: pending true during fetch; error shown as a dismissible ErrorBanner.
@@ -29,8 +29,8 @@ const route = useRoute()
 const initialCategory = typeof route.query.category === 'string' ? route.query.category : null
 const {
   series, categories, pending, error, activeCategory,
-  searchQuery, sortKey, sortDir, needsSourceOnly, matchesElsewhere,
-  setCategory, setSearch, setSort, setNeedsSourceOnly, searchEverywhere,
+  searchQuery, sortKey, sortDir, filters, matchesElsewhere,
+  setCategory, setSearch, setSort, setFilters, searchEverywhere,
 } = useLibrary({ initialCategory })
 </script>
 
@@ -44,14 +44,14 @@ const {
       :search="searchQuery"
       :sort-key="sortKey"
       :sort-dir="sortDir"
-      :needs-source-only="needsSourceOnly"
+      :filters="filters"
       :matches-elsewhere="matchesElsewhere"
       :loading="pending"
       @select="(id: string) => navigateTo(`/series/${id}`)"
       @filter="setCategory"
       @update:search="setSearch"
       @update:sort="(p: { key: SortKey; dir: SortDir }) => setSort(p.key, p.dir)"
-      @update:needs-source-only="setNeedsSourceOnly"
+      @update:filters="setFilters"
       @search-everywhere="searchEverywhere"
     />
   </div>

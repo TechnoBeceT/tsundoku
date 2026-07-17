@@ -89,6 +89,8 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	authed.POST("/series/:id/providers/batch", h.AddProviders)
 	authed.POST("/series/:id/providers/dedup", h.DedupProviders)
 	authed.POST("/library/dedup-providers", h.DedupAllProviders)
+	authed.GET("/library/prefs", h.GetPrefs)
+	authed.PUT("/library/prefs", h.PutPrefs)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {

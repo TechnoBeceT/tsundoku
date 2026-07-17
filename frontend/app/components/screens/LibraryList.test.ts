@@ -16,6 +16,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LibraryList from './LibraryList.vue'
+import { NO_FILTERS, type LibraryFilters } from '../library/libraryFilter'
 import type { CategorySummary, SeriesSummary } from './types'
 
 const categories: CategorySummary[] = [
@@ -28,7 +29,7 @@ function mountList(props: {
   search?: string
   matchesElsewhere?: number
   activeCategory?: string | null
-  needsSourceOnly?: boolean
+  filters?: Partial<LibraryFilters>
 }) {
   return mount(LibraryList, {
     props: {
@@ -38,7 +39,7 @@ function mountList(props: {
       search: props.search ?? '',
       sortKey: 'title' as const,
       sortDir: 'asc' as const,
-      needsSourceOnly: props.needsSourceOnly ?? false,
+      filters: { ...NO_FILTERS, ...props.filters },
       matchesElsewhere: props.matchesElsewhere ?? 0,
     },
   })
@@ -71,9 +72,9 @@ describe('LibraryList empty states', () => {
     expect(wrapper.emitted('searchEverywhere')).toHaveLength(1)
   })
 
-  it('shows the needs-source-empty message when the filter is active and no search is running', () => {
-    const wrapper = mountList({ series: [], search: '', needsSourceOnly: true })
-    expect(wrapper.text()).toContain('Every series here has a source.')
+  it('shows the filtered-empty message when a toggle-filter is active and no search is running', () => {
+    const wrapper = mountList({ series: [], search: '', filters: { needsSource: true } })
+    expect(wrapper.text()).toContain('No series match the active filters.')
     expect(wrapper.text()).not.toContain('No series in this category yet.')
   })
 })

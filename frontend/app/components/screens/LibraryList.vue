@@ -10,6 +10,8 @@ import LibraryToolbar from '../library/LibraryToolbar.vue'
 import ResponsiveGrid from '../ui/ResponsiveGrid.vue'
 import type { TabItem } from '../ui/nav.types'
 import type { SortKey, SortDir } from '../library/librarySort'
+import type { LibraryFilters } from '../library/libraryFilter'
+import { anyFilterActive } from '../library/libraryFilter'
 import type { CategorySummary, SeriesSummary } from './types'
 
 /**
@@ -44,8 +46,8 @@ const props = withDefaults(defineProps<{
   sortKey: SortKey
   /** The active sort direction. */
   sortDir: SortDir
-  /** Whether the "Needs source" filter is active (v-model:needsSourceOnly). */
-  needsSourceOnly: boolean
+  /** The active toggle-filters (v-model:filters). */
+  filters: LibraryFilters
   /** How many series match the query OUTSIDE the active category (escape hatch). */
   matchesElsewhere: number
   /** When true, render skeleton cards instead of content. */
@@ -64,8 +66,8 @@ const emit = defineEmits<{
   'update:search': [value: string]
   /** The sort selection changed — carries the resolved key + direction. */
   'update:sort': [payload: { key: SortKey; dir: SortDir }]
-  /** The "Needs source" toggle flipped — carries the NEW value. */
-  'update:needsSourceOnly': [value: boolean]
+  /** A filter toggle flipped — carries the NEW full filter set. */
+  'update:filters': [value: LibraryFilters]
   /** The owner widened an in-category search to the whole library. */
   searchEverywhere: []
 }>()
@@ -93,6 +95,10 @@ const onTab = (key: string): void => emit('filter', key === ALL_KEY ? null : key
 // A search is active once the query has any non-whitespace content.
 const searching = computed(() => props.search.trim().length > 0)
 
+// Whether any toggle-filter is narrowing the grid (drives the filtered-empty
+// message, which would otherwise wrongly claim the category itself is empty).
+const filtering = computed(() => anyFilterActive(props.filters))
+
 // The active category's display name for the escape-hatch line ("in <Name>").
 const activeName = computed(() => props.activeCategory ?? 'All')
 
@@ -116,10 +122,10 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
       :search="search"
       :sort-key="sortKey"
       :sort-dir="sortDir"
-      :needs-source-only="needsSourceOnly"
+      :filters="filters"
       @update:search="emit('update:search', $event)"
       @update:sort="emit('update:sort', $event)"
-      @update:needs-source-only="emit('update:needsSourceOnly', $event)"
+      @update:filters="emit('update:filters', $event)"
     />
 
     <!-- Loading skeletons -->
@@ -161,12 +167,12 @@ const skeletons = Array.from({ length: 10 }, (_, i) => i)
       </template>
     </EmptyState>
 
-    <!-- Empty: the "Needs source" filter matched nothing (no search active,
-         else the search-empty branches above already explain the gap). -->
+    <!-- Empty: a toggle-filter matched nothing (no search active, else the
+         search-empty branches above already explain the gap). -->
     <EmptyState
-      v-else-if="series.length === 0 && needsSourceOnly"
-      title="Every series here has a source."
-      sub="Nothing in this view is missing a live download source."
+      v-else-if="series.length === 0 && filtering"
+      title="No series match the active filters."
+      sub="Try clearing a filter to see more."
     >
       <template #icon>
         <BrandMark :size="56" tone="gradient" />

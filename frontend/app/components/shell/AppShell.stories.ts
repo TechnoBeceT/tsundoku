@@ -4,6 +4,7 @@ import AppShell from './AppShell.vue'
 import type { NavItem } from './types'
 import LibraryList from '../screens/LibraryList.vue'
 import type { SortKey, SortDir } from '../library/librarySort'
+import { NO_FILTERS, type LibraryFilters } from '../library/libraryFilter'
 import { categories, seriesPage } from '../../fixtures/series'
 
 /**
@@ -124,6 +125,7 @@ export const InShell: Story = {
       const search = ref('')
       const sortKey = ref<SortKey>('title')
       const sortDir = ref<SortDir>('asc')
+      const filters = ref<LibraryFilters>({ ...NO_FILTERS })
 
       const inCategory = computed(() =>
         activeCategory.value == null
@@ -162,6 +164,7 @@ export const InShell: Story = {
         search,
         sortKey,
         sortDir,
+        filters,
         page,
         matchesElsewhere,
         categories,
@@ -186,6 +189,7 @@ export const InShell: Story = {
           :active-category="activeCategory"
           :matches-elsewhere="matchesElsewhere"
           v-model:search="search"
+          :filters="filters"
           :sort-key="sortKey"
           :sort-dir="sortDir"
           @filter="onFilter"

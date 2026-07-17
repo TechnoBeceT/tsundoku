@@ -1181,6 +1181,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the owner's library-list view preferences
+         * @description Returns the persisted library-list view state — sort field, direction,
+         *     and the active toggle-filters (downloaded / unread / completed /
+         *     needs-source). A single-owner server-side preference so the chosen sort
+         *     + filters survive a refresh/restart and are shared cross-device. When
+         *     nothing has been saved yet, the defaults (title / asc / no filters) are
+         *     returned.
+         */
+        get: operations["getLibraryPrefs"];
+        /**
+         * Replace the owner's library-list view preferences
+         * @description Persists the library-list view state. The frontend saves this
+         *     best-effort (debounced) whenever the owner changes the sort or a filter,
+         *     so a failure here never blocks the UI. An unknown sortKey or a direction
+         *     other than asc/desc is rejected with 400 (fail-closed — nothing is
+         *     written). Returns the stored value (round-trip).
+         */
+        put: operations["setLibraryPrefs"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/dedup-providers": {
         parameters: {
             query?: never;
@@ -3143,6 +3176,31 @@ export interface components {
         LibraryDedupStarted: {
             /** @description Always true — the library-wide dedup sweep has been launched in the background. */
             started: boolean;
+        };
+        /** @description The set of boolean toggle-filters the library grid applies on top of the category tab + search. All default false (the whole library shows). */
+        LibraryFilters: {
+            /** @description Narrow to series with at least one downloaded chapter. */
+            downloaded: boolean;
+            /** @description Narrow to series with at least one unread downloaded chapter. */
+            unread: boolean;
+            /** @description Narrow to series the owner marked finished. */
+            completed: boolean;
+            /** @description Narrow to series with no live download source (every provider is disk-origin). */
+            needsSource: boolean;
+        };
+        /** @description The owner's persisted library-list view state — sort field, direction, and active toggle-filters. A single-owner server-side preference (GET/PUT /api/library/prefs) so the chosen sort + filters survive a refresh/restart and are shared cross-device. */
+        LibraryPrefs: {
+            /**
+             * @description The active sort field. One of title (Alphabetical), added (date added), updated (latest chapter), unread (unread count), total (total chapters), random (shuffle).
+             * @enum {string}
+             */
+            sortKey: "title" | "added" | "updated" | "unread" | "total" | "random";
+            /**
+             * @description The sort direction.
+             * @enum {string}
+             */
+            sortDir: "asc" | "desc";
+            filters: components["schemas"]["LibraryFilters"];
         };
         /** @description One row of a library scan's staging result — a series discovered on disk (whether or not it is already imported into the DB). */
         FoundSeries: {
@@ -5976,6 +6034,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScanStarted"];
+                };
+            };
+        };
+    };
+    getLibraryPrefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current (or default) library preferences. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryPrefs"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setLibraryPrefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryPrefs"];
+            };
+        };
+        responses: {
+            /** @description The stored library preferences. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryPrefs"];
+                };
+            };
+            /** @description Unknown sortKey or invalid direction. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

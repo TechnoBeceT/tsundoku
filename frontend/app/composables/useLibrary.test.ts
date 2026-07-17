@@ -62,10 +62,18 @@ const makeCat = (name: string, isDefault: boolean, count = 0): Cat => ({
   count,
 })
 
+interface Prefs {
+  sortKey: string
+  sortDir: string
+  filters: { downloaded: boolean, unread: boolean, completed: boolean, needsSource: boolean }
+}
+
 // Mutable per-test state the mock reads at call time.
 let allRows: Row[] = []
 let seriesTotalHeader: string | null = null
 let categoriesData: Cat[] = []
+// null ⇒ the prefs GET resolves with no data (nothing stored) → defaults kept.
+let libraryPrefsData: Prefs | null = null
 
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
@@ -82,10 +90,16 @@ vi.mock('~/utils/api/client', () => ({
       if (path === '/api/categories') {
         return Promise.resolve({ data: categoriesData, error: null, response: new Response() })
       }
+      if (path === '/api/library/prefs') {
+        // Default: no stored prefs → load() returns null → composable keeps its
+        // own defaults. Tests that pin persistence override this per-test.
+        return Promise.resolve({ data: libraryPrefsData, error: libraryPrefsData ? null : 'none', response: new Response() })
+      }
       return Promise.resolve({ data: [], error: null, response: new Response() })
     }),
     POST: vi.fn(),
     PATCH: vi.fn(),
+    PUT: vi.fn().mockResolvedValue({ data: {}, error: null }),
     DELETE: vi.fn(),
     use: vi.fn(),
   },
@@ -104,6 +118,7 @@ beforeEach(() => {
   allRows = [makeRow(1)]
   seriesTotalHeader = '1'
   categoriesData = []
+  libraryPrefsData = null
 })
 
 describe('useLibrary — landing category', () => {
@@ -127,7 +142,7 @@ describe('useLibrary — landing category', () => {
 })
 
 describe('useLibrary — no refetch on interaction', () => {
-  it('does NOT refetch when category, search, sort, or needsSourceOnly changes', async () => {
+  it('does NOT refetch when category, search, sort, or filters change', async () => {
     categoriesData = [makeCat('Manga', false)]
     const lib = await mountSettled()
     const calls = seriesGetSpy.mock.calls.length
@@ -135,7 +150,7 @@ describe('useLibrary — no refetch on interaction', () => {
     lib.setCategory('Manga')
     lib.setSearch('solo')
     lib.setSort('unread', 'desc')
-    lib.setNeedsSourceOnly(true)
+    lib.setFilters({ downloaded: false, unread: false, completed: false, needsSource: true })
     await Promise.resolve()
 
     expect(seriesGetSpy.mock.calls.length).toBe(calls)
@@ -203,7 +218,9 @@ describe('useLibrary — in-memory filter/search/sort + escape hatch', () => {
   })
 })
 
-describe('useLibrary — needsSourceOnly filter', () => {
+describe('useLibrary — toggle filters', () => {
+  const ALL_OFF = { downloaded: false, unread: false, completed: false, needsSource: false }
+
   beforeEach(() => {
     categoriesData = [] // All (null) so both rows below are in view
     allRows = [
@@ -213,25 +230,51 @@ describe('useLibrary — needsSourceOnly filter', () => {
     seriesTotalHeader = '2'
   })
 
-  it('maps dto.needsSource onto the screen type (off by default)', async () => {
+  it('maps dto.needsSource onto the screen type (filters off by default)', async () => {
     const lib = await mountSettled()
-    expect(lib.needsSourceOnly.value).toBe(false)
+    expect(lib.filters.value).toEqual(ALL_OFF)
     expect(lib.series.value.map(s => [s.title, s.needsSource])).toEqual([
       ['Has A Source', false],
       ['Needs A Source', true],
     ])
   })
 
-  it('setNeedsSourceOnly(true) narrows the in-memory grid to needsSource series', async () => {
+  it('needsSource filter narrows the in-memory grid to needsSource series', async () => {
     const lib = await mountSettled()
-    lib.setNeedsSourceOnly(true)
+    lib.setFilters({ ...ALL_OFF, needsSource: true })
     expect(lib.series.value.map(s => s.title)).toEqual(['Needs A Source'])
   })
 
-  it('setNeedsSourceOnly(false) restores the full grid', async () => {
+  it('clearing the filter restores the full grid', async () => {
     const lib = await mountSettled()
-    lib.setNeedsSourceOnly(true)
-    lib.setNeedsSourceOnly(false)
+    lib.setFilters({ ...ALL_OFF, needsSource: true })
+    lib.setFilters({ ...ALL_OFF })
     expect(lib.series.value.map(s => s.title)).toEqual(['Has A Source', 'Needs A Source'])
+  })
+})
+
+describe('useLibrary — persisted prefs', () => {
+  it('applies stored prefs on load (sort + filters)', async () => {
+    categoriesData = []
+    allRows = [
+      makeRow(1, { title: 'Alpha', displayName: 'Alpha', chapterCounts: { total: 5, downloaded: 5, wanted: 0, failed: 0, unread: 1 } }),
+      makeRow(2, { title: 'Bravo', displayName: 'Bravo', chapterCounts: { total: 9, downloaded: 9, wanted: 0, failed: 0, unread: 8 } }),
+    ]
+    seriesTotalHeader = '2'
+    libraryPrefsData = { sortKey: 'unread', sortDir: 'desc', filters: { downloaded: false, unread: false, completed: false, needsSource: false } }
+
+    const lib = await mountSettled()
+    expect(lib.sortKey.value).toBe('unread')
+    expect(lib.sortDir.value).toBe('desc')
+    // unread desc → Bravo (8) before Alpha (1).
+    expect(lib.series.value.map(s => s.title)).toEqual(['Bravo', 'Alpha'])
+  })
+
+  it('keeps defaults when nothing is stored', async () => {
+    libraryPrefsData = null
+    const lib = await mountSettled()
+    expect(lib.sortKey.value).toBe('title')
+    expect(lib.sortDir.value).toBe('asc')
+    expect(lib.filters.value).toEqual({ downloaded: false, unread: false, completed: false, needsSource: false })
   })
 })

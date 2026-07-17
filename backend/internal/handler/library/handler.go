@@ -347,6 +347,39 @@ func (h *Handler) DedupAllProviders(c echo.Context) error {
 	return c.JSON(http.StatusAccepted, libraryDedupStartedResponse{Started: true})
 }
 
+// GetPrefs handles GET /api/library/prefs.
+//
+// Returns the owner's persisted library-list view state (sort field +
+// direction + active toggle-filters), or the defaults when none are stored.
+// A single-owner server-side preference so the view survives a refresh/restart
+// and is shared cross-device.
+func (h *Handler) GetPrefs(c echo.Context) error {
+	out, err := h.svc.GetPrefs(c.Request().Context())
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// PutPrefs handles PUT /api/library/prefs.
+//
+// Replaces the owner's library-list view state. The body is a full
+// library.LibraryPrefs {sortKey, sortDir, filters}; an unknown sortKey or a
+// bad direction is rejected 400 (ErrInvalidPrefs, fail-closed — nothing is
+// written). Returns the stored value (§16 round-trip). The frontend saves
+// best-effort on change, so a failure here never breaks the grid.
+func (h *Handler) PutPrefs(c echo.Context) error {
+	var body library.LibraryPrefs
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+	out, err := h.svc.SetPrefs(c.Request().Context(), body)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // mapServiceError translates a library.Service sentinel error into the
 // matching HTTP status, leaving any unexpected error to fall through to the
 // central middleware as a 500. ErrSeriesNotFound / ErrEntryNotFound → 404;
@@ -377,6 +410,8 @@ func mapServiceError(err error) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "provider is not an unlinked disk-origin provider")
 	case errors.Is(err, library.ErrNoProviders):
 		return echo.NewHTTPError(http.StatusBadRequest, "no providers supplied")
+	case errors.Is(err, library.ErrInvalidPrefs):
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	default:
 		return err
 	}
