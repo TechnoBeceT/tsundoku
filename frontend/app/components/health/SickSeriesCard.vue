@@ -58,19 +58,25 @@ const sourceLabel = computed(() => {
 </template>
 
 <style scoped>
+/* px→rem (§5.16 preserve≠skip-responsive): this card has NO content-out
+ * legibility break across its width band (cover is a small fixed 42px, all text
+ * is on `--text-*` tokens that ride the fluid root and either ellipsize or wrap),
+ * so it correctly takes NO §3 `@container` step — only the px→rem migration.
+ * Every literal below is byte-identical at the 16px desktop anchor (value ÷ 16);
+ * the 1px hairline border stays px. */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  padding: 16px;
+  padding: var(--space-lg); /* 16px @16 */
 }
 
 .card__head {
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 0.8125rem; /* 13px @16 — off-ladder, byte-identical rem literal */
   width: 100%;
-  margin-bottom: 13px;
+  margin-bottom: 0.8125rem; /* 13px @16 — off-ladder, byte-identical rem literal */
   padding: 0;
   border: none;
   background: none;
@@ -79,7 +85,7 @@ const sourceLabel = computed(() => {
 }
 
 .card__cover {
-  width: 42px;
+  width: 2.625rem; /* 42px @16 — byte-identical rem literal */
   border-radius: var(--radius-sm);
   overflow: hidden;
   flex: none;
@@ -90,7 +96,7 @@ const sourceLabel = computed(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-3xs); /* 2px @16 */
 }
 
 .card__title {

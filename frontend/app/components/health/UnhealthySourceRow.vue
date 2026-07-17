@@ -53,19 +53,21 @@ const hasBehind = computed(() => props.source.chaptersBehind > 0)
 </template>
 
 <style scoped>
+/* px→rem (§5.16): a wrapping meta row on `--text-*` tokens — no content-out
+ * break, so px→rem only, byte-identical at the 16px anchor; 1px hairline stays. */
 .source {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 0.5625rem; /* 9px @16 — off-ladder, byte-identical rem literal */
   flex-wrap: wrap;
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-md); /* 10px 12px @16 */
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface2);
 }
 
 .source + .source {
-  margin-top: 8px;
+  margin-top: var(--space-xs); /* 8px @16 */
 }
 
 .source__provider {
@@ -86,7 +88,7 @@ const hasBehind = computed(() => props.source.chaptersBehind > 0)
 
 .source__error {
   flex-basis: 100%;
-  margin-top: 3px;
+  margin-top: 0.1875rem; /* 3px @16 — off-ladder, byte-identical rem literal */
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--sd-hl-erroring-fg);
@@ -97,7 +99,7 @@ const hasBehind = computed(() => props.source.chaptersBehind > 0)
    badge. Full-width so it sits on its own line under the source meta. */
 .source__hint {
   flex-basis: 100%;
-  margin-top: 3px;
+  margin-top: 0.1875rem; /* 3px @16 — off-ladder, byte-identical rem literal */
   font-size: var(--text-xs);
   color: var(--sd-hl-unavailable-fg);
 }
