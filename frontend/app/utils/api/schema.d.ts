@@ -372,14 +372,22 @@ export interface paths {
         put?: never;
         /**
          * Remove superseded duplicate CBZ files for a series
-         * @description Owner-triggered duplicate-CBZ sweep. For every downloaded chapter it
-         *     removes any OTHER CBZ in the series folder that shares that chapter's
-         *     number, keeping the chapter's winning file — converging the on-disk state
-         *     to one file per chapter number (the Komga contract). This is the bulk
-         *     counterpart to the automatic per-convergence cleanup on upgrade; it
-         *     cleans up a library that accumulated duplicates before convergence
-         *     existed (e.g. an imported Kaizoku library). Performs NO DB writes and
-         *     never deletes a winning file. Returns the number of files removed.
+         * @description Owner-triggered duplicate cleanup. First it MERGES engine-switch
+         *     duplicate chapter rows: the Suwayomi→Rensaio switch keyed the same
+         *     physical chapter twice (a negative-numeric "-1" and a name-keyed
+         *     "name:epilogue"), so both the Chapter row and its CBZ persisted twice.
+         *     Each PROVABLE pair — matched by the source chapter URL, the true identity
+         *     across both ingests — is folded into its name-keyed canonical (read-state
+         *     transferred, read wins), deleting the legacy row + its orphaned feed rows
+         *     + its CBZ (files deleted before the DB commit, rolled back on failure).
+         *     Then, for every downloaded chapter, it removes any OTHER CBZ in the series
+         *     folder that shares that chapter's number, keeping the chapter's winning
+         *     file — converging the on-disk state to one file per chapter number (the
+         *     Komga contract). The file sweep is the bulk counterpart to the automatic
+         *     per-convergence cleanup on upgrade; it cleans up a library that
+         *     accumulated duplicates before convergence existed (e.g. an imported
+         *     Kaizoku library). Never deletes a winning file or a canonical row.
+         *     Returns the number of duplicates resolved.
          */
         post: operations["dedupeSeriesFiles"];
         delete?: never;
@@ -2421,7 +2429,7 @@ export interface components {
             retried: number;
         };
         DedupeFilesResult: {
-            /** @description Number of superseded duplicate CBZ files removed from disk by the owner-triggered dedupe-files sweep. Winning files are never removed. */
+            /** @description Number of duplicates resolved by the owner-triggered dedupe-files sweep: superseded/orphan duplicate CBZ files removed from disk PLUS engine-switch duplicate chapter rows merged (a negative-numeric legacy row folded into its name-keyed canonical twin). Winning files and canonical rows are never removed. */
             removed: number;
         };
         FractionalCleanupChapter: {

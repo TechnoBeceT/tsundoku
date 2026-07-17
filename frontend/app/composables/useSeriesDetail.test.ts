@@ -534,12 +534,18 @@ describe('useSeriesDetail — dedupProviders / dedupeFiles', () => {
     expect(series.value?.providers).toHaveLength(2)
   })
 
-  it('dedupeFiles sets the removed message and does not reseed', async () => {
+  it('dedupeFiles sets the removed message and refreshes the series', async () => {
     const { series, refresh, dedupeFiles, dedupMessage } = useSeriesDetail('series-1')
     await refresh()
+    const getBefore = calls.filter(c => c.method === 'GET' && c.path === '/api/series/{id}').length
+
     await dedupeFiles()
+
     expect(dedupMessage.value).toContain('3')
-    // dedupe-files makes no DB change → providers unchanged (still 2).
+    // The merge pass can delete chapter rows, so dedupeFiles refreshes the series
+    // (one extra GET) rather than reseeding from the count-only response.
+    const getAfter = calls.filter(c => c.method === 'GET' && c.path === '/api/series/{id}').length
+    expect(getAfter).toBe(getBefore + 1)
     expect(series.value?.providers).toHaveLength(2)
   })
 

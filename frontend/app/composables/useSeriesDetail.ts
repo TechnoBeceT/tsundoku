@@ -339,10 +339,13 @@ export function useSeriesDetail(id: string) {
   }
 
   /**
-   * Sweeps this series' orphan/duplicate CBZ files (any .cbz that is not a
-   * chapter's current winning filename) via POST /api/series/{id}/dedupe-files.
-   * A pure on-disk sweep — NO DB/series change — so it does not reseed; it only
-   * reports how many files were removed in dedupMessage. Errors set `error`.
+   * Sweeps this series' duplicates via POST /api/series/{id}/dedupe-files: it
+   * removes orphan/duplicate CBZ files (any .cbz that is not a chapter's current
+   * winning filename) AND merges engine-switch duplicate chapter rows (the
+   * Suwayomi "-1" vs Rensaio "name:epilogue" twin, matched by source URL). The
+   * merge DELETES chapter rows, so on success it refreshes the series to drop the
+   * removed rows from the view, then reports how many duplicates were resolved in
+   * dedupMessage. Errors set `error`.
    */
   const dedupeFiles = async (): Promise<void> => {
     dedupeFilesBusy.value = true
@@ -352,7 +355,10 @@ export function useSeriesDetail(id: string) {
       const res = await apiClient.POST('/api/series/{id}/dedupe-files', { params: { path: { id } } })
       if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Dedupe files failed')
       const { removed } = res.data
-      dedupMessage.value = `Removed ${removed} duplicate file${removed === 1 ? '' : 's'}`
+      // The merge pass may have deleted chapter rows — refresh so the detail view
+      // reflects the removals before showing the result message.
+      await refresh()
+      dedupMessage.value = `Removed ${removed} duplicate${removed === 1 ? '' : 's'}`
     }
     catch (err) {
       error.value = err instanceof Error ? err.message : 'Dedupe files failed'
