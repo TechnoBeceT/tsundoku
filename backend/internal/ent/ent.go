@@ -20,6 +20,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
+	"github.com/technobecet/tsundoku/internal/ent/networkendpoint"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
 	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
@@ -30,6 +31,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
+	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
@@ -95,29 +97,31 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			category.Table:           category.ValidColumn,
-			chapter.Table:            chapter.ValidColumn,
-			disabledsource.Table:     disabledsource.ValidColumn,
-			etagcache.Table:          etagcache.ValidColumn,
-			harvestedextension.Table: harvestedextension.ValidColumn,
-			harvestedrepo.Table:      harvestedrepo.ValidColumn,
-			importentry.Table:        importentry.ValidColumn,
-			latestseries.Table:       latestseries.ValidColumn,
-			owner.Table:              owner.ValidColumn,
-			pendingtrackpush.Table:   pendingtrackpush.ValidColumn,
-			providerchapter.Table:    providerchapter.ValidColumn,
-			pushsubscription.Table:   pushsubscription.ValidColumn,
-			series.Table:             series.ValidColumn,
-			seriesprovider.Table:     seriesprovider.ValidColumn,
-			settings.Table:           settings.ValidColumn,
-			sourcecircuitstate.Table: sourcecircuitstate.ValidColumn,
-			sourceevent.Table:        sourceevent.ValidColumn,
-			sourcemetric.Table:       sourcemetric.ValidColumn,
-			sourcepreference.Table:   sourcepreference.ValidColumn,
-			sourceseedstate.Table:    sourceseedstate.ValidColumn,
-			suwayomisyncstate.Table:  suwayomisyncstate.ValidColumn,
-			trackbinding.Table:       trackbinding.ValidColumn,
-			trackerconnection.Table:  trackerconnection.ValidColumn,
+			category.Table:             category.ValidColumn,
+			chapter.Table:              chapter.ValidColumn,
+			disabledsource.Table:       disabledsource.ValidColumn,
+			etagcache.Table:            etagcache.ValidColumn,
+			harvestedextension.Table:   harvestedextension.ValidColumn,
+			harvestedrepo.Table:        harvestedrepo.ValidColumn,
+			importentry.Table:          importentry.ValidColumn,
+			latestseries.Table:         latestseries.ValidColumn,
+			networkendpoint.Table:      networkendpoint.ValidColumn,
+			owner.Table:                owner.ValidColumn,
+			pendingtrackpush.Table:     pendingtrackpush.ValidColumn,
+			providerchapter.Table:      providerchapter.ValidColumn,
+			pushsubscription.Table:     pushsubscription.ValidColumn,
+			series.Table:               series.ValidColumn,
+			seriesprovider.Table:       seriesprovider.ValidColumn,
+			settings.Table:             settings.ValidColumn,
+			sourcecircuitstate.Table:   sourcecircuitstate.ValidColumn,
+			sourceevent.Table:          sourceevent.ValidColumn,
+			sourcemetric.Table:         sourcemetric.ValidColumn,
+			sourcenetworkbinding.Table: sourcenetworkbinding.ValidColumn,
+			sourcepreference.Table:     sourcepreference.ValidColumn,
+			sourceseedstate.Table:      sourceseedstate.ValidColumn,
+			suwayomisyncstate.Table:    suwayomisyncstate.ValidColumn,
+			trackbinding.Table:         trackbinding.ValidColumn,
+			trackerconnection.Table:    trackerconnection.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

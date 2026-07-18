@@ -2726,6 +2726,207 @@ components:
         private:
           type: boolean
 
+    NetworkEndpoint:
+      type: object
+      description: >-
+        A named, reusable network-egress endpoint (per-source network routing).
+        The `kind` field selects which field-group is meaningful: the SOCKS group
+        (host/port/socksVersion/username) for `socks`, or the FlareSolverr group
+        (url/fsProxy/session/sessionTtl/timeout) for `flaresolverr`. The SOCKS
+        password is WRITE-ONLY — it is set via create/update but never returned.
+      required:
+        - id
+        - name
+        - kind
+        - enabled
+        - host
+        - port
+        - socksVersion
+        - username
+        - url
+        - fsProxy
+        - session
+        - sessionTtl
+        - timeout
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Endpoint identifier.
+        name:
+          type: string
+          description: Owner-facing label.
+        kind:
+          type: string
+          enum: [socks, flaresolverr]
+          description: Which field-group applies.
+        enabled:
+          type: boolean
+          description: Whether a binding to this endpoint takes effect.
+        host:
+          type: string
+          description: SOCKS proxy host (kind=socks).
+        port:
+          type: integer
+          description: SOCKS proxy port (kind=socks).
+        socksVersion:
+          type: integer
+          description: SOCKS protocol version, 4 or 5 (kind=socks).
+        username:
+          type: string
+          description: Optional SOCKS auth username (kind=socks).
+        url:
+          type: string
+          description: FlareSolverr endpoint URL (kind=flaresolverr).
+        fsProxy:
+          type: string
+          description: Upstream proxy FlareSolverr egresses the solve through (kind=flaresolverr).
+        session:
+          type: string
+          description: FlareSolverr session identifier (kind=flaresolverr).
+        sessionTtl:
+          type: integer
+          description: FlareSolverr session TTL in minutes (kind=flaresolverr).
+        timeout:
+          type: integer
+          description: FlareSolverr per-request solve timeout in seconds (kind=flaresolverr).
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    NetworkEndpointCreate:
+      type: object
+      description: >-
+        Create-endpoint body. `name` and `kind` are required; the SOCKS group
+        applies when kind=socks, the FlareSolverr group when kind=flaresolverr
+        (validated by kind). `socksVersion` defaults to 5 and `timeout` to 60
+        when omitted. `password` is write-only.
+      required:
+        - name
+        - kind
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [socks, flaresolverr]
+        enabled:
+          type: boolean
+          description: Defaults to true when omitted.
+        host:
+          type: string
+        port:
+          type: integer
+        socksVersion:
+          type: integer
+        username:
+          type: string
+        password:
+          type: string
+          description: Write-only SOCKS auth password.
+        url:
+          type: string
+        fsProxy:
+          type: string
+        session:
+          type: string
+        sessionTtl:
+          type: integer
+        timeout:
+          type: integer
+
+    NetworkEndpointUpdate:
+      type: object
+      description: >-
+        Partial update — every field is optional; an omitted field is left
+        untouched. In particular an omitted `password` KEEPS the stored password
+        (write-only). The merged endpoint is re-validated by its (possibly
+        changed) kind.
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [socks, flaresolverr]
+        enabled:
+          type: boolean
+        host:
+          type: string
+        port:
+          type: integer
+        socksVersion:
+          type: integer
+        username:
+          type: string
+        password:
+          type: string
+          description: Write-only; omit to keep the stored password.
+        url:
+          type: string
+        fsProxy:
+          type: string
+        session:
+          type: string
+        sessionTtl:
+          type: integer
+        timeout:
+          type: integer
+
+    SourceNetworkBinding:
+      type: object
+      description: >-
+        A per-source network-routing assignment. Its ABSENCE (no row) means the
+        source uses the global default. sourceId is stringified (a 64-bit source
+        id can exceed JS's safe-integer range). The endpoint ids are nullable —
+        null = no override for that dimension.
+      required:
+        - sourceId
+        - flareMode
+      properties:
+        sourceId:
+          type: string
+          description: The engine-host source id (stringified decimal int64).
+        socksEndpointId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The bound SOCKS endpoint, or null for direct/global SOCKS.
+        flareMode:
+          type: string
+          enum: [none, global, endpoint]
+          description: FlareSolverr routing scope for the source.
+        flareEndpointId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The bound FlareSolverr endpoint; present iff flareMode=endpoint.
+
+    SourceNetworkBindingUpdate:
+      type: object
+      description: >-
+        Set-binding body. `flareMode` is required; the two endpoint ids are
+        optional (null / omitted = no override). `flareEndpointId` is required
+        iff flareMode=endpoint, forbidden otherwise.
+      required:
+        - flareMode
+      properties:
+        socksEndpointId:
+          type: string
+          format: uuid
+          nullable: true
+        flareMode:
+          type: string
+          enum: [none, global, endpoint]
+        flareEndpointId:
+          type: string
+          format: uuid
+          nullable: true
+
 paths:
   /health:
     get:
@@ -7272,6 +7473,253 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "400":
           description: Invalid series id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/network/endpoints:
+    get:
+      operationId: listNetworkEndpoints
+      summary: List network endpoints
+      description: Returns every reusable SOCKS/FlareSolverr egress endpoint (passwords omitted), ordered by name.
+      tags:
+        - network
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The defined endpoints.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NetworkEndpoint"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createNetworkEndpoint
+      summary: Create a network endpoint
+      description: Creates a reusable SOCKS or FlareSolverr endpoint and returns the persisted endpoint (password omitted).
+      tags:
+        - network
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkEndpointCreate"
+      responses:
+        "201":
+          description: The created endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkEndpoint"
+        "400":
+          description: Invalid endpoint (unknown kind, blank name, or a bad SOCKS/FlareSolverr field).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/network/endpoints/{id}:
+    patch:
+      operationId: updateNetworkEndpoint
+      summary: Update a network endpoint
+      description: Partially updates an endpoint (omitted fields untouched; an omitted password is kept) and returns the persisted endpoint.
+      tags:
+        - network
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Endpoint UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkEndpointUpdate"
+      responses:
+        "200":
+          description: The updated endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkEndpoint"
+        "400":
+          description: Invalid endpoint id or a bad merged field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No endpoint with that id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteNetworkEndpoint
+      summary: Delete a network endpoint
+      description: Deletes an endpoint. Blocked with 409 when at least one binding still references it (the message lists the referencing source ids).
+      tags:
+        - network
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Endpoint UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Endpoint deleted.
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No endpoint with that id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The endpoint is referenced by at least one binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/network/bindings:
+    get:
+      operationId: listNetworkBindings
+      summary: List per-source network bindings
+      description: Returns every per-source network binding (drives the assignment table). Unbound sources have no row and use the global default.
+      tags:
+        - network
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The per-source bindings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceNetworkBinding"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/network/sources/{sourceId}/binding:
+    put:
+      operationId: setNetworkBinding
+      summary: Assign a source's network route
+      description: Upserts the source's binding (one binding per source) and returns the persisted binding.
+      tags:
+        - network
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Engine-host source ID, stringified decimal int64.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceNetworkBindingUpdate"
+      responses:
+        "200":
+          description: The persisted binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceNetworkBinding"
+        "400":
+          description: Malformed sourceId/UUID, or an invalid binding (missing/kind-mismatched endpoint, inconsistent flareMode).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: clearNetworkBinding
+      summary: Clear a source's network route
+      description: Removes the source's binding, reverting it to the global default.
+      tags:
+        - network
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Engine-host source ID, stringified decimal int64.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Binding cleared.
+        "400":
+          description: Malformed sourceId.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The source had no binding to clear.
           content:
             application/json:
               schema:

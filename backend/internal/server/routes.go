@@ -22,6 +22,7 @@ import (
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
 	libraryh "github.com/technobecet/tsundoku/internal/handler/library"
 	metadatah "github.com/technobecet/tsundoku/internal/handler/metadata"
+	networkh "github.com/technobecet/tsundoku/internal/handler/network"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	pushh "github.com/technobecet/tsundoku/internal/handler/push"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
@@ -35,6 +36,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
+	networksvc "github.com/technobecet/tsundoku/internal/network"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/series"
@@ -104,6 +106,10 @@ import (
 //   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
 //   - /api/flaresolverr/settings (GET)              — read Tsundoku-owned FlareSolverr settings (RequireOwner).
 //   - /api/flaresolverr/settings (PATCH)            — partial-update + best-effort mirror to Suwayomi (RequireOwner).
+//   - /api/network/endpoints (GET/POST)            — list / create reusable SOCKS|FlareSolverr egress endpoints (RequireOwner).
+//   - /api/network/endpoints/:id (PATCH/DELETE)    — update / delete an endpoint (delete blocked 409 when bound) (RequireOwner).
+//   - /api/network/bindings (GET)                  — list every per-source network binding (RequireOwner).
+//   - /api/network/sources/:sourceId/binding (PUT/DELETE) — assign / clear a source's network route (RequireOwner).
 //   - /api/suwayomi/extensions (GET)                — list Suwayomi extensions (RequireOwner).
 //   - /api/suwayomi/extensions/refresh (POST)       — refresh available extensions from repos (RequireOwner).
 //     The static /repos routes are registered BEFORE the dynamic /:pkgName routes
@@ -332,6 +338,20 @@ func registerRoutes(
 	flareSolverrH := flaresolverrh.NewHandler(settingsSvc, engineClient)
 	authed.GET("/flaresolverr/settings", flareSolverrH.Get)
 	authed.PATCH("/flaresolverr/settings", flareSolverrH.Update)
+
+	// Per-source network routing (QCAT-283, Slice 1: DB-truth only). The owner
+	// defines reusable SOCKS / FlareSolverr endpoints and binds individual
+	// sources to them. This slice persists the NetworkEndpoint + SourceNetworkBinding
+	// tables and validates them; the engine push that makes a binding actually
+	// route traffic is a SEPARATE later slice — no engine client is wired here.
+	networkH := networkh.NewHandler(networksvc.NewService(client))
+	authed.GET("/network/endpoints", networkH.ListEndpoints)
+	authed.POST("/network/endpoints", networkH.CreateEndpoint)
+	authed.PATCH("/network/endpoints/:id", networkH.UpdateEndpoint)
+	authed.DELETE("/network/endpoints/:id", networkH.DeleteEndpoint)
+	authed.GET("/network/bindings", networkH.ListBindings)
+	authed.PUT("/network/sources/:sourceId/binding", networkH.SetBinding)
+	authed.DELETE("/network/sources/:sourceId/binding", networkH.ClearBinding)
 
 	// Sources & Extensions management (P2 Suwayomi-removal slice 5: repointed
 	// onto the engine host). Like the settings proxy, the handler holds the

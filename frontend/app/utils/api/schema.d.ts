@@ -2085,6 +2085,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/network/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List network endpoints
+         * @description Returns every reusable SOCKS/FlareSolverr egress endpoint (passwords omitted), ordered by name.
+         */
+        get: operations["listNetworkEndpoints"];
+        put?: never;
+        /**
+         * Create a network endpoint
+         * @description Creates a reusable SOCKS or FlareSolverr endpoint and returns the persisted endpoint (password omitted).
+         */
+        post: operations["createNetworkEndpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/network/endpoints/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a network endpoint
+         * @description Deletes an endpoint. Blocked with 409 when at least one binding still references it (the message lists the referencing source ids).
+         */
+        delete: operations["deleteNetworkEndpoint"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a network endpoint
+         * @description Partially updates an endpoint (omitted fields untouched; an omitted password is kept) and returns the persisted endpoint.
+         */
+        patch: operations["updateNetworkEndpoint"];
+        trace?: never;
+    };
+    "/api/network/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List per-source network bindings
+         * @description Returns every per-source network binding (drives the assignment table). Unbound sources have no row and use the global default.
+         */
+        get: operations["listNetworkBindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/network/sources/{sourceId}/binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Assign a source's network route
+         * @description Upserts the source's binding (one binding per source) and returns the persisted binding.
+         */
+        put: operations["setNetworkBinding"];
+        post?: never;
+        /**
+         * Clear a source's network route
+         * @description Removes the source's binding, reverting it to the global default.
+         */
+        delete: operations["clearNetworkBinding"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3672,6 +3764,111 @@ export interface components {
             /** Format: date-time */
             finishDate?: string | null;
             private?: boolean;
+        };
+        /** @description A named, reusable network-egress endpoint (per-source network routing). The `kind` field selects which field-group is meaningful: the SOCKS group (host/port/socksVersion/username) for `socks`, or the FlareSolverr group (url/fsProxy/session/sessionTtl/timeout) for `flaresolverr`. The SOCKS password is WRITE-ONLY — it is set via create/update but never returned. */
+        NetworkEndpoint: {
+            /**
+             * Format: uuid
+             * @description Endpoint identifier.
+             */
+            id: string;
+            /** @description Owner-facing label. */
+            name: string;
+            /**
+             * @description Which field-group applies.
+             * @enum {string}
+             */
+            kind: "socks" | "flaresolverr";
+            /** @description Whether a binding to this endpoint takes effect. */
+            enabled: boolean;
+            /** @description SOCKS proxy host (kind=socks). */
+            host: string;
+            /** @description SOCKS proxy port (kind=socks). */
+            port: number;
+            /** @description SOCKS protocol version, 4 or 5 (kind=socks). */
+            socksVersion: number;
+            /** @description Optional SOCKS auth username (kind=socks). */
+            username: string;
+            /** @description FlareSolverr endpoint URL (kind=flaresolverr). */
+            url: string;
+            /** @description Upstream proxy FlareSolverr egresses the solve through (kind=flaresolverr). */
+            fsProxy: string;
+            /** @description FlareSolverr session identifier (kind=flaresolverr). */
+            session: string;
+            /** @description FlareSolverr session TTL in minutes (kind=flaresolverr). */
+            sessionTtl: number;
+            /** @description FlareSolverr per-request solve timeout in seconds (kind=flaresolverr). */
+            timeout: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @description Create-endpoint body. `name` and `kind` are required; the SOCKS group applies when kind=socks, the FlareSolverr group when kind=flaresolverr (validated by kind). `socksVersion` defaults to 5 and `timeout` to 60 when omitted. `password` is write-only. */
+        NetworkEndpointCreate: {
+            name: string;
+            /** @enum {string} */
+            kind: "socks" | "flaresolverr";
+            /** @description Defaults to true when omitted. */
+            enabled?: boolean;
+            host?: string;
+            port?: number;
+            socksVersion?: number;
+            username?: string;
+            /** @description Write-only SOCKS auth password. */
+            password?: string;
+            url?: string;
+            fsProxy?: string;
+            session?: string;
+            sessionTtl?: number;
+            timeout?: number;
+        };
+        /** @description Partial update — every field is optional; an omitted field is left untouched. In particular an omitted `password` KEEPS the stored password (write-only). The merged endpoint is re-validated by its (possibly changed) kind. */
+        NetworkEndpointUpdate: {
+            name?: string;
+            /** @enum {string} */
+            kind?: "socks" | "flaresolverr";
+            enabled?: boolean;
+            host?: string;
+            port?: number;
+            socksVersion?: number;
+            username?: string;
+            /** @description Write-only; omit to keep the stored password. */
+            password?: string;
+            url?: string;
+            fsProxy?: string;
+            session?: string;
+            sessionTtl?: number;
+            timeout?: number;
+        };
+        /** @description A per-source network-routing assignment. Its ABSENCE (no row) means the source uses the global default. sourceId is stringified (a 64-bit source id can exceed JS's safe-integer range). The endpoint ids are nullable — null = no override for that dimension. */
+        SourceNetworkBinding: {
+            /** @description The engine-host source id (stringified decimal int64). */
+            sourceId: string;
+            /**
+             * Format: uuid
+             * @description The bound SOCKS endpoint, or null for direct/global SOCKS.
+             */
+            socksEndpointId?: string | null;
+            /**
+             * @description FlareSolverr routing scope for the source.
+             * @enum {string}
+             */
+            flareMode: "none" | "global" | "endpoint";
+            /**
+             * Format: uuid
+             * @description The bound FlareSolverr endpoint; present iff flareMode=endpoint.
+             */
+            flareEndpointId?: string | null;
+        };
+        /** @description Set-binding body. `flareMode` is required; the two endpoint ids are optional (null / omitted = no override). `flareEndpointId` is required iff flareMode=endpoint, forbidden otherwise. */
+        SourceNetworkBindingUpdate: {
+            /** Format: uuid */
+            socksEndpointId?: string | null;
+            /** @enum {string} */
+            flareMode: "none" | "global" | "endpoint";
+            /** Format: uuid */
+            flareEndpointId?: string | null;
         };
     };
     responses: never;
@@ -8207,6 +8404,301 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listNetworkEndpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The defined endpoints. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkEndpoint"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createNetworkEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NetworkEndpointCreate"];
+            };
+        };
+        responses: {
+            /** @description The created endpoint. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkEndpoint"];
+                };
+            };
+            /** @description Invalid endpoint (unknown kind, blank name, or a bad SOCKS/FlareSolverr field). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteNetworkEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Endpoint UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Endpoint deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No endpoint with that id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The endpoint is referenced by at least one binding. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateNetworkEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Endpoint UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NetworkEndpointUpdate"];
+            };
+        };
+        responses: {
+            /** @description The updated endpoint. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkEndpoint"];
+                };
+            };
+            /** @description Invalid endpoint id or a bad merged field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No endpoint with that id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listNetworkBindings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The per-source bindings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceNetworkBinding"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setNetworkBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Engine-host source ID, stringified decimal int64. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceNetworkBindingUpdate"];
+            };
+        };
+        responses: {
+            /** @description The persisted binding. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceNetworkBinding"];
+                };
+            };
+            /** @description Malformed sourceId/UUID, or an invalid binding (missing/kind-mismatched endpoint, inconsistent flareMode). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    clearNetworkBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Engine-host source ID, stringified decimal int64. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Binding cleared. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed sourceId. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The source had no binding to clear. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

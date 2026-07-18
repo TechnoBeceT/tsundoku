@@ -21,6 +21,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
+	"github.com/technobecet/tsundoku/internal/ent/networkendpoint"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
 	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
@@ -32,6 +33,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
+	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
@@ -49,29 +51,31 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
-	TypeCategory           = "Category"
-	TypeChapter            = "Chapter"
-	TypeDisabledSource     = "DisabledSource"
-	TypeEtagCache          = "EtagCache"
-	TypeHarvestedExtension = "HarvestedExtension"
-	TypeHarvestedRepo      = "HarvestedRepo"
-	TypeImportEntry        = "ImportEntry"
-	TypeLatestSeries       = "LatestSeries"
-	TypeOwner              = "Owner"
-	TypePendingTrackPush   = "PendingTrackPush"
-	TypeProviderChapter    = "ProviderChapter"
-	TypePushSubscription   = "PushSubscription"
-	TypeSeries             = "Series"
-	TypeSeriesProvider     = "SeriesProvider"
-	TypeSettings           = "Settings"
-	TypeSourceCircuitState = "SourceCircuitState"
-	TypeSourceEvent        = "SourceEvent"
-	TypeSourceMetric       = "SourceMetric"
-	TypeSourcePreference   = "SourcePreference"
-	TypeSourceSeedState    = "SourceSeedState"
-	TypeSuwayomiSyncState  = "SuwayomiSyncState"
-	TypeTrackBinding       = "TrackBinding"
-	TypeTrackerConnection  = "TrackerConnection"
+	TypeCategory             = "Category"
+	TypeChapter              = "Chapter"
+	TypeDisabledSource       = "DisabledSource"
+	TypeEtagCache            = "EtagCache"
+	TypeHarvestedExtension   = "HarvestedExtension"
+	TypeHarvestedRepo        = "HarvestedRepo"
+	TypeImportEntry          = "ImportEntry"
+	TypeLatestSeries         = "LatestSeries"
+	TypeNetworkEndpoint      = "NetworkEndpoint"
+	TypeOwner                = "Owner"
+	TypePendingTrackPush     = "PendingTrackPush"
+	TypeProviderChapter      = "ProviderChapter"
+	TypePushSubscription     = "PushSubscription"
+	TypeSeries               = "Series"
+	TypeSeriesProvider       = "SeriesProvider"
+	TypeSettings             = "Settings"
+	TypeSourceCircuitState   = "SourceCircuitState"
+	TypeSourceEvent          = "SourceEvent"
+	TypeSourceMetric         = "SourceMetric"
+	TypeSourceNetworkBinding = "SourceNetworkBinding"
+	TypeSourcePreference     = "SourcePreference"
+	TypeSourceSeedState      = "SourceSeedState"
+	TypeSuwayomiSyncState    = "SuwayomiSyncState"
+	TypeTrackBinding         = "TrackBinding"
+	TypeTrackerConnection    = "TrackerConnection"
 )
 
 // CategoryMutation represents an operation that mutates the Category nodes in the graph.
@@ -6073,6 +6077,1229 @@ func (m *LatestSeriesMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *LatestSeriesMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown LatestSeries edge %s", name)
+}
+
+// NetworkEndpointMutation represents an operation that mutates the NetworkEndpoint nodes in the graph.
+type NetworkEndpointMutation struct {
+	config
+	op               Op
+	typ              string
+	id               *uuid.UUID
+	name             *string
+	kind             *string
+	enabled          *bool
+	host             *string
+	port             *int
+	addport          *int
+	socks_version    *int
+	addsocks_version *int
+	username         *string
+	password         *string
+	url              *string
+	fs_proxy         *string
+	session          *string
+	session_ttl      *int
+	addsession_ttl   *int
+	timeout          *int
+	addtimeout       *int
+	created_at       *time.Time
+	updated_at       *time.Time
+	clearedFields    map[string]struct{}
+	done             bool
+	oldValue         func(context.Context) (*NetworkEndpoint, error)
+	predicates       []predicate.NetworkEndpoint
+}
+
+var _ ent.Mutation = (*NetworkEndpointMutation)(nil)
+
+// networkendpointOption allows management of the mutation configuration using functional options.
+type networkendpointOption func(*NetworkEndpointMutation)
+
+// newNetworkEndpointMutation creates new mutation for the NetworkEndpoint entity.
+func newNetworkEndpointMutation(c config, op Op, opts ...networkendpointOption) *NetworkEndpointMutation {
+	m := &NetworkEndpointMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeNetworkEndpoint,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withNetworkEndpointID sets the ID field of the mutation.
+func withNetworkEndpointID(id uuid.UUID) networkendpointOption {
+	return func(m *NetworkEndpointMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *NetworkEndpoint
+		)
+		m.oldValue = func(ctx context.Context) (*NetworkEndpoint, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().NetworkEndpoint.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withNetworkEndpoint sets the old NetworkEndpoint of the mutation.
+func withNetworkEndpoint(node *NetworkEndpoint) networkendpointOption {
+	return func(m *NetworkEndpointMutation) {
+		m.oldValue = func(context.Context) (*NetworkEndpoint, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m NetworkEndpointMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m NetworkEndpointMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of NetworkEndpoint entities.
+func (m *NetworkEndpointMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *NetworkEndpointMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *NetworkEndpointMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().NetworkEndpoint.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetName sets the "name" field.
+func (m *NetworkEndpointMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *NetworkEndpointMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *NetworkEndpointMutation) ResetName() {
+	m.name = nil
+}
+
+// SetKind sets the "kind" field.
+func (m *NetworkEndpointMutation) SetKind(s string) {
+	m.kind = &s
+}
+
+// Kind returns the value of the "kind" field in the mutation.
+func (m *NetworkEndpointMutation) Kind() (r string, exists bool) {
+	v := m.kind
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKind returns the old "kind" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldKind(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKind is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKind requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKind: %w", err)
+	}
+	return oldValue.Kind, nil
+}
+
+// ResetKind resets all changes to the "kind" field.
+func (m *NetworkEndpointMutation) ResetKind() {
+	m.kind = nil
+}
+
+// SetEnabled sets the "enabled" field.
+func (m *NetworkEndpointMutation) SetEnabled(b bool) {
+	m.enabled = &b
+}
+
+// Enabled returns the value of the "enabled" field in the mutation.
+func (m *NetworkEndpointMutation) Enabled() (r bool, exists bool) {
+	v := m.enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEnabled returns the old "enabled" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEnabled: %w", err)
+	}
+	return oldValue.Enabled, nil
+}
+
+// ResetEnabled resets all changes to the "enabled" field.
+func (m *NetworkEndpointMutation) ResetEnabled() {
+	m.enabled = nil
+}
+
+// SetHost sets the "host" field.
+func (m *NetworkEndpointMutation) SetHost(s string) {
+	m.host = &s
+}
+
+// Host returns the value of the "host" field in the mutation.
+func (m *NetworkEndpointMutation) Host() (r string, exists bool) {
+	v := m.host
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHost returns the old "host" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldHost(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHost: %w", err)
+	}
+	return oldValue.Host, nil
+}
+
+// ResetHost resets all changes to the "host" field.
+func (m *NetworkEndpointMutation) ResetHost() {
+	m.host = nil
+}
+
+// SetPort sets the "port" field.
+func (m *NetworkEndpointMutation) SetPort(i int) {
+	m.port = &i
+	m.addport = nil
+}
+
+// Port returns the value of the "port" field in the mutation.
+func (m *NetworkEndpointMutation) Port() (r int, exists bool) {
+	v := m.port
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPort returns the old "port" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldPort(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPort is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPort requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPort: %w", err)
+	}
+	return oldValue.Port, nil
+}
+
+// AddPort adds i to the "port" field.
+func (m *NetworkEndpointMutation) AddPort(i int) {
+	if m.addport != nil {
+		*m.addport += i
+	} else {
+		m.addport = &i
+	}
+}
+
+// AddedPort returns the value that was added to the "port" field in this mutation.
+func (m *NetworkEndpointMutation) AddedPort() (r int, exists bool) {
+	v := m.addport
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPort resets all changes to the "port" field.
+func (m *NetworkEndpointMutation) ResetPort() {
+	m.port = nil
+	m.addport = nil
+}
+
+// SetSocksVersion sets the "socks_version" field.
+func (m *NetworkEndpointMutation) SetSocksVersion(i int) {
+	m.socks_version = &i
+	m.addsocks_version = nil
+}
+
+// SocksVersion returns the value of the "socks_version" field in the mutation.
+func (m *NetworkEndpointMutation) SocksVersion() (r int, exists bool) {
+	v := m.socks_version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSocksVersion returns the old "socks_version" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldSocksVersion(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSocksVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSocksVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSocksVersion: %w", err)
+	}
+	return oldValue.SocksVersion, nil
+}
+
+// AddSocksVersion adds i to the "socks_version" field.
+func (m *NetworkEndpointMutation) AddSocksVersion(i int) {
+	if m.addsocks_version != nil {
+		*m.addsocks_version += i
+	} else {
+		m.addsocks_version = &i
+	}
+}
+
+// AddedSocksVersion returns the value that was added to the "socks_version" field in this mutation.
+func (m *NetworkEndpointMutation) AddedSocksVersion() (r int, exists bool) {
+	v := m.addsocks_version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSocksVersion resets all changes to the "socks_version" field.
+func (m *NetworkEndpointMutation) ResetSocksVersion() {
+	m.socks_version = nil
+	m.addsocks_version = nil
+}
+
+// SetUsername sets the "username" field.
+func (m *NetworkEndpointMutation) SetUsername(s string) {
+	m.username = &s
+}
+
+// Username returns the value of the "username" field in the mutation.
+func (m *NetworkEndpointMutation) Username() (r string, exists bool) {
+	v := m.username
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUsername returns the old "username" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldUsername(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUsername is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUsername requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUsername: %w", err)
+	}
+	return oldValue.Username, nil
+}
+
+// ResetUsername resets all changes to the "username" field.
+func (m *NetworkEndpointMutation) ResetUsername() {
+	m.username = nil
+}
+
+// SetPassword sets the "password" field.
+func (m *NetworkEndpointMutation) SetPassword(s string) {
+	m.password = &s
+}
+
+// Password returns the value of the "password" field in the mutation.
+func (m *NetworkEndpointMutation) Password() (r string, exists bool) {
+	v := m.password
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPassword returns the old "password" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldPassword(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPassword is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPassword requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPassword: %w", err)
+	}
+	return oldValue.Password, nil
+}
+
+// ResetPassword resets all changes to the "password" field.
+func (m *NetworkEndpointMutation) ResetPassword() {
+	m.password = nil
+}
+
+// SetURL sets the "url" field.
+func (m *NetworkEndpointMutation) SetURL(s string) {
+	m.url = &s
+}
+
+// URL returns the value of the "url" field in the mutation.
+func (m *NetworkEndpointMutation) URL() (r string, exists bool) {
+	v := m.url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldURL returns the old "url" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldURL: %w", err)
+	}
+	return oldValue.URL, nil
+}
+
+// ResetURL resets all changes to the "url" field.
+func (m *NetworkEndpointMutation) ResetURL() {
+	m.url = nil
+}
+
+// SetFsProxy sets the "fs_proxy" field.
+func (m *NetworkEndpointMutation) SetFsProxy(s string) {
+	m.fs_proxy = &s
+}
+
+// FsProxy returns the value of the "fs_proxy" field in the mutation.
+func (m *NetworkEndpointMutation) FsProxy() (r string, exists bool) {
+	v := m.fs_proxy
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFsProxy returns the old "fs_proxy" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldFsProxy(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFsProxy is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFsProxy requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFsProxy: %w", err)
+	}
+	return oldValue.FsProxy, nil
+}
+
+// ResetFsProxy resets all changes to the "fs_proxy" field.
+func (m *NetworkEndpointMutation) ResetFsProxy() {
+	m.fs_proxy = nil
+}
+
+// SetSession sets the "session" field.
+func (m *NetworkEndpointMutation) SetSession(s string) {
+	m.session = &s
+}
+
+// Session returns the value of the "session" field in the mutation.
+func (m *NetworkEndpointMutation) Session() (r string, exists bool) {
+	v := m.session
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSession returns the old "session" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldSession(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSession is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSession requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSession: %w", err)
+	}
+	return oldValue.Session, nil
+}
+
+// ResetSession resets all changes to the "session" field.
+func (m *NetworkEndpointMutation) ResetSession() {
+	m.session = nil
+}
+
+// SetSessionTTL sets the "session_ttl" field.
+func (m *NetworkEndpointMutation) SetSessionTTL(i int) {
+	m.session_ttl = &i
+	m.addsession_ttl = nil
+}
+
+// SessionTTL returns the value of the "session_ttl" field in the mutation.
+func (m *NetworkEndpointMutation) SessionTTL() (r int, exists bool) {
+	v := m.session_ttl
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSessionTTL returns the old "session_ttl" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldSessionTTL(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSessionTTL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSessionTTL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSessionTTL: %w", err)
+	}
+	return oldValue.SessionTTL, nil
+}
+
+// AddSessionTTL adds i to the "session_ttl" field.
+func (m *NetworkEndpointMutation) AddSessionTTL(i int) {
+	if m.addsession_ttl != nil {
+		*m.addsession_ttl += i
+	} else {
+		m.addsession_ttl = &i
+	}
+}
+
+// AddedSessionTTL returns the value that was added to the "session_ttl" field in this mutation.
+func (m *NetworkEndpointMutation) AddedSessionTTL() (r int, exists bool) {
+	v := m.addsession_ttl
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSessionTTL resets all changes to the "session_ttl" field.
+func (m *NetworkEndpointMutation) ResetSessionTTL() {
+	m.session_ttl = nil
+	m.addsession_ttl = nil
+}
+
+// SetTimeout sets the "timeout" field.
+func (m *NetworkEndpointMutation) SetTimeout(i int) {
+	m.timeout = &i
+	m.addtimeout = nil
+}
+
+// Timeout returns the value of the "timeout" field in the mutation.
+func (m *NetworkEndpointMutation) Timeout() (r int, exists bool) {
+	v := m.timeout
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTimeout returns the old "timeout" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldTimeout(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTimeout is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTimeout requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTimeout: %w", err)
+	}
+	return oldValue.Timeout, nil
+}
+
+// AddTimeout adds i to the "timeout" field.
+func (m *NetworkEndpointMutation) AddTimeout(i int) {
+	if m.addtimeout != nil {
+		*m.addtimeout += i
+	} else {
+		m.addtimeout = &i
+	}
+}
+
+// AddedTimeout returns the value that was added to the "timeout" field in this mutation.
+func (m *NetworkEndpointMutation) AddedTimeout() (r int, exists bool) {
+	v := m.addtimeout
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTimeout resets all changes to the "timeout" field.
+func (m *NetworkEndpointMutation) ResetTimeout() {
+	m.timeout = nil
+	m.addtimeout = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *NetworkEndpointMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *NetworkEndpointMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *NetworkEndpointMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *NetworkEndpointMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *NetworkEndpointMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *NetworkEndpointMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the NetworkEndpointMutation builder.
+func (m *NetworkEndpointMutation) Where(ps ...predicate.NetworkEndpoint) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the NetworkEndpointMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *NetworkEndpointMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.NetworkEndpoint, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *NetworkEndpointMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *NetworkEndpointMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (NetworkEndpoint).
+func (m *NetworkEndpointMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *NetworkEndpointMutation) Fields() []string {
+	fields := make([]string, 0, 15)
+	if m.name != nil {
+		fields = append(fields, networkendpoint.FieldName)
+	}
+	if m.kind != nil {
+		fields = append(fields, networkendpoint.FieldKind)
+	}
+	if m.enabled != nil {
+		fields = append(fields, networkendpoint.FieldEnabled)
+	}
+	if m.host != nil {
+		fields = append(fields, networkendpoint.FieldHost)
+	}
+	if m.port != nil {
+		fields = append(fields, networkendpoint.FieldPort)
+	}
+	if m.socks_version != nil {
+		fields = append(fields, networkendpoint.FieldSocksVersion)
+	}
+	if m.username != nil {
+		fields = append(fields, networkendpoint.FieldUsername)
+	}
+	if m.password != nil {
+		fields = append(fields, networkendpoint.FieldPassword)
+	}
+	if m.url != nil {
+		fields = append(fields, networkendpoint.FieldURL)
+	}
+	if m.fs_proxy != nil {
+		fields = append(fields, networkendpoint.FieldFsProxy)
+	}
+	if m.session != nil {
+		fields = append(fields, networkendpoint.FieldSession)
+	}
+	if m.session_ttl != nil {
+		fields = append(fields, networkendpoint.FieldSessionTTL)
+	}
+	if m.timeout != nil {
+		fields = append(fields, networkendpoint.FieldTimeout)
+	}
+	if m.created_at != nil {
+		fields = append(fields, networkendpoint.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, networkendpoint.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *NetworkEndpointMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case networkendpoint.FieldName:
+		return m.Name()
+	case networkendpoint.FieldKind:
+		return m.Kind()
+	case networkendpoint.FieldEnabled:
+		return m.Enabled()
+	case networkendpoint.FieldHost:
+		return m.Host()
+	case networkendpoint.FieldPort:
+		return m.Port()
+	case networkendpoint.FieldSocksVersion:
+		return m.SocksVersion()
+	case networkendpoint.FieldUsername:
+		return m.Username()
+	case networkendpoint.FieldPassword:
+		return m.Password()
+	case networkendpoint.FieldURL:
+		return m.URL()
+	case networkendpoint.FieldFsProxy:
+		return m.FsProxy()
+	case networkendpoint.FieldSession:
+		return m.Session()
+	case networkendpoint.FieldSessionTTL:
+		return m.SessionTTL()
+	case networkendpoint.FieldTimeout:
+		return m.Timeout()
+	case networkendpoint.FieldCreatedAt:
+		return m.CreatedAt()
+	case networkendpoint.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *NetworkEndpointMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case networkendpoint.FieldName:
+		return m.OldName(ctx)
+	case networkendpoint.FieldKind:
+		return m.OldKind(ctx)
+	case networkendpoint.FieldEnabled:
+		return m.OldEnabled(ctx)
+	case networkendpoint.FieldHost:
+		return m.OldHost(ctx)
+	case networkendpoint.FieldPort:
+		return m.OldPort(ctx)
+	case networkendpoint.FieldSocksVersion:
+		return m.OldSocksVersion(ctx)
+	case networkendpoint.FieldUsername:
+		return m.OldUsername(ctx)
+	case networkendpoint.FieldPassword:
+		return m.OldPassword(ctx)
+	case networkendpoint.FieldURL:
+		return m.OldURL(ctx)
+	case networkendpoint.FieldFsProxy:
+		return m.OldFsProxy(ctx)
+	case networkendpoint.FieldSession:
+		return m.OldSession(ctx)
+	case networkendpoint.FieldSessionTTL:
+		return m.OldSessionTTL(ctx)
+	case networkendpoint.FieldTimeout:
+		return m.OldTimeout(ctx)
+	case networkendpoint.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case networkendpoint.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown NetworkEndpoint field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *NetworkEndpointMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case networkendpoint.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
+	case networkendpoint.FieldKind:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKind(v)
+		return nil
+	case networkendpoint.FieldEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEnabled(v)
+		return nil
+	case networkendpoint.FieldHost:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHost(v)
+		return nil
+	case networkendpoint.FieldPort:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPort(v)
+		return nil
+	case networkendpoint.FieldSocksVersion:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSocksVersion(v)
+		return nil
+	case networkendpoint.FieldUsername:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUsername(v)
+		return nil
+	case networkendpoint.FieldPassword:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPassword(v)
+		return nil
+	case networkendpoint.FieldURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetURL(v)
+		return nil
+	case networkendpoint.FieldFsProxy:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFsProxy(v)
+		return nil
+	case networkendpoint.FieldSession:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSession(v)
+		return nil
+	case networkendpoint.FieldSessionTTL:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSessionTTL(v)
+		return nil
+	case networkendpoint.FieldTimeout:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTimeout(v)
+		return nil
+	case networkendpoint.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case networkendpoint.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown NetworkEndpoint field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *NetworkEndpointMutation) AddedFields() []string {
+	var fields []string
+	if m.addport != nil {
+		fields = append(fields, networkendpoint.FieldPort)
+	}
+	if m.addsocks_version != nil {
+		fields = append(fields, networkendpoint.FieldSocksVersion)
+	}
+	if m.addsession_ttl != nil {
+		fields = append(fields, networkendpoint.FieldSessionTTL)
+	}
+	if m.addtimeout != nil {
+		fields = append(fields, networkendpoint.FieldTimeout)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *NetworkEndpointMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case networkendpoint.FieldPort:
+		return m.AddedPort()
+	case networkendpoint.FieldSocksVersion:
+		return m.AddedSocksVersion()
+	case networkendpoint.FieldSessionTTL:
+		return m.AddedSessionTTL()
+	case networkendpoint.FieldTimeout:
+		return m.AddedTimeout()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *NetworkEndpointMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case networkendpoint.FieldPort:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPort(v)
+		return nil
+	case networkendpoint.FieldSocksVersion:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSocksVersion(v)
+		return nil
+	case networkendpoint.FieldSessionTTL:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSessionTTL(v)
+		return nil
+	case networkendpoint.FieldTimeout:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTimeout(v)
+		return nil
+	}
+	return fmt.Errorf("unknown NetworkEndpoint numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *NetworkEndpointMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *NetworkEndpointMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *NetworkEndpointMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown NetworkEndpoint nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *NetworkEndpointMutation) ResetField(name string) error {
+	switch name {
+	case networkendpoint.FieldName:
+		m.ResetName()
+		return nil
+	case networkendpoint.FieldKind:
+		m.ResetKind()
+		return nil
+	case networkendpoint.FieldEnabled:
+		m.ResetEnabled()
+		return nil
+	case networkendpoint.FieldHost:
+		m.ResetHost()
+		return nil
+	case networkendpoint.FieldPort:
+		m.ResetPort()
+		return nil
+	case networkendpoint.FieldSocksVersion:
+		m.ResetSocksVersion()
+		return nil
+	case networkendpoint.FieldUsername:
+		m.ResetUsername()
+		return nil
+	case networkendpoint.FieldPassword:
+		m.ResetPassword()
+		return nil
+	case networkendpoint.FieldURL:
+		m.ResetURL()
+		return nil
+	case networkendpoint.FieldFsProxy:
+		m.ResetFsProxy()
+		return nil
+	case networkendpoint.FieldSession:
+		m.ResetSession()
+		return nil
+	case networkendpoint.FieldSessionTTL:
+		m.ResetSessionTTL()
+		return nil
+	case networkendpoint.FieldTimeout:
+		m.ResetTimeout()
+		return nil
+	case networkendpoint.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case networkendpoint.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown NetworkEndpoint field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *NetworkEndpointMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *NetworkEndpointMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *NetworkEndpointMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *NetworkEndpointMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *NetworkEndpointMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *NetworkEndpointMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *NetworkEndpointMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown NetworkEndpoint unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *NetworkEndpointMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown NetworkEndpoint edge %s", name)
 }
 
 // OwnerMutation represents an operation that mutates the Owner nodes in the graph.
@@ -15712,6 +16939,685 @@ func (m *SourceMetricMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SourceMetricMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown SourceMetric edge %s", name)
+}
+
+// SourceNetworkBindingMutation represents an operation that mutates the SourceNetworkBinding nodes in the graph.
+type SourceNetworkBindingMutation struct {
+	config
+	op                Op
+	typ               string
+	id                *uuid.UUID
+	source_id         *int64
+	addsource_id      *int64
+	socks_endpoint_id *uuid.UUID
+	flare_mode        *string
+	flare_endpoint_id *uuid.UUID
+	created_at        *time.Time
+	updated_at        *time.Time
+	clearedFields     map[string]struct{}
+	done              bool
+	oldValue          func(context.Context) (*SourceNetworkBinding, error)
+	predicates        []predicate.SourceNetworkBinding
+}
+
+var _ ent.Mutation = (*SourceNetworkBindingMutation)(nil)
+
+// sourcenetworkbindingOption allows management of the mutation configuration using functional options.
+type sourcenetworkbindingOption func(*SourceNetworkBindingMutation)
+
+// newSourceNetworkBindingMutation creates new mutation for the SourceNetworkBinding entity.
+func newSourceNetworkBindingMutation(c config, op Op, opts ...sourcenetworkbindingOption) *SourceNetworkBindingMutation {
+	m := &SourceNetworkBindingMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceNetworkBinding,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceNetworkBindingID sets the ID field of the mutation.
+func withSourceNetworkBindingID(id uuid.UUID) sourcenetworkbindingOption {
+	return func(m *SourceNetworkBindingMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceNetworkBinding
+		)
+		m.oldValue = func(ctx context.Context) (*SourceNetworkBinding, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceNetworkBinding.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceNetworkBinding sets the old SourceNetworkBinding of the mutation.
+func withSourceNetworkBinding(node *SourceNetworkBinding) sourcenetworkbindingOption {
+	return func(m *SourceNetworkBindingMutation) {
+		m.oldValue = func(context.Context) (*SourceNetworkBinding, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceNetworkBindingMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceNetworkBindingMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceNetworkBinding entities.
+func (m *SourceNetworkBindingMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceNetworkBindingMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceNetworkBindingMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceNetworkBinding.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourceNetworkBindingMutation) SetSourceID(i int64) {
+	m.source_id = &i
+	m.addsource_id = nil
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourceNetworkBindingMutation) SourceID() (r int64, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourceNetworkBinding entity.
+// If the SourceNetworkBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceNetworkBindingMutation) OldSourceID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// AddSourceID adds i to the "source_id" field.
+func (m *SourceNetworkBindingMutation) AddSourceID(i int64) {
+	if m.addsource_id != nil {
+		*m.addsource_id += i
+	} else {
+		m.addsource_id = &i
+	}
+}
+
+// AddedSourceID returns the value that was added to the "source_id" field in this mutation.
+func (m *SourceNetworkBindingMutation) AddedSourceID() (r int64, exists bool) {
+	v := m.addsource_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourceNetworkBindingMutation) ResetSourceID() {
+	m.source_id = nil
+	m.addsource_id = nil
+}
+
+// SetSocksEndpointID sets the "socks_endpoint_id" field.
+func (m *SourceNetworkBindingMutation) SetSocksEndpointID(u uuid.UUID) {
+	m.socks_endpoint_id = &u
+}
+
+// SocksEndpointID returns the value of the "socks_endpoint_id" field in the mutation.
+func (m *SourceNetworkBindingMutation) SocksEndpointID() (r uuid.UUID, exists bool) {
+	v := m.socks_endpoint_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSocksEndpointID returns the old "socks_endpoint_id" field's value of the SourceNetworkBinding entity.
+// If the SourceNetworkBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceNetworkBindingMutation) OldSocksEndpointID(ctx context.Context) (v *uuid.UUID, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSocksEndpointID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSocksEndpointID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSocksEndpointID: %w", err)
+	}
+	return oldValue.SocksEndpointID, nil
+}
+
+// ClearSocksEndpointID clears the value of the "socks_endpoint_id" field.
+func (m *SourceNetworkBindingMutation) ClearSocksEndpointID() {
+	m.socks_endpoint_id = nil
+	m.clearedFields[sourcenetworkbinding.FieldSocksEndpointID] = struct{}{}
+}
+
+// SocksEndpointIDCleared returns if the "socks_endpoint_id" field was cleared in this mutation.
+func (m *SourceNetworkBindingMutation) SocksEndpointIDCleared() bool {
+	_, ok := m.clearedFields[sourcenetworkbinding.FieldSocksEndpointID]
+	return ok
+}
+
+// ResetSocksEndpointID resets all changes to the "socks_endpoint_id" field.
+func (m *SourceNetworkBindingMutation) ResetSocksEndpointID() {
+	m.socks_endpoint_id = nil
+	delete(m.clearedFields, sourcenetworkbinding.FieldSocksEndpointID)
+}
+
+// SetFlareMode sets the "flare_mode" field.
+func (m *SourceNetworkBindingMutation) SetFlareMode(s string) {
+	m.flare_mode = &s
+}
+
+// FlareMode returns the value of the "flare_mode" field in the mutation.
+func (m *SourceNetworkBindingMutation) FlareMode() (r string, exists bool) {
+	v := m.flare_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFlareMode returns the old "flare_mode" field's value of the SourceNetworkBinding entity.
+// If the SourceNetworkBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceNetworkBindingMutation) OldFlareMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFlareMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFlareMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFlareMode: %w", err)
+	}
+	return oldValue.FlareMode, nil
+}
+
+// ResetFlareMode resets all changes to the "flare_mode" field.
+func (m *SourceNetworkBindingMutation) ResetFlareMode() {
+	m.flare_mode = nil
+}
+
+// SetFlareEndpointID sets the "flare_endpoint_id" field.
+func (m *SourceNetworkBindingMutation) SetFlareEndpointID(u uuid.UUID) {
+	m.flare_endpoint_id = &u
+}
+
+// FlareEndpointID returns the value of the "flare_endpoint_id" field in the mutation.
+func (m *SourceNetworkBindingMutation) FlareEndpointID() (r uuid.UUID, exists bool) {
+	v := m.flare_endpoint_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFlareEndpointID returns the old "flare_endpoint_id" field's value of the SourceNetworkBinding entity.
+// If the SourceNetworkBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceNetworkBindingMutation) OldFlareEndpointID(ctx context.Context) (v *uuid.UUID, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFlareEndpointID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFlareEndpointID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFlareEndpointID: %w", err)
+	}
+	return oldValue.FlareEndpointID, nil
+}
+
+// ClearFlareEndpointID clears the value of the "flare_endpoint_id" field.
+func (m *SourceNetworkBindingMutation) ClearFlareEndpointID() {
+	m.flare_endpoint_id = nil
+	m.clearedFields[sourcenetworkbinding.FieldFlareEndpointID] = struct{}{}
+}
+
+// FlareEndpointIDCleared returns if the "flare_endpoint_id" field was cleared in this mutation.
+func (m *SourceNetworkBindingMutation) FlareEndpointIDCleared() bool {
+	_, ok := m.clearedFields[sourcenetworkbinding.FieldFlareEndpointID]
+	return ok
+}
+
+// ResetFlareEndpointID resets all changes to the "flare_endpoint_id" field.
+func (m *SourceNetworkBindingMutation) ResetFlareEndpointID() {
+	m.flare_endpoint_id = nil
+	delete(m.clearedFields, sourcenetworkbinding.FieldFlareEndpointID)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *SourceNetworkBindingMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *SourceNetworkBindingMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the SourceNetworkBinding entity.
+// If the SourceNetworkBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceNetworkBindingMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *SourceNetworkBindingMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceNetworkBindingMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceNetworkBindingMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceNetworkBinding entity.
+// If the SourceNetworkBinding object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceNetworkBindingMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceNetworkBindingMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourceNetworkBindingMutation builder.
+func (m *SourceNetworkBindingMutation) Where(ps ...predicate.SourceNetworkBinding) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceNetworkBindingMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceNetworkBindingMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceNetworkBinding, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceNetworkBindingMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceNetworkBindingMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceNetworkBinding).
+func (m *SourceNetworkBindingMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceNetworkBindingMutation) Fields() []string {
+	fields := make([]string, 0, 6)
+	if m.source_id != nil {
+		fields = append(fields, sourcenetworkbinding.FieldSourceID)
+	}
+	if m.socks_endpoint_id != nil {
+		fields = append(fields, sourcenetworkbinding.FieldSocksEndpointID)
+	}
+	if m.flare_mode != nil {
+		fields = append(fields, sourcenetworkbinding.FieldFlareMode)
+	}
+	if m.flare_endpoint_id != nil {
+		fields = append(fields, sourcenetworkbinding.FieldFlareEndpointID)
+	}
+	if m.created_at != nil {
+		fields = append(fields, sourcenetworkbinding.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourcenetworkbinding.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceNetworkBindingMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcenetworkbinding.FieldSourceID:
+		return m.SourceID()
+	case sourcenetworkbinding.FieldSocksEndpointID:
+		return m.SocksEndpointID()
+	case sourcenetworkbinding.FieldFlareMode:
+		return m.FlareMode()
+	case sourcenetworkbinding.FieldFlareEndpointID:
+		return m.FlareEndpointID()
+	case sourcenetworkbinding.FieldCreatedAt:
+		return m.CreatedAt()
+	case sourcenetworkbinding.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceNetworkBindingMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcenetworkbinding.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourcenetworkbinding.FieldSocksEndpointID:
+		return m.OldSocksEndpointID(ctx)
+	case sourcenetworkbinding.FieldFlareMode:
+		return m.OldFlareMode(ctx)
+	case sourcenetworkbinding.FieldFlareEndpointID:
+		return m.OldFlareEndpointID(ctx)
+	case sourcenetworkbinding.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case sourcenetworkbinding.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceNetworkBinding field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceNetworkBindingMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcenetworkbinding.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourcenetworkbinding.FieldSocksEndpointID:
+		v, ok := value.(uuid.UUID)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSocksEndpointID(v)
+		return nil
+	case sourcenetworkbinding.FieldFlareMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFlareMode(v)
+		return nil
+	case sourcenetworkbinding.FieldFlareEndpointID:
+		v, ok := value.(uuid.UUID)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFlareEndpointID(v)
+		return nil
+	case sourcenetworkbinding.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case sourcenetworkbinding.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceNetworkBinding field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceNetworkBindingMutation) AddedFields() []string {
+	var fields []string
+	if m.addsource_id != nil {
+		fields = append(fields, sourcenetworkbinding.FieldSourceID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceNetworkBindingMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourcenetworkbinding.FieldSourceID:
+		return m.AddedSourceID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceNetworkBindingMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourcenetworkbinding.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSourceID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceNetworkBinding numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceNetworkBindingMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourcenetworkbinding.FieldSocksEndpointID) {
+		fields = append(fields, sourcenetworkbinding.FieldSocksEndpointID)
+	}
+	if m.FieldCleared(sourcenetworkbinding.FieldFlareEndpointID) {
+		fields = append(fields, sourcenetworkbinding.FieldFlareEndpointID)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceNetworkBindingMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceNetworkBindingMutation) ClearField(name string) error {
+	switch name {
+	case sourcenetworkbinding.FieldSocksEndpointID:
+		m.ClearSocksEndpointID()
+		return nil
+	case sourcenetworkbinding.FieldFlareEndpointID:
+		m.ClearFlareEndpointID()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceNetworkBinding nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceNetworkBindingMutation) ResetField(name string) error {
+	switch name {
+	case sourcenetworkbinding.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourcenetworkbinding.FieldSocksEndpointID:
+		m.ResetSocksEndpointID()
+		return nil
+	case sourcenetworkbinding.FieldFlareMode:
+		m.ResetFlareMode()
+		return nil
+	case sourcenetworkbinding.FieldFlareEndpointID:
+		m.ResetFlareEndpointID()
+		return nil
+	case sourcenetworkbinding.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case sourcenetworkbinding.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceNetworkBinding field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceNetworkBindingMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceNetworkBindingMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceNetworkBindingMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceNetworkBindingMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceNetworkBindingMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceNetworkBindingMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceNetworkBindingMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceNetworkBinding unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceNetworkBindingMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceNetworkBinding edge %s", name)
 }
 
 // SourcePreferenceMutation represents an operation that mutates the SourcePreference nodes in the graph.

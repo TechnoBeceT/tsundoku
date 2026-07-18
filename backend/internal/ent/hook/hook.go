@@ -105,6 +105,18 @@ func (f LatestSeriesFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.LatestSeriesMutation", m)
 }
 
+// The NetworkEndpointFunc type is an adapter to allow the use of ordinary
+// function as NetworkEndpoint mutator.
+type NetworkEndpointFunc func(context.Context, *ent.NetworkEndpointMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f NetworkEndpointFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.NetworkEndpointMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.NetworkEndpointMutation", m)
+}
+
 // The OwnerFunc type is an adapter to allow the use of ordinary
 // function as Owner mutator.
 type OwnerFunc func(context.Context, *ent.OwnerMutation) (ent.Value, error)
@@ -223,6 +235,18 @@ func (f SourceMetricFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceMetricMutation", m)
+}
+
+// The SourceNetworkBindingFunc type is an adapter to allow the use of ordinary
+// function as SourceNetworkBinding mutator.
+type SourceNetworkBindingFunc func(context.Context, *ent.SourceNetworkBindingMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceNetworkBindingFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceNetworkBindingMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceNetworkBindingMutation", m)
 }
 
 // The SourcePreferenceFunc type is an adapter to allow the use of ordinary

@@ -24,6 +24,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
+	"github.com/technobecet/tsundoku/internal/ent/networkendpoint"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
 	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
@@ -34,6 +35,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
+	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
@@ -62,6 +64,8 @@ type Client struct {
 	ImportEntry *ImportEntryClient
 	// LatestSeries is the client for interacting with the LatestSeries builders.
 	LatestSeries *LatestSeriesClient
+	// NetworkEndpoint is the client for interacting with the NetworkEndpoint builders.
+	NetworkEndpoint *NetworkEndpointClient
 	// Owner is the client for interacting with the Owner builders.
 	Owner *OwnerClient
 	// PendingTrackPush is the client for interacting with the PendingTrackPush builders.
@@ -82,6 +86,8 @@ type Client struct {
 	SourceEvent *SourceEventClient
 	// SourceMetric is the client for interacting with the SourceMetric builders.
 	SourceMetric *SourceMetricClient
+	// SourceNetworkBinding is the client for interacting with the SourceNetworkBinding builders.
+	SourceNetworkBinding *SourceNetworkBindingClient
 	// SourcePreference is the client for interacting with the SourcePreference builders.
 	SourcePreference *SourcePreferenceClient
 	// SourceSeedState is the client for interacting with the SourceSeedState builders.
@@ -111,6 +117,7 @@ func (c *Client) init() {
 	c.HarvestedRepo = NewHarvestedRepoClient(c.config)
 	c.ImportEntry = NewImportEntryClient(c.config)
 	c.LatestSeries = NewLatestSeriesClient(c.config)
+	c.NetworkEndpoint = NewNetworkEndpointClient(c.config)
 	c.Owner = NewOwnerClient(c.config)
 	c.PendingTrackPush = NewPendingTrackPushClient(c.config)
 	c.ProviderChapter = NewProviderChapterClient(c.config)
@@ -121,6 +128,7 @@ func (c *Client) init() {
 	c.SourceCircuitState = NewSourceCircuitStateClient(c.config)
 	c.SourceEvent = NewSourceEventClient(c.config)
 	c.SourceMetric = NewSourceMetricClient(c.config)
+	c.SourceNetworkBinding = NewSourceNetworkBindingClient(c.config)
 	c.SourcePreference = NewSourcePreferenceClient(c.config)
 	c.SourceSeedState = NewSourceSeedStateClient(c.config)
 	c.SuwayomiSyncState = NewSuwayomiSyncStateClient(c.config)
@@ -216,31 +224,33 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:                ctx,
-		config:             cfg,
-		Category:           NewCategoryClient(cfg),
-		Chapter:            NewChapterClient(cfg),
-		DisabledSource:     NewDisabledSourceClient(cfg),
-		EtagCache:          NewEtagCacheClient(cfg),
-		HarvestedExtension: NewHarvestedExtensionClient(cfg),
-		HarvestedRepo:      NewHarvestedRepoClient(cfg),
-		ImportEntry:        NewImportEntryClient(cfg),
-		LatestSeries:       NewLatestSeriesClient(cfg),
-		Owner:              NewOwnerClient(cfg),
-		PendingTrackPush:   NewPendingTrackPushClient(cfg),
-		ProviderChapter:    NewProviderChapterClient(cfg),
-		PushSubscription:   NewPushSubscriptionClient(cfg),
-		Series:             NewSeriesClient(cfg),
-		SeriesProvider:     NewSeriesProviderClient(cfg),
-		Settings:           NewSettingsClient(cfg),
-		SourceCircuitState: NewSourceCircuitStateClient(cfg),
-		SourceEvent:        NewSourceEventClient(cfg),
-		SourceMetric:       NewSourceMetricClient(cfg),
-		SourcePreference:   NewSourcePreferenceClient(cfg),
-		SourceSeedState:    NewSourceSeedStateClient(cfg),
-		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
-		TrackBinding:       NewTrackBindingClient(cfg),
-		TrackerConnection:  NewTrackerConnectionClient(cfg),
+		ctx:                  ctx,
+		config:               cfg,
+		Category:             NewCategoryClient(cfg),
+		Chapter:              NewChapterClient(cfg),
+		DisabledSource:       NewDisabledSourceClient(cfg),
+		EtagCache:            NewEtagCacheClient(cfg),
+		HarvestedExtension:   NewHarvestedExtensionClient(cfg),
+		HarvestedRepo:        NewHarvestedRepoClient(cfg),
+		ImportEntry:          NewImportEntryClient(cfg),
+		LatestSeries:         NewLatestSeriesClient(cfg),
+		NetworkEndpoint:      NewNetworkEndpointClient(cfg),
+		Owner:                NewOwnerClient(cfg),
+		PendingTrackPush:     NewPendingTrackPushClient(cfg),
+		ProviderChapter:      NewProviderChapterClient(cfg),
+		PushSubscription:     NewPushSubscriptionClient(cfg),
+		Series:               NewSeriesClient(cfg),
+		SeriesProvider:       NewSeriesProviderClient(cfg),
+		Settings:             NewSettingsClient(cfg),
+		SourceCircuitState:   NewSourceCircuitStateClient(cfg),
+		SourceEvent:          NewSourceEventClient(cfg),
+		SourceMetric:         NewSourceMetricClient(cfg),
+		SourceNetworkBinding: NewSourceNetworkBindingClient(cfg),
+		SourcePreference:     NewSourcePreferenceClient(cfg),
+		SourceSeedState:      NewSourceSeedStateClient(cfg),
+		SuwayomiSyncState:    NewSuwayomiSyncStateClient(cfg),
+		TrackBinding:         NewTrackBindingClient(cfg),
+		TrackerConnection:    NewTrackerConnectionClient(cfg),
 	}, nil
 }
 
@@ -258,31 +268,33 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:                ctx,
-		config:             cfg,
-		Category:           NewCategoryClient(cfg),
-		Chapter:            NewChapterClient(cfg),
-		DisabledSource:     NewDisabledSourceClient(cfg),
-		EtagCache:          NewEtagCacheClient(cfg),
-		HarvestedExtension: NewHarvestedExtensionClient(cfg),
-		HarvestedRepo:      NewHarvestedRepoClient(cfg),
-		ImportEntry:        NewImportEntryClient(cfg),
-		LatestSeries:       NewLatestSeriesClient(cfg),
-		Owner:              NewOwnerClient(cfg),
-		PendingTrackPush:   NewPendingTrackPushClient(cfg),
-		ProviderChapter:    NewProviderChapterClient(cfg),
-		PushSubscription:   NewPushSubscriptionClient(cfg),
-		Series:             NewSeriesClient(cfg),
-		SeriesProvider:     NewSeriesProviderClient(cfg),
-		Settings:           NewSettingsClient(cfg),
-		SourceCircuitState: NewSourceCircuitStateClient(cfg),
-		SourceEvent:        NewSourceEventClient(cfg),
-		SourceMetric:       NewSourceMetricClient(cfg),
-		SourcePreference:   NewSourcePreferenceClient(cfg),
-		SourceSeedState:    NewSourceSeedStateClient(cfg),
-		SuwayomiSyncState:  NewSuwayomiSyncStateClient(cfg),
-		TrackBinding:       NewTrackBindingClient(cfg),
-		TrackerConnection:  NewTrackerConnectionClient(cfg),
+		ctx:                  ctx,
+		config:               cfg,
+		Category:             NewCategoryClient(cfg),
+		Chapter:              NewChapterClient(cfg),
+		DisabledSource:       NewDisabledSourceClient(cfg),
+		EtagCache:            NewEtagCacheClient(cfg),
+		HarvestedExtension:   NewHarvestedExtensionClient(cfg),
+		HarvestedRepo:        NewHarvestedRepoClient(cfg),
+		ImportEntry:          NewImportEntryClient(cfg),
+		LatestSeries:         NewLatestSeriesClient(cfg),
+		NetworkEndpoint:      NewNetworkEndpointClient(cfg),
+		Owner:                NewOwnerClient(cfg),
+		PendingTrackPush:     NewPendingTrackPushClient(cfg),
+		ProviderChapter:      NewProviderChapterClient(cfg),
+		PushSubscription:     NewPushSubscriptionClient(cfg),
+		Series:               NewSeriesClient(cfg),
+		SeriesProvider:       NewSeriesProviderClient(cfg),
+		Settings:             NewSettingsClient(cfg),
+		SourceCircuitState:   NewSourceCircuitStateClient(cfg),
+		SourceEvent:          NewSourceEventClient(cfg),
+		SourceMetric:         NewSourceMetricClient(cfg),
+		SourceNetworkBinding: NewSourceNetworkBindingClient(cfg),
+		SourcePreference:     NewSourcePreferenceClient(cfg),
+		SourceSeedState:      NewSourceSeedStateClient(cfg),
+		SuwayomiSyncState:    NewSuwayomiSyncStateClient(cfg),
+		TrackBinding:         NewTrackBindingClient(cfg),
+		TrackerConnection:    NewTrackerConnectionClient(cfg),
 	}, nil
 }
 
@@ -313,10 +325,11 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.HarvestedExtension,
-		c.HarvestedRepo, c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush,
-		c.ProviderChapter, c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
-		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourcePreference,
-		c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
+		c.HarvestedRepo, c.ImportEntry, c.LatestSeries, c.NetworkEndpoint, c.Owner,
+		c.PendingTrackPush, c.ProviderChapter, c.PushSubscription, c.Series,
+		c.SeriesProvider, c.Settings, c.SourceCircuitState, c.SourceEvent,
+		c.SourceMetric, c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
+		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Use(hooks...)
 	}
@@ -327,10 +340,11 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.HarvestedExtension,
-		c.HarvestedRepo, c.ImportEntry, c.LatestSeries, c.Owner, c.PendingTrackPush,
-		c.ProviderChapter, c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
-		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourcePreference,
-		c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
+		c.HarvestedRepo, c.ImportEntry, c.LatestSeries, c.NetworkEndpoint, c.Owner,
+		c.PendingTrackPush, c.ProviderChapter, c.PushSubscription, c.Series,
+		c.SeriesProvider, c.Settings, c.SourceCircuitState, c.SourceEvent,
+		c.SourceMetric, c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
+		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -355,6 +369,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.ImportEntry.mutate(ctx, m)
 	case *LatestSeriesMutation:
 		return c.LatestSeries.mutate(ctx, m)
+	case *NetworkEndpointMutation:
+		return c.NetworkEndpoint.mutate(ctx, m)
 	case *OwnerMutation:
 		return c.Owner.mutate(ctx, m)
 	case *PendingTrackPushMutation:
@@ -375,6 +391,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SourceEvent.mutate(ctx, m)
 	case *SourceMetricMutation:
 		return c.SourceMetric.mutate(ctx, m)
+	case *SourceNetworkBindingMutation:
+		return c.SourceNetworkBinding.mutate(ctx, m)
 	case *SourcePreferenceMutation:
 		return c.SourcePreference.mutate(ctx, m)
 	case *SourceSeedStateMutation:
@@ -1499,6 +1517,139 @@ func (c *LatestSeriesClient) mutate(ctx context.Context, m *LatestSeriesMutation
 		return (&LatestSeriesDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown LatestSeries mutation op: %q", m.Op())
+	}
+}
+
+// NetworkEndpointClient is a client for the NetworkEndpoint schema.
+type NetworkEndpointClient struct {
+	config
+}
+
+// NewNetworkEndpointClient returns a client for the NetworkEndpoint from the given config.
+func NewNetworkEndpointClient(c config) *NetworkEndpointClient {
+	return &NetworkEndpointClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `networkendpoint.Hooks(f(g(h())))`.
+func (c *NetworkEndpointClient) Use(hooks ...Hook) {
+	c.hooks.NetworkEndpoint = append(c.hooks.NetworkEndpoint, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `networkendpoint.Intercept(f(g(h())))`.
+func (c *NetworkEndpointClient) Intercept(interceptors ...Interceptor) {
+	c.inters.NetworkEndpoint = append(c.inters.NetworkEndpoint, interceptors...)
+}
+
+// Create returns a builder for creating a NetworkEndpoint entity.
+func (c *NetworkEndpointClient) Create() *NetworkEndpointCreate {
+	mutation := newNetworkEndpointMutation(c.config, OpCreate)
+	return &NetworkEndpointCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of NetworkEndpoint entities.
+func (c *NetworkEndpointClient) CreateBulk(builders ...*NetworkEndpointCreate) *NetworkEndpointCreateBulk {
+	return &NetworkEndpointCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *NetworkEndpointClient) MapCreateBulk(slice any, setFunc func(*NetworkEndpointCreate, int)) *NetworkEndpointCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &NetworkEndpointCreateBulk{err: fmt.Errorf("calling to NetworkEndpointClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*NetworkEndpointCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &NetworkEndpointCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for NetworkEndpoint.
+func (c *NetworkEndpointClient) Update() *NetworkEndpointUpdate {
+	mutation := newNetworkEndpointMutation(c.config, OpUpdate)
+	return &NetworkEndpointUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *NetworkEndpointClient) UpdateOne(_m *NetworkEndpoint) *NetworkEndpointUpdateOne {
+	mutation := newNetworkEndpointMutation(c.config, OpUpdateOne, withNetworkEndpoint(_m))
+	return &NetworkEndpointUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *NetworkEndpointClient) UpdateOneID(id uuid.UUID) *NetworkEndpointUpdateOne {
+	mutation := newNetworkEndpointMutation(c.config, OpUpdateOne, withNetworkEndpointID(id))
+	return &NetworkEndpointUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for NetworkEndpoint.
+func (c *NetworkEndpointClient) Delete() *NetworkEndpointDelete {
+	mutation := newNetworkEndpointMutation(c.config, OpDelete)
+	return &NetworkEndpointDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *NetworkEndpointClient) DeleteOne(_m *NetworkEndpoint) *NetworkEndpointDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *NetworkEndpointClient) DeleteOneID(id uuid.UUID) *NetworkEndpointDeleteOne {
+	builder := c.Delete().Where(networkendpoint.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &NetworkEndpointDeleteOne{builder}
+}
+
+// Query returns a query builder for NetworkEndpoint.
+func (c *NetworkEndpointClient) Query() *NetworkEndpointQuery {
+	return &NetworkEndpointQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeNetworkEndpoint},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a NetworkEndpoint entity by its id.
+func (c *NetworkEndpointClient) Get(ctx context.Context, id uuid.UUID) (*NetworkEndpoint, error) {
+	return c.Query().Where(networkendpoint.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *NetworkEndpointClient) GetX(ctx context.Context, id uuid.UUID) *NetworkEndpoint {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *NetworkEndpointClient) Hooks() []Hook {
+	return c.hooks.NetworkEndpoint
+}
+
+// Interceptors returns the client interceptors.
+func (c *NetworkEndpointClient) Interceptors() []Interceptor {
+	return c.inters.NetworkEndpoint
+}
+
+func (c *NetworkEndpointClient) mutate(ctx context.Context, m *NetworkEndpointMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&NetworkEndpointCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&NetworkEndpointUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&NetworkEndpointUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&NetworkEndpointDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown NetworkEndpoint mutation op: %q", m.Op())
 	}
 }
 
@@ -2976,6 +3127,139 @@ func (c *SourceMetricClient) mutate(ctx context.Context, m *SourceMetricMutation
 	}
 }
 
+// SourceNetworkBindingClient is a client for the SourceNetworkBinding schema.
+type SourceNetworkBindingClient struct {
+	config
+}
+
+// NewSourceNetworkBindingClient returns a client for the SourceNetworkBinding from the given config.
+func NewSourceNetworkBindingClient(c config) *SourceNetworkBindingClient {
+	return &SourceNetworkBindingClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourcenetworkbinding.Hooks(f(g(h())))`.
+func (c *SourceNetworkBindingClient) Use(hooks ...Hook) {
+	c.hooks.SourceNetworkBinding = append(c.hooks.SourceNetworkBinding, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourcenetworkbinding.Intercept(f(g(h())))`.
+func (c *SourceNetworkBindingClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceNetworkBinding = append(c.inters.SourceNetworkBinding, interceptors...)
+}
+
+// Create returns a builder for creating a SourceNetworkBinding entity.
+func (c *SourceNetworkBindingClient) Create() *SourceNetworkBindingCreate {
+	mutation := newSourceNetworkBindingMutation(c.config, OpCreate)
+	return &SourceNetworkBindingCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceNetworkBinding entities.
+func (c *SourceNetworkBindingClient) CreateBulk(builders ...*SourceNetworkBindingCreate) *SourceNetworkBindingCreateBulk {
+	return &SourceNetworkBindingCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceNetworkBindingClient) MapCreateBulk(slice any, setFunc func(*SourceNetworkBindingCreate, int)) *SourceNetworkBindingCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceNetworkBindingCreateBulk{err: fmt.Errorf("calling to SourceNetworkBindingClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceNetworkBindingCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceNetworkBindingCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceNetworkBinding.
+func (c *SourceNetworkBindingClient) Update() *SourceNetworkBindingUpdate {
+	mutation := newSourceNetworkBindingMutation(c.config, OpUpdate)
+	return &SourceNetworkBindingUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceNetworkBindingClient) UpdateOne(_m *SourceNetworkBinding) *SourceNetworkBindingUpdateOne {
+	mutation := newSourceNetworkBindingMutation(c.config, OpUpdateOne, withSourceNetworkBinding(_m))
+	return &SourceNetworkBindingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceNetworkBindingClient) UpdateOneID(id uuid.UUID) *SourceNetworkBindingUpdateOne {
+	mutation := newSourceNetworkBindingMutation(c.config, OpUpdateOne, withSourceNetworkBindingID(id))
+	return &SourceNetworkBindingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceNetworkBinding.
+func (c *SourceNetworkBindingClient) Delete() *SourceNetworkBindingDelete {
+	mutation := newSourceNetworkBindingMutation(c.config, OpDelete)
+	return &SourceNetworkBindingDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceNetworkBindingClient) DeleteOne(_m *SourceNetworkBinding) *SourceNetworkBindingDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceNetworkBindingClient) DeleteOneID(id uuid.UUID) *SourceNetworkBindingDeleteOne {
+	builder := c.Delete().Where(sourcenetworkbinding.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceNetworkBindingDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceNetworkBinding.
+func (c *SourceNetworkBindingClient) Query() *SourceNetworkBindingQuery {
+	return &SourceNetworkBindingQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceNetworkBinding},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceNetworkBinding entity by its id.
+func (c *SourceNetworkBindingClient) Get(ctx context.Context, id uuid.UUID) (*SourceNetworkBinding, error) {
+	return c.Query().Where(sourcenetworkbinding.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceNetworkBindingClient) GetX(ctx context.Context, id uuid.UUID) *SourceNetworkBinding {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceNetworkBindingClient) Hooks() []Hook {
+	return c.hooks.SourceNetworkBinding
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceNetworkBindingClient) Interceptors() []Interceptor {
+	return c.inters.SourceNetworkBinding
+}
+
+func (c *SourceNetworkBindingClient) mutate(ctx context.Context, m *SourceNetworkBindingMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceNetworkBindingCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceNetworkBindingUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceNetworkBindingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceNetworkBindingDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceNetworkBinding mutation op: %q", m.Op())
+	}
+}
+
 // SourcePreferenceClient is a client for the SourcePreference schema.
 type SourcePreferenceClient struct {
 	config
@@ -3677,16 +3961,18 @@ func (c *TrackerConnectionClient) mutate(ctx context.Context, m *TrackerConnecti
 type (
 	hooks struct {
 		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
-		ImportEntry, LatestSeries, Owner, PendingTrackPush, ProviderChapter,
-		PushSubscription, Series, SeriesProvider, Settings, SourceCircuitState,
-		SourceEvent, SourceMetric, SourcePreference, SourceSeedState,
-		SuwayomiSyncState, TrackBinding, TrackerConnection []ent.Hook
+		ImportEntry, LatestSeries, NetworkEndpoint, Owner, PendingTrackPush,
+		ProviderChapter, PushSubscription, Series, SeriesProvider, Settings,
+		SourceCircuitState, SourceEvent, SourceMetric, SourceNetworkBinding,
+		SourcePreference, SourceSeedState, SuwayomiSyncState, TrackBinding,
+		TrackerConnection []ent.Hook
 	}
 	inters struct {
 		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
-		ImportEntry, LatestSeries, Owner, PendingTrackPush, ProviderChapter,
-		PushSubscription, Series, SeriesProvider, Settings, SourceCircuitState,
-		SourceEvent, SourceMetric, SourcePreference, SourceSeedState,
-		SuwayomiSyncState, TrackBinding, TrackerConnection []ent.Interceptor
+		ImportEntry, LatestSeries, NetworkEndpoint, Owner, PendingTrackPush,
+		ProviderChapter, PushSubscription, Series, SeriesProvider, Settings,
+		SourceCircuitState, SourceEvent, SourceMetric, SourceNetworkBinding,
+		SourcePreference, SourceSeedState, SuwayomiSyncState, TrackBinding,
+		TrackerConnection []ent.Interceptor
 	}
 )

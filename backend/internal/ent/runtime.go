@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
+	"github.com/technobecet/tsundoku/internal/ent/networkendpoint"
 	"github.com/technobecet/tsundoku/internal/ent/owner"
 	"github.com/technobecet/tsundoku/internal/ent/pendingtrackpush"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
@@ -25,6 +26,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
+	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
@@ -220,6 +222,66 @@ func init() {
 	latestseriesDescID := latestseriesFields[0].Descriptor()
 	// latestseries.DefaultID holds the default value on creation for the id field.
 	latestseries.DefaultID = latestseriesDescID.Default.(func() uuid.UUID)
+	networkendpointFields := schema.NetworkEndpoint{}.Fields()
+	_ = networkendpointFields
+	// networkendpointDescEnabled is the schema descriptor for enabled field.
+	networkendpointDescEnabled := networkendpointFields[3].Descriptor()
+	// networkendpoint.DefaultEnabled holds the default value on creation for the enabled field.
+	networkendpoint.DefaultEnabled = networkendpointDescEnabled.Default.(bool)
+	// networkendpointDescHost is the schema descriptor for host field.
+	networkendpointDescHost := networkendpointFields[4].Descriptor()
+	// networkendpoint.DefaultHost holds the default value on creation for the host field.
+	networkendpoint.DefaultHost = networkendpointDescHost.Default.(string)
+	// networkendpointDescPort is the schema descriptor for port field.
+	networkendpointDescPort := networkendpointFields[5].Descriptor()
+	// networkendpoint.DefaultPort holds the default value on creation for the port field.
+	networkendpoint.DefaultPort = networkendpointDescPort.Default.(int)
+	// networkendpointDescSocksVersion is the schema descriptor for socks_version field.
+	networkendpointDescSocksVersion := networkendpointFields[6].Descriptor()
+	// networkendpoint.DefaultSocksVersion holds the default value on creation for the socks_version field.
+	networkendpoint.DefaultSocksVersion = networkendpointDescSocksVersion.Default.(int)
+	// networkendpointDescUsername is the schema descriptor for username field.
+	networkendpointDescUsername := networkendpointFields[7].Descriptor()
+	// networkendpoint.DefaultUsername holds the default value on creation for the username field.
+	networkendpoint.DefaultUsername = networkendpointDescUsername.Default.(string)
+	// networkendpointDescPassword is the schema descriptor for password field.
+	networkendpointDescPassword := networkendpointFields[8].Descriptor()
+	// networkendpoint.DefaultPassword holds the default value on creation for the password field.
+	networkendpoint.DefaultPassword = networkendpointDescPassword.Default.(string)
+	// networkendpointDescURL is the schema descriptor for url field.
+	networkendpointDescURL := networkendpointFields[9].Descriptor()
+	// networkendpoint.DefaultURL holds the default value on creation for the url field.
+	networkendpoint.DefaultURL = networkendpointDescURL.Default.(string)
+	// networkendpointDescFsProxy is the schema descriptor for fs_proxy field.
+	networkendpointDescFsProxy := networkendpointFields[10].Descriptor()
+	// networkendpoint.DefaultFsProxy holds the default value on creation for the fs_proxy field.
+	networkendpoint.DefaultFsProxy = networkendpointDescFsProxy.Default.(string)
+	// networkendpointDescSession is the schema descriptor for session field.
+	networkendpointDescSession := networkendpointFields[11].Descriptor()
+	// networkendpoint.DefaultSession holds the default value on creation for the session field.
+	networkendpoint.DefaultSession = networkendpointDescSession.Default.(string)
+	// networkendpointDescSessionTTL is the schema descriptor for session_ttl field.
+	networkendpointDescSessionTTL := networkendpointFields[12].Descriptor()
+	// networkendpoint.DefaultSessionTTL holds the default value on creation for the session_ttl field.
+	networkendpoint.DefaultSessionTTL = networkendpointDescSessionTTL.Default.(int)
+	// networkendpointDescTimeout is the schema descriptor for timeout field.
+	networkendpointDescTimeout := networkendpointFields[13].Descriptor()
+	// networkendpoint.DefaultTimeout holds the default value on creation for the timeout field.
+	networkendpoint.DefaultTimeout = networkendpointDescTimeout.Default.(int)
+	// networkendpointDescCreatedAt is the schema descriptor for created_at field.
+	networkendpointDescCreatedAt := networkendpointFields[14].Descriptor()
+	// networkendpoint.DefaultCreatedAt holds the default value on creation for the created_at field.
+	networkendpoint.DefaultCreatedAt = networkendpointDescCreatedAt.Default.(func() time.Time)
+	// networkendpointDescUpdatedAt is the schema descriptor for updated_at field.
+	networkendpointDescUpdatedAt := networkendpointFields[15].Descriptor()
+	// networkendpoint.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	networkendpoint.DefaultUpdatedAt = networkendpointDescUpdatedAt.Default.(func() time.Time)
+	// networkendpoint.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	networkendpoint.UpdateDefaultUpdatedAt = networkendpointDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// networkendpointDescID is the schema descriptor for id field.
+	networkendpointDescID := networkendpointFields[0].Descriptor()
+	// networkendpoint.DefaultID holds the default value on creation for the id field.
+	networkendpoint.DefaultID = networkendpointDescID.Default.(func() uuid.UUID)
 	ownerFields := schema.Owner{}.Fields()
 	_ = ownerFields
 	// ownerDescCreatedAt is the schema descriptor for created_at field.
@@ -512,6 +574,26 @@ func init() {
 	sourcemetricDescID := sourcemetricFields[0].Descriptor()
 	// sourcemetric.DefaultID holds the default value on creation for the id field.
 	sourcemetric.DefaultID = sourcemetricDescID.Default.(func() uuid.UUID)
+	sourcenetworkbindingFields := schema.SourceNetworkBinding{}.Fields()
+	_ = sourcenetworkbindingFields
+	// sourcenetworkbindingDescFlareMode is the schema descriptor for flare_mode field.
+	sourcenetworkbindingDescFlareMode := sourcenetworkbindingFields[3].Descriptor()
+	// sourcenetworkbinding.DefaultFlareMode holds the default value on creation for the flare_mode field.
+	sourcenetworkbinding.DefaultFlareMode = sourcenetworkbindingDescFlareMode.Default.(string)
+	// sourcenetworkbindingDescCreatedAt is the schema descriptor for created_at field.
+	sourcenetworkbindingDescCreatedAt := sourcenetworkbindingFields[5].Descriptor()
+	// sourcenetworkbinding.DefaultCreatedAt holds the default value on creation for the created_at field.
+	sourcenetworkbinding.DefaultCreatedAt = sourcenetworkbindingDescCreatedAt.Default.(func() time.Time)
+	// sourcenetworkbindingDescUpdatedAt is the schema descriptor for updated_at field.
+	sourcenetworkbindingDescUpdatedAt := sourcenetworkbindingFields[6].Descriptor()
+	// sourcenetworkbinding.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourcenetworkbinding.DefaultUpdatedAt = sourcenetworkbindingDescUpdatedAt.Default.(func() time.Time)
+	// sourcenetworkbinding.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourcenetworkbinding.UpdateDefaultUpdatedAt = sourcenetworkbindingDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourcenetworkbindingDescID is the schema descriptor for id field.
+	sourcenetworkbindingDescID := sourcenetworkbindingFields[0].Descriptor()
+	// sourcenetworkbinding.DefaultID holds the default value on creation for the id field.
+	sourcenetworkbinding.DefaultID = sourcenetworkbindingDescID.Default.(func() uuid.UUID)
 	sourcepreferenceFields := schema.SourcePreference{}.Fields()
 	_ = sourcepreferenceFields
 	// sourcepreferenceDescValue is the schema descriptor for value field.

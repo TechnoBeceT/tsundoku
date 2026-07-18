@@ -28,6 +28,8 @@ type Tx struct {
 	ImportEntry *ImportEntryClient
 	// LatestSeries is the client for interacting with the LatestSeries builders.
 	LatestSeries *LatestSeriesClient
+	// NetworkEndpoint is the client for interacting with the NetworkEndpoint builders.
+	NetworkEndpoint *NetworkEndpointClient
 	// Owner is the client for interacting with the Owner builders.
 	Owner *OwnerClient
 	// PendingTrackPush is the client for interacting with the PendingTrackPush builders.
@@ -48,6 +50,8 @@ type Tx struct {
 	SourceEvent *SourceEventClient
 	// SourceMetric is the client for interacting with the SourceMetric builders.
 	SourceMetric *SourceMetricClient
+	// SourceNetworkBinding is the client for interacting with the SourceNetworkBinding builders.
+	SourceNetworkBinding *SourceNetworkBindingClient
 	// SourcePreference is the client for interacting with the SourcePreference builders.
 	SourcePreference *SourcePreferenceClient
 	// SourceSeedState is the client for interacting with the SourceSeedState builders.
@@ -197,6 +201,7 @@ func (tx *Tx) init() {
 	tx.HarvestedRepo = NewHarvestedRepoClient(tx.config)
 	tx.ImportEntry = NewImportEntryClient(tx.config)
 	tx.LatestSeries = NewLatestSeriesClient(tx.config)
+	tx.NetworkEndpoint = NewNetworkEndpointClient(tx.config)
 	tx.Owner = NewOwnerClient(tx.config)
 	tx.PendingTrackPush = NewPendingTrackPushClient(tx.config)
 	tx.ProviderChapter = NewProviderChapterClient(tx.config)
@@ -207,6 +212,7 @@ func (tx *Tx) init() {
 	tx.SourceCircuitState = NewSourceCircuitStateClient(tx.config)
 	tx.SourceEvent = NewSourceEventClient(tx.config)
 	tx.SourceMetric = NewSourceMetricClient(tx.config)
+	tx.SourceNetworkBinding = NewSourceNetworkBindingClient(tx.config)
 	tx.SourcePreference = NewSourcePreferenceClient(tx.config)
 	tx.SourceSeedState = NewSourceSeedStateClient(tx.config)
 	tx.SuwayomiSyncState = NewSuwayomiSyncStateClient(tx.config)

@@ -171,6 +171,31 @@ var (
 		Columns:    LatestSeriesColumns,
 		PrimaryKey: []*schema.Column{LatestSeriesColumns[0]},
 	}
+	// NetworkEndpointsColumns holds the columns for the "network_endpoints" table.
+	NetworkEndpointsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "name", Type: field.TypeString},
+		{Name: "kind", Type: field.TypeString},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "host", Type: field.TypeString, Default: ""},
+		{Name: "port", Type: field.TypeInt, Default: 0},
+		{Name: "socks_version", Type: field.TypeInt, Default: 5},
+		{Name: "username", Type: field.TypeString, Default: ""},
+		{Name: "password", Type: field.TypeString, Default: ""},
+		{Name: "url", Type: field.TypeString, Default: ""},
+		{Name: "fs_proxy", Type: field.TypeString, Default: ""},
+		{Name: "session", Type: field.TypeString, Default: ""},
+		{Name: "session_ttl", Type: field.TypeInt, Default: 0},
+		{Name: "timeout", Type: field.TypeInt, Default: 60},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// NetworkEndpointsTable holds the schema information for the "network_endpoints" table.
+	NetworkEndpointsTable = &schema.Table{
+		Name:       "network_endpoints",
+		Columns:    NetworkEndpointsColumns,
+		PrimaryKey: []*schema.Column{NetworkEndpointsColumns[0]},
+	}
 	// OwnersColumns holds the columns for the "owners" table.
 	OwnersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -414,6 +439,22 @@ var (
 		Columns:    SourceMetricsColumns,
 		PrimaryKey: []*schema.Column{SourceMetricsColumns[0]},
 	}
+	// SourceNetworkBindingsColumns holds the columns for the "source_network_bindings" table.
+	SourceNetworkBindingsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeInt64, Unique: true},
+		{Name: "socks_endpoint_id", Type: field.TypeUUID, Nullable: true},
+		{Name: "flare_mode", Type: field.TypeString, Default: "global"},
+		{Name: "flare_endpoint_id", Type: field.TypeUUID, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourceNetworkBindingsTable holds the schema information for the "source_network_bindings" table.
+	SourceNetworkBindingsTable = &schema.Table{
+		Name:       "source_network_bindings",
+		Columns:    SourceNetworkBindingsColumns,
+		PrimaryKey: []*schema.Column{SourceNetworkBindingsColumns[0]},
+	}
 	// SourcePreferencesColumns holds the columns for the "source_preferences" table.
 	SourcePreferencesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -561,6 +602,7 @@ var (
 		HarvestedReposTable,
 		ImportEntriesTable,
 		LatestSeriesTable,
+		NetworkEndpointsTable,
 		OwnersTable,
 		PendingTrackPushesTable,
 		ProviderChaptersTable,
@@ -571,6 +613,7 @@ var (
 		SourceCircuitStatesTable,
 		SourceEventsTable,
 		SourceMetricsTable,
+		SourceNetworkBindingsTable,
 		SourcePreferencesTable,
 		SourceSeedStatesTable,
 		SuwayomiSyncStatesTable,

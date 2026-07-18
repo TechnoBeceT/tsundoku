@@ -30,6 +30,9 @@ type ImportEntry func(*sql.Selector)
 // LatestSeries is the predicate function for latestseries builders.
 type LatestSeries func(*sql.Selector)
 
+// NetworkEndpoint is the predicate function for networkendpoint builders.
+type NetworkEndpoint func(*sql.Selector)
+
 // Owner is the predicate function for owner builders.
 type Owner func(*sql.Selector)
 
@@ -59,6 +62,9 @@ type SourceEvent func(*sql.Selector)
 
 // SourceMetric is the predicate function for sourcemetric builders.
 type SourceMetric func(*sql.Selector)
+
+// SourceNetworkBinding is the predicate function for sourcenetworkbinding builders.
+type SourceNetworkBinding func(*sql.Selector)
 
 // SourcePreference is the predicate function for sourcepreference builders.
 type SourcePreference func(*sql.Selector)
