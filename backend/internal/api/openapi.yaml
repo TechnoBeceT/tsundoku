@@ -3233,13 +3233,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: No series with the given id, or no such Suwayomi source/manga.
+          description: No series with the given id, or the source id is not a currently-loaded source (a true membership miss).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The source is already attached to this series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The engine host could not be reached, or the source fetch failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The source exists but its anti-ban circuit-breaker is cooled down — retry shortly.
           content:
             application/json:
               schema:
@@ -3294,13 +3306,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: No series with the given id, or no such Suwayomi source/manga for one of the entries.
+          description: No series with the given id, or a source id in one of the entries is not a currently-loaded source (a true membership miss).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: One of the sources is already attached to this series (sources attached before the failing entry are NOT rolled back).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The engine host could not be reached, or a source fetch failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: A source exists but its anti-ban circuit-breaker is cooled down — retry shortly.
           content:
             application/json:
               schema:
@@ -3369,7 +3393,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: No series with the given id, or no such Suwayomi source/manga.
+          description: No series with the given id, or the source id is not a currently-loaded source (a true membership miss).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The engine host could not be reached, or the source fetch failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The source exists but its anti-ban circuit-breaker is cooled down — retry shortly.
           content:
             application/json:
               schema:

@@ -414,7 +414,8 @@ func registerRoutes(
 	// construction — plus the shared trigger, storage root, and SSE hub (the
 	// async scan streams scan.start/scan.progress/scan.done over it).
 	librarySvc := library.NewService(client, ingestSvc, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub).
-		WithAutoIdentifier(metaSvc) // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
+		WithAutoIdentifier(metaSvc).   // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
+		WithSourceLister(engineClient) // membership check for AddProvider/MatchDiskProvider — true 404 only on a real miss (not a cooled-down source)
 	libraryH := libraryh.NewHandler(librarySvc)
 	authed.POST("/library/scan", libraryH.Scan)
 	authed.GET("/library/imports", libraryH.ListImports)

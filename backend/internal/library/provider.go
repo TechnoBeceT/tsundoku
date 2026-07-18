@@ -2,7 +2,6 @@ package library
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 
@@ -35,11 +34,17 @@ func parseSourceID(source string) (int64, error) {
 //  2. Reject if a SeriesProvider with provider==source AND the same scanlator
 //     is already attached — ErrProviderAlreadyPresent (the same source MAY be
 //     attached again under a DIFFERENT scanlator; see ingest.Ingest.AddSeries).
-//  3. Call s.ingest.AddSeries(ctx, source, url, ser.Title, scanlator):
-//     AddSeries find-or-creates a Series by slug(title), so passing the
-//     EXISTING series' canonical title attaches the new source to THIS series
-//     and ingests its chapter feed (new chapters land as wanted). An engine-host
-//     fetch failure is wrapped as ErrSourceNotFound.
+//  3. Verify sourceID is a real, loaded source via s.sourceExists (a true
+//     membership check) — ErrSourceNotFound (404) ONLY on a genuine miss.
+//     Then call s.ingest.AddSeriesUngated(ctx, source, url, ser.Title,
+//     scanlator): the UNGATED variant, since a deliberate one-shot owner click
+//     must not be refused by the anti-ban circuit-breaker that throttles bulk
+//     sweeps. AddSeriesUngated find-or-creates a Series by slug(title), so
+//     passing the EXISTING series' canonical title attaches the new source to
+//     THIS series and ingests its chapter feed (new chapters land as wanted). A
+//     fetch failure is classified honestly by classifyAttachError —
+//     ErrSourceUnavailable (503) when the source is cooled down, else
+//     ErrSourceUpstream (502) — NEVER a phantom ErrSourceNotFound.
 //  4. Set importance on the just-created SeriesProvider(seriesID, source,
 //     scanlator) — matched by the full triple (same fix as
 //     imports.Service.setImportances) so a second scanlator row for the same
@@ -88,12 +93,11 @@ func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source st
 		return series.SeriesDetailDTO{}, ErrProviderAlreadyPresent
 	}
 
-	sourceID, err := parseSourceID(source)
-	if err != nil {
-		return series.SeriesDetailDTO{}, errors.Join(ErrSourceNotFound, err)
-	}
-	if _, err := s.ingest.AddSeries(ctx, sourceID, url, ser.Title, scanlator); err != nil {
-		return series.SeriesDetailDTO{}, errors.Join(ErrSourceNotFound, err)
+	// Membership check + UNGATED owner-attach ingest with honest error taxonomy
+	// (true 404 only on a real miss; 503 cooled-down / 502 upstream on a fetch
+	// failure) — see resolveAndIngestSource.
+	if _, err := s.resolveAndIngestSource(ctx, source, url, ser.Title, scanlator); err != nil {
+		return series.SeriesDetailDTO{}, err
 	}
 
 	sp, err := s.db.SeriesProvider.Query().

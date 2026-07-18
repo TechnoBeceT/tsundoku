@@ -54,9 +54,12 @@ type relabeledChapter struct {
 // rename-then-compensate pattern — disk ops cannot live inside a DB tx):
 //  1. Load the series and the target disk provider; reject a provider that is
 //     already linked (series.IsLinkedProvider true) with ErrNotADiskProvider.
-//  2. Attach the real source via ingest.Ingest.AddSeries (idempotent) and
-//     set its importance. An engine-host fetch failure is wrapped as
-//     ErrSourceNotFound (mirrors AddProvider). If a later step fails, this
+//  2. Verify the source exists (membership check → ErrSourceNotFound/404 only on
+//     a true miss), then attach it via ingest.Ingest.AddSeriesUngated (the
+//     UNGATED variant — an owner Match click must not be refused by the anti-ban
+//     breaker) and set its importance. A fetch failure is classified honestly by
+//     classifyAttachError (ErrSourceUnavailable/503 or ErrSourceUpstream/502),
+//     mirroring AddProvider — never a phantom ErrSourceNotFound. If a later step fails, this
 //     newly-attached SeriesProvider is deliberately left in place — an orphan
 //     real provider is harmless and reconcile-consistent (documented, not
 //     rolled back).
@@ -225,12 +228,11 @@ func (s *Service) restoreImportance(ctx context.Context, providerID uuid.UUID, o
 // where the chosen source was ALREADY attached at a higher importance, so the
 // disk window is safe there too.
 func (s *Service) attachRealSource(ctx context.Context, seriesID uuid.UUID, seriesTitle, source string, url string, scanlator string) (*ent.SeriesProvider, error) {
-	sourceID, err := parseSourceID(source)
-	if err != nil {
-		return nil, errors.Join(ErrSourceNotFound, err)
-	}
-	if _, err := s.ingest.AddSeries(ctx, sourceID, url, seriesTitle, scanlator); err != nil {
-		return nil, errors.Join(ErrSourceNotFound, err)
+	// Membership check + UNGATED owner-attach ingest with honest error taxonomy
+	// (true 404 only on a real miss; 503 cooled-down / 502 upstream on a fetch
+	// failure) — see resolveAndIngestSource. Shared with AddProvider (§2 DRY).
+	if _, err := s.resolveAndIngestSource(ctx, source, url, seriesTitle, scanlator); err != nil {
+		return nil, err
 	}
 
 	sp, err := s.db.SeriesProvider.Query().

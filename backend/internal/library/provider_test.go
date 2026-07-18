@@ -36,6 +36,10 @@ import (
 type fakeAddProviderClient struct {
 	searchTitle string
 	chapters    []sourceengine.Chapter
+	// chaptersErr, when non-nil, makes Chapters fail — used to simulate a genuine
+	// engine-host upstream fetch failure so AddProvider/MatchDiskProvider must
+	// classify it as ErrSourceUpstream (502), never the old phantom ErrSourceNotFound.
+	chaptersErr error
 }
 
 func newFakeClientWithFeed(t *testing.T) *fakeAddProviderClient {
@@ -84,6 +88,9 @@ func (f *fakeAddProviderClient) MangaDetails(ctx context.Context, sourceID int64
 	return sourceengine.MangaDetails{URL: url, Title: "My Series"}, nil
 }
 func (f *fakeAddProviderClient) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
+	if f.chaptersErr != nil {
+		return nil, f.chaptersErr
+	}
 	if f.chapters != nil {
 		return f.chapters, nil
 	}

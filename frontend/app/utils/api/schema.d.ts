@@ -4137,7 +4137,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No series with the given id, or no such Suwayomi source/manga. */
+            /** @description No series with the given id, or the source id is not a currently-loaded source (a true membership miss). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -4148,6 +4148,24 @@ export interface operations {
             };
             /** @description The source is already attached to this series. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host could not be reached, or the source fetch failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The source exists but its anti-ban circuit-breaker is cooled down — retry shortly. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4254,7 +4272,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No series with the given id, or no such Suwayomi source/manga for one of the entries. */
+            /** @description No series with the given id, or a source id in one of the entries is not a currently-loaded source (a true membership miss). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -4265,6 +4283,24 @@ export interface operations {
             };
             /** @description One of the sources is already attached to this series (sources attached before the failing entry are NOT rolled back). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host could not be reached, or a source fetch failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A source exists but its anti-ban circuit-breaker is cooled down — retry shortly. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4319,8 +4355,26 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No series with the given id, or no such Suwayomi source/manga. */
+            /** @description No series with the given id, or the source id is not a currently-loaded source (a true membership miss). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host could not be reached, or the source fetch failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The source exists but its anti-ban circuit-breaker is cooled down — retry shortly. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -22,6 +22,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/handler/sourcefilter"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
@@ -388,10 +389,13 @@ func (h *Handler) PutPrefs(c echo.Context) error {
 // mapServiceError translates a library.Service sentinel error into the
 // matching HTTP status, leaving any unexpected error to fall through to the
 // central middleware as a 500. ErrSeriesNotFound / ErrEntryNotFound → 404;
-// ErrProviderAlreadyPresent → 409; ErrSourceNotFound → 404 (a Suwayomi
-// manga-fetch miss is treated the same as an unknown resource — see
-// library.AddProvider, which wraps it via errors.Join so errors.Is still
-// matches through the join); ErrProviderNotInSeries / ErrNotADiskProvider
+// ErrProviderAlreadyPresent → 409; ErrSourceNotFound → 404 (a TRUE membership
+// miss only — an unparseable id or one absent from the engine host's live
+// Sources(); AddProvider wraps the parse-miss via errors.Join so errors.Is still
+// matches through the join); ErrSourceUnavailable → 503 (the source exists but
+// its anti-ban circuit-breaker is cooled down — retry shortly); ErrSourceUpstream
+// → 502 via httperr.Upstream (a genuine engine-host fetch failure — the real
+// reason surfaces instead of the old phantom 404); ErrProviderNotInSeries / ErrNotADiskProvider
 // (MatchDiskProvider) → 400 (a malformed request referencing the wrong
 // provider or one that is already a real, linked source); ErrNoProviders
 // (library.AddProviders called with an empty batch) → 400 — reachable from
@@ -400,6 +404,9 @@ func (h *Handler) PutPrefs(c echo.Context) error {
 // elements is caught by the handler building a zero-length refs slice, which
 // AddProviders itself guards).
 func mapServiceError(err error) error {
+	if mapped, ok := mapSourceError(err); ok {
+		return mapped
+	}
 	switch {
 	case errors.Is(err, library.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "series not found")
@@ -407,8 +414,6 @@ func mapServiceError(err error) error {
 		return echo.NewHTTPError(http.StatusNotFound, "import entry not found")
 	case errors.Is(err, library.ErrProviderAlreadyPresent):
 		return echo.NewHTTPError(http.StatusConflict, "provider already attached to series")
-	case errors.Is(err, library.ErrSourceNotFound):
-		return echo.NewHTTPError(http.StatusNotFound, "source not found")
 	case errors.Is(err, library.ErrProviderNotInSeries):
 		return echo.NewHTTPError(http.StatusBadRequest, "provider does not belong to series")
 	case errors.Is(err, library.ErrNotADiskProvider):
@@ -420,4 +425,25 @@ func mapServiceError(err error) error {
 	default:
 		return err
 	}
+}
+
+// mapSourceError maps the source-attach error family (AddProvider /
+// MatchDiskProvider) to its HTTP status, returning ok=false when err is not one
+// of them so mapServiceError can fall through to the rest. Split out of
+// mapServiceError to keep both within the fleet cyclop budget (§2 side benefit:
+// the honest source taxonomy lives in one place). ErrSourceNotFound → 404 (a TRUE
+// membership miss only); ErrSourceUnavailable → 503 (cooled-down breaker, retry
+// shortly — the sentinel's own text is caller-safe and names the source);
+// ErrSourceUpstream → 502 via httperr.Upstream (a genuine engine-host fetch
+// failure — the real reason surfaces instead of the old phantom 404).
+func mapSourceError(err error) (error, bool) {
+	switch {
+	case errors.Is(err, library.ErrSourceNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, "source not found"), true
+	case errors.Is(err, library.ErrSourceUnavailable):
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()), true
+	case errors.Is(err, library.ErrSourceUpstream):
+		return httperr.Upstream(err), true
+	}
+	return nil, false
 }

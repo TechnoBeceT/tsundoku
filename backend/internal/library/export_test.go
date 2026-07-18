@@ -34,3 +34,11 @@ func SetScanBlock(ch chan struct{}) func() {
 func ProviderNameMatches(diskProviderName, liveDisplayName string) bool {
 	return providerNameMatches(diskProviderName, liveDisplayName)
 }
+
+// ClassifyAttachError exposes the unexported attach-error classifier so the
+// black-box test package can pin the honest error taxonomy (cooled-down →
+// ErrSourceUnavailable, else ErrSourceUpstream) in isolation — the branch the
+// ungated owner-attach path never trips in practice, but must still map correctly.
+func ClassifyAttachError(source string, err error) error {
+	return classifyAttachError(source, err)
+}

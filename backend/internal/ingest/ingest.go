@@ -154,6 +154,41 @@ func (i *Ingest) AddSeries(
 	return i.addSeriesWithChapters(ctx, sourceID, url, title, scanlator, providerName, swChapters)
 }
 
+// AddSeriesUngated is AddSeries for a DELIBERATE, one-shot OWNER-initiated attach
+// (library.AddProvider / library.MatchDiskProvider — the "Link chapters / Match
+// source" action). It performs the SAME ingest as AddSeries, but its upstream
+// fetch BYPASSES the circuit-breaker cooldown refusal: it never returns
+// ErrSourceCooledDown.
+//
+// The source-politeness gate (sourcegate) exists to throttle BULK background
+// sweeps (the refresh sweep, the download/upgrade dispatcher) so an unattended
+// deployment cannot hammer a source into a Cloudflare block. A single, explicit
+// owner click is not that traffic shape — refusing it because unrelated
+// background failures happened to trip the breaker is exactly the phantom
+// "source not found" bug this method fixes. The politeness delay (Wait) and the
+// success/failure bookkeeping are STILL applied, so an owner attach stays polite
+// and a success even clears the breaker; only the cooldown REFUSAL is skipped.
+//
+// This is deliberately NOT used by any background path — the sweep and the
+// dispatcher MUST stay gated (anti-ban). Only the owner attach/match path calls
+// it.
+func (i *Ingest) AddSeriesUngated(
+	ctx context.Context,
+	sourceID int64,
+	url string,
+	title string,
+	scanlator string,
+) (chapter.IngestResult, error) {
+	providerName := i.resolveProviderName(ctx, sourceID)
+
+	swChapters, err := i.fetchForAttach(ctx, sourceID, url, title, providerName)
+	if err != nil {
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeriesUngated: fetch chapters for source %d url %q: %w", sourceID, url, err)
+	}
+
+	return i.addSeriesWithChapters(ctx, sourceID, url, title, scanlator, providerName, swChapters)
+}
+
 // AddSeriesWithChapters is AddSeries WITHOUT the upstream fetch: it ingests the
 // caller-supplied raw (all-scanlators) chapter list for this source-manga. The
 // refresh sweep uses it to fetch a source-manga ONCE (via FetchChaptersUncached)
@@ -495,7 +530,18 @@ func (i *Ingest) FetchChaptersUncached(ctx context.Context, sourceID int64, url 
 // imports.Service never masquerades as this call's real-title result.
 func (i *Ingest) fetchForAdopt(ctx context.Context, sourceID int64, url string, title string, providerName string) ([]sourceengine.Chapter, error) {
 	return i.chaptersThroughCache(ctx, sourceID, url, title, func() ([]sourceengine.Chapter, error) {
-		return i.gatedUpstream(ctx, sourceID, url, title, providerName)
+		return i.gatedUpstream(ctx, sourceID, url, title, providerName, true)
+	})
+}
+
+// fetchForAttach is fetchForAdopt for the one-shot OWNER attach path
+// (AddSeriesUngated): cached, and on a cache miss fetched with the SAME
+// politeness delay + breaker bookkeeping BUT with the cooldown refusal skipped
+// (respectCooldown=false — see gatedUpstream). A cache hit still makes no request
+// (and correctly skips the gate entirely), exactly like fetchForAdopt.
+func (i *Ingest) fetchForAttach(ctx context.Context, sourceID int64, url string, title string, providerName string) ([]sourceengine.Chapter, error) {
+	return i.chaptersThroughCache(ctx, sourceID, url, title, func() ([]sourceengine.Chapter, error) {
+		return i.gatedUpstream(ctx, sourceID, url, title, providerName, false)
 	})
 }
 
@@ -518,10 +564,15 @@ func (i *Ingest) chaptersThroughCache(ctx context.Context, sourceID int64, url s
 // stringified source id, trimmed) — the SAME key refresh/download use, so one
 // source's breaker state is shared across every path. title feeds the engine
 // host's chapter-number recognition.
-func (i *Ingest) gatedUpstream(ctx context.Context, sourceID int64, url string, title string, providerName string) ([]sourceengine.Chapter, error) {
+//
+// respectCooldown gates ONLY the cooldown REFUSAL: true for the background
+// adopt/sweep paths (a tripped breaker refuses the fetch); false for the one-shot
+// OWNER attach (AddSeriesUngated) — the politeness delay + breaker bookkeeping
+// still run, but a tripped breaker never blocks a deliberate owner click.
+func (i *Ingest) gatedUpstream(ctx context.Context, sourceID int64, url string, title string, providerName string, respectCooldown bool) ([]sourceengine.Chapter, error) {
 	key := gateKey(providerName, sourceID)
 	now := time.Now()
-	if !i.gateAvailable(ctx, key, now) {
+	if respectCooldown && !i.gateAvailable(ctx, key, now) {
 		return nil, fmt.Errorf("%w: %s", ErrSourceCooledDown, key)
 	}
 	i.gateWait(ctx, key)
