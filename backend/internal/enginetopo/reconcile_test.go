@@ -1065,3 +1065,78 @@ func TestReconcile_MultiSelectDifferentSetStillDrifts(t *testing.T) {
 		t.Errorf("SetPreferences called %d times, want 1", client.CallCount("SetPreferences"))
 	}
 }
+
+// TestReconcile_WithoutExtensionsSkipsReposAndExtensions proves the per-profile
+// provisioning seam (WithoutExtensions): even with a durable store that WOULD
+// drive a repo set + an extension install on a full pass, the option skips BOTH
+// the repo and the extension steps (no Repos/Extensions read, no SetRepos,
+// RefreshExtensions, or InstallExtension) while STILL pushing source preferences
+// and FlareSolverr/SOCKS config. This is what lets a profile instance share the
+// default's already-populated extensions dir without a redundant, concurrent
+// re-install.
+func TestReconcile_WithoutExtensionsSkipsReposAndExtensions(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	seedProvider(ctx, t, db, "Solo Leveling", "111", 111)
+	seedHarvestedExtension(ctx, t, db, "pkg.one", []int64{111})
+	db.HarvestedRepo.Create().SetURL("https://repo.test/repo").SaveX(ctx)
+	seedStoredPref(ctx, t, db, 111, "nsfw", "true", sourceengine.PreferenceCheckBox)
+
+	cfg := baseConfig()
+	client := &reconcileClient{
+		Client: sourceenginefake.New(
+			// Empty engine (no repos, no extensions) — a FULL pass would set the
+			// repo and install pkg.one. WithoutExtensions must do neither.
+			sourceenginefake.WithPreferences(111, []sourceengine.Preference{
+				{Type: sourceengine.PreferenceCheckBox, Key: "nsfw", CurrentValue: false},
+			}),
+		),
+	}
+
+	res, err := enginetopo.Reconcile(ctx, client, db, cache, cfg, enginetopo.WithoutExtensions())
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	assertExtensionsUntouched(t, client, res)
+	assertPrefsAndConfigStillPushed(t, client, res)
+}
+
+// assertExtensionsUntouched checks a WithoutExtensions pass made no repo/
+// extension engine call (read or write) and reported the two skipped counters as
+// zero.
+func assertExtensionsUntouched(t *testing.T, client *reconcileClient, res enginetopo.ReconcileResult) {
+	t.Helper()
+	for _, method := range []string{"Repos", "SetRepos", "Extensions", "RefreshExtensions", "InstallExtension"} {
+		if got := client.CallCount(method); got != 0 {
+			t.Errorf("%s called %d times under WithoutExtensions, want 0", method, got)
+		}
+	}
+	if res.ReposSet {
+		t.Error("ReposSet = true, want false (repos skipped)")
+	}
+	if res.ExtensionsInstalled != 0 {
+		t.Errorf("ExtensionsInstalled = %d, want 0 (extensions skipped)", res.ExtensionsInstalled)
+	}
+}
+
+// assertPrefsAndConfigStillPushed checks a WithoutExtensions pass STILL pushed
+// source preferences and the FlareSolverr/SOCKS config (the per-profile axes).
+func assertPrefsAndConfigStillPushed(t *testing.T, client *reconcileClient, res enginetopo.ReconcileResult) {
+	t.Helper()
+	if res.PrefsApplied != 1 {
+		t.Errorf("PrefsApplied = %d, want 1 (prefs still pushed)", res.PrefsApplied)
+	}
+	if client.CallCount("SetPreferences") != 1 {
+		t.Errorf("SetPreferences called %d times, want 1", client.CallCount("SetPreferences"))
+	}
+	if !res.ConfigApplied {
+		t.Error("ConfigApplied = false, want true (config still pushed)")
+	}
+	if client.CallCount("SetFlareSolverr") != 1 || client.CallCount("SetSocks") != 1 {
+		t.Errorf("config push calls = flare:%d socks:%d, want 1/1",
+			client.CallCount("SetFlareSolverr"), client.CallCount("SetSocks"))
+	}
+}

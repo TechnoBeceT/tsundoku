@@ -36,14 +36,14 @@ type NetworkEndpoint struct {
 	Password string `json:"-"`
 	// URL holds the value of the "url" field.
 	URL string `json:"url,omitempty"`
-	// FsProxy holds the value of the "fs_proxy" field.
-	FsProxy string `json:"fs_proxy,omitempty"`
 	// Session holds the value of the "session" field.
 	Session string `json:"session,omitempty"`
 	// SessionTTL holds the value of the "session_ttl" field.
 	SessionTTL int `json:"session_ttl,omitempty"`
 	// Timeout holds the value of the "timeout" field.
 	Timeout int `json:"timeout,omitempty"`
+	// AsResponseFallback holds the value of the "as_response_fallback" field.
+	AsResponseFallback bool `json:"as_response_fallback,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -56,11 +56,11 @@ func (*NetworkEndpoint) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case networkendpoint.FieldEnabled:
+		case networkendpoint.FieldEnabled, networkendpoint.FieldAsResponseFallback:
 			values[i] = new(sql.NullBool)
 		case networkendpoint.FieldPort, networkendpoint.FieldSocksVersion, networkendpoint.FieldSessionTTL, networkendpoint.FieldTimeout:
 			values[i] = new(sql.NullInt64)
-		case networkendpoint.FieldName, networkendpoint.FieldKind, networkendpoint.FieldHost, networkendpoint.FieldUsername, networkendpoint.FieldPassword, networkendpoint.FieldURL, networkendpoint.FieldFsProxy, networkendpoint.FieldSession:
+		case networkendpoint.FieldName, networkendpoint.FieldKind, networkendpoint.FieldHost, networkendpoint.FieldUsername, networkendpoint.FieldPassword, networkendpoint.FieldURL, networkendpoint.FieldSession:
 			values[i] = new(sql.NullString)
 		case networkendpoint.FieldCreatedAt, networkendpoint.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -141,12 +141,6 @@ func (_m *NetworkEndpoint) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.URL = value.String
 			}
-		case networkendpoint.FieldFsProxy:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field fs_proxy", values[i])
-			} else if value.Valid {
-				_m.FsProxy = value.String
-			}
 		case networkendpoint.FieldSession:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field session", values[i])
@@ -164,6 +158,12 @@ func (_m *NetworkEndpoint) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field timeout", values[i])
 			} else if value.Valid {
 				_m.Timeout = int(value.Int64)
+			}
+		case networkendpoint.FieldAsResponseFallback:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field as_response_fallback", values[i])
+			} else if value.Valid {
+				_m.AsResponseFallback = value.Bool
 			}
 		case networkendpoint.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -239,9 +239,6 @@ func (_m *NetworkEndpoint) String() string {
 	builder.WriteString("url=")
 	builder.WriteString(_m.URL)
 	builder.WriteString(", ")
-	builder.WriteString("fs_proxy=")
-	builder.WriteString(_m.FsProxy)
-	builder.WriteString(", ")
 	builder.WriteString("session=")
 	builder.WriteString(_m.Session)
 	builder.WriteString(", ")
@@ -250,6 +247,9 @@ func (_m *NetworkEndpoint) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("timeout=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Timeout))
+	builder.WriteString(", ")
+	builder.WriteString("as_response_fallback=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AsResponseFallback))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

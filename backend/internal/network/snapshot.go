@@ -29,10 +29,12 @@ type ResolvedSocks struct {
 type ResolvedFlare struct {
 	ID         string
 	URL        string
-	Proxy      string
 	Session    string
 	SessionTTL int
 	Timeout    int
+	// AsResponseFallback is the endpoint's FlareSolverr reactive-fallback flag,
+	// pushed verbatim to the profile's instance for "endpoint" flare mode.
+	AsResponseFallback bool
 }
 
 // ResolvedBinding is one source's binding with its referenced endpoints resolved
@@ -128,12 +130,12 @@ func resolveFlare(id *uuid.UUID, byID map[uuid.UUID]*ent.NetworkEndpoint) *Resol
 		return nil
 	}
 	return &ResolvedFlare{
-		ID:         row.ID.String(),
-		URL:        row.URL,
-		Proxy:      row.FsProxy,
-		Session:    row.Session,
-		SessionTTL: row.SessionTTL,
-		Timeout:    row.Timeout,
+		ID:                 row.ID.String(),
+		URL:                row.URL,
+		Session:            row.Session,
+		SessionTTL:         row.SessionTTL,
+		Timeout:            row.Timeout,
+		AsResponseFallback: row.AsResponseFallback,
 	}
 }
 

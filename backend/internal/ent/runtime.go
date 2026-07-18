@@ -252,22 +252,22 @@ func init() {
 	networkendpointDescURL := networkendpointFields[9].Descriptor()
 	// networkendpoint.DefaultURL holds the default value on creation for the url field.
 	networkendpoint.DefaultURL = networkendpointDescURL.Default.(string)
-	// networkendpointDescFsProxy is the schema descriptor for fs_proxy field.
-	networkendpointDescFsProxy := networkendpointFields[10].Descriptor()
-	// networkendpoint.DefaultFsProxy holds the default value on creation for the fs_proxy field.
-	networkendpoint.DefaultFsProxy = networkendpointDescFsProxy.Default.(string)
 	// networkendpointDescSession is the schema descriptor for session field.
-	networkendpointDescSession := networkendpointFields[11].Descriptor()
+	networkendpointDescSession := networkendpointFields[10].Descriptor()
 	// networkendpoint.DefaultSession holds the default value on creation for the session field.
 	networkendpoint.DefaultSession = networkendpointDescSession.Default.(string)
 	// networkendpointDescSessionTTL is the schema descriptor for session_ttl field.
-	networkendpointDescSessionTTL := networkendpointFields[12].Descriptor()
+	networkendpointDescSessionTTL := networkendpointFields[11].Descriptor()
 	// networkendpoint.DefaultSessionTTL holds the default value on creation for the session_ttl field.
 	networkendpoint.DefaultSessionTTL = networkendpointDescSessionTTL.Default.(int)
 	// networkendpointDescTimeout is the schema descriptor for timeout field.
-	networkendpointDescTimeout := networkendpointFields[13].Descriptor()
+	networkendpointDescTimeout := networkendpointFields[12].Descriptor()
 	// networkendpoint.DefaultTimeout holds the default value on creation for the timeout field.
 	networkendpoint.DefaultTimeout = networkendpointDescTimeout.Default.(int)
+	// networkendpointDescAsResponseFallback is the schema descriptor for as_response_fallback field.
+	networkendpointDescAsResponseFallback := networkendpointFields[13].Descriptor()
+	// networkendpoint.DefaultAsResponseFallback holds the default value on creation for the as_response_fallback field.
+	networkendpoint.DefaultAsResponseFallback = networkendpointDescAsResponseFallback.Default.(bool)
 	// networkendpointDescCreatedAt is the schema descriptor for created_at field.
 	networkendpointDescCreatedAt := networkendpointFields[14].Descriptor()
 	// networkendpoint.DefaultCreatedAt holds the default value on creation for the created_at field.

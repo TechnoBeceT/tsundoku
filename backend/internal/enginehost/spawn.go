@@ -26,6 +26,14 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 	// this instance, never the spawn (see seedKCEF).
 	l.seedKCEF(dataDir)
 
+	// Sharing the default instance's extensions dir is NOT best-effort: without
+	// it the profile boots with an empty extensions/ and every routed source
+	// fails "unknown sourceId". A failure aborts the spawn so the profile
+	// degrades to the fully-provisioned default engine (see linkSharedExtensions).
+	if err := l.linkSharedExtensions(dataDir); err != nil {
+		return engineroute.Instance{}, fmt.Errorf("enginehost: link shared extensions for profile %q: %w", p.Key, err)
+	}
+
 	proc, err := l.starter.Start(port, dataDir)
 	if err != nil {
 		return engineroute.Instance{}, fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)

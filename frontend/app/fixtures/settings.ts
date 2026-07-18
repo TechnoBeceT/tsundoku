@@ -274,10 +274,10 @@ export const networkEndpoints: NetworkEndpoint[] = [
     socksVersion: 5,
     username: 'tsundoku',
     url: '',
-    fsProxy: '',
     session: '',
     sessionTtl: 0,
     timeout: 0,
+    asResponseFallback: true,
   },
   {
     id: 'ep-vpn-flare',
@@ -289,10 +289,10 @@ export const networkEndpoints: NetworkEndpoint[] = [
     socksVersion: 5,
     username: '',
     url: 'http://flaresolverr-vpn:8191',
-    fsProxy: 'socks5://10.0.1.9:1080',
     session: 'sess-a',
     sessionTtl: 15,
     timeout: 60,
+    asResponseFallback: false,
   },
 ]
 

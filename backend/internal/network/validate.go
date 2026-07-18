@@ -13,19 +13,19 @@ import (
 // selects which field-group is validated; the other group's fields are stored
 // as given (defaulted) but never validated or used.
 type EndpointInput struct {
-	Name         string
-	Kind         string
-	Enabled      bool
-	Host         string
-	Port         int
-	SocksVersion int
-	Username     string
-	Password     string
-	URL          string
-	FSProxy      string
-	Session      string
-	SessionTTL   int
-	Timeout      int
+	Name               string
+	Kind               string
+	Enabled            bool
+	Host               string
+	Port               int
+	SocksVersion       int
+	Username           string
+	Password           string
+	URL                string
+	Session            string
+	SessionTTL         int
+	Timeout            int
+	AsResponseFallback bool
 }
 
 // EndpointPatch is the partial set of endpoint fields for UpdateEndpoint. Every
@@ -33,19 +33,19 @@ type EndpointInput struct {
 // Password KEEPS the stored password (write-only — the frontend loads the edit
 // form with a blank password, and an untouched password must not clear it).
 type EndpointPatch struct {
-	Name         *string
-	Kind         *string
-	Enabled      *bool
-	Host         *string
-	Port         *int
-	SocksVersion *int
-	Username     *string
-	Password     *string
-	URL          *string
-	FSProxy      *string
-	Session      *string
-	SessionTTL   *int
-	Timeout      *int
+	Name               *string
+	Kind               *string
+	Enabled            *bool
+	Host               *string
+	Port               *int
+	SocksVersion       *int
+	Username           *string
+	Password           *string
+	URL                *string
+	Session            *string
+	SessionTTL         *int
+	Timeout            *int
+	AsResponseFallback *bool
 }
 
 // BindingInput is the desired binding state for SetBinding.

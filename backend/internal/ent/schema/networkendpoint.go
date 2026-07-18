@@ -16,8 +16,8 @@ import (
 //   - "socks"        — a SOCKS4/5 proxy the bound source's traffic egresses
 //     through (the host/port/socks_version/username/password fields apply).
 //   - "flaresolverr" — a FlareSolverr instance the bound source's Cloudflare
-//     challenge-solving is routed to (the url/fs_proxy/session/session_ttl/
-//     timeout fields apply).
+//     challenge-solving is routed to (the url/session/session_ttl/timeout/
+//     as_response_fallback fields apply).
 //
 // Both field-groups live on the ONE table (the two are mutually exclusive per
 // row and validated by kind in internal/network — Ent has no per-kind field
@@ -67,15 +67,19 @@ func (NetworkEndpoint) Fields() []ent.Field {
 		// url is the FlareSolverr endpoint (absolute http(s); non-blank for a
 		// flaresolverr endpoint).
 		field.String("url").Default(""),
-		// fs_proxy is the upstream proxy FlareSolverr itself egresses the solve
-		// through ("" = FlareSolverr's own network).
-		field.String("fs_proxy").Default(""),
 		// session is the FlareSolverr session identifier ("" = none).
 		field.String("session").Default(""),
 		// session_ttl is the FlareSolverr session time-to-live in minutes (≥0).
 		field.Int("session_ttl").Default(0),
 		// timeout is the per-request solve timeout in seconds (≥0).
 		field.Int("timeout").Default(60),
+		// as_response_fallback mirrors FlareSolverr's asResponseFallback flag:
+		// when true the engine uses FlareSolverr only reactively (as a fallback
+		// for a request the plain HTTP client sees blocked), not for every
+		// request. Default TRUE — the sensible reactive-fallback default that
+		// keeps an UNBOUND source's behaviour byte-for-byte unchanged and matches
+		// the least-aggressive FlareSolverr posture.
+		field.Bool("as_response_fallback").Default(true),
 
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),

@@ -100,11 +100,6 @@ func URL(v string) predicate.NetworkEndpoint {
 	return predicate.NetworkEndpoint(sql.FieldEQ(FieldURL, v))
 }
 
-// FsProxy applies equality check predicate on the "fs_proxy" field. It's identical to FsProxyEQ.
-func FsProxy(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldEQ(FieldFsProxy, v))
-}
-
 // Session applies equality check predicate on the "session" field. It's identical to SessionEQ.
 func Session(v string) predicate.NetworkEndpoint {
 	return predicate.NetworkEndpoint(sql.FieldEQ(FieldSession, v))
@@ -118,6 +113,11 @@ func SessionTTL(v int) predicate.NetworkEndpoint {
 // Timeout applies equality check predicate on the "timeout" field. It's identical to TimeoutEQ.
 func Timeout(v int) predicate.NetworkEndpoint {
 	return predicate.NetworkEndpoint(sql.FieldEQ(FieldTimeout, v))
+}
+
+// AsResponseFallback applies equality check predicate on the "as_response_fallback" field. It's identical to AsResponseFallbackEQ.
+func AsResponseFallback(v bool) predicate.NetworkEndpoint {
+	return predicate.NetworkEndpoint(sql.FieldEQ(FieldAsResponseFallback, v))
 }
 
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
@@ -610,71 +610,6 @@ func URLContainsFold(v string) predicate.NetworkEndpoint {
 	return predicate.NetworkEndpoint(sql.FieldContainsFold(FieldURL, v))
 }
 
-// FsProxyEQ applies the EQ predicate on the "fs_proxy" field.
-func FsProxyEQ(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldEQ(FieldFsProxy, v))
-}
-
-// FsProxyNEQ applies the NEQ predicate on the "fs_proxy" field.
-func FsProxyNEQ(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldNEQ(FieldFsProxy, v))
-}
-
-// FsProxyIn applies the In predicate on the "fs_proxy" field.
-func FsProxyIn(vs ...string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldIn(FieldFsProxy, vs...))
-}
-
-// FsProxyNotIn applies the NotIn predicate on the "fs_proxy" field.
-func FsProxyNotIn(vs ...string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldNotIn(FieldFsProxy, vs...))
-}
-
-// FsProxyGT applies the GT predicate on the "fs_proxy" field.
-func FsProxyGT(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldGT(FieldFsProxy, v))
-}
-
-// FsProxyGTE applies the GTE predicate on the "fs_proxy" field.
-func FsProxyGTE(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldGTE(FieldFsProxy, v))
-}
-
-// FsProxyLT applies the LT predicate on the "fs_proxy" field.
-func FsProxyLT(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldLT(FieldFsProxy, v))
-}
-
-// FsProxyLTE applies the LTE predicate on the "fs_proxy" field.
-func FsProxyLTE(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldLTE(FieldFsProxy, v))
-}
-
-// FsProxyContains applies the Contains predicate on the "fs_proxy" field.
-func FsProxyContains(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldContains(FieldFsProxy, v))
-}
-
-// FsProxyHasPrefix applies the HasPrefix predicate on the "fs_proxy" field.
-func FsProxyHasPrefix(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldHasPrefix(FieldFsProxy, v))
-}
-
-// FsProxyHasSuffix applies the HasSuffix predicate on the "fs_proxy" field.
-func FsProxyHasSuffix(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldHasSuffix(FieldFsProxy, v))
-}
-
-// FsProxyEqualFold applies the EqualFold predicate on the "fs_proxy" field.
-func FsProxyEqualFold(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldEqualFold(FieldFsProxy, v))
-}
-
-// FsProxyContainsFold applies the ContainsFold predicate on the "fs_proxy" field.
-func FsProxyContainsFold(v string) predicate.NetworkEndpoint {
-	return predicate.NetworkEndpoint(sql.FieldContainsFold(FieldFsProxy, v))
-}
-
 // SessionEQ applies the EQ predicate on the "session" field.
 func SessionEQ(v string) predicate.NetworkEndpoint {
 	return predicate.NetworkEndpoint(sql.FieldEQ(FieldSession, v))
@@ -818,6 +753,16 @@ func TimeoutLT(v int) predicate.NetworkEndpoint {
 // TimeoutLTE applies the LTE predicate on the "timeout" field.
 func TimeoutLTE(v int) predicate.NetworkEndpoint {
 	return predicate.NetworkEndpoint(sql.FieldLTE(FieldTimeout, v))
+}
+
+// AsResponseFallbackEQ applies the EQ predicate on the "as_response_fallback" field.
+func AsResponseFallbackEQ(v bool) predicate.NetworkEndpoint {
+	return predicate.NetworkEndpoint(sql.FieldEQ(FieldAsResponseFallback, v))
+}
+
+// AsResponseFallbackNEQ applies the NEQ predicate on the "as_response_fallback" field.
+func AsResponseFallbackNEQ(v bool) predicate.NetworkEndpoint {
+	return predicate.NetworkEndpoint(sql.FieldNEQ(FieldAsResponseFallback, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

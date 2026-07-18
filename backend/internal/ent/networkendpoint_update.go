@@ -168,20 +168,6 @@ func (_u *NetworkEndpointUpdate) SetNillableURL(v *string) *NetworkEndpointUpdat
 	return _u
 }
 
-// SetFsProxy sets the "fs_proxy" field.
-func (_u *NetworkEndpointUpdate) SetFsProxy(v string) *NetworkEndpointUpdate {
-	_u.mutation.SetFsProxy(v)
-	return _u
-}
-
-// SetNillableFsProxy sets the "fs_proxy" field if the given value is not nil.
-func (_u *NetworkEndpointUpdate) SetNillableFsProxy(v *string) *NetworkEndpointUpdate {
-	if v != nil {
-		_u.SetFsProxy(*v)
-	}
-	return _u
-}
-
 // SetSession sets the "session" field.
 func (_u *NetworkEndpointUpdate) SetSession(v string) *NetworkEndpointUpdate {
 	_u.mutation.SetSession(v)
@@ -235,6 +221,20 @@ func (_u *NetworkEndpointUpdate) SetNillableTimeout(v *int) *NetworkEndpointUpda
 // AddTimeout adds value to the "timeout" field.
 func (_u *NetworkEndpointUpdate) AddTimeout(v int) *NetworkEndpointUpdate {
 	_u.mutation.AddTimeout(v)
+	return _u
+}
+
+// SetAsResponseFallback sets the "as_response_fallback" field.
+func (_u *NetworkEndpointUpdate) SetAsResponseFallback(v bool) *NetworkEndpointUpdate {
+	_u.mutation.SetAsResponseFallback(v)
+	return _u
+}
+
+// SetNillableAsResponseFallback sets the "as_response_fallback" field if the given value is not nil.
+func (_u *NetworkEndpointUpdate) SetNillableAsResponseFallback(v *bool) *NetworkEndpointUpdate {
+	if v != nil {
+		_u.SetAsResponseFallback(*v)
+	}
 	return _u
 }
 
@@ -327,9 +327,6 @@ func (_u *NetworkEndpointUpdate) sqlSave(ctx context.Context) (_node int, err er
 	if value, ok := _u.mutation.URL(); ok {
 		_spec.SetField(networkendpoint.FieldURL, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.FsProxy(); ok {
-		_spec.SetField(networkendpoint.FieldFsProxy, field.TypeString, value)
-	}
 	if value, ok := _u.mutation.Session(); ok {
 		_spec.SetField(networkendpoint.FieldSession, field.TypeString, value)
 	}
@@ -344,6 +341,9 @@ func (_u *NetworkEndpointUpdate) sqlSave(ctx context.Context) (_node int, err er
 	}
 	if value, ok := _u.mutation.AddedTimeout(); ok {
 		_spec.AddField(networkendpoint.FieldTimeout, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AsResponseFallback(); ok {
+		_spec.SetField(networkendpoint.FieldAsResponseFallback, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(networkendpoint.FieldUpdatedAt, field.TypeTime, value)
@@ -508,20 +508,6 @@ func (_u *NetworkEndpointUpdateOne) SetNillableURL(v *string) *NetworkEndpointUp
 	return _u
 }
 
-// SetFsProxy sets the "fs_proxy" field.
-func (_u *NetworkEndpointUpdateOne) SetFsProxy(v string) *NetworkEndpointUpdateOne {
-	_u.mutation.SetFsProxy(v)
-	return _u
-}
-
-// SetNillableFsProxy sets the "fs_proxy" field if the given value is not nil.
-func (_u *NetworkEndpointUpdateOne) SetNillableFsProxy(v *string) *NetworkEndpointUpdateOne {
-	if v != nil {
-		_u.SetFsProxy(*v)
-	}
-	return _u
-}
-
 // SetSession sets the "session" field.
 func (_u *NetworkEndpointUpdateOne) SetSession(v string) *NetworkEndpointUpdateOne {
 	_u.mutation.SetSession(v)
@@ -575,6 +561,20 @@ func (_u *NetworkEndpointUpdateOne) SetNillableTimeout(v *int) *NetworkEndpointU
 // AddTimeout adds value to the "timeout" field.
 func (_u *NetworkEndpointUpdateOne) AddTimeout(v int) *NetworkEndpointUpdateOne {
 	_u.mutation.AddTimeout(v)
+	return _u
+}
+
+// SetAsResponseFallback sets the "as_response_fallback" field.
+func (_u *NetworkEndpointUpdateOne) SetAsResponseFallback(v bool) *NetworkEndpointUpdateOne {
+	_u.mutation.SetAsResponseFallback(v)
+	return _u
+}
+
+// SetNillableAsResponseFallback sets the "as_response_fallback" field if the given value is not nil.
+func (_u *NetworkEndpointUpdateOne) SetNillableAsResponseFallback(v *bool) *NetworkEndpointUpdateOne {
+	if v != nil {
+		_u.SetAsResponseFallback(*v)
+	}
 	return _u
 }
 
@@ -697,9 +697,6 @@ func (_u *NetworkEndpointUpdateOne) sqlSave(ctx context.Context) (_node *Network
 	if value, ok := _u.mutation.URL(); ok {
 		_spec.SetField(networkendpoint.FieldURL, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.FsProxy(); ok {
-		_spec.SetField(networkendpoint.FieldFsProxy, field.TypeString, value)
-	}
 	if value, ok := _u.mutation.Session(); ok {
 		_spec.SetField(networkendpoint.FieldSession, field.TypeString, value)
 	}
@@ -714,6 +711,9 @@ func (_u *NetworkEndpointUpdateOne) sqlSave(ctx context.Context) (_node *Network
 	}
 	if value, ok := _u.mutation.AddedTimeout(); ok {
 		_spec.AddField(networkendpoint.FieldTimeout, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AsResponseFallback(); ok {
+		_spec.SetField(networkendpoint.FieldAsResponseFallback, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(networkendpoint.FieldUpdatedAt, field.TypeTime, value)

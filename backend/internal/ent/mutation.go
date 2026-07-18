@@ -6082,32 +6082,32 @@ func (m *LatestSeriesMutation) ResetEdge(name string) error {
 // NetworkEndpointMutation represents an operation that mutates the NetworkEndpoint nodes in the graph.
 type NetworkEndpointMutation struct {
 	config
-	op               Op
-	typ              string
-	id               *uuid.UUID
-	name             *string
-	kind             *string
-	enabled          *bool
-	host             *string
-	port             *int
-	addport          *int
-	socks_version    *int
-	addsocks_version *int
-	username         *string
-	password         *string
-	url              *string
-	fs_proxy         *string
-	session          *string
-	session_ttl      *int
-	addsession_ttl   *int
-	timeout          *int
-	addtimeout       *int
-	created_at       *time.Time
-	updated_at       *time.Time
-	clearedFields    map[string]struct{}
-	done             bool
-	oldValue         func(context.Context) (*NetworkEndpoint, error)
-	predicates       []predicate.NetworkEndpoint
+	op                   Op
+	typ                  string
+	id                   *uuid.UUID
+	name                 *string
+	kind                 *string
+	enabled              *bool
+	host                 *string
+	port                 *int
+	addport              *int
+	socks_version        *int
+	addsocks_version     *int
+	username             *string
+	password             *string
+	url                  *string
+	session              *string
+	session_ttl          *int
+	addsession_ttl       *int
+	timeout              *int
+	addtimeout           *int
+	as_response_fallback *bool
+	created_at           *time.Time
+	updated_at           *time.Time
+	clearedFields        map[string]struct{}
+	done                 bool
+	oldValue             func(context.Context) (*NetworkEndpoint, error)
+	predicates           []predicate.NetworkEndpoint
 }
 
 var _ ent.Mutation = (*NetworkEndpointMutation)(nil)
@@ -6578,42 +6578,6 @@ func (m *NetworkEndpointMutation) ResetURL() {
 	m.url = nil
 }
 
-// SetFsProxy sets the "fs_proxy" field.
-func (m *NetworkEndpointMutation) SetFsProxy(s string) {
-	m.fs_proxy = &s
-}
-
-// FsProxy returns the value of the "fs_proxy" field in the mutation.
-func (m *NetworkEndpointMutation) FsProxy() (r string, exists bool) {
-	v := m.fs_proxy
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFsProxy returns the old "fs_proxy" field's value of the NetworkEndpoint entity.
-// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *NetworkEndpointMutation) OldFsProxy(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFsProxy is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFsProxy requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFsProxy: %w", err)
-	}
-	return oldValue.FsProxy, nil
-}
-
-// ResetFsProxy resets all changes to the "fs_proxy" field.
-func (m *NetworkEndpointMutation) ResetFsProxy() {
-	m.fs_proxy = nil
-}
-
 // SetSession sets the "session" field.
 func (m *NetworkEndpointMutation) SetSession(s string) {
 	m.session = &s
@@ -6762,6 +6726,42 @@ func (m *NetworkEndpointMutation) ResetTimeout() {
 	m.addtimeout = nil
 }
 
+// SetAsResponseFallback sets the "as_response_fallback" field.
+func (m *NetworkEndpointMutation) SetAsResponseFallback(b bool) {
+	m.as_response_fallback = &b
+}
+
+// AsResponseFallback returns the value of the "as_response_fallback" field in the mutation.
+func (m *NetworkEndpointMutation) AsResponseFallback() (r bool, exists bool) {
+	v := m.as_response_fallback
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAsResponseFallback returns the old "as_response_fallback" field's value of the NetworkEndpoint entity.
+// If the NetworkEndpoint object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *NetworkEndpointMutation) OldAsResponseFallback(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAsResponseFallback is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAsResponseFallback requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAsResponseFallback: %w", err)
+	}
+	return oldValue.AsResponseFallback, nil
+}
+
+// ResetAsResponseFallback resets all changes to the "as_response_fallback" field.
+func (m *NetworkEndpointMutation) ResetAsResponseFallback() {
+	m.as_response_fallback = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *NetworkEndpointMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -6896,9 +6896,6 @@ func (m *NetworkEndpointMutation) Fields() []string {
 	if m.url != nil {
 		fields = append(fields, networkendpoint.FieldURL)
 	}
-	if m.fs_proxy != nil {
-		fields = append(fields, networkendpoint.FieldFsProxy)
-	}
 	if m.session != nil {
 		fields = append(fields, networkendpoint.FieldSession)
 	}
@@ -6907,6 +6904,9 @@ func (m *NetworkEndpointMutation) Fields() []string {
 	}
 	if m.timeout != nil {
 		fields = append(fields, networkendpoint.FieldTimeout)
+	}
+	if m.as_response_fallback != nil {
+		fields = append(fields, networkendpoint.FieldAsResponseFallback)
 	}
 	if m.created_at != nil {
 		fields = append(fields, networkendpoint.FieldCreatedAt)
@@ -6940,14 +6940,14 @@ func (m *NetworkEndpointMutation) Field(name string) (ent.Value, bool) {
 		return m.Password()
 	case networkendpoint.FieldURL:
 		return m.URL()
-	case networkendpoint.FieldFsProxy:
-		return m.FsProxy()
 	case networkendpoint.FieldSession:
 		return m.Session()
 	case networkendpoint.FieldSessionTTL:
 		return m.SessionTTL()
 	case networkendpoint.FieldTimeout:
 		return m.Timeout()
+	case networkendpoint.FieldAsResponseFallback:
+		return m.AsResponseFallback()
 	case networkendpoint.FieldCreatedAt:
 		return m.CreatedAt()
 	case networkendpoint.FieldUpdatedAt:
@@ -6979,14 +6979,14 @@ func (m *NetworkEndpointMutation) OldField(ctx context.Context, name string) (en
 		return m.OldPassword(ctx)
 	case networkendpoint.FieldURL:
 		return m.OldURL(ctx)
-	case networkendpoint.FieldFsProxy:
-		return m.OldFsProxy(ctx)
 	case networkendpoint.FieldSession:
 		return m.OldSession(ctx)
 	case networkendpoint.FieldSessionTTL:
 		return m.OldSessionTTL(ctx)
 	case networkendpoint.FieldTimeout:
 		return m.OldTimeout(ctx)
+	case networkendpoint.FieldAsResponseFallback:
+		return m.OldAsResponseFallback(ctx)
 	case networkendpoint.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case networkendpoint.FieldUpdatedAt:
@@ -7063,13 +7063,6 @@ func (m *NetworkEndpointMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetURL(v)
 		return nil
-	case networkendpoint.FieldFsProxy:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFsProxy(v)
-		return nil
 	case networkendpoint.FieldSession:
 		v, ok := value.(string)
 		if !ok {
@@ -7090,6 +7083,13 @@ func (m *NetworkEndpointMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetTimeout(v)
+		return nil
+	case networkendpoint.FieldAsResponseFallback:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAsResponseFallback(v)
 		return nil
 	case networkendpoint.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -7232,9 +7232,6 @@ func (m *NetworkEndpointMutation) ResetField(name string) error {
 	case networkendpoint.FieldURL:
 		m.ResetURL()
 		return nil
-	case networkendpoint.FieldFsProxy:
-		m.ResetFsProxy()
-		return nil
 	case networkendpoint.FieldSession:
 		m.ResetSession()
 		return nil
@@ -7243,6 +7240,9 @@ func (m *NetworkEndpointMutation) ResetField(name string) error {
 		return nil
 	case networkendpoint.FieldTimeout:
 		m.ResetTimeout()
+		return nil
+	case networkendpoint.FieldAsResponseFallback:
+		m.ResetAsResponseFallback()
 		return nil
 	case networkendpoint.FieldCreatedAt:
 		m.ResetCreatedAt()

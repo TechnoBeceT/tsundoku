@@ -23,12 +23,12 @@ const source: NetworkSource = { id: '222', name: 'Source A', lang: 'en' }
 const socksEndpoints: NetworkEndpoint[] = [{
   id: 'ep-socks', name: 'VPN SOCKS', kind: 'socks', enabled: true,
   host: '10.0.1.9', port: 1080, socksVersion: 5, username: '',
-  url: '', fsProxy: '', session: '', sessionTtl: 0, timeout: 0,
+  url: '', session: '', sessionTtl: 0, timeout: 0, asResponseFallback: true,
 }]
 const flareEndpoints: NetworkEndpoint[] = [{
   id: 'ep-flare', name: 'VPN Flare', kind: 'flaresolverr', enabled: true,
   host: '', port: 0, socksVersion: 5, username: '',
-  url: 'http://flare:8191', fsProxy: '', session: '', sessionTtl: 15, timeout: 60,
+  url: 'http://flare:8191', session: '', sessionTtl: 15, timeout: 60, asResponseFallback: false,
 }]
 
 function mountRow(props: Record<string, unknown> = {}) {

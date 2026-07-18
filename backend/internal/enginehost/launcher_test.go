@@ -3,6 +3,8 @@ package enginehost_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,6 +15,13 @@ import (
 // lifecycle paths run fast and deterministically.
 func newTestLauncher(t *testing.T, cfg enginehost.EngineHostLauncherConfig, starter enginehost.ProcessStarter, prober enginehost.HealthProber, opts ...enginehost.Option) (*enginehost.Launcher, *recordingFactory) {
 	t.Helper()
+	// spawn now links a shared extensions dir under DataDir before starting the
+	// process (see linkSharedExtensions), so DataDir must be a WRITABLE root.
+	// Tests that don't care about the exact path pass an empty DataDir and get a
+	// per-test temp dir here.
+	if cfg.DataDir == "" {
+		cfg.DataDir = t.TempDir()
+	}
 	rf := &recordingFactory{}
 	base := []enginehost.Option{
 		enginehost.WithStarter(starter),
@@ -32,7 +41,8 @@ func newTestLauncher(t *testing.T, cfg enginehost.EngineHostLauncherConfig, star
 // + a factory-built client aimed at the instance's base URL.
 func TestEnsureProfile_SpawnsWithAllocatedPortAndDataDir(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
-	cfg := enginehost.EngineHostLauncherConfig{HostBin: "/bin/host", DataDir: "/config/engine"}
+	root := t.TempDir()
+	cfg := enginehost.EngineHostLauncherConfig{HostBin: "/bin/host", DataDir: root}
 	l, rf := newTestLauncher(t, cfg, starter, okProber,
 		enginehost.WithPortAllocator(fixedPortAllocator(41001)))
 
@@ -61,7 +71,7 @@ func TestEnsureProfile_SpawnsWithAllocatedPortAndDataDir(t *testing.T) {
 	if call.port != 41001 {
 		t.Errorf("spawn port = %d, want 41001 (the allocated port)", call.port)
 	}
-	wantDir := enginehost.DataDirFor("/config/engine", "socks-1|global|")
+	wantDir := enginehost.DataDirFor(root, "socks-1|global|")
 	if call.dataDir != wantDir {
 		t.Errorf("spawn dataDir = %q, want %q (per-profile dir)", call.dataDir, wantDir)
 	}
@@ -71,7 +81,7 @@ func TestEnsureProfile_SpawnsWithAllocatedPortAndDataDir(t *testing.T) {
 // healthy profile returns the cached instance WITHOUT a second spawn.
 func TestEnsureProfile_IdempotentReuse(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, okProber)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
 
 	first, err := l.EnsureProfile(context.Background(), profile("k1"))
 	if err != nil {
@@ -94,7 +104,7 @@ func TestEnsureProfile_IdempotentReuse(t *testing.T) {
 // exited is discarded and respawned.
 func TestEnsureProfile_DeadCachedRespawns(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, okProber,
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
 		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
 
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
@@ -121,7 +131,7 @@ func TestEnsureProfile_DeadCachedRespawns(t *testing.T) {
 func TestEnsureProfile_UnhealthyCachedRespawns(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
 	prober := sequenceProber(nil, errors.New("wedged"), nil)
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, prober,
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
 		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
 
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
@@ -140,13 +150,35 @@ func TestEnsureProfile_UnhealthyCachedRespawns(t *testing.T) {
 	}
 }
 
+// TestEnsureProfile_ExtensionsLinkFailureDegrades proves the shared-extensions
+// link is NOT best-effort: when it can't be created (here DataDir is a regular
+// FILE, so "<DataDir>/extensions" can't be made) the spawn ABORTS with an error
+// BEFORE the process is started, so ReconcileNetwork degrades the profile to the
+// default instance rather than running a source-less one.
+func TestEnsureProfile_ExtensionsLinkFailureDegrades(t *testing.T) {
+	root := t.TempDir()
+	fileAsDataDir := filepath.Join(root, "not-a-dir")
+	if err := os.WriteFile(fileAsDataDir, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	starter := &fakeStarter{}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: fileAsDataDir}, starter, okProber)
+
+	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err == nil {
+		t.Fatal("EnsureProfile succeeded, want an extensions-link error (degrade to default)")
+	}
+	if starter.callCount() != 0 {
+		t.Errorf("process started %d times despite the link failure, want 0 (abort before spawn)", starter.callCount())
+	}
+}
+
 // TestEnsureProfile_HealthTimeoutKillsAndErrors proves a spawn whose /health
 // never comes up is killed and surfaces an error (so the caller degrades the
 // profile to the default instance).
 func TestEnsureProfile_HealthTimeoutKillsAndErrors(t *testing.T) {
 	starter := &fakeStarter{}
 	prober := func(string) error { return errors.New("never ready") }
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, prober)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober)
 
 	inst, err := l.EnsureProfile(context.Background(), profile("k1"))
 	if err == nil {
@@ -163,7 +195,7 @@ func TestEnsureProfile_ProcessExitsBeforeReady(t *testing.T) {
 	starter := &fakeStarter{}
 	prober := func(string) error { return errors.New("not up") }
 	// A long start timeout so the test can only pass via the early-exit branch.
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, prober,
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
 		enginehost.WithStartTimeout(10*time.Second))
 
 	// Kill the process right after it is created so awaitReady observes the exit.
@@ -189,7 +221,7 @@ func TestEnsureProfile_ProcessExitsBeforeReady(t *testing.T) {
 func TestEnsureProfile_CtxCancelDuringWait(t *testing.T) {
 	starter := &fakeStarter{}
 	prober := func(string) error { return errors.New("not up") }
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, prober,
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
 		enginehost.WithStartTimeout(10*time.Second))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -212,7 +244,7 @@ func TestEnsureProfile_CtxCancelDuringWait(t *testing.T) {
 // start returns an error (degrading the profile to the default instance).
 func TestEnsureProfile_StarterErrorSurfaces(t *testing.T) {
 	starter := &fakeStarter{err: errors.New("exec failed")}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, okProber)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
 
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err == nil {
 		t.Fatal("EnsureProfile succeeded, want a start error")
@@ -223,7 +255,7 @@ func TestEnsureProfile_StarterErrorSurfaces(t *testing.T) {
 // aborts the spawn with an error before any process is started.
 func TestEnsureProfile_PortAllocErrorSurfaces(t *testing.T) {
 	starter := &fakeStarter{}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, okProber,
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
 		enginehost.WithPortAllocator(func() (int, error) { return 0, errors.New("no ports") }))
 
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err == nil {
@@ -238,7 +270,7 @@ func TestEnsureProfile_PortAllocErrorSurfaces(t *testing.T) {
 // keep and leaves the kept one running (reused without a respawn).
 func TestRetire_StopsNonKeptKeepsKept(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, okProber,
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
 		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
 
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
@@ -270,7 +302,7 @@ func TestRetire_StopsNonKeptKeepsKept(t *testing.T) {
 // an empty keep-set on a launcher that spawned nothing is a safe no-op.
 func TestRetire_EmptyOnEmptyIsNoOp(t *testing.T) {
 	starter := &fakeStarter{}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, okProber)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
 
 	l.Retire(context.Background(), map[string]bool{})
 
@@ -283,7 +315,7 @@ func TestRetire_EmptyOnEmptyIsNoOp(t *testing.T) {
 // EnsureProfile afterwards is refused.
 func TestClose_StopsAllAndRefusesFurther(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, okProber,
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
 		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
 
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
@@ -307,7 +339,7 @@ func TestClose_StopsAllAndRefusesFurther(t *testing.T) {
 
 // TestClose_Idempotent proves Close can be called twice safely.
 func TestClose_Idempotent(t *testing.T) {
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, &fakeStarter{}, okProber)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, &fakeStarter{}, okProber)
 	if err := l.Close(); err != nil {
 		t.Fatalf("Close #1: %v", err)
 	}
@@ -320,7 +352,7 @@ func TestClose_Idempotent(t *testing.T) {
 // SIGKILLed after the grace period.
 func TestStopInstance_KillEscalation(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: false} // ignores SIGTERM
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DataDir: "/d"}, starter, okProber,
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
 		enginehost.WithStopGrace(10*time.Millisecond))
 
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {

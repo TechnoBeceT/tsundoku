@@ -28,11 +28,11 @@ type EndpointDTO struct {
 	// Password is intentionally omitted — write-only.
 
 	// FlareSolverr field-group (meaningful when kind == "flaresolverr").
-	URL        string `json:"url"`
-	FSProxy    string `json:"fsProxy"`
-	Session    string `json:"session"`
-	SessionTTL int    `json:"sessionTtl"`
-	Timeout    int    `json:"timeout"`
+	URL                string `json:"url"`
+	Session            string `json:"session"`
+	SessionTTL         int    `json:"sessionTtl"`
+	Timeout            int    `json:"timeout"`
+	AsResponseFallback bool   `json:"asResponseFallback"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -42,21 +42,21 @@ type EndpointDTO struct {
 // password (write-only).
 func newEndpointDTO(e *ent.NetworkEndpoint) EndpointDTO {
 	return EndpointDTO{
-		ID:           e.ID.String(),
-		Name:         e.Name,
-		Kind:         e.Kind,
-		Enabled:      e.Enabled,
-		Host:         e.Host,
-		Port:         e.Port,
-		SocksVersion: e.SocksVersion,
-		Username:     e.Username,
-		URL:          e.URL,
-		FSProxy:      e.FsProxy,
-		Session:      e.Session,
-		SessionTTL:   e.SessionTTL,
-		Timeout:      e.Timeout,
-		CreatedAt:    e.CreatedAt,
-		UpdatedAt:    e.UpdatedAt,
+		ID:                 e.ID.String(),
+		Name:               e.Name,
+		Kind:               e.Kind,
+		Enabled:            e.Enabled,
+		Host:               e.Host,
+		Port:               e.Port,
+		SocksVersion:       e.SocksVersion,
+		Username:           e.Username,
+		URL:                e.URL,
+		Session:            e.Session,
+		SessionTTL:         e.SessionTTL,
+		Timeout:            e.Timeout,
+		AsResponseFallback: e.AsResponseFallback,
+		CreatedAt:          e.CreatedAt,
+		UpdatedAt:          e.UpdatedAt,
 	}
 }
 

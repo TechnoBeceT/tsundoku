@@ -183,10 +183,10 @@ var (
 		{Name: "username", Type: field.TypeString, Default: ""},
 		{Name: "password", Type: field.TypeString, Default: ""},
 		{Name: "url", Type: field.TypeString, Default: ""},
-		{Name: "fs_proxy", Type: field.TypeString, Default: ""},
 		{Name: "session", Type: field.TypeString, Default: ""},
 		{Name: "session_ttl", Type: field.TypeInt, Default: 0},
 		{Name: "timeout", Type: field.TypeInt, Default: 60},
+		{Name: "as_response_fallback", Type: field.TypeBool, Default: true},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}

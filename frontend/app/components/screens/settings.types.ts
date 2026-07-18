@@ -384,8 +384,8 @@ export type FlareMode = 'none' | 'global' | 'endpoint'
  * NetworkEndpoint — one named, reusable egress endpoint (Network pane). Screen
  * mirror of the backend `NetworkEndpoint` DTO. `kind` selects which field-group
  * is meaningful: the SOCKS group (host/port/socksVersion/username) for `socks`,
- * or the FlareSolverr group (url/fsProxy/session/sessionTtl/timeout) for
- * `flaresolverr`. The SOCKS password is WRITE-ONLY — the backend never returns
+ * or the FlareSolverr group (url/session/sessionTtl/timeout/asResponseFallback)
+ * for `flaresolverr`. The SOCKS password is WRITE-ONLY — the backend never returns
  * it, so this screen type carries no password field (the editor sends a new one
  * via `NetworkEndpointInput` only when the owner types it).
  */
@@ -408,14 +408,14 @@ export interface NetworkEndpoint {
   username: string
   /** FlareSolverr endpoint URL (kind=flaresolverr). */
   url: string
-  /** Upstream proxy the FlareSolverr solve egresses through (kind=flaresolverr). */
-  fsProxy: string
   /** FlareSolverr session identifier (kind=flaresolverr). */
   session: string
   /** FlareSolverr session TTL in minutes (kind=flaresolverr). */
   sessionTtl: number
   /** FlareSolverr per-request solve timeout in seconds (kind=flaresolverr). */
   timeout: number
+  /** Use FlareSolverr only reactively, as a fallback for blocked requests (kind=flaresolverr). */
+  asResponseFallback: boolean
 }
 
 /**
@@ -445,14 +445,14 @@ export interface NetworkEndpointInput {
   password?: string
   /** FlareSolverr endpoint URL (kind=flaresolverr). */
   url: string
-  /** Upstream proxy the FlareSolverr solve egresses through (kind=flaresolverr). */
-  fsProxy: string
   /** FlareSolverr session identifier (kind=flaresolverr). */
   session: string
   /** FlareSolverr session TTL in minutes (kind=flaresolverr). */
   sessionTtl: number
   /** FlareSolverr per-request solve timeout in seconds (kind=flaresolverr). */
   timeout: number
+  /** Use FlareSolverr only reactively, as a fallback for blocked requests (kind=flaresolverr). */
+  asResponseFallback: boolean
 }
 
 /**

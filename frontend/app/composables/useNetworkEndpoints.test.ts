@@ -29,10 +29,10 @@ const SOCKS_DTO = {
   socksVersion: 5,
   username: 'tsundoku',
   url: '',
-  fsProxy: '',
   session: '',
   sessionTtl: 0,
   timeout: 0,
+  asResponseFallback: true,
   createdAt: '2026-07-17T00:00:00Z',
   updatedAt: '2026-07-17T00:00:00Z',
 }
@@ -44,10 +44,10 @@ const FLARE_DTO = {
   host: '',
   port: 0,
   url: 'http://flare:8191',
-  fsProxy: 'socks5://10.0.1.9:1080',
   session: 'sess-a',
   sessionTtl: 15,
   timeout: 60,
+  asResponseFallback: false,
 }
 const ENDPOINTS = [SOCKS_DTO, FLARE_DTO]
 
@@ -90,10 +90,10 @@ const socksInput = (over: Partial<NetworkEndpointInput> = {}): NetworkEndpointIn
   username: 'u',
   password: '',
   url: '',
-  fsProxy: '',
   session: '',
   sessionTtl: 0,
   timeout: 0,
+  asResponseFallback: true,
   ...over,
 })
 
@@ -126,6 +126,24 @@ describe('useNetworkEndpoints', () => {
     })
     expect('password' in (lastPost?.body ?? {})).toBe(false)
     expect(endpointAction.value).toEqual({ busyId: null })
+  })
+
+  it('create POSTs the FlareSolverr field-group INCLUDING asResponseFallback', async () => {
+    const { endpoints, saveEndpoint } = useNetworkEndpoints()
+    await vi.waitFor(() => expect(endpoints.value.length).toBe(2))
+
+    await saveEndpoint({
+      id: null, name: 'FS', kind: 'flaresolverr', enabled: true,
+      host: '', port: 0, socksVersion: 5, username: '', password: '',
+      url: 'http://flare:8191', session: '', sessionTtl: 15, timeout: 60,
+      asResponseFallback: false,
+    })
+
+    expect(lastPost?.body).toEqual({
+      name: 'FS', kind: 'flaresolverr', enabled: true,
+      url: 'http://flare:8191', session: '', sessionTtl: 15, timeout: 60,
+      asResponseFallback: false,
+    })
   })
 
   it('create SENDS a typed password', async () => {

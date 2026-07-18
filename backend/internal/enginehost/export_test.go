@@ -22,6 +22,12 @@ func BuildHostEnv(base []string, port int, dataDir string) []string {
 // against a temp dir + fake bundle without a spawn.
 func SeedKCEF(l *Launcher, dataDir string) { l.seedKCEF(dataDir) }
 
+// LinkSharedExtensions exposes the (fail-loud) shared-extensions symlink step so
+// it can be driven against temp dirs without a spawn.
+func LinkSharedExtensions(l *Launcher, profileDataDir string) error {
+	return l.linkSharedExtensions(profileDataDir)
+}
+
 // HTTPHealthProber exposes the production HTTP prober constructor.
 func HTTPHealthProber(timeout time.Duration) HealthProber { return newHTTPHealthProber(timeout) }
 

@@ -88,6 +88,44 @@ func TestCreateEndpoint_FlareSolverrRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCreateEndpoint_ResponseFallbackRoundTrips proves the FlareSolverr
+// response-fallback flag persists and round-trips through the DTO in both states
+// (it is what a per-endpoint toggle sets).
+func TestCreateEndpoint_ResponseFallbackRoundTrips(t *testing.T) {
+	client := testdb.New(t)
+	svc := network.NewService(client)
+	ctx := context.Background()
+
+	for _, want := range []bool{true, false} {
+		in := flareInput("FS")
+		in.AsResponseFallback = want
+		created, err := svc.CreateEndpoint(ctx, in)
+		if err != nil {
+			t.Fatalf("CreateEndpoint(%v): %v", want, err)
+		}
+		if created.AsResponseFallback != want {
+			t.Errorf("AsResponseFallback = %v, want %v", created.AsResponseFallback, want)
+		}
+	}
+}
+
+// TestNetworkEndpoint_ResponseFallbackSchemaDefaultsTrue proves the ent column
+// default is true, so ANY create path that does not set it (e.g. a DB-loss
+// reconcile round-trip) still yields the reactive-fallback default —
+// zero-disruption.
+func TestNetworkEndpoint_ResponseFallbackSchemaDefaultsTrue(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	row := client.NetworkEndpoint.Create().
+		SetName("FS").
+		SetKind(network.KindFlareSolverr).
+		SetURL("http://flaresolverr:8191").
+		SaveX(ctx)
+	if !row.AsResponseFallback {
+		t.Error("AsResponseFallback schema default = false, want true")
+	}
+}
+
 // TestCreateEndpoint_KindValidation proves an unknown kind is rejected with
 // ErrInvalidEndpoint.
 func TestCreateEndpoint_KindValidation(t *testing.T) {

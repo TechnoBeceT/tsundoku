@@ -13,10 +13,10 @@ const socksEndpoint: NetworkEndpoint = {
   socksVersion: 5,
   username: 'tsundoku',
   url: '',
-  fsProxy: '',
   session: '',
   sessionTtl: 0,
   timeout: 0,
+  asResponseFallback: true,
 }
 
 /**

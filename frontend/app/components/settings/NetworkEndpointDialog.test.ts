@@ -31,10 +31,10 @@ const SOCKS: NetworkEndpoint = {
   socksVersion: 5,
   username: 'tsundoku',
   url: '',
-  fsProxy: '',
   session: '',
   sessionTtl: 0,
   timeout: 0,
+  asResponseFallback: true,
 }
 
 function mountDialog(props: Record<string, unknown> = {}) {

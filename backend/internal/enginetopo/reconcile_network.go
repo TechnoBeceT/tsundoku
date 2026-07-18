@@ -132,11 +132,18 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 }
 
 // ensureProvisionedInstance brings up p's instance and provisions it: it ensures
-// the instance (Launcher), reconciles the library's repos/extensions/preferences
-// AND the profile's own FlareSolverr/SOCKS config onto it (reusing Reconcile with
-// a profile-scoped ConfigProvider), then pushes the profile's SOCKS credentials
+// the instance (Launcher), reconciles the library's source PREFERENCES AND the
+// profile's own FlareSolverr/SOCKS config onto it (reusing Reconcile with a
+// profile-scoped ConfigProvider), then pushes the profile's SOCKS credentials
 // (which the ConfigProvider surface can't express) when it has any. A failure at
 // any step is returned so the caller degrades this profile to the default.
+//
+// EXTENSIONS ARE DELIBERATELY NOT RECONCILED HERE (WithoutExtensions): every
+// profile instance SHARES the default instance's extensions dir (see
+// enginehost.linkSharedExtensions), which the default-instance boot Reconcile
+// already populated. Re-installing per profile would be a redundant network hit
+// and a concurrent write into that shared dir — so a profile pass touches only
+// prefs + config.
 func ensureProvisionedInstance(ctx context.Context, deps NetworkReconcileDeps, p engineroute.Profile) (engineroute.Instance, error) {
 	inst, err := deps.Launcher.EnsureProfile(ctx, p)
 	if err != nil {
@@ -144,7 +151,7 @@ func ensureProvisionedInstance(ctx context.Context, deps NetworkReconcileDeps, p
 	}
 
 	cfg := profileConfigProvider{profile: p, base: deps.BaseConfig}
-	if _, err := Reconcile(ctx, inst.Client, deps.DB, deps.Cache, cfg); err != nil {
+	if _, err := Reconcile(ctx, inst.Client, deps.DB, deps.Cache, cfg, WithoutExtensions()); err != nil {
 		return engineroute.Instance{}, fmt.Errorf("provision profile %q instance: %w", p.Key, err)
 	}
 
@@ -218,11 +225,11 @@ func toFlareEndpoint(f *network.ResolvedFlare) *engineroute.FlareEndpoint {
 		return nil
 	}
 	return &engineroute.FlareEndpoint{
-		ID:         f.ID,
-		URL:        f.URL,
-		Proxy:      f.Proxy,
-		Session:    f.Session,
-		SessionTTL: f.SessionTTL,
-		Timeout:    f.Timeout,
+		ID:                 f.ID,
+		URL:                f.URL,
+		Session:            f.Session,
+		SessionTTL:         f.SessionTTL,
+		Timeout:            f.Timeout,
+		AsResponseFallback: f.AsResponseFallback,
 	}
 }

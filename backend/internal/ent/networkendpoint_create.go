@@ -131,20 +131,6 @@ func (_c *NetworkEndpointCreate) SetNillableURL(v *string) *NetworkEndpointCreat
 	return _c
 }
 
-// SetFsProxy sets the "fs_proxy" field.
-func (_c *NetworkEndpointCreate) SetFsProxy(v string) *NetworkEndpointCreate {
-	_c.mutation.SetFsProxy(v)
-	return _c
-}
-
-// SetNillableFsProxy sets the "fs_proxy" field if the given value is not nil.
-func (_c *NetworkEndpointCreate) SetNillableFsProxy(v *string) *NetworkEndpointCreate {
-	if v != nil {
-		_c.SetFsProxy(*v)
-	}
-	return _c
-}
-
 // SetSession sets the "session" field.
 func (_c *NetworkEndpointCreate) SetSession(v string) *NetworkEndpointCreate {
 	_c.mutation.SetSession(v)
@@ -183,6 +169,20 @@ func (_c *NetworkEndpointCreate) SetTimeout(v int) *NetworkEndpointCreate {
 func (_c *NetworkEndpointCreate) SetNillableTimeout(v *int) *NetworkEndpointCreate {
 	if v != nil {
 		_c.SetTimeout(*v)
+	}
+	return _c
+}
+
+// SetAsResponseFallback sets the "as_response_fallback" field.
+func (_c *NetworkEndpointCreate) SetAsResponseFallback(v bool) *NetworkEndpointCreate {
+	_c.mutation.SetAsResponseFallback(v)
+	return _c
+}
+
+// SetNillableAsResponseFallback sets the "as_response_fallback" field if the given value is not nil.
+func (_c *NetworkEndpointCreate) SetNillableAsResponseFallback(v *bool) *NetworkEndpointCreate {
+	if v != nil {
+		_c.SetAsResponseFallback(*v)
 	}
 	return _c
 }
@@ -292,10 +292,6 @@ func (_c *NetworkEndpointCreate) defaults() {
 		v := networkendpoint.DefaultURL
 		_c.mutation.SetURL(v)
 	}
-	if _, ok := _c.mutation.FsProxy(); !ok {
-		v := networkendpoint.DefaultFsProxy
-		_c.mutation.SetFsProxy(v)
-	}
 	if _, ok := _c.mutation.Session(); !ok {
 		v := networkendpoint.DefaultSession
 		_c.mutation.SetSession(v)
@@ -307,6 +303,10 @@ func (_c *NetworkEndpointCreate) defaults() {
 	if _, ok := _c.mutation.Timeout(); !ok {
 		v := networkendpoint.DefaultTimeout
 		_c.mutation.SetTimeout(v)
+	}
+	if _, ok := _c.mutation.AsResponseFallback(); !ok {
+		v := networkendpoint.DefaultAsResponseFallback
+		_c.mutation.SetAsResponseFallback(v)
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := networkendpoint.DefaultCreatedAt()
@@ -351,9 +351,6 @@ func (_c *NetworkEndpointCreate) check() error {
 	if _, ok := _c.mutation.URL(); !ok {
 		return &ValidationError{Name: "url", err: errors.New(`ent: missing required field "NetworkEndpoint.url"`)}
 	}
-	if _, ok := _c.mutation.FsProxy(); !ok {
-		return &ValidationError{Name: "fs_proxy", err: errors.New(`ent: missing required field "NetworkEndpoint.fs_proxy"`)}
-	}
 	if _, ok := _c.mutation.Session(); !ok {
 		return &ValidationError{Name: "session", err: errors.New(`ent: missing required field "NetworkEndpoint.session"`)}
 	}
@@ -362,6 +359,9 @@ func (_c *NetworkEndpointCreate) check() error {
 	}
 	if _, ok := _c.mutation.Timeout(); !ok {
 		return &ValidationError{Name: "timeout", err: errors.New(`ent: missing required field "NetworkEndpoint.timeout"`)}
+	}
+	if _, ok := _c.mutation.AsResponseFallback(); !ok {
+		return &ValidationError{Name: "as_response_fallback", err: errors.New(`ent: missing required field "NetworkEndpoint.as_response_fallback"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "NetworkEndpoint.created_at"`)}
@@ -440,10 +440,6 @@ func (_c *NetworkEndpointCreate) createSpec() (*NetworkEndpoint, *sqlgraph.Creat
 		_spec.SetField(networkendpoint.FieldURL, field.TypeString, value)
 		_node.URL = value
 	}
-	if value, ok := _c.mutation.FsProxy(); ok {
-		_spec.SetField(networkendpoint.FieldFsProxy, field.TypeString, value)
-		_node.FsProxy = value
-	}
 	if value, ok := _c.mutation.Session(); ok {
 		_spec.SetField(networkendpoint.FieldSession, field.TypeString, value)
 		_node.Session = value
@@ -455,6 +451,10 @@ func (_c *NetworkEndpointCreate) createSpec() (*NetworkEndpoint, *sqlgraph.Creat
 	if value, ok := _c.mutation.Timeout(); ok {
 		_spec.SetField(networkendpoint.FieldTimeout, field.TypeInt, value)
 		_node.Timeout = value
+	}
+	if value, ok := _c.mutation.AsResponseFallback(); ok {
+		_spec.SetField(networkendpoint.FieldAsResponseFallback, field.TypeBool, value)
+		_node.AsResponseFallback = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(networkendpoint.FieldCreatedAt, field.TypeTime, value)

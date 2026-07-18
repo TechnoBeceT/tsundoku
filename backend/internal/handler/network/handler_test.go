@@ -127,6 +127,82 @@ func TestCreateEndpoint_PasswordNeverReturned(t *testing.T) {
 	}
 }
 
+// TestCreateEndpoint_ResponseFallbackDefaultsTrue proves the FlareSolverr
+// response-fallback flag defaults to TRUE when the create body omits it (the
+// sensible reactive-fallback default the endpoint form relies on) and honours an
+// explicit false. This is the load-bearing zero-disruption default.
+func TestCreateEndpoint_ResponseFallbackDefaultsTrue(t *testing.T) {
+	env := newTestEnv(t)
+
+	rec := env.do(http.MethodPost, "/api/network/endpoints",
+		`{"name":"FS default","kind":"flaresolverr","url":"http://flaresolverr:8191"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create (omitted): want 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := decodeResponseFallback(t, rec.Body.Bytes()); !got {
+		t.Errorf("asResponseFallback omitted → %v, want true", got)
+	}
+
+	rec2 := env.do(http.MethodPost, "/api/network/endpoints",
+		`{"name":"FS off","kind":"flaresolverr","url":"http://flaresolverr:8191","asResponseFallback":false}`)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("create (false): want 201, got %d (%s)", rec2.Code, rec2.Body.String())
+	}
+	if got := decodeResponseFallback(t, rec2.Body.Bytes()); got {
+		t.Errorf("asResponseFallback:false → %v, want false", got)
+	}
+}
+
+// TestCreateEndpoint_TimeoutDefaults proves an omitted FlareSolverr timeout
+// defaults to 60 (the ent default) — toInput must apply its computed default,
+// not pass the raw zero through — while an explicit value is honoured.
+func TestCreateEndpoint_TimeoutDefaults(t *testing.T) {
+	env := newTestEnv(t)
+
+	rec := env.do(http.MethodPost, "/api/network/endpoints",
+		`{"name":"FS notimeout","kind":"flaresolverr","url":"http://flaresolverr:8191"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create (omitted): want 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := decodeTimeout(t, rec.Body.Bytes()); got != 60 {
+		t.Errorf("timeout omitted → %d, want 60", got)
+	}
+
+	rec2 := env.do(http.MethodPost, "/api/network/endpoints",
+		`{"name":"FS t90","kind":"flaresolverr","url":"http://flaresolverr:8191","timeout":90}`)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("create (explicit): want 201, got %d (%s)", rec2.Code, rec2.Body.String())
+	}
+	if got := decodeTimeout(t, rec2.Body.Bytes()); got != 90 {
+		t.Errorf("timeout:90 → %d, want 90", got)
+	}
+}
+
+// decodeTimeout pulls the timeout out of an endpoint DTO response body.
+func decodeTimeout(t *testing.T, body []byte) int {
+	t.Helper()
+	var obj struct {
+		Timeout int `json:"timeout"`
+	}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		t.Fatalf("decode endpoint DTO: %v", err)
+	}
+	return obj.Timeout
+}
+
+// decodeResponseFallback pulls the asResponseFallback flag out of an endpoint
+// DTO response body.
+func decodeResponseFallback(t *testing.T, body []byte) bool {
+	t.Helper()
+	var obj struct {
+		AsResponseFallback bool `json:"asResponseFallback"`
+	}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		t.Fatalf("decode endpoint DTO: %v", err)
+	}
+	return obj.AsResponseFallback
+}
+
 // TestCreateEndpoint_InvalidKind proves a bad kind is a 400.
 func TestCreateEndpoint_InvalidKind(t *testing.T) {
 	env := newTestEnv(t)

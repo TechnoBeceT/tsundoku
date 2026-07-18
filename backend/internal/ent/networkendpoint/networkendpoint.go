@@ -32,14 +32,14 @@ const (
 	FieldPassword = "password"
 	// FieldURL holds the string denoting the url field in the database.
 	FieldURL = "url"
-	// FieldFsProxy holds the string denoting the fs_proxy field in the database.
-	FieldFsProxy = "fs_proxy"
 	// FieldSession holds the string denoting the session field in the database.
 	FieldSession = "session"
 	// FieldSessionTTL holds the string denoting the session_ttl field in the database.
 	FieldSessionTTL = "session_ttl"
 	// FieldTimeout holds the string denoting the timeout field in the database.
 	FieldTimeout = "timeout"
+	// FieldAsResponseFallback holds the string denoting the as_response_fallback field in the database.
+	FieldAsResponseFallback = "as_response_fallback"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -60,10 +60,10 @@ var Columns = []string{
 	FieldUsername,
 	FieldPassword,
 	FieldURL,
-	FieldFsProxy,
 	FieldSession,
 	FieldSessionTTL,
 	FieldTimeout,
+	FieldAsResponseFallback,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -93,14 +93,14 @@ var (
 	DefaultPassword string
 	// DefaultURL holds the default value on creation for the "url" field.
 	DefaultURL string
-	// DefaultFsProxy holds the default value on creation for the "fs_proxy" field.
-	DefaultFsProxy string
 	// DefaultSession holds the default value on creation for the "session" field.
 	DefaultSession string
 	// DefaultSessionTTL holds the default value on creation for the "session_ttl" field.
 	DefaultSessionTTL int
 	// DefaultTimeout holds the default value on creation for the "timeout" field.
 	DefaultTimeout int
+	// DefaultAsResponseFallback holds the default value on creation for the "as_response_fallback" field.
+	DefaultAsResponseFallback bool
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
@@ -164,11 +164,6 @@ func ByURL(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldURL, opts...).ToFunc()
 }
 
-// ByFsProxy orders the results by the fs_proxy field.
-func ByFsProxy(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldFsProxy, opts...).ToFunc()
-}
-
 // BySession orders the results by the session field.
 func BySession(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSession, opts...).ToFunc()
@@ -182,6 +177,11 @@ func BySessionTTL(opts ...sql.OrderTermOption) OrderOption {
 // ByTimeout orders the results by the timeout field.
 func ByTimeout(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTimeout, opts...).ToFunc()
+}
+
+// ByAsResponseFallback orders the results by the as_response_fallback field.
+func ByAsResponseFallback(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAsResponseFallback, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

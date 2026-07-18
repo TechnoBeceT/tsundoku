@@ -20,9 +20,10 @@ const socksDefaultPort = 1080
 //     version (credentials are pushed separately — see pushSocksCredentials —
 //     because ConfigProvider's surface can't express them).
 //
-// It satisfies ConfigProvider so reconcileConfig pushes it verbatim; base is only
+// It satisfies ConfigProvider so reconcileConfig pushes it verbatim; base is
 // consulted for the "global" flare mode (and for the FlareSolverr response-
-// fallback flag, which has no per-profile counterpart).
+// fallback flag in the non-"endpoint" modes, which have no bound endpoint to
+// read it from).
 type profileConfigProvider struct {
 	profile engineroute.Profile
 	base    ConfigProvider
@@ -89,9 +90,14 @@ func (p profileConfigProvider) FlareSolverrSessionTTL(ctx context.Context) int {
 	return p.base.FlareSolverrSessionTTL(ctx)
 }
 
-// FlareSolverrResponseFallback inherits the base global flag — there is no
-// per-profile counterpart in the binding model.
+// FlareSolverrResponseFallback returns the bound endpoint's reactive-fallback
+// flag for "endpoint" mode (so a per-endpoint toggle actually reaches the
+// instance), and inherits the base global flag for "global"/"none" (which have
+// no per-profile FlareSolverr endpoint to read it from).
 func (p profileConfigProvider) FlareSolverrResponseFallback(ctx context.Context) bool {
+	if p.profile.FlareMode == engineroute.FlareModeEndpoint {
+		return p.profile.Flare.AsResponseFallback
+	}
 	return p.base.FlareSolverrResponseFallback(ctx)
 }
 

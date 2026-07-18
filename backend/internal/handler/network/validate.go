@@ -21,27 +21,28 @@ import (
 // CreateEndpointRequest is the POST /api/network/endpoints body — the full field
 // set for a new endpoint. name + kind are required; the SOCKS group applies when
 // kind == "socks", the FlareSolverr group when kind == "flaresolverr" (the
-// service validates by kind). Two fields default when omitted (zero-valued) to
-// match the Ent column defaults: socksVersion → 5, timeout → 60.
+// service validates by kind). Three fields default when omitted to match the Ent
+// column defaults: socksVersion → 5, timeout → 60, asResponseFallback → true
+// (the latter two are pointer/zero-guarded in toInput).
 type CreateEndpointRequest struct {
-	Name         string `json:"name"`
-	Kind         string `json:"kind"`
-	Enabled      *bool  `json:"enabled"`
-	Host         string `json:"host"`
-	Port         int    `json:"port"`
-	SocksVersion int    `json:"socksVersion"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	URL          string `json:"url"`
-	FSProxy      string `json:"fsProxy"`
-	Session      string `json:"session"`
-	SessionTTL   int    `json:"sessionTtl"`
-	Timeout      int    `json:"timeout"`
+	Name               string `json:"name"`
+	Kind               string `json:"kind"`
+	Enabled            *bool  `json:"enabled"`
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	SocksVersion       int    `json:"socksVersion"`
+	Username           string `json:"username"`
+	Password           string `json:"password"`
+	URL                string `json:"url"`
+	Session            string `json:"session"`
+	SessionTTL         int    `json:"sessionTtl"`
+	Timeout            int    `json:"timeout"`
+	AsResponseFallback *bool  `json:"asResponseFallback"`
 }
 
-// toInput maps the request to the service EndpointInput, applying the two
-// column-default fallbacks (socksVersion → 5, timeout → 60) and defaulting
-// enabled to true when the field is omitted.
+// toInput maps the request to the service EndpointInput, applying the column-
+// default fallbacks: socksVersion → 5, timeout → 60, and both enabled and
+// asResponseFallback → true when the (pointer) field is omitted.
 func (r CreateEndpointRequest) toInput() networksvc.EndpointInput {
 	socksVersion := r.SocksVersion
 	if socksVersion == 0 {
@@ -55,20 +56,24 @@ func (r CreateEndpointRequest) toInput() networksvc.EndpointInput {
 	if r.Enabled != nil {
 		enabled = *r.Enabled
 	}
+	asResponseFallback := true
+	if r.AsResponseFallback != nil {
+		asResponseFallback = *r.AsResponseFallback
+	}
 	return networksvc.EndpointInput{
-		Name:         r.Name,
-		Kind:         r.Kind,
-		Enabled:      enabled,
-		Host:         r.Host,
-		Port:         r.Port,
-		SocksVersion: socksVersion,
-		Username:     r.Username,
-		Password:     r.Password,
-		URL:          r.URL,
-		FSProxy:      r.FSProxy,
-		Session:      r.Session,
-		SessionTTL:   r.SessionTTL,
-		Timeout:      r.Timeout,
+		Name:               r.Name,
+		Kind:               r.Kind,
+		Enabled:            enabled,
+		Host:               r.Host,
+		Port:               r.Port,
+		SocksVersion:       socksVersion,
+		Username:           r.Username,
+		Password:           r.Password,
+		URL:                r.URL,
+		Session:            r.Session,
+		SessionTTL:         r.SessionTTL,
+		Timeout:            timeout,
+		AsResponseFallback: asResponseFallback,
 	}
 }
 
@@ -77,38 +82,38 @@ func (r CreateEndpointRequest) toInput() networksvc.EndpointInput {
 // KEEPS the stored password (write-only — the frontend loads the edit form with
 // a blank password field, so an untouched password must never clear it).
 type UpdateEndpointRequest struct {
-	Name         *string `json:"name"`
-	Kind         *string `json:"kind"`
-	Enabled      *bool   `json:"enabled"`
-	Host         *string `json:"host"`
-	Port         *int    `json:"port"`
-	SocksVersion *int    `json:"socksVersion"`
-	Username     *string `json:"username"`
-	Password     *string `json:"password"`
-	URL          *string `json:"url"`
-	FSProxy      *string `json:"fsProxy"`
-	Session      *string `json:"session"`
-	SessionTTL   *int    `json:"sessionTtl"`
-	Timeout      *int    `json:"timeout"`
+	Name               *string `json:"name"`
+	Kind               *string `json:"kind"`
+	Enabled            *bool   `json:"enabled"`
+	Host               *string `json:"host"`
+	Port               *int    `json:"port"`
+	SocksVersion       *int    `json:"socksVersion"`
+	Username           *string `json:"username"`
+	Password           *string `json:"password"`
+	URL                *string `json:"url"`
+	Session            *string `json:"session"`
+	SessionTTL         *int    `json:"sessionTtl"`
+	Timeout            *int    `json:"timeout"`
+	AsResponseFallback *bool   `json:"asResponseFallback"`
 }
 
 // toPatch maps the request to the service EndpointPatch (a straight field copy —
 // nil stays nil).
 func (r UpdateEndpointRequest) toPatch() networksvc.EndpointPatch {
 	return networksvc.EndpointPatch{
-		Name:         r.Name,
-		Kind:         r.Kind,
-		Enabled:      r.Enabled,
-		Host:         r.Host,
-		Port:         r.Port,
-		SocksVersion: r.SocksVersion,
-		Username:     r.Username,
-		Password:     r.Password,
-		URL:          r.URL,
-		FSProxy:      r.FSProxy,
-		Session:      r.Session,
-		SessionTTL:   r.SessionTTL,
-		Timeout:      r.Timeout,
+		Name:               r.Name,
+		Kind:               r.Kind,
+		Enabled:            r.Enabled,
+		Host:               r.Host,
+		Port:               r.Port,
+		SocksVersion:       r.SocksVersion,
+		Username:           r.Username,
+		Password:           r.Password,
+		URL:                r.URL,
+		Session:            r.Session,
+		SessionTTL:         r.SessionTTL,
+		Timeout:            r.Timeout,
+		AsResponseFallback: r.AsResponseFallback,
 	}
 }
 

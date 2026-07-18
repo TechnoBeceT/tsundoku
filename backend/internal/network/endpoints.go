@@ -44,10 +44,10 @@ func (s *Service) CreateEndpoint(ctx context.Context, in EndpointInput) (Endpoin
 		SetUsername(in.Username).
 		SetPassword(in.Password).
 		SetURL(in.URL).
-		SetFsProxy(in.FSProxy).
 		SetSession(in.Session).
 		SetSessionTTL(in.SessionTTL).
 		SetTimeout(in.Timeout).
+		SetAsResponseFallback(in.AsResponseFallback).
 		Save(ctx)
 	if err != nil {
 		return EndpointDTO{}, fmt.Errorf("network.CreateEndpoint: save: %w", err)
@@ -81,10 +81,10 @@ func (s *Service) UpdateEndpoint(ctx context.Context, id uuid.UUID, patch Endpoi
 		SetSocksVersion(merged.SocksVersion).
 		SetUsername(merged.Username).
 		SetURL(merged.URL).
-		SetFsProxy(merged.FSProxy).
 		SetSession(merged.Session).
 		SetSessionTTL(merged.SessionTTL).
-		SetTimeout(merged.Timeout)
+		SetTimeout(merged.Timeout).
+		SetAsResponseFallback(merged.AsResponseFallback)
 	// Only touch the password when the patch explicitly carried one (write-only).
 	if patch.Password != nil {
 		upd = upd.SetPassword(*patch.Password)
@@ -161,19 +161,19 @@ func (s *Service) endpointByID(ctx context.Context, id uuid.UUID) (*ent.NetworkE
 // write is gated on patch.Password (see UpdateEndpoint).
 func applyPatch(row *ent.NetworkEndpoint, patch EndpointPatch) EndpointInput {
 	merged := EndpointInput{
-		Name:         row.Name,
-		Kind:         row.Kind,
-		Enabled:      row.Enabled,
-		Host:         row.Host,
-		Port:         row.Port,
-		SocksVersion: row.SocksVersion,
-		Username:     row.Username,
-		Password:     row.Password,
-		URL:          row.URL,
-		FSProxy:      row.FsProxy,
-		Session:      row.Session,
-		SessionTTL:   row.SessionTTL,
-		Timeout:      row.Timeout,
+		Name:               row.Name,
+		Kind:               row.Kind,
+		Enabled:            row.Enabled,
+		Host:               row.Host,
+		Port:               row.Port,
+		SocksVersion:       row.SocksVersion,
+		Username:           row.Username,
+		Password:           row.Password,
+		URL:                row.URL,
+		Session:            row.Session,
+		SessionTTL:         row.SessionTTL,
+		Timeout:            row.Timeout,
+		AsResponseFallback: row.AsResponseFallback,
 	}
 	overlayStrings(&merged, patch)
 	overlayScalars(&merged, patch)
@@ -200,9 +200,6 @@ func overlayStrings(merged *EndpointInput, patch EndpointPatch) {
 	if patch.URL != nil {
 		merged.URL = *patch.URL
 	}
-	if patch.FSProxy != nil {
-		merged.FSProxy = *patch.FSProxy
-	}
 	if patch.Session != nil {
 		merged.Session = *patch.Session
 	}
@@ -224,5 +221,8 @@ func overlayScalars(merged *EndpointInput, patch EndpointPatch) {
 	}
 	if patch.Timeout != nil {
 		merged.Timeout = *patch.Timeout
+	}
+	if patch.AsResponseFallback != nil {
+		merged.AsResponseFallback = *patch.AsResponseFallback
 	}
 }

@@ -57,10 +57,15 @@ type FlareEndpoint struct {
 	// ID is the NetworkEndpoint's UUID string — see SocksEndpoint.ID.
 	ID         string
 	URL        string
-	Proxy      string
 	Session    string
 	SessionTTL int
 	Timeout    int
+	// AsResponseFallback mirrors FlareSolverr's asResponseFallback flag: when
+	// true the profile's instance uses FlareSolverr only reactively (as a
+	// fallback for a blocked request), not for every request. It is pushed to
+	// the instance verbatim for "endpoint" flare mode (see
+	// enginetopo.profileConfigProvider).
+	AsResponseFallback bool
 }
 
 // BindingInput is one source's resolved network binding — the Derive input. It

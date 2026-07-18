@@ -3765,7 +3765,7 @@ export interface components {
             finishDate?: string | null;
             private?: boolean;
         };
-        /** @description A named, reusable network-egress endpoint (per-source network routing). The `kind` field selects which field-group is meaningful: the SOCKS group (host/port/socksVersion/username) for `socks`, or the FlareSolverr group (url/fsProxy/session/sessionTtl/timeout) for `flaresolverr`. The SOCKS password is WRITE-ONLY — it is set via create/update but never returned. */
+        /** @description A named, reusable network-egress endpoint (per-source network routing). The `kind` field selects which field-group is meaningful: the SOCKS group (host/port/socksVersion/username) for `socks`, or the FlareSolverr group (url/session/sessionTtl/timeout/asResponseFallback) for `flaresolverr`. The SOCKS password is WRITE-ONLY — it is set via create/update but never returned. */
         NetworkEndpoint: {
             /**
              * Format: uuid
@@ -3791,14 +3791,14 @@ export interface components {
             username: string;
             /** @description FlareSolverr endpoint URL (kind=flaresolverr). */
             url: string;
-            /** @description Upstream proxy FlareSolverr egresses the solve through (kind=flaresolverr). */
-            fsProxy: string;
             /** @description FlareSolverr session identifier (kind=flaresolverr). */
             session: string;
             /** @description FlareSolverr session TTL in minutes (kind=flaresolverr). */
             sessionTtl: number;
             /** @description FlareSolverr per-request solve timeout in seconds (kind=flaresolverr). */
             timeout: number;
+            /** @description Use FlareSolverr only reactively (as a fallback for a blocked request), not for every request (kind=flaresolverr). */
+            asResponseFallback: boolean;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -3818,10 +3818,11 @@ export interface components {
             /** @description Write-only SOCKS auth password. */
             password?: string;
             url?: string;
-            fsProxy?: string;
             session?: string;
             sessionTtl?: number;
             timeout?: number;
+            /** @description Use FlareSolverr only reactively (kind=flaresolverr). Defaults to true when omitted. */
+            asResponseFallback?: boolean;
         };
         /** @description Partial update — every field is optional; an omitted field is left untouched. In particular an omitted `password` KEEPS the stored password (write-only). The merged endpoint is re-validated by its (possibly changed) kind. */
         NetworkEndpointUpdate: {
@@ -3836,10 +3837,11 @@ export interface components {
             /** @description Write-only; omit to keep the stored password. */
             password?: string;
             url?: string;
-            fsProxy?: string;
             session?: string;
             sessionTtl?: number;
             timeout?: number;
+            /** @description Use FlareSolverr only reactively (kind=flaresolverr). */
+            asResponseFallback?: boolean;
         };
         /** @description A per-source network-routing assignment. Its ABSENCE (no row) means the source uses the global default. sourceId is stringified (a 64-bit source id can exceed JS's safe-integer range). The endpoint ids are nullable — null = no override for that dimension. */
         SourceNetworkBinding: {

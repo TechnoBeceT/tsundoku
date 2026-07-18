@@ -1,6 +1,7 @@
 package enginehost
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -55,6 +56,55 @@ func (l *Launcher) linkKCEFBundle(dataDir string) {
 	if err := os.Symlink(bundle, link); err != nil {
 		slog.Warn("enginehost: could not symlink KCEF bundle; WebView sources may be slow", "link", link, "bundle", bundle, "err", err)
 	}
+}
+
+// linkSharedExtensions makes a spawned profile instance SHARE the default
+// instance's extensions directory by symlinking "<profileDataDir>/extensions" →
+// "<baseDataDir>/extensions" (baseDataDir is the launcher's own DataDir, where
+// the default instance keeps its data). This is THE crux of multi-instance
+// routing: extensions are installed ONCE (on the default instance, by the boot
+// reconcile) and every profile instance inherits them through this link, so a
+// routed source resolves instead of failing "unknown sourceId" against an empty
+// per-profile extensions/. The engine-host does mkdirs("<dataRoot>/extensions")
+// on boot; a pre-existing symlink there makes that a no-op, so this must run
+// BEFORE the process spawns.
+//
+// UNLIKE seedKCEF this is NOT best-effort: a missing/failed link leaves the
+// profile with zero sources, which is strictly worse than not running it. On any
+// failure it returns an error so spawn aborts and ReconcileNetwork degrades the
+// profile's sources to the (fully-provisioned) default instance — fault
+// isolation, not a broken instance.
+//
+// It is idempotent and non-destructive: an already-correct symlink is left as
+// is; a stale symlink or an EMPTY real extensions dir (e.g. one the engine-host
+// pre-created on a prior boot before this link existed) is replaced. A NON-empty
+// real extensions dir is never silently deleted — os.Remove refuses it, so that
+// state surfaces as an error (degrade) rather than destroying owner-installed
+// APKs.
+func (l *Launcher) linkSharedExtensions(profileDataDir string) error {
+	baseExt := filepath.Join(l.cfg.DataDir, "extensions")
+	if err := os.MkdirAll(baseExt, 0o750); err != nil {
+		return fmt.Errorf("enginehost: ensure shared extensions dir %q: %w", baseExt, err)
+	}
+	if err := os.MkdirAll(profileDataDir, 0o750); err != nil {
+		return fmt.Errorf("enginehost: create profile data dir %q: %w", profileDataDir, err)
+	}
+
+	link := filepath.Join(profileDataDir, "extensions")
+	if existing, err := os.Readlink(link); err == nil && existing == baseExt {
+		return nil // already linked to the right place — idempotent
+	}
+	// Clear any stale symlink or empty real dir so the symlink lands cleanly.
+	// os.Remove refuses a non-empty directory, so a legacy real extensions dir
+	// with installed APKs surfaces as an error here (degrade) rather than being
+	// destroyed.
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("enginehost: clear extensions path %q: %w", link, err)
+	}
+	if err := os.Symlink(baseExt, link); err != nil {
+		return fmt.Errorf("enginehost: symlink extensions %q -> %q: %w", link, baseExt, err)
+	}
+	return nil
 }
 
 // clearKCEFSingletonLocks removes the Chromium singleton lock/cookie/socket files

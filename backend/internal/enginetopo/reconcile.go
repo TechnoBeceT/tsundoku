@@ -38,6 +38,34 @@ type ConfigProvider interface {
 // ConfigProvider — the wiring main.go relies on.
 var _ ConfigProvider = (*settings.Service)(nil)
 
+// reconcileOptions holds the tunable behaviour of one Reconcile pass. The zero
+// value is the full pass (repos → extensions → prefs → config) — every existing
+// caller keeps that behaviour by passing no options.
+type reconcileOptions struct {
+	// skipExtensions omits BOTH the repo and the extension steps (repos exist
+	// only to feed the extension install/refresh). See WithoutExtensions.
+	skipExtensions bool
+}
+
+// ReconcileOption customizes a Reconcile pass. It exists so the per-profile
+// engine-host provisioning (enginetopo.ReconcileNetwork) can reuse Reconcile for
+// prefs+config WITHOUT touching extensions, while the default-instance boot pass
+// keeps the full behaviour by passing no option.
+type ReconcileOption func(*reconcileOptions)
+
+// WithoutExtensions makes Reconcile SKIP the repo + extension steps and push
+// ONLY source preferences + FlareSolverr/SOCKS config. It is used by the
+// per-profile provisioning, where every profile instance SHARES the default
+// instance's extensions directory (see enginehost.linkSharedExtensions): the
+// default-instance boot reconcile installs the extensions ONCE into that shared
+// dir, and a profile pass must NOT re-run RefreshExtensions/InstallExtension —
+// doing so is a redundant network hit AND a concurrent write into the now-shared
+// extensions dir across instances. Prefs + config remain per-profile (a profile
+// legitimately pushes its own SOCKS/FlareSolverr endpoint).
+func WithoutExtensions() ReconcileOption {
+	return func(o *reconcileOptions) { o.skipExtensions = true }
+}
+
 // ReconcileResult reports what a Reconcile pass did — the observable outcome of
 // pushing Tsundoku's durable engine-topology store back onto a wiped/swapped/
 // rebuilt engine.
@@ -149,30 +177,41 @@ func Reconcile(
 	db *ent.Client,
 	cache *apkcache.Store,
 	cfg ConfigProvider,
+	opts ...ReconcileOption,
 ) (ReconcileResult, error) {
 	_ = cache // intentionally unused — see the doc comment (repo-based install).
 
+	var options reconcileOptions
+	for _, o := range opts {
+		o(&options)
+	}
+
 	var res ReconcileResult
 
-	required, err := requiredPkgSet(ctx, db)
-	if err != nil {
-		return res, err
-	}
-	installed, err := installedPkgSet(ctx, client)
-	if err != nil {
-		return res, err
-	}
+	// Repos + extensions are skipped for a per-profile pass (WithoutExtensions):
+	// profile instances share the default's extensions dir, so only the default
+	// boot pass installs into it (see WithoutExtensions' doc comment).
+	if !options.skipExtensions {
+		required, err := requiredPkgSet(ctx, db)
+		if err != nil {
+			return res, err
+		}
+		installed, err := installedPkgSet(ctx, client)
+		if err != nil {
+			return res, err
+		}
 
-	reposChanged, repoGaps, err := reconcileRepos(ctx, client, db)
-	if err != nil {
-		return res, err
-	}
-	res.ReposSet = reposChanged
-	res.Gaps = append(res.Gaps, repoGaps...)
+		reposChanged, repoGaps, err := reconcileRepos(ctx, client, db)
+		if err != nil {
+			return res, err
+		}
+		res.ReposSet = reposChanged
+		res.Gaps = append(res.Gaps, repoGaps...)
 
-	installedCount, extGaps := reconcileExtensions(ctx, client, required, installed, reposChanged)
-	res.ExtensionsInstalled = installedCount
-	res.Gaps = append(res.Gaps, extGaps...)
+		installedCount, extGaps := reconcileExtensions(ctx, client, required, installed, reposChanged)
+		res.ExtensionsInstalled = installedCount
+		res.Gaps = append(res.Gaps, extGaps...)
+	}
 
 	prefsApplied, prefGaps, err := reconcilePrefs(ctx, client, db)
 	if err != nil {

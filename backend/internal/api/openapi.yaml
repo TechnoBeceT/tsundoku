@@ -2732,8 +2732,9 @@ components:
         A named, reusable network-egress endpoint (per-source network routing).
         The `kind` field selects which field-group is meaningful: the SOCKS group
         (host/port/socksVersion/username) for `socks`, or the FlareSolverr group
-        (url/fsProxy/session/sessionTtl/timeout) for `flaresolverr`. The SOCKS
-        password is WRITE-ONLY — it is set via create/update but never returned.
+        (url/session/sessionTtl/timeout/asResponseFallback) for `flaresolverr`.
+        The SOCKS password is WRITE-ONLY — it is set via create/update but never
+        returned.
       required:
         - id
         - name
@@ -2744,10 +2745,10 @@ components:
         - socksVersion
         - username
         - url
-        - fsProxy
         - session
         - sessionTtl
         - timeout
+        - asResponseFallback
         - createdAt
         - updatedAt
       properties:
@@ -2780,9 +2781,6 @@ components:
         url:
           type: string
           description: FlareSolverr endpoint URL (kind=flaresolverr).
-        fsProxy:
-          type: string
-          description: Upstream proxy FlareSolverr egresses the solve through (kind=flaresolverr).
         session:
           type: string
           description: FlareSolverr session identifier (kind=flaresolverr).
@@ -2792,6 +2790,11 @@ components:
         timeout:
           type: integer
           description: FlareSolverr per-request solve timeout in seconds (kind=flaresolverr).
+        asResponseFallback:
+          type: boolean
+          description: >-
+            Use FlareSolverr only reactively (as a fallback for a blocked
+            request), not for every request (kind=flaresolverr).
         createdAt:
           type: string
           format: date-time
@@ -2831,14 +2834,17 @@ components:
           description: Write-only SOCKS auth password.
         url:
           type: string
-        fsProxy:
-          type: string
         session:
           type: string
         sessionTtl:
           type: integer
         timeout:
           type: integer
+        asResponseFallback:
+          type: boolean
+          description: >-
+            Use FlareSolverr only reactively (kind=flaresolverr). Defaults to
+            true when omitted.
 
     NetworkEndpointUpdate:
       type: object
@@ -2868,14 +2874,15 @@ components:
           description: Write-only; omit to keep the stored password.
         url:
           type: string
-        fsProxy:
-          type: string
         session:
           type: string
         sessionTtl:
           type: integer
         timeout:
           type: integer
+        asResponseFallback:
+          type: boolean
+          description: Use FlareSolverr only reactively (kind=flaresolverr).
 
     SourceNetworkBinding:
       type: object

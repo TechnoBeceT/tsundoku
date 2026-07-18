@@ -44,10 +44,10 @@ function mapEndpoint(dto: NetworkEndpointDTO): NetworkEndpoint {
     socksVersion: dto.socksVersion,
     username: dto.username,
     url: dto.url,
-    fsProxy: dto.fsProxy,
     session: dto.session,
     sessionTtl: dto.sessionTtl,
     timeout: dto.timeout,
+    asResponseFallback: dto.asResponseFallback,
   }
 }
 
@@ -73,10 +73,10 @@ function buildBody(input: NetworkEndpointInput): NetworkEndpointCreateDTO {
   return {
     ...base,
     url: input.url,
-    fsProxy: input.fsProxy,
     session: input.session,
     sessionTtl: input.sessionTtl,
     timeout: input.timeout,
+    asResponseFallback: input.asResponseFallback,
   }
 }
 

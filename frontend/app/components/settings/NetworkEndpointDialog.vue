@@ -78,10 +78,10 @@ function seed(ep: NetworkEndpoint | null): NetworkEndpointInput {
       username: ep.username,
       password: '', // write-only — never pre-filled
       url: ep.url,
-      fsProxy: ep.fsProxy,
       session: ep.session,
       sessionTtl: ep.sessionTtl,
       timeout: ep.timeout,
+      asResponseFallback: ep.asResponseFallback,
     }
   }
   return {
@@ -95,10 +95,10 @@ function seed(ep: NetworkEndpoint | null): NetworkEndpointInput {
     username: '',
     password: '',
     url: '',
-    fsProxy: '',
     session: '',
     sessionTtl: 15,
     timeout: 60,
+    asResponseFallback: true, // sensible reactive-fallback default (matches the backend)
   }
 }
 
@@ -194,11 +194,15 @@ function onSubmit(): void {
       <!-- FlareSolverr field-group (mirrors the FlareSolverr card's field set) -->
       <template v-else>
         <TextField label="Server URL" :model-value="form.url" :disabled="busy" mono @update:model-value="form.url = $event" />
-        <TextField label="Upstream proxy" :model-value="form.fsProxy" :disabled="busy" mono placeholder="Optional — e.g. socks5://vpn:1080" @update:model-value="form.fsProxy = $event" />
         <div class="ep-form__grid">
           <TextField label="Session name" :model-value="form.session" :disabled="busy" @update:model-value="form.session = $event" />
           <TextField label="Session TTL (min)" type="number" :model-value="String(form.sessionTtl)" :disabled="busy" @update:model-value="form.sessionTtl = clampInt($event, 0)" />
           <TextField label="Timeout (s)" type="number" :model-value="String(form.timeout)" :disabled="busy" @update:model-value="form.timeout = clampInt($event, 0)" />
+        </div>
+        <div class="ep-form__field ep-form__field--inline">
+          <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+          <Toggle :model-value="form.asResponseFallback" :disabled="busy" :ariaLabel="'Response fallback'" @update:model-value="form.asResponseFallback = $event" />
+          <span class="ep-form__inline-label">Response fallback</span>
         </div>
       </template>
 
