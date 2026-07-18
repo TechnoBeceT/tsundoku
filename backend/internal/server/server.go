@@ -85,6 +85,7 @@ func New(
 	vapidPublicKey string,
 	trigger func(),
 	apkStore *apkcache.Store,
+	onNetworkChange func(),
 ) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -107,6 +108,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore, onNetworkChange)
 	return e
 }

@@ -51,7 +51,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
-	h := handler.NewHandler(networksvc.NewService(client))
+	h := handler.NewHandler(networksvc.NewService(client), nil)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler

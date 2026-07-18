@@ -174,6 +174,7 @@ func registerRoutes(
 	vapidPublicKey string,
 	trigger func(),
 	apkStore *apkcache.Store,
+	onNetworkChange func(),
 ) {
 	// Infrastructure routes — no authentication required.
 	e.GET("/health", HealthCheck)
@@ -339,12 +340,14 @@ func registerRoutes(
 	authed.GET("/flaresolverr/settings", flareSolverrH.Get)
 	authed.PATCH("/flaresolverr/settings", flareSolverrH.Update)
 
-	// Per-source network routing (QCAT-283, Slice 1: DB-truth only). The owner
-	// defines reusable SOCKS / FlareSolverr endpoints and binds individual
-	// sources to them. This slice persists the NetworkEndpoint + SourceNetworkBinding
-	// tables and validates them; the engine push that makes a binding actually
-	// route traffic is a SEPARATE later slice — no engine client is wired here.
-	networkH := networkh.NewHandler(networksvc.NewService(client))
+	// Per-source network routing (QCAT-283 DB layer + QCAT-284 multi-instance
+	// routing). The owner defines reusable SOCKS / FlareSolverr endpoints and
+	// binds individual sources to them; this handler persists + validates the
+	// NetworkEndpoint + SourceNetworkBinding tables. onNetworkChange is the
+	// best-effort write-through that re-derives the engine-host routing profiles
+	// (enginetopo.ReconcileNetwork) after every mutation so a binding change
+	// takes effect promptly, not only on the next boot (nil = DB-truth only).
+	networkH := networkh.NewHandler(networksvc.NewService(client), onNetworkChange)
 	authed.GET("/network/endpoints", networkH.ListEndpoints)
 	authed.POST("/network/endpoints", networkH.CreateEndpoint)
 	authed.PATCH("/network/endpoints/:id", networkH.UpdateEndpoint)

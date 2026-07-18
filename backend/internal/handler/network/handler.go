@@ -10,15 +10,32 @@ import (
 )
 
 // Handler holds the dependencies for the network-routing HTTP handlers. All
-// business logic lives in network.Service; the handler is thin. This slice is
-// DB-truth only — no engine client is involved.
+// business logic lives in network.Service; the handler is thin.
+//
+// onChange is a best-effort write-through hook fired after every SUCCESSFUL
+// endpoint/binding mutation (create/update/delete an endpoint, set/clear a
+// binding). It re-derives the engine-host routing profiles so an owner's edit
+// takes effect promptly instead of only on the next boot (QCAT-284) — see
+// enginetopo.ReconcileNetwork. It is fire-and-forget (the closure detaches its
+// own goroutine) and nil-safe (tests and the DB-only deploy pass nil).
 type Handler struct {
-	svc *networksvc.Service
+	svc      *networksvc.Service
+	onChange func()
 }
 
-// NewHandler constructs a Handler bound to a network.Service.
-func NewHandler(svc *networksvc.Service) *Handler {
-	return &Handler{svc: svc}
+// NewHandler constructs a Handler bound to a network.Service. onChange may be nil
+// (no engine-routing write-through — DB-truth only).
+func NewHandler(svc *networksvc.Service, onChange func()) *Handler {
+	return &Handler{svc: svc, onChange: onChange}
+}
+
+// notifyChanged fires the write-through hook when one is wired. Best-effort: the
+// mutation has already succeeded, so a routing re-derive is a background
+// side-effect that must never affect the HTTP response.
+func (h *Handler) notifyChanged() {
+	if h.onChange != nil {
+		h.onChange()
+	}
 }
 
 // ListEndpoints handles GET /api/network/endpoints — every endpoint (passwords
@@ -43,6 +60,7 @@ func (h *Handler) CreateEndpoint(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+	h.notifyChanged()
 	return c.JSON(http.StatusCreated, out)
 }
 
@@ -62,6 +80,7 @@ func (h *Handler) UpdateEndpoint(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+	h.notifyChanged()
 	return c.JSON(http.StatusOK, out)
 }
 
@@ -76,6 +95,7 @@ func (h *Handler) DeleteEndpoint(c echo.Context) error {
 	if err := h.svc.DeleteEndpoint(c.Request().Context(), id); err != nil {
 		return mapServiceError(err)
 	}
+	h.notifyChanged()
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -109,6 +129,7 @@ func (h *Handler) SetBinding(c echo.Context) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+	h.notifyChanged()
 	return c.JSON(http.StatusOK, out)
 }
 
@@ -123,6 +144,7 @@ func (h *Handler) ClearBinding(c echo.Context) error {
 	if err := h.svc.ClearBinding(c.Request().Context(), sourceID); err != nil {
 		return mapServiceError(err)
 	}
+	h.notifyChanged()
 	return c.NoContent(http.StatusNoContent)
 }
 

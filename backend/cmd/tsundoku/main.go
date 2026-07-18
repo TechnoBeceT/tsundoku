@@ -39,6 +39,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
 	"github.com/technobecet/tsundoku/internal/download"
+	"github.com/technobecet/tsundoku/internal/engineroute"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -48,6 +49,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/metadata/providers"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
+	"github.com/technobecet/tsundoku/internal/network"
 	"github.com/technobecet/tsundoku/internal/notify"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/push"
@@ -234,8 +236,28 @@ func main() {
 	// (download/ingest/imports/refresh/warmup/cover/handlers) targets the
 	// engine-host client — internal/suwayomi no longer exists.
 	httpc := &http.Client{Timeout: cfg.Engine.HTTPTimeout}
-	engineClient := sourceengine.New(cfg.Engine.URL, httpc)
+	// Per-source network routing (QCAT-284, MULTI-INSTANCE): every consumer holds
+	// the Router — the ONE engine-client seam — not the raw client, so a bound
+	// source's RPC transparently egresses through its own profile's engine-host
+	// instance. defaultEngineClient stays the raw client for the DEFAULT instance
+	// (the entrypoint-managed engine-host at cfg.Engine.URL): it is the Router's
+	// fallback and the boot-reconcile target. With NO non-default bindings the
+	// Router delegates 100% to it — byte-for-byte the single-instance client.
+	defaultEngineClient := sourceengine.New(cfg.Engine.URL, httpc)
+	engineRouter := engineroute.NewRouter(defaultEngineClient)
+	// The per-profile engine-host launcher. Until the JVM-spawning launcher lands
+	// (the launcher/lifecycle slice) this is the conservative default-only
+	// launcher: a bound source degrades to the default instance (logged) rather
+	// than getting its own JVM, so routing is wired end-to-end and provably
+	// non-disruptive before the OS-heavy process launcher ships.
+	engineLauncher := engineroute.Launcher(engineroute.DisabledLauncher{})
+	engineClient := sourceengine.Client(engineRouter)
 	engineFetcher := sourceengine.NewFetcher(engineClient)
+
+	// Network-routing domain service (DB-truth: endpoints + bindings). Read by
+	// ReconcileNetwork to derive the profiles; a stateless second instance is
+	// safe (mirrors healthSvc), so the HTTP handler keeps constructing its own.
+	networkSvc := network.NewService(entClient)
 
 	// Shared extension-.apk byte cache (rooted under the engine runtime dir).
 	// Constructed ONCE here and handed to BOTH the boot-time engine-topology seed
@@ -304,15 +326,36 @@ func main() {
 	// itself lives outside internal/metadatasvc.
 	metaSvc = metaSvc.WithSourceCoverFetcher(sourceCoverAdapter{series: healthSvc, sw: engineClient})
 
+	// Per-source network-routing reconcile (QCAT-284): derive the distinct
+	// network profiles from the bindings, ensure + provision an engine-host
+	// instance per profile, and rebuild the Router's source→instance table. Its
+	// deps are gathered once here; netReconcile runs ONE pass (panic-safe,
+	// detached), used both on boot (after the default-instance reconcile) and as
+	// the network-mutation write-through. With no bindings it is a pure no-op.
+	netDeps := enginetopo.NetworkReconcileDeps{
+		Snapshot:   networkSvc,
+		Router:     engineRouter,
+		Launcher:   engineLauncher,
+		DB:         entClient,
+		Cache:      apkStore,
+		BaseConfig: settingsSvc,
+	}
+	netReconcile := func(rctx context.Context) { runNetworkReconcile(rctx, netDeps) }
+
 	// Start the download + refresh + extension-check + warm-up tickers. This
 	// also launches the one-shot engine-topology seed (BackfillProviderURLs →
 	// SeedExtensions → SeedSourcePreferences → SeedEngineConfig) in a detached
 	// background goroutine — see startEngine. The engine host itself is
 	// launched by the container entrypoint, not this process, so there is no
-	// process manager to start or stop here.
-	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore)
+	// process manager to start or stop here. netReconcile runs in that same
+	// boot goroutine, right after the default-instance reconcile.
+	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, netReconcile)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore)
+	// onNetworkChange fires netReconcile (detached) after any endpoint/binding
+	// mutation so an owner's routing edit takes effect promptly.
+	onNetworkChange := func() { go netReconcile(ctx) }
+
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore, onNetworkChange)
 
 	addr := ":" + cfg.Server.Port
 
@@ -433,6 +476,7 @@ func startEngine(
 	warmupSvc *warmup.Service,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
+	netReconcile func(context.Context),
 ) {
 	// Log the currently-resolved cadence (the loops re-read it each cycle, so
 	// these are the values in force right now, not a fixed schedule).
@@ -446,7 +490,7 @@ func startEngine(
 	runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 	runner.StartExtensionCheck(ctx, engineClient)
 	runner.StartWarmup(ctx, warmupSvc)
-	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc)
+	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, netReconcile)
 }
 
 // startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
@@ -489,9 +533,15 @@ func startEngineTopo(
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
 	settingsSvc *settings.Service,
+	netReconcile func(context.Context),
 ) {
 	go func() {
 		runEngineTopoReconcile(ctx, engineClient, entClient, apkStore, settingsSvc)
+		// Per-source network routing (QCAT-284) runs AFTER the default-instance
+		// reconcile so the global FlareSolverr/SOCKS config is pushed first; the
+		// per-profile instances then get their own config. With no non-default
+		// bindings this is a pure no-op (Router routes everything to the default).
+		netReconcile(ctx)
 		enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
 			Client:   engineClient,
 			DB:       entClient,
@@ -552,5 +602,41 @@ func runEngineTopoReconcile(
 	)
 	for _, gap := range res.Gaps {
 		slog.WarnContext(ctx, "enginetopo: reconcile gap", "err", gap)
+	}
+}
+
+// runNetworkReconcile runs ONE enginetopo.ReconcileNetwork pass (QCAT-284
+// per-source routing), mirroring runEngineTopoReconcile's safety contract:
+//   - PANIC-SAFE: a deferred recover turns any bug into a logged error, never a
+//     crashed process (it runs on a detached goroutine — boot and write-through).
+//   - LOGGED: the NetworkReconcileResult is logged at Info (profiles,
+//     instances_routed, sources_routed, gaps_count); each gap (an isolated
+//     per-profile launch/provision failure — that profile's sources degrade to
+//     the default instance) is ALSO logged at Warn so none is buried in a count.
+//
+// It is NOT reachability-gated: ReconcileNetwork degrades gracefully on its own
+// (an unreachable/absent instance surfaces as a per-profile gap, and with no
+// bindings the pass is a pure no-op), so a separate engine probe would add
+// nothing.
+func runNetworkReconcile(ctx context.Context, deps enginetopo.NetworkReconcileDeps) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.ErrorContext(ctx, "enginetopo: network reconcile panicked — recovered", "panic", r)
+		}
+	}()
+
+	res, err := enginetopo.ReconcileNetwork(ctx, deps)
+	if err != nil {
+		slog.ErrorContext(ctx, "enginetopo: network reconcile failed", "err", err)
+		return
+	}
+	slog.InfoContext(ctx, "enginetopo: network reconcile complete",
+		"profiles", res.Profiles,
+		"instances_routed", res.InstancesRouted,
+		"sources_routed", res.SourcesRouted,
+		"gaps_count", len(res.Gaps),
+	)
+	for _, gap := range res.Gaps {
+		slog.WarnContext(ctx, "enginetopo: network reconcile gap", "err", gap)
 	}
 }
