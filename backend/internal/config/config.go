@@ -385,6 +385,39 @@ type EngineConfig struct {
 	// default path is unchanged so an existing deploy's volume mount keeps
 	// working; only the env var name moved).
 	RuntimeDir string
+	// HostBin is the filesystem path to the engine-host launcher binary that the
+	// per-profile process launcher (internal/enginehost) spawns one JVM of per
+	// non-default network profile. Default "/app/engine-host/bin/tsundoku-engine-
+	// host" — the path the container image installs it at (see the Dockerfile).
+	// This is NOT used for the DEFAULT engine-host instance (the container
+	// entrypoint launches that one directly); it is only read when a source is
+	// bound to a non-default network profile and therefore needs its own
+	// instance. DELIBERATELY NOT fail-closed-validated: a deploy with no network
+	// bindings must boot even if this path does not exist locally (it is only
+	// dereferenced when a profile actually spawns, and a spawn failure degrades
+	// that profile to the default instance — the zero-disruption invariant). Set
+	// via TSUNDOKU_ENGINE_HOSTBIN.
+	HostBin string
+	// DataDir is the engine-host data-root the container entrypoint uses for the
+	// DEFAULT instance; the per-profile launcher puts each non-default instance's
+	// own data dir under "<DataDir>/profiles/<hash>". Default "/config/engine" —
+	// the SAME value TSUNDOKU_ENGINE_DATA carries for the entrypoint, so both the
+	// default instance and the launched profiles live on the one persistent
+	// volume. Bound to the SAME env var the entrypoint reads
+	// (TSUNDOKU_ENGINE_DATA) via the `koanf:"data"` tag, so there is exactly one
+	// data-root knob. Like HostBin, deliberately NOT fail-closed-validated (see
+	// its doc). Set via TSUNDOKU_ENGINE_DATA.
+	DataDir string `koanf:"data"`
+	// KCEFBundle is the path to the pre-downloaded KCEF (Chromium) runtime the
+	// image bakes in, which the per-profile launcher symlinks into each profile's
+	// "<dataDir>/bin/kcef" so a spawned instance needs no first-run Chromium
+	// download (mirroring what entrypoint.sh does for the default instance via
+	// ENGINE_KCEF_BUNDLE). Default "/app/kcef-runtime/bin/kcef". When it is blank
+	// or the path does not exist the launcher simply skips KCEF seeding (best-
+	// effort — a missing bundle degrades a WebView source, never the spawn). Like
+	// HostBin, deliberately NOT fail-closed-validated. Set via
+	// TSUNDOKU_ENGINE_KCEFBUNDLE.
+	KCEFBundle string
 }
 
 // ExtensionsConfig holds source-extension management settings.
@@ -454,6 +487,13 @@ func defaults() map[string]any {
 		"engine.httptimeout":   "3m",
 		"engine.searchtimeout": "85s",
 		"engine.runtimedir":    "/data/suwayomi",
+		// Engine — the per-profile process launcher (internal/enginehost). None of
+		// these three is fail-closed-validated: a deploy with no network bindings
+		// must boot even if the paths do not exist locally (they are only
+		// dereferenced when a source's non-default profile actually spawns).
+		"engine.hostbin":    "/app/engine-host/bin/tsundoku-engine-host",
+		"engine.data":       "/config/engine",
+		"engine.kcefbundle": "/app/kcef-runtime/bin/kcef",
 		// Extensions — source-extension management.
 		"extensions.retainedversions": 3,
 	}
@@ -544,6 +584,11 @@ func Load() (*Config, error) {
 //	TSUNDOKU_ENGINE_HTTPTIMEOUT             → engine.httptimeout
 //	TSUNDOKU_ENGINE_SEARCHTIMEOUT           → engine.searchtimeout
 //	TSUNDOKU_ENGINE_RUNTIMEDIR              → engine.runtimedir
+//	TSUNDOKU_ENGINE_HOSTBIN                 → engine.hostbin
+//	TSUNDOKU_ENGINE_DATA                    → engine.data (see the
+//	                                          `koanf:"data"` tag on
+//	                                          EngineConfig.DataDir)
+//	TSUNDOKU_ENGINE_KCEFBUNDLE              → engine.kcefbundle
 //
 // Convention: after stripping the prefix the first "_" separates the
 // top-level struct key from the field name; the remainder is kept as-is

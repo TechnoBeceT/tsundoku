@@ -128,6 +128,7 @@ ENV TSUNDOKU_STORAGE_FOLDER=/series \
     TSUNDOKU_ENGINE_PORT=7777 \
     TSUNDOKU_ENGINE_KCEF=true \
     ENGINE_KCEF_BUNDLE=/app/kcef-runtime/bin/kcef \
+    TSUNDOKU_ENGINE_KCEFBUNDLE=/app/kcef-runtime/bin/kcef \
     TSUNDOKU_ENGINE_URL=http://localhost:7777 \
     TSUNDOKU_ENGINE_RUNTIMEDIR=/config/engine-cache
 

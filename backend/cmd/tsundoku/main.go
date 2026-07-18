@@ -35,10 +35,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/labstack/echo/v4"
+
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
 	"github.com/technobecet/tsundoku/internal/download"
+	"github.com/technobecet/tsundoku/internal/enginehost"
 	"github.com/technobecet/tsundoku/internal/engineroute"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
@@ -245,12 +248,22 @@ func main() {
 	// Router delegates 100% to it — byte-for-byte the single-instance client.
 	defaultEngineClient := sourceengine.New(cfg.Engine.URL, httpc)
 	engineRouter := engineroute.NewRouter(defaultEngineClient)
-	// The per-profile engine-host launcher. Until the JVM-spawning launcher lands
-	// (the launcher/lifecycle slice) this is the conservative default-only
-	// launcher: a bound source degrades to the default instance (logged) rather
-	// than getting its own JVM, so routing is wired end-to-end and provably
-	// non-disruptive before the OS-heavy process launcher ships.
-	engineLauncher := engineroute.Launcher(engineroute.DisabledLauncher{})
+	// The per-profile engine-host launcher: spawns one engine-host JVM per
+	// non-default network profile (its own port + data dir under
+	// cfg.Engine.DataDir), each reusing the same global SOCKS+FlareSolverr
+	// mechanism. With NO non-default bindings it spawns nothing (ReconcileNetwork
+	// calls it zero times) — byte-for-byte the single-instance deployment. Its
+	// ClientFactory reuses the shared httpc so an instance's client is built
+	// exactly like the default one. Close() is wired into the shutdown path below.
+	engineHostLauncher := enginehost.New(
+		enginehost.EngineHostLauncherConfig{
+			HostBin:    cfg.Engine.HostBin,
+			DataDir:    cfg.Engine.DataDir,
+			KCEFBundle: cfg.Engine.KCEFBundle,
+		},
+		func(u string) sourceengine.Client { return sourceengine.New(u, httpc) },
+	)
+	engineLauncher := engineroute.Launcher(engineHostLauncher)
 	engineClient := sourceengine.Client(engineRouter)
 	engineFetcher := sourceengine.NewFetcher(engineClient)
 
@@ -371,11 +384,22 @@ func main() {
 	// Block until a shutdown signal arrives.
 	<-ctx.Done()
 	log.Println("tsundoku: shutdown signal received — draining requests")
+	gracefulShutdown(e, engineHostLauncher)
+}
 
+// gracefulShutdown drains in-flight HTTP requests (bounded by shutdownTimeout)
+// and then stops every per-profile engine-host JVM the launcher spawned (a no-op
+// when no non-default profile was ever brought up; the default instance is owned
+// by the container entrypoint, not this launcher). Extracted from main so main's
+// cyclomatic complexity stays within the cyclop budget.
+func gracefulShutdown(e *echo.Echo, engineHostLauncher *enginehost.Launcher) {
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := e.Shutdown(shutCtx); err != nil {
 		log.Printf("tsundoku: graceful shutdown: %v", err)
+	}
+	if err := engineHostLauncher.Close(); err != nil {
+		log.Printf("tsundoku: engine-host launcher close: %v", err)
 	}
 }
 

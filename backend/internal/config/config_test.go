@@ -523,6 +523,69 @@ func TestEngineRuntimeDirEnvOverride(t *testing.T) {
 	}
 }
 
+// TestEngineHostLauncherDefaults confirms the per-profile process-launcher keys
+// (HostBin/DataDir/KCEFBundle) apply their non-empty defaults when unset. The
+// exact paths mirror the container image layout (see the Dockerfile).
+func TestEngineHostLauncherDefaults(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Engine.HostBin != "/app/engine-host/bin/tsundoku-engine-host" {
+		t.Errorf("Engine.HostBin default = %q", cfg.Engine.HostBin)
+	}
+	if cfg.Engine.DataDir != "/config/engine" {
+		t.Errorf("Engine.DataDir default = %q, want /config/engine", cfg.Engine.DataDir)
+	}
+	if cfg.Engine.KCEFBundle != "/app/kcef-runtime/bin/kcef" {
+		t.Errorf("Engine.KCEFBundle default = %q", cfg.Engine.KCEFBundle)
+	}
+}
+
+// TestEngineHostLauncherEnvOverride confirms each launcher key is overridable —
+// in particular that DataDir binds to TSUNDOKU_ENGINE_DATA (the SAME env var the
+// entrypoint reads), via the `koanf:"data"` tag.
+func TestEngineHostLauncherEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_ENGINE_HOSTBIN", "/opt/host")
+	t.Setenv("TSUNDOKU_ENGINE_DATA", "/mnt/engine")
+	t.Setenv("TSUNDOKU_ENGINE_KCEFBUNDLE", "/opt/kcef")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Engine.HostBin != "/opt/host" {
+		t.Errorf("Engine.HostBin = %q, want /opt/host", cfg.Engine.HostBin)
+	}
+	if cfg.Engine.DataDir != "/mnt/engine" {
+		t.Errorf("Engine.DataDir = %q, want /mnt/engine (TSUNDOKU_ENGINE_DATA)", cfg.Engine.DataDir)
+	}
+	if cfg.Engine.KCEFBundle != "/opt/kcef" {
+		t.Errorf("Engine.KCEFBundle = %q, want /opt/kcef", cfg.Engine.KCEFBundle)
+	}
+}
+
+// TestEngineHostLauncherKeysNotFailClosed confirms the three launcher paths are
+// NOT validated at startup — a deploy with no network bindings must boot even if
+// they point at nonexistent paths (they are only dereferenced on an actual
+// profile spawn, which degrades to the default instance on failure).
+func TestEngineHostLauncherKeysNotFailClosed(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_ENGINE_HOSTBIN", "/no/such/binary")
+	t.Setenv("TSUNDOKU_ENGINE_DATA", "/no/such/dir")
+	t.Setenv("TSUNDOKU_ENGINE_KCEFBUNDLE", "/no/such/bundle")
+
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("load must not fail closed on nonexistent launcher paths: %v", err)
+	}
+}
+
 // TestJobsDownloadConcurrencyDefault confirms the per-source download
 // concurrency defaults to 5 (Kaizoku parity).
 func TestJobsDownloadConcurrencyDefault(t *testing.T) {
