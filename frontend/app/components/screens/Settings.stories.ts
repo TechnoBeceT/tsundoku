@@ -9,8 +9,11 @@ import {
   flareSolverrConfig,
   installedExtensions,
   librarySettings,
+  networkEndpoints,
+  networkSources,
   repos,
   settingsCategories,
+  sourceBindings,
   sourcesSettings,
   systemInfo,
   upgradeStepsInProgress,
@@ -38,6 +41,9 @@ const baseProps = {
   repos,
   extCheckInterval,
   sourcesSettings,
+  networkEndpoints,
+  networkSources,
+  networkBindings: sourceBindings,
 }
 
 const meta = {
@@ -103,6 +109,11 @@ export const Extensions: Story = {
 /** Sources pane — warm-up/circuit-breaker knobs stacked above search metrics. */
 export const Sources: Story = {
   render: () => withPane('sources'),
+}
+
+/** Network pane — per-source SOCKS/FlareSolverr routing (endpoints + assignment). */
+export const Network: Story = {
+  render: () => withPane('network'),
 }
 
 /**

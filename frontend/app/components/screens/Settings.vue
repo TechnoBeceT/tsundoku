@@ -7,14 +7,19 @@ import SuwayomiPane from '../settings/SuwayomiPane.vue'
 import ExtensionsPane from '../settings/ExtensionsPane.vue'
 import SourceMetricsPane from '../settings/SourceMetricsPane.vue'
 import SourcesSettingsPane from '../settings/SourcesSettingsPane.vue'
+import NetworkPane from '../settings/NetworkPane.vue'
 import TrackersPane from '../settings/TrackersPane.vue'
 import NotificationsPane from '../settings/NotificationsPane.vue'
 import type {
   DurationValue,
   EngineInfo,
   Extension,
+  FlareMode,
   FlareSolverrConfig,
   LibrarySettings,
+  NetworkEndpoint,
+  NetworkEndpointInput,
+  NetworkSource,
   NotificationPermissionState,
   Repo,
   ReorderDirection,
@@ -22,6 +27,7 @@ import type {
   SaveState,
   SettingsCategory,
   SettingsPane,
+  SourceBinding,
   SourceMetric,
   SourcesSettings,
   SystemInfo,
@@ -46,6 +52,9 @@ import type {
  *                   the library-wide dedup-sweep trigger)
  *                   + SourceMetricsPane (per-source search metrics + Warm now),
  *                   stacked — mirrors how LibraryPane stacks its own two cards
+ *   - network     → NetworkPane      (per-source SOCKS/FlareSolverr routing:
+ *                   the reusable-endpoint manager + the per-source assignment
+ *                   table, two stacked cards, QCAT-283)
  *   - trackers    → TrackersPane (connect/disconnect AniList/MAL/Kitsu/
  *                   MangaUpdates + the Phase 4 auto-update-track toggle;
  *                   per-series bind + the tracking-sheet edit live on Series
@@ -152,6 +161,24 @@ withDefaults(defineProps<{
   notifGlobalBusy?: boolean
   /** A global notifications toggle save failure, surfaced inline. */
   notifGlobalError?: string | null
+  /** The defined network-egress endpoints (2h, Network pane). */
+  networkEndpoints?: NetworkEndpoint[]
+  /** §16 state of the endpoint save/delete mutation (busy row + error). */
+  networkEndpointAction?: RowActionState
+  /** Whether the endpoint list is loading (pane-owned, out of the global gate). */
+  networkEndpointsPending?: boolean
+  /** An endpoint-list load failure, surfaced inline. */
+  networkEndpointsError?: string | null
+  /** The engine sources shown in the per-source assignment table. */
+  networkSources?: NetworkSource[]
+  /** The per-source bindings (a source absent here uses the global default). */
+  networkBindings?: SourceBinding[]
+  /** §16 state of the binding set/clear mutation (busy source + error). */
+  networkBindingAction?: RowActionState
+  /** Whether the sources/bindings are loading (pane-owned, out of the global gate). */
+  networkBindingsPending?: boolean
+  /** A sources/bindings load failure, surfaced inline. */
+  networkBindingsError?: string | null
   /** When true, the whole screen renders as skeletons. */
   loading?: boolean
 }>(), {
@@ -190,6 +217,15 @@ withDefaults(defineProps<{
   notifError: null,
   notifGlobalBusy: false,
   notifGlobalError: null,
+  networkEndpoints: () => [],
+  networkEndpointAction: () => ({ busyId: null }),
+  networkEndpointsPending: false,
+  networkEndpointsError: null,
+  networkSources: () => [],
+  networkBindings: () => [],
+  networkBindingAction: () => ({ busyId: null }),
+  networkBindingsPending: false,
+  networkBindingsError: null,
   loading: false,
 })
 
@@ -254,6 +290,16 @@ const emit = defineEmits<{
   'disable-notifications': []
   /** The global notifications toggle was flipped — carries the new value. */
   'set-notifications-global': [value: boolean]
+  /** Create or update a network endpoint (id=null = create). */
+  'save-endpoint': [input: NetworkEndpointInput]
+  /** Remove a network endpoint by id. */
+  'remove-endpoint': [id: string]
+  /** Dismiss the lingering endpoint-action error banner. */
+  'dismiss-endpoint-error': []
+  /** Set (upsert) a source's binding — carries the full merged binding. */
+  'set-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }]
+  /** Clear a source's binding (revert to global default). */
+  'clear-binding': [sourceId: string]
 }>()
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
@@ -351,6 +397,24 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             @reset-breaker="emit('reset-breaker', $event)"
           />
         </div>
+
+        <NetworkPane
+          v-else-if="activePane === 'network'"
+          :endpoints="networkEndpoints"
+          :endpoint-action="networkEndpointAction"
+          :endpoints-pending="networkEndpointsPending"
+          :endpoints-error="networkEndpointsError"
+          :sources="networkSources"
+          :bindings="networkBindings"
+          :binding-action="networkBindingAction"
+          :bindings-pending="networkBindingsPending"
+          :bindings-error="networkBindingsError"
+          @save-endpoint="emit('save-endpoint', $event)"
+          @remove-endpoint="emit('remove-endpoint', $event)"
+          @dismiss-endpoint-error="emit('dismiss-endpoint-error')"
+          @set-binding="emit('set-binding', $event)"
+          @clear-binding="emit('clear-binding', $event)"
+        />
 
         <TrackersPane
           v-else-if="activePane === 'trackers'"

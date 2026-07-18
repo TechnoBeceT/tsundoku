@@ -15,8 +15,11 @@ import type {
   Extension,
   FlareSolverrConfig,
   LibrarySettings,
+  NetworkEndpoint,
+  NetworkSource,
   Repo,
   SettingsCategory,
+  SourceBinding,
   SourceMetric,
   SourcesSettings,
   SystemInfo,
@@ -255,4 +258,61 @@ export const trackers: TrackerStatus[] = [
   { id: 1, name: 'MyAnimeList', needsOAuth: true, isLoggedIn: false, isTokenExpired: false, username: '', supportsPrivate: false },
   { id: 3, name: 'Kitsu', needsOAuth: false, isLoggedIn: false, isTokenExpired: false, username: '', supportsPrivate: true },
   { id: 7, name: 'MangaUpdates', needsOAuth: false, isLoggedIn: false, isTokenExpired: false, username: '', supportsPrivate: false },
+]
+
+/* ---- 2h. Network routing (per-source SOCKS + FlareSolverr) ----------------- */
+
+/** Two reusable egress endpoints — a VPN SOCKS proxy + a VPN FlareSolverr. */
+export const networkEndpoints: NetworkEndpoint[] = [
+  {
+    id: 'ep-vpn-socks',
+    name: 'VPN SOCKS',
+    kind: 'socks',
+    enabled: true,
+    host: '10.0.1.9',
+    port: 1080,
+    socksVersion: 5,
+    username: 'tsundoku',
+    url: '',
+    fsProxy: '',
+    session: '',
+    sessionTtl: 0,
+    timeout: 0,
+  },
+  {
+    id: 'ep-vpn-flare',
+    name: 'VPN FlareSolverr',
+    kind: 'flaresolverr',
+    enabled: true,
+    host: '',
+    port: 0,
+    socksVersion: 5,
+    username: '',
+    url: 'http://flaresolverr-vpn:8191',
+    fsProxy: 'socks5://10.0.1.9:1080',
+    session: 'omega',
+    sessionTtl: 15,
+    timeout: 60,
+  },
+]
+
+/** The engine sources shown in the assignment table. */
+export const networkSources: NetworkSource[] = [
+  { id: '1998416842837112832', name: 'Asura Scans', lang: 'en' },
+  { id: '2035199668263834297', name: 'The Blank', lang: 'en' },
+  { id: '9127482910938471028', name: 'Omega Scans', lang: 'en' },
+]
+
+/**
+ * One explicit binding: Omega Scans routes through both VPN endpoints. The other
+ * two sources have no binding → they use the global default (shown by the row's
+ * "Global default" tag + default select options).
+ */
+export const sourceBindings: SourceBinding[] = [
+  {
+    sourceId: '9127482910938471028',
+    socksEndpointId: 'ep-vpn-socks',
+    flareMode: 'endpoint',
+    flareEndpointId: 'ep-vpn-flare',
+  },
 ]

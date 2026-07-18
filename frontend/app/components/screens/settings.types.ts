@@ -10,8 +10,8 @@
  * this `.ts` (never exported from a `.vue`) so stories + fixtures import freely.
  */
 
-/** The seven settings panes, selected from the sticky sidebar nav. */
-export type SettingsPane = 'library' | 'categories' | 'engine' | 'serverConfig' | 'extensions' | 'sources' | 'trackers' | 'notifications'
+/** The settings panes, selected from the sticky sidebar nav. */
+export type SettingsPane = 'library' | 'categories' | 'engine' | 'serverConfig' | 'extensions' | 'sources' | 'network' | 'trackers' | 'notifications'
 
 /** NotificationPermission is this device's honest Web Push status (Notifications pane). */
 export type NotificationPermissionState = 'unsupported' | 'blocked' | 'granted' | 'default'
@@ -366,4 +366,123 @@ export interface TrackerActionState {
   busyId?: number | null
   /** A human-readable failure surfaced inline; empty/absent when none. */
   error?: string
+}
+
+/* ---- 2h. Network routing (per-source SOCKS + FlareSolverr) ----------------- */
+
+/** Which field-group a network endpoint carries (drives the editor's form). */
+export type NetworkEndpointKind = 'socks' | 'flaresolverr'
+
+/**
+ * FlareMode — a source's FlareSolverr routing scope: `none` (never solve),
+ * `global` (the shared global FlareSolverr), or `endpoint` (a specific bound
+ * FlareSolverr endpoint — pairs with a non-null `flareEndpointId`).
+ */
+export type FlareMode = 'none' | 'global' | 'endpoint'
+
+/**
+ * NetworkEndpoint — one named, reusable egress endpoint (Network pane). Screen
+ * mirror of the backend `NetworkEndpoint` DTO. `kind` selects which field-group
+ * is meaningful: the SOCKS group (host/port/socksVersion/username) for `socks`,
+ * or the FlareSolverr group (url/fsProxy/session/sessionTtl/timeout) for
+ * `flaresolverr`. The SOCKS password is WRITE-ONLY — the backend never returns
+ * it, so this screen type carries no password field (the editor sends a new one
+ * via `NetworkEndpointInput` only when the owner types it).
+ */
+export interface NetworkEndpoint {
+  /** Endpoint UUID (the mutation target + row key). */
+  id: string
+  /** Owner-facing label. */
+  name: string
+  /** Which field-group applies. */
+  kind: NetworkEndpointKind
+  /** Whether a binding to this endpoint takes effect. */
+  enabled: boolean
+  /** SOCKS proxy host (kind=socks). */
+  host: string
+  /** SOCKS proxy port (kind=socks). */
+  port: number
+  /** SOCKS protocol version, 4 or 5 (kind=socks). */
+  socksVersion: number
+  /** Optional SOCKS auth username (kind=socks). */
+  username: string
+  /** FlareSolverr endpoint URL (kind=flaresolverr). */
+  url: string
+  /** Upstream proxy the FlareSolverr solve egresses through (kind=flaresolverr). */
+  fsProxy: string
+  /** FlareSolverr session identifier (kind=flaresolverr). */
+  session: string
+  /** FlareSolverr session TTL in minutes (kind=flaresolverr). */
+  sessionTtl: number
+  /** FlareSolverr per-request solve timeout in seconds (kind=flaresolverr). */
+  timeout: number
+}
+
+/**
+ * NetworkEndpointInput — the create/update payload the endpoint dialog emits.
+ * `id` is null for a create and the endpoint id for an update. `password` is
+ * WRITE-ONLY and optional: send it only when the owner typed a new one; leave it
+ * blank/omitted to keep the stored password (update) or none (create).
+ */
+export interface NetworkEndpointInput {
+  /** Null = create; an endpoint id = update. */
+  id: string | null
+  /** Owner-facing label. */
+  name: string
+  /** Which field-group the endpoint carries. */
+  kind: NetworkEndpointKind
+  /** Whether a binding to this endpoint takes effect. */
+  enabled: boolean
+  /** SOCKS proxy host (kind=socks). */
+  host: string
+  /** SOCKS proxy port (kind=socks). */
+  port: number
+  /** SOCKS protocol version, 4 or 5 (kind=socks). */
+  socksVersion: number
+  /** Optional SOCKS auth username (kind=socks). */
+  username: string
+  /** New SOCKS auth password (write-only); blank/omitted keeps the stored one. */
+  password?: string
+  /** FlareSolverr endpoint URL (kind=flaresolverr). */
+  url: string
+  /** Upstream proxy the FlareSolverr solve egresses through (kind=flaresolverr). */
+  fsProxy: string
+  /** FlareSolverr session identifier (kind=flaresolverr). */
+  session: string
+  /** FlareSolverr session TTL in minutes (kind=flaresolverr). */
+  sessionTtl: number
+  /** FlareSolverr per-request solve timeout in seconds (kind=flaresolverr). */
+  timeout: number
+}
+
+/**
+ * SourceBinding — one source's network-routing assignment (Network pane
+ * assignment table). Screen mirror of the backend `SourceNetworkBinding` DTO;
+ * the two nullable endpoint ids normalise absent → null (mapper parity with the
+ * other composables). A source WITHOUT a binding is not represented here at all —
+ * its absence means "use the global default".
+ */
+export interface SourceBinding {
+  /** The engine-host source id (stringified decimal int64) — the row key. */
+  sourceId: string
+  /** The bound SOCKS endpoint, or null for the direct/global SOCKS default. */
+  socksEndpointId: string | null
+  /** FlareSolverr routing scope for the source. */
+  flareMode: FlareMode
+  /** The bound FlareSolverr endpoint; non-null iff flareMode=endpoint. */
+  flareEndpointId: string | null
+}
+
+/**
+ * NetworkSource — one engine source shown as a row in the assignment table
+ * (`GET /api/sources`). Only the id/name/lang are needed to render + address a
+ * binding row.
+ */
+export interface NetworkSource {
+  /** Engine-host source id (stringified decimal int64) — the binding target. */
+  id: string
+  /** Human-readable source name. */
+  name: string
+  /** BCP-47 content language tag (e.g. "en", "ko"). */
+  lang: string
 }

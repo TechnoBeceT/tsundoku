@@ -24,6 +24,10 @@
  *                           (library-wide duplicate-source dedup sweep)
  *   useTrackers()         → trackers + trackerAction (busyId/error) + misconfigured
  *                           + connect/loginCredentials/logout (Trackers pane)
+ *   useNetworkEndpoints() → networkEndpoints + endpointAction + saveEndpoint/
+ *                           removeEndpoint (Network pane, endpoints card)
+ *   useSourceNetworkBindings() → networkSources + networkBindings + bindingAction
+ *                           + setBinding/clearBinding (Network pane, assignment table)
  *
  * Prop wiring:
  *   :active-pane          — local activePane ref (default 'library')
@@ -113,7 +117,7 @@
  * state to keep in sync). The query is stripped via `router.replace` so a page
  * refresh never replays the flash.
  */
-import type { EngineInfo, SettingsPane } from '~/components/screens/settings.types'
+import type { EngineInfo, FlareMode, SettingsPane } from '~/components/screens/settings.types'
 import { stashPendingTrackerId } from '~/utils/trackerCallback'
 
 const {
@@ -219,6 +223,32 @@ const {
   disable: disableNotifications,
   setGlobal: setNotificationsGlobal,
 } = useNotifications()
+
+const {
+  endpoints: networkEndpoints,
+  pending: networkEndpointsPending,
+  error: networkEndpointsError,
+  endpointAction: networkEndpointAction,
+  saveEndpoint,
+  removeEndpoint,
+  clearActionError: clearEndpointActionError,
+} = useNetworkEndpoints()
+
+const {
+  sources: networkSources,
+  bindings: networkBindings,
+  pending: networkBindingsPending,
+  error: networkBindingsError,
+  bindingAction: networkBindingAction,
+  setBinding,
+  clearBinding,
+} = useSourceNetworkBindings()
+
+/** Unpack the row's full merged binding payload and PUT it for the source. */
+function onSetBinding(payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }): void {
+  const { sourceId, ...update } = payload
+  void setBinding(sourceId, update)
+}
 
 /** { busyId, error } shape TrackersPane expects, derived from useTrackers' own refs. */
 const trackerAction = computed(() => ({ busyId: trackerBusyId.value, error: trackerActionError.value ?? undefined }))
@@ -354,6 +384,15 @@ const loading = computed(
       :notif-error="notifError"
       :notif-global-busy="notifGlobalBusy"
       :notif-global-error="notifGlobalError"
+      :network-endpoints="networkEndpoints"
+      :network-endpoint-action="networkEndpointAction"
+      :network-endpoints-pending="networkEndpointsPending"
+      :network-endpoints-error="networkEndpointsError"
+      :network-sources="networkSources"
+      :network-bindings="networkBindings"
+      :network-binding-action="networkBindingAction"
+      :network-bindings-pending="networkBindingsPending"
+      :network-bindings-error="networkBindingsError"
       :loading="loading"
       @set-pane="setPane"
       @save-library="saveLibrary"
@@ -385,6 +424,11 @@ const loading = computed(
       @enable-notifications="enableNotifications"
       @disable-notifications="disableNotifications"
       @set-notifications-global="setNotificationsGlobal"
+      @save-endpoint="saveEndpoint"
+      @remove-endpoint="removeEndpoint"
+      @dismiss-endpoint-error="clearEndpointActionError"
+      @set-binding="onSetBinding"
+      @clear-binding="clearBinding"
     />
   </div>
 </template>
