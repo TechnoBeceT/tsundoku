@@ -20,9 +20,9 @@ type execStarter struct {
 // Start spawns the engine-host binary and returns a handle to it. The single
 // reaper goroutine calls Wait exactly once and closes the done channel, so the
 // process never zombies.
-func (s execStarter) Start(port int, dataDir string) (RunningProcess, error) {
+func (s execStarter) Start(port int, dataDir string, disableKCEF bool) (RunningProcess, error) {
 	cmd := exec.Command(s.hostBin) //nolint:gosec // hostBin is operator config, not user input
-	cmd.Env = buildHostEnv(os.Environ(), port, dataDir)
+	cmd.Env = buildHostEnv(os.Environ(), port, dataDir, disableKCEF)
 	// Inherit stdio so the JVM's logs are visible alongside the Go server's (the
 	// entrypoint does the same for the default instance).
 	cmd.Stdout = os.Stdout
@@ -41,17 +41,24 @@ func (s execStarter) Start(port int, dataDir string) (RunningProcess, error) {
 }
 
 // buildHostEnv appends the per-instance TSUNDOKU_ENGINE_PORT + TSUNDOKU_ENGINE_DATA
-// overrides onto a copy of base. Later entries win in exec's env, so these
-// override any inherited value — a launched profile MUST NOT share the default
-// instance's port (7777) or data dir. Extracted as a pure helper so the env shape
-// is unit-testable without spawning a process.
-func buildHostEnv(base []string, port int, dataDir string) []string {
-	env := make([]string, 0, len(base)+2)
+// overrides onto a copy of base — and, when disableKCEF is set, an explicit
+// TSUNDOKU_ENGINE_KCEF=false. Later entries win in exec's env, so these override
+// any inherited value — a launched profile MUST NOT share the default instance's
+// port (7777) or data dir, and a FlareSolverr-backed profile must NOT inherit the
+// default's TSUNDOKU_ENGINE_KCEF=true (see the ProcessStarter contract + GAP-094).
+// The engine-host only enables KCEF when the value equals "true" (Main.kt), so
+// "false" reliably disables it. Extracted as a pure helper so the env shape is
+// unit-testable without spawning a process.
+func buildHostEnv(base []string, port int, dataDir string, disableKCEF bool) []string {
+	env := make([]string, 0, len(base)+3)
 	env = append(env, base...)
 	env = append(env,
 		fmt.Sprintf("TSUNDOKU_ENGINE_PORT=%d", port),
 		"TSUNDOKU_ENGINE_DATA="+dataDir,
 	)
+	if disableKCEF {
+		env = append(env, "TSUNDOKU_ENGINE_KCEF=false")
+	}
 	return env
 }
 

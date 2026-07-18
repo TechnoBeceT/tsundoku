@@ -46,7 +46,14 @@ import "os"
 type ProcessStarter interface {
 	// Start launches the process. A non-nil error means nothing was spawned (the
 	// caller does not need to clean anything up).
-	Start(port int, dataDir string) (RunningProcess, error)
+	//
+	// disableKCEF forces TSUNDOKU_ENGINE_KCEF=false for this instance, overriding
+	// the inherited default. A profile that solves Cloudflare through its own
+	// FlareSolverr endpoint does NOT need the embedded Chromium (KCEF) WebView, so
+	// it is spawned with KCEF off — every KCEF instance starts its own Chromium
+	// against the shared Xvfb, and 3+ concurrent Chromiums in one container crash
+	// each other (GAP-094). Off ⇒ no Chromium ⇒ no contention.
+	Start(port int, dataDir string, disableKCEF bool) (RunningProcess, error)
 }
 
 // RunningProcess is a handle to a spawned engine-host process. The launcher uses

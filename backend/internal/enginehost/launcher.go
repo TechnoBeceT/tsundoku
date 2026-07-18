@@ -72,6 +72,7 @@ type Launcher struct {
 	// Tunables (production defaults set by New; overridden in tests).
 	startTimeout time.Duration // how long a spawn waits for the first healthy /health
 	pollInterval time.Duration // gap between health polls during a spawn
+	settleDelay  time.Duration // post-healthy re-probe delay (catches healthy-then-dead; 0 disables)
 	stopGrace    time.Duration // SIGTERM→SIGKILL grace on stop
 
 	mu        sync.Mutex
@@ -88,6 +89,10 @@ var _ engineroute.Launcher = (*Launcher)(nil)
 const (
 	defaultStartTimeout = 60 * time.Second
 	defaultPollInterval = 500 * time.Millisecond
+	// defaultSettleDelay is the post-healthy re-probe window: long enough for a
+	// crash-after-health (e.g. a failed Chromium init — GAP-094) to manifest,
+	// short enough to add negligible latency to a rare profile spawn.
+	defaultSettleDelay  = 1 * time.Second
 	defaultStopGrace    = 5 * time.Second
 	defaultProbeTimeout = 5 * time.Second
 )
@@ -106,6 +111,7 @@ func New(cfg EngineHostLauncherConfig, factory engineroute.ClientFactory, opts .
 		allocPort:    allocFreePort,
 		startTimeout: defaultStartTimeout,
 		pollInterval: defaultPollInterval,
+		settleDelay:  defaultSettleDelay,
 		stopGrace:    defaultStopGrace,
 		instances:    map[string]*managedInstance{},
 	}

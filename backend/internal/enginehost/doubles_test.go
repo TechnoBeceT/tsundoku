@@ -72,8 +72,9 @@ func (p *fakeProcess) wasSignalled() bool {
 
 // startCall records one ProcessStarter.Start invocation.
 type startCall struct {
-	port    int
-	dataDir string
+	port        int
+	dataDir     string
+	disableKCEF bool
 }
 
 // fakeStarter is an in-memory ProcessStarter recording every Start and handing
@@ -88,13 +89,13 @@ type fakeStarter struct {
 	procs []*fakeProcess
 }
 
-func (s *fakeStarter) Start(port int, dataDir string) (enginehost.RunningProcess, error) {
+func (s *fakeStarter) Start(port int, dataDir string, disableKCEF bool) (enginehost.RunningProcess, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return nil, s.err
 	}
-	s.calls = append(s.calls, startCall{port: port, dataDir: dataDir})
+	s.calls = append(s.calls, startCall{port: port, dataDir: dataDir, disableKCEF: disableKCEF})
 	p := newFakeProcess(len(s.procs)+1, s.closeOnSignal)
 	s.procs = append(s.procs, p)
 	return p, nil

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/enginehost"
+	"github.com/technobecet/tsundoku/internal/engineroute"
 )
 
 // newTestLauncher builds a Launcher with the given fakes and short timers so the
@@ -29,6 +30,10 @@ func newTestLauncher(t *testing.T, cfg enginehost.EngineHostLauncherConfig, star
 		enginehost.WithPortAllocator(fixedPortAllocator(41001)),
 		enginehost.WithStartTimeout(50 * time.Millisecond),
 		enginehost.WithPollInterval(2 * time.Millisecond),
+		// Default the settle recheck OFF so a test's scripted prober sequence maps
+		// 1:1 to poll calls; the settle-specific tests re-enable it with an
+		// explicit WithSettleDelay (opts win, applied after base).
+		enginehost.WithSettleDelay(0),
 		enginehost.WithStopGrace(20 * time.Millisecond),
 	}
 	l := enginehost.New(cfg, rf.factory(), append(base, opts...)...)
@@ -369,5 +374,96 @@ func TestStopInstance_KillEscalation(t *testing.T) {
 
 	if !starter.proc(0).wasKilled() {
 		t.Error("SIGTERM-ignoring process was not SIGKILLed after the grace period")
+	}
+}
+
+// TestSpawn_EndpointProfileDisablesKCEF proves a profile that solves Cloudflare
+// through its OWN FlareSolverr endpoint is spawned with KCEF off — the GAP-094
+// fix that stops each extra profile JVM from starting a Chromium against the one
+// shared Xvfb (3+ concurrent Chromiums crash each other in a container).
+func TestSpawn_EndpointProfileDisablesKCEF(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
+
+	p := engineroute.Profile{Key: "socks-1|endpoint|flare-1", FlareMode: engineroute.FlareModeEndpoint}
+	if _, err := l.EnsureProfile(context.Background(), p); err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+	if got := starter.lastCall(); !got.disableKCEF {
+		t.Error("endpoint-mode profile was spawned with KCEF enabled, want disabled")
+	}
+}
+
+// TestSpawn_NonEndpointProfileKeepsKCEF proves a profile WITHOUT its own
+// FlareSolverr (global/none flare mode) keeps KCEF: it may still need the embedded
+// WebView to solve a challenge itself, so the GAP-094 fix must not strip it.
+func TestSpawn_NonEndpointProfileKeepsKCEF(t *testing.T) {
+	for _, mode := range []string{engineroute.FlareModeGlobal, engineroute.FlareModeNone} {
+		t.Run(mode, func(t *testing.T) {
+			starter := &fakeStarter{closeOnSignal: true}
+			l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
+
+			p := engineroute.Profile{Key: "socks-1|" + mode + "|", FlareMode: mode}
+			if _, err := l.EnsureProfile(context.Background(), p); err != nil {
+				t.Fatalf("EnsureProfile: %v", err)
+			}
+			if got := starter.lastCall(); got.disableKCEF {
+				t.Errorf("%s-mode profile was spawned with KCEF disabled, want enabled", mode)
+			}
+		})
+	}
+}
+
+// TestAwaitReady_SettleCatchesHealthyThenDead proves the settle recheck catches a
+// JVM that passes /health and then dies during the settle window — the exact
+// GAP-094 failure mode. The spawn errors so ReconcileNetwork degrades the profile
+// cleanly, instead of returning a live instance that EOFs on the first RPC.
+func TestAwaitReady_SettleCatchesHealthyThenDead(t *testing.T) {
+	starter := &fakeStarter{}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithSettleDelay(200*time.Millisecond))
+
+	// Kill the process during the settle window (after it was created + reported
+	// healthy) so settle observes the death.
+	go func() {
+		for starter.callCount() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		starter.proc(0).exit()
+	}()
+
+	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err == nil {
+		t.Fatal("EnsureProfile succeeded, want a healthy-then-dead settle error")
+	}
+}
+
+// TestAwaitReady_SettleRecheckCatchesUnhealthy proves a JVM that is healthy on the
+// first poll but fails the post-settle re-probe is treated as not-ready (a spawn
+// error → degrade), not handed back.
+func TestAwaitReady_SettleRecheckCatchesUnhealthy(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	// Healthy on the first poll, unhealthy on the settle re-probe.
+	prober := sequenceProber(nil, errors.New("wedged after settle"))
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
+		enginehost.WithSettleDelay(2*time.Millisecond))
+
+	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err == nil {
+		t.Fatal("EnsureProfile succeeded, want a settle re-probe unhealthy error")
+	}
+}
+
+// TestAwaitReady_SettlePassesWhenStable proves a genuinely stable instance
+// (healthy on the poll AND after the settle) is returned normally — the recheck
+// adds robustness without rejecting good instances.
+func TestAwaitReady_SettlePassesWhenStable(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithSettleDelay(2*time.Millisecond))
+
+	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
+		t.Fatalf("EnsureProfile failed on a stable instance: %v", err)
+	}
+	if starter.callCount() != 1 {
+		t.Errorf("starter called %d times, want 1", starter.callCount())
 	}
 }
