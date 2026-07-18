@@ -19,7 +19,7 @@ func TestSetBinding_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	socks, _ := svc.CreateEndpoint(ctx, socksInput("VPN"))
-	flare, _ := svc.CreateEndpoint(ctx, flareInput("Omega FS"))
+	flare, _ := svc.CreateEndpoint(ctx, flareInput("FS A"))
 	socksID := uuid.MustParse(socks.ID)
 	flareID := uuid.MustParse(flare.ID)
 
@@ -125,7 +125,7 @@ func TestSetBinding_EndpointKindMustMatch(t *testing.T) {
 	svc := network.NewService(client)
 	ctx := context.Background()
 
-	flare, _ := svc.CreateEndpoint(ctx, flareInput("Omega FS"))
+	flare, _ := svc.CreateEndpoint(ctx, flareInput("FS A"))
 	flareID := uuid.MustParse(flare.ID)
 
 	// Point the SOCKS slot at a FlareSolverr endpoint — wrong kind.
@@ -145,7 +145,7 @@ func TestSetBinding_FlareModeConsistency(t *testing.T) {
 	svc := network.NewService(client)
 	ctx := context.Background()
 
-	flare, _ := svc.CreateEndpoint(ctx, flareInput("Omega FS"))
+	flare, _ := svc.CreateEndpoint(ctx, flareInput("FS A"))
 	flareID := uuid.MustParse(flare.ID)
 
 	// endpoint mode without a flare_endpoint_id → invalid.

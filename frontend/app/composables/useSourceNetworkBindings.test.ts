@@ -17,11 +17,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useSourceNetworkBindings } from './useSourceNetworkBindings'
 
 const SOURCES = [
-  { id: '111', name: 'Asura', lang: 'en', degraded: false, degradedReason: '' },
-  { id: '222', name: 'Omega', lang: 'en', degraded: false, degradedReason: '' },
+  { id: '111', name: 'Source A', lang: 'en', degraded: false, degradedReason: '' },
+  { id: '222', name: 'Source B', lang: 'en', degraded: false, degradedReason: '' },
 ]
 const BINDINGS = [
-  // Omega bound: SOCKS endpoint + FlareSolverr endpoint.
+  // Source B bound: SOCKS endpoint + FlareSolverr endpoint.
   { sourceId: '222', socksEndpointId: 'ep-socks', flareMode: 'endpoint' as const, flareEndpointId: 'ep-flare' },
   // A SOCKS-only binding with the flare endpoint id ABSENT (should map to null).
   { sourceId: '111', flareMode: 'none' as const },
@@ -61,10 +61,10 @@ describe('useSourceNetworkBindings', () => {
     const { sources, bindings } = useSourceNetworkBindings()
     await vi.waitFor(() => expect(sources.value.length).toBe(2))
 
-    expect(sources.value[0]).toEqual({ id: '111', name: 'Asura', lang: 'en' })
+    expect(sources.value[0]).toEqual({ id: '111', name: 'Source A', lang: 'en' })
     // The SOCKS-only binding's absent flareEndpointId maps to null (not undefined).
-    const asura = bindings.value.find(b => b.sourceId === '111')!
-    expect(asura).toEqual({ sourceId: '111', socksEndpointId: null, flareMode: 'none', flareEndpointId: null })
+    const sourceA = bindings.value.find(b => b.sourceId === '111')!
+    expect(sourceA).toEqual({ sourceId: '111', socksEndpointId: null, flareMode: 'none', flareEndpointId: null })
   })
 
   it('setBinding PUTs to the source binding path with the body, then clears the action', async () => {

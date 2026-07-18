@@ -18,7 +18,7 @@ import { mount } from '@vue/test-utils'
 import SourceBindingRow from './SourceBindingRow.vue'
 import type { NetworkEndpoint, NetworkSource, SourceBinding } from '../screens/settings.types'
 
-const source: NetworkSource = { id: '222', name: 'Omega', lang: 'en' }
+const source: NetworkSource = { id: '222', name: 'Source A', lang: 'en' }
 
 const socksEndpoints: NetworkEndpoint[] = [{
   id: 'ep-socks', name: 'VPN SOCKS', kind: 'socks', enabled: true,
@@ -37,8 +37,8 @@ function mountRow(props: Record<string, unknown> = {}) {
   })
 }
 
-const socksSelect = (w: ReturnType<typeof mountRow>) => w.find('select[aria-label="SOCKS route for Omega"]')
-const flareSelect = (w: ReturnType<typeof mountRow>) => w.find('select[aria-label="FlareSolverr route for Omega"]')
+const socksSelect = (w: ReturnType<typeof mountRow>) => w.find('select[aria-label="SOCKS route for Source A"]')
+const flareSelect = (w: ReturnType<typeof mountRow>) => w.find('select[aria-label="FlareSolverr route for Source A"]')
 const clearButton = (w: ReturnType<typeof mountRow>) => w.findAll('button').find(b => b.text() === 'Use global default')!
 
 describe('SourceBindingRow', () => {

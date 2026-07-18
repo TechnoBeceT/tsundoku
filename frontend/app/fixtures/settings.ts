@@ -290,7 +290,7 @@ export const networkEndpoints: NetworkEndpoint[] = [
     username: '',
     url: 'http://flaresolverr-vpn:8191',
     fsProxy: 'socks5://10.0.1.9:1080',
-    session: 'omega',
+    session: 'sess-a',
     sessionTtl: 15,
     timeout: 60,
   },
@@ -298,13 +298,13 @@ export const networkEndpoints: NetworkEndpoint[] = [
 
 /** The engine sources shown in the assignment table. */
 export const networkSources: NetworkSource[] = [
-  { id: '1998416842837112832', name: 'Asura Scans', lang: 'en' },
-  { id: '2035199668263834297', name: 'The Blank', lang: 'en' },
-  { id: '9127482910938471028', name: 'Omega Scans', lang: 'en' },
+  { id: '1998416842837112832', name: 'Source A', lang: 'en' },
+  { id: '2035199668263834297', name: 'Source B', lang: 'en' },
+  { id: '9127482910938471028', name: 'Source C', lang: 'en' },
 ]
 
 /**
- * One explicit binding: Omega Scans routes through both VPN endpoints. The other
+ * One explicit binding: Source C routes through both VPN endpoints. The other
  * two sources have no binding → they use the global default (shown by the row's
  * "Global default" tag + default select options).
  */

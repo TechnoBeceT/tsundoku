@@ -27,7 +27,7 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Populated — two endpoints + three sources (Omega bound to both VPN endpoints). */
+/** Populated — two endpoints + three sources (Source C bound to both VPN endpoints). */
 export const Populated: Story = {}
 
 /** Empty — no endpoints defined and no sources installed yet. */

@@ -79,7 +79,7 @@ func TestCreateEndpoint_FlareSolverrRoundTrip(t *testing.T) {
 	svc := network.NewService(client)
 	ctx := context.Background()
 
-	created, err := svc.CreateEndpoint(ctx, flareInput("Omega FS"))
+	created, err := svc.CreateEndpoint(ctx, flareInput("FS A"))
 	if err != nil {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}

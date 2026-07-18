@@ -4,7 +4,7 @@ import { networkEndpoints } from '../../fixtures/settings'
 import type { NetworkSource, SourceBinding } from '../screens/settings.types'
 import '../../assets/css/tokens/settings.css'
 
-const source: NetworkSource = { id: '9127482910938471028', name: 'Omega Scans', lang: 'en' }
+const source: NetworkSource = { id: '9127482910938471028', name: 'Source A', lang: 'en' }
 const socksEndpoints = networkEndpoints.filter(ep => ep.kind === 'socks')
 const flareEndpoints = networkEndpoints.filter(ep => ep.kind === 'flaresolverr')
 

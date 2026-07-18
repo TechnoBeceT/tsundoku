@@ -45,7 +45,7 @@ const FLARE_DTO = {
   port: 0,
   url: 'http://flare:8191',
   fsProxy: 'socks5://10.0.1.9:1080',
-  session: 'omega',
+  session: 'sess-a',
   sessionTtl: 15,
   timeout: 60,
 }
