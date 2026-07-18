@@ -65,8 +65,12 @@ func SeedExtensions(
 	db *ent.Client,
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
+	retainedFn func(context.Context) int,
 ) (Result, error) {
 	var res Result
+	// The rollback-history depth is read ONCE per pass (a seed is one-shot); the
+	// prune keeps this many versions ∪ the installed version per extension.
+	retained := resolveRetained(ctx, retainedFn)
 
 	repoURLs, err := client.Repos(ctx)
 	if err != nil {
@@ -89,7 +93,7 @@ func SeedExtensions(
 		if !ext.IsInstalled {
 			continue
 		}
-		cached, err := seedOneExtension(ctx, db, cache, indexes, httpGet, ext)
+		cached, err := seedOneExtension(ctx, db, cache, indexes, httpGet, ext, retained)
 		if err != nil {
 			slog.WarnContext(ctx, "enginetopo: could not cache extension apk, recording gap",
 				"pkg_name", ext.PkgName, "repo", repoURLOf(ext), "version_code", ext.VersionCode, "err", err)
@@ -135,13 +139,14 @@ func seedOneExtension(
 	indexes *indexResolver,
 	httpGet func(url string) (*http.Response, error),
 	ext sourceengine.Extension,
+	retained int,
 ) (cached bool, err error) {
 	if already, err := isAlreadyCached(ctx, db, cache, ext); err != nil {
 		return false, err
 	} else if already {
 		return false, nil
 	}
-	if err := recordInstalledExtension(ctx, db, cache, indexes, httpGet, ext); err != nil {
+	if err := recordInstalledExtension(ctx, db, cache, indexes, httpGet, ext, retained); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -173,8 +178,9 @@ func RecordInstalledExtension(
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
 	ext sourceengine.Extension,
+	retained int,
 ) error {
-	return recordInstalledExtension(ctx, db, cache, newIndexResolver(httpGet), httpGet, ext)
+	return recordInstalledExtension(ctx, db, cache, newIndexResolver(httpGet), httpGet, ext, retained)
 }
 
 // recordInstalledExtension is the resolver-injected caching core shared by the
@@ -191,6 +197,7 @@ func recordInstalledExtension(
 	indexes *indexResolver,
 	httpGet func(url string) (*http.Response, error),
 	ext sourceengine.Extension,
+	retained int,
 ) error {
 	repoURL := repoURLOf(ext)
 	apkURL, indexVersion, err := indexes.resolve(repoURL, ext.PkgName)
@@ -203,6 +210,13 @@ func recordInstalledExtension(
 		return err
 	}
 
+	// Retention: with the freshly-cached apk now on disk, prune this package's
+	// cached versions to the newest `retained` ∪ the installed version, and record
+	// the resulting held set on the row (the reversible-update history the UI lists).
+	cachedVersions := pruneAndBuildCachedVersions(
+		ctx, db, cache, ext.PkgName, retained, indexVersion, ext.VersionName, int(ext.VersionCode),
+	)
+
 	row := extensionRow{
 		pkgName:              ext.PkgName,
 		repoURL:              repoURL,
@@ -212,6 +226,7 @@ func recordInstalledExtension(
 		sourceIDs:            sourceIDs(ext.Sources),
 		apkSHA256:            sha,
 		apkCached:            true,
+		cachedVersions:       cachedVersions,
 	}
 	if err := upsertExtension(ctx, db, row); err != nil {
 		return fmt.Errorf("persist harvested extension: %w", err)
@@ -350,6 +365,9 @@ type extensionRow struct {
 	sourceIDs            []int64
 	apkSHA256            string
 	apkCached            bool
+	// cachedVersions is the held-version set to store (nil ⇒ keep the row's
+	// existing set unchanged on update — see recordGap, which preserves it).
+	cachedVersions []apkcache.CachedVersion
 }
 
 // upsertExtension find-or-creates a HarvestedExtension by pkg_name (its stable
@@ -371,6 +389,7 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 			SetSourceIds(row.sourceIDs).
 			SetApkSha256(row.apkSHA256).
 			SetApkCached(row.apkCached).
+			SetCachedVersions(row.cachedVersions).
 			Exec(ctx)
 	}
 	if err != nil {
@@ -384,6 +403,7 @@ func upsertExtension(ctx context.Context, db *ent.Client, row extensionRow) erro
 		SetSourceIds(row.sourceIDs).
 		SetApkSha256(row.apkSHA256).
 		SetApkCached(row.apkCached).
+		SetCachedVersions(row.cachedVersions).
 		Exec(ctx)
 }
 
@@ -399,6 +419,9 @@ func recordGap(ctx context.Context, db *ent.Client, ext sourceengine.Extension) 
 		installedVersionCode: int(ext.VersionCode),
 		versionName:          ext.VersionName,
 		apkCached:            false,
+		// Preserve any already-held versions: a transient caching failure must not
+		// wipe the extension's rollback history.
+		cachedVersions: loadCachedVersions(ctx, db, ext.PkgName),
 	}
 	if err := upsertExtension(ctx, db, row); err != nil {
 		slog.WarnContext(ctx, "enginetopo: failed to record extension gap",

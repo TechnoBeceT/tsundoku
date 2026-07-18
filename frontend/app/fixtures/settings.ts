@@ -92,20 +92,26 @@ export const flareSolverrConfig: FlareSolverrConfig = {
  * square); ExtensionRow.stories.ts adds a dedicated icon fixture separately.
  */
 export const installedExtensions: Extension[] = [
-  { id: 'mangadex', name: 'MangaDex', lang: 'en', version: '1.4.21', hasUpdate: false, iconUrl: '' },
-  { id: 'asurascans', name: 'Asura Scans', lang: 'en', version: '1.4.9', hasUpdate: true, iconUrl: '' },
-  { id: 'comick', name: 'ComicK', lang: 'en', version: '2.0.3', hasUpdate: false, iconUrl: '' },
-  { id: 'weebcentral', name: 'Weeb Central', lang: 'en', version: '1.2.0', hasUpdate: true, iconUrl: '' },
-  { id: 'bilibili', name: 'BiliBili Comics', lang: 'zh', version: '1.3.7', hasUpdate: false, iconUrl: '' },
+  { id: 'mangadex', name: 'MangaDex', lang: 'en', version: '1.4.21', versionCode: 42, hasUpdate: false, iconUrl: '', cachedVersions: [{ versionCode: 42, versionName: '1.4.21', cachedAt: '2026-07-10T00:00:00Z' }] },
+  // Asura carries a rollback history: the current 1.4.9 plus two held older
+  // builds the owner can reinstall (the reversible-update showcase).
+  { id: 'asurascans', name: 'Asura Scans', lang: 'en', version: '1.4.9', versionCode: 49, hasUpdate: true, iconUrl: '', cachedVersions: [
+    { versionCode: 49, versionName: '1.4.9', cachedAt: '2026-07-15T00:00:00Z' },
+    { versionCode: 48, versionName: '1.4.8', cachedAt: '2026-06-28T00:00:00Z' },
+    { versionCode: 47, versionName: '1.4.7', cachedAt: '2026-06-02T00:00:00Z' },
+  ] },
+  { id: 'comick', name: 'ComicK', lang: 'en', version: '2.0.3', versionCode: 203, hasUpdate: false, iconUrl: '', cachedVersions: [{ versionCode: 203, versionName: '2.0.3', cachedAt: '2026-07-12T00:00:00Z' }] },
+  { id: 'weebcentral', name: 'Weeb Central', lang: 'en', version: '1.2.0', versionCode: 120, hasUpdate: true, iconUrl: '', cachedVersions: [{ versionCode: 120, versionName: '1.2.0', cachedAt: '2026-07-01T00:00:00Z' }] },
+  { id: 'bilibili', name: 'BiliBili Comics', lang: 'zh', version: '1.3.7', versionCode: 137, hasUpdate: false, iconUrl: '', cachedVersions: [{ versionCode: 137, versionName: '1.3.7', cachedAt: '2026-07-08T00:00:00Z' }] },
 ]
 
-/** Available (installable) extensions. */
+/** Available (installable) extensions — nothing held (not installed). */
 export const availableExtensions: Extension[] = [
-  { id: 'reaperscans', name: 'Reaper Scans', lang: 'en', version: '1.5.1', hasUpdate: false, iconUrl: '' },
-  { id: 'flamecomics', name: 'Flame Comics', lang: 'en', version: '1.1.2', hasUpdate: false, iconUrl: '' },
-  { id: 'mangaplus', name: 'MANGA Plus', lang: 'en', version: '1.6.0', hasUpdate: false, iconUrl: '' },
-  { id: 'webtoons', name: 'Webtoons', lang: 'en', version: '2.1.0', hasUpdate: false, iconUrl: '' },
-  { id: 'kakao', name: 'Kakao', lang: 'ko', version: '1.0.4', hasUpdate: false, iconUrl: '' },
+  { id: 'reaperscans', name: 'Reaper Scans', lang: 'en', version: '1.5.1', versionCode: 151, hasUpdate: false, iconUrl: '', cachedVersions: [] },
+  { id: 'flamecomics', name: 'Flame Comics', lang: 'en', version: '1.1.2', versionCode: 112, hasUpdate: false, iconUrl: '', cachedVersions: [] },
+  { id: 'mangaplus', name: 'MANGA Plus', lang: 'en', version: '1.6.0', versionCode: 160, hasUpdate: false, iconUrl: '', cachedVersions: [] },
+  { id: 'webtoons', name: 'Webtoons', lang: 'en', version: '2.1.0', versionCode: 210, hasUpdate: false, iconUrl: '', cachedVersions: [] },
+  { id: 'kakao', name: 'Kakao', lang: 'ko', version: '1.0.4', versionCode: 104, hasUpdate: false, iconUrl: '', cachedVersions: [] },
 ]
 
 /** Extension repositories — the first is the pre-populated default. */

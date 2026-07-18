@@ -198,6 +198,20 @@ export interface FlareSolverrConfig {
 export type ExtensionTab = 'installed' | 'available' | 'repos'
 
 /**
+ * CachedVersion — one HELD (retained) .apk version of an extension the owner can
+ * reinstall (roll back to) from Tsundoku's apk cache. Surfaced so the owner never
+ * has to hunt through physical .apk files to undo a bad update.
+ */
+export interface CachedVersion {
+  /** The numeric version code — the reinstall target. */
+  versionCode: number
+  /** The human-readable version string. */
+  versionName: string
+  /** ISO-8601 timestamp of when these bytes were cached. */
+  cachedAt: string
+}
+
+/**
  * Extension — one Suwayomi source plugin. `id` is the Suwayomi `pkgName`
  * identity; `hasUpdate` drives the UPDATE badge on installed rows.
  */
@@ -210,6 +224,8 @@ export interface Extension {
   lang: string
   /** Installed/available version string. */
   version: string
+  /** The installed/available numeric version code (marks the "current" held version). */
+  versionCode: number
   /** Whether a newer version is available (installed rows only). */
   hasUpdate: boolean
   /**
@@ -218,6 +234,13 @@ export interface Extension {
    * (or when this is empty, e.g. a Storybook fixture with no backend).
    */
   iconUrl: string
+  /**
+   * The HELD (retained) versions of this extension in the apk cache — the
+   * reversible-update history. Newest-first; [] when none held (e.g. an
+   * available-but-not-installed extension). Each carries a "Reinstall this
+   * version" action on installed rows.
+   */
+  cachedVersions: CachedVersion[]
 }
 
 /** Extension repository URL row (reorderable; one is the pre-populated default). */

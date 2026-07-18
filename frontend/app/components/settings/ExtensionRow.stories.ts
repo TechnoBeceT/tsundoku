@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
-import { expect, waitFor } from 'storybook/test'
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test'
 import ExtensionRow from './ExtensionRow.vue'
 import { availableExtensions, installedExtensions } from '../../fixtures/settings'
 // Load this screen's status tokens directly: index.css does not @import them yet
@@ -45,6 +45,31 @@ export const Available: Story = {
 /** §16 busy — the acting button spins and the row dims/disables. */
 export const Busy: Story = {
   args: { extension: installedExtensions[1]!, installed: true, busy: true },
+}
+
+/**
+ * Reversible updates: an installed extension with a rollback HISTORY. The
+ * "History (3)" toggle reveals the held versions — the current one tagged
+ * "Current", the older two each offering "Reinstall this version". The play
+ * function expands the history and clicks the newest older build's reinstall,
+ * asserting it emits that version code.
+ */
+export const WithVersionHistory: Story = {
+  args: { extension: installedExtensions[1]!, installed: true, onReinstall: fn() },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: /History \(3\)/ }))
+    // Three held rows; the current version (49) shows "Current", the other two
+    // offer a reinstall — so exactly two "Reinstall this version" buttons.
+    await waitFor(async () => {
+      await expect(canvasElement.querySelectorAll('.ext-history__row').length).toBe(3)
+    })
+    const reinstalls = canvas.getAllByRole('button', { name: /Reinstall this version/ })
+    await expect(reinstalls.length).toBe(2)
+    await userEvent.click(reinstalls[0]!)
+    // The first older build in the newest-first list is versionCode 48.
+    await expect(args.onReinstall).toHaveBeenCalledWith(48)
+  },
 }
 
 /**

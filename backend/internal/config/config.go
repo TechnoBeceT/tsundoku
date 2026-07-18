@@ -50,6 +50,8 @@ type Config struct {
 	// process replacing Suwayomi as the download engine — Suwayomi-removal
 	// P2 migration).
 	Engine EngineConfig
+	// Extensions holds source-extension management settings.
+	Extensions ExtensionsConfig
 }
 
 // AuthConfig holds HMAC signing settings for the single-owner auth layer.
@@ -385,6 +387,17 @@ type EngineConfig struct {
 	RuntimeDir string
 }
 
+// ExtensionsConfig holds source-extension management settings.
+type ExtensionsConfig struct {
+	// RetainedVersions is how many .apk versions per extension the apk cache
+	// keeps (the reversible-update rollback-history depth). Default 3. This is
+	// the env-sourced DEFAULT the runtime settings overlay
+	// (extensions.retained_versions) can override without a restart; the prune
+	// reads the tunable at use-time, not this value directly. validate() rejects
+	// a value outside [1, 20]. Set via TSUNDOKU_EXTENSIONS_RETAINEDVERSIONS.
+	RetainedVersions int
+}
+
 // StorageConfig holds library-path settings.
 type StorageConfig struct {
 	// Folder is the absolute path to the manga library on disk where
@@ -441,6 +454,8 @@ func defaults() map[string]any {
 		"engine.httptimeout":   "3m",
 		"engine.searchtimeout": "85s",
 		"engine.runtimedir":    "/data/suwayomi",
+		// Extensions — source-extension management.
+		"extensions.retainedversions": 3,
 	}
 }
 
@@ -613,6 +628,12 @@ func (c *Config) validate() error {
 	if c.Jobs.WarmupSlowThresholdMs < 1 {
 		errs = append(errs, fmt.Sprintf(
 			"TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS must be at least 1 (got %d)", c.Jobs.WarmupSlowThresholdMs,
+		))
+	}
+
+	if c.Extensions.RetainedVersions < 1 || c.Extensions.RetainedVersions > 20 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_EXTENSIONS_RETAINEDVERSIONS must be in [1, 20] (got %d)", c.Extensions.RetainedVersions,
 		))
 	}
 

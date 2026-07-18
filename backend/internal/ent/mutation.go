@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent/category"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/disabledsource"
@@ -3372,6 +3373,8 @@ type HarvestedExtensionMutation struct {
 	appendsource_ids          []int64
 	apk_sha256                *string
 	apk_cached                *bool
+	cached_versions           *[]apkcache.CachedVersion
+	appendcached_versions     []apkcache.CachedVersion
 	updated_at                *time.Time
 	clearedFields             map[string]struct{}
 	done                      bool
@@ -3840,6 +3843,71 @@ func (m *HarvestedExtensionMutation) ResetApkCached() {
 	m.apk_cached = nil
 }
 
+// SetCachedVersions sets the "cached_versions" field.
+func (m *HarvestedExtensionMutation) SetCachedVersions(av []apkcache.CachedVersion) {
+	m.cached_versions = &av
+	m.appendcached_versions = nil
+}
+
+// CachedVersions returns the value of the "cached_versions" field in the mutation.
+func (m *HarvestedExtensionMutation) CachedVersions() (r []apkcache.CachedVersion, exists bool) {
+	v := m.cached_versions
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCachedVersions returns the old "cached_versions" field's value of the HarvestedExtension entity.
+// If the HarvestedExtension object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HarvestedExtensionMutation) OldCachedVersions(ctx context.Context) (v []apkcache.CachedVersion, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCachedVersions is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCachedVersions requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCachedVersions: %w", err)
+	}
+	return oldValue.CachedVersions, nil
+}
+
+// AppendCachedVersions adds av to the "cached_versions" field.
+func (m *HarvestedExtensionMutation) AppendCachedVersions(av []apkcache.CachedVersion) {
+	m.appendcached_versions = append(m.appendcached_versions, av...)
+}
+
+// AppendedCachedVersions returns the list of values that were appended to the "cached_versions" field in this mutation.
+func (m *HarvestedExtensionMutation) AppendedCachedVersions() ([]apkcache.CachedVersion, bool) {
+	if len(m.appendcached_versions) == 0 {
+		return nil, false
+	}
+	return m.appendcached_versions, true
+}
+
+// ClearCachedVersions clears the value of the "cached_versions" field.
+func (m *HarvestedExtensionMutation) ClearCachedVersions() {
+	m.cached_versions = nil
+	m.appendcached_versions = nil
+	m.clearedFields[harvestedextension.FieldCachedVersions] = struct{}{}
+}
+
+// CachedVersionsCleared returns if the "cached_versions" field was cleared in this mutation.
+func (m *HarvestedExtensionMutation) CachedVersionsCleared() bool {
+	_, ok := m.clearedFields[harvestedextension.FieldCachedVersions]
+	return ok
+}
+
+// ResetCachedVersions resets all changes to the "cached_versions" field.
+func (m *HarvestedExtensionMutation) ResetCachedVersions() {
+	m.cached_versions = nil
+	m.appendcached_versions = nil
+	delete(m.clearedFields, harvestedextension.FieldCachedVersions)
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (m *HarvestedExtensionMutation) SetUpdatedAt(t time.Time) {
 	m.updated_at = &t
@@ -3910,7 +3978,7 @@ func (m *HarvestedExtensionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *HarvestedExtensionMutation) Fields() []string {
-	fields := make([]string, 0, 9)
+	fields := make([]string, 0, 10)
 	if m.pkg_name != nil {
 		fields = append(fields, harvestedextension.FieldPkgName)
 	}
@@ -3934,6 +4002,9 @@ func (m *HarvestedExtensionMutation) Fields() []string {
 	}
 	if m.apk_cached != nil {
 		fields = append(fields, harvestedextension.FieldApkCached)
+	}
+	if m.cached_versions != nil {
+		fields = append(fields, harvestedextension.FieldCachedVersions)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, harvestedextension.FieldUpdatedAt)
@@ -3962,6 +4033,8 @@ func (m *HarvestedExtensionMutation) Field(name string) (ent.Value, bool) {
 		return m.ApkSha256()
 	case harvestedextension.FieldApkCached:
 		return m.ApkCached()
+	case harvestedextension.FieldCachedVersions:
+		return m.CachedVersions()
 	case harvestedextension.FieldUpdatedAt:
 		return m.UpdatedAt()
 	}
@@ -3989,6 +4062,8 @@ func (m *HarvestedExtensionMutation) OldField(ctx context.Context, name string) 
 		return m.OldApkSha256(ctx)
 	case harvestedextension.FieldApkCached:
 		return m.OldApkCached(ctx)
+	case harvestedextension.FieldCachedVersions:
+		return m.OldCachedVersions(ctx)
 	case harvestedextension.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
 	}
@@ -4055,6 +4130,13 @@ func (m *HarvestedExtensionMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetApkCached(v)
+		return nil
+	case harvestedextension.FieldCachedVersions:
+		v, ok := value.([]apkcache.CachedVersion)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCachedVersions(v)
 		return nil
 	case harvestedextension.FieldUpdatedAt:
 		v, ok := value.(time.Time)
@@ -4123,6 +4205,9 @@ func (m *HarvestedExtensionMutation) ClearedFields() []string {
 	if m.FieldCleared(harvestedextension.FieldSourceIds) {
 		fields = append(fields, harvestedextension.FieldSourceIds)
 	}
+	if m.FieldCleared(harvestedextension.FieldCachedVersions) {
+		fields = append(fields, harvestedextension.FieldCachedVersions)
+	}
 	return fields
 }
 
@@ -4139,6 +4224,9 @@ func (m *HarvestedExtensionMutation) ClearField(name string) error {
 	switch name {
 	case harvestedextension.FieldSourceIds:
 		m.ClearSourceIds()
+		return nil
+	case harvestedextension.FieldCachedVersions:
+		m.ClearCachedVersions()
 		return nil
 	}
 	return fmt.Errorf("unknown HarvestedExtension nullable field %s", name)
@@ -4171,6 +4259,9 @@ func (m *HarvestedExtensionMutation) ResetField(name string) error {
 		return nil
 	case harvestedextension.FieldApkCached:
 		m.ResetApkCached()
+		return nil
+	case harvestedextension.FieldCachedVersions:
+		m.ResetCachedVersions()
 		return nil
 	case harvestedextension.FieldUpdatedAt:
 		m.ResetUpdatedAt()

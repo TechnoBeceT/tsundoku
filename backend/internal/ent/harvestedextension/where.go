@@ -455,6 +455,16 @@ func ApkCachedNEQ(v bool) predicate.HarvestedExtension {
 	return predicate.HarvestedExtension(sql.FieldNEQ(FieldApkCached, v))
 }
 
+// CachedVersionsIsNil applies the IsNil predicate on the "cached_versions" field.
+func CachedVersionsIsNil() predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldIsNull(FieldCachedVersions))
+}
+
+// CachedVersionsNotNil applies the NotNil predicate on the "cached_versions" field.
+func CachedVersionsNotNil() predicate.HarvestedExtension {
+	return predicate.HarvestedExtension(sql.FieldNotNull(FieldCachedVersions))
+}
+
 // UpdatedAtEQ applies the EQ predicate on the "updated_at" field.
 func UpdatedAtEQ(v time.Time) predicate.HarvestedExtension {
 	return predicate.HarvestedExtension(sql.FieldEQ(FieldUpdatedAt, v))

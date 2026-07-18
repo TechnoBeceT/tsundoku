@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 )
 
@@ -35,6 +36,8 @@ type HarvestedExtension struct {
 	ApkSha256 string `json:"apk_sha256,omitempty"`
 	// ApkCached holds the value of the "apk_cached" field.
 	ApkCached bool `json:"apk_cached,omitempty"`
+	// CachedVersions holds the value of the "cached_versions" field.
+	CachedVersions []apkcache.CachedVersion `json:"cached_versions,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt    time.Time `json:"updated_at,omitempty"`
 	selectValues sql.SelectValues
@@ -45,7 +48,7 @@ func (*HarvestedExtension) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case harvestedextension.FieldSourceIds:
+		case harvestedextension.FieldSourceIds, harvestedextension.FieldCachedVersions:
 			values[i] = new([]byte)
 		case harvestedextension.FieldApkCached:
 			values[i] = new(sql.NullBool)
@@ -128,6 +131,14 @@ func (_m *HarvestedExtension) assignValues(columns []string, values []any) error
 			} else if value.Valid {
 				_m.ApkCached = value.Bool
 			}
+		case harvestedextension.FieldCachedVersions:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field cached_versions", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CachedVersions); err != nil {
+					return fmt.Errorf("unmarshal field cached_versions: %w", err)
+				}
+			}
 		case harvestedextension.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
@@ -193,6 +204,9 @@ func (_m *HarvestedExtension) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("apk_cached=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ApkCached))
+	builder.WriteString(", ")
+	builder.WriteString("cached_versions=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CachedVersions))
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")
 	builder.WriteString(_m.UpdatedAt.Format(time.ANSIC))

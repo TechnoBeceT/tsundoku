@@ -43,6 +43,32 @@ func testDefaults() settings.Defaults {
 		EngineSocksHost:         "",
 		EngineSocksPort:         1080,
 		EngineSocksVersion:      5,
+		RetainedVersions:        3,
+	}
+}
+
+// TestRetainedVersions proves the extensions.retained_versions accessor returns
+// the injected default, hot-reloads a valid Set override at use-time, and
+// fail-closes an out-of-bounds value (bounds 1..20).
+func TestRetainedVersions(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.RetainedVersions(ctx); got != 3 {
+		t.Errorf("RetainedVersions default = %d, want 3", got)
+	}
+	if err := svc.Set(ctx, settings.KeyRetainedVersions, "7"); err != nil {
+		t.Fatalf("Set(7): %v", err)
+	}
+	if got := svc.RetainedVersions(ctx); got != 7 {
+		t.Errorf("after Set, RetainedVersions = %d, want 7 (read-at-use hot reload)", got)
+	}
+	if err := svc.Set(ctx, settings.KeyRetainedVersions, "0"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Errorf("Set(0) below the min: err = %v, want ErrInvalidSetting", err)
+	}
+	if err := svc.Set(ctx, settings.KeyRetainedVersions, "21"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Errorf("Set(21) above the max: err = %v, want ErrInvalidSetting", err)
 	}
 }
 
@@ -245,8 +271,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 30 {
-		t.Fatalf("List len = %d, want 30", len(list))
+	if len(list) != 31 {
+		t.Fatalf("List len = %d, want 31", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {

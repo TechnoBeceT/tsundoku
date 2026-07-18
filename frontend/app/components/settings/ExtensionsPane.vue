@@ -68,6 +68,8 @@ const emit = defineEmits<{
   'update-extension': [id: string]
   /** Uninstall an installed extension (by pkgName). */
   'uninstall-extension': [id: string]
+  /** Reinstall (roll back to) a held version of an installed extension. */
+  'reinstall-extension': [payload: { id: string, versionCode: number }]
   /** Trigger a check-for-updates across installed extensions. */
   'check-updates': []
   /** Add an extension repository URL. */
@@ -227,6 +229,7 @@ function closePreferences() {
         @update="emit('update-extension', e.id)"
         @uninstall="startUninstall(e)"
         @configure="startConfigure(e)"
+        @reinstall="emit('reinstall-extension', { id: e.id, versionCode: $event })"
       />
     </div>
   </template>

@@ -223,11 +223,12 @@ func TestValidateRejectsShortAuthSecret(t *testing.T) {
 // passes validate() when combined with a valid DB password.
 func TestValidateAcceptsValidAuthSecret(t *testing.T) {
 	cfg := &config.Config{
-		Database: config.DatabaseConfig{Password: "somepassword"},
-		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Engine:   validEngineConfig(),
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
-		Sources:  validSourcesConfig(),
+		Database:   config.DatabaseConfig{Password: "somepassword"},
+		Auth:       config.AuthConfig{Secret: "exactly16charssss"},
+		Engine:     validEngineConfig(),
+		Extensions: validExtensionsConfig(),
+		Jobs:       config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Sources:    validSourcesConfig(),
 	}
 	if err := config.ExportValidateForTest(cfg); err != nil {
 		t.Fatalf("expected validate to pass, got: %v", err)
@@ -247,6 +248,13 @@ func validSourcesConfig() config.SourcesConfig {
 // Engine timeout rules threads through (mirrors validSourcesConfig).
 func validEngineConfig() config.EngineConfig {
 	return config.EngineConfig{HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute}
+}
+
+// validExtensionsConfig returns an ExtensionsConfig that passes validate() — the
+// fixture every "happy path" validate() test threads through so adding the
+// retained-versions bound doesn't need to touch unrelated fixtures.
+func validExtensionsConfig() config.ExtensionsConfig {
+	return config.ExtensionsConfig{RetainedVersions: 3}
 }
 
 // TestLoadAuthSecretFromEnv confirms that TSUNDOKU_AUTH_SECRET is loaded and
@@ -776,11 +784,12 @@ func TestValidateRejectsSourcesCooldownBelowOneMinute(t *testing.T) {
 // still be accepted.
 func TestValidateRejectsSourcesMinRequestDelayNegative(t *testing.T) {
 	cfg := &config.Config{
-		Database: config.DatabaseConfig{Password: "somepassword"},
-		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-		Engine:   validEngineConfig(),
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
-		Sources:  config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Minute, MinRequestDelay: -time.Second}, // invalid
+		Database:   config.DatabaseConfig{Password: "somepassword"},
+		Auth:       config.AuthConfig{Secret: "exactly16charssss"},
+		Engine:     validEngineConfig(),
+		Extensions: validExtensionsConfig(),
+		Jobs:       config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Sources:    config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Minute, MinRequestDelay: -time.Second}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
@@ -960,6 +969,50 @@ func TestTrackerConfig_BlankPublicURLPasses(t *testing.T) {
 	}
 }
 
+// TestExtensionsConfig_DefaultAndEnvOverride confirms Load() defaults
+// ExtensionsConfig.RetainedVersions to 3 and honours the env override.
+func TestExtensionsConfig_DefaultAndEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Extensions.RetainedVersions != 3 {
+		t.Fatalf("RetainedVersions default = %d, want 3", cfg.Extensions.RetainedVersions)
+	}
+
+	t.Setenv("TSUNDOKU_EXTENSIONS_RETAINEDVERSIONS", "8")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Extensions.RetainedVersions != 8 {
+		t.Fatalf("RetainedVersions env override = %d, want 8", cfg.Extensions.RetainedVersions)
+	}
+}
+
+// TestValidateRejectsRetainedVersionsOutOfBounds confirms validate() fails closed
+// on a retained-versions value outside [1, 20], naming the env var.
+func TestValidateRejectsRetainedVersionsOutOfBounds(t *testing.T) {
+	cfg := &config.Config{
+		Database:   config.DatabaseConfig{Password: "somepassword"},
+		Auth:       config.AuthConfig{Secret: "exactly16charssss"},
+		Engine:     validEngineConfig(),
+		Extensions: config.ExtensionsConfig{RetainedVersions: 21}, // invalid
+		Jobs:       config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Sources:    validSourcesConfig(),
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for RetainedVersions=21, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_EXTENSIONS_RETAINEDVERSIONS") {
+		t.Errorf("error should name TSUNDOKU_EXTENSIONS_RETAINEDVERSIONS, got: %v", err)
+	}
+}
+
 // TestEngineConfig_DefaultURL confirms Load() defaults EngineConfig.URL to the
 // engine-host's default listen address (http://localhost:7777 — confirmed
 // against engine-host/src/main/kotlin/enginehost/Main.kt's
@@ -997,11 +1050,12 @@ func TestEngineConfig_FromEnv(t *testing.T) {
 func TestValidateAcceptsEngineURL(t *testing.T) {
 	for _, raw := range []string{"http://localhost:7777", "https://engine.example/rpc"} {
 		cfg := &config.Config{
-			Database: config.DatabaseConfig{Password: "somepassword"},
-			Auth:     config.AuthConfig{Secret: "exactly16charssss"},
-			Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
-			Sources:  validSourcesConfig(),
-			Engine:   config.EngineConfig{URL: raw, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
+			Database:   config.DatabaseConfig{Password: "somepassword"},
+			Auth:       config.AuthConfig{Secret: "exactly16charssss"},
+			Jobs:       config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+			Sources:    validSourcesConfig(),
+			Extensions: validExtensionsConfig(),
+			Engine:     config.EngineConfig{URL: raw, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},
 		}
 		if err := config.ExportValidateForTest(cfg); err != nil {
 			t.Errorf("validate() rejected Engine.URL %q, want accept: %v", raw, err)

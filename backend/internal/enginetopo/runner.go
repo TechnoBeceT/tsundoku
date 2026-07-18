@@ -42,6 +42,11 @@ type SeedDeps struct {
 	// HTTPGet fetches repo indexes + .apk bytes for SeedExtensions (http.Get in
 	// production; a stub in tests).
 	HTTPGet func(url string) (*http.Response, error)
+	// Retained resolves the apk-cache rollback-history depth
+	// (extensions.retained_versions) at seed time — how many .apk versions per
+	// extension SeedExtensions keeps after caching a new one. Nil ⇒ the built-in
+	// default (3). settingsSvc.RetainedVersions satisfies it.
+	Retained func(context.Context) int
 }
 
 // SeedReport is the aggregate outcome of one RunSeed pass — the per-pass counts
@@ -114,7 +119,7 @@ func RunSeed(ctx context.Context, deps SeedDeps) SeedReport {
 // runSeedExtensions runs the extension/repo/apk-cache seed, logging an
 // enumerating-call failure and reporting zeroes in that case.
 func runSeedExtensions(ctx context.Context, deps SeedDeps) (repos, cached, gaps int) {
-	res, err := SeedExtensions(ctx, deps.Client, deps.DB, deps.Cache, deps.HTTPGet)
+	res, err := SeedExtensions(ctx, deps.Client, deps.DB, deps.Cache, deps.HTTPGet, deps.Retained)
 	if err != nil {
 		slog.ErrorContext(ctx, "enginetopo: seed extensions failed", "err", err)
 		return 0, 0, 0

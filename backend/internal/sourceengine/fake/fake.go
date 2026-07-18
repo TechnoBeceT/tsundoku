@@ -48,6 +48,8 @@ type Client struct {
 	flareSolverr  sourceengine.FlareSolverrConfig
 	socks         sourceengine.SocksConfig
 
+	lastInstallApkURL string
+
 	errors map[string]error
 	calls  map[string]int
 }
@@ -335,13 +337,33 @@ func (c *Client) Extensions(_ context.Context) ([]sourceengine.Extension, error)
 }
 
 // InstallExtension marks the extension identified by pkgName installed and
-// returns the refreshed list.
-func (c *Client) InstallExtension(_ context.Context, pkgName, _ string) ([]sourceengine.Extension, error) {
+// returns the refreshed list. When installed by apkURL (pkgName ""), it records
+// the apkURL (LastInstallApkURL) so a test can assert the reinstall path passed
+// the cached-apk path, and marks the matching-by-apk extension installed if one
+// exists (best-effort: the fake has no real apk to inspect).
+func (c *Client) InstallExtension(_ context.Context, pkgName, apkURL string) ([]sourceengine.Extension, error) {
 	c.record("InstallExtension")
+	c.mu.Lock()
+	c.lastInstallApkURL = apkURL
+	c.mu.Unlock()
 	if err := c.errFor("InstallExtension"); err != nil {
 		return nil, err
 	}
+	if pkgName == "" {
+		// apkURL-only install: the fake cannot read the apk to learn its pkg, so it
+		// leaves the list unchanged and just returns it (the reinstall test asserts
+		// the apkURL + a re-read, not a state flip).
+		return c.extensionsCopy(), nil
+	}
 	return c.setInstalled(pkgName, true), nil
+}
+
+// LastInstallApkURL returns the apkURL passed to the most recent
+// InstallExtension call ("" when none, or when the last install was by pkgName).
+func (c *Client) LastInstallApkURL() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastInstallApkURL
 }
 
 // RefreshExtensions returns the current extension list unchanged (the fake

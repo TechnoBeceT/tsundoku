@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 )
 
@@ -114,6 +115,12 @@ func (_c *HarvestedExtensionCreate) SetNillableApkCached(v *bool) *HarvestedExte
 	if v != nil {
 		_c.SetApkCached(*v)
 	}
+	return _c
+}
+
+// SetCachedVersions sets the "cached_versions" field.
+func (_c *HarvestedExtensionCreate) SetCachedVersions(v []apkcache.CachedVersion) *HarvestedExtensionCreate {
+	_c.mutation.SetCachedVersions(v)
 	return _c
 }
 
@@ -306,6 +313,10 @@ func (_c *HarvestedExtensionCreate) createSpec() (*HarvestedExtension, *sqlgraph
 	if value, ok := _c.mutation.ApkCached(); ok {
 		_spec.SetField(harvestedextension.FieldApkCached, field.TypeBool, value)
 		_node.ApkCached = value
+	}
+	if value, ok := _c.mutation.CachedVersions(); ok {
+		_spec.SetField(harvestedextension.FieldCachedVersions, field.TypeJSON, value)
+		_node.CachedVersions = value
 	}
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(harvestedextension.FieldUpdatedAt, field.TypeTime, value)

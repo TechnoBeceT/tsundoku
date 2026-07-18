@@ -30,6 +30,26 @@ func validatePkgName(raw string) (string, error) {
 	return pkgName, nil
 }
 
+// ReinstallRequest is the POST …/{pkgName}/reinstall body: which held version
+// to reinstall. VersionCode is a pointer so a missing key is rejected rather
+// than silently defaulting to 0 (which would look like a real version target).
+type ReinstallRequest struct {
+	// VersionCode is the held .apk version code to reinstall (roll back to).
+	VersionCode *int `json:"versionCode"`
+}
+
+// validateReinstall fail-closes the reinstall body: versionCode must be present
+// and a positive integer (version codes are >= 1). It returns the version code.
+func validateReinstall(req ReinstallRequest) (int, error) {
+	if req.VersionCode == nil {
+		return 0, httperr.BadRequest("versionCode required")
+	}
+	if *req.VersionCode < 1 {
+		return 0, httperr.BadRequest("versionCode must be a positive integer")
+	}
+	return *req.VersionCode, nil
+}
+
 // PreferenceUpdateRequest is the PATCH …/{pkgName}/preferences body: which
 // source (sourceId) and which preference by KEY to write, plus the raw value.
 // value is a json.RawMessage so it can be a bool, string, or string array — it

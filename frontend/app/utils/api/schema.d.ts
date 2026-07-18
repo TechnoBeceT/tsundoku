@@ -1737,6 +1737,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/suwayomi/extensions/{pkgName}/reinstall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reinstall a held (older) extension version
+         * @description Reinstalls a HELD (older) cached .apk version of the extension — the
+         *     reversible-update rollback path. The version must be present in the
+         *     extension's cachedVersions AND still on disk (else a 404). The engine
+         *     host installs it from Tsundoku's own apk cache (no upstream re-download),
+         *     then the durable store pins it as the installed version. RE-READS and
+         *     returns the full extension list (§16). A missing/invalid versionCode is a
+         *     400; an upstream engine failure is a 502.
+         */
+        post: operations["reinstallExtension"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/suwayomi/extensions/{pkgName}": {
         parameters: {
             query?: never;
@@ -3158,6 +3184,39 @@ export interface components {
             isNsfw: boolean;
             /** @description The content sources this extension provides (one per language it supports) — the set the per-source preferences endpoint resolves against. */
             sources: components["schemas"]["ExtensionSource"][];
+            /**
+             * @description The HELD (retained) .apk versions of this extension in Tsundoku's apk
+             *     cache — the reversible-update history the UI lists so the owner can
+             *     reinstall (roll back to) an older build. Never null ([] when none are
+             *     held). Newest-first.
+             */
+            cachedVersions: components["schemas"]["CachedVersion"][];
+        };
+        /** @description One held .apk version of an extension the owner can reinstall (roll back to) from the apk cache. */
+        CachedVersion: {
+            /**
+             * @description The numeric version code — the reinstall endpoint's target.
+             * @example 42
+             */
+            versionCode: number;
+            /**
+             * @description Human-readable version string.
+             * @example 1.4.2
+             */
+            versionName: string;
+            /**
+             * Format: date-time
+             * @description When these bytes were cached.
+             */
+            cachedAt: string;
+        };
+        /** @description Which held extension version to reinstall (roll back to). */
+        ExtensionReinstallRequest: {
+            /**
+             * @description The held .apk version code to reinstall. Must be present in the extension's cachedVersions.
+             * @example 41
+             */
+            versionCode: number;
         };
         /** @description One content source an extension provides. */
         ExtensionSource: {
@@ -7291,6 +7350,69 @@ export interface operations {
                 };
             };
             /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reinstallExtension: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The extension package name (its identity). */
+                pkgName: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtensionReinstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Reinstalled. Returns the refreshed extension list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Extension"][];
+                };
+            };
+            /** @description A blank pkgName or a missing/invalid versionCode. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No cached apk exists for that extension version. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host was unreachable or returned an error. */
             502: {
                 headers: {
                     [name: string]: unknown;

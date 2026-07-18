@@ -1858,6 +1858,7 @@ components:
         - hasUpdate
         - isNsfw
         - sources
+        - cachedVersions
       properties:
         pkgName:
           type: string
@@ -1900,6 +1901,43 @@ components:
           description: The content sources this extension provides (one per language it supports) — the set the per-source preferences endpoint resolves against.
           items:
             $ref: "#/components/schemas/ExtensionSource"
+        cachedVersions:
+          type: array
+          description: |
+            The HELD (retained) .apk versions of this extension in Tsundoku's apk
+            cache — the reversible-update history the UI lists so the owner can
+            reinstall (roll back to) an older build. Never null ([] when none are
+            held). Newest-first.
+          items:
+            $ref: "#/components/schemas/CachedVersion"
+
+    CachedVersion:
+      type: object
+      description: One held .apk version of an extension the owner can reinstall (roll back to) from the apk cache.
+      required: [versionCode, versionName, cachedAt]
+      properties:
+        versionCode:
+          type: integer
+          description: The numeric version code — the reinstall endpoint's target.
+          example: 42
+        versionName:
+          type: string
+          description: Human-readable version string.
+          example: 1.4.2
+        cachedAt:
+          type: string
+          format: date-time
+          description: When these bytes were cached.
+
+    ExtensionReinstallRequest:
+      type: object
+      description: Which held extension version to reinstall (roll back to).
+      required: [versionCode]
+      properties:
+        versionCode:
+          type: integer
+          description: The held .apk version code to reinstall. Must be present in the extension's cachedVersions.
+          example: 41
 
     ExtensionSource:
       type: object
@@ -6400,6 +6438,68 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/suwayomi/extensions/{pkgName}/reinstall:
+    post:
+      operationId: reinstallExtension
+      summary: Reinstall a held (older) extension version
+      description: |
+        Reinstalls a HELD (older) cached .apk version of the extension — the
+        reversible-update rollback path. The version must be present in the
+        extension's cachedVersions AND still on disk (else a 404). The engine
+        host installs it from Tsundoku's own apk cache (no upstream re-download),
+        then the durable store pins it as the installed version. RE-READS and
+        returns the full extension list (§16). A missing/invalid versionCode is a
+        400; an upstream engine failure is a 502.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: pkgName
+          in: path
+          required: true
+          description: The extension package name (its identity).
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtensionReinstallRequest"
+      responses:
+        "200":
+          description: Reinstalled. Returns the refreshed extension list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Extension"
+        "400":
+          description: A blank pkgName or a missing/invalid versionCode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No cached apk exists for that extension version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The engine host was unreachable or returned an error.
           content:
             application/json:
               schema:

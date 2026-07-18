@@ -28,7 +28,7 @@ func TestOnExtensionInstalled(t *testing.T) {
 		"https://repo.test/repo/apk/one.apk":    {status: 200, body: apkBytes},
 	}}
 
-	enginetopo.OnExtensionInstalled(ctx, db, cache, stub.get, installedExt("pkg.one", repo, 4, sourceengine.Source{ID: 7}))
+	enginetopo.OnExtensionInstalled(ctx, db, cache, stub.get, installedExt("pkg.one", repo, 4, sourceengine.Source{ID: 7}), 3)
 
 	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName("pkg.one")).OnlyX(ctx)
 	assertCachedExtension(t, row, hexSHA(apkBytes), 4, []int64{7})
@@ -50,7 +50,7 @@ func TestOnExtensionUninstalled(t *testing.T) {
 	}}
 
 	// Seed a real row + cached file via the capture path, then uninstall it.
-	enginetopo.OnExtensionInstalled(ctx, db, cache, stub.get, installedExt("pkg.one", repo, 2, sourceengine.Source{ID: 1}))
+	enginetopo.OnExtensionInstalled(ctx, db, cache, stub.get, installedExt("pkg.one", repo, 2, sourceengine.Source{ID: 1}), 3)
 	if !cache.Exists("pkg.one", 2) {
 		t.Fatal("precondition: apk not cached before uninstall")
 	}

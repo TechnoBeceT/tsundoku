@@ -217,6 +217,14 @@ func (s *Service) EngineSocksVersion(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyEngineSocksVersion)
 }
 
+// RetainedVersions is how many .apk versions per extension the apk cache keeps
+// — the reversible-update history depth (DB override else default 3). Read at
+// use-time by the harvest/update prune + the reinstall write-through, so a
+// change hot-reloads on the next prune.
+func (s *Service) RetainedVersions(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyRetainedVersions)
+}
+
 // List returns the whole allowlist in stable order with each key's current
 // resolved value, default, type, and unit — the GET /api/settings payload.
 func (s *Service) List(ctx context.Context) []SettingDTO {

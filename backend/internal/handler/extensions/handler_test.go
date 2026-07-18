@@ -98,7 +98,7 @@ func newTestEnv(t *testing.T, fc *sourceenginefake.Client) *testEnv {
 	t.Helper()
 	authSvc := auth.NewService(testSecret)
 	store := newFakeToggleStore()
-	h := handler.NewHandler(fc, nil, nil, nil, store)
+	h := handler.NewHandler(fc, nil, nil, nil, store, nil)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler

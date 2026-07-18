@@ -54,10 +54,54 @@ func OnExtensionInstalled(
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
 	ext sourceengine.Extension,
+	retained int,
 ) {
-	if err := RecordInstalledExtension(ctx, db, cache, httpGet, ext); err != nil {
+	if err := RecordInstalledExtension(ctx, db, cache, httpGet, ext, retained); err != nil {
 		slog.WarnContext(ctx, "enginetopo: write-through could not capture installed extension",
 			"pkg_name", ext.PkgName, "repo", repoURLOf(ext), "err", err)
+	}
+}
+
+// OnExtensionReinstalled records an owner-initiated reinstall of a HELD (older)
+// version from the apk cache — the reversible-update rollback path. Unlike
+// OnExtensionInstalled it does NO repo fetch (the requested version's bytes are
+// already cached; re-resolving from the repo would re-download the LATEST, which
+// is exactly the version the owner is rolling AWAY from, and would fail outright
+// when the repo is down — the very scenario a rollback exists for). It just
+// pins installed_version_code to the reinstalled version and re-prunes the held
+// set with that version as the always-keep anchor.
+//
+// Best-effort (mirrors the other write-throughs): the engine install already
+// succeeded; a DB/cache hiccup here is logged and swallowed, never surfaced. The
+// row is expected to exist (the reinstall endpoint validated the version against
+// cached_versions before calling), so an absent row is logged as an anomaly.
+func OnExtensionReinstalled(
+	ctx context.Context,
+	db *ent.Client,
+	cache *apkcache.Store,
+	pkgName string,
+	versionCode, retained int,
+) {
+	row, err := db.HarvestedExtension.Query().
+		Where(entharvestedextension.PkgName(pkgName)).
+		Only(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "enginetopo: reinstall write-through could not load extension row",
+			"pkg_name", pkgName, "version_code", versionCode, "err", err)
+		return
+	}
+	// The reinstalled version is now the running one — pin it as the prune anchor
+	// (newName "" ⇒ buildCachedVersions keeps the stored name) so it survives even
+	// if it is older than the newest N.
+	cachedVersions := pruneAndBuildCachedVersions(
+		ctx, db, cache, pkgName, retained, versionCode, "", versionCode,
+	)
+	if err := db.HarvestedExtension.UpdateOne(row).
+		SetInstalledVersionCode(versionCode).
+		SetCachedVersions(cachedVersions).
+		Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "enginetopo: reinstall write-through could not update extension row",
+			"pkg_name", pkgName, "version_code", versionCode, "err", err)
 	}
 }
 

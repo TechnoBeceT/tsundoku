@@ -404,6 +404,9 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		EngineSocksHost:    "",
 		EngineSocksPort:    1080,
 		EngineSocksVersion: 5,
+		// RetainedVersions IS env-sourced (unlike the FlareSolverr/SOCKS groups):
+		// the apk-cache rollback-history depth.
+		RetainedVersions: cfg.Extensions.RetainedVersions,
 	}
 }
 
@@ -490,10 +493,11 @@ func startEngineTopo(
 	go func() {
 		runEngineTopoReconcile(ctx, engineClient, entClient, apkStore, settingsSvc)
 		enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
-			Client:  engineClient,
-			DB:      entClient,
-			Cache:   apkStore,
-			HTTPGet: http.Get,
+			Client:   engineClient,
+			DB:       entClient,
+			Cache:    apkStore,
+			HTTPGet:  http.Get,
+			Retained: settingsSvc.RetainedVersions,
 		})
 	}()
 }

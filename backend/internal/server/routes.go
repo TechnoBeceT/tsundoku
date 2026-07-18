@@ -112,6 +112,7 @@ import (
 //   - /api/suwayomi/extensions/repos (PUT)          — replace extension repo URLs (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/install (POST) — install an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/update (POST)  — update an extension (RequireOwner).
+//   - /api/suwayomi/extensions/:pkgName/reinstall (POST) — reinstall a HELD (older) cached version (rollback) (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName (DELETE)    — uninstall an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/icon (GET)  — extension icon proxy (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/preferences (GET)   — per-source preferences, grouped by source (RequireOwner).
@@ -348,13 +349,14 @@ func registerRoutes(
 	// DisabledSource entity) and applied as a picker filter in internal/imports;
 	// it is NEVER pushed to the engine (internal/enginetopo does not read it).
 	disabledSrcSvc := disabledsource.NewService(client)
-	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get, disabledSrcSvc)
+	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get, disabledSrcSvc, settingsSvc.RetainedVersions)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
 	authed.PUT("/suwayomi/extensions/repos", extensionsH.SetRepos)
 	authed.POST("/suwayomi/extensions/:pkgName/install", extensionsH.Install)
 	authed.POST("/suwayomi/extensions/:pkgName/update", extensionsH.Update)
+	authed.POST("/suwayomi/extensions/:pkgName/reinstall", extensionsH.Reinstall)
 	authed.DELETE("/suwayomi/extensions/:pkgName", extensionsH.Uninstall)
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", extensionsH.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", extensionsH.SetPreference)

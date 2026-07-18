@@ -218,6 +218,8 @@ const emit = defineEmits<{
   'update-extension': [id: string]
   /** Uninstall an installed extension (by pkgName). */
   'uninstall-extension': [id: string]
+  /** Reinstall (roll back to) a held version of an installed extension. */
+  'reinstall-extension': [payload: { id: string, versionCode: number }]
   /** Trigger a check-for-updates across installed extensions. */
   'check-updates': []
   /** Add an extension repository URL. */
@@ -317,6 +319,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @install-extension="emit('install-extension', $event)"
           @update-extension="emit('update-extension', $event)"
           @uninstall-extension="emit('uninstall-extension', $event)"
+          @reinstall-extension="emit('reinstall-extension', $event)"
           @check-updates="emit('check-updates')"
           @add-repo="emit('add-repo', $event)"
           @remove-repo="emit('remove-repo', $event)"

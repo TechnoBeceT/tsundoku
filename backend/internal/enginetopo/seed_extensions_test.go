@@ -108,7 +108,7 @@ func TestSeedExtensions_HappyPath(t *testing.T) {
 		}),
 	)
 
-	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("SeedExtensions: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestSeedExtensions_RepoIndexFailureIsGap(t *testing.T) {
 		}),
 	)
 
-	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("SeedExtensions: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestSeedExtensions_IdempotentSecondRun(t *testing.T) {
 		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 1, sourceengine.Source{ID: 1})}),
 	)
 
-	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("first SeedExtensions: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestSeedExtensions_IdempotentSecondRun(t *testing.T) {
 		t.Fatal("first pass made zero http calls, expected index + apk fetch")
 	}
 
-	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("second SeedExtensions: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestSeedExtensions_RecordsIndexVersionNotInstalled(t *testing.T) {
 		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 3, sourceengine.Source{ID: 9})}),
 	)
 
-	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("SeedExtensions: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestSeedExtensions_ReDownloadsWhenFileMissing(t *testing.T) {
 		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 1, sourceengine.Source{ID: 1})}),
 	)
 
-	if _, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get); err != nil {
+	if _, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil); err != nil {
 		t.Fatalf("first SeedExtensions: %v", err)
 	}
 	// The row now says cached — but delete the bytes out from under it.
@@ -331,7 +331,7 @@ func TestSeedExtensions_ReDownloadsWhenFileMissing(t *testing.T) {
 		t.Fatal("cache file still present after Remove")
 	}
 
-	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("second SeedExtensions: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
 		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 3, sourceengine.Source{ID: 1})}),
 	)
 
-	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("first SeedExtensions: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
 	stub.routes[indexURL] = stubResp{status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"one.apk","code":5}]`)}
 	stub.routes[apkURL] = stubResp{status: 200, body: []byte("APK-V5")}
 
-	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("second SeedExtensions: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestSeedExtensions_ReCachesWhenInstalledVersionAdvances(t *testing.T) {
 	// installed ext.VersionCode (5) == stored installed_version_code (5) → skip,
 	// zero http calls.
 	callsBefore := stub.callCount()
-	res3, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res3, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("third SeedExtensions: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestSeedExtensions_IndexLagsInstalledNoLoop(t *testing.T) {
 		sourceenginefake.WithExtensions([]sourceengine.Extension{installedExt("pkg.one", repo, 100, sourceengine.Source{ID: 1})}),
 	)
 
-	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res1, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("first SeedExtensions: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestSeedExtensions_IndexLagsInstalledNoLoop(t *testing.T) {
 	// SECOND seed, installed version UNCHANGED (still 100). This is the boot that
 	// the old `<=`-against-index-version bug re-downloaded: it must now SKIP with
 	// zero http calls (the loop is gone).
-	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get)
+	res2, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil)
 	if err != nil {
 		t.Fatalf("second SeedExtensions: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestSeedExtensions_ListReposErrorAborts(t *testing.T) {
 	client := sourceenginefake.New(sourceenginefake.WithError("Repos", errors.New("engine down")))
 	stub := &stubHTTP{}
 
-	if _, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get); err == nil {
+	if _, err := enginetopo.SeedExtensions(ctx, client, db, cache, stub.get, nil); err == nil {
 		t.Fatal("SeedExtensions: want error when listing repos fails, got nil")
 	}
 }

@@ -196,6 +196,20 @@ const (
 	// KeyEngineSocksVersion is the SOCKS protocol version (int, MUST be 4 or 5
 	// — not a contiguous range, unlike every other int tunable — default 5).
 	KeyEngineSocksVersion = "engine.socks_version"
+	// KeyRetainedVersions is how many .apk versions per extension the apk cache
+	// keeps (int, 1..20, default 3) — the depth of the reversible-update history.
+	// 1 means "keep only the current version" (no rollback history). A harvest or
+	// update prunes each extension's cached .apks to the newest N ∪ the installed
+	// version; the retained set is surfaced in the Extensions UI for reinstall.
+	// Read at USE-TIME (harvest/update write-through), so a change hot-reloads on
+	// the next prune without a restart.
+	KeyRetainedVersions = "extensions.retained_versions"
+)
+
+// retainedVersionsMin/Max bound the extensions.retained_versions tunable.
+const (
+	retainedVersionsMin = 1
+	retainedVersionsMax = 20
 )
 
 // flareSolverrTimeoutMin/Max and flareSolverrSessionTTLMin/Max bound the two
@@ -267,6 +281,10 @@ type Defaults struct {
 	EngineSocksHost    string
 	EngineSocksPort    int
 	EngineSocksVersion int
+	// RetainedVersions backs the extensions.retained_versions tunable — the depth
+	// of the apk-cache rollback history (env-sourced default, unlike the
+	// FlareSolverr/SOCKS groups which have no env var).
+	RetainedVersions int
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -316,6 +334,7 @@ var tunableOrder = []string{
 	KeyEngineSocksHost,
 	KeyEngineSocksPort,
 	KeyEngineSocksVersion,
+	KeyRetainedVersions,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -453,6 +472,10 @@ var tunables = map[string]tunable{
 	KeyEngineSocksVersion: intEnumTunable(
 		KeyEngineSocksVersion, "version", engineSocksVersions,
 		func(d Defaults) int { return d.EngineSocksVersion },
+	),
+	KeyRetainedVersions: intTunable(
+		KeyRetainedVersions, "count", retainedVersionsMin, retainedVersionsMax,
+		func(d Defaults) int { return d.RetainedVersions },
 	),
 }
 

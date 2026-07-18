@@ -2,7 +2,9 @@ package extensions
 
 import (
 	"strconv"
+	"time"
 
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
@@ -45,6 +47,23 @@ type ExtensionDTO struct {
 	// language it supports) — the set the per-source preferences endpoint
 	// (GET .../preferences) resolves against.
 	Sources []ExtensionSourceDTO `json:"sources"`
+	// CachedVersions is the set of HELD (retained) .apk versions of this
+	// extension in Tsundoku's apk cache — the reversible-update history the UI
+	// lists so the owner can reinstall an older build. Never null ([] when none
+	// are held, e.g. an available-but-not-installed extension). Read from the
+	// HarvestedExtension row (durable store), NOT the engine.
+	CachedVersions []CachedVersionDTO `json:"cachedVersions"`
+}
+
+// CachedVersionDTO is one held .apk version of an extension — a build the owner
+// can reinstall (roll back to) from the apk cache.
+type CachedVersionDTO struct {
+	// VersionCode is the numeric version (the reinstall endpoint's target).
+	VersionCode int `json:"versionCode"`
+	// VersionName is the human-readable version string.
+	VersionName string `json:"versionName"`
+	// CachedAt is when these bytes were cached (RFC 3339).
+	CachedAt time.Time `json:"cachedAt"`
 }
 
 // ExtensionSourceDTO is one content source an extension provides, mirroring
@@ -67,23 +86,39 @@ type ExtensionReposDTO struct {
 	Repos []string `json:"repos"`
 }
 
-// toExtensionDTO maps one client Extension into the HTTP DTO. It is the SINGLE
-// mapper every extension-returning endpoint routes through, so no field is ever
-// dropped on one path but not another.
-func toExtensionDTO(e sourceengine.Extension) ExtensionDTO {
+// toExtensionDTO maps one client Extension into the HTTP DTO, attaching the
+// package's held-version set (heldByPkg[e.PkgName]). It is the SINGLE mapper
+// every extension-returning endpoint routes through, so no field is ever dropped
+// on one path but not another.
+func toExtensionDTO(e sourceengine.Extension, heldByPkg map[string][]apkcache.CachedVersion) ExtensionDTO {
 	return ExtensionDTO{
-		PkgName:     e.PkgName,
-		Name:        e.Name,
-		Lang:        e.Lang,
-		VersionName: e.VersionName,
-		VersionCode: e.VersionCode,
-		IconURL:     e.IconURL,
-		RepoURL:     e.RepoURL,
-		IsInstalled: e.IsInstalled,
-		HasUpdate:   e.HasUpdate,
-		IsNsfw:      e.IsNsfw,
-		Sources:     toExtensionSourceDTOs(e.Sources),
+		PkgName:        e.PkgName,
+		Name:           e.Name,
+		Lang:           e.Lang,
+		VersionName:    e.VersionName,
+		VersionCode:    e.VersionCode,
+		IconURL:        e.IconURL,
+		RepoURL:        e.RepoURL,
+		IsInstalled:    e.IsInstalled,
+		HasUpdate:      e.HasUpdate,
+		IsNsfw:         e.IsNsfw,
+		Sources:        toExtensionSourceDTOs(e.Sources),
+		CachedVersions: toCachedVersionDTOs(heldByPkg[e.PkgName]),
 	}
+}
+
+// toCachedVersionDTOs maps a package's held-version set into DTOs. The result is
+// always non-nil so the JSON is [] (not null) when nothing is held.
+func toCachedVersionDTOs(held []apkcache.CachedVersion) []CachedVersionDTO {
+	out := make([]CachedVersionDTO, 0, len(held))
+	for _, cv := range held {
+		out = append(out, CachedVersionDTO{
+			VersionCode: cv.VersionCode,
+			VersionName: cv.VersionName,
+			CachedAt:    cv.CachedAt,
+		})
+	}
+	return out
 }
 
 // formatSourceID renders an engine-host numeric source id as the wire/DTO
@@ -115,12 +150,14 @@ func toExtensionSourceDTOs(sources []sourceengine.Source) []ExtensionSourceDTO {
 	return out
 }
 
-// toExtensionDTOs maps a slice of client Extensions through toExtensionDTO. The
-// result is always non-nil so the JSON body is [] (not null) for an empty list.
-func toExtensionDTOs(exts []sourceengine.Extension) []ExtensionDTO {
+// toExtensionDTOs maps a slice of client Extensions through toExtensionDTO,
+// attaching each package's held-version set from heldByPkg (one batched read, no
+// N+1). The result is always non-nil so the JSON body is [] (not null) for an
+// empty list.
+func toExtensionDTOs(exts []sourceengine.Extension, heldByPkg map[string][]apkcache.CachedVersion) []ExtensionDTO {
 	out := make([]ExtensionDTO, 0, len(exts))
 	for _, e := range exts {
-		out = append(out, toExtensionDTO(e))
+		out = append(out, toExtensionDTO(e, heldByPkg))
 	}
 	return out
 }

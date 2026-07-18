@@ -6,6 +6,8 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
+
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 )
 
 // HarvestedExtension holds the schema definition for the HarvestedExtension
@@ -51,6 +53,13 @@ func (HarvestedExtension) Fields() []ent.Field {
 		// apk_cached marks whether the extension's .apk has been downloaded into the
 		// local cache.
 		field.Bool("apk_cached").Default(false),
+		// cached_versions is the set of HELD (retained) .apk versions still on disk
+		// for this extension — the durable record behind reversible updates: the
+		// Extensions UI lists these so the owner can reinstall an older build, and a
+		// harvest/update prunes the set to the newest N (extensions.retained_versions)
+		// ∪ the installed version. Additive/optional ⇒ zero-data migration (existing
+		// rows read as an empty held set until the next harvest populates it).
+		field.JSON("cached_versions", []apkcache.CachedVersion{}).Optional(),
 		// updated_at is refreshed on every write (harvest / cache update).
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

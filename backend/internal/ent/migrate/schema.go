@@ -110,6 +110,7 @@ var (
 		{Name: "source_ids", Type: field.TypeJSON, Nullable: true},
 		{Name: "apk_sha256", Type: field.TypeString, Default: ""},
 		{Name: "apk_cached", Type: field.TypeBool, Default: false},
+		{Name: "cached_versions", Type: field.TypeJSON, Nullable: true},
 		{Name: "updated_at", Type: field.TypeTime},
 	}
 	// HarvestedExtensionsTable holds the schema information for the "harvested_extensions" table.

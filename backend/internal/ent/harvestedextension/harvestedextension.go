@@ -30,6 +30,8 @@ const (
 	FieldApkSha256 = "apk_sha256"
 	// FieldApkCached holds the string denoting the apk_cached field in the database.
 	FieldApkCached = "apk_cached"
+	// FieldCachedVersions holds the string denoting the cached_versions field in the database.
+	FieldCachedVersions = "cached_versions"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
 	// Table holds the table name of the harvestedextension in the database.
@@ -47,6 +49,7 @@ var Columns = []string{
 	FieldSourceIds,
 	FieldApkSha256,
 	FieldApkCached,
+	FieldCachedVersions,
 	FieldUpdatedAt,
 }
 

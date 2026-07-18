@@ -151,7 +151,7 @@ func init() {
 	// harvestedextension.DefaultApkCached holds the default value on creation for the apk_cached field.
 	harvestedextension.DefaultApkCached = harvestedextensionDescApkCached.Default.(bool)
 	// harvestedextensionDescUpdatedAt is the schema descriptor for updated_at field.
-	harvestedextensionDescUpdatedAt := harvestedextensionFields[9].Descriptor()
+	harvestedextensionDescUpdatedAt := harvestedextensionFields[10].Descriptor()
 	// harvestedextension.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	harvestedextension.DefaultUpdatedAt = harvestedextensionDescUpdatedAt.Default.(func() time.Time)
 	// harvestedextension.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

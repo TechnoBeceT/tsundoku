@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
+	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 )
@@ -159,6 +160,24 @@ func (_u *HarvestedExtensionUpdate) SetNillableApkCached(v *bool) *HarvestedExte
 	return _u
 }
 
+// SetCachedVersions sets the "cached_versions" field.
+func (_u *HarvestedExtensionUpdate) SetCachedVersions(v []apkcache.CachedVersion) *HarvestedExtensionUpdate {
+	_u.mutation.SetCachedVersions(v)
+	return _u
+}
+
+// AppendCachedVersions appends value to the "cached_versions" field.
+func (_u *HarvestedExtensionUpdate) AppendCachedVersions(v []apkcache.CachedVersion) *HarvestedExtensionUpdate {
+	_u.mutation.AppendCachedVersions(v)
+	return _u
+}
+
+// ClearCachedVersions clears the value of the "cached_versions" field.
+func (_u *HarvestedExtensionUpdate) ClearCachedVersions() *HarvestedExtensionUpdate {
+	_u.mutation.ClearCachedVersions()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *HarvestedExtensionUpdate) SetUpdatedAt(v time.Time) *HarvestedExtensionUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -252,6 +271,17 @@ func (_u *HarvestedExtensionUpdate) sqlSave(ctx context.Context) (_node int, err
 	}
 	if value, ok := _u.mutation.ApkCached(); ok {
 		_spec.SetField(harvestedextension.FieldApkCached, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CachedVersions(); ok {
+		_spec.SetField(harvestedextension.FieldCachedVersions, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCachedVersions(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, harvestedextension.FieldCachedVersions, value)
+		})
+	}
+	if _u.mutation.CachedVersionsCleared() {
+		_spec.ClearField(harvestedextension.FieldCachedVersions, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(harvestedextension.FieldUpdatedAt, field.TypeTime, value)
@@ -406,6 +436,24 @@ func (_u *HarvestedExtensionUpdateOne) SetNillableApkCached(v *bool) *HarvestedE
 	return _u
 }
 
+// SetCachedVersions sets the "cached_versions" field.
+func (_u *HarvestedExtensionUpdateOne) SetCachedVersions(v []apkcache.CachedVersion) *HarvestedExtensionUpdateOne {
+	_u.mutation.SetCachedVersions(v)
+	return _u
+}
+
+// AppendCachedVersions appends value to the "cached_versions" field.
+func (_u *HarvestedExtensionUpdateOne) AppendCachedVersions(v []apkcache.CachedVersion) *HarvestedExtensionUpdateOne {
+	_u.mutation.AppendCachedVersions(v)
+	return _u
+}
+
+// ClearCachedVersions clears the value of the "cached_versions" field.
+func (_u *HarvestedExtensionUpdateOne) ClearCachedVersions() *HarvestedExtensionUpdateOne {
+	_u.mutation.ClearCachedVersions()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *HarvestedExtensionUpdateOne) SetUpdatedAt(v time.Time) *HarvestedExtensionUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -529,6 +577,17 @@ func (_u *HarvestedExtensionUpdateOne) sqlSave(ctx context.Context) (_node *Harv
 	}
 	if value, ok := _u.mutation.ApkCached(); ok {
 		_spec.SetField(harvestedextension.FieldApkCached, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CachedVersions(); ok {
+		_spec.SetField(harvestedextension.FieldCachedVersions, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCachedVersions(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, harvestedextension.FieldCachedVersions, value)
+		})
+	}
+	if _u.mutation.CachedVersionsCleared() {
+		_spec.ClearField(harvestedextension.FieldCachedVersions, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(harvestedextension.FieldUpdatedAt, field.TypeTime, value)

@@ -44,8 +44,14 @@ function mapExtension(dto: ExtensionDTO): Extension {
     name: dto.name,
     lang: dto.lang,
     version: dto.versionName,
+    versionCode: dto.versionCode,
     hasUpdate: dto.hasUpdate,
     iconUrl: dto.iconUrl,
+    cachedVersions: dto.cachedVersions.map(cv => ({
+      versionCode: cv.versionCode,
+      versionName: cv.versionName,
+      cachedAt: cv.cachedAt,
+    })),
   }
 }
 
@@ -151,6 +157,23 @@ export function useExtensions() {
     await extMutate(id, async () => {
       const res = await apiClient.DELETE('/api/suwayomi/extensions/{pkgName}', {
         params: { path: { pkgName: id } },
+      })
+      if (res.error) throw new Error(res.error.message)
+      return res.data
+    })
+  }
+
+  /**
+   * Reinstalls a HELD (older) version of an extension by pkgName + versionCode —
+   * the reversible-update rollback. Returns the refreshed full list (§16); the
+   * row is busy (extensionAction.busyId=id) while it runs, and any 404/502 is
+   * surfaced in extensionAction.error.
+   */
+  async function reinstallExtension(id: string, versionCode: number): Promise<void> {
+    await extMutate(id, async () => {
+      const res = await apiClient.POST('/api/suwayomi/extensions/{pkgName}/reinstall', {
+        params: { path: { pkgName: id } },
+        body: { versionCode },
       })
       if (res.error) throw new Error(res.error.message)
       return res.data
@@ -269,6 +292,7 @@ export function useExtensions() {
     installExtension,
     updateExtension,
     uninstallExtension,
+    reinstallExtension,
     checkUpdates,
     addRepo,
     removeRepo,

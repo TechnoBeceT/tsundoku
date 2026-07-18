@@ -164,11 +164,17 @@ const {
   installExtension,
   updateExtension,
   uninstallExtension,
+  reinstallExtension,
   checkUpdates,
   addRepo,
   removeRepo,
   reorderRepo,
 } = useExtensions()
+
+/** Reinstall a held version, unpacking the pane's {id, versionCode} payload. */
+function onReinstallExtension({ id, versionCode }: { id: string, versionCode: number }): void {
+  void reinstallExtension(id, versionCode)
+}
 
 const {
   metrics: sourceMetrics,
@@ -362,6 +368,7 @@ const loading = computed(
       @install-extension="installExtension"
       @update-extension="updateExtension"
       @uninstall-extension="uninstallExtension"
+      @reinstall-extension="onReinstallExtension"
       @check-updates="checkUpdates"
       @add-repo="addRepo"
       @remove-repo="removeRepo"
