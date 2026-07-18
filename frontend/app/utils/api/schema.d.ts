@@ -1255,9 +1255,12 @@ export interface paths {
         /**
          * List staged library-import entries
          * @description Returns a page of the staged entries from a prior scan, optionally
-         *     filtered by status. An empty/absent status returns every staged
-         *     entry. Paginated via limit/offset so a 1000+ series library loads
-         *     incrementally.
+         *     filtered by status and/or a case-insensitive title search. An
+         *     empty/absent status returns every staging status; an empty/absent q
+         *     applies no title filter. The q filter is applied by the backend across
+         *     the full staged set (not just the loaded page), so it finds a series
+         *     anywhere in a 1000+ entry migration, and composes with status.
+         *     Paginated via limit/offset so a large library loads incrementally.
          */
         get: operations["listImports"];
         put?: never;
@@ -6151,6 +6154,8 @@ export interface operations {
             query?: {
                 /** @description Filter to one staging status. */
                 status?: "pending" | "imported" | "skipped";
+                /** @description Case-insensitive title substring filter (ILIKE %q%). Empty/absent applies no title filter. */
+                q?: string;
                 /** @description Page size (default 50, capped at 200). */
                 limit?: number;
                 /** @description Number of rows to skip. */

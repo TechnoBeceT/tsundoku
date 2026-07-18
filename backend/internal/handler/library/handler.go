@@ -17,6 +17,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -62,22 +63,26 @@ func (h *Handler) Scan(c echo.Context) error {
 	return c.JSON(http.StatusAccepted, scanStartedResponse{Started: true})
 }
 
-// ListImports handles GET /api/library/imports?status=&limit=&offset=.
+// ListImports handles GET /api/library/imports?status=&q=&limit=&offset=.
 //
 // The optional ?status filter must be one of pending/imported/skipped (empty
-// means no filter). ?limit/?offset page the result (default 50, capped at
-// 200 — see validatePagination). Returns the staged ImportEntry rows as
-// []FoundSeriesDTO.
+// means no filter). The optional ?q is a case-insensitive title substring
+// filter (empty/absent means no filter) applied by the DB across the FULL
+// staged set — so search finds a series anywhere in a 1000+ entry migration,
+// not just within the loaded page — and composes with ?status. ?limit/?offset
+// page the result (default 50, capped at 200 — see validatePagination).
+// Returns the staged ImportEntry rows as []FoundSeriesDTO.
 func (h *Handler) ListImports(c echo.Context) error {
 	status, err := parseStatusFilter(c.QueryParam("status"))
 	if err != nil {
 		return err
 	}
+	search := strings.TrimSpace(c.QueryParam("q"))
 	limit, offset, err := validatePagination(c.QueryParam("limit"), c.QueryParam("offset"))
 	if err != nil {
 		return err
 	}
-	out, err := h.svc.ListImports(c.Request().Context(), status, limit, offset)
+	out, err := h.svc.ListImports(c.Request().Context(), status, search, limit, offset)
 	if err != nil {
 		return mapServiceError(err)
 	}

@@ -324,6 +324,54 @@ describe('useScanLibrary', () => {
     expect(calls.some(c => c.method === 'GET' && c.path === '/api/library/imports')).toBe(true)
   })
 
+  it('setSearch(q) threads q into the fetch (debounced) and re-pages from offset 0', async () => {
+    vi.useFakeTimers()
+    try {
+      const { setSearch, loadMore } = mountScanLibrary()
+      await vi.runAllTimersAsync() // flush the initial load() + loadSources()
+      calls = []
+
+      // Advance the page offset so we can prove setSearch resets it to 0.
+      loadMore()
+      await vi.runAllTimersAsync()
+      const moreGet = calls.find(c => c.method === 'GET' && c.path === '/api/library/imports')
+      expect((moreGet!.query as { offset?: number }).offset).toBe(50)
+      calls = []
+
+      // setSearch is debounced — no fetch fires immediately.
+      setSearch('solo')
+      expect(calls.some(c => c.path === '/api/library/imports')).toBe(false)
+
+      // After the debounce window, exactly one fetch carrying q + offset 0.
+      await vi.advanceTimersByTimeAsync(250)
+      const searchGet = calls.find(c => c.method === 'GET' && c.path === '/api/library/imports')
+      expect(searchGet).toBeDefined()
+      expect(searchGet!.query).toMatchObject({ q: 'solo', offset: 0, limit: 50 })
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('setSearch("") sends no q (blank clears the filter)', async () => {
+    vi.useFakeTimers()
+    try {
+      const { setSearch } = mountScanLibrary()
+      await vi.runAllTimersAsync()
+      calls = []
+
+      setSearch('   ') // whitespace only → trimmed to empty → no filter
+      await vi.advanceTimersByTimeAsync(250)
+
+      const get = calls.find(c => c.method === 'GET' && c.path === '/api/library/imports')
+      expect(get).toBeDefined()
+      expect((get!.query as { q?: string }).q).toBeUndefined()
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('importWithMatches(path, matches) POSTs /api/library/import with {path, matches}', async () => {
     const { importWithMatches } = mountScanLibrary()
     calls = []

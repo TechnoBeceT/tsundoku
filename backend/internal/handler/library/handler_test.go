@@ -526,7 +526,7 @@ func testAddProvidersSuccess(t *testing.T) {
 	if _, err := env.svc.Scan(ctx); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	entries, err := env.svc.ListImports(ctx, "pending", 0, 0)
+	entries, err := env.svc.ListImports(ctx, "pending", "", 0, 0)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("ListImports: %v (entries=%v)", err, entries)
 	}

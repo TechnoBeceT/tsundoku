@@ -231,6 +231,12 @@ export function useScanLibrary() {
   // ── Staged-entries list (paginated) ─────────────────────────────────────
   const entries = ref<ScanEntry[]>([])
   const statusFilter = ref<ScanStatusFilter>(null)
+  // Backend title search (?q). The staged set is 1000+ rich rows — far too
+  // heavy to load fully and filter client-side — so search is applied by the
+  // DB (case-insensitive title substring) across the WHOLE set, not just the
+  // loaded page. Threaded into every list fetch (see `load`), so both the
+  // first page AND load-more's appended pages stay within the filtered set.
+  const searchQuery = ref('')
   const offset = ref(0)
   const pending = ref(false)
   // Load failure for the entries list itself (distinct from a per-row
@@ -249,6 +255,7 @@ export function useScanLibrary() {
         params: {
           query: {
             status: statusFilter.value ?? undefined,
+            q: searchQuery.value.trim() || undefined,
             limit: PAGE,
             offset: offset.value,
           },
@@ -274,6 +281,31 @@ export function useScanLibrary() {
     statusFilter.value = status
     void load(false)
   }
+
+  // Debounce backend title-search reloads so a fast typist fires ONE request
+  // per settle point, not one per keystroke. `load(false)` resets offset to 0,
+  // so every search change re-pages from the top of the filtered set.
+  const SEARCH_DEBOUNCE_MS = 250
+  let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * Updates the backend title-search string and reloads (debounced) from
+   * offset 0. Empty/whitespace `q` clears the filter (the backend treats a
+   * blank q as "no filter"). load-more then appends within the filtered set,
+   * since `load` always threads the current `searchQuery`.
+   */
+  function setSearch(q: string): void {
+    searchQuery.value = q
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(() => {
+      searchTimer = null
+      void load(false)
+    }, SEARCH_DEBOUNCE_MS)
+  }
+
+  onUnmounted(() => {
+    if (searchTimer) clearTimeout(searchTimer)
+  })
 
   /** Loads the next page and appends it to the current entries. */
   function loadMore(): void {
@@ -562,6 +594,8 @@ export function useScanLibrary() {
     entries,
     statusFilter,
     setStatusFilter,
+    searchQuery,
+    setSearch,
     pending,
     entriesError,
     hasMore,

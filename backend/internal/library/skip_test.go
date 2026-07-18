@@ -30,7 +30,7 @@ func TestSkip_MarksEntrySkipped(t *testing.T) {
 		t.Fatalf("skip: %v", err)
 	}
 
-	skipped, err := svc.ListImports(ctx, "skipped", 50, 0)
+	skipped, err := svc.ListImports(ctx, "skipped", "", 50, 0)
 	if err != nil {
 		t.Fatalf("list skipped: %v", err)
 	}

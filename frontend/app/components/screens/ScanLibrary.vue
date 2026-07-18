@@ -7,6 +7,7 @@ import Stepper from '../ui/Stepper.vue'
 import MatchPanel from '../scanLibrary/MatchPanel.vue'
 import ScanProgress from '../scanLibrary/ScanProgress.vue'
 import StagingTable from '../scanLibrary/StagingTable.vue'
+import SearchInput from '../ui/SearchInput.vue'
 import SourceFilterChips from '../ui/SourceFilterChips.vue'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { StepItem } from '../ui/nav.types'
@@ -61,6 +62,8 @@ const props = withDefaults(defineProps<{
   entries: ScanEntry[]
   /** The active staging-status filter. */
   statusFilter?: ScanStatusFilter
+  /** The current backend title-search string (v-model:searchQuery). */
+  searchQuery?: string
   /** True while the entries list is loading (first page or load-more). */
   pending?: boolean
   /** A load failure for the entries list itself, or "" for none. */
@@ -93,6 +96,7 @@ const props = withDefaults(defineProps<{
   sources: () => [],
   sourceFilter: () => [],
   statusFilter: null,
+  searchQuery: '',
   pending: false,
   entriesError: '',
   hasMore: false,
@@ -116,6 +120,8 @@ const emit = defineEmits<{
   'start-scan': []
   /** The status filter tab changed. */
   'set-status-filter': [status: ScanStatusFilter]
+  /** The backend title-search string changed (v-model:searchQuery). */
+  'update:searchQuery': [value: string]
   /** Load the next page of the current filter. */
   'load-more': []
   /** Import one staged entry disk-only. */
@@ -265,6 +271,18 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
               />
             </DisclosurePanel>
 
+            <!-- Backend title search over the FULL staged set (not just the
+                 loaded page) — see useScanLibrary. Composes with the status
+                 tabs + load-more; typing re-pages from the top of the filtered
+                 set (debounced in the composable). -->
+            <div class="sl-search">
+              <SearchInput
+                :model-value="searchQuery"
+                placeholder="Search staged series by title…"
+                @update:model-value="emit('update:searchQuery', $event)"
+              />
+            </div>
+
             <StagingTable
               :entries="entries"
               :status-filter="statusFilter"
@@ -407,6 +425,12 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
 }
 
 .sl-review-filter {
+  margin-bottom: var(--space-base); /* 14px @16 */
+}
+
+/* The staged-list title search sits above the table; matches the filter's
+ * trailing rhythm so the search / table stack reads as one block. */
+.sl-search {
   margin-bottom: var(--space-base); /* 14px @16 */
 }
 

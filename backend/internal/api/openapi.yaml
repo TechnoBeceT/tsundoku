@@ -5299,9 +5299,12 @@ paths:
       summary: List staged library-import entries
       description: |
         Returns a page of the staged entries from a prior scan, optionally
-        filtered by status. An empty/absent status returns every staged
-        entry. Paginated via limit/offset so a 1000+ series library loads
-        incrementally.
+        filtered by status and/or a case-insensitive title search. An
+        empty/absent status returns every staging status; an empty/absent q
+        applies no title filter. The q filter is applied by the backend across
+        the full staged set (not just the loaded page), so it finds a series
+        anywhere in a 1000+ entry migration, and composes with status.
+        Paginated via limit/offset so a large library loads incrementally.
       tags:
         - library
       security:
@@ -5314,6 +5317,14 @@ paths:
           schema:
             type: string
             enum: [pending, imported, skipped]
+        - name: q
+          in: query
+          required: false
+          description: >-
+            Case-insensitive title substring filter (ILIKE %q%). Empty/absent
+            applies no title filter.
+          schema:
+            type: string
         - name: limit
           in: query
           required: false

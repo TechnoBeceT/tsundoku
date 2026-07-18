@@ -40,6 +40,7 @@
  *   @update:source-filter → sourceFilter = $event (page-level "Limit matches to:")
  *   @start-scan          → startScan()
  *   @set-status-filter   → setStatusFilter(status)
+ *   @update:search-query → setSearch(q) — backend title search (debounced, re-pages from 0)
  *   @load-more           → loadMore()
  *   @import-disk-only    → importDiskOnly(path)
  *   @match               → onMatch(path) — opens the panel + runs match(path)
@@ -59,6 +60,8 @@ const {
   entries,
   statusFilter,
   setStatusFilter,
+  searchQuery,
+  setSearch,
   pending,
   entriesError,
   hasMore,
@@ -149,6 +152,7 @@ function onMatchBack(): void {
       :source-filter="sourceFilter"
       :entries="entries"
       :status-filter="statusFilter"
+      :search-query="searchQuery"
       :pending="pending"
       :entries-error="entriesError"
       :has-more="hasMore"
@@ -166,6 +170,7 @@ function onMatchBack(): void {
       @update:source-filter="sourceFilter = $event"
       @start-scan="startScan"
       @set-status-filter="setStatusFilter"
+      @update:search-query="setSearch"
       @load-more="loadMore"
       @import-disk-only="importDiskOnly"
       @match="onMatch"

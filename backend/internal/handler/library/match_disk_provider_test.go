@@ -176,7 +176,7 @@ func TestMatchDiskProvider_HappyPath(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 	// Import disk-only via the staged entry so the series + disk provider exist.
-	entries, err := env.svc.ListImports(ctx, "pending", 0, 0)
+	entries, err := env.svc.ListImports(ctx, "pending", "", 0, 0)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("ListImports: %v (entries=%v)", err, entries)
 	}
