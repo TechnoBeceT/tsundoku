@@ -101,6 +101,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.DELETE("/series/:id/providers/:providerId", h.RemoveProvider)
 	authed.PATCH("/series/:id/providers/:providerId/ignore-fractional", h.SetIgnoreFractional)
 	authed.DELETE("/series/:id", h.DeleteSeries)
+	authed.GET("/series/:id/dedupe-files", h.DedupeFilesPreview)
 	authed.POST("/series/:id/dedupe-files", h.DedupeFiles)
 	authed.GET("/series/:id/fractional-cleanup", h.FractionalCleanupPreview)
 	authed.POST("/series/:id/fractional-cleanup", h.RemoveFractionalChapters)
@@ -419,6 +420,7 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPatch, "/api/series/" + id + "/providers"},
 		{http.MethodDelete, "/api/series/" + id + "/providers/" + id},
 		{http.MethodDelete, "/api/series/" + id + "?deleteFiles=true"},
+		{http.MethodGet, "/api/series/" + id + "/dedupe-files"},
 		{http.MethodPost, "/api/series/" + id + "/dedupe-files"},
 		{http.MethodGet, "/api/series/" + id + "/fractional-cleanup"},
 		{http.MethodPost, "/api/series/" + id + "/fractional-cleanup"},
@@ -437,15 +439,10 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 	}
 }
 
-// TestDedupeFiles_OK confirms POST /api/series/:id/dedupe-files removes a
-// duplicate CBZ for a downloaded chapter, keeps the winner, and returns
-// {removed: N}.
-func TestDedupeFiles_OK(t *testing.T) {
-	env := newTestEnv(t)
-	ctx := context.Background()
-	env.seed(ctx, t)
-
-	// Alpha Saga's chapter 1 winner is "[mangadex][en] Alpha Saga 001.cbz".
+// seedAlphaSagaDupes writes Alpha Saga's chapter-1 winner and one orphan duplicate on
+// disk and returns the series directory. Shared by the dedupe execute + preview tests.
+func seedAlphaSagaDupes(t *testing.T, env *testEnv) string {
+	t.Helper()
 	seriesDir := disk.SeriesDir(env.storage, "Manga", "Alpha Saga")
 	if err := os.MkdirAll(seriesDir, 0o750); err != nil {
 		t.Fatalf("mkdir series dir: %v", err)
@@ -455,6 +452,19 @@ func TestDedupeFiles_OK(t *testing.T) {
 			t.Fatalf("write %q: %v", name, err)
 		}
 	}
+	return seriesDir
+}
+
+// TestDedupeFiles_OK confirms POST /api/series/:id/dedupe-files removes a
+// duplicate CBZ for a downloaded chapter, keeps the winner, and returns
+// {removed: N}.
+func TestDedupeFiles_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+
+	// Alpha Saga's chapter 1 winner is "[mangadex][en] Alpha Saga 001.cbz".
+	seriesDir := seedAlphaSagaDupes(t, env)
 
 	rec := env.do(http.MethodPost, "/api/series/"+env.mangaID.String()+"/dedupe-files", "")
 	if rec.Code != http.StatusOK {
@@ -483,6 +493,48 @@ func TestDedupeFiles_NotFound(t *testing.T) {
 	rec := env.do(http.MethodPost, "/api/series/"+uuid.New().String()+"/dedupe-files", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("DedupeFiles(unknown): want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDedupeFilesPreview_OK confirms GET /api/series/:id/dedupe-files lists the
+// orphan CBZ that a POST would remove (grouped by reason), and DELETES NOTHING.
+func TestDedupeFilesPreview_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	seriesDir := seedAlphaSagaDupes(t, env)
+
+	rec := env.do(http.MethodGet, "/api/series/"+env.mangaID.String()+"/dedupe-files", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DedupeFilesPreview: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got seriessvc.DedupePlanDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("DedupeFilesPreview: decode: %v", err)
+	}
+
+	wantItem := seriessvc.DedupePlanItemDTO{Reason: string(seriessvc.DedupeReasonOrphanSuperseded), Filename: "[old][en] Alpha Saga 001.cbz"}
+	if got.Total != 1 || len(got.Items) != 1 {
+		t.Fatalf("DedupeFilesPreview: want 1 item, got total=%d items=%d", got.Total, len(got.Items))
+	}
+	if got.Items[0].Reason != wantItem.Reason || got.Items[0].Filename != wantItem.Filename {
+		t.Errorf("preview item = %+v, want reason=%q filename=%q", got.Items[0], wantItem.Reason, wantItem.Filename)
+	}
+
+	// The preview deleted NOTHING — both files are still on disk.
+	for _, name := range []string{"[mangadex][en] Alpha Saga 001.cbz", "[old][en] Alpha Saga 001.cbz"} {
+		if _, err := os.Stat(filepath.Join(seriesDir, name)); err != nil {
+			t.Errorf("preview must not delete %q: %v", name, err)
+		}
+	}
+}
+
+// TestDedupeFilesPreview_NotFound confirms an unknown series id yields 404.
+func TestDedupeFilesPreview_NotFound(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodGet, "/api/series/"+uuid.New().String()+"/dedupe-files", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("DedupeFilesPreview(unknown): want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 

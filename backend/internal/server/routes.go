@@ -243,6 +243,7 @@ func registerRoutes(
 	authed.DELETE("/series/:id/providers/:providerId", seriesH.RemoveProvider)
 	authed.PATCH("/series/:id/providers/:providerId/ignore-fractional", seriesH.SetIgnoreFractional)
 	authed.DELETE("/series/:id", seriesH.DeleteSeries)
+	authed.GET("/series/:id/dedupe-files", seriesH.DedupeFilesPreview)
 	authed.POST("/series/:id/dedupe-files", seriesH.DedupeFiles)
 	authed.GET("/series/:id/fractional-cleanup", seriesH.FractionalCleanupPreview)
 	authed.POST("/series/:id/fractional-cleanup", seriesH.RemoveFractionalChapters)

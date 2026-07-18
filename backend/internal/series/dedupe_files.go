@@ -17,7 +17,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
-	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
 
@@ -30,10 +29,83 @@ import (
 // handler to a 500.
 var ErrDedupeMergeFailed = errors.New("dedupe-files failed while deleting a merged duplicate's CBZ")
 
-// DedupeFiles is the owner-triggered duplicate cleanup for a whole series. It runs
-// FOUR passes and returns the total number of duplicates/leftovers it resolved:
+// DedupeReason names WHICH pass a planned removal came from, so the preview UI can
+// group the items the owner is about to delete. The three reasons mirror the three
+// deletion sources described on DedupeFiles.
+type DedupeReason string
+
+const (
+	// DedupeReasonEpilogueMerge is a pass-0 engine-switch duplicate: a negative-numeric
+	// legacy chapter row (+ its orphaned feed + its CBZ) merged into its name-keyed twin.
+	DedupeReasonEpilogueMerge DedupeReason = "epilogue-merge"
+	// DedupeReasonIgnoredFractional is a pass-0b downloaded fractional whose every
+	// carrier now ignores fractionals: its Chapter row + CBZ are removed.
+	DedupeReasonIgnoredFractional DedupeReason = "ignored-fractional"
+	// DedupeReasonOrphanSuperseded is a passes-1/2 file-only removal: a duplicate CBZ
+	// of a downloaded chapter's winning file, or a superseded fractional part's
+	// orphaned CBZ. NO DB row is touched.
+	DedupeReasonOrphanSuperseded DedupeReason = "orphan-superseded"
+)
+
+// DedupePlanItemDTO is one removal the DedupeFiles sweep WOULD perform: the CBZ
+// filename that goes, the chapter number it belongs to (nullable — a name-keyed
+// merge twin or an un-numbered file has none), and the reason/pass it came from so
+// the confirm dialog can group it.
+type DedupePlanItemDTO struct {
+	Reason   string   `json:"reason"`
+	Number   *float64 `json:"number"`
+	Filename string   `json:"filename"`
+}
+
+// DedupePlanDTO is the DedupeFiles dry-run: the exact set of removals the owner is
+// about to confirm. Total is len(Items); Items is always non-nil so the JSON renders
+// [] rather than null. Because both the preview and the executor derive from the SAME
+// plan (dedupeFilesPlan), this list is provably identical to what a subsequent
+// POST /api/series/:id/dedupe-files deletes.
+type DedupePlanDTO struct {
+	Total int                 `json:"total"`
+	Items []DedupePlanItemDTO `json:"items"`
+}
+
+// dedupePlan is the resolved set of everything DedupeFiles would remove for one
+// series, computed ONCE (read-only) and consumed by BOTH DedupeFilesPreview (the
+// dry-run) and DedupeFiles (the executor) — so the preview list can never drift from
+// what execute deletes (the whole point of the plan). Each field carries the
+// machinery its pass needs to actually delete:
+//   - mergePairs: pass 0 — Chapter ROW + orphaned feed rows + CBZ, in a transaction.
+//   - ignoredFractionals: pass 0b — Chapter ROW + CBZ, in a transaction.
+//   - fileOnly: passes 1+2 — orphan/duplicate CBZ files only, best-effort, no DB.
+type dedupePlan struct {
+	mergePairs         []duplicatePair
+	ignoredFractionals []*ent.Chapter
+	fileOnly           []dedupeFileItem
+}
+
+// dedupeFileItem is one file-only (passes 1+2) removal: the CBZ filename and the
+// chapter number the sweep matched it against (for the preview label).
+type dedupeFileItem struct {
+	number   *float64
+	filename string
+}
+
+// DedupeFilesPreview returns the DedupeFiles DRY-RUN for one series: the exact list
+// of CBZ files (and the chapter rows behind the pass-0/0b items) that a subsequent
+// POST /api/series/:id/dedupe-files would delete, grouped by reason. It DELETES
+// NOTHING and writes NOTHING — a read-only projection of dedupeFilesPlan, the same
+// plan the executor consumes. A missing series yields ErrSeriesNotFound (404).
+func (s *Service) DedupeFilesPreview(ctx context.Context, id uuid.UUID) (DedupePlanDTO, error) {
+	plan, _, err := s.dedupeFilesPlan(ctx, s.client, id)
+	if err != nil {
+		return DedupePlanDTO{}, err
+	}
+	return plan.toDTO(), nil
+}
+
+// DedupeFiles is the owner-triggered duplicate cleanup for a whole series. It removes
+// everything dedupeFilesPlan resolves and returns the total number of
+// duplicates/leftovers it deleted, across THREE sources:
 //
-//  0. Engine-switch duplicate CHAPTER-ROW merge (see mergeEngineSwitchDuplicates):
+//  0. Engine-switch duplicate CHAPTER-ROW merge (see detectEngineSwitchDuplicates):
 //     the Suwayomi→Rensaio switch keyed the SAME physical chapter twice — once as a
 //     negative-numeric literal ("-1", from Suwayomi's "number = -1" epilogue) and
 //     once name-keyed ("name:epilogue", from Rensaio reporting it unparseable) — so
@@ -43,15 +115,14 @@ var ErrDedupeMergeFailed = errors.New("dedupe-files failed while deleting a merg
 //     keeping the name-keyed canonical and deleting the negative-numeric legacy row +
 //     its orphaned feed rows + its CBZ. Runs in its own transaction with
 //     files-deleted-before-commit + rollback.
-//     0b. Ignored DOWNLOADED fractional cleanup (see removeIgnoredDownloadedFractionals):
-//     every fractional chapter that is DOWNLOADED and whose EVERY carrier now
-//     ignores fractionals — i.e. was downloaded BEFORE the owner ticked
-//     ignore_fractional on its source(s) — is deleted (row + CBZ), the whole-series
-//     counterpart of the per-chapter RemoveFractionalChapters. It reuses that
-//     endpoint's exact removable rule (fractional AND >=1 carrier AND every carrier
-//     ignored — the resurrection guard) and its files-before-commit ordering. Like
-//     pass 0 it deletes Chapter ROWs, in its own transaction, and like every
-//     deletion path it is owner-triggered, never automatic.
+//     0b. Ignored DOWNLOADED fractional cleanup (see removableFractionals): every
+//     fractional chapter that is DOWNLOADED and whose EVERY carrier now ignores
+//     fractionals — i.e. was downloaded BEFORE the owner ticked ignore_fractional on
+//     its source(s) — is deleted (row + CBZ), the whole-series counterpart of the
+//     per-chapter RemoveFractionalChapters. It reuses that endpoint's exact removable
+//     rule (fractional AND >=1 carrier AND every carrier ignored — the resurrection
+//     guard) and its files-before-commit ordering. Like pass 0 it deletes Chapter
+//     ROWs, in its own transaction, never automatically.
 //  1. For every downloaded chapter (one with a winning filename AND a number) it
 //     removes any OTHER CBZ in the series folder that shares that chapter's number,
 //     keeping the chapter's own winning filename.
@@ -72,147 +143,223 @@ var ErrDedupeMergeFailed = errors.New("dedupe-files failed while deleting a merg
 // owner's explicit POST /api/series/:id/dedupe-files ("Remove duplicate files"
 // button). The never-auto-delete invariant is intact.
 func (s *Service) DedupeFiles(ctx context.Context, id uuid.UUID) (int, error) {
-	// DB-mutating passes first (each in its own tx, delete rows): the file-only sweep
-	// then loads fresh so it sees the post-deletion state (no stale removed chapter).
-	merged, err := s.mergeEngineSwitchDuplicates(ctx, id)
+	plan, row, err := s.dedupeFilesPlan(ctx, s.client, id)
+	if err != nil {
+		return 0, err
+	}
+
+	// DB-mutating passes first (each in its own tx, delete rows), then the file-only
+	// sweep. The plan already resolved the file-only set as-if the pass-0/0b rows were
+	// gone (their files are excluded), so it is safe to delete them last.
+	merged, err := s.executeMergePlan(ctx, row, plan.mergePairs)
 	if err != nil {
 		return merged, err
 	}
-	ignoredRemoved, err := s.removeIgnoredDownloadedFractionals(ctx, id)
-	dbRemoved := merged + ignoredRemoved
-	if err != nil {
-		return dbRemoved, err
-	}
 
-	ser, err := s.client.Series.Query().
-		Where(entseries.IDEQ(id)).
-		WithCategory().
-		WithChapters().
-		Only(ctx)
-	if err != nil {
-		if ent.IsNotFound(err) {
-			return dbRemoved, ErrSeriesNotFound
-		}
-		return dbRemoved, fmt.Errorf("series.DedupeFiles: load series %s: %w", id, err)
-	}
-
-	categoryName := category.NameOf(ser)
-	total := dbRemoved
-
-	winningRemoved, err := dedupeWinningChapters(s.storage, categoryName, ser)
-	total += winningRemoved
+	ignoredRemoved, err := s.executeIgnoredFractionalPlan(ctx, id, row, plan.ignoredFractionals)
+	total := merged + ignoredRemoved
 	if err != nil {
 		return total, err
 	}
 
-	supersededRemoved, err := dedupeSupersededPartOrphans(s.storage, categoryName, ser)
-	total += supersededRemoved
-	if err != nil {
-		return total, err
-	}
-
+	total += s.executeFileOnlyPlan(row, plan.fileOnly)
 	return total, nil
 }
 
-// dedupeWinningChapters is DedupeFiles pass 1: for every chapter with a
-// winning filename AND a number, remove any OTHER CBZ in the series folder
-// sharing that number, keeping the winner. Returns the count removed.
-func dedupeWinningChapters(storage, categoryName string, ser *ent.Series) (int, error) {
-	total := 0
-	for _, ch := range ser.Edges.Chapters {
+// dedupeFilesPlan resolves the COMPLETE removal set for one series, read-only, in one
+// bounded query set plus one directory read per swept chapter number. It is the
+// single source of truth behind both DedupeFilesPreview and DedupeFiles. The client
+// is a parameter so it can run against s.client (preview) or a transaction's client;
+// it returns the loaded series too (the executor reuses it for the delete machinery).
+// An unknown id yields ErrSeriesNotFound.
+//
+// The file-only set (passes 1+2) is resolved AS-IF the pass-0/0b rows were already
+// deleted: those chapters are excluded and their filenames are seeded into the
+// planned set, so the plan matches the executor's sequenced behaviour (pass 0/0b
+// commit before the file sweep runs) without mutating anything.
+func (s *Service) dedupeFilesPlan(ctx context.Context, client *ent.Client, id uuid.UUID) (dedupePlan, *ent.Series, error) {
+	row, err := loadSeriesForCleanup(ctx, client, id)
+	if err != nil {
+		return dedupePlan{}, nil, err
+	}
+
+	mergePairs := detectEngineSwitchDuplicates(row)
+	ignoredFractionals := removableFractionals(row)
+
+	// The rows the pass-0/0b deletes claim: exclude them from the file-only sweep so a
+	// merged twin or an ignored fractional is never also counted as a file-only orphan.
+	removedChapters := make(map[uuid.UUID]struct{}, len(mergePairs)+len(ignoredFractionals))
+	claimedFiles := make(map[string]struct{}, len(mergePairs)+len(ignoredFractionals))
+	for _, p := range mergePairs {
+		removedChapters[p.remove.ID] = struct{}{}
+		if p.remove.Filename != "" {
+			claimedFiles[p.remove.Filename] = struct{}{}
+		}
+	}
+	for _, ch := range ignoredFractionals {
+		removedChapters[ch.ID] = struct{}{}
+		if ch.Filename != "" {
+			claimedFiles[ch.Filename] = struct{}{}
+		}
+	}
+
+	fileOnly, err := s.planFileOnlySweeps(row, removedChapters, claimedFiles)
+	if err != nil {
+		return dedupePlan{}, nil, err
+	}
+
+	return dedupePlan{
+		mergePairs:         mergePairs,
+		ignoredFractionals: ignoredFractionals,
+		fileOnly:           fileOnly,
+	}, row, nil
+}
+
+// planFileOnlySweeps resolves passes 1 (winning-chapter duplicates) and 2 (superseded
+// fractional-part orphans) as a list of CBZ filenames to remove, WITHOUT deleting
+// anything — the read-only enumerator behind the executor's best-effort file sweep.
+//
+// removedChapters are the rows the pass-0/0b deletes claim (skipped here); claimedFiles
+// seeds the running "already planned" set so a file the pass-0/0b already owns, or one
+// pass 1 already listed, is never listed twice (which would inflate the count). Files
+// are enumerated in the series' loaded (number-ASC) chapter order, replicating the
+// executor's per-chapter re-read semantics exactly.
+func (s *Service) planFileOnlySweeps(row *ent.Series, removedChapters map[uuid.UUID]struct{}, claimedFiles map[string]struct{}) ([]dedupeFileItem, error) {
+	categoryName := category.NameOf(row)
+	planned := make(map[string]struct{}, len(claimedFiles))
+	for f := range claimedFiles {
+		planned[f] = struct{}{}
+	}
+
+	items, err := s.planWinningDuplicates(categoryName, row, removedChapters, planned)
+	if err != nil {
+		return nil, err
+	}
+	orphans, err := s.planSupersededOrphans(categoryName, row, removedChapters, planned)
+	if err != nil {
+		return nil, err
+	}
+	return append(items, orphans...), nil
+}
+
+// planWinningDuplicates is DedupeFiles pass 1: for every downloaded chapter with a
+// winning filename AND a number (not claimed by pass 0/0b), list the OTHER CBZs of
+// that number — the winner is kept by ListOtherChapterFiles.
+func (s *Service) planWinningDuplicates(categoryName string, row *ent.Series, removedChapters map[uuid.UUID]struct{}, planned map[string]struct{}) ([]dedupeFileItem, error) {
+	var items []dedupeFileItem
+	for _, ch := range row.Edges.Chapters {
+		if _, gone := removedChapters[ch.ID]; gone {
+			continue
+		}
 		if ch.Filename == "" || ch.Number == nil {
 			continue
 		}
-		removed, err := disk.RemoveOtherChapterFiles(
-			storage, categoryName, ser.Title,
-			chapter.FormatChapterNumber(*ch.Number), ch.Filename,
-		)
+		listed, err := s.listFileOnly(categoryName, row.Title, *ch.Number, ch.Filename, planned)
 		if err != nil {
-			return total, fmt.Errorf("series.DedupeFiles: chapter %s: %w", ch.ID, err)
+			return nil, fmt.Errorf("series.DedupeFiles: chapter %s: %w", ch.ID, err)
 		}
-		total += removed
+		items = append(items, listed...)
 	}
-	return total, nil
+	return items, nil
 }
 
-// dedupeSupersededPartOrphans is DedupeFiles pass 2 (see the DedupeFiles doc
-// comment): for every superseded FRACTIONAL-part chapter, remove EVERY CBZ
-// matching its number with no keeper. Whole-integer superseded chapters are
-// skipped. Returns the count removed.
-func dedupeSupersededPartOrphans(storage, categoryName string, ser *ent.Series) (int, error) {
-	total := 0
-	for _, ch := range ser.Edges.Chapters {
-		if ch.State != entchapter.StateSuperseded || ch.Number == nil {
+// planSupersededOrphans is DedupeFiles pass 2: for every superseded FRACTIONAL-part
+// chapter (not claimed by pass 0/0b), list EVERY CBZ of that number with no keeper.
+// Whole-integer superseded chapters are skipped — their file, if any, is a legitimate
+// keeper elsewhere.
+func (s *Service) planSupersededOrphans(categoryName string, row *ent.Series, removedChapters map[uuid.UUID]struct{}, planned map[string]struct{}) ([]dedupeFileItem, error) {
+	var items []dedupeFileItem
+	for _, ch := range row.Edges.Chapters {
+		if _, gone := removedChapters[ch.ID]; gone {
 			continue
 		}
-		n := *ch.Number
-		if !chapterrange.IsFractional(n) {
-			// Whole-integer "superseded" chapter: not a split part, skip —
-			// its file (if any) is a legitimate keeper elsewhere.
+		if ch.State != entchapter.StateSuperseded || ch.Number == nil || !chapterrange.IsFractional(*ch.Number) {
 			continue
 		}
-		removed, err := disk.RemoveOtherChapterFiles(
-			storage, categoryName, ser.Title,
-			chapter.FormatChapterNumber(n), "",
-		)
+		listed, err := s.listFileOnly(categoryName, row.Title, *ch.Number, "", planned)
 		if err != nil {
-			return total, fmt.Errorf("series.DedupeFiles: superseded chapter %s: %w", ch.ID, err)
+			return nil, fmt.Errorf("series.DedupeFiles: superseded chapter %s: %w", ch.ID, err)
 		}
-		total += removed
+		items = append(items, listed...)
 	}
-	return total, nil
+	return items, nil
 }
 
-// duplicatePair is one engine-switch duplicate: keep is the name-keyed canonical
-// chapter (the go-forward Rensaio key), remove is its negative-numeric legacy twin
-// (the Suwayomi artifact). Both proven to be the SAME physical chapter by a shared
-// source chapter URL — see detectEngineSwitchDuplicates.
-type duplicatePair struct {
-	keep   *ent.Chapter
-	remove *ent.Chapter
+// listFileOnly enumerates the removable duplicate CBZs for one chapter number
+// (keeping keepFilename), skipping any filename already in planned and recording the
+// rest into it — so the same file is never planned twice across passes/chapters.
+func (s *Service) listFileOnly(categoryName, title string, number float64, keepFilename string, planned map[string]struct{}) ([]dedupeFileItem, error) {
+	names, err := disk.ListOtherChapterFiles(s.storage, categoryName, title, chapter.FormatChapterNumber(number), keepFilename)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dedupeFileItem, 0, len(names))
+	for _, name := range names {
+		if _, dup := planned[name]; dup {
+			continue
+		}
+		planned[name] = struct{}{}
+		n := number
+		out = append(out, dedupeFileItem{number: &n, filename: name})
+	}
+	return out, nil
 }
 
-// mergeEngineSwitchDuplicates is DedupeFiles pass 0: it merges every provable
-// engine-switch duplicate chapter pair in one transaction and returns how many
-// duplicates were merged. All DB row changes happen inside the transaction and the
-// CBZ deletions run BEFORE the commit, so a disk failure rolls the row changes back
-// — a committed merge can never leave an orphan CBZ behind for disk.Reconcile to
-// re-import (which would resurrect exactly what was removed).
-func (s *Service) mergeEngineSwitchDuplicates(ctx context.Context, id uuid.UUID) (int, error) {
+// executeMergePlan runs pass 0 for the planned merge pairs in ONE transaction: each
+// pair's read-state is transferred onto its canonical twin, the legacy row + orphaned
+// feed rows are deleted, and the CBZs are removed BEFORE the commit so a disk failure
+// rolls the row changes back (no committed merge can orphan a CBZ). Returns the count
+// merged (one per pair, whether or not its CBZ was on disk).
+func (s *Service) executeMergePlan(ctx context.Context, row *ent.Series, pairs []duplicatePair) (int, error) {
+	if len(pairs) == 0 {
+		return 0, nil
+	}
+
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("series.DedupeFiles: begin merge tx: %w", err)
 	}
 
-	merged, err := s.mergeDuplicatesInTx(ctx, tx, id)
-	if err != nil {
+	for _, p := range pairs {
+		if err := s.applyMergePair(ctx, tx, row, p); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+	}
+	if err := s.removeMergedFiles(row, pairs); err != nil {
 		_ = tx.Rollback()
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("series.DedupeFiles: commit merge tx: %w", err)
 	}
-	return merged, nil
+	return len(pairs), nil
 }
 
-// removeIgnoredDownloadedFractionals is DedupeFiles pass 0b: it deletes every
-// DOWNLOADED fractional chapter of the series whose EVERY carrier ignores
-// fractionals (row + CBZ), reusing RemoveFractionalChapters' removable rule and its
-// files-before-commit transaction ordering — but with NO per-chapter selection: the
-// whole removable set is swept at once. This cleans the fractionals that were
-// already downloaded BEFORE the owner ticked ignore_fractional (the toggle itself
-// deletes nothing). Returns the count removed.
-//
-// 🔴 OWNER-TRIGGERED ONLY (via DedupeFiles). The resurrection guard is intact — a
-// fractional a non-ignored source also carries is NOT removable — and the feed rows
-// are kept, so un-ticking the toggle re-ingests + re-downloads it.
-func (s *Service) removeIgnoredDownloadedFractionals(ctx context.Context, id uuid.UUID) (int, error) {
+// applyMergePair applies one merge pair's DB changes inside the caller's transaction:
+// transfer read-state onto the canonical, then delete the legacy row + its feed rows.
+func (s *Service) applyMergePair(ctx context.Context, tx *ent.Tx, row *ent.Series, p duplicatePair) error {
+	if err := transferReadState(ctx, tx, p); err != nil {
+		return err
+	}
+	return deleteMergedChapter(ctx, tx, row, p.remove)
+}
+
+// executeIgnoredFractionalPlan runs pass 0b for the planned ignored downloaded
+// fractionals in ONE transaction, reusing deleteRemovableTargets (the shared
+// files-before-commit delete guard). Returns the count removed. An empty plan is a
+// no-op.
+func (s *Service) executeIgnoredFractionalPlan(ctx context.Context, id uuid.UUID, row *ent.Series, targets []*ent.Chapter) (int, error) {
+	if len(targets) == 0 {
+		return 0, nil
+	}
+
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("series.DedupeFiles: begin ignored-fractional tx: %w", err)
 	}
 
-	removed, err := s.removeIgnoredDownloadedFractionalsInTx(ctx, tx, id)
+	removed, err := s.deleteRemovableTargets(ctx, tx, id, row, targets)
 	if err != nil {
 		_ = tx.Rollback()
 		return 0, err
@@ -223,74 +370,66 @@ func (s *Service) removeIgnoredDownloadedFractionals(ctx context.Context, id uui
 	return removed, nil
 }
 
-// removeIgnoredDownloadedFractionalsInTx is the body of
-// removeIgnoredDownloadedFractionals, run inside one transaction. The series
-// (chapters + providers + feeds) is loaded through the TX client so the removable
-// decision and the deletes share ONE snapshot. An unknown id yields
-// ErrSeriesNotFound; every other error rolls the caller's transaction back.
-func (s *Service) removeIgnoredDownloadedFractionalsInTx(ctx context.Context, tx *ent.Tx, id uuid.UUID) (int, error) {
-	row, err := loadSeriesForCleanup(ctx, tx.Client(), id)
-	if err != nil {
-		return 0, err
+// executeFileOnlyPlan deletes the planned passes-1/2 orphan/duplicate CBZs. It is
+// BEST-EFFORT per file (a genuine os.Remove failure is logged and skipped, mirroring
+// RemoveOtherChapterFiles) and performs NO DB writes, so it never returns an error;
+// it returns the count actually removed. A file already gone (removed=false) is not
+// counted.
+func (s *Service) executeFileOnlyPlan(row *ent.Series, items []dedupeFileItem) int {
+	if len(items) == 0 {
+		return 0
 	}
-	// removableFractionals already requires downloaded + filed + fractional + >=1
-	// carrier + every carrier ignored — the exact DOWNLOADED removable rule.
-	return s.deleteRemovableTargets(ctx, tx, id, row, removableFractionals(row))
+	categoryName := category.NameOf(row)
+	total := 0
+	for _, it := range items {
+		removed, err := disk.RemoveChapterFile(s.storage, categoryName, row.Title, it.filename)
+		if err != nil {
+			slog.Warn("series.DedupeFiles: best-effort delete of orphan/duplicate CBZ failed",
+				"series_id", row.ID, "title", row.Title, "category", categoryName, "filename", it.filename, "err", err)
+			continue
+		}
+		if removed {
+			total++
+		}
+	}
+	return total
 }
 
-// mergeDuplicatesInTx is the body of mergeEngineSwitchDuplicates, run inside one
-// transaction. The series (chapters + providers + feeds) is loaded through the TX
-// client so the detection and the deletes share ONE snapshot. Every error rolls the
-// caller's transaction back.
-func (s *Service) mergeDuplicatesInTx(ctx context.Context, tx *ent.Tx, id uuid.UUID) (int, error) {
-	row, err := loadSeriesForMerge(ctx, tx.Client(), id)
-	if err != nil {
-		return 0, err
+// toDTO projects a plan onto the wire shape the preview returns: one item per removal,
+// grouped by reason, non-nil Items so the JSON is [] not null.
+func (p dedupePlan) toDTO() DedupePlanDTO {
+	items := make([]DedupePlanItemDTO, 0, len(p.mergePairs)+len(p.ignoredFractionals)+len(p.fileOnly))
+	for _, pair := range p.mergePairs {
+		items = append(items, DedupePlanItemDTO{
+			Reason:   string(DedupeReasonEpilogueMerge),
+			Number:   pair.remove.Number,
+			Filename: pair.remove.Filename,
+		})
 	}
-
-	pairs := detectEngineSwitchDuplicates(row)
-	if len(pairs) == 0 {
-		return 0, nil
+	for _, ch := range p.ignoredFractionals {
+		items = append(items, DedupePlanItemDTO{
+			Reason:   string(DedupeReasonIgnoredFractional),
+			Number:   ch.Number,
+			Filename: ch.Filename,
+		})
 	}
-
-	for _, p := range pairs {
-		if err := transferReadState(ctx, tx, p); err != nil {
-			return 0, err
-		}
-		if err := deleteMergedChapter(ctx, tx, row, p.remove); err != nil {
-			return 0, err
-		}
+	for _, it := range p.fileOnly {
+		items = append(items, DedupePlanItemDTO{
+			Reason:   string(DedupeReasonOrphanSuperseded),
+			Number:   it.number,
+			Filename: it.filename,
+		})
 	}
-
-	// Files LAST, before the caller commits: a disk failure rolls back every row
-	// change above, so a committed merge never leaves a duplicate CBZ orphaned.
-	if err := s.removeMergedFiles(row, pairs); err != nil {
-		return 0, err
-	}
-	return len(pairs), nil
+	return DedupePlanDTO{Total: len(items), Items: items}
 }
 
-// loadSeriesForMerge loads one series with everything the engine-switch merge needs
-// in a single bounded query set: its chapters, its providers WITH their availability
-// feeds (the URL identity carriers), and its category (the disk folder). The client
-// is a parameter (not s.client) so the merge can pass the TRANSACTION's client and
-// share one snapshot with the deletes. An unknown id yields ErrSeriesNotFound.
-func loadSeriesForMerge(ctx context.Context, client *ent.Client, id uuid.UUID) (*ent.Series, error) {
-	row, err := client.Series.Query().
-		Where(entseries.IDEQ(id)).
-		WithCategory().
-		WithChapters().
-		WithProviders(func(pq *ent.SeriesProviderQuery) {
-			pq.WithProviderChapters()
-		}).
-		Only(ctx)
-	if err != nil {
-		if ent.IsNotFound(err) {
-			return nil, ErrSeriesNotFound
-		}
-		return nil, fmt.Errorf("series.DedupeFiles: load series %s for merge: %w", id, err)
-	}
-	return row, nil
+// duplicatePair is one engine-switch duplicate: keep is the name-keyed canonical
+// chapter (the go-forward Rensaio key), remove is its negative-numeric legacy twin
+// (the Suwayomi artifact). Both proven to be the SAME physical chapter by a shared
+// source chapter URL — see detectEngineSwitchDuplicates.
+type duplicatePair struct {
+	keep   *ent.Chapter
+	remove *ent.Chapter
 }
 
 // detectEngineSwitchDuplicates finds the provable engine-switch duplicate pairs in

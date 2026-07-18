@@ -843,6 +843,54 @@ components:
             legacy row folded into its name-keyed canonical twin). Winning files
             and canonical rows are never removed.
 
+    DedupePlanItem:
+      type: object
+      required:
+        - reason
+        - number
+        - filename
+      properties:
+        reason:
+          type: string
+          enum:
+            - epilogue-merge
+            - ignored-fractional
+            - orphan-superseded
+          description: >-
+            Which removal source this item came from: `epilogue-merge` (an
+            engine-switch duplicate chapter row + its CBZ), `ignored-fractional` (a
+            downloaded fractional whose every carrier now ignores fractionals — row
+            + CBZ), or `orphan-superseded` (a duplicate/orphan CBZ removed on disk
+            only, no DB row).
+        number:
+          type: number
+          format: double
+          nullable: true
+          description: >-
+            The chapter number this file belongs to, or null when it has none (a
+            name-keyed merge twin, or an un-numbered file).
+        filename:
+          type: string
+          description: The CBZ filename that will be deleted.
+
+    DedupePlan:
+      type: object
+      required:
+        - total
+        - items
+      properties:
+        total:
+          type: integer
+          description: Number of removals in the plan (len(items)).
+        items:
+          type: array
+          description: >-
+            Every removal the sweep would perform, grouped by reason. Empty when
+            there is nothing to clean. Provably identical to what a subsequent POST
+            to this path deletes.
+          items:
+            $ref: "#/components/schemas/DedupePlanItem"
+
     FractionalCleanupChapter:
       type: object
       required:
@@ -3355,6 +3403,58 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /api/series/{id}/dedupe-files:
+    get:
+      operationId: previewDedupeSeriesFiles
+      summary: Preview the series' removable duplicate files (dry-run)
+      description: |
+        DRY-RUN for the owner's duplicate cleanup: the exact list of CBZ files (and
+        the chapter rows behind the merge / ignored-fractional items) that a
+        subsequent POST to this path would delete, grouped by reason, so the confirm
+        dialog can show the owner what will go BEFORE the destructive call. Both the
+        preview and the executor derive from the SAME plan, so this list is provably
+        identical to what the POST removes. This endpoint DELETES NOTHING.
+
+        Each item carries its reason: `epilogue-merge` (an engine-switch duplicate
+        chapter row + its CBZ), `ignored-fractional` (a downloaded fractional whose
+        every carrier now ignores fractionals — row + CBZ), or `orphan-superseded`
+        (a duplicate/orphan CBZ removed on disk only, no DB row touched).
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The removal plan (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DedupePlan"
+        "400":
+          description: Malformed series id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: dedupeSeriesFiles
       summary: Remove superseded duplicate CBZ files for a series

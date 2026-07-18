@@ -368,7 +368,21 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Preview the series' removable duplicate files (dry-run)
+         * @description DRY-RUN for the owner's duplicate cleanup: the exact list of CBZ files (and
+         *     the chapter rows behind the merge / ignored-fractional items) that a
+         *     subsequent POST to this path would delete, grouped by reason, so the confirm
+         *     dialog can show the owner what will go BEFORE the destructive call. Both the
+         *     preview and the executor derive from the SAME plan, so this list is provably
+         *     identical to what the POST removes. This endpoint DELETES NOTHING.
+         *
+         *     Each item carries its reason: `epilogue-merge` (an engine-switch duplicate
+         *     chapter row + its CBZ), `ignored-fractional` (a downloaded fractional whose
+         *     every carrier now ignores fractionals — row + CBZ), or `orphan-superseded`
+         *     (a duplicate/orphan CBZ removed on disk only, no DB row touched).
+         */
+        get: operations["previewDedupeSeriesFiles"];
         put?: never;
         /**
          * Remove superseded duplicate CBZ files for a series
@@ -2435,6 +2449,26 @@ export interface components {
             /** @description Number of duplicates resolved by the owner-triggered dedupe-files sweep: superseded/orphan duplicate CBZ files removed from disk PLUS engine-switch duplicate chapter rows merged (a negative-numeric legacy row folded into its name-keyed canonical twin). Winning files and canonical rows are never removed. */
             removed: number;
         };
+        DedupePlanItem: {
+            /**
+             * @description Which removal source this item came from: `epilogue-merge` (an engine-switch duplicate chapter row + its CBZ), `ignored-fractional` (a downloaded fractional whose every carrier now ignores fractionals — row + CBZ), or `orphan-superseded` (a duplicate/orphan CBZ removed on disk only, no DB row).
+             * @enum {string}
+             */
+            reason: "epilogue-merge" | "ignored-fractional" | "orphan-superseded";
+            /**
+             * Format: double
+             * @description The chapter number this file belongs to, or null when it has none (a name-keyed merge twin, or an un-numbered file).
+             */
+            number: number | null;
+            /** @description The CBZ filename that will be deleted. */
+            filename: string;
+        };
+        DedupePlan: {
+            /** @description Number of removals in the plan (len(items)). */
+            total: number;
+            /** @description Every removal the sweep would perform, grouped by reason. Empty when there is nothing to clean. Provably identical to what a subsequent POST to this path deletes. */
+            items: components["schemas"]["DedupePlanItem"][];
+        };
         FractionalCleanupChapter: {
             /**
              * Format: uuid
@@ -4308,6 +4342,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderDedupResult"];
+                };
+            };
+            /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    previewDedupeSeriesFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The removal plan (possibly empty). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DedupePlan"];
                 };
             };
             /** @description Malformed series id. */

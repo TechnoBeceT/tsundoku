@@ -328,6 +328,41 @@ export interface FractionalCleanupPreview {
 }
 
 /**
+ * DedupeReason — which removal source a dedupe-files plan item came from:
+ *   - `epilogue-merge`: an engine-switch duplicate chapter row (a "-1" epilogue
+ *     re-keyed by the new engine) + its CBZ; the canonical twin is kept.
+ *   - `ignored-fractional`: a downloaded fractional whose every carrier now ignores
+ *     fractionals — its chapter row + CBZ go.
+ *   - `orphan-superseded`: a duplicate/orphan CBZ removed on disk only (no DB row) —
+ *     a superseded fractional part's leftover, or a duplicate of a chapter's winner.
+ */
+export type DedupeReason = 'epilogue-merge' | 'ignored-fractional' | 'orphan-superseded'
+
+/**
+ * DedupePlanItem — one removal the "Remove duplicate files" sweep would perform
+ * (`GET /api/series/:id/dedupe-files`). `number` is the chapter number the file
+ * belongs to (null for a name-keyed merge twin or an un-numbered file).
+ */
+export interface DedupePlanItem {
+  /** Which pass produced this removal (drives the confirm dialog's grouping). */
+  reason: DedupeReason
+  /** The chapter number this file belongs to; null when it has none. */
+  number: number | null
+  /** The CBZ filename that will be deleted. */
+  filename: string
+}
+
+/**
+ * DedupePlan — the dry-run for the duplicate-file sweep: the exact set of removals
+ * the owner confirms before the destructive POST. `total` is `items.length`; empty
+ * `items` = nothing to remove (the dialog shows "nothing to remove", no POST fires).
+ */
+export interface DedupePlan {
+  total: number
+  items: DedupePlanItem[]
+}
+
+/**
  * TrackBinding — one series↔tracker link (the inline Trackers section's
  * bound-tracker list, `TrackersSection`/`TrackerBindingRow`, QCAT-234).
  * `status`/`score`/`lastChapterRead` are the tracker's OWN native

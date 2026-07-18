@@ -325,10 +325,28 @@ type DedupeFilesResult struct {
 	Removed int `json:"removed"`
 }
 
+// DedupeFilesPreview handles GET /api/series/:id/dedupe-files. It returns the DRY-RUN
+// for the owner's duplicate-CBZ sweep — the exact list of files (and the chapter rows
+// behind the merge/ignored-fractional items) that a subsequent POST would delete,
+// grouped by reason — so the confirm dialog can show the owner what will go BEFORE the
+// destructive call. It DELETES NOTHING. A missing series yields 404.
+func (h *Handler) DedupeFilesPreview(c echo.Context) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+
+	out, err := h.svc.DedupeFilesPreview(c.Request().Context(), id)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // DedupeFiles handles POST /api/series/:id/dedupe-files. It runs the owner-
 // triggered duplicate-CBZ sweep over the series — removing every superseded CBZ
 // that does not match a chapter's winning filename while keeping the winners —
-// and returns {removed: N}. It performs no DB writes. A missing series yields 404.
+// and returns {removed: N}. A missing series yields 404.
 func (h *Handler) DedupeFiles(c echo.Context) error {
 	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {

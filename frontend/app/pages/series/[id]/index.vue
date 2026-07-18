@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { ReaderChapter } from '~/composables/useReader'
-import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, UpdateTrackPatch } from '~/components/screens/seriesDetail.types'
+import type { CoverCandidate, DedupePlan, FractionalCleanupPreview, MetadataCandidate, UpdateTrackPatch } from '~/components/screens/seriesDetail.types'
 
 /**
  * Series detail page — route /series/:id.
@@ -53,7 +53,8 @@ import type { CoverCandidate, FractionalCleanupPreview, MetadataCandidate, Updat
  *   @add-source             → opens MatchSourceDialog (matchOpen = true)
  *   @dismiss-error          → dismissError()
  *   @dedup-providers        → dedupProviders()   (merges drifted disk/live twins)
- *   @dedupe-files           → dedupeFiles()      (sweeps orphan/duplicate CBZs)
+ *   @dedupe-files           → onRequestDedupe()  (fetches the dry-run plan, then
+ *                             opens DedupeCleanupDialog → Confirm runs dedupeFiles())
  *   @request-fractional-cleanup → opens FractionalCleanupDialog (see below)
  *   @resume                 → onResume() (resolves the resume target via
  *                             useReadingProgress.resumeTarget and navigates to
@@ -164,10 +165,12 @@ const {
   dismissError,
   reseed,
   dedupBusy,
+  dedupePreviewBusy,
   dedupeFilesBusy,
   fractionalBusy,
   dedupMessage,
   dedupProviders,
+  fetchDedupePreview,
   dedupeFiles,
   fetchFractionalCleanup,
   removeFractionalChapters,
@@ -240,6 +243,30 @@ async function onConfirmRemove(): Promise<void> {
   if (!removeTargetId.value) return
   const ok = await removeSource(removeTargetId.value)
   if (ok) removeOpen.value = false
+}
+
+// ---- Remove duplicate files (preview → confirm → execute) ------------------
+// The "Remove duplicate files" button now opens a confirm dialog listing EXACTLY
+// what the sweep will delete (grouped by reason) instead of running blind: the
+// click fetches the dry-run plan, this page opens the dialog, and Confirm runs the
+// destructive POST. Like the other page-owned confirm dialogs it closes ONLY on a
+// successful removal (§16), and an EMPTY plan opens the dialog in its
+// "nothing to remove" state — the POST never fires. `dedupeButtonBusy` reflects
+// BOTH phases so the panel button shows "Working…" while the preview loads.
+const dedupePreview = ref<DedupePlan | null>(null)
+const dedupeOpen = ref(false)
+const dedupeButtonBusy = computed(() => dedupePreviewBusy.value || dedupeFilesBusy.value)
+
+async function onRequestDedupe(): Promise<void> {
+  const plan = await fetchDedupePreview()
+  if (!plan) return // the fetch failed — error already surfaced via the banner (§16)
+  dedupePreview.value = plan
+  dedupeOpen.value = true
+}
+
+async function onConfirmDedupe(): Promise<void> {
+  const ok = await dedupeFiles()
+  if (ok) dedupeOpen.value = false
 }
 
 // ---- Fractional cleanup (the owner-triggered half of "ignore fractional") ----
@@ -534,7 +561,7 @@ function onResume(): void {
       :delete-busy="deleteBusy"
       :error="error"
       :dedup-busy="dedupBusy"
-      :dedupe-files-busy="dedupeFilesBusy"
+      :dedupe-files-busy="dedupeButtonBusy"
       :fractional-cleanup-count="fractionalCount"
       :dedup-message="dedupMessage"
       :resume-label="resumeLabel"
@@ -572,7 +599,7 @@ function onResume(): void {
       @add-source="matchOpen = true"
       @dismiss-error="dismissError"
       @dedup-providers="dedupProviders"
-      @dedupe-files="dedupeFiles"
+      @dedupe-files="onRequestDedupe"
       @request-fractional-cleanup="fractionalOpen = true"
       @read="openReader"
       @resume="onResume"
@@ -585,6 +612,15 @@ function onResume(): void {
       @track-clear-search="onClearSearchTracker"
       @reset-progress="onResetProgress"
       @request-set-chapter-progress="openSetChapterProgress"
+    />
+
+    <DedupeCleanupDialog
+      v-if="series"
+      v-model:open="dedupeOpen"
+      :items="dedupePreview?.items ?? []"
+      :busy="dedupeFilesBusy"
+      :error="error"
+      @confirm="onConfirmDedupe"
     />
 
     <FractionalCleanupDialog

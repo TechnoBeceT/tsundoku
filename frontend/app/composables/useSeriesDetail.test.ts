@@ -45,6 +45,8 @@ let nextFractionalPreviewOk = true
 let nextFractionalPreviewMalformed = false
 let nextFractionalRemoveOk = true
 let nextReadingProgressOk = true
+let nextDedupePreviewOk = true
+let nextDedupePreviewMalformed = false
 
 /** The owner's live removable set (see FractionalCleanupDialog.test.ts). */
 const fractionalPreview = {
@@ -52,6 +54,15 @@ const fractionalPreview = {
   chapters: [
     { chapterId: 'c-1815', number: 181.5, pageCount: 1, provider: 'KaliScan', filename: 'a.cbz' },
     { chapterId: 'c-2215', number: 221.5, pageCount: 132, provider: 'KaliScan', filename: 'e.cbz' },
+  ],
+}
+
+/** A dedupe-files dry-run touching two of the three removal sources. */
+const dedupePreview = {
+  total: 2,
+  items: [
+    { reason: 'ignored-fractional', number: 181.5, filename: '181.5.cbz' },
+    { reason: 'orphan-superseded', number: 7, filename: '[old] 007.cbz' },
   ],
 }
 
@@ -162,6 +173,16 @@ vi.mock('~/utils/api/client', () => ({
           return Promise.resolve({ data: { typicalPageCount: 96 }, error: null, response: new Response() })
         }
         return Promise.resolve({ data: fractionalPreview, error: null, response: new Response() })
+      }
+      if (path === '/api/series/{id}/dedupe-files') {
+        if (!nextDedupePreviewOk) {
+          return Promise.resolve({ data: null, error: { message: 'preview failed' }, response: new Response(null, { status: 500 }) })
+        }
+        if (nextDedupePreviewMalformed) {
+          // A 200 whose body carries no `items` array (a partial/garbled payload).
+          return Promise.resolve({ data: { total: 0 }, error: null, response: new Response() })
+        }
+        return Promise.resolve({ data: dedupePreview, error: null, response: new Response() })
       }
       // /api/categories
       return Promise.resolve({ data: [], error: null, response: new Response() })
@@ -507,6 +528,8 @@ describe('useSeriesDetail — dedupProviders / dedupeFiles', () => {
     calls = []
     nextDedupOk = true
     nextDedupeFilesOk = true
+    nextDedupePreviewOk = true
+    nextDedupePreviewMalformed = false
   })
 
   it('dedupProviders reseeds series from the response and sets the message', async () => {
@@ -549,11 +572,40 @@ describe('useSeriesDetail — dedupProviders / dedupeFiles', () => {
     expect(series.value?.providers).toHaveLength(2)
   })
 
-  it('dedupeFiles failure sets error', async () => {
+  it('dedupeFiles resolves true on success and false on failure (dialog closes only on true)', async () => {
+    const ok = useSeriesDetail('series-1')
+    await ok.refresh()
+    expect(await ok.dedupeFiles()).toBe(true)
+
     nextDedupeFilesOk = false
-    const { error, refresh, dedupeFiles } = useSeriesDetail('series-1')
-    await refresh()
-    await dedupeFiles()
+    const bad = useSeriesDetail('series-1')
+    await bad.refresh()
+    expect(await bad.dedupeFiles()).toBe(false)
+  })
+
+  it('fetchDedupePreview maps the dry-run plan (GET, not POST — deletes nothing)', async () => {
+    const { fetchDedupePreview } = useSeriesDetail('series-1')
+    const postBefore = calls.filter(c => c.method === 'POST' && c.path === '/api/series/{id}/dedupe-files').length
+
+    const plan = await fetchDedupePreview()
+
+    expect(plan).toEqual(dedupePreview)
+    // A preview is a READ — it must never fire the destructive POST.
+    const postAfter = calls.filter(c => c.method === 'POST' && c.path === '/api/series/{id}/dedupe-files').length
+    expect(postAfter).toBe(postBefore)
+  })
+
+  it('fetchDedupePreview surfaces a failure via error and resolves null (owner-triggered, §16)', async () => {
+    nextDedupePreviewOk = false
+    const { error, fetchDedupePreview } = useSeriesDetail('series-1')
+    expect(await fetchDedupePreview()).toBeNull()
+    expect(error.value).toBeTruthy()
+  })
+
+  it('fetchDedupePreview treats a body without an items array as a hard error, not an empty plan', async () => {
+    nextDedupePreviewMalformed = true
+    const { error, fetchDedupePreview } = useSeriesDetail('series-1')
+    expect(await fetchDedupePreview()).toBeNull()
     expect(error.value).toBeTruthy()
   })
 })

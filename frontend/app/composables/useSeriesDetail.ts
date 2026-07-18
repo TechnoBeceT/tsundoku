@@ -40,7 +40,7 @@ import { ref } from 'vue'
 import type { Ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { SeriesDetail, Chapter, ChapterState, Provider, FractionalCleanupPreview } from '~/components/screens/seriesDetail.types'
+import type { SeriesDetail, Chapter, ChapterState, Provider, FractionalCleanupPreview, DedupePlan } from '~/components/screens/seriesDetail.types'
 
 type SeriesDetailDTO = components['schemas']['SeriesDetail']
 type ChapterDTO = components['schemas']['Chapter']
@@ -153,6 +153,7 @@ export function useSeriesDetail(id: string) {
   const removeBusy = ref(false)
   const matchBusy = ref(false)
   const dedupBusy = ref(false)
+  const dedupePreviewBusy = ref(false)
   const dedupeFilesBusy = ref(false)
   const fractionalBusy = ref(false)
   const dedupMessage = ref<string | null>(null)
@@ -339,6 +340,45 @@ export function useSeriesDetail(id: string) {
   }
 
   /**
+   * Loads the DRY-RUN for the duplicate-file sweep (GET /api/series/{id}/
+   * dedupe-files): the exact set of files (and duplicate/ignored chapter rows) a
+   * subsequent POST would delete, grouped by reason. This is what the confirm
+   * dialog lists BEFORE the destructive call, so the owner sees what will go.
+   *
+   * Unlike the fractional preview (a background read on mount), THIS is an
+   * owner-triggered fetch (they clicked "Remove duplicate files"), so a failure is
+   * surfaced via `error` (§16 — not swallowed) and resolves null. `dedupePreviewBusy`
+   * spins the button while it loads. A body without an `items` array is treated as a
+   * hard error, never as an empty (successful) plan.
+   */
+  const fetchDedupePreview = async (): Promise<DedupePlan | null> => {
+    dedupePreviewBusy.value = true
+    error.value = null
+    dedupMessage.value = null
+    try {
+      const res = await apiClient.GET('/api/series/{id}/dedupe-files', { params: { path: { id } } })
+      if (res.error || !res.data || !Array.isArray(res.data.items)) {
+        throw new Error(res.error ? res.error.message : 'Could not load the duplicate-file preview')
+      }
+      return {
+        total: res.data.total ?? res.data.items.length,
+        items: res.data.items.map((it) => ({
+          reason: it.reason,
+          number: it.number ?? null,
+          filename: it.filename,
+        })),
+      }
+    }
+    catch (err) {
+      error.value = err instanceof Error ? err.message : 'Could not load the duplicate-file preview'
+      return null
+    }
+    finally {
+      dedupePreviewBusy.value = false
+    }
+  }
+
+  /**
    * Sweeps this series' duplicates via POST /api/series/{id}/dedupe-files: it
    * removes orphan/duplicate CBZ files (any .cbz that is not a chapter's current
    * winning filename) AND merges engine-switch duplicate chapter rows (the
@@ -346,8 +386,11 @@ export function useSeriesDetail(id: string) {
    * merge DELETES chapter rows, so on success it refreshes the series to drop the
    * removed rows from the view, then reports how many duplicates were resolved in
    * dedupMessage. Errors set `error`.
+   *
+   * Resolves true on success / false on failure so the confirm dialog closes ONLY
+   * on success and stays open with the error shown inside it on failure (§16).
    */
-  const dedupeFiles = async (): Promise<void> => {
+  const dedupeFiles = async (): Promise<boolean> => {
     dedupeFilesBusy.value = true
     error.value = null
     dedupMessage.value = null
@@ -359,9 +402,11 @@ export function useSeriesDetail(id: string) {
       // reflects the removals before showing the result message.
       await refresh()
       dedupMessage.value = `Removed ${removed} duplicate${removed === 1 ? '' : 's'}`
+      return true
     }
     catch (err) {
       error.value = err instanceof Error ? err.message : 'Dedupe files failed'
+      return false
     }
     finally {
       dedupeFilesBusy.value = false
@@ -490,6 +535,7 @@ export function useSeriesDetail(id: string) {
     removeBusy,
     matchBusy,
     dedupBusy,
+    dedupePreviewBusy,
     dedupeFilesBusy,
     fractionalBusy,
     dedupMessage,
@@ -505,6 +551,7 @@ export function useSeriesDetail(id: string) {
     deleteSeries,
     matchDiskProvider,
     dedupProviders,
+    fetchDedupePreview,
     dedupeFiles,
     fetchFractionalCleanup,
     removeFractionalChapters,

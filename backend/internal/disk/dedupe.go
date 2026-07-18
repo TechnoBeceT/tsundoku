@@ -36,27 +36,14 @@ import (
 // deletes nothing. keepFilename is NEVER removed, so the winning/only file is
 // always preserved.
 func RemoveOtherChapterFiles(storage, category, title, chapterNumber, keepFilename string) (removed int, err error) {
-	targetKey, ok := strictChapterKey(chapterNumber)
-	if !ok {
-		// A non-clean target number can never be safely matched — sweep nothing
-		// rather than risk deleting a file on an ambiguous compare.
-		return 0, nil
+	names, err := ListOtherChapterFiles(storage, category, title, chapterNumber, keepFilename)
+	if err != nil {
+		return 0, err
 	}
 
 	dir := SeriesDir(storage, category, title)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("disk.RemoveOtherChapterFiles: read dir %q: %w", dir, err)
-	}
-
-	for _, e := range entries {
-		if !isRemovableDuplicate(e, keepFilename, targetKey) {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
+	for _, name := range names {
+		path := filepath.Join(dir, name)
 		if rmErr := os.Remove(path); rmErr != nil {
 			// Best-effort: log and keep sweeping the rest of the directory.
 			slog.Warn("disk.RemoveOtherChapterFiles: best-effort delete of duplicate CBZ failed",
@@ -66,6 +53,44 @@ func RemoveOtherChapterFiles(storage, category, title, chapterNumber, keepFilena
 		removed++
 	}
 	return removed, nil
+}
+
+// ListOtherChapterFiles is the read-only enumerator behind RemoveOtherChapterFiles:
+// it returns the CBZ filenames in the series directory that RemoveOtherChapterFiles
+// WOULD delete for chapterNumber (every .cbz sharing that STRICT chapter number
+// except keepFilename), WITHOUT touching the disk. It is the shared source of truth
+// the DedupeFiles preview lists and the executor deletes, so the dry-run list can
+// never drift from what the sweep removes.
+//
+// Matching is identical to RemoveOtherChapterFiles (see its doc): STRICT full-token
+// number (strictChapterKey) so an imported library's arbitrary filenames can never
+// be mis-parsed into a real chapter number. A non-clean target number, or a missing
+// series directory, yields no names (nil, nil) — never an error; only a genuine
+// directory-read failure is returned.
+func ListOtherChapterFiles(storage, category, title, chapterNumber, keepFilename string) ([]string, error) {
+	targetKey, ok := strictChapterKey(chapterNumber)
+	if !ok {
+		// A non-clean target number can never be safely matched — list nothing
+		// rather than risk deleting a file on an ambiguous compare.
+		return nil, nil
+	}
+
+	dir := SeriesDir(storage, category, title)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("disk.ListOtherChapterFiles: read dir %q: %w", dir, err)
+	}
+
+	var names []string
+	for _, e := range entries {
+		if isRemovableDuplicate(e, keepFilename, targetKey) {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
 }
 
 // isRemovableDuplicate reports whether a directory entry is a CBZ (other than

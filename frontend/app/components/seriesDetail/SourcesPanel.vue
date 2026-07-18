@@ -33,11 +33,14 @@ import type { Provider } from '../screens/seriesDetail.types'
  * result. The panel itself never computes drift or calls the API — it only
  * re-emits `dedupProviders`/`dedupeFiles` for the screen to handle.
  *
- * "Remove fractional files" (→ `removeFractional`, opening the page's
- * `FractionalCleanupDialog`) sits beside "Remove duplicate files" but is a
- * DIFFERENT job: dedupe-files sweeps ORPHAN CBZs (files no chapter owns), while
- * the fractional cleanup removes real downloaded chapter rows + their files. It
- * renders only when `fractionalCleanupCount > 0`.
+ * "Remove duplicate files" (→ `dedupeFiles`) now opens a preview→confirm dialog
+ * (the page's `DedupeCleanupDialog`): the click first fetches the dry-run plan,
+ * so `dedupeFilesBusy` covers BOTH the preview fetch and the eventual removal
+ * (label "Working…"). "Remove fractional files" (→ `removeFractional`, opening the
+ * page's `FractionalCleanupDialog`) sits beside it but is a DIFFERENT job:
+ * dedupe-files sweeps ORPHAN CBZs (files no chapter owns) + engine-switch/ignored
+ * rows, while the fractional cleanup removes real downloaded chapter rows + their
+ * files. It renders only when `fractionalCleanupCount > 0`.
  */
 const props = withDefaults(defineProps<{
   /** The sources to list, importance-descending (preferred first). */
@@ -48,7 +51,7 @@ const props = withDefaults(defineProps<{
   driftedIds?: string[]
   /** True while the dedup-providers request is in flight. */
   dedupBusy?: boolean
-  /** True while the dedupe-files request is in flight. */
+  /** True while the dedupe-files FLOW is busy — the preview fetch OR the removal POST (button shows "Working…"). */
   dedupeFilesBusy?: boolean
   /**
    * How many already-downloaded FRACTIONAL chapters are removable (the
@@ -96,7 +99,7 @@ const driftedSet = computed(() => new Set(props.driftedIds))
     </template>
     <template #actions>
       <AppButton variant="mini" size="sm" :disabled="dedupeFilesBusy" @click="emit('dedupeFiles')">
-        {{ dedupeFilesBusy ? 'Removing…' : 'Remove duplicate files' }}
+        {{ dedupeFilesBusy ? 'Working…' : 'Remove duplicate files' }}
       </AppButton>
       <!-- Absent when nothing is removable — no dead control (see the prop doc). -->
       <AppButton
