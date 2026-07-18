@@ -11,8 +11,10 @@ import Skeleton from '../ui/Skeleton.vue'
 import Toggle from '../ui/Toggle.vue'
 import ChapterDownloadRow from '../downloads/ChapterDownloadRow.vue'
 import CycleBanner from '../downloads/CycleBanner.vue'
+import DeferralNote from '../downloads/DeferralNote.vue'
 import FailedDownloadCard from '../downloads/FailedDownloadCard.vue'
 import RequeueConfirmModal from '../downloads/RequeueConfirmModal.vue'
+import { useNow } from '../../composables/useNow'
 import type { DownloadItem, DownloadState, DownloadTab, RetryAllState } from './downloads.types'
 
 /**
@@ -152,6 +154,25 @@ const queuedRows = computed(() => {
   return applySearch(list)
 })
 
+// ---- Honest cycle pill: deferral summary ------------------------------------
+// A shared ticking clock so the summary drops elapsed cooldowns and the pill's ETA
+// stays live (the CycleBanner formats it against the same clock).
+const { now } = useNow()
+
+// The queued chapters whose waited-on source is still under a FUTURE cooldown. Read
+// from the loaded page only (the documented read-model caveat) — honest, never
+// fabricated: when a queued page is loaded and most of it is deferred, the pill can
+// say so instead of the misleading "Idle — waiting for next cycle".
+const deferralSummary = computed(() => {
+  const queued = props.items.filter((i) => i.state === 'wanted' || i.state === 'upgrade_available')
+  const deferred = queued.filter((i) => i.deferredUntil != null && new Date(i.deferredUntil).getTime() > now.value)
+  // Only speak up when ALL/MOST of the loaded queue is waiting — a few deferred rows
+  // among many ready ones means the cycle IS making progress, so keep the idle text.
+  if (deferred.length === 0 || deferred.length * 2 < queued.length) return null
+  const soonest = Math.min(...deferred.map((i) => new Date(i.deferredUntil!).getTime()))
+  return { count: deferred.length, soonestIso: new Date(soonest).toISOString() }
+})
+
 // ---- Actions ----------------------------------------------------------------
 const selectTab = (tab: DownloadTab): void => {
   expandedId.value = null
@@ -186,7 +207,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
       <!-- Top-level tabs + cycle banner + manual "Download now" trigger -->
       <div class="downloads__head">
         <SegmentedTabs :model-value="activeTab" :tabs="mainTabs" @update:model-value="selectTab($event as DownloadTab)" />
-        <CycleBanner class="downloads__cycle" :cycle-active="cycleActive" :next-cycle-minutes="nextCycleMinutes" />
+        <CycleBanner class="downloads__cycle" :cycle-active="cycleActive" :next-cycle-minutes="nextCycleMinutes" :deferral-summary="deferralSummary" />
         <AppButton variant="mini" size="sm" :loading="running" @click="emit('run-now')">
           <template #icon>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -355,7 +376,17 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
               @open-series="emit('open-series', $event)"
             >
               <template #before-badge>
-                <span v-if="row.state === 'upgrade_available'" class="upgrade-tag">
+                <!-- The source is deferred (persisted cooldown) → say WHY it's stuck,
+                     in place of the bare UPGRADE tag / "Wanted" badge. The waited-on
+                     name is the one already on the row: the upgrade target, else the
+                     primary source. -->
+                <DeferralNote
+                  v-if="row.deferredUntil"
+                  :deferred-until="row.deferredUntil"
+                  :source="row.upgradeTarget || row.providerName"
+                  :reason="row.deferReason"
+                />
+                <span v-else-if="row.state === 'upgrade_available'" class="upgrade-tag">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M12 19V5M5 12l7-7 7 7" />
                   </svg>

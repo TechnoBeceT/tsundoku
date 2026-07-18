@@ -3,6 +3,7 @@ package downloads
 import (
 	"cmp"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -12,15 +13,17 @@ import (
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
-// feedCarrier is one source that OFFERS a given chapter_key, paired with the id of
-// the ProviderChapter feed row through which it offers it. The feed-row id is not
-// cosmetic: it is the SECONDARY sort key the engine ranks candidates by, so
-// carrying it is what lets this read model order ties exactly as the engine does
-// (see newUpgradeTargetIndex). UNIQUE(series_provider_id, chapter_key) means a
-// provider contributes exactly one feed row per key, so pcID is unambiguous.
+// feedCarrier is one source that OFFERS a given chapter_key, paired with the
+// ProviderChapter feed row through which it offers it. The feed row is not
+// cosmetic on two counts: its ID is the SECONDARY sort key the engine ranks
+// candidates by, so carrying it is what lets this read model order ties exactly as
+// the engine does (see newUpgradeTargetIndex); and its next_attempt_at / last_error
+// are the persisted per-source cooldown the deferral read surfaces (see
+// waitedOnCarrier / deferral). UNIQUE(series_provider_id, chapter_key) means a
+// provider contributes exactly one feed row per key, so the pairing is unambiguous.
 type feedCarrier struct {
 	provider *ent.SeriesProvider
-	pcID     uuid.UUID
+	pc       *ent.ProviderChapter
 }
 
 // upgradeTargetIndex maps a chapter_key to the series' sources that OFFER that key,
@@ -61,7 +64,7 @@ func newUpgradeTargetIndex(provs []*ent.SeriesProvider) upgradeTargetIndex {
 			if sp.IgnoreFractional && pc.Number != nil && chapterrange.IsFractional(*pc.Number) {
 				continue
 			}
-			idx[pc.ChapterKey] = append(idx[pc.ChapterKey], feedCarrier{provider: sp, pcID: pc.ID})
+			idx[pc.ChapterKey] = append(idx[pc.ChapterKey], feedCarrier{provider: sp, pc: pc})
 		}
 	}
 	for key, carriers := range idx {
@@ -69,7 +72,7 @@ func newUpgradeTargetIndex(provs []*ent.SeriesProvider) upgradeTargetIndex {
 			if c := cmp.Compare(b.provider.Importance, a.provider.Importance); c != 0 {
 				return c // importance DESC
 			}
-			return cmp.Compare(a.pcID.String(), b.pcID.String()) // then feed-row id ASC
+			return cmp.Compare(a.pc.ID.String(), b.pc.ID.String()) // then feed-row id ASC
 		})
 		idx[key] = carriers
 	}
@@ -104,8 +107,23 @@ func newUpgradeTargetIndex(provs []*ent.SeriesProvider) upgradeTargetIndex {
 // entirely — as the row still shows the intended target. Treat this as a UI hint,
 // never as engine state.
 func upgradeTargetLabel(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uuid.UUID]*ent.SeriesProvider) string {
+	if c, ok := upgradeTargetCarrier(ch, idx, provByID); ok {
+		return series.ProviderLabel(c.provider)
+	}
+	return ""
+}
+
+// upgradeTargetCarrier picks the feed carrier a chapter is upgrading TO, applying
+// the exact rule upgradeTargetLabel documents: the highest-importance carrier that
+// is (a) not the current satisfier and (b) strictly outranks the satisfier's
+// current importance (frozen watermark when removed / parked at the merge sentinel).
+// It returns ok=false when the chapter is not upgrading, or no carrier clears the
+// bar. Extracted so upgradeTargetLabel (which wants the NAME) and waitedOnCarrier
+// (which wants the ProviderChapter row, to read its cooldown) share one definition
+// (§2 DRY) and can never disagree on which source is the target.
+func upgradeTargetCarrier(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uuid.UUID]*ent.SeriesProvider) (feedCarrier, bool) {
 	if !isUpgrading(ch.State) {
-		return ""
+		return feedCarrier{}, false
 	}
 	for _, c := range idx[ch.ChapterKey] {
 		sp := c.provider
@@ -115,11 +133,65 @@ func upgradeTargetLabel(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uu
 		// The list is importance-DESC, so the first candidate that fails the bar means
 		// no remaining one can clear it either.
 		if sp.Importance <= satisfiedImportanceOf(ch, provByID) {
-			return ""
+			return feedCarrier{}, false
 		}
-		return series.ProviderLabel(sp)
+		return c, true
 	}
-	return ""
+	return feedCarrier{}, false
+}
+
+// waitedOnCarrier returns the ProviderChapter feed row of the source the engine is
+// WAITING ON to advance a queued chapter — the source whose persisted cooldown, if
+// any, is why the row is not moving:
+//
+//   - upgrade_available / upgrading → the UPGRADE TARGET (the source it is
+//     converging to; the same carrier upgradeTargetLabel names). While that target
+//     is cooling down after a failed upgrade fetch (download.cooldownSource), the
+//     upgrade is deferred and the row sits still.
+//   - wanted → the PRIMARY live candidate (highest-importance source whose feed
+//     carries the key — the same source chapterProvider names). While that source is
+//     inside its per-source backoff (download.bumpSourceFailure), the download is
+//     deferred.
+//
+// It returns nil for every other state, and when no source can be named (nothing
+// carries the key, or no valid upgrade target), so the caller surfaces no deferral.
+func waitedOnCarrier(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uuid.UUID]*ent.SeriesProvider) *ent.ProviderChapter {
+	switch {
+	case isUpgrading(ch.State):
+		if c, ok := upgradeTargetCarrier(ch, idx, provByID); ok {
+			return c.pc
+		}
+		return nil
+	case ch.State == entchapter.StateWanted:
+		if carriers := idx[ch.ChapterKey]; len(carriers) > 0 {
+			return carriers[0].pc
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+// deferral reports the persisted per-source cooldown the engine is waiting out on a
+// queued chapter's source: it returns (next_attempt_at, last_error) ONLY when that
+// source has a next_attempt_at genuinely in the FUTURE relative to now — the backoff
+// the engine records on a failed download (download.bumpSourceFailure) or a failed
+// upgrade fetch (download.cooldownSource). A nil carrier, or a nil / past
+// next_attempt_at, means the source is ready to try next cycle, so it returns
+// (nil, "") — a ready row is never mislabelled as waiting. reason is the carrier's
+// last_error and travels with the deferral (it is meaningless without one).
+//
+// KNOWN GAP (v1, owner-ratified): this surfaces only the PERSISTED cooldown. The
+// engine's in-memory source-politeness circuit-breaker (download/upgrade.go) can
+// defer a source WITHOUT writing next_attempt_at; a chapter held back purely by it
+// has no persisted timestamp, so it correctly shows no fabricated reason and reads
+// as plain "ready" until the next cycle. Threading engine internals into this read
+// path is deliberately out of scope.
+func deferral(pc *ent.ProviderChapter, now time.Time) (until *time.Time, reason string) {
+	if pc == nil || pc.NextAttemptAt == nil || !pc.NextAttemptAt.After(now) {
+		return nil, ""
+	}
+	return pc.NextAttemptAt, pc.LastError
 }
 
 // isUpgrading reports whether a chapter state is one where an upgrade TARGET is

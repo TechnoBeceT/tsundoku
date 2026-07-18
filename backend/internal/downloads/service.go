@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -113,10 +114,16 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 	}
 	resolutions := resolveSeries(seriesByID, provBySeries)
 
+	// One wall-clock read for the whole page so every row's deferral is judged
+	// against the same instant (a future next_attempt_at = still waiting).
+	now := time.Now()
 	items := make([]DownloadChapterDTO, len(rows))
 	for i, ch := range rows {
 		res := resolutions[ch.SeriesID]
 		provID, provName := chapterProvider(ch, provByID, res.upgradeTargets)
+		// The deferral is read from the SAME batch-loaded feeds (waitedOnCarrier
+		// returns a ProviderChapter already in memory), so it adds ZERO queries.
+		deferredUntil, deferReason := deferral(waitedOnCarrier(ch, res.upgradeTargets, provByID), now)
 		items[i] = newDownloadChapterDTO(
 			ch,
 			category.NameOf(seriesByID[ch.SeriesID]),
@@ -124,6 +131,8 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 			provID,
 			provName,
 			upgradeTargetLabel(ch, res.upgradeTargets, provByID),
+			deferredUntil,
+			deferReason,
 		)
 	}
 	return DownloadListDTO{Total: total, Items: items}, nil

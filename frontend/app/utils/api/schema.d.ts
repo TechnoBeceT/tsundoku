@@ -2414,6 +2414,13 @@ export interface components {
             providerName: string;
             /** @description Display name of the source this chapter is upgrading TO — the highest-importance source (other than the current one) whose feed carries the chapter and which outranks it. Empty for every chapter not in upgrade_available/upgrading. The UI renders "providerName → upgradeTarget". It is the INTENDED target: the engine additionally excludes retry-exhausted, cooled-down, or circuit-broken sources, which this read model does not know about, so it may name a source the engine defers this cycle. */
             upgradeTarget: string;
+            /**
+             * Format: date-time
+             * @description Why a QUEUED chapter is not moving: the source the engine is waiting on — the upgrade TARGET for an upgrade_available/upgrading chapter, else the PRIMARY candidate for a wanted one — has a persisted per-source cooldown, and this is its next_attempt_at. Populated ONLY when that timestamp is genuinely in the FUTURE (an absent or past cooldown = the source is ready next cycle → null, never mislabelled as waiting). The waited-on source's NAME is already on the row (upgradeTarget for an upgrade defer, providerName for a wanted one), so it is not duplicated here. Surfaces only the PERSISTED cooldown: a chapter held back purely by the engine's in-memory circuit-breaker (which writes no next_attempt_at) shows null here and reads as plain "ready".
+             */
+            deferredUntil: string | null;
+            /** @description The waited-on source's last_error, travelling with deferredUntil (meaningless without it). Empty when the chapter is not deferred, or when the cooldown carries no recorded reason. */
+            deferReason: string;
             /** @description Number of download attempts so far (0 when never attempted or after a retry reset). */
             retries: number;
             /**

@@ -13,6 +13,9 @@ import type { DownloadItem } from '../components/screens/downloads.types'
 /** Seeded placeholder-image URL so each "has cover" row shows a stable image. */
 const cover = (slug: string): string => `https://picsum.photos/seed/${slug}/120/160`
 
+/** A future ISO timestamp N minutes out — for deferral fixtures that count down live. */
+const inMinutes = (n: number): string => new Date(Date.now() + n * 60_000).toISOString()
+
 /** A varied cross-library activity set spanning all six surfaced states. */
 export const downloadItems: DownloadItem[] = [
   // ---- Active: downloading / upgrading ----
@@ -162,3 +165,58 @@ export const failedItems: DownloadItem[] = downloadItems.filter(
 export const queuedItems: DownloadItem[] = downloadItems.filter(
   (i) => i.state === 'wanted' || i.state === 'upgrade_available',
 )
+
+/**
+ * A DEFERRED queue: every waiting chapter's source is on a persisted cooldown, so
+ * each row reads "⏳ waiting on <source> · retry ~Nm" and the cycle pill shows the
+ * honest "N waiting on a source" summary instead of "Idle — waiting for next cycle".
+ * The mirror of the owner-reported bug (upgrades stuck on a cooled-down target).
+ */
+export const queuedDeferredItems: DownloadItem[] = [
+  {
+    chapterId: 'c-0040',
+    seriesId: '0a4d1c8e-2222-4a00-9000-000000000002',
+    seriesTitle: 'Berserk',
+    seriesCategory: 'Manga',
+    coverUrl: '',
+    number: 366,
+    name: 'Chapter 366',
+    state: 'upgrade_available',
+    provider: '2499283573021220255',
+    providerName: 'Comix',
+    // Converging TO Asura Scans, but that target just failed a fetch → cooling down.
+    upgradeTarget: 'Asura Scans',
+    deferredUntil: inMinutes(23),
+    deferReason: 'Cloudflare challenge failed (403)',
+  },
+  {
+    chapterId: 'c-0041',
+    seriesId: '0a4d1c8e-2222-4a00-9000-000000000002',
+    seriesTitle: 'Berserk',
+    seriesCategory: 'Manga',
+    coverUrl: '',
+    number: 367,
+    name: 'Chapter 367',
+    state: 'upgrade_available',
+    provider: '2499283573021220255',
+    providerName: 'Comix',
+    upgradeTarget: 'Asura Scans',
+    deferredUntil: inMinutes(23),
+    deferReason: 'Cloudflare challenge failed (403)',
+  },
+  {
+    chapterId: 'c-0042',
+    seriesId: '0a4d1c8e-6666-4a00-9000-000000000006',
+    seriesTitle: 'One Piece',
+    seriesCategory: 'Manga',
+    coverUrl: cover('one-piece'),
+    number: 1124,
+    name: 'Chapter 1124',
+    state: 'wanted',
+    provider: '2499283573021220255',
+    providerName: 'MangaDex',
+    // A plain wanted chapter whose primary source is inside its download backoff.
+    deferredUntil: inMinutes(6),
+    deferReason: 'read tcp 10.0.0.4:443: connection reset by peer',
+  },
+]

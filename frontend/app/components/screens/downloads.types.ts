@@ -64,6 +64,17 @@ export interface DownloadItem {
    */
   upgradeTarget?: string
   /**
+   * Why a QUEUED chapter is not moving: the source the engine is waiting on (the
+   * `upgradeTarget` for an upgrading chapter, else the primary source =
+   * `providerName` for a wanted one) is under a persisted cooldown, and this is its
+   * next-attempt time (raw ISO 8601). Set ONLY when genuinely in the future — a
+   * ready source leaves it undefined. Raw (not pre-formatted) so the row's "retry
+   * ~Nm" counts down live. Undefined for a row that is not deferred.
+   */
+  deferredUntil?: string
+  /** The waited-on source's last error, shown as the deferral tooltip. Undefined when none. */
+  deferReason?: string
+  /**
    * Live download percentage (0–100), driven by the `download.progress` SSE
    * event (round(100 * pagesCurrent / pagesTotal)). Undefined before the first
    * event → the Active bar stays indeterminate until pages start arriving.

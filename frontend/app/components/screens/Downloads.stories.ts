@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { ref } from 'vue'
 import Downloads from './Downloads.vue'
-import { downloadItems, failedItems, queuedItems } from '../../fixtures/downloads'
+import { downloadItems, failedItems, queuedItems, queuedDeferredItems } from '../../fixtures/downloads'
 import type { DownloadTab } from './downloads.types'
 // Load this screen's state-badge tokens directly: index.css does not @import them
 // yet (a coordinator wires that line to avoid parallel-worker conflicts), so the
@@ -71,6 +71,20 @@ export const Failed: Story = {
 /** Queued tab — wanted + upgrade_available rows, with the upgrades-only toggle. */
 export const Scheduled: Story = {
   render: () => interactive('queued'),
+}
+
+/**
+ * Queued tab, DEFERRED: every waiting chapter's source is on a persisted cooldown
+ * (the owner-reported "upgrades stuck" case). Each row reads "⏳ waiting on <source>
+ * · retry ~Nm" in place of the bare UPGRADE tag / Wanted badge, and the top-right
+ * pill states the honest "N waiting on a source · retry ~Nm" instead of "Idle".
+ */
+export const QueuedDeferred: Story = {
+  args: {
+    items: queuedDeferredItems,
+    activeTab: 'queued',
+    counts: { active: 0, failed: 0, terminal: 0, queued: queuedDeferredItems.length },
+  },
 }
 
 /**

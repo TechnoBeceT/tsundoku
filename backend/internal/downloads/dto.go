@@ -42,6 +42,19 @@ import (
 // during a convergence wave. It is the INTENDED target, not the engine's
 // authoritative pick — see upgradeTargetLabel for the resolution rule and where
 // the two can differ.
+//
+// DeferredUntil + DeferReason answer WHY a queued chapter is not moving: the source
+// the engine is waiting on (the upgrade TARGET for an upgrading chapter, else the
+// PRIMARY candidate for a wanted one — see waitedOnCarrier) has a persisted
+// per-source cooldown. DeferredUntil is that source's next_attempt_at, populated
+// ONLY when it is genuinely in the FUTURE (a nil / past timestamp = the source is
+// ready next cycle → null, never mislabelled as waiting); DeferReason is that
+// source's last_error, travelling with the deferral. The waited-on source's NAME is
+// already on the row — UpgradeTarget for an upgrade defer, ProviderName for a wanted
+// one — so it is not duplicated here. Both are the zero value for a row that is not
+// deferred. It surfaces only the PERSISTED cooldown: a chapter held back purely by
+// the engine's in-memory circuit-breaker (which writes no next_attempt_at) shows no
+// deferral — see deferral's KNOWN GAP.
 type DownloadChapterDTO struct {
 	ID             uuid.UUID  `json:"id"`
 	SeriesID       uuid.UUID  `json:"seriesId"`
@@ -55,6 +68,8 @@ type DownloadChapterDTO struct {
 	Provider       string     `json:"provider"`
 	ProviderName   string     `json:"providerName"`
 	UpgradeTarget  string     `json:"upgradeTarget"`
+	DeferredUntil  *time.Time `json:"deferredUntil"`
+	DeferReason    string     `json:"deferReason"`
 	Retries        int        `json:"retries"`
 	NextAttemptAt  *time.Time `json:"nextAttemptAt"`
 	LastError      string     `json:"lastError"`
@@ -99,10 +114,10 @@ type seriesResolution struct {
 
 // newDownloadChapterDTO maps one Chapter row to its enriched DTO. The series
 // context (display name, category, cover, chapter name, provider id + name,
-// upgrade target) is resolved once per series by the caller and passed in, so this
-// mapper does no lookups — it only projects fields, ensuring every contract field is
-// populated (§16).
-func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, provider, providerName, upgradeTarget string) DownloadChapterDTO {
+// upgrade target, deferral) is resolved once per chapter by the caller and passed
+// in, so this mapper does no lookups — it only projects fields, ensuring every
+// contract field is populated (§16).
+func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, provider, providerName, upgradeTarget string, deferredUntil *time.Time, deferReason string) DownloadChapterDTO {
 	return DownloadChapterDTO{
 		ID:             ch.ID,
 		SeriesID:       ch.SeriesID,
@@ -116,6 +131,8 @@ func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolutio
 		Provider:       provider,
 		ProviderName:   providerName,
 		UpgradeTarget:  upgradeTarget,
+		DeferredUntil:  deferredUntil,
+		DeferReason:    deferReason,
 		Retries:        ch.Retries,
 		NextAttemptAt:  ch.NextAttemptAt,
 		LastError:      ch.LastError,

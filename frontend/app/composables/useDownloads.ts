@@ -85,6 +85,10 @@ function mapItem(dto: DownloadChapterDTO): DownloadItem {
     // "" means "not upgrading / no nameable target" — map to undefined so the row
     // simply omits the "→ target" half.
     upgradeTarget: dto.upgradeTarget || undefined,
+    // The waited-on source's cooldown: raw ISO through to the row (which counts it
+    // down live). null (not deferred) → undefined so the row shows no waiting note.
+    deferredUntil: dto.deferredUntil ?? undefined,
+    deferReason: dto.deferReason || undefined,
     retries: dto.retries,
     nextAttempt: formatNextAttempt(dto.nextAttemptAt),
     // Empty string means "no error" — map to undefined so optional fields stay absent.
