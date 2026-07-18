@@ -95,6 +95,44 @@ func assertPersistedBinding(ctx context.Context, t *testing.T, client *ent.Clien
 	}
 }
 
+// TestUpdateTrack_FloorsFractionalLastChapterRead confirms even an explicit
+// owner tracking-sheet edit reports a WHOLE chapter: a manual lastChapterRead
+// of 42.1 is floored to 42 both in the value pushed to the tracker and in the
+// value persisted locally (a tracker's progress field is an integer chapter
+// COUNT — see sync.TruncateForInteger). Score is left fractional to prove only
+// the chapter number is floored.
+func TestUpdateTrack_FloorsFractionalLastChapterRead(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Frac Manual Edit", "frac-manual-edit")
+	seedConnection(ctx, t, client, fakeTrackerID, "acct-token")
+	binding := seedBinding(ctx, t, client, seriesID, fakeTrackerID, "r1", 5, 0)
+
+	ft := &fakeTracker{id: fakeTrackerID}
+	svc := newService(client, ft, nil, nil)
+
+	updated, err := svc.UpdateTrack(ctx, binding.ID, syncsvc.UpdatePatch{
+		LastChapterRead: floatPtr(42.1),
+		Score:           floatPtr(9.5),
+	})
+	if err != nil {
+		t.Fatalf("UpdateTrack: %v", err)
+	}
+
+	if ft.updateEntryCalls != 1 || ft.lastUpdateEntry.Progress != 42 {
+		t.Fatalf("pushed = calls=%d Progress=%v, want 1 call pushing 42 (floor of 42.1)", ft.updateEntryCalls, ft.lastUpdateEntry.Progress)
+	}
+	if ft.lastUpdateEntry.Score != 9.5 {
+		t.Fatalf("pushed Score = %v, want 9.5 (score must NOT be floored)", ft.lastUpdateEntry.Score)
+	}
+	if updated.LastChapterRead != 42 {
+		t.Fatalf("updated.LastChapterRead = %v, want 42", updated.LastChapterRead)
+	}
+	if got := reloadBinding(ctx, t, client, binding.ID).LastChapterRead; got != 42 {
+		t.Fatalf("persisted LastChapterRead = %v, want 42", got)
+	}
+}
+
 // TestUpdateTrack_BindingNotFound confirms UpdateTrack fails closed for an
 // unknown recordID.
 func TestUpdateTrack_BindingNotFound(t *testing.T) {

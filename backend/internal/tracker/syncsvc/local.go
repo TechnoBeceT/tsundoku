@@ -51,5 +51,12 @@ func (s *Service) seriesLocalFurthest(ctx context.Context, seriesID uuid.UUID) (
 	if len(syncable) == 0 {
 		return 0, nil
 	}
-	return syncable[0], nil
+	// WHOLE-CHAPTER PROGRESS: a tracker stores an integer chapter COUNT, so the
+	// local library's furthest-read value must be a whole chapter — reading the
+	// 42.1 split when the highest whole chapter read is 42 reports 42, never
+	// 42.1 and never 43 (kernel.TruncateForInteger floors, matching Suwayomi/
+	// mihon's last_chapter_read.toInt()). Flooring here is the local-library →
+	// tracker-progress boundary for SyncNow's three-way convergence, mirroring
+	// PushProgress's reader-hook floor.
+	return float64(kernel.TruncateForInteger(syncable[0])), nil
 }

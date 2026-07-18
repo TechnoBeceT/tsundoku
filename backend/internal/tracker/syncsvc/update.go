@@ -11,6 +11,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	enttrackbinding "github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/tracker"
+	kernel "github.com/technobecet/tsundoku/internal/tracker/sync"
 )
 
 // UpdatePatch is the owner's manual tracking-sheet edit — every field is a
@@ -112,8 +113,15 @@ func applyUpdatePatch(entry *tracker.TrackEntry, upd *ent.TrackBindingUpdateOne,
 		upd = upd.SetStatus(*patch.Status)
 	}
 	if patch.LastChapterRead != nil {
-		entry.Progress = *patch.LastChapterRead
-		upd = upd.SetLastChapterRead(*patch.LastChapterRead)
+		// WHOLE-CHAPTER PROGRESS: even an explicit owner edit must report a whole
+		// chapter — a tracker's progress field is an integer chapter COUNT, so a
+		// fractional 42.1 floors to 42 (never 42.1, never 43), matching Suwayomi/
+		// mihon's last_chapter_read.toInt(). The handler already rejects a
+		// negative lastChapterRead, so only the fractional case reaches here.
+		// Score is deliberately NOT floored — AniList/MAL scores are fractional.
+		whole := float64(kernel.TruncateForInteger(*patch.LastChapterRead))
+		entry.Progress = whole
+		upd = upd.SetLastChapterRead(whole)
 	}
 	if patch.Score != nil {
 		entry.Score = *patch.Score

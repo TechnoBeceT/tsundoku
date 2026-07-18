@@ -212,6 +212,50 @@ func assertLocalLibraryReadCountConverged(t *testing.T, out []*ent.TrackBinding,
 	}
 }
 
+// TestSyncNow_LocalFurthest_FractionalReadConvergesToWholeChapter proves the
+// local-library leg of the three-way convergence reports a WHOLE chapter: the
+// owner has read locally up to chapter 42 AND the 42.1 split, the remote is at
+// 0, and the binding stored 0 — the converged value pushed back to the tracker
+// (and stored) is 42, never 42.1 and never 43 (seriesLocalFurthest floors,
+// matching Suwayomi/mihon's last_chapter_read.toInt()).
+func TestSyncNow_LocalFurthest_FractionalReadConvergesToWholeChapter(t *testing.T) {
+	ctx := context.Background()
+	client := newTestDB(t)
+	seriesID := seedSeries(ctx, t, client, "Frac Local Furthest", "frac-local-furthest")
+	seedConnection(ctx, t, client, fakeTrackerID, "acct-token")
+	binding := seedBinding(ctx, t, client, seriesID, fakeTrackerID, "r1", 0, 0)
+
+	// Chapters 1..42 plus the 42.1 split, ALL read locally.
+	for i := 1; i <= 42; i++ {
+		ch := seedChapter(ctx, t, client, seriesID, chKey(i), float64(i))
+		markChapterRead(ctx, t, client, ch.ID, time.Now().UTC())
+	}
+	split := seedChapter(ctx, t, client, seriesID, "ch-42-1", 42.1)
+	markChapterRead(ctx, t, client, split.ID, time.Now().UTC())
+
+	ft := &fakeTracker{
+		id: fakeTrackerID,
+		getEntryFn: func(_ context.Context, _, remoteID string) (*tracker.TrackEntry, error) {
+			return &tracker.TrackEntry{RemoteID: remoteID, Progress: 0}, nil
+		},
+	}
+	svc := newService(client, ft, nil, nil)
+
+	out, err := svc.SyncNow(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("SyncNow: %v", err)
+	}
+	if len(out) != 1 || out[0].LastChapterRead != 42 {
+		t.Fatalf("SyncNow result = %+v, want converged to the whole chapter 42 (not 42.1, not 43)", out)
+	}
+	if ft.updateEntryCalls != 1 || ft.lastUpdateEntry.Progress != 42 {
+		t.Fatalf("push-back = calls=%d entry.Progress=%v, want 1 call pushing 42", ft.updateEntryCalls, ft.lastUpdateEntry.Progress)
+	}
+	if got := reloadBinding(ctx, t, client, binding.ID).LastChapterRead; got != 42 {
+		t.Fatalf("LastChapterRead = %v, want 42", got)
+	}
+}
+
 // TestSyncNow_NeverRegressWhenRemoteRegressesAndLocalHasNothingRead is the
 // never-regress proof for the three-way chain: a prior sync already
 // converged the binding to 60; the remote's report has since REGRESSED to

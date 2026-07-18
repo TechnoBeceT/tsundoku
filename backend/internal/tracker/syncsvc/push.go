@@ -43,6 +43,17 @@ func (s *Service) PushProgress(ctx context.Context, seriesID uuid.UUID, localFur
 	if len(kernel.SyncableNumbers([]float64{localFurthest})) == 0 {
 		return nil // unparseable/negative chapter number — never sync.
 	}
+	// WHOLE-CHAPTER PROGRESS: trackers (AniList/MAL) store an integer chapter
+	// COUNT (see sync.TruncateForInteger), so a fractional split like 42.1 must
+	// report 42 — never 42.1, and never 43. Floor the trigger value HERE, at
+	// the point a local chapter number becomes tracker progress, so the
+	// never-regress comparison (NextPush), the retry-queue value enqueued on
+	// failure, and every per-binding push below all operate on the same whole
+	// chapter. Matches Suwayomi/mihon, which both push last_chapter_read.toInt()
+	// (truncate toward zero). pushOne re-applies TruncateForInteger as the wire
+	// floor for the retry path (Push), which reaches it without going through
+	// here — this is not that guard, it is the reader-hook intake boundary.
+	localFurthest = float64(kernel.TruncateForInteger(localFurthest))
 
 	bindings, err := s.client.TrackBinding.Query().Where(enttrackbinding.SeriesID(seriesID)).All(ctx)
 	if err != nil {

@@ -83,6 +83,58 @@ func TestPushProgress_LocalAheadPushesTruncatedValue(t *testing.T) {
 	}
 }
 
+// TestPushProgress_FractionalReadFloorsToWholeChapter proves a fractional
+// local read reports the WHOLE chapter to the tracker, never the fraction and
+// never the next chapter up (matches Suwayomi/mihon's last_chapter_read.toInt()):
+//   - reading 42.1 while the binding sits at 41 pushes 42 (floor of 42.1),
+//   - reading 42.1 while the binding is ALREADY at 42 is a no-op — the floored
+//     value equals the remote's, so never-regress declines (a fractional split
+//     must never advance progress a whole chapter).
+func TestPushProgress_FractionalReadFloorsToWholeChapter(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("42.1 read advances a behind binding to 42", func(t *testing.T) {
+		client := newTestDB(t)
+		seriesID := seedSeries(ctx, t, client, "Frac Advance", "frac-advance")
+		seedConnection(ctx, t, client, fakeTrackerID, "acct-token")
+		binding := seedBinding(ctx, t, client, seriesID, fakeTrackerID, "rf1", 41, 0)
+
+		ft := &fakeTracker{id: fakeTrackerID}
+		svc := newService(client, ft, nil, nil)
+
+		if err := svc.PushProgress(ctx, seriesID, 42.1); err != nil {
+			t.Fatalf("PushProgress: %v", err)
+		}
+		if ft.updateEntryCalls != 1 || ft.lastUpdateEntry.Progress != 42 {
+			t.Fatalf("push = calls=%d entry.Progress=%v, want 1 call pushing 42 (floor of 42.1, not 42.1, not 43)",
+				ft.updateEntryCalls, ft.lastUpdateEntry.Progress)
+		}
+		if got := reloadBinding(ctx, t, client, binding.ID).LastChapterRead; got != 42 {
+			t.Fatalf("LastChapterRead = %v, want 42", got)
+		}
+	})
+
+	t.Run("42.1 read does not advance a binding already at 42", func(t *testing.T) {
+		client := newTestDB(t)
+		seriesID := seedSeries(ctx, t, client, "Frac No Advance", "frac-no-advance")
+		seedConnection(ctx, t, client, fakeTrackerID, "acct-token")
+		binding := seedBinding(ctx, t, client, seriesID, fakeTrackerID, "rf2", 42, 0)
+
+		ft := &fakeTracker{id: fakeTrackerID}
+		svc := newService(client, ft, nil, nil)
+
+		if err := svc.PushProgress(ctx, seriesID, 42.1); err != nil {
+			t.Fatalf("PushProgress: %v", err)
+		}
+		if ft.updateEntryCalls != 0 {
+			t.Fatalf("UpdateEntry calls = %d, want 0 (42.1 floors to 42 == remote; never-regress declines)", ft.updateEntryCalls)
+		}
+		if got := reloadBinding(ctx, t, client, binding.ID).LastChapterRead; got != 42 {
+			t.Fatalf("LastChapterRead = %v, want unchanged 42", got)
+		}
+	})
+}
+
 // TestPushProgress_PreservesScorePrivateStatusOnAdvance confirms a NORMAL
 // advance push (local strictly ahead, not completing) carries the binding's
 // EXISTING Score/Private/Status to UpdateEntry UNCHANGED — the
