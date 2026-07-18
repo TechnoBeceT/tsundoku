@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useNow } from '../../composables/useNow'
+import { formatRetryEta } from '../../utils/retryEta'
+import AppButton from '../ui/AppButton.vue'
 import type { SourceMetric, SourceWarmth } from '../screens/settings.types'
 
 /**
@@ -7,16 +10,46 @@ import type { SourceMetric, SourceWarmth } from '../screens/settings.types'
  * pane: the source name, a warm/cold session badge, an amber "Slow" badge when
  * the backend flags it slow, a danger "Erroring" badge when a last error is
  * present, then the last/avg latency, the success rate, and (when erroring) the
- * truncated last-error text (full message on hover via `title`). Presentation-
- * only — the whole snapshot arrives via the `source` prop and the row emits
- * nothing. Token-only colours so it reads in both themes.
+ * truncated last-error text (full message on hover via `title`).
+ *
+ * When the source's anti-ban circuit-breaker is tripped (`source.breaker.
+ * isCoolingDown`) the row also shows a "⏸ cooling down · retry ~Nm (N failures)"
+ * banner (the breaker's last error rides in the tooltip) plus a "Reset" button
+ * that force-clears the cooldown — the owner escape from a wedged source. The
+ * retry ETA is computed CLIENT-SIDE from `cooldownUntil` against the shared
+ * ticking clock (useNow), so it counts down live without a refetch.
+ *
+ * Emits `reset` (the source id) when the owner clicks Reset; the row is otherwise
+ * presentation-only. Token-only colours so it reads in both themes.
  *
  *   - `source`: the source metric to render.
+ *   - `resetting`: this row's reset is in flight (spins its Reset button).
  */
 const props = defineProps<{
   /** The source metric snapshot to render. */
   source: SourceMetric
+  /** Whether this source's breaker reset is in flight. */
+  resetting?: boolean
 }>()
+
+const emit = defineEmits<{
+  /** Reset this source's tripped circuit-breaker — carries the source id. */
+  reset: [id: string]
+}>()
+
+const { now } = useNow()
+
+// The breaker is cooling down (tripped) — drives the cooldown banner + Reset button.
+const isCoolingDown = computed(() => props.source.breaker?.isCoolingDown === true)
+
+// Live "~Nm" / "~Ns" / "~Nh" until the cooldown elapses (recomputes each tick).
+const retryEta = computed(() => {
+  const until = props.source.breaker?.cooldownUntil
+  return until ? formatRetryEta(until, now.value) : ''
+})
+
+// The breaker's last error (why it tripped) — surfaced in the banner tooltip.
+const breakerError = computed(() => props.source.breaker?.lastError ?? '')
 
 // A source counts as "warm" only if it was warmed within this window — the
 // anti-bot session is still fresh. Chosen to match Suwayomi's default
@@ -71,13 +104,14 @@ const successLabel = computed(() =>
 </script>
 
 <template>
-  <div class="metric" :class="{ 'metric--slow': source.isSlow, 'metric--erroring': hasError }">
+  <div class="metric" :class="{ 'metric--slow': source.isSlow, 'metric--erroring': hasError, 'metric--cooling': isCoolingDown }">
     <div class="metric__head">
       <span class="metric__name">{{ source.name }}</span>
       <span class="metric__warmth" :class="`metric__warmth--${warmth}`" :title="warmthTitle">
         <span class="metric__dot" aria-hidden="true" />
         {{ warmthLabel }}
       </span>
+      <span v-if="isCoolingDown" class="metric__badge metric__badge--cooling">Cooling down</span>
       <span v-if="source.isSlow" class="metric__badge metric__badge--slow">Slow</span>
       <span v-if="hasError" class="metric__badge metric__badge--error" :title="source.lastError">Erroring</span>
     </div>
@@ -87,6 +121,19 @@ const successLabel = computed(() =>
       <span class="metric__stat">avg <b>{{ fmtLatency(source.avgLatencyMs) }}</b></span>
       <span class="metric__stat">{{ successLabel }}</span>
       <span v-if="source.lastWarmedAt" class="metric__stat metric__stat--faint">warmed {{ rel(source.lastWarmedAt) }}</span>
+    </div>
+
+    <!-- Anti-ban breaker banner: the engine is refusing this source until the
+         cooldown elapses. The owner can force-clear it with Reset. -->
+    <div v-if="isCoolingDown" class="metric__cooldown">
+      <span class="metric__cooldown-text" :title="breakerError || undefined">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></svg>
+        cooling down · retry {{ retryEta }}
+        <span class="metric__cooldown-fails">({{ source.breaker?.consecutiveFailures }} failures)</span>
+      </span>
+      <AppButton variant="mini" size="xs" :loading="resetting" @click="emit('reset', source.id)">
+        Reset
+      </AppButton>
     </div>
 
     <div v-if="hasError" class="metric__error" :title="source.lastError">{{ source.lastError }}</div>
@@ -111,6 +158,12 @@ const successLabel = computed(() =>
 }
 
 .metric--erroring {
+  border-left: 3px solid var(--danger);
+}
+
+/* A cooling-down source gets a danger rule too — it is being actively refused,
+   the most urgent signal (wins over slow). */
+.metric--cooling {
   border-left: 3px solid var(--danger);
 }
 
@@ -178,6 +231,37 @@ const successLabel = computed(() =>
 .metric__badge--error {
   color: var(--danger-text);
   background: var(--danger-bg);
+}
+
+.metric__badge--cooling {
+  color: var(--danger-text);
+  background: var(--danger-bg);
+}
+
+/* ---- Cooldown banner ------------------------------------------------------- */
+.metric__cooldown {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: var(--radius-md);
+  background: var(--danger-bg);
+}
+
+.metric__cooldown-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: var(--danger-text);
+}
+
+/* The failure count is secondary detail — quieter than the headline. */
+.metric__cooldown-fails {
+  font-weight: var(--weight-semibold);
+  opacity: 0.8;
 }
 
 /* ---- Stats line ------------------------------------------------------------ */

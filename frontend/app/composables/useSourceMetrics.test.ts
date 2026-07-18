@@ -11,6 +11,9 @@
  *      intentionally NOT coupled to this test).
  *   3. An empty list ([]) is handled gracefully — metrics stays [].
  *   4. A failed load surfaces in `error`; a failed warm-up in `warmError`.
+ *   5. The breaker DTO maps onto the screen breaker object (absent → null).
+ *   6. resetBreaker() POSTs the reset endpoint then refetches; a failure lands in
+ *      `resetError` verbatim.
  *
  * Non-vacuous: if the mapper dropped the rename, assertion 1 (id === 'src-1',
  * avgLatencyMs === 320) would fail on undefined; if warmNow did NOT post,
@@ -56,6 +59,13 @@ const RAW_METRICS = [
     // lastWarmedAt intentionally absent → must normalise to null.
     updatedAt: '2026-07-05T10:00:00Z',
     isSlow: true,
+    // A tripped anti-ban breaker → must map onto the screen breaker object.
+    breaker: {
+      consecutiveFailures: 5,
+      cooldownUntil: '2026-07-05T10:30:00Z',
+      lastError: 'context deadline exceeded',
+      isCoolingDown: true,
+    },
   },
 ]
 
@@ -63,8 +73,10 @@ const RAW_METRICS = [
 
 let getCount = 0
 let postCount = 0
+let resetCount = 0
 let getError = false
 let postError = false
+let resetError = false
 let emptyMetrics = false
 
 // ── Module mock ───────────────────────────────────────────────────────────────
@@ -85,6 +97,11 @@ vi.mock('~/utils/api/client', () => ({
         if (postError) return Promise.resolve({ data: null, error: { message: 'warm failed' } })
         return Promise.resolve({ data: { started: true }, error: null })
       }
+      if (path === '/api/sources/{sourceId}/reset-breaker') {
+        resetCount++
+        if (resetError) return Promise.resolve({ data: null, error: { message: 'reset failed' } })
+        return Promise.resolve({ data: { sourceId: 'src-2', sourceName: 'Asura Scans' }, error: null })
+      }
       return Promise.resolve({ data: null, error: null })
     }),
     PATCH: vi.fn(),
@@ -101,8 +118,10 @@ describe('useSourceMetrics', () => {
   beforeEach(() => {
     getCount = 0
     postCount = 0
+    resetCount = 0
     getError = false
     postError = false
+    resetError = false
     emptyMetrics = false
   })
 
@@ -125,6 +144,41 @@ describe('useSourceMetrics', () => {
     // Absent lastWarmedAt on the second row → null.
     expect(metrics.value[1]!.lastWarmedAt).toBeNull()
     expect(metrics.value[1]!.isSlow).toBe(true)
+
+    // The breaker maps onto the screen object; a source with no breaker → null.
+    expect(first.breaker).toBeNull()
+    expect(metrics.value[1]!.breaker).toEqual({
+      consecutiveFailures: 5,
+      cooldownUntil: '2026-07-05T10:30:00Z',
+      lastError: 'context deadline exceeded',
+      isCoolingDown: true,
+    })
+  })
+
+  it('resetBreaker() POSTs the reset endpoint, then refetches to clear the state', async () => {
+    const { pending, resetBreaker, resetting, resetError: resetErr } = useSourceMetrics()
+
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+    expect(getCount).toBe(1)
+
+    await resetBreaker('src-2')
+
+    // Exactly one reset POST + one follow-up refetch (so the row's cooling-down
+    // state clears); the in-flight tracker is cleared and no error surfaced.
+    expect(resetCount).toBe(1)
+    expect(getCount).toBe(2)
+    expect(resetting.value).toBeNull()
+    expect(resetErr.value).toBeNull()
+  })
+
+  it('surfaces a reset failure in resetError (verbatim server message)', async () => {
+    resetError = true
+    const { pending, resetBreaker, resetError: resetErr } = useSourceMetrics()
+
+    await vi.waitFor(() => expect(pending.value).toBe(false))
+    await resetBreaker('src-2')
+
+    expect(resetErr.value).toBe('reset failed')
   })
 
   it('warmNow() POSTs /api/sources/warmup and sets the background-started message', async () => {

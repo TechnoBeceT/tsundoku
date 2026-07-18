@@ -21,6 +21,7 @@ package sourcegate
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -97,6 +98,74 @@ func (s *Service) IsAvailable(ctx context.Context, key string, now time.Time) bo
 		return true
 	}
 	return !row.CooldownUntil.After(now)
+}
+
+// BreakerState is a read-only snapshot of one source's circuit-breaker row,
+// returned by Snapshot for the read models that surface breaker state alongside
+// their own data (the source-metrics screen). It is a plain value so callers
+// outside sourcegate never touch the Ent row directly.
+type BreakerState struct {
+	// SourceKey is the physical-source identity the breaker is keyed by (the
+	// trimmed display name — see the package doc comment).
+	SourceKey string
+	// ConsecutiveFailures is how many gated fetches have failed in a row.
+	ConsecutiveFailures int
+	// CooldownUntil is when the tripped breaker reopens; nil when not tripped.
+	CooldownUntil *time.Time
+	// LastError is the most recent gated-fetch failure reason ("" when none).
+	LastError string
+	// UpdatedAt is when the breaker row was last written.
+	UpdatedAt time.Time
+}
+
+// IsCoolingDown reports whether the breaker is currently tripped at now: a
+// cooldown is set and still in the future. It is the read-model mirror of
+// IsAvailable (a source is cooling down exactly when it is not available because
+// of a live cooldown), kept here so the rule lives in one place.
+func (b BreakerState) IsCoolingDown(now time.Time) bool {
+	return b.CooldownUntil != nil && b.CooldownUntil.After(now)
+}
+
+// Snapshot returns every source's current breaker state keyed by source_key, in
+// ONE query — the batch read a read model joins against so it never issues a
+// per-source breaker lookup (no N+1). An empty map is returned when no breaker
+// rows exist. Unlike the best-effort writers this RETURNS its read error: the
+// caller (a read endpoint) decides whether a missing join is fatal.
+func (s *Service) Snapshot(ctx context.Context) (map[string]BreakerState, error) {
+	rows, err := s.client.SourceCircuitState.Query().All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sourcegate.Snapshot: %w", err)
+	}
+	out := make(map[string]BreakerState, len(rows))
+	for _, r := range rows {
+		out[r.SourceKey] = BreakerState{
+			SourceKey:           r.SourceKey,
+			ConsecutiveFailures: r.ConsecutiveFailures,
+			CooldownUntil:       r.CooldownUntil,
+			LastError:           r.LastError,
+			UpdatedAt:           r.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
+// Reset clears key's tripped circuit-breaker: it DELETES the breaker row, so the
+// source is immediately available again (consecutive_failures back to 0, no
+// cooldown, no residual last_error). This is the owner "reset source" action — a
+// deliberate override of the anti-ban cooldown for one source. It is:
+//   - idempotent: deleting zero rows is not an error, so it is a safe no-op when
+//     the source has no breaker row;
+//   - scoped to exactly key: no other source's breaker and no global gating
+//     behaviour is affected (gating stays fully in force for every other source);
+//   - error-RETURNING (unlike the best-effort recorders) so the handler can
+//     surface a failure to the owner (§16).
+func (s *Service) Reset(ctx context.Context, key string) error {
+	if _, err := s.client.SourceCircuitState.Delete().
+		Where(entsourcecircuitstate.SourceKeyEQ(key)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("sourcegate.Reset: delete breaker %q: %w", key, err)
+	}
+	return nil
 }
 
 // RecordSuccess resets key's consecutive-failure counter and clears any

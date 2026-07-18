@@ -301,9 +301,10 @@ func registerRoutes(
 	// per-source performance snapshot (metricsSvc) and triggers a manual warm
 	// pass (warmupSvc); the slow threshold is resolved from the settings overlay
 	// at read time (settingsSvc).
-	sourcesH := sourcesh.NewHandler(metricsSvc, warmupSvc, settingsSvc)
+	sourcesH := sourcesh.NewHandler(metricsSvc, warmupSvc, settingsSvc, gate, engineClient)
 	authed.GET("/sources/metrics", sourcesH.Metrics)
 	authed.POST("/sources/warmup", sourcesH.Warmup)
+	authed.POST("/sources/:sourceId/reset-breaker", sourcesH.ResetBreaker)
 
 	// Web Push registration API. The handler serves the server VAPID public key
 	// and upserts/removes a device's subscription (internal/push store); the

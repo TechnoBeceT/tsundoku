@@ -114,6 +114,10 @@ withDefaults(defineProps<{
   warmMessage?: string | null
   /** The last warm-up's failure message. */
   warmError?: string | null
+  /** The source id whose breaker reset is in flight (null when none). */
+  resetting?: string | null
+  /** The last breaker-reset failure message. */
+  resetError?: string | null
   /** True while the library-wide dedup sweep request is in flight. */
   dedupAllBusy?: boolean
   /** Started/success message from the last dedup sweep trigger. */
@@ -228,6 +232,8 @@ const emit = defineEmits<{
   'save-sources-settings': [settings: SourcesSettings]
   /** Trigger a manual warm-up pass across all sources. */
   'warm-now': []
+  /** Reset a source's tripped circuit-breaker — carries the source id. */
+  'reset-breaker': [id: string]
   /** Trigger the library-wide duplicate-source dedup sweep. */
   'dedup-all': []
   /** The OAuth "Connect" button was pressed for a tracker id. */
@@ -336,7 +342,10 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             :warming="warming"
             :warm-message="warmMessage"
             :warm-error="warmError"
+            :resetting="resetting"
+            :reset-error="resetError"
             @warm-now="emit('warm-now')"
+            @reset-breaker="emit('reset-breaker', $event)"
           />
         </div>
 

@@ -1595,6 +1595,57 @@ components:
           description: |
             Derived flag — true when the source has never been measured OR its
             ewmaLatencyMs exceeds the current slow threshold.
+        breaker:
+          $ref: "#/components/schemas/SourceBreaker"
+
+    SourceBreaker:
+      type: object
+      description: |
+        A source's persisted anti-ban circuit-breaker state, surfaced next to its
+        latency/reliability stats. Present only when a breaker row exists (absent
+        for a healthy source). "isCoolingDown" is derived at read time (a cooldown
+        is set and still in the future) — the breaker is currently refusing
+        background fetches to that source.
+      required:
+        - consecutiveFailures
+        - lastError
+        - isCoolingDown
+      properties:
+        consecutiveFailures:
+          type: integer
+          description: Number of gated fetches that failed in a row.
+        cooldownUntil:
+          type: string
+          format: date-time
+          description: When the tripped breaker reopens (absent when not tripped).
+        lastError:
+          type: string
+          description: Most recent gated-fetch failure reason ("" when none).
+        isCoolingDown:
+          type: boolean
+          description: |
+            Derived — true when a cooldown is set and still in the future (the
+            source is currently being refused for background fetches).
+
+    SourceBreakerReset:
+      type: object
+      description: |
+        Response to POST /api/sources/{sourceId}/reset-breaker: the source's
+        identity plus its breaker state AFTER the reset (§16 round-trip). "breaker"
+        is absent on a clean reset (the row was cleared), confirming the source is
+        no longer cooling down.
+      required:
+        - sourceId
+        - sourceName
+      properties:
+        sourceId:
+          type: string
+          description: The Suwayomi source id.
+        sourceName:
+          type: string
+          description: The source's display name.
+        breaker:
+          $ref: "#/components/schemas/SourceBreaker"
 
     SourceWarmStarted:
       type: object
@@ -5832,6 +5883,60 @@ paths:
                 $ref: "#/components/schemas/SourceWarmStarted"
         "401":
           description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/reset-breaker:
+    post:
+      operationId: resetSourceBreaker
+      summary: Reset a source's anti-bot circuit-breaker
+      description: |
+        Clears a source's tripped circuit-breaker so it is immediately available
+        again (consecutive_failures back to 0, no cooldown). This is a deliberate
+        owner override of the anti-bot cooldown for ONE source — every other
+        source's gating is untouched. Idempotent (a no-op when the source has no
+        breaker row). Returns the refreshed breaker state (breaker absent once
+        cleared).
+      tags:
+        - sources
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The Suwayomi source id whose breaker to reset.
+      responses:
+        "200":
+          description: The breaker was reset; the refreshed state is returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceBreakerReset"
+        "400":
+          description: The sourceId is not a valid numeric id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No source with that id is loaded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The engine host could not be reached to resolve the source.
           content:
             application/json:
               schema:

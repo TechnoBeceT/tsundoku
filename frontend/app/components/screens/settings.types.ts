@@ -252,6 +252,24 @@ export type SourceWarmth = 'warm' | 'cold' | 'never'
  * mappers). `isSlow` is the backend's own derived flag (never measured OR EWMA
  * over the current slow threshold).
  */
+/**
+ * SourceBreaker — a source's anti-ban circuit-breaker state, joined into its
+ * metric row (screen-facing mirror of the backend `SourceBreaker` DTO). Present
+ * only when the source has a breaker row (null for a healthy source). When
+ * `isCoolingDown`, the engine is currently refusing background fetches to this
+ * source; the owner can force-clear it with the Reset action.
+ */
+export interface SourceBreaker {
+  /** How many gated fetches failed in a row. */
+  consecutiveFailures: number
+  /** When the tripped breaker reopens (ISO 8601); null when not tripped. */
+  cooldownUntil: string | null
+  /** Most recent gated-fetch failure reason ("" when none). */
+  lastError: string
+  /** Derived — true when a cooldown is set and still in the future. */
+  isCoolingDown: boolean
+}
+
 export interface SourceMetric {
   /** Suwayomi source id — the row identity/key. */
   id: string
@@ -279,6 +297,8 @@ export interface SourceMetric {
   updatedAt: string
   /** Derived — true when never measured OR EWMA over the slow threshold. */
   isSlow: boolean
+  /** Anti-ban circuit-breaker state — null when the source has no breaker row. */
+  breaker: SourceBreaker | null
 }
 
 /* ---- 2g. Trackers (Phase 3d — connect + bind; sync is Phase 4) ------------ */

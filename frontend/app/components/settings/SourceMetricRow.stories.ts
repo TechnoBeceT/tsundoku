@@ -32,7 +32,21 @@ export const Slow: Story = {
 
 /** Erroring — a danger badge + the truncated last-error line (full text on hover). */
 export const Erroring: Story = {
+  args: { source: { ...sourceMetrics[1]!, breaker: null } },
+}
+
+/**
+ * Cooling down — the source's anti-ban circuit-breaker is TRIPPED: a cooldown
+ * banner ("cooling down · retry ~28m (5 failures)", the breaker error on hover)
+ * plus a Reset button to force-clear it.
+ */
+export const CoolingDown: Story = {
   args: { source: sourceMetrics[1]! },
+}
+
+/** Reset in flight — the Reset button spins while the reset request is pending. */
+export const Resetting: Story = {
+  args: { source: sourceMetrics[1]!, resetting: true },
 }
 
 /** Never warmed — unmeasured source, neutral badge, latency reads "—". */

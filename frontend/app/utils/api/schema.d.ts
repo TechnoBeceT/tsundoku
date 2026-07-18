@@ -1463,6 +1463,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sources/{sourceId}/reset-breaker": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset a source's anti-bot circuit-breaker
+         * @description Clears a source's tripped circuit-breaker so it is immediately available
+         *     again (consecutive_failures back to 0, no cooldown). This is a deliberate
+         *     owner override of the anti-bot cooldown for ONE source — every other
+         *     source's gating is untouched. Idempotent (a no-op when the source has no
+         *     breaker row). Returns the refreshed breaker state (breaker absent once
+         *     cleared).
+         */
+        post: operations["resetSourceBreaker"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/push/vapid-key": {
         parameters: {
             query?: never;
@@ -2892,6 +2917,43 @@ export interface components {
              *     ewmaLatencyMs exceeds the current slow threshold.
              */
             isSlow: boolean;
+            breaker?: components["schemas"]["SourceBreaker"];
+        };
+        /**
+         * @description A source's persisted anti-ban circuit-breaker state, surfaced next to its
+         *     latency/reliability stats. Present only when a breaker row exists (absent
+         *     for a healthy source). "isCoolingDown" is derived at read time (a cooldown
+         *     is set and still in the future) — the breaker is currently refusing
+         *     background fetches to that source.
+         */
+        SourceBreaker: {
+            /** @description Number of gated fetches that failed in a row. */
+            consecutiveFailures: number;
+            /**
+             * Format: date-time
+             * @description When the tripped breaker reopens (absent when not tripped).
+             */
+            cooldownUntil?: string;
+            /** @description Most recent gated-fetch failure reason ("" when none). */
+            lastError: string;
+            /**
+             * @description Derived — true when a cooldown is set and still in the future (the
+             *     source is currently being refused for background fetches).
+             */
+            isCoolingDown: boolean;
+        };
+        /**
+         * @description Response to POST /api/sources/{sourceId}/reset-breaker: the source's
+         *     identity plus its breaker state AFTER the reset (§16 round-trip). "breaker"
+         *     is absent on a clean reset (the row was cleared), confirming the source is
+         *     no longer cooling down.
+         */
+        SourceBreakerReset: {
+            /** @description The Suwayomi source id. */
+            sourceId: string;
+            /** @description The source's display name. */
+            sourceName: string;
+            breaker?: components["schemas"]["SourceBreaker"];
         };
         SourceWarmStarted: {
             /**
@@ -6658,6 +6720,65 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resetSourceBreaker: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Suwayomi source id whose breaker to reset. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The breaker was reset; the refreshed state is returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceBreakerReset"];
+                };
+            };
+            /** @description The sourceId is not a valid numeric id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No source with that id is loaded. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host could not be reached to resolve the source. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

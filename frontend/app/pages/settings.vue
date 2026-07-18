@@ -59,6 +59,8 @@
  *   :warming              — warming from useSourceMetrics
  *   :warm-message         — warmMessage from useSourceMetrics
  *   :warm-error           — warmError from useSourceMetrics
+ *   :resetting            — resetting (source id) from useSourceMetrics
+ *   :reset-error          — resetError from useSourceMetrics
  *   :dedup-all-busy       — dedupAllBusy from useLibraryMaintenance
  *   :dedup-all-message    — dedupAllMessage from useLibraryMaintenance
  *   :dedup-all-error      — dedupAllError from useLibraryMaintenance
@@ -94,6 +96,7 @@
  *   @update:ext-check-interval   → saveExtensionCheckInterval
  *   @save-sources-settings       → saveSourcesSettings
  *   @warm-now                    → warmNow
+ *   @reset-breaker               → resetBreaker
  *   @dedup-all                   → dedupAllProviders
  *   @connect-tracker             → onConnectTracker (authUrl() → full-tab redirect;
  *                                   stashes the tracker id first — see trackerCallback.ts)
@@ -175,6 +178,9 @@ const {
   warmMessage,
   warmError,
   warmNow,
+  resetting: sourceResetting,
+  resetError: sourceResetError,
+  resetBreaker,
 } = useSourceMetrics()
 
 const {
@@ -323,6 +329,8 @@ const loading = computed(
       :warming="warming"
       :warm-message="warmMessage"
       :warm-error="warmError"
+      :resetting="sourceResetting"
+      :reset-error="sourceResetError"
       :dedup-all-busy="dedupAllBusy"
       :dedup-all-message="dedupAllMessage"
       :dedup-all-error="dedupAllError"
@@ -361,6 +369,7 @@ const loading = computed(
       @update:ext-check-interval="saveExtensionCheckInterval"
       @save-sources-settings="saveSourcesSettings"
       @warm-now="warmNow"
+      @reset-breaker="resetBreaker"
       @dedup-all="dedupAllProviders"
       @connect-tracker="onConnectTracker"
       @login-tracker-credentials="onLoginTrackerCredentials"

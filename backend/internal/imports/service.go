@@ -783,9 +783,11 @@ func (s *Service) MangaDetails(ctx context.Context, sourceID string, url string)
 // Algorithm:
 //  1. Validate req.Category early (before any DB writes) so an invalid category
 //     surfaces cleanly rather than leaving orphaned rows.
-//  2. For each provider p: call ingest.AddSeries with the canonical req.Title so
-//     that all providers attach to the SAME Series slug. On error, wrap with the
-//     list of sources already attached in this call and return (§16 no-silent-partial).
+//  2. For each provider p: call ingest.AddSeriesUngated with the canonical
+//     req.Title so that all providers attach to the SAME Series slug (ungated:
+//     Adopt is an owner click, never blocked by a background-tripped breaker). On
+//     error, wrap with the list of sources already attached in this call and
+//     return (§16 no-silent-partial).
 //  3. Load the Series by slug = disk.Slugify(req.Title).
 //  4. For each provider p: find its SeriesProvider by (series_id, provider) and
 //     set its Importance.
@@ -850,10 +852,17 @@ func validateCategory(cat string) error {
 	return nil
 }
 
-// ingestProviders calls ingest.AddSeries for every provider in req, all under
-// req.Title so they attach to the same slug-derived Series. On the first error
-// it returns a wrapped message that names every source successfully attached
+// ingestProviders calls ingest.AddSeriesUngated for every provider in req, all
+// under req.Title so they attach to the same slug-derived Series. On the first
+// error it returns a wrapped message that names every source successfully attached
 // before the failure (§16 no-silent-partial). No rollback is performed.
+//
+// Adopt is a DELIBERATE, one-shot OWNER action (the same class as the library
+// Match/Add-source clicks), so it uses the UNGATED attach: a per-source
+// circuit-breaker tripped by unrelated BULK background failures (a refresh sweep,
+// the download dispatcher) must never block an explicit owner adopt (QCAT-281).
+// Only those bulk/background paths stay gated (anti-ban) — they call the gated
+// ingest.AddSeries, unchanged.
 func (s *Service) ingestProviders(ctx context.Context, req AdoptRequest) error {
 	attached := make([]string, 0, len(req.Providers))
 	for _, p := range req.Providers {
@@ -863,8 +872,8 @@ func (s *Service) ingestProviders(ctx context.Context, req AdoptRequest) error {
 		}
 		// p.Scanlator selects which scanlation group's chapters this provider
 		// tracks; "" means "all chapters from this source" (see
-		// ingest.Ingest.AddSeries).
-		if _, err := s.ingest.AddSeries(ctx, sourceID, p.URL, req.Title, p.Scanlator); err != nil {
+		// ingest.Ingest.AddSeriesUngated).
+		if _, err := s.ingest.AddSeriesUngated(ctx, sourceID, p.URL, req.Title, p.Scanlator); err != nil {
 			if len(attached) > 0 {
 				return fmt.Errorf(
 					"imports.Adopt: provider %q failed (providers already attached: %s): %w",

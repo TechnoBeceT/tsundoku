@@ -23,6 +23,8 @@ import type { SourceMetric } from '../screens/settings.types'
  *   - `warming`: a warm-up pass is in flight.
  *   - `warmMessage`: the last warm-up's success note (the warmed count).
  *   - `warmError`: the last warm-up's failure message.
+ *   - `resetting`: the source id whose breaker reset is in flight (spins its row).
+ *   - `resetError`: the last breaker-reset failure message (surfaced inline).
  */
 withDefaults(defineProps<{
   /** The per-source metric rows (slowest-first). */
@@ -37,17 +39,25 @@ withDefaults(defineProps<{
   warmMessage?: string | null
   /** The last warm-up's failure message. */
   warmError?: string | null
+  /** The source id whose breaker reset is in flight (null when none). */
+  resetting?: string | null
+  /** The last breaker-reset failure message. */
+  resetError?: string | null
 }>(), {
   pending: false,
   error: null,
   warming: false,
   warmMessage: null,
   warmError: null,
+  resetting: null,
+  resetError: null,
 })
 
 const emit = defineEmits<{
   /** Trigger a manual warm-up pass across all sources. */
   'warm-now': []
+  /** Reset a source's tripped circuit-breaker — carries the source id. */
+  'reset-breaker': [id: string]
 }>()
 
 // A few skeleton rows while the metrics list loads.
@@ -74,6 +84,11 @@ const skeletons = [0, 1, 2, 3]
       <FormError :message="warmError" />
     </div>
 
+    <!-- §16 breaker-reset failure (success is reflected by the row's cleared state). -->
+    <div v-if="resetError" class="warm-error">
+      <FormError :message="resetError" />
+    </div>
+
     <!-- Loading skeletons -->
     <div v-if="pending" class="metric-list">
       <div v-for="n in skeletons" :key="n" class="skeleton-row" />
@@ -91,7 +106,13 @@ const skeletons = [0, 1, 2, 3]
 
     <!-- The metric rows -->
     <div v-else class="metric-list">
-      <SourceMetricRow v-for="m in metrics" :key="m.id" :source="m" />
+      <SourceMetricRow
+        v-for="m in metrics"
+        :key="m.id"
+        :source="m"
+        :resetting="resetting === m.id"
+        @reset="emit('reset-breaker', $event)"
+      />
     </div>
   </SurfaceCard>
 </template>

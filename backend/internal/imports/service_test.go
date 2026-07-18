@@ -20,7 +20,9 @@ import (
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/metrics"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
 
 // --- fake client -------------------------------------------------------------
@@ -1440,6 +1442,59 @@ func TestService_Adopt_TwoProviders(t *testing.T) {
 	assertAdoptSeries(t, ctx, db, canonicalTitle, id)
 	assertAdoptProviders(t, ctx, db, 2, map[string]int{srcA: impA, srcB: impB})
 	assertAdoptChapters(t, ctx, db, 3)
+}
+
+// TestService_Adopt_UngatedBypassesTrippedBreaker proves Adopt uses the UNGATED
+// attach (ingest.AddSeriesUngated): a per-source circuit-breaker tripped by
+// unrelated BULK background failures must NOT block a deliberate owner adopt
+// (QCAT-281). The same breaker still refuses the GATED path (AddSeries) that the
+// refresh sweep + download dispatcher use — proving only the owner click is
+// exempt, gating stays in force for anti-ban.
+func TestService_Adopt_UngatedBypassesTrippedBreaker(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+
+	const (
+		title  = "Solo Leveling"
+		src    = "1"
+		url    = "/manga/101"
+		srcKey = "Comix" // the source's display name = the breaker key
+	)
+	fc := &fakeClient{
+		sources:       []sourceengine.Source{{ID: 1, Name: srcKey, Lang: "en"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{url: makeAdoptChapters(url, 2)},
+	}
+
+	// Trip the breaker for the source's display name via the gate itself.
+	gate := sourcegate.NewService(db, settings.Static{SourcesFailureThresh: 3, SourcesCooldownIv: 10 * time.Minute})
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		gate.RecordFailure(ctx, srcKey, errors.New("cf block"), now)
+	}
+	if gate.IsAvailable(ctx, srcKey, now) {
+		t.Fatal("test setup: expected the breaker tripped")
+	}
+
+	ingestSvc := ingest.NewIngestWithGate(fc, db, nil, gate)
+
+	// The GATED path (sweeps / dispatcher) IS refused by the tripped breaker.
+	if _, err := ingestSvc.AddSeries(ctx, 1, url, title, ""); !errors.Is(err, ingest.ErrSourceCooledDown) {
+		t.Fatalf("gated AddSeries must be refused by the tripped breaker, got %v", err)
+	}
+
+	// Adopt (owner click) uses the UNGATED attach → succeeds despite the trip.
+	svc := imports.NewService(fc, ingestSvc, db, "", testSearchTimeout, nil)
+	id, err := svc.Adopt(ctx, imports.AdoptRequest{
+		Title:     title,
+		Providers: []imports.AdoptProvider{{Source: src, URL: url, Importance: 10}},
+	})
+	if err != nil {
+		t.Fatalf("Adopt must succeed via the ungated attach despite a tripped breaker: %v", err)
+	}
+	if id.String() == "00000000-0000-0000-0000-000000000000" {
+		t.Fatal("Adopt returned zero UUID")
+	}
+	assertAdoptProviders(t, ctx, db, 1, map[string]int{src: 10})
 }
 
 // TestService_Adopt_SameSourceDifferentScanlators is the CRITICAL

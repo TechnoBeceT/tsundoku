@@ -19,15 +19,32 @@
  * Exposes the §16 trio for that action: `warming` (in flight), `warmMessage`
  * (success), `warmError` (failure). An empty metrics list ([]) is handled
  * gracefully — `metrics` simply stays empty and the pane renders its empty state.
+ *
+ * resetBreaker(id) POSTs /api/sources/{id}/reset-breaker — the owner "reset
+ * source" action that force-clears a source's tripped anti-ban circuit-breaker,
+ * then refetches so the row's cooling-down state clears. Its §16 state:
+ * `resetting` (the source id in flight) + `resetError` (failure).
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { SourceMetric } from '~/components/screens/settings.types'
+import type { SourceBreaker, SourceMetric } from '~/components/screens/settings.types'
 
 type SourceMetricDTO = components['schemas']['SourceMetric']
+type SourceBreakerDTO = components['schemas']['SourceBreaker']
 
 // ── DTO mapper ────────────────────────────────────────────────────────────────
+
+/** Map the optional breaker DTO → screen SourceBreaker (undefined → null). */
+function mapBreaker(dto: SourceBreakerDTO | undefined): SourceBreaker | null {
+  if (dto == null) return null
+  return {
+    consecutiveFailures: dto.consecutiveFailures,
+    cooldownUntil: dto.cooldownUntil ?? null,
+    lastError: dto.lastError,
+    isCoolingDown: dto.isCoolingDown,
+  }
+}
 
 function mapMetric(dto: SourceMetricDTO): SourceMetric {
   return {
@@ -44,6 +61,7 @@ function mapMetric(dto: SourceMetricDTO): SourceMetric {
     lastWarmedAt: dto.lastWarmedAt ?? null,
     updatedAt: dto.updatedAt,
     isSlow: dto.isSlow,
+    breaker: mapBreaker(dto.breaker),
   }
 }
 
@@ -59,6 +77,12 @@ export function useSourceMetrics() {
   const warming = ref(false)
   const warmMessage = ref<string | null>(null)
   const warmError = ref<string | null>(null)
+
+  // §16 state of the per-source "Reset" (breaker) action. `resetting` holds the
+  // source id whose reset is in flight (so only that row's button spins);
+  // `resetError` surfaces a failure.
+  const resetting = ref<string | null>(null)
+  const resetError = ref<string | null>(null)
 
   /** Load (or reload) the per-source metrics list. */
   async function refetch(): Promise<void> {
@@ -104,7 +128,44 @@ export function useSourceMetrics() {
     }
   }
 
+  /**
+   * Reset one source's tripped anti-ban circuit-breaker (POST
+   * /api/sources/{id}/reset-breaker), clearing its cooldown so it is immediately
+   * usable again, then refetch so the row's cooling-down state disappears. `id`
+   * is the source id (SourceMetric.id). A failure lands in `resetError` (never
+   * swallowed, §16); the in-flight row is tracked by `resetting`.
+   */
+  async function resetBreaker(id: string): Promise<void> {
+    resetting.value = id
+    resetError.value = null
+    try {
+      const res = await apiClient.POST('/api/sources/{sourceId}/reset-breaker', {
+        params: { path: { sourceId: id } },
+      })
+      if (res.error) throw new Error(res.error.message)
+      await refetch()
+    }
+    catch (e) {
+      resetError.value = e instanceof Error ? e.message : 'Failed to reset source'
+    }
+    finally {
+      resetting.value = null
+    }
+  }
+
   void refetch()
 
-  return { metrics, pending, error, warming, warmMessage, warmError, refetch, warmNow }
+  return {
+    metrics,
+    pending,
+    error,
+    warming,
+    warmMessage,
+    warmError,
+    resetting,
+    resetError,
+    refetch,
+    warmNow,
+    resetBreaker,
+  }
 }

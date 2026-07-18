@@ -140,12 +140,14 @@ export const sourcesSettingsWarmupDisabled: SourcesSettings = {
 // Date here is fine.
 const now = Date.now()
 const agoIso = (msAgo: number): string => new Date(now - msAgo).toISOString()
+const inIso = (msAhead: number): string => new Date(now + msAhead).toISOString()
 const MIN = 60_000
 
 /**
  * A mix of source-performance snapshots (as the backend returns them, sorted
- * slowest-first by EWMA): a fast+warm source, a slow+warm one, a slow+erroring
- * cold source, a never-warmed unmeasured source, and a healthy cold source.
+ * slowest-first by EWMA): a fast+warm source, a slow+erroring source whose
+ * anti-ban breaker is TRIPPED (cooling down · retry ~28m — drives the Reset
+ * flow), a never-warmed unmeasured source, and two healthy sources.
  */
 export const sourceMetrics: SourceMetric[] = [
   {
@@ -162,6 +164,7 @@ export const sourceMetrics: SourceMetric[] = [
     lastWarmedAt: agoIso(5 * MIN),
     updatedAt: agoIso(1 * MIN),
     isSlow: true,
+    breaker: null,
   },
   {
     id: 'src-comick',
@@ -177,6 +180,14 @@ export const sourceMetrics: SourceMetric[] = [
     lastWarmedAt: agoIso(40 * MIN),
     updatedAt: agoIso(3 * MIN),
     isSlow: true,
+    // Tripped anti-ban breaker — repeated Cloudflare timeouts pushed it into
+    // cooldown; the row shows the "cooling down · retry ~28m" banner + Reset.
+    breaker: {
+      consecutiveFailures: 5,
+      cooldownUntil: inIso(28 * MIN),
+      lastError: 'context deadline exceeded: FlareSolverr timed out after 60s while solving the Cloudflare challenge',
+      isCoolingDown: true,
+    },
   },
   {
     id: 'src-weeb',
@@ -192,6 +203,7 @@ export const sourceMetrics: SourceMetric[] = [
     lastWarmedAt: null,
     updatedAt: agoIso(2 * 60 * MIN),
     isSlow: true,
+    breaker: null,
   },
   {
     id: 'src-bili',
@@ -207,6 +219,7 @@ export const sourceMetrics: SourceMetric[] = [
     lastWarmedAt: agoIso(45 * MIN),
     updatedAt: agoIso(46 * MIN),
     isSlow: false,
+    breaker: null,
   },
   {
     id: 'src-mangadex',
@@ -222,6 +235,7 @@ export const sourceMetrics: SourceMetric[] = [
     lastWarmedAt: agoIso(3 * MIN),
     updatedAt: agoIso(2 * MIN),
     isSlow: false,
+    breaker: null,
   },
 ]
 

@@ -9,7 +9,8 @@ import '../../assets/css/tokens/settings.css'
 /**
  * Stories for the Source Metrics pane. Flip the Storybook theme toolbar to
  * confirm both dark and light. Covers the populated list (a mix of fast / slow /
- * erroring / never-warmed / cold rows) plus the empty and loading states.
+ * erroring / cooling-down / never-warmed / cold rows), the empty and loading
+ * states, plus the warm-up and breaker-reset §16 states.
  */
 const meta = {
   title: 'Settings/SourceMetricsPane',
@@ -48,4 +49,17 @@ export const Warming: Story = {
 /** §16: a failed warm-up surfaces its error inline — never fires into the void. */
 export const WarmFailed: Story = {
   args: { warmError: 'Warm-up failed — could not reach the engine.' },
+}
+
+/**
+ * A source's breaker reset in flight — the tripped ComicK row's Reset button
+ * spins (`resetting` = its id) while the request runs.
+ */
+export const Resetting: Story = {
+  args: { resetting: 'src-comick' },
+}
+
+/** §16: a failed breaker reset surfaces its error inline above the list. */
+export const ResetFailed: Story = {
+  args: { resetError: 'Reset failed — could not reach the engine.' },
 }

@@ -164,6 +164,128 @@ func TestPersistence_CooldownSurvivesServiceReload(t *testing.T) {
 	}
 }
 
+// TestReset_ClearsTrippedBreaker proves the owner "reset source" action clears a
+// tripped breaker: after Reset the source is available again and no row remains.
+func TestReset_ClearsTrippedBreaker(t *testing.T) {
+	db := testdb.New(t)
+	svc := sourcegate.NewService(db, thresholds())
+	ctx := context.Background()
+	now := time.Now()
+	const key = "Comix"
+
+	for i := 0; i < 3; i++ {
+		svc.RecordFailure(ctx, key, errors.New("timeout"), now)
+	}
+	if svc.IsAvailable(ctx, key, now) {
+		t.Fatal("expected tripped after 3 failures")
+	}
+
+	if err := svc.Reset(ctx, key); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if !svc.IsAvailable(ctx, key, now) {
+		t.Fatal("expected available immediately after Reset")
+	}
+
+	// The row must be gone (Reset deletes it, not just clears the cooldown).
+	if _, err := db.SourceCircuitState.Query().
+		Where(entsourcecircuitstate.SourceKeyEQ(key)).Only(ctx); err == nil {
+		t.Fatal("expected no breaker row after Reset")
+	}
+}
+
+// TestReset_NoOpOnAbsentRow proves Reset is idempotent: resetting a source with
+// no breaker row returns nil (no error).
+func TestReset_NoOpOnAbsentRow(t *testing.T) {
+	db := testdb.New(t)
+	svc := sourcegate.NewService(db, thresholds())
+
+	if err := svc.Reset(context.Background(), "NeverSeenSource"); err != nil {
+		t.Errorf("Reset on absent row should be a nil no-op, got %v", err)
+	}
+}
+
+// TestReset_TouchesOnlyTargetKey proves Reset is scoped to exactly its key: a
+// second, still-tripped source is unaffected.
+func TestReset_TouchesOnlyTargetKey(t *testing.T) {
+	db := testdb.New(t)
+	svc := sourcegate.NewService(db, thresholds())
+	ctx := context.Background()
+	now := time.Now()
+
+	for i := 0; i < 3; i++ {
+		svc.RecordFailure(ctx, "Comix", errors.New("timeout"), now)
+		svc.RecordFailure(ctx, "Asura", errors.New("timeout"), now)
+	}
+	if svc.IsAvailable(ctx, "Comix", now) || svc.IsAvailable(ctx, "Asura", now) {
+		t.Fatal("expected both sources tripped")
+	}
+
+	if err := svc.Reset(ctx, "Comix"); err != nil {
+		t.Fatalf("Reset Comix: %v", err)
+	}
+	if !svc.IsAvailable(ctx, "Comix", now) {
+		t.Error("Comix should be available after its reset")
+	}
+	if svc.IsAvailable(ctx, "Asura", now) {
+		t.Error("Asura must stay tripped — Reset(Comix) must not touch it")
+	}
+}
+
+// TestSnapshot_ReturnsTrippedStateInOneRead proves Snapshot returns the current
+// breaker state for every source keyed by source_key, with the cooldown/failure
+// fields a read model surfaces.
+func TestSnapshot_ReturnsTrippedStateInOneRead(t *testing.T) {
+	db := testdb.New(t)
+	svc := sourcegate.NewService(db, thresholds())
+	ctx := context.Background()
+	now := time.Now()
+
+	for i := 0; i < 3; i++ {
+		svc.RecordFailure(ctx, "Comix", errors.New("cf block"), now)
+	}
+	svc.RecordFailure(ctx, "Asura", errors.New("one blip"), now) // 1 failure: not tripped
+
+	snap, err := svc.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap) != 2 {
+		t.Fatalf("Snapshot len = %d, want 2", len(snap))
+	}
+
+	comix := snap["Comix"]
+	if !comix.IsCoolingDown(now) {
+		t.Error("Comix should be cooling down (tripped)")
+	}
+	if comix.ConsecutiveFailures != 3 {
+		t.Errorf("Comix failures = %d, want 3", comix.ConsecutiveFailures)
+	}
+	if comix.CooldownUntil == nil || comix.LastError == "" {
+		t.Error("Comix should carry a cooldown + last error")
+	}
+
+	asura := snap["Asura"]
+	if asura.IsCoolingDown(now) {
+		t.Error("Asura should NOT be cooling down (1 failure, threshold 3)")
+	}
+}
+
+// TestSnapshot_EmptyWhenNoRows proves Snapshot returns an empty (non-nil) map
+// when no source has a breaker row.
+func TestSnapshot_EmptyWhenNoRows(t *testing.T) {
+	db := testdb.New(t)
+	svc := sourcegate.NewService(db, thresholds())
+
+	snap, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap) != 0 {
+		t.Errorf("Snapshot len = %d, want 0", len(snap))
+	}
+}
+
 // TestWait_EnforcesMinimumGap proves Wait blocks a second call for the same key
 // until the configured politeness delay has elapsed since the first.
 func TestWait_EnforcesMinimumGap(t *testing.T) {
