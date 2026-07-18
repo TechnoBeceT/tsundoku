@@ -184,7 +184,24 @@ func (s *Service) dedupeFilesPlan(ctx context.Context, client *ent.Client, id uu
 	}
 
 	mergePairs := detectEngineSwitchDuplicates(row)
-	ignoredFractionals := removableFractionals(row)
+
+	// Pass 0 (merge) and pass 0b (ignored fractionals) are resolved from the SAME
+	// pre-deletion snapshot, so they are NOT inherently disjoint: a negative-FRACTIONAL
+	// merge twin (chapter_key "-1.5" — isNegativeNumericKey contemplates it, and
+	// chapterrange.IsFractional(-1.5) is true) that is ALSO downloaded, filed, and
+	// carried by >=1 ignore-fractional feed row satisfies BOTH rules. Leaving it in both
+	// would (a) emit its file twice and inflate the preview Total, breaking the
+	// dry-run==execute parity this plan exists to guarantee, and (b) on execute ERROR:
+	// executeMergePlan commits the twin's row deletion, then executeIgnoredFractionalPlan
+	// re-deletes the same id and trips deleted != len(targets) → ErrChapterNotRemovable
+	// (a spurious 500). MERGE WINS — the old sequenced executor was immune because pass 0
+	// committed and pass 0b then RELOADED through the tx client, so the deleted twin was
+	// invisible to removableFractionals; excluding every merge-removed id restores that.
+	mergeRemoved := make(map[uuid.UUID]struct{}, len(mergePairs))
+	for _, p := range mergePairs {
+		mergeRemoved[p.remove.ID] = struct{}{}
+	}
+	ignoredFractionals := excludeMergeRemoved(removableFractionals(row), mergeRemoved)
 
 	// The rows the pass-0/0b deletes claim: exclude them from the file-only sweep so a
 	// merged twin or an ignored fractional is never also counted as a file-only orphan.
@@ -213,6 +230,25 @@ func (s *Service) dedupeFilesPlan(ctx context.Context, client *ent.Client, id uu
 		ignoredFractionals: ignoredFractionals,
 		fileOnly:           fileOnly,
 	}, row, nil
+}
+
+// excludeMergeRemoved drops every chapter the merge pass (pass 0) will delete from the
+// ignored-downloaded-fractional set (pass 0b), keeping the two passes disjoint. A
+// negative-FRACTIONAL merge twin can satisfy BOTH rules at once; without this filter it
+// would be planned (and, on execute, deleted) twice — see dedupeFilesPlan for the full
+// double-claim. Merge wins, so the fractional set yields to it.
+func excludeMergeRemoved(fractionals []*ent.Chapter, mergeRemoved map[uuid.UUID]struct{}) []*ent.Chapter {
+	if len(mergeRemoved) == 0 {
+		return fractionals
+	}
+	kept := make([]*ent.Chapter, 0, len(fractionals))
+	for _, ch := range fractionals {
+		if _, removed := mergeRemoved[ch.ID]; removed {
+			continue
+		}
+		kept = append(kept, ch)
+	}
+	return kept
 }
 
 // planFileOnlySweeps resolves passes 1 (winning-chapter duplicates) and 2 (superseded
@@ -308,8 +344,11 @@ func (s *Service) listFileOnly(categoryName, title string, number float64, keepF
 // executeMergePlan runs pass 0 for the planned merge pairs in ONE transaction: each
 // pair's read-state is transferred onto its canonical twin, the legacy row + orphaned
 // feed rows are deleted, and the CBZs are removed BEFORE the commit so a disk failure
-// rolls the row changes back (no committed merge can orphan a CBZ). Returns the count
-// merged (one per pair, whether or not its CBZ was on disk).
+// rolls the row changes back (no committed merge can orphan a CBZ). EVERY pair's row is
+// merged, but the returned count includes only the FILE-bearing pairs — the same set
+// toDTO surfaces — so the executor's tally stays exactly equal to the preview Total (a
+// row-only merge, twin never downloaded, is a silent dedup artifact with no CBZ to
+// report).
 func (s *Service) executeMergePlan(ctx context.Context, row *ent.Series, pairs []duplicatePair) (int, error) {
 	if len(pairs) == 0 {
 		return 0, nil
@@ -320,10 +359,14 @@ func (s *Service) executeMergePlan(ctx context.Context, row *ent.Series, pairs [
 		return 0, fmt.Errorf("series.DedupeFiles: begin merge tx: %w", err)
 	}
 
+	merged := 0
 	for _, p := range pairs {
 		if err := s.applyMergePair(ctx, tx, row, p); err != nil {
 			_ = tx.Rollback()
 			return 0, err
+		}
+		if p.remove.Filename != "" {
+			merged++
 		}
 	}
 	if err := s.removeMergedFiles(row, pairs); err != nil {
@@ -333,7 +376,7 @@ func (s *Service) executeMergePlan(ctx context.Context, row *ent.Series, pairs [
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("series.DedupeFiles: commit merge tx: %w", err)
 	}
-	return len(pairs), nil
+	return merged, nil
 }
 
 // applyMergePair applies one merge pair's DB changes inside the caller's transaction:
@@ -395,11 +438,18 @@ func (s *Service) executeFileOnlyPlan(row *ent.Series, items []dedupeFileItem) i
 	return total
 }
 
-// toDTO projects a plan onto the wire shape the preview returns: one item per removal,
-// grouped by reason, non-nil Items so the JSON is [] not null.
+// toDTO projects a plan onto the wire shape the preview returns: one item per FILE
+// removal, grouped by reason, non-nil Items so the JSON is [] not null. A merge pair
+// whose twin was never downloaded (Filename == "") removes only a duplicate ROW, no
+// CBZ, so it is omitted here (an empty-filename row is a blank line in the confirm
+// dialog) — executeMergePlan drops it from the returned count the same way, so the
+// preview Total stays exactly equal to what execute reports.
 func (p dedupePlan) toDTO() DedupePlanDTO {
 	items := make([]DedupePlanItemDTO, 0, len(p.mergePairs)+len(p.ignoredFractionals)+len(p.fileOnly))
 	for _, pair := range p.mergePairs {
+		if pair.remove.Filename == "" {
+			continue
+		}
 		items = append(items, DedupePlanItemDTO{
 			Reason:   string(DedupeReasonEpilogueMerge),
 			Number:   pair.remove.Number,

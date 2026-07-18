@@ -2457,7 +2457,7 @@ export interface components {
             reason: "epilogue-merge" | "ignored-fractional" | "orphan-superseded";
             /**
              * Format: double
-             * @description The chapter number this file belongs to, or null when it has none (a name-keyed merge twin, or an un-numbered file).
+             * @description The chapter number this file belongs to, or null when the removed chapter carries no number. A merge twin removed here is the negative-numeric row (it HAS a number, e.g. -1); the name-keyed canonical it merges into is the KEPT row and never appears as an item.
              */
             number: number | null;
             /** @description The CBZ filename that will be deleted. */

@@ -3,6 +3,7 @@ package series_test
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 
@@ -130,6 +131,97 @@ func TestDedupeFilesPlan_PreviewMatchesExecuteAndIsPure(t *testing.T) {
 	assertChapterRows(t, ctx, db, []string{"-1", "5.5"}, []string{"name:epilogue", "7", "9.1"})
 }
 
+// seedDoubleClaimFixture seeds the pathological shape F1 fixes: a DOWNLOADED
+// negative-FRACTIONAL merge twin ("-1.5") that is ALSO an ignored-downloaded-fractional
+// removable, so the SAME chapter satisfies both the pass-0 merge rule AND the pass-0b
+// ignored-fractional rule off the ONE pre-deletion snapshot. Its carrier feed row
+// ignores fractionals (so removableFractionals claims it) and shares a source URL with a
+// name-keyed twin (so detectEngineSwitchDuplicates claims it too). Returns the series
+// id, storage root, and series dir.
+func seedDoubleClaimFixture(ctx context.Context, t *testing.T, db *ent.Client) (seriesID uuid.UUID, storage, seriesDir string) {
+	t.Helper()
+	storage = t.TempDir()
+
+	sr := db.Series.Create().
+		SetTitle("Double Claim Series").SetSlug("double-claim-series").
+		SetCategoryID(catID(ctx, db, "Manga")).SaveX(ctx)
+
+	// One IGNORE-FRACTIONAL source carrying the SAME epilogue under two engine keys
+	// (shared URL): the negative-fractional "-1.5" and its name-keyed twin. The
+	// ignore-fractional flag is what makes the "-1.5" chapter ALSO look removable to
+	// pass 0b, while the shared URL makes it a pass-0 merge twin — the double claim.
+	sp := db.SeriesProvider.Create().
+		SetSeriesID(sr.ID).SetProvider("202").SetProviderName("Comix").SetImportance(10).
+		SetIgnoreFractional(true).SaveX(ctx)
+	db.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("-1.5").SetURL("/u/ep15").SaveX(ctx)
+	db.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("name:epi15").SetURL("/u/ep15").SaveX(ctx)
+
+	negNumber := -1.5
+	db.Chapter.Create().SetSeriesID(sr.ID).SetChapterKey("-1.5").SetNumber(negNumber).
+		SetState(entchapter.StateDownloaded).SetFilename("neg-1.5.cbz").
+		SetSatisfiedByProviderID(sp.ID).SaveX(ctx)
+	db.Chapter.Create().SetSeriesID(sr.ID).SetChapterKey("name:epi15").
+		SetState(entchapter.StateDownloaded).SetFilename("named-epi15.cbz").SaveX(ctx)
+
+	seriesDir = filepath.Join(storage, "Manga", "Double Claim Series")
+	for _, name := range []string{"neg-1.5.cbz", "named-epi15.cbz"} {
+		writeCBZ(t, seriesDir, name)
+	}
+	return sr.ID, storage, seriesDir
+}
+
+// TestDedupeFilesPlan_MergeTwinAlsoIgnoredFractional pins F1: a DOWNLOADED negative-
+// FRACTIONAL merge twin ("-1.5") whose carrier ignores fractionals satisfies BOTH the
+// pass-0 merge rule and the pass-0b ignored-fractional rule off the ONE pre-deletion
+// snapshot. Before the disjoint-set fix the preview listed it TWICE (Total inflated,
+// dry-run != execute) and execute ERRORED with ErrChapterNotRemovable — the merge pass
+// had already committed the twin's row deletion, so the ignored-fractional pass's
+// re-delete tripped deleted != len(targets). The fix makes MERGE WIN: the twin is listed
+// exactly once (epilogue-merge), Total is correct, and execute succeeds — the twin's row
+// + CBZ gone, the name-keyed canonical kept.
+func TestDedupeFilesPlan_MergeTwinAlsoIgnoredFractional(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	id, storage, seriesDir := seedDoubleClaimFixture(ctx, t, db)
+	svc := series.NewService(db, storage, 14)
+
+	filesBefore := listCBZ(t, seriesDir)
+
+	// 1. Preview — the twin appears EXACTLY ONCE, as an epilogue-merge, never doubled.
+	preview, err := svc.DedupeFilesPreview(ctx, id)
+	if err != nil {
+		t.Fatalf("DedupeFilesPreview: %v", err)
+	}
+	if preview.Total != 1 {
+		t.Fatalf("preview Total = %d, want 1 (the twin listed once, not double-claimed)", preview.Total)
+	}
+	if got := plannedFilenames(preview); !equalStrings(got, []string{"neg-1.5.cbz"}) {
+		t.Fatalf("preview files = %v, want [neg-1.5.cbz]", got)
+	}
+	if r := preview.Items[0].Reason; r != string(series.DedupeReasonEpilogueMerge) {
+		t.Fatalf("item reason = %q, want %q (merge wins over ignored-fractional)", r, series.DedupeReasonEpilogueMerge)
+	}
+
+	// 2. Execute — no ErrChapterNotRemovable second-delete; the count matches the preview.
+	removed, err := svc.DedupeFiles(ctx, id)
+	if err != nil {
+		t.Fatalf("DedupeFiles: %v (F1 regression: merge + ignored-fractional double-delete)", err)
+	}
+	if removed != preview.Total {
+		t.Fatalf("execute removed %d, preview planned %d — plan and execute disagree", removed, preview.Total)
+	}
+
+	// 3. Exactly the twin's CBZ is gone; the canonical is kept.
+	gone := diffStrings(filesBefore, listCBZ(t, seriesDir))
+	sort.Strings(gone)
+	if !equalStrings(gone, []string{"neg-1.5.cbz"}) {
+		t.Fatalf("execute removed files %v, want [neg-1.5.cbz]", gone)
+	}
+
+	// 4. The twin's row is gone; the name-keyed canonical survives.
+	assertChapterRows(t, ctx, db, []string{"-1.5"}, []string{"name:epi15"})
+}
+
 // plannedFilenames projects a plan onto its sorted filenames and asserts Total is
 // consistent with the item count.
 func plannedFilenames(preview series.DedupePlanDTO) []string {
@@ -179,15 +271,7 @@ func assertChapterRows(t *testing.T, ctx context.Context, db *ent.Client, gone, 
 
 // equalStrings reports whether two string slices are element-wise equal.
 func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 // diffStrings returns the elements of before that are absent from after (the files a
