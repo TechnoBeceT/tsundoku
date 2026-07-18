@@ -2553,6 +2553,16 @@ export interface components {
              * @example en
              */
             lang: string;
+            /**
+             * @description True when this source's anti-ban circuit-breaker is currently tripped (cooling down) — background fetches are being refused, so a search/adopt against it is likely to fail. A HINT, not a hard block: the picker still lets the owner select it.
+             * @example false
+             */
+            degraded: boolean;
+            /**
+             * @description Short human explanation for the degraded state, "" when not degraded.
+             * @example
+             */
+            degradedReason: string;
         };
         SearchCandidate: {
             /** @description Suwayomi source ID from which this candidate came. */

@@ -16,6 +16,15 @@ export interface Source {
   name: string
   /** Content language of this source (e.g. "en"). */
   lang: string
+  /**
+   * True when this source's anti-ban circuit-breaker is currently tripped
+   * (cooling down) — a search/adopt against it is likely to fail. A HINT, not a
+   * hard block: the source stays selectable (the backend returns an honest 503
+   * if actually tried).
+   */
+  degraded: boolean
+  /** Short human explanation for the degraded state ("" when not degraded). */
+  degradedReason: string
 }
 
 /**

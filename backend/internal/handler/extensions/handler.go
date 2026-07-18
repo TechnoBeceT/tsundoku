@@ -9,6 +9,32 @@
 // the engine host. The handler owns a sourceengine.Client directly and does
 // bind → validate → client → DTO. Validation is extracted to validate.go; the
 // DTO mapping to dto.go.
+//
+// NO POST-MUTATION SOURCE-RELOAD HEAL (deliberate, QCAT-281 Slice C).
+// Updating one extension can leave OTHER extensions' sources LISTED in the
+// engine's /sources but MISSING from its runtime loaded-source collection —
+// they then throw "Collection contains no element matching the predicate" on
+// search/fetch (observed live for Rolia Scan + Comick after an Asura update).
+// Tsundoku does NOT attempt to heal this after Install/Update/Uninstall, because
+// no existing capability CAN reliably heal it:
+//   - sourceengine.Client exposes NO runtime source-reload RPC. RefreshExtensions
+//     only re-fetches the AVAILABLE-extensions list from the repos ("check for
+//     updates") — it does not re-instantiate the runtime loaded-source
+//     collection. Install/Update/Uninstall reload only THEIR OWN extension's
+//     sources, not the ones collaterally dropped.
+//   - enginetopo.Reconcile (DB→engine) is drift-gated and only INSTALLS
+//     required-but-MISSING extensions; the dropped sources' extensions are still
+//     reported installed, so Reconcile is a guaranteed no-op for this failure
+//     mode — wiring it here would add latency (and a ConfigProvider dependency)
+//     for zero heal.
+//
+// A true heal needs a NEW engine-host RPC — e.g. POST /sources/reload that
+// re-instantiates the runtime loaded-source collection from all installed
+// extensions (or, equivalently, the engine re-instantiating EVERY extension's
+// sources after any single-extension update). Until Rensaio exposes that, the
+// reliable mitigation is surfacing DEGRADED sources in the picker (the source
+// circuit-breaker trips on the resulting fetch failures — internal/sourcegate)
+// so a broken source is no longer presented as cleanly selectable.
 package extensions
 
 import (

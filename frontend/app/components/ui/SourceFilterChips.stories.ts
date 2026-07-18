@@ -62,3 +62,20 @@ export const AllSelected: Story = {
 export const ManySources: Story = {
   args: { sources: manySources, selected: ['2', '5'] },
 }
+
+/**
+ * Degraded sources — two sources whose anti-ban circuit-breaker is cooling down
+ * are dimmed and carry a ⚠ marker (reason on hover), while the rest read
+ * normally. They stay SELECTABLE: a degraded chip is a hint, never a hard block.
+ */
+export const Degraded: Story = {
+  args: {
+    sources: [
+      { id: '1', name: 'MangaDex' },
+      { id: '2', name: 'Asura Scans', degraded: true, degradedReason: 'Temporarily unavailable — 4 consecutive failures' },
+      { id: '3', name: 'Manganato' },
+      { id: '4', name: 'Comick', degraded: true, degradedReason: 'Temporarily unavailable — 3 consecutive failures' },
+    ],
+    selected: ['1'],
+  },
+}

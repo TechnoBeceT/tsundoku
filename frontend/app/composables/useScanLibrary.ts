@@ -83,7 +83,7 @@ type SourceDTO = components['schemas']['Source']
  * composable's public surface just to reach it.
  */
 function mapSource(dto: SourceDTO): Source {
-  return { id: dto.id, name: dto.name, lang: dto.lang }
+  return { id: dto.id, name: dto.name, lang: dto.lang, degraded: dto.degraded, degradedReason: dto.degradedReason }
 }
 
 /** Stable cache/in-flight key for one (source, mangaId) breakdown fetch (mirrors `useMatchSource`). */

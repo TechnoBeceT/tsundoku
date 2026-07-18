@@ -13,6 +13,15 @@ type SourceDTO struct {
 	Name string `json:"name"`
 	// Lang is the BCP-47 content language tag for this source (e.g. "en", "ko").
 	Lang string `json:"lang"`
+	// Degraded is true when this source's anti-ban circuit-breaker (internal/
+	// sourcegate) is currently tripped (cooling down) — background fetches
+	// against it are being refused, so a search/adopt is likely to fail. It is a
+	// HINT, not a hard block: the picker still lets the owner select it (a real
+	// attempt returns an honest 503 from the gated path).
+	Degraded bool `json:"degraded"`
+	// DegradedReason is a short human explanation for the degraded state ("" when
+	// not degraded) — surfaced verbatim next to the source in the picker.
+	DegradedReason string `json:"degradedReason"`
 }
 
 // SearchCandidateDTO is one source's search hit within a grouped result.

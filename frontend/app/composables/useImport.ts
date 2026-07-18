@@ -54,7 +54,7 @@ type SourceDTO = components['schemas']['Source']
 type ChapterInspectDTO = components['schemas']['ChapterInspect']
 
 function mapSource(dto: SourceDTO): Source {
-  return { id: dto.id, name: dto.name, lang: dto.lang }
+  return { id: dto.id, name: dto.name, lang: dto.lang, degraded: dto.degraded, degradedReason: dto.degradedReason }
 }
 
 function mapChapterInspect(dto: ChapterInspectDTO): ChapterInspect {

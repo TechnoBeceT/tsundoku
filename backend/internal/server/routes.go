@@ -398,8 +398,9 @@ func registerRoutes(
 		// hot reload); 0 disables the search cache at runtime.
 		func(ctx context.Context) time.Duration { return settingsSvc.SearchCacheTTL(ctx) },
 	).
-		WithAutoIdentifier(metaSvc).        // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
-		WithDisabledSources(disabledSrcSvc) // hides owner-disabled sources from the Discover/Search/Browse pickers
+		WithAutoIdentifier(metaSvc).         // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
+		WithDisabledSources(disabledSrcSvc). // hides owner-disabled sources from the Discover/Search/Browse pickers
+		WithSourceBreakers(gate)             // flags a cooling-down source as degraded in the picker (shared anti-ban breaker snapshot)
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, coverCache)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)

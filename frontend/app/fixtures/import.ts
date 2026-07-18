@@ -18,10 +18,10 @@ const cover = (id: number): string => `https://picsum.photos/seed/imp-${id}/120/
 
 /** Sources available to search (mirrors `GET /api/sources`). */
 export const sources: Source[] = [
-  { id: '2499283573021220255', name: 'MangaDex', lang: 'en' },
-  { id: '1024627298672457456', name: 'Asura Scans', lang: 'en' },
-  { id: '5183633796946525193', name: 'Bato.to', lang: 'en' },
-  { id: '3437691801785968169', name: 'Manganato', lang: 'en' },
+  { id: '2499283573021220255', name: 'MangaDex', lang: 'en', degraded: false, degradedReason: '' },
+  { id: '1024627298672457456', name: 'Asura Scans', lang: 'en', degraded: false, degradedReason: '' },
+  { id: '5183633796946525193', name: 'Bato.to', lang: 'en', degraded: false, degradedReason: '' },
+  { id: '3437691801785968169', name: 'Manganato', lang: 'en', degraded: false, degradedReason: '' },
 ]
 
 /** The owner's dynamic category list (mirrors `GET /api/categories`). */

@@ -35,6 +35,16 @@ interface ChipSource {
   id: string
   /** Human-readable source name shown on the chip. */
   name: string
+  /**
+   * When true, the source's anti-ban circuit-breaker is currently cooling down —
+   * a search against it is likely to fail. The chip shows a subtle "unavailable"
+   * marker but stays SELECTABLE (never hard-disabled): the owner may still try
+   * it, and the backend returns an honest 503 if it is truly down. Optional so
+   * any caller with a plain id+name list still drives the component unchanged.
+   */
+  degraded?: boolean
+  /** Short reason for the degraded state, shown as the chip's tooltip. */
+  degradedReason?: string
 }
 
 const props = withDefaults(defineProps<{
@@ -75,10 +85,16 @@ const toggle = (id: string): void => {
       :key="s.id"
       type="button"
       class="imp-chip"
-      :class="{ 'imp-chip--on': selected.includes(s.id) }"
+      :class="{ 'imp-chip--on': selected.includes(s.id), 'imp-chip--degraded': s.degraded }"
+      :title="s.degraded ? (s.degradedReason || 'Temporarily unavailable') : undefined"
       @click="toggle(s.id)"
     >
       {{ s.name }}
+      <span
+        v-if="s.degraded"
+        class="imp-chip__warn"
+        aria-label="temporarily unavailable"
+      >⚠</span>
     </button>
   </div>
 </template>
@@ -129,5 +145,19 @@ const toggle = (id: string): void => {
   border-color: var(--accent);
   background: var(--accentSoft);
   color: var(--accentBright);
+}
+
+/* A degraded (cooling-down) source: dimmed + a warning-tinted border, so it
+ * reads as "temporarily unavailable" without being hard-disabled. Selection
+ * still works (the owner may retry it); the reason rides on the chip's title. */
+.imp-chip--degraded {
+  border-color: var(--warn);
+  opacity: 0.72;
+}
+
+.imp-chip__warn {
+  margin-left: var(--space-2xs); /* 4px @16 */
+  color: var(--warn);
+  font-size: var(--text-xs);
 }
 </style>

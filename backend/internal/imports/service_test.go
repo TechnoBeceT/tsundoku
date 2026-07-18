@@ -470,6 +470,108 @@ func TestService_Sources_DisabledStoreError(t *testing.T) {
 	}
 }
 
+// fakeBreakers is an in-memory imports.SourceBreakers — the source circuit-
+// breaker snapshot — for the degraded-picker tests. It counts Snapshot calls so
+// a test can prove the batch read happens exactly once (no N+1).
+type fakeBreakers struct {
+	snap  map[string]sourcegate.BreakerState
+	err   error
+	calls int
+}
+
+func (f *fakeBreakers) Snapshot(context.Context) (map[string]sourcegate.BreakerState, error) {
+	f.calls++
+	return f.snap, f.err
+}
+
+// TestService_Sources_FlagsCoolingDownDegraded proves a source whose circuit-
+// breaker is currently cooling down is flagged degraded (with a reason), while a
+// healthy sibling is not — and that the breaker snapshot is read EXACTLY ONCE
+// for the whole page (no per-source lookup / no N+1).
+func TestService_Sources_FlagsCoolingDownDegraded(t *testing.T) {
+	t.Parallel()
+
+	cooldown := time.Now().Add(30 * time.Minute)
+	fc := &fakeClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Rolia Scan", Lang: "en"},
+			{ID: 2, Name: "MangaDex", Lang: "en"},
+			{ID: 3, Name: "Comick", Lang: "en"},
+		},
+	}
+	breakers := &fakeBreakers{snap: map[string]sourcegate.BreakerState{
+		// Keyed by the trimmed source NAME, the same key sourcegate trips.
+		"Rolia Scan": {SourceKey: "Rolia Scan", ConsecutiveFailures: 4, CooldownUntil: &cooldown, LastError: "cf block"},
+	}}
+	svc := newService(fc).WithSourceBreakers(breakers)
+
+	got, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: unexpected error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("Sources: got %d DTOs, want 3: %+v", len(got), got)
+	}
+	byID := map[string]imports.SourceDTO{}
+	for _, s := range got {
+		byID[s.ID] = s
+	}
+	if d := byID["1"]; !d.Degraded || d.DegradedReason == "" {
+		t.Errorf("Sources: cooling-down source 1 not flagged degraded: %+v", d)
+	}
+	if d := byID["2"]; d.Degraded || d.DegradedReason != "" {
+		t.Errorf("Sources: healthy source 2 wrongly flagged degraded: %+v", d)
+	}
+	if d := byID["3"]; d.Degraded {
+		t.Errorf("Sources: source 3 (no breaker row) wrongly flagged degraded: %+v", d)
+	}
+	if breakers.calls != 1 {
+		t.Errorf("Sources: breaker Snapshot called %d times, want exactly 1 (no N+1)", breakers.calls)
+	}
+}
+
+// TestService_Sources_ExpiredCooldownNotDegraded proves a breaker row whose
+// cooldown has already elapsed is NOT flagged degraded (the source is available
+// again) — the flag tracks live cooling-down state, not a historical trip.
+func TestService_Sources_ExpiredCooldownNotDegraded(t *testing.T) {
+	t.Parallel()
+
+	past := time.Now().Add(-time.Minute)
+	fc := &fakeClient{sources: []sourceengine.Source{{ID: 1, Name: "Rolia Scan", Lang: "en"}}}
+	breakers := &fakeBreakers{snap: map[string]sourcegate.BreakerState{
+		"Rolia Scan": {SourceKey: "Rolia Scan", ConsecutiveFailures: 4, CooldownUntil: &past},
+	}}
+	svc := newService(fc).WithSourceBreakers(breakers)
+
+	got, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Degraded {
+		t.Errorf("Sources: expired-cooldown source wrongly flagged degraded: %+v", got)
+	}
+}
+
+// TestService_Sources_BreakerSnapshotErrorIsBestEffort proves a breaker-snapshot
+// read failure does NOT fail the picker (unlike the disabled-store read): the
+// sources are still returned, just without any degraded flag. A missing badge is
+// cosmetic; a real fetch against a cooling-down source still 503s from the gate.
+func TestService_Sources_BreakerSnapshotErrorIsBestEffort(t *testing.T) {
+	t.Parallel()
+
+	fc := &fakeClient{sources: []sourceengine.Source{{ID: 1, Name: "MangaDex", Lang: "en"}}}
+	breakers := &fakeBreakers{err: errors.New("db: breaker read failed")}
+	svc := newService(fc).WithSourceBreakers(breakers)
+
+	got, err := svc.Sources(context.Background())
+	if err != nil {
+		t.Fatalf("Sources: breaker read failure must not fail the picker, got err: %v", err)
+	}
+	if len(got) != 1 || got[0].Degraded {
+		t.Errorf("Sources: expected 1 un-flagged source on breaker error, got %+v", got)
+	}
+}
+
 // TestService_Search_ExcludesDisabled proves the Search fan-out never queries an
 // owner-disabled source, EVEN when the caller names it explicitly in sourceIDs
 // (a stale/hand-crafted request) — resolveSources applies the same exclusion.

@@ -43,6 +43,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
 
 // searchConcurrency is the maximum number of sources queried in parallel during
@@ -72,6 +73,16 @@ var ErrSourceNotFound = errors.New("source not found")
 // "nothing is disabled" — every source is offered.
 type DisabledSources interface {
 	Disabled(ctx context.Context) (map[int64]bool, error)
+}
+
+// SourceBreakers is the narrow read surface the picker uses to flag a source as
+// DEGRADED: the batch source circuit-breaker snapshot (internal/sourcegate),
+// keyed by the trimmed source NAME — the SAME key sourcegate trips. It is read
+// ONCE per Sources() call (one query, no N+1). *sourcegate.Service satisfies it;
+// a nil SourceBreakers (the plain/test constructors) means "nothing is flagged"
+// — every source is offered without a degraded hint.
+type SourceBreakers interface {
+	Snapshot(ctx context.Context) (map[string]sourcegate.BreakerState, error)
 }
 
 // Service provides the import workflow over the engine-host backend: source
@@ -108,6 +119,12 @@ type Service struct {
 	// existing NewService/NewServiceWithCaches call site is unaffected) — attach
 	// it with WithDisabledSources.
 	disabled DisabledSources
+
+	// breakers is the source circuit-breaker snapshot store used to flag a
+	// cooling-down source as DEGRADED in the picker (see Sources). Nil ⇒ nothing
+	// is flagged (every existing NewService/NewServiceWithCaches call site is
+	// unaffected) — attach it with WithSourceBreakers.
+	breakers SourceBreakers
 }
 
 // WithDisabledSources attaches the per-source disabled-flag store so the
@@ -118,6 +135,35 @@ type Service struct {
 func (s *Service) WithDisabledSources(d DisabledSources) *Service {
 	s.disabled = d
 	return s
+}
+
+// WithSourceBreakers attaches the source circuit-breaker snapshot store so
+// Sources() flags a currently-cooling-down source as degraded (a HINT, never a
+// hard block — the owner may still select it). It returns the receiver for
+// chaining off a NewService/NewServiceWithCaches call. A nil store flags
+// nothing.
+func (s *Service) WithSourceBreakers(b SourceBreakers) *Service {
+	s.breakers = b
+	return s
+}
+
+// breakerSnapshot returns the source circuit-breaker snapshot used to decorate
+// the picker with degraded flags. BEST-EFFORT: a nil store or a read error
+// yields a nil map (no source flagged) and NEVER fails the picker — a missing
+// badge is cosmetic, and a genuinely cooling-down source still returns an honest
+// 503 when actually fetched. Contrast disabledSet, whose error IS returned:
+// hiding a disabled source is a correctness rule, flagging a degraded one is
+// advisory.
+func (s *Service) breakerSnapshot(ctx context.Context) map[string]sourcegate.BreakerState {
+	if s.breakers == nil {
+		return nil
+	}
+	snap, err := s.breakers.Snapshot(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "imports: source breaker snapshot failed; sources not flagged degraded", "err", err)
+		return nil
+	}
+	return snap
 }
 
 // disabledSet returns the set of owner-disabled source ids, or an empty
@@ -195,14 +241,39 @@ func (s *Service) Sources(ctx context.Context) ([]SourceDTO, error) {
 	if err != nil {
 		return nil, err
 	}
+	breakers := s.breakerSnapshot(ctx)
+	now := time.Now()
 	out := make([]SourceDTO, 0, len(srcs))
 	for _, src := range srcs {
 		if excludedFromPicker(src, disabled) {
 			continue
 		}
-		out = append(out, SourceDTO{ID: sourceIDString(src.ID), Name: src.Name, Lang: src.Lang})
+		out = append(out, newSourceDTO(src, breakers, now))
 	}
 	return out, nil
+}
+
+// newSourceDTO maps an engine-host Source to its picker DTO, flagging it as
+// DEGRADED when its circuit-breaker (keyed by the trimmed source NAME — the
+// SAME key sourcegate trips, mirroring handler/sources' breaker join) is
+// currently cooling down at now. breakers may be nil (nothing flagged). The
+// flag is a HINT: the source is still returned and selectable — a real fetch
+// against it surfaces an honest 503 from the gated path.
+func newSourceDTO(src sourceengine.Source, breakers map[string]sourcegate.BreakerState, now time.Time) SourceDTO {
+	dto := SourceDTO{ID: sourceIDString(src.ID), Name: src.Name, Lang: src.Lang}
+	if b, ok := breakers[strings.TrimSpace(src.Name)]; ok && b.IsCoolingDown(now) {
+		dto.Degraded = true
+		dto.DegradedReason = degradedReason(b)
+	}
+	return dto
+}
+
+// degradedReason renders the short human explanation shown next to a degraded
+// source in the picker. It names the consecutive-failure count so the owner
+// sees WHY the source is being refused; the raw upstream error stays on the
+// dedicated source-metrics screen, keeping this note concise.
+func degradedReason(b sourcegate.BreakerState) string {
+	return fmt.Sprintf("Temporarily unavailable — %d consecutive failures", b.ConsecutiveFailures)
 }
 
 // isBrokenSource reports whether src is a known-broken source Tsundoku must never

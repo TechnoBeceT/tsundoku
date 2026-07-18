@@ -5,7 +5,9 @@
  * NEW `selected` array (the component holds no state of its own).
  *
  * Non-vacuous: the toggle must ADD an unselected id and REMOVE an already-
- * selected one — both directions asserted.
+ * selected one — both directions asserted. A degraded (cooling-down) source is
+ * marked (⚠ + `.imp-chip--degraded`) but stays SELECTABLE; a healthy source
+ * shows no marker.
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -31,5 +33,36 @@ describe('SourceFilterChips', () => {
     await wrapper.findAll('button.imp-chip')[0]!.trigger('click')
 
     expect(wrapper.emitted('update:selected')).toEqual([[[]]])
+  })
+
+  it('marks a degraded source (⚠ + reason tooltip) while leaving a healthy one unmarked', () => {
+    const wrapper = mount(SourceFilterChips, {
+      props: {
+        sources: [
+          { id: 'a', name: 'MangaDex' },
+          { id: 'b', name: 'Asura Scans', degraded: true, degradedReason: 'Temporarily unavailable — 4 consecutive failures' },
+        ],
+        selected: [],
+      },
+    })
+
+    const chips = wrapper.findAll('button.imp-chip')
+    // Healthy chip: no degraded class, no warning marker.
+    expect(chips[0]!.classes()).not.toContain('imp-chip--degraded')
+    expect(chips[0]!.find('.imp-chip__warn').exists()).toBe(false)
+    // Degraded chip: dimmed class + ⚠ marker + reason on the title.
+    expect(chips[1]!.classes()).toContain('imp-chip--degraded')
+    expect(chips[1]!.find('.imp-chip__warn').exists()).toBe(true)
+    expect(chips[1]!.attributes('title')).toBe('Temporarily unavailable — 4 consecutive failures')
+  })
+
+  it('still emits the toggle when a degraded chip is clicked (a hint, not a hard block)', async () => {
+    const wrapper = mount(SourceFilterChips, {
+      props: { sources: [{ id: 'b', name: 'Asura Scans', degraded: true }], selected: [] },
+    })
+
+    await wrapper.find('button.imp-chip').trigger('click')
+
+    expect(wrapper.emitted('update:selected')).toEqual([[['b']]])
   })
 })

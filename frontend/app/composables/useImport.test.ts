@@ -94,6 +94,32 @@ describe('useImport', () => {
     expect(searchResults.value).toEqual([{ title: 'One Piece', candidates: [] }])
     expect(error.value).toBe('')
   })
+
+  it('maps the degraded/degradedReason flags from GET /api/sources through to the filter list', async () => {
+    // The picker must carry the backend's per-source degraded hint so the chip
+    // row can mark a cooling-down source; a healthy source carries the flags
+    // false/"" verbatim (never dropped in the mapper).
+    vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+      calls.push({ method: 'GET', path })
+      if (path === '/api/sources') {
+        return Promise.resolve({
+          data: [
+            { id: '1', name: 'MangaDex', lang: 'en', degraded: false, degradedReason: '' },
+            { id: '2', name: 'Asura Scans', lang: 'en', degraded: true, degradedReason: 'Temporarily unavailable — 4 consecutive failures' },
+          ],
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })
+      }
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    })
+
+    const { sources } = useImport()
+    await vi.waitFor(() => expect(sources.value).toHaveLength(2))
+
+    expect(sources.value[0]).toEqual({ id: '1', name: 'MangaDex', lang: 'en', degraded: false, degradedReason: '' })
+    expect(sources.value[1]).toEqual({ id: '2', name: 'Asura Scans', lang: 'en', degraded: true, degradedReason: 'Temporarily unavailable — 4 consecutive failures' })
+  })
 })
 
 describe('useImport — inspect (Stage 2 chapter-count preview)', () => {

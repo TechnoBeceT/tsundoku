@@ -1004,6 +1004,8 @@ components:
         - id
         - name
         - lang
+        - degraded
+        - degradedReason
       properties:
         id:
           type: string
@@ -1017,6 +1019,19 @@ components:
           type: string
           description: BCP-47 content language tag for this source (e.g. "en", "ko").
           example: en
+        degraded:
+          type: boolean
+          description: >-
+            True when this source's anti-ban circuit-breaker is currently tripped
+            (cooling down) — background fetches are being refused, so a
+            search/adopt against it is likely to fail. A HINT, not a hard block:
+            the picker still lets the owner select it.
+          example: false
+        degradedReason:
+          type: string
+          description: >-
+            Short human explanation for the degraded state, "" when not degraded.
+          example: ""
 
     SearchCandidate:
       type: object
