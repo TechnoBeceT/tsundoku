@@ -13,7 +13,7 @@
  * the whole library is in memory. At ~86 series today it is one request; the
  * design scales to the ~1000 the Kaizoku migration will reach.
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { SeriesSummary, CategorySummary } from '~/components/screens/types'
@@ -96,8 +96,10 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
 
   // Server-side persistence of {sortKey, sortDir, filters} — best-effort (§16):
   // a failed load keeps the defaults, a failed save is swallowed. `hydrated`
-  // gates saving until the loaded prefs have been applied, so we never clobber
-  // stored prefs with the pre-load defaults.
+  // gates the save-watcher: it stays false until AFTER the watcher's first flush
+  // has run (flipped on nextTick in loadAll — see there), so applying the loaded
+  // prefs on mount never echoes a redundant save, and the pre-load defaults are
+  // never persisted over stored prefs.
   const prefsApi = useLibraryPrefs()
   let hydrated = false
 
@@ -131,7 +133,15 @@ export function useLibrary(opts: { initialCategory?: string | null } = {}) {
         sortDir.value = prefs.sortDir
         filters.value = { ...NO_FILTERS, ...prefs.filters }
       }
-      hydrated = true
+      // Flip `hydrated` on nextTick, AFTER the watcher's first flush — NOT
+      // synchronously. Vue's watcher flush is async ('pre'), so the pref
+      // mutations above schedule the save-watcher to run later; setting the flag
+      // synchronously here would leave it already true when that first flush
+      // runs, firing one redundant (idempotent) save of the just-loaded prefs.
+      // nextTick resolves after the pending flush completes, so the first
+      // watcher run sees hydrated=false and skips — only genuine later user
+      // edits save.
+      void nextTick(() => { hydrated = true })
 
       if (firstPage.error || !firstPage.data) throw new Error('Failed to load library')
 

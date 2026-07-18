@@ -37,19 +37,12 @@ export function filterByCategory(items: SeriesSummary[], category: string | null
 }
 
 /**
- * Filter to series that need a live download source (`needsSource === true`);
- * `active === false` returns the whole list unchanged. Cover-independent by
- * construction — it reads only `needsSource`, never `coverUrl` (handover
- * 2026-07-13#15: a cover must never be used as a stand-in for "has a source").
- */
-export function filterNeedsSource(items: SeriesSummary[], active: boolean): SeriesSummary[] {
-  return active ? items.filter((s) => s.needsSource) : items
-}
-
-/**
  * Apply the boolean toggle-filters. Each active toggle NARROWS (logical AND) —
  * every inactive one is a pass-through. Reads only the present DTO fields
  * (chapterCounts / completed / needsSource), so no new backend data is required.
+ * The `needsSource` branch is cover-independent by construction — it reads only
+ * `needsSource`, never `coverUrl` (handover 2026-07-13#15: a cover must never be
+ * used as a stand-in for "has a source").
  */
 export function applyFilters(items: SeriesSummary[], f: LibraryFilters): SeriesSummary[] {
   let out = items

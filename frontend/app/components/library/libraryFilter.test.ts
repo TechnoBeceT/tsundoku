@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SeriesSummary } from '../screens/types'
-import { countMatchesElsewhere, filterByCategory, filterNeedsSource, searchSeries } from './libraryFilter'
+import { NO_FILTERS, applyFilters, countMatchesElsewhere, filterByCategory, searchSeries } from './libraryFilter'
 
 function series(over: Partial<SeriesSummary> & { id: string }): SeriesSummary {
   return {
@@ -49,24 +49,24 @@ describe('filterByCategory', () => {
   })
 })
 
-describe('filterNeedsSource', () => {
+describe('applyFilters — needsSource', () => {
   const mixed: SeriesSummary[] = [
     series({ id: 'a', needsSource: true }),
     series({ id: 'b', needsSource: false }),
     series({ id: 'c', needsSource: true }),
   ]
 
-  it('active=false returns the whole list unchanged (same reference)', () => {
-    expect(filterNeedsSource(mixed, false)).toBe(mixed)
+  it('all filters off returns the whole list unchanged (same reference)', () => {
+    expect(applyFilters(mixed, NO_FILTERS)).toBe(mixed)
   })
 
-  it('active=true keeps only needsSource series', () => {
-    expect(filterNeedsSource(mixed, true).map((s) => s.id)).toEqual(['a', 'c'])
+  it('needsSource keeps only needsSource series', () => {
+    expect(applyFilters(mixed, { ...NO_FILTERS, needsSource: true }).map((s) => s.id)).toEqual(['a', 'c'])
   })
 
-  it('active=true is cover-independent: a needsSource series WITH a cover is still kept', () => {
+  it('needsSource is cover-independent: a needsSource series WITH a cover is still kept', () => {
     const withCover = series({ id: 'z', needsSource: true, coverUrl: '/api/series/z/cover?v=abc' })
-    expect(filterNeedsSource([withCover], true)).toEqual([withCover])
+    expect(applyFilters([withCover], { ...NO_FILTERS, needsSource: true })).toEqual([withCover])
   })
 })
 
