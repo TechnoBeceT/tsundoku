@@ -10,11 +10,13 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
 // ProviderChapterUpdate is the builder for updating ProviderChapter entities.
@@ -277,6 +279,24 @@ func (_u *ProviderChapterUpdate) ClearNextAttemptAt() *ProviderChapterUpdate {
 	return _u
 }
 
+// SetPageLinks sets the "page_links" field.
+func (_u *ProviderChapterUpdate) SetPageLinks(v []fetcher.PageLink) *ProviderChapterUpdate {
+	_u.mutation.SetPageLinks(v)
+	return _u
+}
+
+// AppendPageLinks appends value to the "page_links" field.
+func (_u *ProviderChapterUpdate) AppendPageLinks(v []fetcher.PageLink) *ProviderChapterUpdate {
+	_u.mutation.AppendPageLinks(v)
+	return _u
+}
+
+// ClearPageLinks clears the value of the "page_links" field.
+func (_u *ProviderChapterUpdate) ClearPageLinks() *ProviderChapterUpdate {
+	_u.mutation.ClearPageLinks()
+	return _u
+}
+
 // SetSeriesProvider sets the "series_provider" edge to the SeriesProvider entity.
 func (_u *ProviderChapterUpdate) SetSeriesProvider(v *SeriesProvider) *ProviderChapterUpdate {
 	return _u.SetSeriesProviderID(v.ID)
@@ -405,6 +425,17 @@ func (_u *ProviderChapterUpdate) sqlSave(ctx context.Context) (_node int, err er
 	}
 	if _u.mutation.NextAttemptAtCleared() {
 		_spec.ClearField(providerchapter.FieldNextAttemptAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.PageLinks(); ok {
+		_spec.SetField(providerchapter.FieldPageLinks, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedPageLinks(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, providerchapter.FieldPageLinks, value)
+		})
+	}
+	if _u.mutation.PageLinksCleared() {
+		_spec.ClearField(providerchapter.FieldPageLinks, field.TypeJSON)
 	}
 	if _u.mutation.SeriesProviderCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -702,6 +733,24 @@ func (_u *ProviderChapterUpdateOne) ClearNextAttemptAt() *ProviderChapterUpdateO
 	return _u
 }
 
+// SetPageLinks sets the "page_links" field.
+func (_u *ProviderChapterUpdateOne) SetPageLinks(v []fetcher.PageLink) *ProviderChapterUpdateOne {
+	_u.mutation.SetPageLinks(v)
+	return _u
+}
+
+// AppendPageLinks appends value to the "page_links" field.
+func (_u *ProviderChapterUpdateOne) AppendPageLinks(v []fetcher.PageLink) *ProviderChapterUpdateOne {
+	_u.mutation.AppendPageLinks(v)
+	return _u
+}
+
+// ClearPageLinks clears the value of the "page_links" field.
+func (_u *ProviderChapterUpdateOne) ClearPageLinks() *ProviderChapterUpdateOne {
+	_u.mutation.ClearPageLinks()
+	return _u
+}
+
 // SetSeriesProvider sets the "series_provider" edge to the SeriesProvider entity.
 func (_u *ProviderChapterUpdateOne) SetSeriesProvider(v *SeriesProvider) *ProviderChapterUpdateOne {
 	return _u.SetSeriesProviderID(v.ID)
@@ -860,6 +909,17 @@ func (_u *ProviderChapterUpdateOne) sqlSave(ctx context.Context) (_node *Provide
 	}
 	if _u.mutation.NextAttemptAtCleared() {
 		_spec.ClearField(providerchapter.FieldNextAttemptAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.PageLinks(); ok {
+		_spec.SetField(providerchapter.FieldPageLinks, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedPageLinks(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, providerchapter.FieldPageLinks, value)
+		})
+	}
+	if _u.mutation.PageLinksCleared() {
+		_spec.ClearField(providerchapter.FieldPageLinks, field.TypeJSON)
 	}
 	if _u.mutation.SeriesProviderCleared() {
 		edge := &sqlgraph.EdgeSpec{

@@ -325,9 +325,9 @@ func WriteSidecar(dir string, s Sidecar) error {
 		return fmt.Errorf("disk.WriteSidecar: marshal: %w", err)
 	}
 
-	if err := writeFileAtomic(filepath.Join(dir, sidecarFilename), data); err != nil {
+	if err := WriteFileAtomic(filepath.Join(dir, sidecarFilename), data); err != nil {
 		// Defensive path: reachable only on OS-level I/O failure (disk full / fd exhausted /
-		// permission denied). writeFileAtomic never leaves a partial file behind.
+		// permission denied). WriteFileAtomic never leaves a partial file behind.
 		return fmt.Errorf("disk.WriteSidecar: %w", err)
 	}
 

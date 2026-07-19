@@ -14,8 +14,11 @@ package download
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +34,8 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/fetcher"
+	"github.com/technobecet/tsundoku/internal/pkg/errorclass"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -45,6 +50,14 @@ type Config struct {
 	// Storage is the root library directory (e.g. "/data/library") passed to
 	// disk.RenderChapter.
 	Storage string
+
+	// StagingRoot is the on-disk page-staging root (<storage>/.tsundoku-staging)
+	// each chapter's per-provider staging dir lives under (<StagingRoot>/<pcID>/).
+	// It is the SAME path handed to sourceengine.NewFetcher, threaded here so the
+	// dispatcher can wipe a chapter's staging dirs when it reaches the terminal
+	// permanently_failed state (its partial downloads will never be resumed). Empty
+	// disables that cleanup — tests using the fake fetcher stage nothing on disk.
+	StagingRoot string
 }
 
 // RetrySettings supplies the runtime-tunable download policy. The Dispatcher
@@ -594,19 +607,31 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 	// Every live source failed this cycle. Decide failed vs permanently_failed
 	// from the CURRENT per-source state (the loop just bumped attempts). The claim
 	// already succeeded, so this pass made progress regardless of the outcome.
-	return true, d.finalizeAfterAllFailed(ctx, chapterID, maxRetries, lastErr)
+	return true, d.finalizeAfterAllFailed(ctx, ch, maxRetries, lastErr)
 }
 
 // tryCandidate attempts a single source for a chapter: it fetches under the
 // source's per-provider concurrency slot, and on success renders + persists +
-// transitions the chapter to downloaded (returning done=true). On any failure —
-// fetch, render, or persist — it bumps that source's per-source retry state and
-// returns done=false with the cause, so the caller falls through to the next
+// transitions the chapter to downloaded (returning done=true). It returns
+// done=false with the cause on failure so the caller falls through to the next
 // source. The concurrency slot is held only for the network fetch; rendering is
 // local disk work and does not contend for the provider's API.
+//
+// Failure accounting is deliberately asymmetric (the ban fix, GAP-099):
+//   - A FETCH failure is CLASSIFIED (chargeFetchFailure): a ban/source-down class
+//     (rate_limit / captcha / timeout / network / server_error / unknown AND a
+//     broken page — an anti-bot challenge served as a 200 image) only COOLS THE
+//     SOURCE DOWN (defers the next try, retry budget UNTOUCHED), so a banned
+//     source's chapters wait for the cooldown and never drain to permanently_failed;
+//     a chapter-specific class (not_found / no_pages / parse / a disk-origin
+//     non-source) BUMPS the budget as before.
+//   - A render/persist (finishDownload) failure is a LOCAL fault (disk/NFS/DB), NOT
+//     the source's — the source is NOT charged at all, so a persistent infra fault
+//     can never drain the library. The staging dir is KEPT so the retry resumes.
+//   - On SUCCESS the staging dir is deleted (its bytes are now in the CBZ).
 func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time) (done bool, cause error) {
-	// Carry a per-chapter progress sink so the suwayomi fetcher can report live
-	// per-page progress; the sink throttles + broadcasts download.progress.
+	// Carry a per-chapter progress sink so the fetcher can report live per-page
+	// progress; the sink throttles + broadcasts download.progress.
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))
 	sourceKey := canonicalSourceKey(cand.SeriesProvider)
 	// Politeness delay BEFORE the fetch: enforces the runtime-tunable minimum
@@ -618,9 +643,14 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	pages, fetchErr := d.f.Fetch(pctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
 	fetchDuration := time.Since(fetchStart)
 	release()
+
+	// Write-through the resolved page links the instant they are known (even on a
+	// byte-fetch failure), so a retry SKIPS the source's page-resolution step.
+	d.persistPageLinks(ctx, cand.ProviderChapter, pages.PageLinks)
+
 	if fetchErr != nil {
 		d.logDownloadEvent(ctx, ch, cand.SeriesProvider, sourceevents.StatusFailed, fetchDuration, nil, fetchErr)
-		d.bumpSourceFailure(ctx, cand.ProviderChapter, fetchErr, now)
+		d.chargeFetchFailure(ctx, cand.ProviderChapter, pages.StagingDir, fetchErr, now)
 		// Circuit-breaker bookkeeping is SEPARATE from the per-chapter retry
 		// state above: it tracks whether this source is down ENTIRELY (see
 		// filterGated), not whether it can serve this one chapter. Skip it on a
@@ -633,19 +663,195 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	}
 
 	if err := d.finishDownload(ctx, ch, chapterID, cand, pages); err != nil {
-		// A render/persist failure is not the source's fault, but bumping it (and
-		// falling through) keeps the chapter from stranding in downloading and lets
-		// another source deliver it. On retry RenderChapter safely upserts the CBZ.
-		// The gate is deliberately NOT touched here — the fetch itself succeeded,
-		// so this is not evidence the source is unavailable.
+		// A render/persist failure is a LOCAL fault, NOT the source's — do NOT charge
+		// the source (no bump, no cooldown) or a persistent infra fault would drain the
+		// whole library in maxRetries cycles. Falling through keeps the chapter from
+		// stranding in downloading; on retry RenderChapter safely upserts the CBZ from
+		// the KEPT staging dir. The gate is deliberately NOT touched either — the fetch
+		// itself succeeded, so this is not evidence the source is unavailable.
 		d.logDownloadEvent(ctx, ch, cand.SeriesProvider, sourceevents.StatusFailed, fetchDuration, nil, err)
-		d.bumpSourceFailure(ctx, cand.ProviderChapter, err, now)
+		slog.WarnContext(ctx, "download.tryCandidate: render/persist failed — not charging the source (local fault)",
+			"chapter_id", chapterID,
+			"err", err,
+		)
 		return false, err
 	}
+
+	// The staged bytes are now inside the CBZ — delete the staging dir so the byte
+	// cache holds bytes only for in-progress chapters.
+	d.cleanupStaging(ctx, pages.StagingDir)
+
 	pageCount := pages.PageCount
 	d.logDownloadEvent(ctx, ch, cand.SeriesProvider, sourceevents.StatusSuccess, fetchDuration, &pageCount, nil)
 	d.gateRecordSuccess(ctx, sourceKey)
 	return true, nil
+}
+
+// chargeFetchFailure applies the per-source retry accounting for a FETCH failure,
+// classifying the cause (internal/pkg/errorclass) to decide whether it spends the
+// source's retry budget. A chapter-specific failure (the source genuinely cannot
+// serve THIS chapter) BUMPS the budget; a ban / source-down failure (the source is
+// unavailable right now) only COOLS THE SOURCE DOWN, leaving the budget untouched
+// so the chapter waits for the cooldown instead of exhausting — the core of the
+// ban fix (GAP-099).
+//
+// A not_found is treated as a STALE RESOLUTION: the stored page links, and the
+// pages already staged from them, may point at moved/renamed resources, so BOTH are
+// invalidated (links cleared, staging dir wiped) and the next attempt re-resolves +
+// re-downloads from scratch. stagingDir is the failed fetch's staging directory ("" if none).
+func (d *Dispatcher) chargeFetchFailure(ctx context.Context, pc *ent.ProviderChapter, stagingDir string, cause error, now time.Time) {
+	if isChapterSpecificFailure(cause) {
+		d.bumpSourceFailure(ctx, pc, cause, now)
+	} else {
+		d.cooldownSource(ctx, pc, cause, now)
+	}
+	if errorclass.Classify(cause) == errorclass.CategoryNotFound {
+		// Wipe the staging dir FIRST and clear the page links ONLY if the wipe
+		// succeeded: the two must stay consistent. If the links were cleared but the
+		// (index-keyed) staged files survived, the next attempt would re-resolve a
+		// fresh, possibly-reordered page list and pack it against those stale files —
+		// the mismatched-page corruption FIX-2 guards on the upgrade path. Keeping the
+		// links on a wipe failure means the next attempt re-uses the SAME links +
+		// staging (consistent, if still stale); the not_found bump exhausts it anyway.
+		if err := d.removeStaging(stagingDir); err != nil {
+			slog.WarnContext(ctx, "download.chargeFetchFailure: staging wipe failed on not_found — keeping page links to avoid re-resolve against stale staging",
+				"provider_chapter_id", pc.ID,
+				"staging_dir", stagingDir,
+				"err", err,
+			)
+			return
+		}
+		d.clearPageLinks(ctx, pc)
+	}
+}
+
+// isChapterSpecificFailure reports whether a fetch error is the source's problem
+// with THIS chapter (so it should spend the per-source retry budget) rather than
+// the source being down/blocked entirely (so it should only cool down).
+//
+// ErrBrokenPage is deliberately NOT chapter-specific: it is the IMAGE-step
+// manifestation of an anti-bot block — an HTML Cloudflare challenge served as
+// HTTP 200 fails validateImagePage exactly like a genuinely corrupt panel (see
+// sourceengine/imagevalidate.go). Charging it would relocate the very ban-drain
+// this classification exists to prevent to the image step, draining a banned
+// source's whole backlog to permanently_failed. A persistent ErrBrokenPage is far
+// more often a CF challenge than a corrupt image, and the owner's ratified
+// priority is "nothing forgotten" (never exhaust on a source-side condition); the
+// genuinely-corrupt-page corner has a manual owner escape (delete). It is checked
+// EXPLICITLY (not left to the taxonomy) so the wrapped decode message can never
+// reclassify it as chapter-specific.
+//
+// ErrNotLiveSource (a disk-origin, non-numeric provider) IS chapter-specific: that
+// candidate can never be fetched live, so a wanted chapter whose only candidate is
+// disk-origin must exhaust rather than retry forever on a cooldown. ErrNoPages
+// (zero-page chapter) is chapter-specific too. Otherwise the shared error taxonomy
+// decides — not_found / no_pages / parse are chapter-specific, while rate_limit,
+// captcha, timeout, network, server_error, and the ambiguous unknown are treated
+// as source-down (cooldown, never drain).
+func isChapterSpecificFailure(err error) bool {
+	if errors.Is(err, sourceengine.ErrBrokenPage) {
+		return false
+	}
+	if errors.Is(err, sourceengine.ErrNoPages) || errors.Is(err, sourceengine.ErrNotLiveSource) {
+		return true
+	}
+	switch errorclass.Classify(err) {
+	case errorclass.CategoryNotFound, errorclass.CategoryNoPages, errorclass.CategoryParse:
+		return true
+	default:
+		return false
+	}
+}
+
+// persistPageLinks write-throughs the freshly-resolved page links onto the
+// ProviderChapter row so a retry skips the source's page-resolution step. It is
+// best-effort (a write failure is logged, never fatal) and a NO-OP when the row
+// already carries links (they were re-used this attempt, not re-resolved) or none
+// were resolved.
+func (d *Dispatcher) persistPageLinks(ctx context.Context, pc *ent.ProviderChapter, links []fetcher.PageLink) {
+	if len(links) == 0 || len(pc.PageLinks) > 0 {
+		return
+	}
+	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).SetPageLinks(links).Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "download.persistPageLinks: could not persist resolved page links",
+			"provider_chapter_id", pc.ID,
+			"err", err,
+		)
+		return
+	}
+	pc.PageLinks = links
+}
+
+// clearPageLinks wipes the stored page links so the next attempt re-resolves them
+// via the source — used when a not_found image failure signals the stored links
+// have gone stale. Best-effort; a no-op when there are no stored links.
+func (d *Dispatcher) clearPageLinks(ctx context.Context, pc *ent.ProviderChapter) {
+	if len(pc.PageLinks) == 0 {
+		return
+	}
+	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).ClearPageLinks().Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "download.clearPageLinks: could not clear stale page links",
+			"provider_chapter_id", pc.ID,
+			"err", err,
+		)
+		return
+	}
+	pc.PageLinks = nil
+}
+
+// cleanupStaging removes a chapter's page-staging directory (best-effort): on a
+// completed download/upgrade its bytes are now inside the rendered CBZ, and on a
+// failed upgrade its stale index-keyed pages must not be reused. A leftover dir is
+// bounded (in-progress chapters + a rare crash-window leak + the startup GC
+// backstop), invisible to the library scanner, and re-used or re-cleaned on any
+// later re-download of the chapter.
+func (d *Dispatcher) cleanupStaging(ctx context.Context, dir string) {
+	if err := d.removeStaging(dir); err != nil {
+		slog.WarnContext(ctx, "download.cleanupStaging: could not remove staging dir",
+			"staging_dir", dir,
+			"err", err,
+		)
+	}
+}
+
+// removeStaging removes dir (recursively), returning any error so a caller that
+// must react to a failure (chargeFetchFailure's not_found branch, which only
+// clears the page links when the wipe SUCCEEDS) can. A blank dir is a no-op.
+func (d *Dispatcher) removeStaging(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	return os.RemoveAll(dir)
+}
+
+// cleanupChapterStaging removes the page-staging dirs of EVERY provider offering
+// this chapter. It is called when a chapter reaches the terminal
+// permanently_failed state, whose partial downloads will never be resumed (the
+// owner must manually retry, which resets the per-source budgets and re-downloads
+// from scratch). Best-effort — a query/remove failure is logged, never fatal — and
+// a no-op when no staging root is configured (tests using the fake fetcher stage
+// nothing on disk). The startup GC (GCStagingRoot) is the backstop for the sources
+// this misses (a removed provider, a deleted series, a crash before this runs).
+func (d *Dispatcher) cleanupChapterStaging(ctx context.Context, ch *ent.Chapter) {
+	if d.cfg.StagingRoot == "" {
+		return
+	}
+	pcIDs, err := d.client.ProviderChapter.Query().
+		Where(
+			entproviderchapter.ChapterKeyEQ(ch.ChapterKey),
+			entproviderchapter.HasSeriesProviderWith(entseriesprovider.SeriesIDEQ(ch.SeriesID)),
+		).
+		IDs(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "download.cleanupChapterStaging: could not list provider chapters — staging dirs left for the startup GC",
+			"chapter_id", ch.ID,
+			"err", err,
+		)
+		return
+	}
+	for _, id := range pcIDs {
+		d.cleanupStaging(ctx, filepath.Join(d.cfg.StagingRoot, id.String()))
+	}
 }
 
 // finishDownload renders the fetched pages to disk, writes the success provenance
@@ -771,7 +977,8 @@ func (d *Dispatcher) cooldownSource(ctx context.Context, pc *ent.ProviderChapter
 // (some source is still on cooldown and may recover on a later cycle). It records
 // the last cause as the chapter's last_error and broadcasts download.fail with the
 // resting state.
-func (d *Dispatcher) finalizeAfterAllFailed(ctx context.Context, chapterID uuid.UUID, maxRetries int, cause error) error {
+func (d *Dispatcher) finalizeAfterAllFailed(ctx context.Context, ch *ent.Chapter, maxRetries int, cause error) error {
+	chapterID := ch.ID
 	exhausted, err := chapter.AllProvidersExhausted(ctx, d.client, chapterID, maxRetries)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.finalizeAfterAllFailed: exhaustion check for chapter %s: %w", chapterID, err)
@@ -796,6 +1003,11 @@ func (d *Dispatcher) finalizeAfterAllFailed(ctx context.Context, chapterID uuid.
 			"chapter_id", chapterID,
 			"err", err,
 		)
+	}
+
+	// Terminal state → the chapter's partial staged pages are dead weight; free them.
+	if exhausted {
+		d.cleanupChapterStaging(ctx, ch)
 	}
 
 	d.broadcast("download.fail", DownloadEvent{
@@ -854,6 +1066,8 @@ func (d *Dispatcher) handleNoCandidates(ctx context.Context, ch *ent.Chapter, ma
 			"err", err,
 		)
 	}
+	// Terminal state → free any staged pages left by this chapter's sources.
+	d.cleanupChapterStaging(ctx, ch)
 	d.broadcast("download.fail", DownloadEvent{
 		ChapterID: ch.ID,
 		State:     string(entchapter.StatePermanentlyFailed),
@@ -1073,12 +1287,14 @@ func seriesCategoryName(ch *ent.Chapter) string {
 // suwayomi.Fetcher.Fetch → client.ChapterPages(ctx, ref.SuwayomiID).
 func buildFetchRef(pc *ent.ProviderChapter, sp *ent.SeriesProvider) fetcher.FetchRef {
 	return fetcher.FetchRef{
-		Provider:         sp.Provider,
-		Scanlator:        sp.Scanlator,
-		Language:         sp.Language,
-		URL:              pc.URL,
-		SuwayomiID:       pc.SuwayomiChapterID,
-		SeriesProviderID: sp.ID,
+		Provider:          sp.Provider,
+		Scanlator:         sp.Scanlator,
+		Language:          sp.Language,
+		URL:               pc.URL,
+		SuwayomiID:        pc.SuwayomiChapterID,
+		SeriesProviderID:  sp.ID,
+		ProviderChapterID: pc.ID,
+		PageLinks:         pc.PageLinks,
 	}
 }
 

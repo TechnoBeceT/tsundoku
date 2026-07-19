@@ -120,6 +120,18 @@ func main() {
 		slog.Info("startup: reset orphaned chapters", "requeued", result.Requeued, "upgrades_reset", result.UpgradesReset)
 	}
 
+	// Page-staging root: a hidden per-chapter byte-cache dir under the library
+	// storage root (invisible to the scanner — every other top-level dir is a
+	// category). Computed ONCE here and reused by the download Fetcher + Dispatcher
+	// below (§2 DRY — the same path the terminal-cleanup + this GC key on).
+	stagingRoot := filepath.Join(cfg.Storage.Folder, ".tsundoku-staging")
+
+	// Startup staging GC: reclaim leaked page-staging dirs whose chapter is no
+	// longer downloading (completed / permanently-failed / its provider or series
+	// deleted). Runs AFTER the orphan reset above, so a legitimately in-progress
+	// chapter is already back in `wanted` and its dir is kept.
+	runStartupStagingGC(ctx, entClient, stagingRoot)
+
 	authSvc := auth.NewService(cfg.Auth.Secret)
 	hub := sse.NewHub()
 	ownerH := owner.NewHandler(entClient, authSvc, cfg.Auth.CookieSecure)
@@ -275,7 +287,11 @@ func main() {
 	)
 	engineLauncher := engineroute.Launcher(engineHostLauncher)
 	engineClient := sourceengine.Client(engineRouter)
-	engineFetcher := sourceengine.NewFetcher(engineClient)
+	// Page bytes stage under a hidden dir inside the library storage root: it shares
+	// the library's filesystem (so the atomic temp→rename is a real rename, not a
+	// cross-device copy) and the leading dot keeps it invisible to the library
+	// scanner/reconcile (every OTHER top-level dir under storage is a category).
+	engineFetcher := sourceengine.NewFetcher(engineClient, stagingRoot)
 
 	// Network-routing domain service (DB-truth: endpoints + bindings). Read by
 	// ReconcileNetwork to derive the profiles; a stateless second instance is
@@ -295,7 +311,8 @@ func main() {
 		WithEventRecorder(eventsSvc) // logs a `warm` audit event per warm
 
 	dispatcher := download.New(entClient, engineFetcher, hub, download.Config{
-		Storage: cfg.Storage.Folder,
+		Storage:     cfg.Storage.Folder,
+		StagingRoot: stagingRoot,
 	}, settingsSvc, gateSvc).
 		WithEventRecorder(eventsSvc) // logs a `download` audit event per source attempt
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
@@ -421,6 +438,19 @@ func main() {
 // when no non-default profile was ever brought up; the default instance is owned
 // by the container entrypoint, not this launcher). Extracted from main so main's
 // cyclomatic complexity stays within the cyclop budget.
+// runStartupStagingGC reclaims leaked page-staging dirs under stagingRoot at boot
+// (download.GCStagingRoot). Best-effort: a GC error is logged, never fatal
+// (NFS-safe) — the API must keep serving regardless — and a no-removals sweep is
+// silent. Extracted from main so its two-branch logging does not push main's
+// cyclomatic complexity over the lint cap.
+func runStartupStagingGC(ctx context.Context, entClient *ent.Client, stagingRoot string) {
+	if removed, err := download.GCStagingRoot(ctx, entClient, stagingRoot); err != nil {
+		slog.Error("startup: staging GC failed", "error", err)
+	} else if removed > 0 {
+		slog.Info("startup: staging GC reclaimed leaked dirs", "removed", removed)
+	}
+}
+
 func gracefulShutdown(e *echo.Echo, engineHostLauncher *enginehost.Launcher) {
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()

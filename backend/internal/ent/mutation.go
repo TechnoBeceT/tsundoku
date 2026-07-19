@@ -40,6 +40,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
+	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/metadata"
 )
 
@@ -8936,6 +8937,8 @@ type ProviderChapterMutation struct {
 	addattempts            *int
 	last_error             *string
 	next_attempt_at        *time.Time
+	page_links             *[]fetcher.PageLink
+	appendpage_links       []fetcher.PageLink
 	clearedFields          map[string]struct{}
 	series_provider        *uuid.UUID
 	clearedseries_provider bool
@@ -9684,6 +9687,71 @@ func (m *ProviderChapterMutation) ResetNextAttemptAt() {
 	delete(m.clearedFields, providerchapter.FieldNextAttemptAt)
 }
 
+// SetPageLinks sets the "page_links" field.
+func (m *ProviderChapterMutation) SetPageLinks(fl []fetcher.PageLink) {
+	m.page_links = &fl
+	m.appendpage_links = nil
+}
+
+// PageLinks returns the value of the "page_links" field in the mutation.
+func (m *ProviderChapterMutation) PageLinks() (r []fetcher.PageLink, exists bool) {
+	v := m.page_links
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPageLinks returns the old "page_links" field's value of the ProviderChapter entity.
+// If the ProviderChapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProviderChapterMutation) OldPageLinks(ctx context.Context) (v []fetcher.PageLink, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPageLinks is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPageLinks requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPageLinks: %w", err)
+	}
+	return oldValue.PageLinks, nil
+}
+
+// AppendPageLinks adds fl to the "page_links" field.
+func (m *ProviderChapterMutation) AppendPageLinks(fl []fetcher.PageLink) {
+	m.appendpage_links = append(m.appendpage_links, fl...)
+}
+
+// AppendedPageLinks returns the list of values that were appended to the "page_links" field in this mutation.
+func (m *ProviderChapterMutation) AppendedPageLinks() ([]fetcher.PageLink, bool) {
+	if len(m.appendpage_links) == 0 {
+		return nil, false
+	}
+	return m.appendpage_links, true
+}
+
+// ClearPageLinks clears the value of the "page_links" field.
+func (m *ProviderChapterMutation) ClearPageLinks() {
+	m.page_links = nil
+	m.appendpage_links = nil
+	m.clearedFields[providerchapter.FieldPageLinks] = struct{}{}
+}
+
+// PageLinksCleared returns if the "page_links" field was cleared in this mutation.
+func (m *ProviderChapterMutation) PageLinksCleared() bool {
+	_, ok := m.clearedFields[providerchapter.FieldPageLinks]
+	return ok
+}
+
+// ResetPageLinks resets all changes to the "page_links" field.
+func (m *ProviderChapterMutation) ResetPageLinks() {
+	m.page_links = nil
+	m.appendpage_links = nil
+	delete(m.clearedFields, providerchapter.FieldPageLinks)
+}
+
 // ClearSeriesProvider clears the "series_provider" edge to the SeriesProvider entity.
 func (m *ProviderChapterMutation) ClearSeriesProvider() {
 	m.clearedseries_provider = true
@@ -9745,7 +9813,7 @@ func (m *ProviderChapterMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProviderChapterMutation) Fields() []string {
-	fields := make([]string, 0, 13)
+	fields := make([]string, 0, 14)
 	if m.series_provider != nil {
 		fields = append(fields, providerchapter.FieldSeriesProviderID)
 	}
@@ -9785,6 +9853,9 @@ func (m *ProviderChapterMutation) Fields() []string {
 	if m.next_attempt_at != nil {
 		fields = append(fields, providerchapter.FieldNextAttemptAt)
 	}
+	if m.page_links != nil {
+		fields = append(fields, providerchapter.FieldPageLinks)
+	}
 	return fields
 }
 
@@ -9819,6 +9890,8 @@ func (m *ProviderChapterMutation) Field(name string) (ent.Value, bool) {
 		return m.LastError()
 	case providerchapter.FieldNextAttemptAt:
 		return m.NextAttemptAt()
+	case providerchapter.FieldPageLinks:
+		return m.PageLinks()
 	}
 	return nil, false
 }
@@ -9854,6 +9927,8 @@ func (m *ProviderChapterMutation) OldField(ctx context.Context, name string) (en
 		return m.OldLastError(ctx)
 	case providerchapter.FieldNextAttemptAt:
 		return m.OldNextAttemptAt(ctx)
+	case providerchapter.FieldPageLinks:
+		return m.OldPageLinks(ctx)
 	}
 	return nil, fmt.Errorf("unknown ProviderChapter field %s", name)
 }
@@ -9953,6 +10028,13 @@ func (m *ProviderChapterMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetNextAttemptAt(v)
+		return nil
+	case providerchapter.FieldPageLinks:
+		v, ok := value.([]fetcher.PageLink)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPageLinks(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter field %s", name)
@@ -10062,6 +10144,9 @@ func (m *ProviderChapterMutation) ClearedFields() []string {
 	if m.FieldCleared(providerchapter.FieldNextAttemptAt) {
 		fields = append(fields, providerchapter.FieldNextAttemptAt)
 	}
+	if m.FieldCleared(providerchapter.FieldPageLinks) {
+		fields = append(fields, providerchapter.FieldPageLinks)
+	}
 	return fields
 }
 
@@ -10090,6 +10175,9 @@ func (m *ProviderChapterMutation) ClearField(name string) error {
 		return nil
 	case providerchapter.FieldNextAttemptAt:
 		m.ClearNextAttemptAt()
+		return nil
+	case providerchapter.FieldPageLinks:
+		m.ClearPageLinks()
 		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter nullable field %s", name)
@@ -10137,6 +10225,9 @@ func (m *ProviderChapterMutation) ResetField(name string) error {
 		return nil
 	case providerchapter.FieldNextAttemptAt:
 		m.ResetNextAttemptAt()
+		return nil
+	case providerchapter.FieldPageLinks:
+		m.ResetPageLinks()
 		return nil
 	}
 	return fmt.Errorf("unknown ProviderChapter field %s", name)

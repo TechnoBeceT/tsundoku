@@ -796,6 +796,16 @@ func NextAttemptAtNotNil() predicate.ProviderChapter {
 	return predicate.ProviderChapter(sql.FieldNotNull(FieldNextAttemptAt))
 }
 
+// PageLinksIsNil applies the IsNil predicate on the "page_links" field.
+func PageLinksIsNil() predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldIsNull(FieldPageLinks))
+}
+
+// PageLinksNotNil applies the NotNil predicate on the "page_links" field.
+func PageLinksNotNil() predicate.ProviderChapter {
+	return predicate.ProviderChapter(sql.FieldNotNull(FieldPageLinks))
+}
+
 // HasSeriesProvider applies the HasEdge predicate on the "series_provider" edge.
 func HasSeriesProvider() predicate.ProviderChapter {
 	return predicate.ProviderChapter(func(s *sql.Selector) {

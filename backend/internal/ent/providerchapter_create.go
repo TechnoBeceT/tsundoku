@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
 // ProviderChapterCreate is the builder for creating a ProviderChapter entity.
@@ -185,6 +186,12 @@ func (_c *ProviderChapterCreate) SetNillableNextAttemptAt(v *time.Time) *Provide
 	if v != nil {
 		_c.SetNextAttemptAt(*v)
 	}
+	return _c
+}
+
+// SetPageLinks sets the "page_links" field.
+func (_c *ProviderChapterCreate) SetPageLinks(v []fetcher.PageLink) *ProviderChapterCreate {
+	_c.mutation.SetPageLinks(v)
 	return _c
 }
 
@@ -383,6 +390,10 @@ func (_c *ProviderChapterCreate) createSpec() (*ProviderChapter, *sqlgraph.Creat
 	if value, ok := _c.mutation.NextAttemptAt(); ok {
 		_spec.SetField(providerchapter.FieldNextAttemptAt, field.TypeTime, value)
 		_node.NextAttemptAt = &value
+	}
+	if value, ok := _c.mutation.PageLinks(); ok {
+		_spec.SetField(providerchapter.FieldPageLinks, field.TypeJSON, value)
+		_node.PageLinks = value
 	}
 	if nodes := _c.mutation.SeriesProviderIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{

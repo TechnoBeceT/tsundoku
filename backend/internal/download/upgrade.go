@@ -35,6 +35,11 @@ type upgradeResult struct {
 	importance  int
 	newFilename string
 	pageCount   int
+	// stagingDir is the on-disk page-staging directory the fetch used; the caller
+	// deletes it after the upgraded CBZ is assembled (mirrors the download path's
+	// cleanup) so the byte cache holds bytes only for in-progress chapters. "" when
+	// no fetch staged pages (a stale/no-op upgrade).
+	stagingDir string
 }
 
 // DetectUpgrades scans all Chapter rows in state=downloaded and transitions
@@ -294,14 +299,28 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 		if errors.Is(err, errUpgradeNoLongerNeeded) {
 			return d.finishStaleUpgrade(ctx, chapterID)
 		}
+		// A failed upgrade must NEVER reuse its partially-staged, index-keyed pages:
+		// the next attempt re-resolves the page list fresh, and a reordered list
+		// packed against those stale files would produce a mismatched CBZ that
+		// tryDeleteOldCBZ then swaps in over the good original. Correctness over
+		// resume — upgrades are infrequent — so wipe the target's staging dir on
+		// every failure path (fetch, render, or persist). res.stagingDir is populated
+		// on the fetch/render failure returns for exactly this.
+		d.cleanupStaging(ctx, res.stagingDir)
 		return d.handleUpgradeFailure(ctx, chapterID, res.pc, err)
 	}
 
 	if err := d.persistUpgradeSuccess(ctx, chapterID, res); err != nil {
 		// A persist failure is a DB error, not the source's fault — no per-source
-		// bump (failedPC is nil).
+		// bump (failedPC is nil). Still wipe the staging dir (correctness over resume,
+		// like every upgrade-failure path); the working copy on disk is untouched.
+		d.cleanupStaging(ctx, res.stagingDir)
 		return d.handleUpgradeFailure(ctx, chapterID, nil, err)
 	}
+
+	// The staged bytes are now inside the upgraded CBZ — delete the staging dir
+	// (same self-cleaning lifecycle as the download path).
+	d.cleanupStaging(ctx, res.stagingDir)
 
 	d.broadcast("download.done", DownloadEvent{
 		ChapterID: chapterID,
@@ -373,8 +392,10 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		if shouldRecordGateFailure(ctx) {
 			d.gateRecordFailure(ctx, sourceKey, err, time.Now())
 		}
-		// Carry pc so handleUpgradeFailure bumps this source's per-source retry state.
-		return upgradeResult{pc: pc, sp: sp}, err
+		// Carry pc so handleUpgradeFailure COOLS DOWN this source's per-source retry
+		// state (an upgrade failure never spends budget), and stagingDir so the caller
+		// wipes the partially-staged pages — Fetch populates StagingDir even on error.
+		return upgradeResult{pc: pc, sp: sp, stagingDir: pages.StagingDir}, err
 	}
 	// The fetch succeeded → the source is reachable; clear its breaker state.
 	// (A later render/persist failure is not the source's fault, so it does not
@@ -388,7 +409,10 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		Pages:   pages.Pages,
 	})
 	if err != nil {
-		return upgradeResult{}, err
+		// A render failure is a LOCAL fault (no pc → no cooldown), but the fetch
+		// already staged every page — carry stagingDir so the caller wipes it (a
+		// failed upgrade never resumes, unlike the download path).
+		return upgradeResult{stagingDir: pages.StagingDir}, err
 	}
 
 	return upgradeResult{
@@ -397,6 +421,7 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		importance:  sp.Importance,
 		newFilename: newFilename,
 		pageCount:   pages.PageCount,
+		stagingDir:  pages.StagingDir,
 	}, nil
 }
 

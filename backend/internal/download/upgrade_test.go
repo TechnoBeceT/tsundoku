@@ -20,6 +20,7 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -720,5 +721,60 @@ func TestUpgrade_NoOpWhenBestIsCurrentSatisfier(t *testing.T) {
 	}
 	if after.SatisfiedImportance == nil || *after.SatisfiedImportance != 9 {
 		t.Errorf("satisfied_importance: want 9 (watermark refreshed), got %v", after.SatisfiedImportance)
+	}
+}
+
+// TestUpgradeFailure_CleansStagingDir proves FIX 2: a FAILED upgrade wipes the
+// target provider's page-staging dir, so a later upgrade attempt can never pack
+// stale index-keyed staged pages against a re-resolved (possibly reordered) page
+// list — the silent-corruption shape that would then supersede the good original
+// CBZ. It wires the REAL validating Fetcher and a higher-importance source whose
+// second page is broken: the fetch fails AFTER staging page 0, and the upgrade
+// path must remove that dir on the way out.
+func TestUpgradeFailure_CleansStagingDir(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := mustTempDir(t)
+	stagingRoot := mustTempDir(t)
+
+	s := client.Series.Create().SetTitle("Upgrade Staging").SetSlug("upgrade-staging").SaveX(ctx)
+	// Current satisfier: a disk-origin (low) source.
+	spLow := client.SeriesProvider.Create().SetSeries(s).SetProvider("Disk").SetImportance(1).SaveX(ctx)
+	// The upgrade target: a numeric (live) higher-importance source.
+	spHigh := client.SeriesProvider.Create().SetSeries(s).SetProvider("7").SetImportance(10).SaveX(ctx)
+	_ = client.ProviderChapter.Create().SetSeriesProviderID(spLow.ID).SetChapterKey("c1").
+		SetURL("/lo/c1").SetProviderIndex(0).SaveX(ctx)
+	pcHigh := client.ProviderChapter.Create().SetSeriesProviderID(spHigh.ID).SetChapterKey("c1").
+		SetURL("/hi/c1").SetProviderIndex(0).SaveX(ctx)
+	// A downloaded chapter satisfied by the low source, already flagged for upgrade.
+	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("c1").SetNumber(1).
+		SetState(entchapter.StateUpgradeAvailable).
+		SetSatisfiedByProviderID(spLow.ID).SetSatisfiedImportance(1).
+		SetFilename("old.cbz").SaveX(ctx)
+
+	good := encodeTestJPEG(t)
+	bc := &brokenPageClient{
+		pages: []sourceengine.Page{
+			{Index: 0, URL: "u0"},
+			{Index: 1, URL: "u1"}, // broken → fetch fails after page 0 is staged
+		},
+		pageData: map[string][]byte{"u0": good, "u1": good[:12]},
+	}
+	d := download.New(client, sourceengine.NewFetcher(bc, stagingRoot), sse.NewHub(),
+		download.Config{Storage: storage, StagingRoot: stagingRoot},
+		settings.Static{Retries: 3, Backoff: time.Hour, DownloadConc: 1}, nil)
+
+	if err := d.Upgrade(ctx, ch.ID); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	// The working copy is retained: the chapter returns to downloaded.
+	if st := client.Chapter.GetX(ctx, ch.ID).State; st != entchapter.StateDownloaded {
+		t.Fatalf("state = %s, want downloaded (upgrade failure keeps the working copy)", st)
+	}
+	// And the target's staging dir is GONE — no stale pages for a later attempt.
+	stagingDir := filepath.Join(stagingRoot, pcHigh.ID.String())
+	if _, err := os.Stat(stagingDir); !os.IsNotExist(err) {
+		t.Errorf("staging dir %s survived a failed upgrade (want cleaned); stat err = %v", stagingDir, err)
 	}
 }

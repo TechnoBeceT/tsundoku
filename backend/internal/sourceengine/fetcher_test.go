@@ -29,7 +29,7 @@ func TestFetcher_Fetch_Success(t *testing.T) {
 		fake.WithImage(7, "/ch/1/page/0", jpg, "image/jpeg"),
 		fake.WithImage(7, "/ch/1/page/1", png, "image/png"),
 	)
-	f := sourceengine.NewFetcher(client)
+	f := sourceengine.NewFetcher(client, t.TempDir())
 
 	var progressCalls [][2]int
 	ctx := fetcher.WithProgress(context.Background(), func(current, total int) {
@@ -85,11 +85,17 @@ func assertProgressCalls(t *testing.T, got, want [][2]int) {
 // client calls at all.
 func TestFetcher_Fetch_NonNumericProvider(t *testing.T) {
 	client := fake.New()
-	f := sourceengine.NewFetcher(client)
+	f := sourceengine.NewFetcher(client, t.TempDir())
 
 	_, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "disk-import", URL: "/ch/1"})
 	if err == nil {
 		t.Fatal("Fetch: want error for non-numeric provider, got nil")
+	}
+	// The distinct sentinel lets the dispatcher classify a disk-origin candidate as
+	// chapter-specific (charge the budget → eventually exhaust) rather than a
+	// transient source-down cooldown (retry forever).
+	if !errors.Is(err, sourceengine.ErrNotLiveSource) {
+		t.Errorf("Fetch error = %v, want it to wrap ErrNotLiveSource", err)
 	}
 	if client.CallCount("Pages") != 0 {
 		t.Errorf("Pages called %d times, want 0 (must fail before any client call)", client.CallCount("Pages"))
@@ -101,7 +107,7 @@ func TestFetcher_Fetch_NonNumericProvider(t *testing.T) {
 func TestFetcher_Fetch_PagesError(t *testing.T) {
 	wantErr := errors.New("boom")
 	client := fake.New(fake.WithError("Pages", wantErr))
-	f := sourceengine.NewFetcher(client)
+	f := sourceengine.NewFetcher(client, t.TempDir())
 
 	_, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
 	if err == nil || !errors.Is(err, wantErr) {
@@ -116,7 +122,7 @@ func TestFetcher_Fetch_PagesError(t *testing.T) {
 // attempt (never renders an empty "downloaded" CBZ).
 func TestFetcher_Fetch_NoPages(t *testing.T) {
 	client := fake.New(fake.WithPages(7, "/ch/1", nil))
-	f := sourceengine.NewFetcher(client)
+	f := sourceengine.NewFetcher(client, t.TempDir())
 
 	_, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
 	if !errors.Is(err, sourceengine.ErrNoPages) {
@@ -133,7 +139,7 @@ func TestFetcher_Fetch_ImageError(t *testing.T) {
 		fake.WithPages(7, "/ch/1", pages),
 		fake.WithError("Image", wantErr),
 	)
-	f := sourceengine.NewFetcher(client)
+	f := sourceengine.NewFetcher(client, t.TempDir())
 
 	got, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
 	if err == nil || !errors.Is(err, wantErr) {
@@ -172,7 +178,7 @@ func TestFetcher_Fetch_BrokenPageFailsWholeChapter(t *testing.T) {
 				fake.WithImage(7, "/ch/1/page/1", badPage, "image/jpeg"), // the broken middle page
 				fake.WithImage(7, "/ch/1/page/2", validPNG(t), "image/png"),
 			)
-			f := sourceengine.NewFetcher(client)
+			f := sourceengine.NewFetcher(client, t.TempDir())
 
 			got, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
 			if !errors.Is(err, sourceengine.ErrBrokenPage) {
@@ -194,7 +200,7 @@ func TestFetcher_Fetch_BrokenPageFailsWholeChapter(t *testing.T) {
 // before any client call.
 func TestFetcher_Fetch_ContextCancelled(t *testing.T) {
 	client := fake.New()
-	f := sourceengine.NewFetcher(client)
+	f := sourceengine.NewFetcher(client, t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -231,7 +237,7 @@ func TestFetcher_ExtFromContentType(t *testing.T) {
 				fake.WithPages(7, "/ch/1", pages),
 				fake.WithImage(7, "/p", validJPEG(t), tt.contentType),
 			)
-			f := sourceengine.NewFetcher(client)
+			f := sourceengine.NewFetcher(client, t.TempDir())
 
 			got, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
 			if err != nil {
@@ -281,7 +287,7 @@ func TestFetcher_Fetch_ContextCancelledMidLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wrapped := &cancelAfterFirstImage{Client: base, cancel: cancel}
-	f := sourceengine.NewFetcher(wrapped)
+	f := sourceengine.NewFetcher(wrapped, t.TempDir())
 
 	_, err := f.Fetch(ctx, fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
 	if err == nil {
@@ -296,5 +302,5 @@ func TestFetcher_Fetch_ContextCancelledMidLoop(t *testing.T) {
 // exercises the interface value, proving Fetcher satisfies
 // fetcher.ChapterFetcher at the call site the download dispatcher will use.
 func TestFetcher_ImplementsChapterFetcher(t *testing.T) {
-	var _ fetcher.ChapterFetcher = sourceengine.NewFetcher(fake.New())
+	var _ fetcher.ChapterFetcher = sourceengine.NewFetcher(fake.New(), t.TempDir())
 }

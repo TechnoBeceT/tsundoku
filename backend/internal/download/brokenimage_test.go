@@ -4,8 +4,10 @@
 // with a missing/broken panel" invariant: with the REAL, validating
 // sourceengine.Fetcher wired in, a multi-page chapter whose middle page is a
 // truncated image fails the WHOLE attempt cleanly — the chapter never reaches
-// downloaded, NO CBZ is written, and the source is bumped so the existing
-// per-source retry drives a later attempt.
+// downloaded, NO CBZ is written, and the source is COOLED DOWN (retry budget
+// untouched, next_attempt_at set) so a later cycle retries it. A broken page is
+// the image-step manifestation of an anti-bot block, so it must never spend the
+// per-source retry budget (ban-fix, GAP-099) — see download.isChapterSpecificFailure.
 //
 // Ported from the retired suwayomi-era internal/download/brokenimage_test.go
 // (GAP-083) onto the P2 engine-host Fetcher — same guarantee, different
@@ -66,7 +68,8 @@ func encodeTestJPEG(t *testing.T) []byte {
 // TestRunOnce_BrokenPage_ChapterFailsNoCBZ wires the real validating Fetcher and a
 // client whose second page is a truncated JPEG. After one RunOnce pass the chapter
 // must NOT be downloaded, no .cbz may exist under storage, the chapter must carry no
-// filename, and the source's per-source retry state must be bumped (so it retries).
+// filename, and the source must be COOLED DOWN (attempts stay 0, next_attempt_at
+// set) — a broken page is treated as a source-side block, never a budget charge.
 func TestRunOnce_BrokenPage_ChapterFailsNoCBZ(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -93,7 +96,7 @@ func TestRunOnce_BrokenPage_ChapterFailsNoCBZ(t *testing.T) {
 		},
 	}
 
-	d := download.New(client, sourceengine.NewFetcher(bc), sse.NewHub(),
+	d := download.New(client, sourceengine.NewFetcher(bc, mustTempDir(t)), sse.NewHub(),
 		download.Config{Storage: storage}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
 
 	if _, err := d.RunOnce(ctx); err != nil {
@@ -123,8 +126,14 @@ func TestRunOnce_BrokenPage_ChapterFailsNoCBZ(t *testing.T) {
 		t.Errorf("found CBZ files %v, want none (broken chapter must write no file)", cbz)
 	}
 
-	// The source is bumped so the chapter retries on a later cycle.
-	if got := client.ProviderChapter.GetX(ctx, pc.ID); got.Attempts != 1 {
-		t.Errorf("ProviderChapter.attempts = %d, want 1 (source bumped for retry)", got.Attempts)
+	// The source is COOLED DOWN, not bumped: a broken page is a suspected anti-bot
+	// block, so the retry budget is untouched (attempts stay 0) and only a cooldown
+	// (next_attempt_at) is set, so a later cycle retries without ever exhausting.
+	got2 := client.ProviderChapter.GetX(ctx, pc.ID)
+	if got2.Attempts != 0 {
+		t.Errorf("ProviderChapter.attempts = %d, want 0 (a broken page cools down, never charges the budget)", got2.Attempts)
+	}
+	if got2.NextAttemptAt == nil {
+		t.Error("ProviderChapter.next_attempt_at = nil, want set (cooldown scheduled)")
 	}
 }

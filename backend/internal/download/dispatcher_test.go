@@ -128,9 +128,11 @@ func assertSuccessProvenance(
 	}
 }
 
-// TestDispatcher_FailFirstThenSucceed verifies that a transient failure on the
-// first attempt is recorded correctly (state=failed, retries=1) and that a
-// second RunOnce call (once next_attempt_at has been reset to the past)
+// TestDispatcher_FailFirstThenSucceed verifies that a transient (unclassified /
+// ban-class) failure on the first attempt is recorded correctly — state=failed
+// with a per-source COOLDOWN (next_attempt_at set) but the retry budget UNCHANGED
+// (attempts stays 0), the ban fix's asymmetry (a transient blip must not spend
+// budget) — and that a second RunOnce (once the zero-backoff cooldown is past)
 // succeeds, ending with state=downloaded.
 func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 	ctx := context.Background()
@@ -153,8 +155,8 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 		Storage: storageDir,
 	}, settings.Static{Retries: 3, Backoff: 0}, nil)
 
-	// First run: should fail. The per-source retry counter lives on the
-	// ProviderChapter now (NOT the Chapter), so assert attempts there.
+	// First run: should fail. The per-source cooldown state lives on the
+	// ProviderChapter now (NOT the Chapter), so assert it there.
 	if _, err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("first RunOnce: %v", err)
 	}
@@ -166,8 +168,13 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 		t.Error("after first run: last_error should be set")
 	}
 	pc1 := providerChapterFor(ctx, t, client, "ch-retry")
-	if pc1.Attempts != 1 {
-		t.Errorf("after first run: want source attempts=1, got %d", pc1.Attempts)
+	// A transient/ban-class failure COOLS DOWN without spending budget: attempts
+	// stays 0 but next_attempt_at is set (the ban fix — a blip never drains).
+	if pc1.Attempts != 0 {
+		t.Errorf("after first run: want source attempts=0 (transient failure cools down, budget preserved), got %d", pc1.Attempts)
+	}
+	if pc1.NextAttemptAt == nil {
+		t.Error("after first run: source next_attempt_at should be set (cooldown)")
 	}
 	if pc1.LastError == "" {
 		t.Error("after first run: source last_error should be set")
@@ -220,7 +227,10 @@ func TestDispatcher_PermanentFailure(t *testing.T) {
 		SaveX(ctx)
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("ch-perm").SaveX(ctx)
 
-	alwaysErr := errors.New("permanent fetch error")
+	// A chapter-specific failure (not_found) spends the per-source retry budget, so
+	// the single source exhausts and the chapter reaches permanently_failed. (A ban-
+	// class failure would cool down without draining — see the ban-class tests.)
+	alwaysErr := errors.New("chapter not found")
 	f := fake.New(fake.WithError(alwaysErr))
 	d := download.New(client, f, hub, download.Config{
 		Storage: storageDir,

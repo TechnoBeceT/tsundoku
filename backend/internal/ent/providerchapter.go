@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
 // ProviderChapter is the model entity for the ProviderChapter schema.
@@ -45,6 +47,8 @@ type ProviderChapter struct {
 	LastError string `json:"last_error,omitempty"`
 	// NextAttemptAt holds the value of the "next_attempt_at" field.
 	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+	// PageLinks holds the value of the "page_links" field.
+	PageLinks []fetcher.PageLink `json:"page_links,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ProviderChapterQuery when eager-loading is set.
 	Edges        ProviderChapterEdges `json:"edges"`
@@ -76,6 +80,8 @@ func (*ProviderChapter) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case providerchapter.FieldPageLinks:
+			values[i] = new([]byte)
 		case providerchapter.FieldNumber:
 			values[i] = new(sql.NullFloat64)
 		case providerchapter.FieldProviderIndex, providerchapter.FieldPageCount, providerchapter.FieldSuwayomiChapterID, providerchapter.FieldAttempts:
@@ -189,6 +195,14 @@ func (_m *ProviderChapter) assignValues(columns []string, values []any) error {
 				_m.NextAttemptAt = new(time.Time)
 				*_m.NextAttemptAt = value.Time
 			}
+		case providerchapter.FieldPageLinks:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field page_links", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.PageLinks); err != nil {
+					return fmt.Errorf("unmarshal field page_links: %w", err)
+				}
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -276,6 +290,9 @@ func (_m *ProviderChapter) String() string {
 		builder.WriteString("next_attempt_at=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("page_links=")
+	builder.WriteString(fmt.Sprintf("%v", _m.PageLinks))
 	builder.WriteByte(')')
 	return builder.String()
 }

@@ -39,6 +39,8 @@ const (
 	FieldLastError = "last_error"
 	// FieldNextAttemptAt holds the string denoting the next_attempt_at field in the database.
 	FieldNextAttemptAt = "next_attempt_at"
+	// FieldPageLinks holds the string denoting the page_links field in the database.
+	FieldPageLinks = "page_links"
 	// EdgeSeriesProvider holds the string denoting the series_provider edge name in mutations.
 	EdgeSeriesProvider = "series_provider"
 	// Table holds the table name of the providerchapter in the database.
@@ -68,6 +70,7 @@ var Columns = []string{
 	FieldAttempts,
 	FieldLastError,
 	FieldNextAttemptAt,
+	FieldPageLinks,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).

@@ -7,6 +7,8 @@ import (
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
 	"github.com/google/uuid"
+
+	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
 // ProviderChapter is the per-provider availability feed for a chapter.
@@ -65,6 +67,15 @@ func (ProviderChapter) Fields() []ent.Field {
 		// "no cooldown pending" (never failed, or its cooldown has been cleared by a
 		// success or an owner retry-reset).
 		field.Time("next_attempt_at").Optional().Nillable(),
+		// page_links caches the ordered RESOLVED page list for this chapter from
+		// THIS source — each entry the (URL, ImageURL) pair the image-download call
+		// needs. The download engine resolves it ONCE on the first attempt (the
+		// source's Cloudflare-protected page-resolution step) and persists it here,
+		// so every retry SKIPS re-resolution and drives the image loop from these
+		// links directly. Cleared when a not_found image failure signals the links
+		// have gone stale (re-resolved next attempt). Additive/optional ⇒ zero-data
+		// migration (existing rows: nil = not yet resolved, resolved on first fetch).
+		field.JSON("page_links", []fetcher.PageLink{}).Optional(),
 	}
 }
 

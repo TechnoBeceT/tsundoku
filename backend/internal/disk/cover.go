@@ -86,7 +86,7 @@ func SaveCover(req CoverRequest) (filename string, err error) {
 
 	defer lockSidecar(seriesDir)()
 
-	if err := writeFileAtomic(filepath.Join(seriesDir, filename), req.Data); err != nil {
+	if err := WriteFileAtomic(filepath.Join(seriesDir, filename), req.Data); err != nil {
 		return "", fmt.Errorf("disk.SaveCover: %w", err)
 	}
 	removeStaleCovers(seriesDir, filename)
