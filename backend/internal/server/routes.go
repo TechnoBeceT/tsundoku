@@ -80,6 +80,7 @@ import (
 //   - /api/series/:id/providers                    — re-rank provider importances (RequireOwner).
 //   - /api/series/:id/providers/:providerId        — remove a source (RequireOwner).
 //   - /api/series/:id/providers/:providerId/ignore-fractional — flag a source as a fractional re-uploader (RequireOwner).
+//   - /api/series/:id/ignore-fractional          — flag ALL the series' sources as fractional re-uploaders in one call (RequireOwner).
 //   - /api/series/:id/cover                        — metadata-source cover proxy (RequireOwner).
 //   - /api/series/:id/providers/:providerId/cover  — per-provider cover proxy (RequireOwner).
 //   - /api/series/:id/metadata-source              — pin metadata source (RequireOwner).
@@ -97,6 +98,7 @@ import (
 //   - /api/categories/:id/default (PATCH)          — set the default landing category (RequireOwner).
 //   - /api/categories/:id (DELETE)                 — delete an empty category (RequireOwner).
 //   - /api/health                                  — library source-health scan (RequireOwner).
+//   - /api/library/fractionals                     — library-wide list of series with downloaded fractional chapters (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
 //   - /api/sources/metrics (GET)                   — per-source performance metrics + isSlow (RequireOwner).
@@ -252,6 +254,7 @@ func registerRoutes(
 	authed.PATCH("/series/:id/providers", seriesH.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", seriesH.RemoveProvider)
 	authed.PATCH("/series/:id/providers/:providerId/ignore-fractional", seriesH.SetIgnoreFractional)
+	authed.PATCH("/series/:id/ignore-fractional", seriesH.SetIgnoreFractionalForSeries)
 	authed.DELETE("/series/:id", seriesH.DeleteSeries)
 	authed.GET("/series/:id/dedupe-files", seriesH.DedupeFilesPreview)
 	authed.POST("/series/:id/dedupe-files", seriesH.DedupeFiles)
@@ -264,6 +267,7 @@ func registerRoutes(
 	authed.PATCH("/chapters/:id/progress", seriesH.SetProgress)
 	authed.POST("/series/:id/reading-progress", seriesH.SetReadingProgress)
 	authed.GET("/health", seriesH.LibraryHealth)
+	authed.GET("/library/fractionals", seriesH.LibraryFractionals)
 
 	// Phase-1 native metadata engine (spec/metadata-engine-phase1): cross-
 	// provider search, per-series identify, cover-candidate gallery, and cover

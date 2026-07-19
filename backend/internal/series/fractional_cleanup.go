@@ -338,6 +338,35 @@ func removableFractionals(row *ent.Series) []*ent.Chapter {
 	return out
 }
 
+// isDownloadedFractional reports whether a chapter is a DOWNLOADED fractional
+// with a file on disk — the IGNORE-AGNOSTIC predicate ("is there a fractional CBZ
+// here at all"). It is the first half of the removable rule, extracted so the two
+// callers that ask this question — isRemovableFractional (the strict removable
+// set) and downloadedFractionalCount (the library-wide list tally) — can never
+// drift on what "a downloaded fractional" means (§2 DRY).
+func isDownloadedFractional(ch *ent.Chapter) bool {
+	if ch.State != entchapter.StateDownloaded || ch.Filename == "" {
+		return false
+	}
+	return ch.Number != nil && chapterrange.IsFractional(*ch.Number)
+}
+
+// downloadedFractionalCount counts a series' DOWNLOADED fractional chapters,
+// IGNORE-AGNOSTIC — every fractional CBZ on disk regardless of any source's
+// ignore_fractional flag. It is the library Fractionals page's LIST CRITERION (a
+// series is listed when this is > 0) and the row's total; the broader superset of
+// removableFractionals (which additionally requires ≥1 carrier and EVERY carrier
+// ignored). Purely in-memory over the eager-loaded chapters — no query.
+func downloadedFractionalCount(row *ent.Series) int {
+	n := 0
+	for _, ch := range row.Edges.Chapters {
+		if isDownloadedFractional(ch) {
+			n++
+		}
+	}
+	return n
+}
+
 // isRemovableFractional is the removable rule for ONE chapter, given every source
 // whose feed carries its chapter_key. See FractionalCleanupPreview for the why —
 // especially why "every carrier is ignored" (not "its satisfying source is
@@ -357,10 +386,7 @@ func removableFractionals(row *ent.Series) []*ent.Chapter {
 // (DeleteSeries). The alternative — offering carrier-less fractionals — would let
 // this endpoint delete files nothing can ever restore, which is a worse trade.
 func isRemovableFractional(ch *ent.Chapter, carriers []*ent.SeriesProvider) bool {
-	if ch.State != entchapter.StateDownloaded || ch.Filename == "" {
-		return false
-	}
-	if ch.Number == nil || !chapterrange.IsFractional(*ch.Number) {
+	if !isDownloadedFractional(ch) {
 		return false
 	}
 	if len(carriers) == 0 {

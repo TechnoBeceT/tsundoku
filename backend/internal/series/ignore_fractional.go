@@ -2,14 +2,61 @@ package series
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entseries "github.com/technobecet/tsundoku/internal/ent/series"
+	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
+
+// SetIgnoreFractionalForSeries flags EVERY one of the series' sources as a
+// fractional re-uploader (ignore=true), or clears the flag on all of them
+// (ignore=false) — the whole-series convenience behind the library Fractionals
+// page's inline policy toggle. It is the bulk sibling of SetIgnoreFractional
+// (which flips ONE source): that page's toggle reads ON only when every source
+// already ignores, so flipping it must set them all together.
+//
+// Like the per-source form it DELETES NOTHING (never-auto-delete): already-ingested
+// fractional feed rows and downloaded CBZs are kept. After writing the flags it
+// runs the SAME reconcileIgnoredFractionals pass — parking a now-fully-ignored
+// UNDOWNLOADED fractional into the terminal ignored state (out of the queue), or
+// restoring one that regained a non-ignoring carrier back to wanted. Cleaning the
+// already-downloaded files stays the explicit, previewed RemoveFractionalChapters
+// action.
+//
+// An unknown series returns ErrSeriesNotFound (→404). A series with zero sources is
+// a no-op (the bulk update matches no rows). The flag write is one bulk UPDATE — a
+// single atomic statement, so it is all-or-nothing; the reconcile runs after it,
+// mirroring SetIgnoreFractional's update-then-reconcile order.
+func (s *Service) SetIgnoreFractionalForSeries(ctx context.Context, id uuid.UUID, ignore bool) error {
+	exists, err := s.client.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return fmt.Errorf("series.SetIgnoreFractionalForSeries: check series %s: %w", id, err)
+	}
+	if !exists {
+		return ErrSeriesNotFound
+	}
+
+	if err := s.client.SeriesProvider.Update().
+		Where(entseriesprovider.SeriesID(id)).
+		SetIgnoreFractional(ignore).
+		Exec(ctx); err != nil {
+		// Defensive path: the series' existence was just confirmed and a predicate
+		// update never errors on zero matches, so this is reachable only on a
+		// DB-level failure — not forceable in a black-box test.
+		return fmt.Errorf("series.SetIgnoreFractionalForSeries: update providers of series %s: %w", id, err)
+	}
+
+	if err := s.reconcileIgnoredFractionals(ctx, id); err != nil {
+		return fmt.Errorf("series.SetIgnoreFractionalForSeries: reconcile ignored fractionals for series %s: %w", id, err)
+	}
+	return nil
+}
 
 // reconcileIgnoredFractionals brings a series' UNDOWNLOADED fractional chapters
 // into agreement with its sources' current ignore_fractional flags, in BOTH

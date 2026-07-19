@@ -514,6 +514,36 @@ export interface paths {
         patch: operations["setProviderIgnoreFractional"];
         trace?: never;
     };
+    "/api/series/{id}/ignore-fractional": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Flag ALL the series' sources as fractional re-uploaders
+         * @description The whole-series ignore-fractional policy toggle behind the library
+         *     Fractionals page: sets (or clears) ignore_fractional on EVERY one of the
+         *     series' sources in one call, then reconciles the series' undownloaded
+         *     fractionals (parking a now-fully-ignored one, or restoring one that
+         *     regained a non-ignoring carrier).
+         *
+         *     It is the bulk sibling of the per-source
+         *     /providers/{providerId}/ignore-fractional route and shares its body shape.
+         *     It DELETES NOTHING — the already-downloaded fractional files are cleaned by
+         *     the separate, previewed /fractional-cleanup POST. Returns the updated
+         *     series detail (§16).
+         */
+        patch: operations["setSeriesIgnoreFractional"];
+        trace?: never;
+    };
     "/api/series/{id}/cover": {
         parameters: {
             query?: never;
@@ -1022,6 +1052,31 @@ export interface paths {
          * @description Returns every series that has at least one stale, erroring, or unavailable source.
          */
         get: operations["getLibraryHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/fractionals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library-wide list of series with downloaded fractional chapters
+         * @description Returns every series that has at least one DOWNLOADED fractional chapter,
+         *     regardless of ignore state, so the owner can set the ignore-fractional
+         *     policy and clean the leftover files from one place. Each row carries the
+         *     fractional vs removable counts and the whole-series ignore-policy state.
+         *     Sorted most-actionable first (removableCount desc, fractionalCount desc,
+         *     title). It deletes nothing.
+         */
+        get: operations["getLibraryFractionals"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2904,6 +2959,42 @@ export interface components {
             title: string;
             slug: string;
             sources: components["schemas"]["Provider"][];
+        };
+        /**
+         * @description The library-wide Fractionals page: every series that has at least one
+         *     DOWNLOADED fractional chapter, sorted most-actionable first
+         *     (removableCount desc, then fractionalCount desc, then title).
+         */
+        LibraryFractionals: {
+            series: components["schemas"]["SeriesFractionals"][];
+        };
+        /**
+         * @description One series with downloaded fractional chapters. fractionalCount is EVERY
+         *     downloaded fractional (ignore-agnostic — the reason it is listed, incl.
+         *     old un-flagged series); removableCount is how many are removable RIGHT NOW
+         *     under the strict resurrection-safe rule. The provider fields drive the
+         *     whole-series ignore toggle: it reads ON only when every source already
+         *     ignores fractionals (allProvidersIgnoring).
+         */
+        SeriesFractionals: {
+            /** Format: uuid */
+            seriesId: string;
+            title: string;
+            /** @description Resolved display title (falls back to the canonical title). */
+            displayName: string;
+            category: string;
+            /** @description Series cover proxy path, or "" when no cover is available. */
+            coverUrl: string;
+            /** @description All downloaded fractional chapters (ignore-agnostic). */
+            fractionalCount: number;
+            /** @description How many downloaded fractionals are removable right now. */
+            removableCount: number;
+            /** @description Number of sources the series has. */
+            providersTotal: number;
+            /** @description How many of those sources currently ignore fractionals. */
+            providersIgnoring: number;
+            /** @description True when every source ignores fractionals (the toggle's ON state). */
+            allProvidersIgnoring: boolean;
         };
         /**
          * @description Read-only snapshot of how much engine topology Tsundoku has captured into
@@ -5153,6 +5244,60 @@ export interface operations {
             };
         };
     };
+    setSeriesIgnoreFractional: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetIgnoreFractionalRequest"];
+            };
+        };
+        responses: {
+            /** @description Flags updated on every source. Returns the updated series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Malformed series UUID or missing ignoreFractional field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getSeriesCover: {
         parameters: {
             query?: never;
@@ -6294,6 +6439,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryHealth"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getLibraryFractionals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The series with downloaded fractionals (possibly empty). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryFractionals"];
                 };
             };
             /** @description Missing or invalid Bearer token. */

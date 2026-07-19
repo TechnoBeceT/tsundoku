@@ -100,6 +100,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/series/:id/providers", h.ReorderProviders)
 	authed.DELETE("/series/:id/providers/:providerId", h.RemoveProvider)
 	authed.PATCH("/series/:id/providers/:providerId/ignore-fractional", h.SetIgnoreFractional)
+	authed.PATCH("/series/:id/ignore-fractional", h.SetIgnoreFractionalForSeries)
 	authed.DELETE("/series/:id", h.DeleteSeries)
 	authed.GET("/series/:id/dedupe-files", h.DedupeFilesPreview)
 	authed.POST("/series/:id/dedupe-files", h.DedupeFiles)
@@ -111,6 +112,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.GET("/series/:id/chapters/:chapterId/pages/:n", h.ChapterPage)
 	authed.PATCH("/chapters/:id/progress", h.SetProgress)
 	authed.GET("/health", h.LibraryHealth)
+	authed.GET("/library/fractionals", h.LibraryFractionals)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -427,7 +429,9 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodGet, "/api/series/" + id + "/cover"},
 		{http.MethodGet, "/api/series/" + id + "/providers/" + id + "/cover"},
 		{http.MethodPatch, "/api/series/" + id + "/metadata-source"},
+		{http.MethodPatch, "/api/series/" + id + "/ignore-fractional"},
 		{http.MethodGet, "/api/health"},
+		{http.MethodGet, "/api/library/fractionals"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {
