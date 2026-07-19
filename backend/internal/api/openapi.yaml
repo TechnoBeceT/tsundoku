@@ -2632,6 +2632,16 @@ components:
           type: boolean
           description: Always true — the library-wide dedup sweep has been launched in the background.
 
+    MatchStarted:
+      type: object
+      description: Result of a POST /api/series/{id}/providers/{providerId}/match call — whether this call launched the background match/merge (202) or one for the same series+provider was already in flight (409).
+      required:
+        - started
+      properties:
+        started:
+          type: boolean
+          description: true if this call launched the match/merge; false if one for the same series+provider was already running (single-flight guard).
+
     LibraryFilters:
       type: object
       description: The set of boolean toggle-filters the library grid applies on top of the category tab + search. All default false (the whole library shows).
@@ -4096,7 +4106,7 @@ paths:
   /api/series/{id}/providers/{providerId}/match:
     post:
       operationId: matchDiskProvider
-      summary: Attribute existing on-disk chapters to a real source without re-downloading
+      summary: Attribute existing on-disk chapters to a real source without re-downloading (async)
       description: |
         Attributes a series' EXISTING imported/on-disk chapters — currently
         satisfied by the UNLINKED disk-origin provider at {providerId} (see
@@ -4107,7 +4117,17 @@ paths:
         ComicInfo rewritten to the source's identity, and the now-empty disk
         provider is deleted. A chapter the disk group had but the new source
         lacks keeps its prior watermark (never re-downloaded, never dropped).
-        Returns the refreshed series detail (§16 round-trip).
+
+        For a large disk provider this merge runs for MINUTES (a slow source
+        fetch + rewriting every CBZ zip over NFS), longer than any proxy/CDN
+        request budget, and a client disconnect used to cancel it mid-flight
+        (GAP-096). So it runs on a detached, time-bounded background goroutine and
+        returns **202 {started:true}** immediately; the merge always runs to
+        completion regardless of disconnect. On completion (success or failure) a
+        `provider.merged` SSE event carrying the series id is broadcast on
+        /api/progress, so the client refetches the series detail then. A second
+        request for the SAME series+provider while one is already in flight
+        returns **409 {started:false}** (single-flight guard).
       tags:
         - library
       security:
@@ -4134,17 +4154,22 @@ paths:
             schema:
               $ref: "#/components/schemas/AddProviderRequest"
       responses:
-        "200":
-          description: Chapters re-attributed. Returns the refreshed series detail.
+        "202":
+          description: >-
+            The match/merge was launched in the background. Watch for the
+            provider.merged SSE event on /api/progress, then refetch the series
+            detail.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SeriesDetail"
+                $ref: "#/components/schemas/MatchStarted"
         "400":
           description: >-
             Malformed id/providerId, invalid/missing source, mangaId, or
-            importance, the provider does not belong to the series, or the
-            provider is already a real (linked) source, not a disk-origin one.
+            importance. (Deeper failures — the provider does not belong to the
+            series, the provider is already a real linked source, or the source
+            fetch fails — now surface on the provider.merged SSE event's error
+            field, since the merge runs after the 202 is returned.)
           content:
             application/json:
               schema:
@@ -4155,24 +4180,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: No series with the given id, or the source id is not a currently-loaded source (a true membership miss).
+        "409":
+          description: A match/merge for the same series+provider is already in flight (single-flight guard).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "502":
-          description: The engine host could not be reached, or the source fetch failed.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "503":
-          description: The source exists but its anti-ban circuit-breaker is cooled down — retry shortly.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/MatchStarted"
 
   /api/series/{id}/providers/dedup:
     post:

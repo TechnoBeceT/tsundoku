@@ -29,3 +29,25 @@ func (s *Service) broadcastScan(eventType string, data ScanEvent) {
 	}
 	s.hub.Broadcast(sse.Event{Type: eventType, Data: json.RawMessage(raw)})
 }
+
+// MergeEvent is the SSE payload for the provider.merged completion event emitted
+// by StartMatchDiskProvider when an async match/merge finishes. SeriesID names
+// the affected series so the frontend refetches exactly that series' detail;
+// Error is set (and non-empty) only when the background merge failed, so the UI
+// can surface the failure instead of silently showing stale state.
+type MergeEvent struct {
+	SeriesID string `json:"seriesId"`
+	Error    string `json:"error,omitempty"`
+}
+
+// broadcastMerge emits the provider.merged SSE event. JSON-encoding failures are
+// discarded — a missing event beats crashing the background goroutine (mirrors
+// broadcastScan). Unreachable in practice: MergeEvent is strings only, which
+// Marshal cannot fail on; documented rather than faked for coverage.
+func (s *Service) broadcastMerge(data MergeEvent) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "provider.merged", Data: json.RawMessage(raw)})
+}

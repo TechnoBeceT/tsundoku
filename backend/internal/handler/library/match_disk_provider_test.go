@@ -58,14 +58,17 @@ func newMatchClient() *fake.Client {
 // newEnvWithMatchIngest is like newEnvWithStorage but wires a REAL
 // ingest.Ingest over newMatchClient() (instead of nil) and registers the
 // MatchDiskProvider route, so the happy-path round-trip test below can
-// exercise the full handler → service → ingest chain.
+// exercise the full handler → service → ingest chain. The SSE hub is stored on
+// the env so a test can subscribe and wait for the provider.merged completion
+// event the now-async match broadcasts.
 func newEnvWithMatchIngest(t *testing.T, storage string) *testEnv {
 	t.Helper()
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
 	seriesSvc := series.NewService(client, storage, 14)
 	ing := ingest.NewIngest(newMatchClient(), client)
-	svc := library.NewService(client, ing, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	hub := sse.NewHub()
+	svc := library.NewService(client, ing, nil, seriesSvc, func() {}, storage, hub)
 	h := handler.NewHandler(svc)
 
 	e := echo.New()
@@ -79,7 +82,7 @@ func newEnvWithMatchIngest(t *testing.T, storage string) *testEnv {
 	if err != nil {
 		t.Fatalf("Issue token: %v", err)
 	}
-	return &testEnv{e: e, client: client, token: token, svc: svc}
+	return &testEnv{e: e, client: client, token: token, svc: svc, hub: hub}
 }
 
 // TestMatchDiskProvider_RequireOwner proves the new route is behind
@@ -143,29 +146,75 @@ func TestMatchDiskProvider_MissingURL_400(t *testing.T) {
 	}
 }
 
-// TestMatchDiskProvider_UnknownProvider400s proves an unknown providerId (not
-// belonging to the series) maps to 400 via ErrProviderNotInSeries. The lookup
-// that returns ErrProviderNotInSeries happens before the service ever calls
-// ingest, so the source id need not resolve to anything real — only the
-// handler-level url requirement must be satisfied to reach the service.
-func TestMatchDiskProvider_UnknownProvider400s(t *testing.T) {
+// TestMatchDiskProvider_UnknownProviderSurfacesOnSSE proves that a "deeper"
+// failure — an unknown providerId (not belonging to the series) — now surfaces on
+// the provider.merged SSE event's error field, NOT as a synchronous 4xx. With the
+// async hardening (GAP-096) the handler validates only the request SHAPE
+// synchronously (bad id/body → 400, tested above) and returns 202 for a
+// well-formed request; the ErrProviderNotInSeries lookup happens inside the
+// detached merge, so its failure rides the completion event the FE listens on.
+func TestMatchDiskProvider_UnknownProviderSurfacesOnSSE(t *testing.T) {
 	storage := t.TempDir()
 	env := newEnvWithMatchIngest(t, storage)
 	ctx := context.Background()
 	ser := env.client.Series.Create().SetTitle("X").SetSlug("x").SaveX(ctx)
 
+	events, unsubscribe := env.hub.Subscribe()
+	defer unsubscribe()
+
 	path := fmt.Sprintf("/api/series/%s/providers/%s/match", ser.ID, uuid.New())
 	rec := env.do("POST", path, `{"source":"weeb","url":"/manga/1","importance":1}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("unknown provider: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("unknown provider: want 202 (well-formed request, launched async), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	assertStarted(t, rec.Body.Bytes(), true)
+
+	// The background merge fails (provider not in series) and reports it on the
+	// completion event's error field — a CLEAN, caller-safe sentinel message (the
+	// SSE side-channel genericises exactly like the central error middleware).
+	// Waiting also ensures the goroutine finishes before the testdb is torn down.
+	me := awaitMergeEvent(t, events, ser.ID.String())
+	if me.Error != "provider does not belong to series" {
+		t.Fatalf("provider.merged Error = %q, want the clean sentinel message", me.Error)
 	}
 }
 
-// TestMatchDiskProvider_HappyPath exercises the full round-trip through the
-// real HTTP handler: a disk-imported series' unlinked provider is matched to
-// a real engine-host source, and the response carries the refreshed
-// SeriesDetailDTO with the disk provider gone and the new one carrying the
-// chosen importance and both re-pointed chapters.
+// awaitMergeEvent blocks until a provider.merged SSE event for wantSeriesID
+// arrives (returning it) or a timeout fires — the error-tolerant sibling of
+// waitForMerge used by tests that expect the merge to FAIL.
+func awaitMergeEvent(t *testing.T, events <-chan sse.Event, wantSeriesID string) library.MergeEvent {
+	t.Helper()
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type != "provider.merged" {
+				continue
+			}
+			raw, err := json.Marshal(ev.Data)
+			if err != nil {
+				t.Fatalf("marshal merge event: %v", err)
+			}
+			var me library.MergeEvent
+			if err := json.Unmarshal(raw, &me); err != nil {
+				t.Fatalf("decode merge event: %v", err)
+			}
+			if me.SeriesID == wantSeriesID {
+				return me
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for provider.merged SSE event")
+		}
+	}
+}
+
+// TestMatchDiskProvider_HappyPath exercises the full async round-trip through
+// the real HTTP handler: a disk-imported series' unlinked provider is matched to
+// a real engine-host source. The endpoint returns 202 {started:true}
+// immediately, the merge runs detached in the background, a provider.merged SSE
+// event fires on completion, and the subsequently-fetched SeriesDetail shows the
+// disk provider gone and the new one carrying the chosen importance and both
+// re-pointed chapters.
 func TestMatchDiskProvider_HappyPath(t *testing.T) {
 	storage := t.TempDir()
 	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
@@ -187,18 +236,53 @@ func TestMatchDiskProvider_HappyPath(t *testing.T) {
 	ser := env.client.Series.Query().OnlyX(ctx)
 	diskSP := env.client.SeriesProvider.Query().OnlyX(ctx)
 
+	// Subscribe BEFORE the request so the provider.merged completion event can't
+	// be missed (it fires when the detached merge finishes).
+	events, unsubscribe := env.hub.Subscribe()
+	defer unsubscribe()
+
 	path := fmt.Sprintf("/api/series/%s/providers/%s/match", ser.ID, diskSP.ID)
 	body := fmt.Sprintf(`{"source":"%d","url":%q,"importance":5}`, weebSourceID, weebMangaURL)
 	rec := env.do("POST", path, body)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("match = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("match = %d, want 202 (%s)", rec.Code, rec.Body.String())
 	}
+	assertStarted(t, rec.Body.Bytes(), true)
 
-	var got series.SeriesDetailDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
+	// Wait for the async merge to complete via its SSE completion event.
+	waitForMerge(t, events, ser.ID.String())
+
+	// Now the authoritative detail reflects the completed merge (§16 — the FE
+	// refetches on the event; here we fetch via the service the same way).
+	got, err := env.svc.SeriesDetail(ctx, ser.ID)
+	if err != nil {
+		t.Fatalf("SeriesDetail after merge: %v", err)
 	}
 	assertMatchedProviderDTO(t, got)
+}
+
+// assertStarted decodes a {started:bool} match/scan response body and asserts it.
+func assertStarted(t *testing.T, body []byte, want bool) {
+	t.Helper()
+	var resp struct {
+		Started bool `json:"started"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode started response: %v (%s)", err, body)
+	}
+	if resp.Started != want {
+		t.Fatalf("started = %v, want %v", resp.Started, want)
+	}
+}
+
+// waitForMerge blocks until a SUCCESSFUL provider.merged SSE event for
+// wantSeriesID arrives (failing if one reports an error) or a timeout fires. It
+// mirrors how the FE waits on the event before refetching.
+func waitForMerge(t *testing.T, events <-chan sse.Event, wantSeriesID string) {
+	t.Helper()
+	if me := awaitMergeEvent(t, events, wantSeriesID); me.Error != "" {
+		t.Fatalf("provider.merged reported error: %s", me.Error)
+	}
 }
 
 // assertMatchedProviderDTO checks the single-provider shape a successful

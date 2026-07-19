@@ -2,17 +2,18 @@
  * useSeriesDetail — matchDiskProvider (the no-re-download Match action) + the
  * Sources panel's provider feed (coverage straight from the series response).
  *
- * matchDiskProvider pins:
+ * matchDiskProvider pins (ASYNC contract, GAP-096 — the merge runs in the
+ * background and returns 202):
  *   1. matchDiskProvider(providerId, payload) POSTs
  *      /api/series/{id}/providers/{providerId}/match with the exact
  *      {source, mangaId, importance, scanlator} body.
- *   2. On success it reseeds `series` DIRECTLY from the response — NOT via a
- *      second GET /api/series/{id} round-trip (mutate-reseeds-from-response,
- *      §16) — and resolves true.
- *   3. On failure it sets `error` (never swallowed) and resolves false,
- *      leaving the previously-loaded `series` untouched.
- *   4. `matchBusy` flips true for the duration of the call and back to false
- *      once it resolves, win or lose.
+ *   2. On 202 (launched) it does NOT reseed inline — it keeps `matchBusy` true
+ *      + shows "Matching in progress…" and resolves true (so the dialog closes);
+ *      the completion arrives via the `provider.merged` SSE event.
+ *   3. On that SSE completion for this series it clears `matchBusy` and either
+ *      refetches (success) or surfaces `error` (failure) — never swallowed.
+ *   4. A hard failure to even START (not 202/409) sets `error`, resolves false,
+ *      clears `matchBusy`, and leaves the previously-loaded `series` untouched.
  *
  * Only matchDiskProvider is under test in that section — the rest of
  * useSeriesDetail's mutations (setMonitored, removeSource, …) share the same
@@ -31,7 +32,8 @@
  * vi.mock is hoisted by Vitest's transform so the apiClient mock is in place
  * before useSeriesDetail.ts is evaluated, regardless of import order here.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { nextTick, ref } from 'vue'
 import { useSeriesDetail } from './useSeriesDetail'
 
 interface Call { method: string, path: string, body?: unknown, params?: unknown }
@@ -162,7 +164,9 @@ vi.mock('~/utils/api/client', () => ({
     GET: vi.fn().mockImplementation((path: string, opts?: { params?: { path?: Record<string, unknown> } }) => {
       calls.push({ method: 'GET', path, params: opts?.params?.path })
       if (path === '/api/series/{id}') {
-        return Promise.resolve({ data: initialDetail, error: null, response: new Response() })
+        // A mutable seam so a post-merge refetch (fired by the provider.merged
+        // SSE event) can return the consolidated detail, proving the reseed.
+        return Promise.resolve({ data: seriesDetailResponse, error: null, response: new Response() })
       }
       if (path === '/api/series/{id}/fractional-cleanup') {
         if (!nextFractionalPreviewOk) {
@@ -193,7 +197,9 @@ vi.mock('~/utils/api/client', () => ({
         if (!nextMatchOk) {
           return Promise.resolve({ data: null, error: { message: 'match failed' }, response: new Response(null, { status: 400 }) })
         }
-        return Promise.resolve({ data: matchedDetail, error: null, response: new Response(null, { status: 200 }) })
+        // ASYNC: the merge is launched and runs detached; completion arrives via
+        // the provider.merged SSE event (see fireProgress in the tests).
+        return Promise.resolve({ data: { started: true }, error: null, response: new Response(null, { status: 202 }) })
       }
       if (path === '/api/series/{id}/providers/dedup') {
         if (!nextDedupOk) {
@@ -244,10 +250,49 @@ vi.mock('~/utils/api/client', () => ({
   setUnauthorizedHandler: vi.fn(),
 }))
 
-describe('useSeriesDetail — matchDiskProvider', () => {
+// The body a GET /api/series/{id} returns — mutable so a post-merge refetch can
+// return the consolidated detail (defaults back to initialDetail each test).
+let seriesDetailResponse: unknown
+
+// useProgressStream is mocked so tests can capture the registered
+// `provider.merged` handler and fire it manually to simulate the completion SSE,
+// and toggle `connected` to simulate an SSE stream drop+reconnect.
+const progressHandlers = new Map<string, Set<(d: unknown) => void>>()
+const progressConnected = ref(true)
+function fireProgress(event: string, data: unknown): void {
+  progressHandlers.get(event)?.forEach(cb => cb(data))
+}
+
+// flushAll drains the microtask queue + Vue's scheduler so an ASYNC watcher body
+// (the reconnect reconcile awaits refresh()) fully settles before assertions.
+async function flushAll(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await Promise.resolve()
+    await nextTick()
+  }
+}
+vi.mock('~/composables/useProgressStream', () => ({
+  useProgressStream: () => ({
+    on: (event: string, cb: (d: unknown) => void) => {
+      if (!progressHandlers.has(event)) progressHandlers.set(event, new Set())
+      progressHandlers.get(event)!.add(cb)
+      return () => progressHandlers.get(event)?.delete(cb)
+    },
+    connected: progressConnected,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  }),
+}))
+
+describe('useSeriesDetail — matchDiskProvider (async)', () => {
   beforeEach(() => {
     calls = []
     nextMatchOk = true
+    seriesDetailResponse = initialDetail
+    progressConnected.value = true
+  })
+  afterEach(() => {
+    progressHandlers.clear()
   })
 
   it('POSTs the match endpoint with the path params and exact body', async () => {
@@ -262,37 +307,117 @@ describe('useSeriesDetail — matchDiskProvider', () => {
     expect(postCall!.body).toEqual({ source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1, scanlator: '' })
   })
 
-  it('reseeds series directly from the response on success, without a second GET', async () => {
-    const { series, refresh, matchDiskProvider } = useSeriesDetail('series-1')
+  it('on 202 keeps matchBusy + shows in-progress, resolves true, and does NOT reseed yet', async () => {
+    const { series, matchBusy, dedupMessage, refresh, matchDiskProvider } = useSeriesDetail('series-1')
     await refresh()
     expect(series.value?.providers[0]?.linked).toBe(false)
 
-    const getCountBefore = calls.filter(c => c.method === 'GET' && c.path === '/api/series/{id}').length
     const ok = await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
 
-    expect(ok).toBe(true)
+    expect(ok).toBe(true) // dialog closes
+    expect(matchBusy.value).toBe(true) // still "matching…" until the SSE lands
+    expect(dedupMessage.value).toBe('Matching in progress…')
+    // Series is UNCHANGED — the merge has not completed yet.
+    expect(series.value?.providers[0]?.id).toBe('disk-provider-1')
+    expect(series.value?.providers[0]?.linked).toBe(false)
+  })
+
+  it('refetches + clears the busy state when the provider.merged SSE event arrives', async () => {
+    const { series, matchBusy, dedupMessage, refresh, matchDiskProvider } = useSeriesDetail('series-1')
+    await refresh()
+    await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
+
+    // The backend finishes the merge; the refetch now returns the consolidated detail.
+    seriesDetailResponse = matchedDetail
+    fireProgress('provider.merged', { seriesId: 'series-1' })
+    await nextTick()
+    await nextTick()
+
+    expect(matchBusy.value).toBe(false)
+    expect(dedupMessage.value).toBe('Match complete')
     expect(series.value?.providers).toHaveLength(1)
     expect(series.value?.providers[0]?.id).toBe('real-provider-1')
     expect(series.value?.providers[0]?.linked).toBe(true)
-    // No extra GET /api/series/{id} fired — the reseed came from the POST response.
-    const getCountAfter = calls.filter(c => c.method === 'GET' && c.path === '/api/series/{id}').length
-    expect(getCountAfter).toBe(getCountBefore)
   })
 
-  it('failure sets error, resolves false, and never swallows or touches the existing series', async () => {
+  it('ignores a provider.merged event for a DIFFERENT series', async () => {
+    const { matchBusy, refresh, matchDiskProvider } = useSeriesDetail('series-1')
+    await refresh()
+    await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
+
+    fireProgress('provider.merged', { seriesId: 'some-other-series' })
+    await nextTick()
+
+    expect(matchBusy.value).toBe(true) // untouched — the event was for another series
+  })
+
+  it('surfaces the error (never swallowed) when the provider.merged event reports a failure', async () => {
+    const { series, error, matchBusy, dedupMessage, refresh, matchDiskProvider } = useSeriesDetail('series-1')
+    await refresh()
+    await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
+
+    fireProgress('provider.merged', { seriesId: 'series-1', error: 'provider does not belong to series' })
+    await nextTick()
+
+    expect(matchBusy.value).toBe(false)
+    expect(error.value).toBe('provider does not belong to series')
+    expect(dedupMessage.value).toBeNull()
+    // Series untouched — the failed merge changed nothing.
+    expect(series.value?.providers[0]?.linked).toBe(false)
+  })
+
+  it('an SSE reconnect while matching refetches and clears busy once the merge finished (missed event)', async () => {
+    const { series, matchBusy, dedupMessage, refresh, matchDiskProvider } = useSeriesDetail('series-1')
+    await refresh()
+    await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
+    expect(matchBusy.value).toBe(true)
+
+    // The merge finished server-side (disk twin gone) but its provider.merged
+    // event was MISSED because the stream dropped. The stream now reconnects.
+    // (nextTick between the toggles so the watcher observes the drop — Vue would
+    // otherwise batch false→true into a no-op.)
+    seriesDetailResponse = matchedDetail
+    progressConnected.value = false
+    await nextTick()
+    progressConnected.value = true
+    await flushAll()
+
+    expect(matchBusy.value).toBe(false)
+    expect(dedupMessage.value).toBe('Match complete')
+    expect(series.value?.providers[0]?.id).toBe('real-provider-1')
+  })
+
+  it('an SSE reconnect while the merge is still running keeps the busy state', async () => {
+    const { matchBusy, refresh, matchDiskProvider } = useSeriesDetail('series-1')
+    await refresh()
+    await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
+
+    // Still running: the refetch still shows the disk provider (disk-provider-1),
+    // so the reconnect reconcile must NOT clear the indicator.
+    seriesDetailResponse = initialDetail
+    progressConnected.value = false
+    await nextTick()
+    progressConnected.value = true
+    await flushAll()
+
+    expect(matchBusy.value).toBe(true)
+  })
+
+  it('a hard failure to START sets error, resolves false, clears busy, and leaves series untouched', async () => {
     nextMatchOk = false
-    const { series, error, refresh, matchDiskProvider } = useSeriesDetail('series-1')
+    const { series, error, matchBusy, refresh, matchDiskProvider } = useSeriesDetail('series-1')
     await refresh()
 
     const ok = await matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
 
     expect(ok).toBe(false)
+    expect(matchBusy.value).toBe(false)
     expect(error.value).toBe('match failed')
     expect(series.value?.providers[0]?.id).toBe('disk-provider-1')
     expect(series.value?.providers[0]?.linked).toBe(false)
   })
 
-  it('matchBusy flips true during the call and back to false once it resolves', async () => {
+  it('matchBusy flips true synchronously when the call starts', async () => {
     const { matchBusy, refresh, matchDiskProvider } = useSeriesDetail('series-1')
     await refresh()
     expect(matchBusy.value).toBe(false)
@@ -300,8 +425,7 @@ describe('useSeriesDetail — matchDiskProvider', () => {
     const promise = matchDiskProvider('disk-provider-1', { source: 'src-1', mangaId: 42, url: '/manga/42', importance: 1 })
     expect(matchBusy.value).toBe(true)
     await promise
-
-    expect(matchBusy.value).toBe(false)
+    expect(matchBusy.value).toBe(true) // stays true until the SSE completion
   })
 })
 

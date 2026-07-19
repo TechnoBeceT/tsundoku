@@ -27,6 +27,10 @@ import { ref } from 'vue'
  *     chapters this cycle. Forwarded raw via `on()`; the default layout renders it
  *     as an in-app toast (only when the tab is visible — the service worker's Web
  *     Push handler shows the OS notification when it is not).
+ *   provider.merged → payload { seriesId, error? } — an async Match/merge
+ *     (StartMatchDiskProvider) finished for that series. Forwarded raw via `on()`;
+ *     useSeriesDetail listens for its own series id to clear the "matching…" state
+ *     and refetch (or surface `error` on failure). Fires on success AND failure.
  *   scan.start | scan.progress | scan.done — the Library-Import scan (see
  *     useScanLibrary): scan.start carries no payload; scan.progress carries
  *     { processed, total, path }; scan.done is TERMINAL and carries either
@@ -78,6 +82,7 @@ const NAMED_EVENTS = [
   'sources.summary',
   'extensions.checked',
   'chapter.new',
+  'provider.merged',
   'scan.start',
   'scan.progress',
   'scan.done',

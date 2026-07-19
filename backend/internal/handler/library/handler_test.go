@@ -41,6 +41,10 @@ type testEnv struct {
 	// now launches the scan asynchronously (StartScan) and returns before any
 	// row is guaranteed to exist.
 	svc *library.Service
+	// hub is the same SSE hub wired into svc — non-nil only for envs built via
+	// newEnvWithMatchIngest, whose async MatchDiskProvider broadcasts a
+	// provider.merged completion event a test can wait on.
+	hub *sse.Hub
 }
 
 // newEnv wires a fully-authenticated Echo instance with the library routes

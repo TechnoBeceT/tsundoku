@@ -84,6 +84,15 @@ type Service struct {
 	scanMu   sync.Mutex
 	scanning bool
 
+	// matchMu guards matchRunning, the per-(series,provider) in-flight set
+	// consumed by StartMatchDiskProvider (match_disk_provider_async.go): a match
+	// runs detached in the background, so a double-click / retry while one is
+	// already in flight for the SAME series+provider must not launch a second
+	// concurrent merge racing the first over the same CBZs. Lazily initialised
+	// under the lock so every NewService call site is unaffected.
+	matchMu      sync.Mutex
+	matchRunning map[string]struct{}
+
 	// autoIdentifier fires the Phase-1 native metadata engine's background
 	// auto-identify pass after a successful Import (see autoidentify.go). Nil
 	// ⇒ no auto-identify (every existing NewService call site is unaffected)

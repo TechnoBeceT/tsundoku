@@ -235,3 +235,102 @@ func TestUndoRelabelChapterFile_RestoresOriginal(t *testing.T) {
 	assertComicInfo(t, oldPath, "mangadex", "Alpha", 1)
 	assertSidecarEntry(t, filepath.Join(storage, "Manga", "My Series"), "1", "mangadex", oldFilename)
 }
+
+// relabelToWeeb is the shared "mangadex/Alpha → weeb" relabel meta for the
+// idempotency tests below: it always renames (different provider/scanlator) so
+// the OLD→NEW rename path is exercised.
+func relabelToWeeb(oldMeta disk.RenderMeta) disk.RenderMeta {
+	m := oldMeta
+	m.Provider = "weeb"
+	m.ProviderLabel = "weeb"
+	m.Scanlator = ""
+	m.Importance = 5
+	return m
+}
+
+// TestRelabelChapterFile_IdempotentWhenAlreadyAtDestination is the GAP-096
+// retry-safety proof: after a first successful relabel (OLD gone, NEW present),
+// re-issuing the SAME relabel with the ORIGINAL oldFilename — exactly what a
+// retry of a partially-completed Match does, since the DB still records the old
+// filename until commitMatch runs — must SUCCEED (the file is already at its
+// destination), never ENOENT-500. The page images and the new provenance are
+// preserved.
+func TestRelabelChapterFile_IdempotentWhenAlreadyAtDestination(t *testing.T) {
+	t.Parallel()
+	storage := t.TempDir()
+	num := 1.0
+	oldMeta := disk.RenderMeta{
+		Provider:      "mangadex",
+		ProviderLabel: "mangadex",
+		Scanlator:     "Alpha",
+		Language:      "en",
+		SeriesTitle:   "My Series",
+		Category:      "Manga",
+		Number:        &num,
+		ChapterKey:    "1",
+		Importance:    1,
+	}
+	oldFilename := renderOneChapter(t, storage, oldMeta)
+	seriesDir := filepath.Join(storage, "Manga", "My Series")
+	wantImages := countImageEntries(t, filepath.Join(seriesDir, oldFilename))
+
+	newMeta := relabelToWeeb(oldMeta)
+
+	// First relabel: OLD -> NEW (the normal path).
+	newFilename, _, err := disk.RelabelChapterFile(storage, newMeta, oldFilename)
+	if err != nil {
+		t.Fatalf("first RelabelChapterFile: %v", err)
+	}
+	newPath := filepath.Join(seriesDir, newFilename)
+	assertFileGone(t, filepath.Join(seriesDir, oldFilename))
+	assertFilePresent(t, newPath)
+
+	// Second relabel with the SAME original oldFilename — OLD is gone, NEW exists.
+	// This is the idempotent-retry case: it must succeed without a rename, not
+	// ENOENT-500, and leave the file at NEW with its images + provenance intact.
+	againFilename, _, err := disk.RelabelChapterFile(storage, newMeta, oldFilename)
+	if err != nil {
+		t.Fatalf("idempotent retry RelabelChapterFile: want success, got %v", err)
+	}
+	if againFilename != newFilename {
+		t.Fatalf("retry newFilename = %q, want %q (the same destination)", againFilename, newFilename)
+	}
+	assertFilePresent(t, newPath)
+	assertFileGone(t, filepath.Join(seriesDir, oldFilename))
+	assertImageCount(t, newPath, wantImages)
+	assertComicInfo(t, newPath, "weeb", "", 5)
+	assertSidecarEntry(t, seriesDir, "1", "weeb", newFilename)
+}
+
+// TestRelabelChapterFile_ErrorsWhenBothPathsMissing proves the idempotency
+// carve-out is NARROW: it only tolerates an already-at-destination file. When
+// BOTH the old and new paths are missing (a genuinely vanished archive), the
+// rename still fails and the error is surfaced — a missing file is not silently
+// treated as success.
+func TestRelabelChapterFile_ErrorsWhenBothPathsMissing(t *testing.T) {
+	t.Parallel()
+	storage := t.TempDir()
+	num := 1.0
+	oldMeta := disk.RenderMeta{
+		Provider:      "mangadex",
+		ProviderLabel: "mangadex",
+		Scanlator:     "Alpha",
+		Language:      "en",
+		SeriesTitle:   "My Series",
+		Category:      "Manga",
+		Number:        &num,
+		ChapterKey:    "1",
+		Importance:    1,
+	}
+	// Render then DELETE the file, so neither OLD nor the computed NEW exists.
+	oldFilename := renderOneChapter(t, storage, oldMeta)
+	seriesDir := filepath.Join(storage, "Manga", "My Series")
+	if err := os.Remove(filepath.Join(seriesDir, oldFilename)); err != nil {
+		t.Fatalf("remove old file: %v", err)
+	}
+
+	newMeta := relabelToWeeb(oldMeta)
+	if _, _, err := disk.RelabelChapterFile(storage, newMeta, oldFilename); err == nil {
+		t.Fatal("RelabelChapterFile: want an error when both OLD and NEW are missing, got nil")
+	}
+}

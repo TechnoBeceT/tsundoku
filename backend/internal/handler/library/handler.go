@@ -251,14 +251,33 @@ func (h *Handler) AddProviders(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// matchStartedResponse is the wire shape returned by POST
+// /api/series/:id/providers/:providerId/match: {"started":true} on 202 once the
+// async match/merge is launched, or {"started":false} on 409 when one is already
+// in flight for the same series+provider.
+type matchStartedResponse struct {
+	Started bool `json:"started"`
+}
+
 // MatchDiskProvider handles POST /api/series/:id/providers/:providerId/match.
 //
 // It attributes a series' EXISTING on-disk chapters — currently satisfied by
 // the unlinked disk-origin provider at :providerId (see ProviderDTO.Linked)
 // — to a real engine-host source {source, url, scanlator, importance}
-// WITHOUT re-downloading them (see library.Service.MatchDiskProvider). Returns
-// the refreshed series.SeriesDetailDTO (§16). mangaId is bound but unused
-// (kept for FE wire compatibility).
+// WITHOUT re-downloading them (see library.Service.MatchDiskProvider). mangaId
+// is bound but unused (kept for FE wire compatibility).
+//
+// For a large disk provider the merge legitimately runs for MINUTES (a slow
+// Cloudflare source fetch + rewriting every CBZ zip over NFS), far longer than
+// any CDN/proxy request budget, and a client disconnect used to cancel it
+// mid-flight — stranding a duplicate provider + half-relabeled CBZs (GAP-096).
+// So — like POST /api/sources/warmup — it runs the merge on a detached,
+// time-bounded background goroutine (StartMatchDiskProvider) and returns 202
+// immediately; the frontend refetches on the provider.merged SSE event the
+// background op emits on completion. Returns 202 {started:true} once launched, or
+// 409 {started:false} if a match for the same series+provider is already in
+// flight (single-flight guard). The request body is validated SYNCHRONOUSLY, so a
+// malformed request still gets its 400 before anything is launched.
 func (h *Handler) MatchDiskProvider(c echo.Context) error {
 	id, err := validateID(c.Param("id"))
 	if err != nil {
@@ -276,11 +295,11 @@ func (h *Handler) MatchDiskProvider(c echo.Context) error {
 		return err
 	}
 
-	out, err := h.svc.MatchDiskProvider(c.Request().Context(), id, providerID, body.Source, body.URL, body.Scanlator, body.Importance)
-	if err != nil {
-		return mapServiceError(err)
+	started := h.svc.StartMatchDiskProvider(c.Request().Context(), id, providerID, body.Source, body.URL, body.Scanlator, body.Importance)
+	if !started {
+		return c.JSON(http.StatusConflict, matchStartedResponse{Started: false})
 	}
-	return c.JSON(http.StatusOK, out)
+	return c.JSON(http.StatusAccepted, matchStartedResponse{Started: true})
 }
 
 // providerDedupResponse is the wire shape returned by POST

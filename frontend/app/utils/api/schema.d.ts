@@ -314,7 +314,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Attribute existing on-disk chapters to a real source without re-downloading
+         * Attribute existing on-disk chapters to a real source without re-downloading (async)
          * @description Attributes a series' EXISTING imported/on-disk chapters — currently
          *     satisfied by the UNLINKED disk-origin provider at {providerId} (see
          *     Provider.linked) — to a real Suwayomi source {source, mangaId,
@@ -324,7 +324,17 @@ export interface paths {
          *     ComicInfo rewritten to the source's identity, and the now-empty disk
          *     provider is deleted. A chapter the disk group had but the new source
          *     lacks keeps its prior watermark (never re-downloaded, never dropped).
-         *     Returns the refreshed series detail (§16 round-trip).
+         *
+         *     For a large disk provider this merge runs for MINUTES (a slow source
+         *     fetch + rewriting every CBZ zip over NFS), longer than any proxy/CDN
+         *     request budget, and a client disconnect used to cancel it mid-flight
+         *     (GAP-096). So it runs on a detached, time-bounded background goroutine and
+         *     returns **202 {started:true}** immediately; the merge always runs to
+         *     completion regardless of disconnect. On completion (success or failure) a
+         *     `provider.merged` SSE event carrying the series id is broadcast on
+         *     /api/progress, so the client refetches the series detail then. A second
+         *     request for the SAME series+provider while one is already in flight
+         *     returns **409 {started:false}** (single-flight guard).
          */
         post: operations["matchDiskProvider"];
         delete?: never;
@@ -3927,6 +3937,11 @@ export interface components {
             /** @description Always true — the library-wide dedup sweep has been launched in the background. */
             started: boolean;
         };
+        /** @description Result of a POST /api/series/{id}/providers/{providerId}/match call — whether this call launched the background match/merge (202) or one for the same series+provider was already in flight (409). */
+        MatchStarted: {
+            /** @description true if this call launched the match/merge; false if one for the same series+provider was already running (single-flight guard). */
+            started: boolean;
+        };
         /** @description The set of boolean toggle-filters the library grid applies on top of the category tab + search. All default false (the whole library shows). */
         LibraryFilters: {
             /** @description Narrow to series with at least one downloaded chapter. */
@@ -5133,16 +5148,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Chapters re-attributed. Returns the refreshed series detail. */
-            200: {
+            /** @description The match/merge was launched in the background. Watch for the provider.merged SSE event on /api/progress, then refetch the series detail. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SeriesDetail"];
+                    "application/json": components["schemas"]["MatchStarted"];
                 };
             };
-            /** @description Malformed id/providerId, invalid/missing source, mangaId, or importance, the provider does not belong to the series, or the provider is already a real (linked) source, not a disk-origin one. */
+            /** @description Malformed id/providerId, invalid/missing source, mangaId, or importance. (Deeper failures — the provider does not belong to the series, the provider is already a real linked source, or the source fetch fails — now surface on the provider.merged SSE event's error field, since the merge runs after the 202 is returned.) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5160,31 +5175,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No series with the given id, or the source id is not a currently-loaded source (a true membership miss). */
-            404: {
+            /** @description A match/merge for the same series+provider is already in flight (single-flight guard). */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The engine host could not be reached, or the source fetch failed. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The source exists but its anti-ban circuit-breaker is cooled down — retry shortly. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["MatchStarted"];
                 };
             };
         };

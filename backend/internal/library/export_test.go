@@ -28,6 +28,34 @@ func SetScanBlock(ch chan struct{}) func() {
 	return func() { scanBlock = prev }
 }
 
+// SetMatchBlock installs (or clears, with nil) the match-goroutine block seam
+// (match_disk_provider_async.go) and returns a restore func. When set, the
+// background match goroutine waits on the channel (or run-ctx cancel) before
+// running the merge — letting the single-flight-guard test hold the first merge
+// in flight deterministically while it fires a second start. Mirrors
+// SetScanBlock.
+func SetMatchBlock(ch chan struct{}) func() {
+	prev := matchBlock
+	matchBlock = ch
+	return func() { matchBlock = prev }
+}
+
+// SetMatchTimeout overrides the package-level matchTimeout (the detached
+// background-merge bound, production default 15m) and returns a restore func.
+// Mirrors SetScanTimeout.
+func SetMatchTimeout(d time.Duration) (restore func()) {
+	prev := matchTimeout
+	matchTimeout = d
+	return func() { matchTimeout = prev }
+}
+
+// SafeMergeError exposes the unexported caller-safe merge-error mapper so the
+// black-box test package can pin the error-hygiene contract (known sentinel →
+// clean message, unmapped → generic "match failed", never the raw %w chain).
+func SafeMergeError(err error) string {
+	return safeMergeError(err)
+}
+
 // ProviderNameMatches exposes the unexported provider-name equality rule
 // (case-insensitive, trimmed, blank-never-matches) to the black-box test
 // package so it can be table-tested in isolation.

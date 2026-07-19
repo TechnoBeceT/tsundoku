@@ -146,7 +146,7 @@ import (
 //   - /api/library/import/batch (POST)              — bulk disk-only import of many staged entries (RequireOwner).
 //   - /api/series/:id/providers (POST)             — attach an additional source to an existing series (RequireOwner).
 //   - /api/series/:id/providers/batch (POST)       — attach several sources to an existing series in one call (RequireOwner).
-//   - /api/series/:id/providers/:providerId/match (POST) — attribute existing on-disk chapters to a real source without re-downloading (RequireOwner).
+//   - /api/series/:id/providers/:providerId/match (POST) — attribute existing on-disk chapters to a real source without re-downloading; async (202, completes via the provider.merged SSE event) (RequireOwner).
 //   - /api/trackers (GET)                          — list tracker connect status (RequireOwner).
 //   - /api/trackers/:id/auth-url (GET)             — build a fresh OAuth authorize URL on demand (RequireOwner).
 //   - /api/trackers/:id/login/oauth (POST)         — complete an OAuth login callback (RequireOwner).

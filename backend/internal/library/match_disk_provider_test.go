@@ -2,10 +2,13 @@ package library_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -417,6 +420,282 @@ func TestMatchDiskProvider_RollsBackOnMidBatchDiskFailure(t *testing.T) {
 	newSP := client.SeriesProvider.Query().Where(seriesprovider.Provider("1")).OnlyX(ctx)
 	if newSP.Importance != 0 {
 		t.Errorf("new provider importance = %d after rollback, want 0 (parked, never elevated)", newSP.Importance)
+	}
+}
+
+// TestSafeMergeError_GenericisesUnmappedAndRawErrors is the error-hygiene proof
+// for the async provider.merged broadcast (which bypasses the central error
+// middleware): a KNOWN sentinel maps to its clean message, and any UNMAPPED error
+// — including a wrapped ErrSourceUpstream that carries a raw upstream cause —
+// yields a caller-safe message that NEVER leaks the raw detail to the client.
+func TestSafeMergeError_GenericisesUnmappedAndRawErrors(t *testing.T) {
+	// Simulated raw driver/transport detail — the kind of text that must never
+	// reach the client via the SSE side-channel.
+	rawDetail := "dial tcp 10.0.1.17:5432: connection refused (internal driver frame)"
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"series not found", library.ErrSeriesNotFound, "series not found"},
+		{"provider not in series", library.ErrProviderNotInSeries, "provider does not belong to series"},
+		{"not a disk provider", library.ErrNotADiskProvider, "provider is not an unlinked disk-origin provider"},
+		{"source not found", library.ErrSourceNotFound, "source not found"},
+		// A wrapped upstream error whose %w chain contains the raw cause must
+		// broadcast ONLY the clean sentinel text — the raw secret must not leak.
+		{"wrapped upstream hides raw cause", library.ClassifyAttachError("5", errors.New(rawDetail)), "source fetch failed"},
+		// Any entirely-unmapped internal error → the generic message.
+		{"unmapped internal error", errors.New(rawDetail), "match failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := library.SafeMergeError(tt.err)
+			if got != tt.want {
+				t.Fatalf("SafeMergeError = %q, want %q", got, tt.want)
+			}
+			if got == rawDetail || strings.Contains(got, "10.0.1.17") || strings.Contains(got, "driver frame") {
+				t.Fatalf("SafeMergeError leaked raw error detail: %q", got)
+			}
+		})
+	}
+}
+
+// TestStartMatchDiskProvider_DetachedCompletesAfterRequestCancel is the
+// disconnect-proof proof (GAP-096): StartMatchDiskProvider runs the merge on a
+// context DETACHED from the request (context.WithoutCancel), so cancelling the
+// request context the instant the 202 is returned (a client disconnect) must NOT
+// abort the merge — it still runs to completion, deleting the disk provider and
+// re-pointing every chapter. Before the async fix this ran on the request
+// context and a disconnect stranded a duplicate provider + half-relabeled CBZs.
+func TestStartMatchDiskProvider_DetachedCompletesAfterRequestCancel(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+
+	ser, diskSP := setupMatchFixture(t, client, storage)
+	fake := newFakeClientWithFeed(t)
+	// Build the service over an explicit hub so we can wait on the provider.merged
+	// broadcast — which fires AFTER the whole merge (commitMatch + GetSeries +
+	// goroutine defers) completes. Waiting on the event, not on row deletion,
+	// avoids racing testdb teardown with the merge's trailing GetSeries.
+	hub := sse.NewHub()
+	ingestSvc := ingest.NewIngest(fake, client)
+	seriesSvc := series.NewService(client, storage, 14)
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, hub)
+
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+
+	// A request-scoped context that we cancel the moment we "return the 202".
+	reqCtx, cancel := context.WithCancel(context.Background())
+	started := svc.StartMatchDiskProvider(reqCtx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5)
+	if !started {
+		t.Fatal("StartMatchDiskProvider = false, want true")
+	}
+	cancel() // client disconnects immediately after the 202.
+
+	waitForMergeEvent(t, events, ser.ID.String())
+
+	bg := context.Background()
+	if n := client.SeriesProvider.Query().Where(seriesprovider.IDEQ(diskSP.ID)).CountX(bg); n != 0 {
+		t.Fatalf("disk provider row count = %d, want 0 (merge completed despite the cancel)", n)
+	}
+	newSP := client.SeriesProvider.Query().Where(seriesprovider.SeriesID(ser.ID)).OnlyX(bg)
+	if newSP.Provider != "1" || newSP.Importance != 5 {
+		t.Fatalf("new provider = %+v, want provider=1 importance=5 (merge completed despite the cancel)", newSP)
+	}
+	for _, key := range []string{"1", "2"} {
+		assertChapterSatisfaction(t, client, bg, ser.ID, key, &newSP.ID, 5)
+	}
+}
+
+// waitForMergeEvent blocks until a SUCCESSFUL provider.merged SSE event for
+// wantSeriesID arrives (failing on a reported error) or a timeout fires. It is
+// the service-test sibling of the handler test's waitForMerge; waiting on this
+// event — broadcast after the merge's trailing GetSeries + goroutine defers —
+// guarantees the background goroutine is fully done before the test returns and
+// testdb tears the client down.
+func waitForMergeEvent(t *testing.T, events <-chan sse.Event, wantSeriesID string) {
+	t.Helper()
+	deadline := time.After(15 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type != "provider.merged" {
+				continue
+			}
+			raw, ok := ev.Data.(json.RawMessage)
+			if !ok {
+				t.Fatalf("provider.merged Data = %T, want json.RawMessage", ev.Data)
+			}
+			var me library.MergeEvent
+			if err := json.Unmarshal(raw, &me); err != nil {
+				t.Fatalf("decode merge event: %v", err)
+			}
+			if me.SeriesID != wantSeriesID {
+				continue
+			}
+			if me.Error != "" {
+				t.Fatalf("provider.merged reported error: %s", me.Error)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for provider.merged SSE event")
+		}
+	}
+}
+
+// TestStartMatchDiskProvider_SingleFlightGuard proves a second start for the SAME
+// series+provider while one is already in flight is refused (returns false), so a
+// double-click / eager retry can't launch two concurrent merges racing the same
+// CBZs. Once the first completes, the guard clears and a later start is accepted.
+func TestStartMatchDiskProvider_SingleFlightGuard(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+
+	ser, diskSP := setupMatchFixture(t, client, storage)
+	fake := newFakeClientWithFeed(t)
+	hub := sse.NewHub()
+	ingestSvc := ingest.NewIngest(fake, client)
+	seriesSvc := series.NewService(client, storage, 14)
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, hub)
+
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+
+	// Hold the first merge in flight (blocked before it does any work) so the
+	// second start deterministically observes the in-flight key.
+	block := make(chan struct{})
+	restore := library.SetMatchBlock(block)
+	defer restore()
+
+	ctx := context.Background()
+	if !svc.StartMatchDiskProvider(ctx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5) {
+		t.Fatal("first start = false, want true")
+	}
+	if svc.StartMatchDiskProvider(ctx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5) {
+		t.Fatal("second concurrent start = true, want false (single-flight guard)")
+	}
+
+	// Release the first: it completes (through its trailing GetSeries) and clears
+	// the guard. Wait on the completion event so the goroutine is fully done
+	// before testdb teardown.
+	close(block)
+	waitForMergeEvent(t, events, ser.ID.String())
+	if n := client.SeriesProvider.Query().Where(seriesprovider.IDEQ(diskSP.ID)).CountX(ctx); n != 0 {
+		t.Fatalf("disk provider row count = %d, want 0 (first merge completed)", n)
+	}
+}
+
+// TestMatchDiskProvider_RetryAfterPartialRelabelSucceeds is the retry-safety /
+// stuck-series-recovery proof (GAP-096): it reconstructs the exact state a
+// disconnected prod match left behind — the real source already attached, and
+// SOME chapters' CBZs already renamed to their NEW names while the DB still
+// records the OLD filenames — then proves a plain re-run of MatchDiskProvider
+// SUCCEEDS (via the idempotent relabel) instead of hard-500ing on
+// "rename OLD -> NEW: no such file or directory". This is how the owner's stuck
+// "Ranker Who Lives A Second Time" series is recoverable by a simple retry.
+func TestMatchDiskProvider_RetryAfterPartialRelabelSucceeds(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	ser, diskSP := setupMatchFixture(t, client, storage)
+	keys := []string{"1", "2"}
+	oldName := chapterFilenames(t, client, ctx, ser.ID, keys)
+
+	fake := newFakeClientWithFeed(t)
+	svc := newMatchService(client, storage, fake)
+
+	// A first, SUCCESSFUL match gives us the authoritative NEW filenames the merge
+	// produces (no meta reconstruction in the test) and the real linked provider.
+	if _, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP.ID, "1", "/manga/99", "", 5); err != nil {
+		t.Fatalf("initial MatchDiskProvider: %v", err)
+	}
+	newName := chapterFilenames(t, client, ctx, ser.ID, keys)
+	assertRenamed(t, oldName, newName, keys)
+
+	seriesDir := filepath.Join(storage, "Manga", "My Series")
+	diskSP2 := stageStuckPartialRelabel(t, client, ctx, ser.ID, diskSP.Provider, seriesDir, keys, oldName, newName)
+
+	// The retry: with the idempotent relabel, chapter 1 (file already at NEW) is a
+	// no-rename success and chapter 2 renames normally — the whole match succeeds.
+	if _, err := svc.MatchDiskProvider(ctx, ser.ID, diskSP2.ID, "1", "/manga/99", "", 5); err != nil {
+		t.Fatalf("retry MatchDiskProvider after partial relabel: want success, got %v", err)
+	}
+
+	newSP := client.SeriesProvider.Query().Where(seriesprovider.SeriesID(ser.ID)).OnlyX(ctx)
+	if newSP.Provider != "1" || newSP.Importance != 5 {
+		t.Fatalf("new provider = %+v, want provider=1 importance=5", newSP)
+	}
+	for _, key := range keys {
+		assertChapterSatisfaction(t, client, ctx, ser.ID, key, &newSP.ID, 5)
+		assertFilePresentInDir(t, seriesDir, newName[key])
+	}
+	if n := client.SeriesProvider.Query().Where(seriesprovider.IDEQ(diskSP2.ID)).CountX(ctx); n != 0 {
+		t.Fatalf("stuck disk provider row count = %d, want 0 (drained + deleted on retry)", n)
+	}
+}
+
+// chapterFilenames returns the current DB Filename of each (series, key) chapter.
+func chapterFilenames(t *testing.T, client *ent.Client, ctx context.Context, seriesID uuid.UUID, keys []string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, key := range keys {
+		ch := client.Chapter.Query().Where(chapter.SeriesID(seriesID), chapter.ChapterKey(key)).OnlyX(ctx)
+		out[key] = ch.Filename
+	}
+	return out
+}
+
+// assertRenamed fails unless every key's filename changed between old and new —
+// so the idempotency path (file already at its NEW name) is genuinely exercised.
+func assertRenamed(t *testing.T, oldName, newName map[string]string, keys []string) {
+	t.Helper()
+	for _, key := range keys {
+		if newName[key] == oldName[key] {
+			t.Fatalf("chapter %s filename did not change on match — the idempotency path would not be exercised", key)
+		}
+	}
+}
+
+// stageStuckPartialRelabel reconstructs the exact state a disconnected prod match
+// left behind and returns the fresh unlinked disk provider a retry matches away
+// from: both chapters re-pointed to that disk provider at importance 1 with their
+// OLD DB filenames, chapter "1"'s FILE already at its NEW name (an interrupted
+// prior relabel), and every other key's FILE moved back to its OLD name (never
+// got relabeled).
+func stageStuckPartialRelabel(t *testing.T, client *ent.Client, ctx context.Context, seriesID uuid.UUID, diskProviderName, seriesDir string, keys []string, oldName, newName map[string]string) *ent.SeriesProvider {
+	t.Helper()
+	diskSP2 := client.SeriesProvider.Create().
+		SetSeriesID(seriesID).
+		SetProvider(diskProviderName). // non-numeric ⇒ unlinked disk-origin
+		SetScanlator("").
+		SetImportance(1).
+		SaveX(ctx)
+	for _, key := range keys {
+		ch := client.Chapter.Query().Where(chapter.SeriesID(seriesID), chapter.ChapterKey(key)).OnlyX(ctx)
+		client.Chapter.UpdateOneID(ch.ID).
+			SetSatisfiedByProviderID(diskSP2.ID).
+			SetSatisfiedImportance(1).
+			SetFilename(oldName[key]).
+			ExecX(ctx)
+		// Key "1" stays at its NEW name (already relabeled); the rest move back to
+		// their OLD names so the retry renames them normally.
+		if key != "1" {
+			if err := os.Rename(filepath.Join(seriesDir, newName[key]), filepath.Join(seriesDir, oldName[key])); err != nil {
+				t.Fatalf("stage chapter %s old file: %v", key, err)
+			}
+		}
+	}
+	return diskSP2
+}
+
+// assertFilePresentInDir fails the test unless dir/name exists.
+func assertFilePresentInDir(t *testing.T, dir, name string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+		t.Fatalf("file %q missing in %q: %v", name, dir, err)
 	}
 }
 

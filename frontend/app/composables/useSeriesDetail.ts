@@ -36,9 +36,10 @@
  *     "" on an unidentified series collapses to undefined so RichSeriesCard's
  *     `v-if="series.description"` hides the synopsis block cleanly)
  */
-import { ref } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import type { Ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
+import { useProgressStream } from '~/composables/useProgressStream'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { SeriesDetail, Chapter, ChapterState, Provider, FractionalCleanupPreview, DedupePlan } from '~/components/screens/seriesDetail.types'
 
@@ -283,33 +284,89 @@ export function useSeriesDetail(id: string) {
    * Matches a disk-origin (unlinked) provider to a real Suwayomi source: the
    * backend attaches the source, re-points every chapter it already satisfies
    * onto it (no re-download), and drops the now-redundant disk-origin row.
-   * Unlike `mutate`'s default onSuccess (a full `refresh()` round-trip) this
-   * reseeds `series` DIRECTLY from the match response — the endpoint already
-   * returns the authoritative, fully-refreshed SeriesDetail, so a second
-   * fetch would be a wasted round-trip (§16 mutate-reseeds-from-response).
-   * Resolves true on success / false on failure (error surfaced via `error`,
-   * never swallowed) so the dialog knows whether to close.
+   *
+   * ASYNC (GAP-096): this merge legitimately runs for MINUTES for a large
+   * provider (a slow source fetch + rewriting every CBZ over NFS), so the
+   * endpoint no longer returns the refreshed detail inline — it returns 202
+   * immediately (or 409 if one is already in flight for this series+provider),
+   * runs the merge detached (disconnect-proof), and emits a `provider.merged`
+   * SSE event on completion. So this only KICKS OFF the merge: it keeps the
+   * "matching…" busy state (surfaced via `dedupMessage` on the Sources panel),
+   * resolves true so the dialog closes, and the SSE listener below clears the
+   * busy state + refetches (or surfaces the error) when the merge lands. A hard
+   * failure to even start (not 202/409) is surfaced via `error` (§16), never
+   * swallowed, and resolves false so the dialog stays open.
    */
   const matchDiskProvider = async (providerId: string, payload: MatchDiskProviderPayload): Promise<boolean> => {
     matchBusy.value = true
     error.value = null
+    dedupMessage.value = null
     try {
       const res = await apiClient.POST('/api/series/{id}/providers/{providerId}/match', {
         params: { path: { id, providerId } },
         body: payload,
       })
-      if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Match failed')
-      series.value = mapDetail(res.data)
-      return true
+      // 202 = launched; 409 = one already in flight for this series+provider — in
+      // both cases the merge runs in the background and completes via the
+      // provider.merged SSE event, so keep the busy state and let the dialog close.
+      if (res.response.status === 202 || res.response.status === 409) {
+        matchingProviderId.value = providerId
+        dedupMessage.value = 'Matching in progress…'
+        return true
+      }
+      throw new Error(res.error && 'message' in res.error ? String(res.error.message) : 'Match failed')
     }
     catch (err) {
+      matchBusy.value = false
       error.value = err instanceof Error ? err.message : 'Match failed'
       return false
     }
-    finally {
-      matchBusy.value = false
-    }
   }
+
+  // The disk provider a match is currently folding away (set while a match is in
+  // flight, cleared on completion) — the reconnect reconcile below checks whether
+  // it has been drained yet.
+  const matchingProviderId = ref<string | null>(null)
+
+  const { on: onProgress, connected } = useProgressStream()
+
+  // provider.merged fires when an async match/merge finishes (see
+  // StartMatchDiskProvider). When it names THIS series, clear the busy state and
+  // either surface the failure (§16 — never swallowed) or refetch the now-merged
+  // detail. Cleaned up on unmount.
+  const unsubMerged = onProgress('provider.merged', (data) => {
+    const payload = data as { seriesId?: string, error?: string }
+    if (payload.seriesId !== id) return
+    matchBusy.value = false
+    matchingProviderId.value = null
+    if (payload.error) {
+      dedupMessage.value = null
+      error.value = payload.error
+      return
+    }
+    dedupMessage.value = 'Match complete'
+    void refresh()
+  })
+
+  // Reconnect reconcile: a match can run for MINUTES, so if the SSE stream
+  // drops+reconnects mid-merge (laptop sleep / network blip) the provider.merged
+  // event is MISSED and the "Matching…" indicator would stick forever. On every
+  // (re)connect while a match is in flight, refetch: if the matched disk provider
+  // is gone the merge finished → clear the indicator; if it is still there the
+  // merge is still running (or failed) → stay busy and wait for the next event.
+  const stopReconnectWatch = watch(connected, async (isConnected) => {
+    if (!isConnected || !matchBusy.value) return
+    await refresh()
+    const stillPresent = matchingProviderId.value != null
+      && !!series.value?.providers.some((p) => p.id === matchingProviderId.value)
+    if (!stillPresent) {
+      matchBusy.value = false
+      matchingProviderId.value = null
+      dedupMessage.value = 'Match complete'
+    }
+  })
+
+  onUnmounted(() => { unsubMerged(); stopReconnectWatch() })
 
   /**
    * Folds every already-drifted disk/live duplicate source pair on this series
