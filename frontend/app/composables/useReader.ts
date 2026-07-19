@@ -2,7 +2,8 @@
  * useReader — data + windowing layer for the long-strip chapter reader.
  *
  * Loads GET /api/series/{id} (mirrors useSeriesDetail's client call), derives the
- * reader's chapter list — downloaded chapters only, number-ascending — and
+ * reader's chapter list — READABLE chapters only (see `READABLE_STATES`),
+ * number-ascending — and
  * maintains a bounded MOUNTED WINDOW of chapters the ReaderStrip renders. The
  * window grows in BOTH directions: as the reader nears the tail the strip calls
  * `onNearTail()` (appends the next chapter), and as they scroll back up towards
@@ -40,6 +41,27 @@ type SeriesDetailDTO = components['schemas']['SeriesDetail']
 type ChapterDTO = components['schemas']['Chapter']
 
 /**
+ * READABLE_STATES — the chapter states the reader will list and page through.
+ * A chapter is readable whenever a valid CBZ is on disk, which is true for all
+ * three of these states, NOT just `downloaded`:
+ *   - `downloaded`        — the settled state.
+ *   - `upgrade_available` — a better source was detected; the OLD source's CBZ
+ *     is still intact (the convergence engine deletes it only AFTER the new one
+ *     succeeds — `tryDeleteOldCBZ` runs on convergence success only).
+ *   - `upgrading`         — the upgrade fetch is in flight; the old CBZ likewise
+ *     stays on disk until the replacement lands.
+ * Excluding the latter two made a chapter pending/undergoing an upgrade (and a
+ * whole series parked in `upgrade_available` by a source ban) unreadable for no
+ * reason. `filename`/`pageCount`/`pageVersion` are all intact across an upgrade,
+ * so the page-bytes endpoint serves them unchanged.
+ */
+const READABLE_STATES: ReadonlySet<ChapterDTO['state']> = new Set([
+  'downloaded',
+  'upgrade_available',
+  'upgrading',
+])
+
+/**
  * ReaderChapter — one chapter in the reader's ordered list. `id` is the Chapter
  * UUID the page/progress endpoints key on; `pageCount` is the DECLARED count
  * (may exceed the real image count — the strip tolerates trailing 404s).
@@ -68,7 +90,7 @@ export interface ReaderChapter {
   pageVersion?: string
 }
 
-/** Maps a downloaded ChapterDTO to the reader's slimmer ReaderChapter. */
+/** Maps a readable ChapterDTO (see `READABLE_STATES`) to the reader's slimmer ReaderChapter. */
 function mapReaderChapter(dto: ChapterDTO): ReaderChapter {
   return {
     id: dto.id,
@@ -261,9 +283,10 @@ export function useReader(seriesId: string, startChapterId: string) {
 
   /**
    * refresh — (re)load the series and rebuild the chapter list + window. The
-   * window opens at `startChapterId`; if that chapter is absent (not downloaded
-   * or unknown) it falls back to the first downloaded chapter. §16: sets
-   * `loading` while in flight and surfaces a real message on failure.
+   * window opens at `startChapterId`; if that chapter is absent (not readable —
+   * see `READABLE_STATES` — or unknown) it falls back to the first readable
+   * chapter. §16: sets `loading` while in flight and surfaces a real message on
+   * failure.
    */
   async function refresh(): Promise<void> {
     loading.value = true
@@ -274,7 +297,7 @@ export function useReader(seriesId: string, startChapterId: string) {
       const detail: SeriesDetailDTO = res.data
       seriesTitle.value = detail.displayName || detail.title || ''
       const list = detail.chapters
-        .filter((ch) => ch.state === 'downloaded')
+        .filter((ch) => READABLE_STATES.has(ch.state))
         .map(mapReaderChapter)
         .sort(byNumberAsc)
       chapters.value = list

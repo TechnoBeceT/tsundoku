@@ -2,7 +2,9 @@
  * useReader — the reader's data + windowing layer.
  *
  * Pins:
- *   1. The chapter list is DOWNLOADED-only, number-ascending (null numbers last).
+ *   1. The chapter list is READABLE-only (downloaded / upgrade_available /
+ *      upgrading — all keep a valid on-disk CBZ), number-ascending (null numbers
+ *      last).
  *   2. The mounted window opens at `startChapterId` (a single chapter), and falls
  *      back to the first chapter when the start id is absent.
  *   3. `onNearTail` appends the next chapter and unmounts far-above chapters so
@@ -18,6 +20,7 @@ import { MAX_MOUNTED } from '~/components/reader/ReaderStrip.logic'
 
 let nextOk = true
 let nextEmpty = false
+let nextReadable = false
 
 // A series that loads successfully but has NO downloaded chapters (all wanted) —
 // the reader's empty branch: an empty window, no error (the route's EmptyState).
@@ -45,12 +48,33 @@ const detail = {
   ],
 }
 
+// A series whose chapters cover EVERY chapter state, to pin the readable-state
+// filter: a chapter mid/pending upgrade keeps a valid on-disk CBZ (the old
+// source's file survives until the new one lands), so `upgrade_available` and
+// `upgrading` must be listed alongside `downloaded`; every other state (wanted,
+// downloading, failed, permanently_failed, superseded, ignored) is excluded.
+const readableStatesDetail = {
+  id: 'series-1',
+  chapters: [
+    { id: 'ch-dl', chapterKey: 'r1', number: 1, name: 'Downloaded', state: 'downloaded', filename: 'r1.cbz', pageCount: 10, read: false, lastReadPage: 0, pageVersion: 'rv1' },
+    { id: 'ch-up-avail', chapterKey: 'r2', number: 2, name: 'Upgrade available', state: 'upgrade_available', filename: 'r2.cbz', pageCount: 12, read: false, lastReadPage: 0, pageVersion: 'rv2' },
+    { id: 'ch-upgrading', chapterKey: 'r3', number: 3, name: 'Upgrading', state: 'upgrading', filename: 'r3.cbz', pageCount: 14, read: false, lastReadPage: 0, pageVersion: 'rv3' },
+    { id: 'ch-wanted', chapterKey: 'r4', number: 4, name: 'Wanted', state: 'wanted', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-downloading', chapterKey: 'r5', number: 5, name: 'Downloading', state: 'downloading', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-failed', chapterKey: 'r6', number: 6, name: 'Failed', state: 'failed', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-permafailed', chapterKey: 'r7', number: 7, name: 'Perma-failed', state: 'permanently_failed', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-superseded', chapterKey: 'r8', number: 8, name: 'Superseded', state: 'superseded', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-ignored', chapterKey: 'r9', number: 9, name: 'Ignored', state: 'ignored', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+  ],
+}
+
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
     GET: vi.fn().mockImplementation((path: string) => {
       if (path === '/api/series/{id}') {
         if (!nextOk) return Promise.resolve({ data: null, error: { message: 'boom' }, response: new Response(null, { status: 500 }) })
         if (nextEmpty) return Promise.resolve({ data: emptyDetail, error: null, response: new Response() })
+        if (nextReadable) return Promise.resolve({ data: readableStatesDetail, error: null, response: new Response() })
         return Promise.resolve({ data: detail, error: null, response: new Response() })
       }
       return Promise.resolve({ data: null, error: null, response: new Response() })
@@ -61,7 +85,7 @@ vi.mock('~/utils/api/client', () => ({
 }))
 
 describe('useReader — chapter list', () => {
-  beforeEach(() => { nextOk = true })
+  beforeEach(() => { nextOk = true; nextEmpty = false; nextReadable = false })
 
   it('keeps only downloaded chapters, sorted number-ascending with nulls last', async () => {
     const { chapters, refresh } = useReader('series-1', 'ch-a')
@@ -77,6 +101,32 @@ describe('useReader — chapter list', () => {
     await refresh()
     const one = chapters.value.find((c) => c.id === 'ch-a')!
     expect(one).toMatchObject({ pageCount: 10, read: true, lastReadPage: 9, name: 'One' })
+  })
+
+  it('also lists upgrade_available and upgrading chapters (their old CBZ is still on disk), excluding every non-readable state', async () => {
+    nextReadable = true
+    try {
+      const { chapters, refresh } = useReader('series-1', 'ch-dl')
+      await refresh()
+      // downloaded + upgrade_available + upgrading are readable; wanted /
+      // downloading / failed / permanently_failed / superseded / ignored are not.
+      expect(chapters.value.map((c) => c.id)).toEqual(['ch-dl', 'ch-up-avail', 'ch-upgrading'])
+    }
+    finally {
+      nextReadable = false
+    }
+  })
+
+  it('opens the window at a startChapterId that is in upgrade_available (previously unreadable)', async () => {
+    nextReadable = true
+    try {
+      const { mountedChapters, refresh } = useReader('series-1', 'ch-up-avail')
+      await refresh()
+      expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-up-avail'])
+    }
+    finally {
+      nextReadable = false
+    }
   })
 })
 
