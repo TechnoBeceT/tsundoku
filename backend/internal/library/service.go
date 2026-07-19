@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/google/uuid"
+
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/ingest"
@@ -44,6 +46,14 @@ var (
 	// ErrProviderNotInSeries is returned by MatchDiskProvider when the target
 	// SeriesProvider id does not belong to the given series.
 	ErrProviderNotInSeries = errors.New("provider does not belong to series")
+	// ErrTargetNoFeed is returned by ConsolidateProviders when the chosen
+	// EXISTING target provider has an empty ProviderChapter feed. Merging the
+	// selected disk providers into a feed-less target would relabel nothing and
+	// then drain the disk rows — orphaning their downloaded chapters (the exact
+	// guard DedupProviders/linkAttachedProvider already apply to a merge target).
+	// It maps to 409: the request is well-formed but the target is not ready
+	// (refresh it, then retry).
+	ErrTargetNoFeed = errors.New("target provider has no chapter feed")
 )
 
 // SourceLister lists the engine host's currently-loaded sources. AddProvider and
@@ -84,14 +94,18 @@ type Service struct {
 	scanMu   sync.Mutex
 	scanning bool
 
-	// matchMu guards matchRunning, the per-(series,provider) in-flight set
-	// consumed by StartMatchDiskProvider (match_disk_provider_async.go): a match
-	// runs detached in the background, so a double-click / retry while one is
-	// already in flight for the SAME series+provider must not launch a second
-	// concurrent merge racing the first over the same CBZs. Lazily initialised
-	// under the lock so every NewService call site is unaffected.
-	matchMu      sync.Mutex
-	matchRunning map[string]struct{}
+	// mergeMu guards mergeRunning, the per-SERIES in-flight set SHARED by BOTH the
+	// single Match (StartMatchDiskProvider, match_disk_provider_async.go) AND the
+	// multi-provider consolidation (StartConsolidateProviders,
+	// consolidate_async.go). Both detach a background CBZ-relabel merge, and a
+	// consolidation's finaliseSurvivorRanks rewrites EVERY provider's importance —
+	// including one a concurrent Match DB-parked at 0 for its relabel window, which
+	// would re-arm a re-download mid-window (QCAT-295 review). Keying the guard by
+	// SERIES makes Match and Consolidate MUTUALLY EXCLUSIVE per series: a second
+	// start of EITHER kind for a series already merging returns 409. Lazily
+	// initialised under the lock so every NewService call site is unaffected.
+	mergeMu      sync.Mutex
+	mergeRunning map[uuid.UUID]struct{}
 
 	// autoIdentifier fires the Phase-1 native metadata engine's background
 	// auto-identify pass after a successful Import (see autoidentify.go). Nil

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PanelCard from './PanelCard.vue'
 import AppButton from '../ui/AppButton.vue'
 import ProviderRow from './ProviderRow.vue'
@@ -87,9 +87,50 @@ const emit = defineEmits<{
   dedupeFiles: []
   /** "Remove fractional files" was pressed (→ opens the page's cleanup dialog). */
   removeFractional: []
+  /** "Merge N into…" was pressed — carries the SELECTED SeriesProvider ids to consolidate (→ opens the page's target picker). */
+  startConsolidate: [providerIds: string[]]
 }>()
 
 const driftedSet = computed(() => new Set(props.driftedIds))
+
+// ---- Multi-select consolidation (QCAT-295 Part B) --------------------------
+// Selection is a UI concern owned locally: the panel offers checkboxes only when
+// there are ≥2 sources to consolidate, and surfaces a "Merge N into…" action once
+// ≥1 is ticked. The actual target picker + endpoint call live on the page.
+const selectable = computed(() => props.providers.length >= 2)
+const selected = ref<Set<string>>(new Set())
+
+// Prune the selection whenever the provider list changes (a completed
+// consolidation refetches and drops the folded-away rows) so a stale id never
+// lingers in the payload.
+watch(
+  () => props.providers.map((p) => p.id),
+  (ids) => {
+    const present = new Set(ids)
+    for (const id of [...selected.value]) {
+      if (!present.has(id)) selected.value.delete(id)
+    }
+    // Trigger reactivity for the derived selectedIds (Set mutation is in-place).
+    selected.value = new Set(selected.value)
+  },
+)
+
+const selectedIds = computed(() => [...selected.value])
+
+const toggleSelect = (id: string, isSelected: boolean): void => {
+  if (isSelected) selected.value.add(id)
+  else selected.value.delete(id)
+  selected.value = new Set(selected.value)
+}
+
+const clearSelection = (): void => {
+  selected.value = new Set()
+}
+
+const onStartConsolidate = (): void => {
+  if (selectedIds.value.length === 0) return
+  emit('startConsolidate', selectedIds.value)
+}
 </script>
 
 <template>
@@ -131,6 +172,19 @@ const driftedSet = computed(() => new Set(props.driftedIds))
       </div>
       <div v-if="dedupMessage" class="dup-message">{{ dedupMessage }}</div>
 
+      <!-- Multi-select merge bar: appears once ≥1 source is ticked. -->
+      <div v-if="selectedIds.length > 0" class="merge-bar">
+        <span class="merge-bar__text">
+          {{ selectedIds.length }} source{{ selectedIds.length === 1 ? '' : 's' }} selected
+        </span>
+        <div class="merge-bar__actions">
+          <AppButton variant="mini" size="sm" @click="clearSelection">Clear</AppButton>
+          <AppButton variant="primary" size="sm" :disabled="saving" @click="onStartConsolidate">
+            Merge into…
+          </AppButton>
+        </div>
+      </div>
+
       <div v-if="providers.length > 0" class="panel__eyebrow">Preferred first</div>
 
       <ProviderRow
@@ -143,10 +197,13 @@ const driftedSet = computed(() => new Set(props.driftedIds))
         :can-down="idx !== providers.length - 1"
         :saving="saving"
         :duplicate="driftedSet.has(p.id)"
+        :selectable="selectable"
+        :selected="selected.has(p.id)"
         @move="emit('move', p.id, $event)"
         @remove="emit('removeSource', p.id)"
         @match="emit('matchProvider', p.id)"
         @toggle-ignore-fractional="emit('toggleIgnoreFractional', p.id, $event)"
+        @toggle-select="toggleSelect(p.id, $event)"
       />
 
       <div v-if="providers.length === 0" class="panel__empty">
@@ -211,5 +268,29 @@ const driftedSet = computed(() => new Set(props.driftedIds))
   margin: 0 var(--space-2xs) var(--space-sm);
   font-size: 0.71875rem;
   color: var(--muted);
+}
+
+/* The multi-select merge bar — accent-tinted so it reads as an active batch action. */
+.merge-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin: 0 var(--space-2xs) var(--space-sm);
+  padding: var(--space-xs) 0.6875rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: var(--accentSoft);
+}
+
+.merge-bar__text {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  color: var(--text);
+}
+
+.merge-bar__actions {
+  display: flex;
+  gap: var(--space-xs);
 }
 </style>

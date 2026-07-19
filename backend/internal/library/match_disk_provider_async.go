@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/technobecet/tsundoku/internal/disk"
 )
 
 // matchTimeout bounds the detached background match/merge a StartMatchDiskProvider
@@ -33,10 +35,12 @@ var matchBlock chan struct{}
 // timeout, mirroring sources.Warmup / DedupAllProviders) means a disconnect can
 // no longer cancel the merge, so it always runs to completion.
 //
-// Returns false WITHOUT starting a new merge if one is already in flight for the
-// SAME (series, provider) pair (single-flight guard, keyed per pair): a
-// double-click / eager retry must not launch a second concurrent merge racing the
-// first over the same CBZs. Different pairs run concurrently.
+// Returns false WITHOUT starting a new merge if a Match OR a Consolidation is
+// already in flight for the SAME SERIES (the shared per-series single-flight guard
+// — see Service.mergeRunning): a double-click / eager retry, or a Match racing a
+// Consolidation that would rewrite importances mid-relabel, must never launch a
+// second concurrent merge over the same series' CBZs. Different series run
+// concurrently.
 //
 // On completion (success OR failure) it broadcasts a provider.merged SSE event
 // carrying the series id (and the error text on failure), so the frontend — which
@@ -44,18 +48,9 @@ var matchBlock chan struct{}
 // once the background merge lands. The trigger()/convergence side effects live in
 // MatchDiskProvider itself and are unchanged.
 func (s *Service) StartMatchDiskProvider(ctx context.Context, seriesID, diskProviderID uuid.UUID, source, url, scanlator string, importance int) bool {
-	key := seriesID.String() + "|" + diskProviderID.String()
-
-	s.matchMu.Lock()
-	if s.matchRunning == nil {
-		s.matchRunning = make(map[string]struct{})
-	}
-	if _, running := s.matchRunning[key]; running {
-		s.matchMu.Unlock()
+	if !s.acquireMerge(seriesID) {
 		return false
 	}
-	s.matchRunning[key] = struct{}{}
-	s.matchMu.Unlock()
 
 	// Detach from the request context (which ends the moment the handler returns
 	// 202) but keep a hard timeout so the goroutine + context can never leak.
@@ -68,11 +63,7 @@ func (s *Service) StartMatchDiskProvider(ctx context.Context, seriesID, diskProv
 
 	go func() {
 		defer cancel()
-		defer func() {
-			s.matchMu.Lock()
-			delete(s.matchRunning, key)
-			s.matchMu.Unlock()
-		}()
+		defer s.releaseMerge(seriesID)
 
 		if block != nil {
 			select {
@@ -120,6 +111,8 @@ func safeMergeError(err error) string {
 		return "source temporarily unavailable, retry shortly"
 	case errors.Is(err, ErrSourceUpstream):
 		return "source fetch failed"
+	case errors.Is(err, disk.ErrRelabelCollision):
+		return "filename collision with another chapter's file"
 	default:
 		return "match failed"
 	}

@@ -162,6 +162,7 @@ const {
   setIgnoreFractional,
   deleteSeries,
   matchDiskProvider,
+  consolidateProviders,
   dismissError,
   reseed,
   dedupBusy,
@@ -322,6 +323,7 @@ const matchTarget = computed(() => series.value?.providers.find((p) => p.id === 
 const matchProviderError = computed(() => linkSearchError.value ?? error.value)
 
 function openMatchProvider(providerId: string): void {
+  consolidateMode.value = false // a plain single-provider match, not a consolidation
   matchTargetId.value = providerId
   matchProviderOpen.value = true
 }
@@ -331,9 +333,59 @@ function onPickCandidate(payload: { source: string, mangaId: number, url: string
 }
 
 async function onMatchProviderConfirm(payload: { source: string, mangaId: number, url: string, scanlator: string, importance: number }): Promise<void> {
+  // The Match dialog is reused for BOTH the single disk-provider match AND the
+  // consolidation "Match to a new source" arm. In consolidate mode the picked
+  // source becomes the survivor the selected providers fold into.
+  if (consolidateMode.value) {
+    const ok = await consolidateProviders(consolidateSelectedIds.value, {
+      source: { source: payload.source, url: payload.url, scanlator: payload.scanlator, importance: payload.importance },
+    })
+    if (ok) matchProviderOpen.value = false
+    return
+  }
   if (!matchTargetId.value) return
   const ok = await matchDiskProvider(matchTargetId.value, payload)
   if (ok) matchProviderOpen.value = false
+}
+
+// ---- Multi-provider consolidation (QCAT-295 Part B) ------------------------
+// SourcesPanel's multi-select emits `startConsolidate` with the selected ids. The
+// page owns the target picker (only it learns whether the async merge succeeded):
+// choose an EXISTING provider → fire the endpoint straight away; choose "Match to
+// a new source" → hand off to the SAME MatchDiskProviderDialog (consolidateMode)
+// so the source picker is reused, not re-implemented. Like matchDiskProvider the
+// merge is async — the target/match dialog closes on a truthy start (202/409) and
+// the shared provider.merged listener refetches when it lands.
+const consolidateSelectedIds = ref<string[]>([])
+const consolidateTargetOpen = ref(false)
+const consolidateMode = ref(false)
+
+// The survivor candidates the picker offers: every provider NOT in the selected
+// set, as {id, name}.
+const consolidateCandidates = computed(() => {
+  const selected = new Set(consolidateSelectedIds.value)
+  return (series.value?.providers ?? [])
+    .filter((p) => !selected.has(p.id))
+    .map((p) => ({ id: p.id, name: p.providerName || p.provider }))
+})
+
+function onStartConsolidate(providerIds: string[]): void {
+  consolidateSelectedIds.value = providerIds
+  consolidateTargetOpen.value = true
+}
+
+async function onConsolidateExisting(existingProviderId: string): Promise<void> {
+  const ok = await consolidateProviders(consolidateSelectedIds.value, { existingProviderId })
+  if (ok) consolidateTargetOpen.value = false
+}
+
+// "Match to a new source" from the target picker: close it and open the reused
+// Match dialog in consolidate mode.
+function onConsolidateMatchToSource(): void {
+  consolidateTargetOpen.value = false
+  consolidateMode.value = true
+  matchTargetId.value = null
+  matchProviderOpen.value = true
 }
 
 // ---- Identify (native metadata engine "Identify" match) --------------------
@@ -601,6 +653,7 @@ function onResume(): void {
       @dedup-providers="dedupProviders"
       @dedupe-files="onRequestDedupe"
       @request-fractional-cleanup="fractionalOpen = true"
+      @start-consolidate="onStartConsolidate"
       @read="openReader"
       @resume="onResume"
       @track-search="onSearchTracker"
@@ -674,6 +727,17 @@ function onResume(): void {
       @search="linkSearch"
       @pick-candidate="onPickCandidate"
       @confirm="onMatchProviderConfirm"
+    />
+
+    <ConsolidateTargetDialog
+      v-if="series"
+      v-model:open="consolidateTargetOpen"
+      :selected-count="consolidateSelectedIds.length"
+      :candidates="consolidateCandidates"
+      :busy="matchBusy"
+      :error="error"
+      @confirm="onConsolidateExisting"
+      @match-to-source="onConsolidateMatchToSource"
     />
 
     <MetadataIdentifyModal

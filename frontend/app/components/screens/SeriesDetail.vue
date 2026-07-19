@@ -196,6 +196,8 @@ const emit = defineEmits<{
   dedupeFiles: []
   /** "Remove fractional files" pressed (→ the page opens its FractionalCleanupDialog). */
   requestFractionalCleanup: []
+  /** "Merge N into…" pressed on the Sources panel — carries the selected SeriesProvider ids (→ the page opens the consolidation target picker). */
+  startConsolidate: [providerIds: string[]]
   /** A chapter's "Read" was clicked — carries the chapter UUID (→ opens the reader). */
   read: [chapterId: string]
   /** The resume FAB was clicked (→ the page resolves the resume target and opens the reader). */
@@ -343,6 +345,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         @dedup-providers="emit('dedupProviders')"
         @dedupe-files="emit('dedupeFiles')"
         @remove-fractional="emit('requestFractionalCleanup')"
+        @start-consolidate="emit('startConsolidate', $event)"
       />
     </div>
 

@@ -49,6 +49,27 @@ func SetMatchTimeout(d time.Duration) (restore func()) {
 	return func() { matchTimeout = prev }
 }
 
+// SetConsolidateBlock installs (or clears, with nil) the consolidation-goroutine
+// block seam (consolidate_async.go) and returns a restore func. When set, the
+// background consolidation goroutine waits on the channel (or run-ctx cancel)
+// before running — letting the single-flight-guard test hold the first
+// consolidation in flight deterministically while it fires a second start.
+// Mirrors SetMatchBlock.
+func SetConsolidateBlock(ch chan struct{}) func() {
+	prev := consolidateBlock
+	consolidateBlock = ch
+	return func() { consolidateBlock = prev }
+}
+
+// SetConsolidatePerProviderTimeout overrides the per-provider slice of the
+// detached consolidation bound (production default = matchTimeout) and returns a
+// restore func. Mirrors SetMatchTimeout.
+func SetConsolidatePerProviderTimeout(d time.Duration) (restore func()) {
+	prev := consolidatePerProviderTimeout
+	consolidatePerProviderTimeout = d
+	return func() { consolidatePerProviderTimeout = prev }
+}
+
 // SafeMergeError exposes the unexported caller-safe merge-error mapper so the
 // black-box test package can pin the error-hygiene contract (known sentinel →
 // clean message, unmapped → generic "match failed", never the raw %w chain).

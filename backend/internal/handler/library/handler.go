@@ -463,6 +463,10 @@ func mapSourceError(err error) (error, bool) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()), true
 	case errors.Is(err, library.ErrSourceUpstream):
 		return httperr.Upstream(err), true
+	case errors.Is(err, library.ErrTargetNoFeed):
+		// A consolidation target that is not ready to be merged into (empty feed) —
+		// a well-formed request against a not-yet-fetched source. 409, retry after refresh.
+		return echo.NewHTTPError(http.StatusConflict, "target provider has no chapter feed — refresh it first"), true
 	}
 	return nil, false
 }

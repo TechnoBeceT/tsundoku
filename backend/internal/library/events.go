@@ -31,13 +31,18 @@ func (s *Service) broadcastScan(eventType string, data ScanEvent) {
 }
 
 // MergeEvent is the SSE payload for the provider.merged completion event emitted
-// by StartMatchDiskProvider when an async match/merge finishes. SeriesID names
-// the affected series so the frontend refetches exactly that series' detail;
-// Error is set (and non-empty) only when the background merge failed, so the UI
-// can surface the failure instead of silently showing stale state.
+// by StartMatchDiskProvider (single match) AND StartConsolidateProviders (Part B
+// multi-provider consolidation) when an async merge finishes. SeriesID names the
+// affected series so the frontend refetches exactly that series' detail; Error is
+// set (and non-empty) only when the background merge failed, so the UI can surface
+// the failure instead of silently showing stale state. Merged/Skipped carry a
+// consolidation's per-provider summary (how many folded / how many fault-isolated
+// skips); both are omitted (0) for the single match, which folds exactly one.
 type MergeEvent struct {
 	SeriesID string `json:"seriesId"`
 	Error    string `json:"error,omitempty"`
+	Merged   int    `json:"merged,omitempty"`
+	Skipped  int    `json:"skipped,omitempty"`
 }
 
 // broadcastMerge emits the provider.merged SSE event. JSON-encoding failures are

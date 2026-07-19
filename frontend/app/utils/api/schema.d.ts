@@ -343,6 +343,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/providers/consolidate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fold a set of providers into one survivor without re-downloading (async)
+         * @description Consolidates a SET of a series' providers into ONE survivor WITHOUT
+         *     re-downloading (per-series multi-provider consolidation, QCAT-295 Part B).
+         *     The target is EITHER an existing provider on the series (fold the selected
+         *     disk providers into it — e.g. Ranker: fold the disk QiScans into the real
+         *     one) OR a match-to-real-source spec (attach/ingest the source, then fold the
+         *     selected providers into it — e.g. KaliScan io/.me/.com → the live KaliScan).
+         *     Each selected provider's overlapping CBZs are relabeled to the survivor's
+         *     identity and its chapters re-pointed (no re-download); the drained provider
+         *     rows + feeds are deleted (CBZs are relabeled, never deleted). The survivor
+         *     takes the target's importance and every remaining provider is re-densified.
+         *
+         *     Providers are folded SERIALLY (a concurrent relabel of two same-numbered
+         *     chapters would collide on the identical new filename). Per-provider
+         *     fault-isolated: a bad provider is skipped, the rest complete. Idempotent on
+         *     retry.
+         *
+         *     Like the single match this runs on a detached, time-bounded background
+         *     goroutine and returns **202 {started:true}** immediately; on completion a
+         *     `provider.merged` SSE event carrying the series id (plus merged/skipped
+         *     counts, or an error) is broadcast on /api/progress, so the client refetches
+         *     the series detail then. A second request for the SAME series while one is in
+         *     flight returns **409 {started:false}** (single-flight guard).
+         */
+        post: operations["consolidateSeriesProviders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/dedup": {
         parameters: {
             query?: never;
@@ -3941,6 +3982,42 @@ export interface components {
             /** @description true if this call launched the match/merge; false if one for the same series+provider was already running (single-flight guard). */
             started: boolean;
         };
+        /** @description Result of a POST /api/series/{id}/providers/consolidate call — whether this call launched the background consolidation (202) or one for the same series was already in flight (409). */
+        ConsolidateStarted: {
+            /** @description true if this call launched the consolidation; false if one for the same series was already running (single-flight guard). */
+            started: boolean;
+        };
+        /**
+         * @description Fold a SET of the series' providers into ONE survivor (target) without
+         *     re-downloading. providerIds lists the providers to fold away; target names
+         *     the survivor — either an existing provider on the series (existingProviderId)
+         *     OR a match-to-real-source spec (source). Exactly ONE target arm must be set.
+         */
+        ConsolidateProvidersRequest: {
+            /** @description The SeriesProvider ids to fold into the target (non-empty; each a UUID). The target must not appear here. */
+            providerIds: string[];
+            target: components["schemas"]["ConsolidateTarget"];
+        };
+        /** @description The survivor a consolidation folds into — a discriminated union with EXACTLY ONE arm set (existingProviderId XOR source). */
+        ConsolidateTarget: {
+            /**
+             * Format: uuid
+             * @description Fold the selected providers into this existing provider on the series. Mutually exclusive with source.
+             */
+            existingProviderId?: string;
+            source?: components["schemas"]["ConsolidateSourceTarget"];
+        };
+        /** @description The match-to-real-source arm of a consolidation target — attach this engine-host source as the new survivor and fold the selected providers into it. */
+        ConsolidateSourceTarget: {
+            /** @description Engine-host source id (stringified) to attach as the survivor. */
+            source: string;
+            /** @description Source-relative manga URL the backend addresses this manga by. */
+            url: string;
+            /** @description Scanlation group to track; "" (or omitted) = all chapters from the source. */
+            scanlator?: string;
+            /** @description Priority to assign the new survivor (higher = preferred). */
+            importance: number;
+        };
         /** @description The set of boolean toggle-filters the library grid applies on top of the category tab + search. All default false (the whole library shows). */
         LibraryFilters: {
             /** @description Narrow to series with at least one downloaded chapter. */
@@ -5181,6 +5258,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MatchStarted"];
+                };
+            };
+        };
+    };
+    consolidateSeriesProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsolidateProvidersRequest"];
+            };
+        };
+        responses: {
+            /** @description The consolidation was launched in the background. Watch for the provider.merged SSE event on /api/progress, then refetch the series detail. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsolidateStarted"];
+                };
+            };
+            /** @description Malformed id, empty/invalid providerIds, a target that is neither/both arms, a target in the merge set, or an invalid source spec. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A consolidation for the same series is already in flight (single-flight guard). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsolidateStarted"];
                 };
             };
         };

@@ -58,6 +58,10 @@ const props = defineProps<{
   saving?: boolean
   /** True when this row is an unlinked disk provider with a mergeable linked twin (drift). Renders a DUPLICATE chip. */
   duplicate?: boolean
+  /** True to render the multi-select checkbox (consolidation mode). */
+  selectable?: boolean
+  /** Whether this row is currently selected for consolidation (only meaningful when selectable). */
+  selected?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -69,6 +73,8 @@ const emit = defineEmits<{
   match: []
   /** The ignore-fractional switch flipped — carries the NEW value. */
   toggleIgnoreFractional: [ignore: boolean]
+  /** The consolidation checkbox flipped — carries the NEW selected value. */
+  toggleSelect: [selected: boolean]
 }>()
 
 // How many fractional numbers the evidence line renders before collapsing the
@@ -114,7 +120,17 @@ const rel = (iso: string | null): string => {
 </script>
 
 <template>
-  <div class="source">
+  <div class="source" :class="{ 'source--selected': selectable && selected }">
+    <!-- Consolidation multi-select: only rendered in selectable mode so the
+         ordinary Sources list is visually unchanged. -->
+    <label v-if="selectable" class="source__select">
+      <input
+        type="checkbox"
+        :checked="selected"
+        :aria-label="`Select ${provider.providerName} for merge`"
+        @change="emit('toggleSelect', ($event.target as HTMLInputElement).checked)"
+      >
+    </label>
     <ReorderControl
       :rank="rank"
       :top-highlighted="preferred"
@@ -217,6 +233,26 @@ const rel = (iso: string | null): string => {
   border-radius: 0.8125rem; /* 13px */
   border: 1px solid var(--border);
   background: var(--surface2);
+}
+
+/* Consolidation multi-select highlight + checkbox column. */
+.source--selected {
+  border-color: var(--accent);
+  background: var(--accentSoft);
+}
+
+.source__select {
+  display: flex;
+  align-items: center;
+  padding-top: 0.125rem;
+  cursor: pointer;
+}
+
+.source__select input {
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 
 .source__main {

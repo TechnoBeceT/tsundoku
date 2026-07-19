@@ -92,6 +92,7 @@ func newEnvWithStorage(t *testing.T, storage string) *testEnv {
 	authed.POST("/series/:id/providers", h.AddProvider)
 	authed.POST("/series/:id/providers/batch", h.AddProviders)
 	authed.POST("/series/:id/providers/dedup", h.DedupProviders)
+	authed.POST("/series/:id/providers/consolidate", h.ConsolidateProviders)
 	authed.POST("/library/dedup-providers", h.DedupAllProviders)
 	authed.GET("/library/prefs", h.GetPrefs)
 	authed.PUT("/library/prefs", h.PutPrefs)

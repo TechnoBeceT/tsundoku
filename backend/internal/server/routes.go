@@ -147,6 +147,7 @@ import (
 //   - /api/series/:id/providers (POST)             — attach an additional source to an existing series (RequireOwner).
 //   - /api/series/:id/providers/batch (POST)       — attach several sources to an existing series in one call (RequireOwner).
 //   - /api/series/:id/providers/:providerId/match (POST) — attribute existing on-disk chapters to a real source without re-downloading; async (202, completes via the provider.merged SSE event) (RequireOwner).
+//   - /api/series/:id/providers/consolidate (POST) — fold a SET of providers into one survivor (existing or match-to-source) without re-downloading; async (202, completes via the provider.merged SSE event) (RequireOwner).
 //   - /api/trackers (GET)                          — list tracker connect status (RequireOwner).
 //   - /api/trackers/:id/auth-url (GET)             — build a fresh OAuth authorize URL on demand (RequireOwner).
 //   - /api/trackers/:id/login/oauth (POST)         — complete an OAuth login callback (RequireOwner).
@@ -500,6 +501,7 @@ func registerRoutes(
 	authed.POST("/series/:id/providers", libraryH.AddProvider)
 	authed.POST("/series/:id/providers/batch", libraryH.AddProviders)
 	authed.POST("/series/:id/providers/:providerId/match", libraryH.MatchDiskProvider)
+	authed.POST("/series/:id/providers/consolidate", libraryH.ConsolidateProviders)
 	authed.POST("/series/:id/providers/dedup", libraryH.DedupProviders)
 	authed.POST("/library/dedup-providers", libraryH.DedupAllProviders)
 	authed.GET("/library/prefs", libraryH.GetPrefs)

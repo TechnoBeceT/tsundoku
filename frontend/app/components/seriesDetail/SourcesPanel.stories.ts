@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
+import { userEvent, within } from 'storybook/test'
 import SourcesPanel from './SourcesPanel.vue'
 import { richSeries, singleProviderSeries, seriesWithUnlinkedGroup, seriesWithDuplicateProviders } from '../../fixtures/seriesDetail'
 
@@ -55,5 +56,19 @@ export const WithDuplicates: Story = {
   args: {
     providers: seriesWithDuplicateProviders.providers,
     driftedIds: [seriesWithDuplicateProviders.providers.find(p => !p.linked)!.id],
+  },
+}
+
+/**
+ * Multi-select consolidation (QCAT-295 Part B): with ≥2 sources each row shows a
+ * checkbox; ticking one reveals the "Merge into…" bar. The play function selects
+ * the first source to surface the bar.
+ */
+export const MergeSelection: Story = {
+  args: { providers: richSeries.providers },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const first = richSeries.providers[0]!
+    await userEvent.click(await canvas.findByLabelText(`Select ${first.providerName} for merge`))
   },
 }

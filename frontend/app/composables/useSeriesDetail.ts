@@ -325,8 +325,55 @@ export function useSeriesDetail(id: string) {
 
   // The disk provider a match is currently folding away (set while a match is in
   // flight, cleared on completion) — the reconnect reconcile below checks whether
-  // it has been drained yet.
+  // it has been drained yet. For a multi-provider consolidation it holds ONE of
+  // the folded ids (all fold away), so the same "still present?" reconcile applies.
   const matchingProviderId = ref<string | null>(null)
+
+  /**
+   * ConsolidateTarget — the survivor a consolidation folds into: EITHER an
+   * existing provider on the series (existingProviderId) OR a match-to-real-source
+   * spec. Exactly one arm is set (mirrors the backend ConsolidateProvidersRequest).
+   */
+  type ConsolidateTarget =
+    | { existingProviderId: string }
+    | { source: { source: string, url: string, scanlator?: string, importance: number } }
+
+  /**
+   * Folds a SET of the series' providers into ONE survivor WITHOUT re-downloading
+   * (QCAT-295 Part B, POST /api/series/{id}/providers/consolidate). Mirrors
+   * matchDiskProvider's ASYNC UX exactly: the endpoint returns 202 (or 409 when a
+   * consolidation for this series is already in flight), runs the merge detached
+   * (disconnect-proof), and emits the SAME `provider.merged` SSE event on
+   * completion — so this only KICKS OFF the merge, keeps the "merging…" busy state
+   * (matchBusy), resolves true so the target dialog closes, and the shared
+   * provider.merged listener below clears the busy state + refetches (or surfaces
+   * the error) when it lands. A hard failure to even start is surfaced via `error`
+   * (§16) and resolves false so the dialog stays open.
+   */
+  const consolidateProviders = async (providerIds: string[], target: ConsolidateTarget): Promise<boolean> => {
+    matchBusy.value = true
+    error.value = null
+    dedupMessage.value = null
+    try {
+      const res = await apiClient.POST('/api/series/{id}/providers/consolidate', {
+        params: { path: { id } },
+        body: { providerIds, target },
+      })
+      if (res.response.status === 202 || res.response.status === 409) {
+        // Track ONE of the folded ids so the reconnect-reconcile can detect
+        // completion (it disappears from the provider list once merged).
+        matchingProviderId.value = providerIds[0] ?? null
+        dedupMessage.value = 'Merging sources…'
+        return true
+      }
+      throw new Error(res.error && 'message' in res.error ? String(res.error.message) : 'Merge failed')
+    }
+    catch (err) {
+      matchBusy.value = false
+      error.value = err instanceof Error ? err.message : 'Merge failed'
+      return false
+    }
+  }
 
   const { on: onProgress, connected } = useProgressStream()
 
@@ -607,6 +654,7 @@ export function useSeriesDetail(id: string) {
     chooseMetadataSource,
     deleteSeries,
     matchDiskProvider,
+    consolidateProviders,
     dedupProviders,
     fetchDedupePreview,
     dedupeFiles,

@@ -39,6 +39,7 @@ import { useSeriesDetail } from './useSeriesDetail'
 interface Call { method: string, path: string, body?: unknown, params?: unknown }
 let calls: Call[] = []
 let nextMatchOk = true
+let nextConsolidateOk = true
 let nextDedupOk = true
 let nextDedupeFilesOk = true
 let nextDeleteOk = true
@@ -199,6 +200,13 @@ vi.mock('~/utils/api/client', () => ({
         }
         // ASYNC: the merge is launched and runs detached; completion arrives via
         // the provider.merged SSE event (see fireProgress in the tests).
+        return Promise.resolve({ data: { started: true }, error: null, response: new Response(null, { status: 202 }) })
+      }
+      if (path === '/api/series/{id}/providers/consolidate') {
+        if (!nextConsolidateOk) {
+          return Promise.resolve({ data: null, error: { message: 'consolidate failed' }, response: new Response(null, { status: 400 }) })
+        }
+        // ASYNC: launched + detached; completion arrives via the provider.merged SSE event.
         return Promise.resolve({ data: { started: true }, error: null, response: new Response(null, { status: 202 }) })
       }
       if (path === '/api/series/{id}/providers/dedup') {
@@ -426,6 +434,77 @@ describe('useSeriesDetail — matchDiskProvider (async)', () => {
     expect(matchBusy.value).toBe(true)
     await promise
     expect(matchBusy.value).toBe(true) // stays true until the SSE completion
+  })
+})
+
+describe('useSeriesDetail — consolidateProviders (async, QCAT-295 Part B)', () => {
+  beforeEach(() => {
+    calls = []
+    nextConsolidateOk = true
+    seriesDetailResponse = initialDetail
+    progressConnected.value = true
+  })
+  afterEach(() => {
+    progressHandlers.clear()
+  })
+
+  it('POSTs the consolidate endpoint with the exact {providerIds, target} body (existing-provider arm)', async () => {
+    const { refresh, consolidateProviders } = useSeriesDetail('series-1')
+    await refresh()
+
+    await consolidateProviders(['d1', 'd2'], { existingProviderId: 'target-1' })
+
+    const postCall = calls.find(c => c.path === '/api/series/{id}/providers/consolidate')
+    expect(postCall).toBeDefined()
+    expect(postCall!.params).toEqual({ id: 'series-1' })
+    expect(postCall!.body).toEqual({ providerIds: ['d1', 'd2'], target: { existingProviderId: 'target-1' } })
+  })
+
+  it('POSTs the match-to-source arm body verbatim', async () => {
+    const { refresh, consolidateProviders } = useSeriesDetail('series-1')
+    await refresh()
+
+    await consolidateProviders(['d1'], { source: { source: '7', url: '/manga/7', scanlator: '', importance: 20 } })
+
+    const postCall = calls.find(c => c.path === '/api/series/{id}/providers/consolidate')
+    expect(postCall!.body).toEqual({ providerIds: ['d1'], target: { source: { source: '7', url: '/manga/7', scanlator: '', importance: 20 } } })
+  })
+
+  it('on 202 keeps matchBusy + shows in-progress, resolves true, and does NOT reseed yet', async () => {
+    const { series, matchBusy, dedupMessage, refresh, consolidateProviders } = useSeriesDetail('series-1')
+    await refresh()
+
+    const ok = await consolidateProviders(['disk-provider-1'], { existingProviderId: 'target-1' })
+
+    expect(ok).toBe(true)
+    expect(matchBusy.value).toBe(true)
+    expect(dedupMessage.value).toBe('Merging sources…')
+    // Unchanged until the SSE lands.
+    expect(series.value?.providers[0]?.id).toBe('disk-provider-1')
+  })
+
+  it('refetches + clears the busy state when the provider.merged SSE event arrives', async () => {
+    const { matchBusy, refresh, consolidateProviders } = useSeriesDetail('series-1')
+    await refresh()
+    await consolidateProviders(['disk-provider-1'], { existingProviderId: 'target-1' })
+
+    seriesDetailResponse = matchedDetail
+    fireProgress('provider.merged', { seriesId: 'series-1', merged: 1, skipped: 0 })
+    await flushAll()
+
+    expect(matchBusy.value).toBe(false)
+  })
+
+  it('surfaces a hard start failure via error, resolves false (dialog stays open)', async () => {
+    nextConsolidateOk = false
+    const { error, matchBusy, refresh, consolidateProviders } = useSeriesDetail('series-1')
+    await refresh()
+
+    const ok = await consolidateProviders(['d1'], { existingProviderId: 'target-1' })
+
+    expect(ok).toBe(false)
+    expect(matchBusy.value).toBe(false)
+    expect(error.value).toBe('consolidate failed')
   })
 })
 

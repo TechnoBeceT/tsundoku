@@ -1,10 +1,24 @@
 package disk
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// ErrRelabelCollision is returned by RelabelChapterFile when the rename
+// destination is already occupied by a DIFFERENT file (the source still exists
+// AND the target exists, so this is NOT the idempotent already-at-destination
+// retry case). Renaming would os.Rename OVER — and silently destroy — that other
+// archive, so the relabel is refused instead. This is impossible in production
+// (chapter.NormalizeChapterKey maps a given number to one key ⇒ one Chapter row
+// ⇒ one target filename per number), but a legacy/hand-edited DB or a future
+// ingest bug could forge two same-number / distinct-key chapters; for a
+// DESTRUCTIVE op we must never silently overwrite an archive even then. Callers
+// surface it as a SKIP (never a data-losing success). errors.Is-matchable through
+// the wrapping callers use.
+var ErrRelabelCollision = errors.New("disk: relabel target already occupied by a different chapter's file")
 
 // RelabelChapterFile re-attributes an already-rendered chapter CBZ to a NEW
 // provenance identity (provider/scanlator/importance carried by meta) WITHOUT
@@ -89,7 +103,10 @@ func RelabelChapterFile(storage string, meta RenderMeta, oldFilename string) (ne
 // from newPath so the page count survives the retry. A rename with BOTH paths
 // missing (a genuinely vanished archive) still errors.
 func relabelMoveIntoPlace(oldPath, newPath string, renameNeeded bool) (oldCI ComicInfo, didRename bool, err error) {
-	alreadyAtDest := renameNeeded && !pathExists(oldPath) && pathExists(newPath)
+	alreadyAtDest, err := classifyRenameTarget(oldPath, newPath, renameNeeded)
+	if err != nil {
+		return ComicInfo{}, false, err
+	}
 	didRename = renameNeeded && !alreadyAtDest
 
 	readPath := oldPath
@@ -106,6 +123,31 @@ func relabelMoveIntoPlace(oldPath, newPath string, renameNeeded bool) (oldCI Com
 		}
 	}
 	return oldCI, didRename, nil
+}
+
+// classifyRenameTarget decides how a needed rename should proceed by inspecting
+// the two paths:
+//   - source gone + destination present → alreadyAtDest (idempotent retry: a prior
+//     interrupted run already moved the file; skip the rename, read CI from there).
+//   - source present + destination present → COLLISION: os.Rename would overwrite a
+//     DIFFERENT archive, so refuse with ErrRelabelCollision (never silently destroy).
+//   - otherwise → a normal rename (alreadyAtDest false, no error).
+//
+// When no rename is needed (newFilename == oldFilename) it is always a no-op.
+func classifyRenameTarget(oldPath, newPath string, renameNeeded bool) (alreadyAtDest bool, err error) {
+	if !renameNeeded {
+		return false, nil
+	}
+	oldExists := pathExists(oldPath)
+	newExists := pathExists(newPath)
+	switch {
+	case !oldExists && newExists:
+		return true, nil
+	case oldExists && newExists:
+		return false, fmt.Errorf("%w: %q", ErrRelabelCollision, newPath)
+	default:
+		return false, nil
+	}
 }
 
 // pathExists reports whether p is a name that currently exists on disk. Used by
