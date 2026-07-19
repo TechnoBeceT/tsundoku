@@ -48,3 +48,21 @@ export function resolveInitialHealthTab(
   if (storedTab === 'library' || storedTab === 'sources') return storedTab
   return 'library'
 }
+
+/** The reporting windows the Source Metrics tab offers, as SegmentedTabs items. */
+export const REPORT_PERIOD_TABS: TabItem[] = [
+  { key: '24h', label: '24h' },
+  { key: '7d', label: '7d' },
+  { key: '30d', label: '30d' },
+]
+
+/** sessionStorage key the Source Metrics tab persists its report window under. */
+export const HEALTH_REPORT_PERIOD_KEY = 'tsundoku.health.reportPeriod'
+
+/**
+ * resolveInitialReportPeriod — the report window to open with: the persisted
+ * session value if valid, else the `24h` default. Unknown values are ignored.
+ */
+export function resolveInitialReportPeriod(stored: string | null): '24h' | '7d' | '30d' {
+  return stored === '24h' || stored === '7d' || stored === '30d' ? stored : '24h'
+}

@@ -22,7 +22,13 @@
  *
  * useHealth / useSourceMetrics are auto-imported from app/composables/.
  */
-import { HEALTH_TAB_SESSION_KEY, resolveInitialHealthTab, type HealthTab } from '~/utils/healthTabs'
+import {
+  HEALTH_TAB_SESSION_KEY,
+  HEALTH_REPORT_PERIOD_KEY,
+  resolveInitialHealthTab,
+  resolveInitialReportPeriod,
+  type HealthTab,
+} from '~/utils/healthTabs'
 
 // ── Library tab (loads on mount — it is the default view) ──────────────────────
 const { series, pending: healthPending, refreshing, error: healthError, refresh } = useHealth()
@@ -42,6 +48,22 @@ const {
   resetBreaker,
 } = useSourceMetrics({ immediate: false })
 
+// ── Kaizoku-grade Source Metrics report (LAZY — one reactive bundle) ───────────
+// Restore the last-used reporting window before the first fetch so it loads at
+// that period, not the default. `metrics` joins into the accordion for the
+// superset badges + Reset (by canonical source key).
+const storedPeriod = import.meta.client ? sessionStorage.getItem(HEALTH_REPORT_PERIOD_KEY) : null
+const report = useSourceHealthReport({
+  metrics,
+  immediate: false,
+  initialPeriod: resolveInitialReportPeriod(storedPeriod),
+})
+
+// Persist the reporting window so it survives navigating away + back.
+watch(() => report.period, (p) => {
+  if (import.meta.client) sessionStorage.setItem(HEALTH_REPORT_PERIOD_KEY, p)
+})
+
 // ── Active tab: ?tab= deep-link → sessionStorage → default 'library' ───────────
 const route = useRoute()
 const queryTab = typeof route.query.tab === 'string' ? route.query.tab : null
@@ -58,13 +80,15 @@ watch(activeTab, (tab) => {
   if (import.meta.client) sessionStorage.setItem(HEALTH_TAB_SESSION_KEY, tab)
 })
 
-// Lazy-load the Sources tab's metrics exactly once, the first time it is shown
-// (fires immediately if the resolved initial tab is already 'sources').
+// Lazy-load the Sources tab's data exactly once, the first time it is shown
+// (fires immediately if the resolved initial tab is already 'sources'): the
+// search-metrics snapshot AND the Kaizoku-grade report (overview + event log).
 let sourcesLoaded = false
 watch(activeTab, (tab) => {
   if (tab === 'sources' && !sourcesLoaded) {
     sourcesLoaded = true
     void refetchMetrics()
+    report.load()
   }
 }, { immediate: true })
 </script>
@@ -77,6 +101,7 @@ watch(activeTab, (tab) => {
       :health-loading="healthPending"
       :refreshing="refreshing"
       :health-error="healthError"
+      :report="report"
       :metrics="metrics"
       :source-pending="sourcePending"
       :source-error="sourceError"

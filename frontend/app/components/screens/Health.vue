@@ -4,6 +4,7 @@ import SegmentedTabs from '../ui/SegmentedTabs.vue'
 import LibraryHealth from './LibraryHealth.vue'
 import SourceHealth from './SourceHealth.vue'
 import { HEALTH_TABS, type HealthTab } from '~/utils/healthTabs'
+import type { SourceHealthReportModel } from '~/composables/useSourceHealthReport'
 import type { SeriesHealth } from './libraryHealth.types'
 import type { SourceMetric } from './sourceHealth.types'
 
@@ -34,6 +35,8 @@ withDefaults(defineProps<{
   /** A library-health load failure, shown as a page-level banner (§16). */
   healthError?: string | null
   // ── Sources tab ──────────────────────────────────────────────────────────
+  /** The Kaizoku-grade Source Metrics report bundle (data + handlers). */
+  report?: SourceHealthReportModel | null
   /** The per-source metric rows (slowest-first). */
   metrics?: SourceMetric[]
   /** Whether the source-metrics list is loading. */
@@ -52,6 +55,7 @@ withDefaults(defineProps<{
   resetError?: string | null
 }>(), {
   activeTab: 'library',
+  report: null,
   healthLoading: false,
   refreshing: false,
   healthError: null,
@@ -101,9 +105,10 @@ const emit = defineEmits<{
       />
     </template>
 
-    <!-- Sources tab — source-centric metrics (Kaizoku-grade report = slice 4). -->
+    <!-- Sources tab — the Kaizoku-grade Source Metrics report + metrics pane. -->
     <SourceHealth
       v-else
+      :report="report"
       :metrics="metrics"
       :pending="sourcePending"
       :error="sourceError"
