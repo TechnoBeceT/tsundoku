@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,7 @@ import (
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
 
 // ErrChapterNotFound is returned by RetryChapter when no chapter matches the id.
@@ -34,16 +36,59 @@ var retryableStates = []entchapter.State{
 	entchapter.StatePermanentlyFailed,
 }
 
-// Service exposes the cross-library chapter-activity views and the owner retry
-// actions. It owns only the Ent client — all enrichment reuses the exported
-// internal/series resolvers, so no importance/display logic is duplicated here.
-type Service struct {
-	client *ent.Client
+// BreakerSnapshotter is the narrow read port over the source-politeness circuit-
+// breaker: ONE batched snapshot of every source's breaker state, keyed by the
+// canonical source name (breakerKey). *sourcegate.Service satisfies it. Attached via
+// WithBreakers; nil (the default, e.g. in unit tests) skips the cooldown join and the
+// waiting reason falls back to the persisted per-source backoff only.
+type BreakerSnapshotter interface {
+	Snapshot(ctx context.Context) (map[string]sourcegate.BreakerState, error)
 }
 
-// NewService builds the downloads activity service over the given Ent client.
+// RetrySettings supplies the current per-source retry budget for the "N/max" badge,
+// resolved AT USE-TIME so an owner's settings change applies on the next List (hot
+// reload). *settings.Service and settings.Static both satisfy it (MaxRetries(ctx)).
+// Attached via WithRetrySettings; nil reports MaxRetries as 0.
+type RetrySettings interface {
+	MaxRetries(ctx context.Context) int
+}
+
+// Service exposes the cross-library chapter-activity views and the owner retry
+// actions. It owns the Ent client — all enrichment reuses the exported
+// internal/series resolvers, so no importance/display logic is duplicated here —
+// plus two OPTIONAL, nil-guarded read ports: the circuit-breaker snapshot (for the
+// cooling_down waiting reason) and the retry settings (for the N/max badge). Both are
+// attached via the With* builders so the ~20 existing NewService(client) call sites
+// (and unit tests that need neither) are untouched.
+type Service struct {
+	client   *ent.Client
+	breakers BreakerSnapshotter
+	retry    RetrySettings
+}
+
+// NewService builds the downloads activity service over the given Ent client. The
+// breaker-cooldown join and the retry-budget badge are opt-in — see WithBreakers /
+// WithRetrySettings; without them List behaves exactly as before (backoff-only
+// deferral, MaxRetries 0).
 func NewService(client *ent.Client) *Service {
 	return &Service{client: client}
+}
+
+// WithBreakers attaches the source-politeness breaker snapshot so List can surface
+// the cooling_down waiting reason (the source-wide anti-ban cooldown a persisted-only
+// deferral cannot see). Returns the receiver for chaining. A nil snapshotter is the
+// no-op default.
+func (s *Service) WithBreakers(b BreakerSnapshotter) *Service {
+	s.breakers = b
+	return s
+}
+
+// WithRetrySettings attaches the retry-budget accessor so each row can report the
+// current MaxRetries alongside its per-source attempt count ("Comix · 2/3"). Returns
+// the receiver for chaining. Nil reports MaxRetries as 0.
+func (s *Service) WithRetrySettings(r RetrySettings) *Service {
+	s.retry = r
+	return s
 }
 
 // ListFilter selects and paginates a List call. States is the required set of
@@ -114,28 +159,85 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 	}
 	resolutions := resolveSeries(seriesByID, provBySeries)
 
-	// One wall-clock read for the whole page so every row's deferral is judged
-	// against the same instant (a future next_attempt_at = still waiting).
+	// One wall-clock read for the whole page so every row's waiting status is judged
+	// against the same instant. The per-source retry budget and the breaker snapshot
+	// are each read ONCE for the whole page (never per row): the snapshot is the
+	// batched circuit-breaker join that closes the cooldown gap without an N+1.
 	now := time.Now()
+	maxRetries := s.maxRetries(ctx)
+	breakerByKey := s.loadBreakers(ctx)
+
 	items := make([]DownloadChapterDTO, len(rows))
 	for i, ch := range rows {
 		res := resolutions[ch.SeriesID]
-		provID, provName := chapterProvider(ch, provByID, res.upgradeTargets)
-		// The deferral is read from the SAME batch-loaded feeds (waitedOnCarrier
-		// returns a ProviderChapter already in memory), so it adds ZERO queries.
-		deferredUntil, deferReason := deferral(waitedOnCarrier(ch, res.upgradeTargets, provByID), now)
 		items[i] = newDownloadChapterDTO(
 			ch,
 			category.NameOf(seriesByID[ch.SeriesID]),
 			res,
-			provID,
-			provName,
-			upgradeTargetLabel(ch, res.upgradeTargets, provByID),
-			deferredUntil,
-			deferReason,
+			resolveRow(ch, res, provByID, breakerByKey, maxRetries, now),
 		)
 	}
 	return DownloadListDTO{Total: total, Items: items}, nil
+}
+
+// maxRetries reads the current per-source retry budget once (nil accessor → 0).
+func (s *Service) maxRetries(ctx context.Context) int {
+	if s.retry == nil {
+		return 0
+	}
+	return s.retry.MaxRetries(ctx)
+}
+
+// loadBreakers fetches the whole circuit-breaker snapshot ONCE per List so the
+// per-row cooldown join is a pure in-memory map lookup (no N+1). FAILS OPEN: the
+// breaker join is advisory enrichment, so a snapshot read error (or no snapshotter
+// attached) yields a nil map — the list still renders, waiting reasons just fall back
+// to the persisted per-source backoff. Never lets breaker bookkeeping wedge the
+// owner's #1 read model.
+func (s *Service) loadBreakers(ctx context.Context) map[string]sourcegate.BreakerState {
+	if s.breakers == nil {
+		return nil
+	}
+	snap, err := s.breakers.Snapshot(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "downloads.List: breaker snapshot failed; skipping cooldown join", "err", err)
+		return nil
+	}
+	return snap
+}
+
+// resolveRow computes the once-per-chapter enrichment the DTO mapper projects: the
+// resolved source (id + label + its per-source attempt count), the upgrade marker +
+// target, and the waiting status (reason + retry ETA + detail). Every value is read
+// from data already in memory — the batch-loaded provider feeds and the single
+// breaker snapshot — so it issues ZERO queries.
+func resolveRow(ch *ent.Chapter, res seriesResolution, provByID map[uuid.UUID]*ent.SeriesProvider, breakerByKey map[string]sourcegate.BreakerState, maxRetries int, now time.Time) rowContext {
+	sp, pc := chapterSource(ch, provByID, res.upgradeTargets)
+	rc := rowContext{
+		maxRetries:    maxRetries,
+		isUpgrade:     isUpgrading(ch.State),
+		upgradeTarget: upgradeTargetLabel(ch, res.upgradeTargets, provByID),
+	}
+	if sp != nil {
+		rc.provider = sp.Provider
+		rc.providerName = series.ProviderLabel(sp)
+	}
+	if pc != nil {
+		rc.attempts = pc.Attempts
+	}
+
+	// The waited-on source (upgrade target for an upgrade, primary candidate for a
+	// wanted) carries BOTH cooldown signals: its persisted per-source backoff and its
+	// source-wide circuit-breaker (joined from the snapshot by canonical name).
+	waited, ok := waitedOnCarrier(ch, res.upgradeTargets, provByID)
+	var breaker *sourcegate.BreakerState
+	if ok && breakerByKey != nil {
+		if b, found := breakerByKey[breakerKey(waited.provider)]; found {
+			breaker = &b
+		}
+	}
+	rc.waitingReason, rc.retryAt, rc.deferReason = waitingStatus(waited, ok, breaker, now)
+	return rc
 }
 
 // listPredicates builds the Chapter predicates for List: the required state set,
@@ -211,53 +313,37 @@ func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.U
 	return out
 }
 
-// chapterProvider resolves the source a chapter is ACTUALLY coming from, as
-// (id, displayName). The id is SeriesProvider.provider (the raw source key); the
-// name is series.ProviderLabel (display name, falling back to the id).
-//
-//  1. The provider that SATISFIED it (satisfied_by), when set and still present —
-//     true provenance: this is where the file on disk came from.
-//  2. Otherwise the highest-importance provider whose FEED CARRIES this chapter_key,
-//     ranked exactly as the engine ranks candidates (importance DESC, then
-//     ProviderChapter.ID ASC — see upgradeTargetIndex). That is the scheduler's own
-//     primary-source rule (download/schedule.go groupBySource takes cands[0] of the
-//     same importance-DESC, feed-bearing set), so the row names the source the engine
-//     is really fetching from. Falling back to the series' TOP source instead — as
-//     this used to — lies whenever the top source does not carry the key: in
-//     production, chapters were labelled "Asura Scans" while the engine fetched them
-//     from "Comic Asura", because Asura's feed has no such chapter. This case covers
-//     every chapter nothing satisfies yet (downloading / wanted / failed) AND a
-//     DOWNLOADED chapter whose satisfier was CLEARED — series.RemoveProvider nulls
-//     satisfied_by by design (keeping the watermark and the CBZ), so such a row names
-//     a remaining feed carrier rather than the source the file really came from. That
-//     provenance is gone from the DB; the row answers "who would supply this chapter
-//     now", which is what every other unsatisfied row answers too.
-//  3. Otherwise "" — NO source carries this key, so nothing is fetching it. The
-//     engine skips such a chapter every cycle (handleNoCandidates → download.skip,
-//     stays wanted); reporting no source is the truth and surfaces it, where naming
-//     the series' top source would repeat the very lie this fixes. A FRACTIONAL
-//     chapter whose only carrier is a source the owner flagged ignore_fractional
-//     lands here too — the index drops that source's fractional feed rows, exactly as
-//     the engine drops it from candidacy — so the row correctly says nothing is
-//     fetching it instead of naming the source it was told to ignore.
-//
-// GOTCHA (mirrors upgradeTargetLabel's): case 2 names the source the engine WOULD
-// pick. The engine's STRUCTURAL exclusion — ignore_fractional — is mirrored by the
-// index (see newUpgradeTargetIndex), because a permanently-excluded source must
-// never be named. Its TRANSIENT ones are not: it also skips retry-exhausted /
-// cooling-down / breaker-tripped sources, which this read model cannot see without
-// the N+1 the feed index exists to avoid, and which clear on their own. It is a UI
-// hint, never engine state.
-func chapterProvider(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider, idx upgradeTargetIndex) (id, name string) {
-	if ch.SatisfiedByProviderID != nil {
-		if p, ok := provByID[*ch.SatisfiedByProviderID]; ok {
-			return p.Provider, series.ProviderLabel(p)
+// Summary returns the global nav-badge counts — one row per relevant state — from a
+// SINGLE grouped aggregate over the whole Chapter table (GROUP BY state), never a
+// per-state round-trip. Downloading = in-flight; Queued = wanted (waiting to
+// download; upgrade waves are background convergence, not counted here); Failed =
+// failed + permanently_failed (both are "needs attention" and both are retryable).
+// Cheap enough for a persistent nav badge polled on every screen.
+func (s *Service) Summary(ctx context.Context) (DownloadSummaryDTO, error) {
+	var rows []struct {
+		State entchapter.State `json:"state"`
+		Count int              `json:"count"`
+	}
+	err := s.client.Chapter.Query().
+		GroupBy(entchapter.FieldState).
+		Aggregate(ent.As(ent.Count(), "count")).
+		Scan(ctx, &rows)
+	if err != nil {
+		return DownloadSummaryDTO{}, fmt.Errorf("downloads.Summary: aggregate chapter states: %w", err)
+	}
+
+	var out DownloadSummaryDTO
+	for _, r := range rows {
+		switch r.State {
+		case entchapter.StateDownloading:
+			out.Downloading += r.Count
+		case entchapter.StateWanted:
+			out.Queued += r.Count
+		case entchapter.StateFailed, entchapter.StatePermanentlyFailed:
+			out.Failed += r.Count
 		}
 	}
-	if carriers := idx[ch.ChapterKey]; len(carriers) > 0 {
-		return carriers[0].provider.Provider, series.ProviderLabel(carriers[0].provider)
-	}
-	return "", ""
+	return out, nil
 }
 
 // RetryChapter resets one failed/permanently_failed chapter back to wanted so the

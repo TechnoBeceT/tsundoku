@@ -63,6 +63,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	e.HTTPErrorHandler = middleware.ErrorHandler
 	authed := e.Group("/api", middleware.RequireOwner(authSvc, false))
 	authed.GET("/downloads", h.List)
+	authed.GET("/downloads/summary", h.Summary)
 	authed.POST("/downloads/retry-all", h.RetryAll)
 	authed.POST("/chapters/:id/retry", h.RetryChapter)
 	authed.POST("/downloads/run", h.Run)
@@ -289,12 +290,41 @@ func TestRun_OK(t *testing.T) {
 	}
 }
 
+// TestSummary_OK proves GET /api/downloads/summary returns the three global nav
+// counts: one downloading, one queued (wanted), one failed from the seed.
+func TestSummary_OK(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t) // one failed + one wanted
+	env.client.Chapter.Create().SetSeriesID(firstSeriesID(ctx, t, env.client)).
+		SetChapterKey("ch-3").SetNumber(3).SetState(entchapter.StateDownloading).SaveX(ctx)
+
+	rec := env.do(http.MethodGet, "/api/downloads/summary")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("summary: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got downloadssvc.DownloadSummaryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Downloading != 1 || got.Queued != 1 || got.Failed != 1 {
+		t.Errorf("summary = %+v, want downloading 1 / queued 1 / failed 1", got)
+	}
+}
+
+// firstSeriesID returns the single seeded series' id (the seed creates exactly one).
+func firstSeriesID(ctx context.Context, t *testing.T, client *ent.Client) uuid.UUID {
+	t.Helper()
+	return client.Series.Query().FirstIDX(ctx)
+}
+
 // TestRoutes_RequireAuth proves every route is behind RequireOwner (401 without a
 // Bearer token).
 func TestRoutes_RequireAuth(t *testing.T) {
 	env := newTestEnv(t)
 	cases := []struct{ method, target string }{
 		{http.MethodGet, "/api/downloads?state=failed"},
+		{http.MethodGet, "/api/downloads/summary"},
 		{http.MethodPost, "/api/downloads/retry-all"},
 		{http.MethodPost, "/api/chapters/" + uuid.New().String() + "/retry"},
 		{http.MethodPost, "/api/downloads/run"},

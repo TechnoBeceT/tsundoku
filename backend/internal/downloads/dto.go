@@ -25,7 +25,7 @@ import (
 // (SeriesProvider.provider — the raw numeric id) of the source the chapter is
 // ACTUALLY coming from — its satisfier, else the highest-importance source whose
 // feed carries the key, else "" when no source carries it at all (see
-// chapterProvider); ProviderName is that same source's human-readable display
+// chapterSource); ProviderName is that same source's human-readable display
 // label (falls back to the id), which the UI shows in place of the id. Both are
 // "" for a chapter nothing is fetching — the UI renders that as an em-dash.
 // CAVEAT: this is "who supplies this chapter", not a provenance guarantee — a
@@ -35,6 +35,21 @@ import (
 // engine excludes retry-exhausted / cooling-down / breaker-tripped sources this
 // read model cannot see.
 //
+// Attempts + MaxRetries drive the "N/max" retry badge (the UI renders
+// "<ProviderName> · <Attempts>/<MaxRetries>"): Attempts is the resolved source's
+// per-source ProviderChapter.attempts (how many times THIS source has failed THIS
+// chapter — the download engine's per-source budget, NOT the legacy Chapter.retries),
+// and MaxRetries is the current jobs.max_retries budget resolved at request time
+// (hot-reloadable; 0 when no retry-settings port is attached). A source is exhausted
+// for the chapter at Attempts >= MaxRetries; a chapter fails only when ALL its sources
+// are exhausted. Attempts describes the SAME source ProviderName names.
+//
+// IsUpgrade marks a row as a convergence UPGRADE (state upgrade_available / upgrading)
+// rather than a fresh download — the explicit fresh-vs-upgrade discriminator the queue
+// UI needs. It is NOT equivalent to "UpgradeTarget != \"\"": a chapter can be
+// upgrade_available yet have no nameable target (the only higher source has a feed gap,
+// or every candidate is filtered), so IsUpgrade is true while UpgradeTarget is "".
+//
 // UpgradeTarget is the display label of the source an UPGRADING chapter is
 // converging TO (the UI renders "<ProviderName> → <UpgradeTarget>"), and is ""
 // for every chapter that is not in upgrade_available / upgrading. Without it the
@@ -43,18 +58,26 @@ import (
 // authoritative pick — see upgradeTargetLabel for the resolution rule and where
 // the two can differ.
 //
-// DeferredUntil + DeferReason answer WHY a queued chapter is not moving: the source
-// the engine is waiting on (the upgrade TARGET for an upgrading chapter, else the
-// PRIMARY candidate for a wanted one — see waitedOnCarrier) has a persisted
-// per-source cooldown. DeferredUntil is that source's next_attempt_at, populated
-// ONLY when it is genuinely in the FUTURE (a nil / past timestamp = the source is
-// ready next cycle → null, never mislabelled as waiting); DeferReason is that
-// source's last_error, travelling with the deferral. The waited-on source's NAME is
-// already on the row — UpgradeTarget for an upgrade defer, ProviderName for a wanted
-// one — so it is not duplicated here. Both are the zero value for a row that is not
-// deferred. It surfaces only the PERSISTED cooldown: a chapter held back purely by
-// the engine's in-memory circuit-breaker (which writes no next_attempt_at) shows no
-// deferral — see deferral's KNOWN GAP.
+// WaitingReason + DeferredUntil + DeferReason answer WHY a queued chapter is not
+// moving. They read the source the engine is waiting on (the upgrade TARGET for an
+// upgrading chapter, else the PRIMARY candidate for a wanted one — see waitedOnCarrier)
+// and unify its TWO cooldown signals (see waitingStatus):
+//   - WaitingReason "backoff": that source has a persisted per-source next_attempt_at
+//     in the future (a failed download/upgrade fetch's per-chapter backoff).
+//   - WaitingReason "cooling_down": that source's circuit-breaker is tripped
+//     (SourceCircuitState.cooldown_until in the future) — the WHOLE source is in
+//     anti-ban cooldown. This is the batch-joined breaker read that CLOSES the former
+//     KNOWN GAP where a chapter held back purely by the breaker (a different table
+//     from next_attempt_at) showed no reason. The snapshot is loaded once per List.
+//   - WaitingReason "": the source is ready to try next cycle (never mislabelled).
+//
+// DeferredUntil is the EFFECTIVE next-eligible time — the LATER of the two timestamps
+// when both apply (the engine waits out both), else the single one; populated ONLY
+// when in the FUTURE. DeferReason is the binding constraint's recorded message (the
+// breaker's last_error for cooling_down, the feed row's last_error for backoff). All
+// three are the zero value for a row that is not waiting. The waited-on source's NAME
+// is already on the row (UpgradeTarget for an upgrade defer, ProviderName for a wanted
+// one), so it is not duplicated here.
 type DownloadChapterDTO struct {
 	ID             uuid.UUID  `json:"id"`
 	SeriesID       uuid.UUID  `json:"seriesId"`
@@ -67,7 +90,11 @@ type DownloadChapterDTO struct {
 	State          string     `json:"state"`
 	Provider       string     `json:"provider"`
 	ProviderName   string     `json:"providerName"`
+	Attempts       int        `json:"attempts"`
+	MaxRetries     int        `json:"maxRetries"`
+	IsUpgrade      bool       `json:"isUpgrade"`
 	UpgradeTarget  string     `json:"upgradeTarget"`
+	WaitingReason  string     `json:"waitingReason"`
 	DeferredUntil  *time.Time `json:"deferredUntil"`
 	DeferReason    string     `json:"deferReason"`
 	Retries        int        `json:"retries"`
@@ -77,6 +104,35 @@ type DownloadChapterDTO struct {
 	Filename       string     `json:"filename"`
 	PageCount      *int       `json:"pageCount"`
 	DownloadDate   *time.Time `json:"downloadDate"`
+}
+
+// DownloadSummaryDTO is the GET /api/downloads/summary response: the three global
+// nav-badge counts, computed from ONE grouped aggregate over Chapter.state (see
+// Service.Summary). Downloading = chapters fetching now; Queued = wanted chapters
+// waiting to download; Failed = failed + permanently_failed (both retryable, both
+// "needs attention"). Cheap enough to poll for a persistent nav badge.
+type DownloadSummaryDTO struct {
+	Downloading int `json:"downloading"`
+	Queued      int `json:"queued"`
+	Failed      int `json:"failed"`
+}
+
+// rowContext holds the per-chapter values resolveRow derives once (from data already
+// in memory — the batch-loaded feeds + the single breaker snapshot) and the DTO
+// mapper projects: the resolved source (id + label + its per-source attempt count),
+// the current retry budget, the fresh-vs-upgrade marker + target, and the waiting
+// status (reason category + retry ETA + detail message). Passing one struct keeps the
+// mapper's signature small as the enrichment grows.
+type rowContext struct {
+	provider      string
+	providerName  string
+	attempts      int
+	maxRetries    int
+	isUpgrade     bool
+	upgradeTarget string
+	waitingReason string
+	retryAt       *time.Time
+	deferReason   string
 }
 
 // DownloadListDTO is the paginated GET /api/downloads response: the total number
@@ -101,7 +157,7 @@ type RetryAllResultDTO struct {
 // upgradeTargets serves BOTH source questions a row asks, from the one index:
 // which source an upgrading chapter is converging TO (upgradeTargetLabel), and —
 // for a chapter with no satisfier — which source is actually FETCHING it
-// (chapterProvider). Both answers are "the highest-importance source whose feed
+// (chapterSource). Both answers are "the highest-importance source whose feed
 // carries this key", which is exactly the scheduler's primary-source rule, so they
 // share one definition (§2 DRY) and cost no extra query. A chapter no feed carries
 // resolves to no source at all ("").
@@ -112,12 +168,12 @@ type seriesResolution struct {
 	upgradeTargets upgradeTargetIndex
 }
 
-// newDownloadChapterDTO maps one Chapter row to its enriched DTO. The series
-// context (display name, category, cover, chapter name, provider id + name,
-// upgrade target, deferral) is resolved once per chapter by the caller and passed
-// in, so this mapper does no lookups — it only projects fields, ensuring every
-// contract field is populated (§16).
-func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, provider, providerName, upgradeTarget string, deferredUntil *time.Time, deferReason string) DownloadChapterDTO {
+// newDownloadChapterDTO maps one Chapter row to its enriched DTO. The series + source
+// context (display name, category, cover, chapter name, provider id + label, attempt
+// count, retry budget, upgrade marker + target, waiting status) is resolved once per
+// chapter by the caller (resolveRow) and passed in as rc, so this mapper does no
+// lookups — it only projects fields, ensuring every contract field is populated (§16).
+func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, rc rowContext) DownloadChapterDTO {
 	return DownloadChapterDTO{
 		ID:             ch.ID,
 		SeriesID:       ch.SeriesID,
@@ -128,11 +184,15 @@ func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolutio
 		Number:         ch.Number,
 		Name:           res.names[ch.ChapterKey],
 		State:          ch.State.String(),
-		Provider:       provider,
-		ProviderName:   providerName,
-		UpgradeTarget:  upgradeTarget,
-		DeferredUntil:  deferredUntil,
-		DeferReason:    deferReason,
+		Provider:       rc.provider,
+		ProviderName:   rc.providerName,
+		Attempts:       rc.attempts,
+		MaxRetries:     rc.maxRetries,
+		IsUpgrade:      rc.isUpgrade,
+		UpgradeTarget:  rc.upgradeTarget,
+		WaitingReason:  rc.waitingReason,
+		DeferredUntil:  rc.retryAt,
+		DeferReason:    rc.deferReason,
 		Retries:        ch.Retries,
 		NextAttemptAt:  ch.NextAttemptAt,
 		LastError:      ch.LastError,

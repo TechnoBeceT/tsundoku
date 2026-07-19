@@ -1161,6 +1161,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/downloads/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Global download nav-badge counts
+         * @description Returns the three persistent nav-badge counts (downloading / queued / failed)
+         *     across the whole library, from ONE grouped aggregate over chapter state — cheap
+         *     to poll. Queued counts wanted chapters; failed counts failed + permanently_failed.
+         */
+        get: operations["downloadsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/downloads/retry-all": {
         parameters: {
             query?: never;
@@ -2780,14 +2802,25 @@ export interface components {
             provider: string;
             /** @description Human-readable source display name of the source resolved by `provider` (same three steps, same caveat); falls back to the id when unresolved, and is empty exactly when `provider` is. Shown in the UI in place of the id. */
             providerName: string;
+            /** @description Per-source download attempts by the source `provider` names against THIS chapter (ProviderChapter.attempts — the engine's per-source retry budget, NOT the legacy top-level `retries`). With `maxRetries` it drives the "providerName · N/max" badge. A source is exhausted for the chapter at attempts >= maxRetries; the chapter fails only when every source is exhausted. 0 when the resolved source has no feed row for the chapter (or none is resolved). */
+            attempts: number;
+            /** @description Current per-source retry budget (jobs.max_retries), resolved at request time so a settings change is reflected without a restart. The denominator of the N/max badge. 0 when the server has no retry-settings source wired. */
+            maxRetries: number;
+            /** @description True when this row is a convergence UPGRADE (state upgrade_available or upgrading) rather than a fresh download — the explicit fresh-vs-upgrade discriminator for the queue UI. NOT equivalent to "upgradeTarget is non-empty": a chapter can be upgrade_available yet have no nameable target (the higher source has a feed gap), so isUpgrade can be true while upgradeTarget is "". */
+            isUpgrade: boolean;
             /** @description Display name of the source this chapter is upgrading TO — the highest-importance source (other than the current one) whose feed carries the chapter and which outranks it. Empty for every chapter not in upgrade_available/upgrading. The UI renders "providerName → upgradeTarget". It is the INTENDED target: the engine additionally excludes retry-exhausted, cooled-down, or circuit-broken sources, which this read model does not know about, so it may name a source the engine defers this cycle. */
             upgradeTarget: string;
             /**
+             * @description Why a QUEUED chapter is not moving, classifying the cooldown on the source the engine is waiting on (the upgrade TARGET for an upgrade_available/upgrading chapter, else the PRIMARY candidate for a wanted one). "backoff": that source has a persisted per-source next_attempt_at in the future (a failed fetch's per-chapter backoff). "cooling_down": that source's circuit-breaker is tripped — the WHOLE source is in anti-ban cooldown (a batch-joined read of SourceCircuitState, a different table from next_attempt_at). "": the source is ready to try next cycle (never mislabelled as waiting).
+             * @enum {string}
+             */
+            waitingReason: "" | "backoff" | "cooling_down";
+            /**
              * Format: date-time
-             * @description Why a QUEUED chapter is not moving: the source the engine is waiting on — the upgrade TARGET for an upgrade_available/upgrading chapter, else the PRIMARY candidate for a wanted one — has a persisted per-source cooldown, and this is its next_attempt_at. Populated ONLY when that timestamp is genuinely in the FUTURE (an absent or past cooldown = the source is ready next cycle → null, never mislabelled as waiting). The waited-on source's NAME is already on the row (upgradeTarget for an upgrade defer, providerName for a wanted one), so it is not duplicated here. Surfaces only the PERSISTED cooldown: a chapter held back purely by the engine's in-memory circuit-breaker (which writes no next_attempt_at) shows null here and reads as plain "ready".
+             * @description The EFFECTIVE next-eligible time for a waiting chapter — when the waited-on source can next be tried. The LATER of the persisted per-source next_attempt_at and the source-wide circuit-breaker cooldown_until when both apply (the engine waits out both), else whichever single one applies. Populated ONLY when genuinely in the FUTURE (absent/past = ready next cycle → null). Non-null exactly when waitingReason is non-empty. The waited-on source's NAME is already on the row (upgradeTarget for an upgrade defer, providerName for a wanted one), so it is not duplicated here.
              */
             deferredUntil: string | null;
-            /** @description The waited-on source's last_error, travelling with deferredUntil (meaningless without it). Empty when the chapter is not deferred, or when the cooldown carries no recorded reason. */
+            /** @description The binding constraint's recorded message, travelling with deferredUntil: the circuit-breaker's last_error when waitingReason is "cooling_down", the feed row's last_error when "backoff". Empty when the chapter is not waiting, or when the cooldown carries no recorded reason. */
             deferReason: string;
             /** @description Number of download attempts so far (0 when never attempted or after a retry reset). */
             retries: number;
@@ -2815,6 +2848,15 @@ export interface components {
             total: number;
             /** @description The requested page of enriched chapters. */
             items: components["schemas"]["DownloadChapter"][];
+        };
+        /** @description Global nav-badge counts, from ONE grouped aggregate over chapter state — cheap enough to poll for a persistent badge. */
+        DownloadSummary: {
+            /** @description Chapters currently fetching (state downloading). */
+            downloading: number;
+            /** @description Chapters waiting to download (state wanted). */
+            queued: number;
+            /** @description Chapters needing attention (state failed or permanently_failed). */
+            failed: number;
         };
         RetryAllResult: {
             /** @description Number of chapters reset back to wanted by the bulk retry. */
@@ -6955,6 +6997,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    downloadsSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The three global counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadSummary"];
                 };
             };
             /** @description Missing or invalid Bearer token. */

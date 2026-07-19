@@ -433,9 +433,16 @@ func registerRoutes(
 	// Downloads (cross-library chapter activity) API. The service reuses the
 	// exported series resolvers for name/display/cover enrichment, so it needs
 	// only the Ent client.
-	downloadsSvc := downloads.NewService(client)
+	// WithBreakers joins the source-politeness circuit-breaker snapshot so a queued
+	// row can explain a source-wide anti-ban cooldown (waitingReason "cooling_down"),
+	// and WithRetrySettings surfaces the live per-source retry budget for the "N/max"
+	// badge — both read-at-use, both nil-safe.
+	downloadsSvc := downloads.NewService(client).
+		WithBreakers(gate).
+		WithRetrySettings(settingsSvc)
 	downloadsH := downloadsh.NewHandler(downloadsSvc, trigger)
 	authed.GET("/downloads", downloadsH.List)
+	authed.GET("/downloads/summary", downloadsH.Summary)
 	authed.POST("/downloads/retry-all", downloadsH.RetryAll)
 	authed.POST("/chapters/:id/retry", downloadsH.RetryChapter)
 	authed.POST("/downloads/run", downloadsH.Run)

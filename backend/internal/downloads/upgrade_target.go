@@ -3,6 +3,7 @@ package downloads
 import (
 	"cmp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +12,22 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourcegate"
+)
+
+// waiting-reason categories surfaced on a queued row's WaitingReason field: the
+// two things that hold a chapter back from being fetched this cycle. "" means the
+// row is not waiting on a persisted signal.
+const (
+	// waitBackoff — the waited-on source has a persisted per-source next_attempt_at
+	// in the future (download.bumpSourceFailure / cooldownSource): this chapter
+	// failed against that source and is inside its per-chapter backoff.
+	waitBackoff = "backoff"
+	// waitCoolingDown — the waited-on source's circuit-breaker is tripped
+	// (SourceCircuitState.cooldown_until in the future): the WHOLE source is in
+	// anti-ban cooldown, so no chapter of it is fetched until it reopens. This is the
+	// signal the persisted-only deferral used to miss (see the closed KNOWN GAP).
+	waitCoolingDown = "cooling_down"
 )
 
 // feedCarrier is one source that OFFERS a given chapter_key, paired with the
@@ -18,8 +35,8 @@ import (
 // cosmetic on two counts: its ID is the SECONDARY sort key the engine ranks
 // candidates by, so carrying it is what lets this read model order ties exactly as
 // the engine does (see newUpgradeTargetIndex); and its next_attempt_at / last_error
-// are the persisted per-source cooldown the deferral read surfaces (see
-// waitedOnCarrier / deferral). UNIQUE(series_provider_id, chapter_key) means a
+// are the persisted per-source cooldown the waiting read surfaces (see
+// waitedOnCarrier / waitingStatus). UNIQUE(series_provider_id, chapter_key) means a
 // provider contributes exactly one feed row per key, so the pairing is unambiguous.
 type feedCarrier struct {
 	provider *ent.SeriesProvider
@@ -140,58 +157,193 @@ func upgradeTargetCarrier(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[
 	return feedCarrier{}, false
 }
 
-// waitedOnCarrier returns the ProviderChapter feed row of the source the engine is
-// WAITING ON to advance a queued chapter — the source whose persisted cooldown, if
-// any, is why the row is not moving:
+// waitedOnCarrier returns the feed carrier (source + its ProviderChapter feed row)
+// of the source the engine is WAITING ON to advance a queued chapter — the source
+// whose cooldown, if any, is why the row is not moving:
 //
 //   - upgrade_available / upgrading → the UPGRADE TARGET (the source it is
 //     converging to; the same carrier upgradeTargetLabel names). While that target
 //     is cooling down after a failed upgrade fetch (download.cooldownSource), the
 //     upgrade is deferred and the row sits still.
 //   - wanted → the PRIMARY live candidate (highest-importance source whose feed
-//     carries the key — the same source chapterProvider names). While that source is
+//     carries the key — the same source chapterSource names). While that source is
 //     inside its per-source backoff (download.bumpSourceFailure), the download is
 //     deferred.
 //
-// It returns nil for every other state, and when no source can be named (nothing
-// carries the key, or no valid upgrade target), so the caller surfaces no deferral.
-func waitedOnCarrier(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uuid.UUID]*ent.SeriesProvider) *ent.ProviderChapter {
+// It returns ok=false for every other state, and when no source can be named
+// (nothing carries the key, or no valid upgrade target), so the caller surfaces no
+// waiting reason. The provider on the returned carrier is what breakerKey keys the
+// circuit-breaker snapshot by; its pc is where the persisted per-source backoff is
+// read.
+func waitedOnCarrier(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uuid.UUID]*ent.SeriesProvider) (feedCarrier, bool) {
 	switch {
 	case isUpgrading(ch.State):
-		if c, ok := upgradeTargetCarrier(ch, idx, provByID); ok {
-			return c.pc
-		}
-		return nil
+		return upgradeTargetCarrier(ch, idx, provByID)
 	case ch.State == entchapter.StateWanted:
 		if carriers := idx[ch.ChapterKey]; len(carriers) > 0 {
-			return carriers[0].pc
+			return carriers[0], true
 		}
-		return nil
+		return feedCarrier{}, false
 	default:
-		return nil
+		return feedCarrier{}, false
 	}
 }
 
-// deferral reports the persisted per-source cooldown the engine is waiting out on a
-// queued chapter's source: it returns (next_attempt_at, last_error) ONLY when that
-// source has a next_attempt_at genuinely in the FUTURE relative to now — the backoff
-// the engine records on a failed download (download.bumpSourceFailure) or a failed
-// upgrade fetch (download.cooldownSource). A nil carrier, or a nil / past
-// next_attempt_at, means the source is ready to try next cycle, so it returns
-// (nil, "") — a ready row is never mislabelled as waiting. reason is the carrier's
-// last_error and travels with the deferral (it is meaningless without one).
+// chapterSource resolves the source a chapter is ACTUALLY coming from, returning its
+// SeriesProvider (for the display id + label) AND its ProviderChapter feed row (for
+// the per-source attempt count), by a three-step rule:
 //
-// KNOWN GAP (v1, owner-ratified): this surfaces only the PERSISTED cooldown. The
-// engine's in-memory source-politeness circuit-breaker (download/upgrade.go) can
-// defer a source WITHOUT writing next_attempt_at; a chapter held back purely by it
-// has no persisted timestamp, so it correctly shows no fabricated reason and reads
-// as plain "ready" until the next cycle. Threading engine internals into this read
-// path is deliberately out of scope.
-func deferral(pc *ent.ProviderChapter, now time.Time) (until *time.Time, reason string) {
-	if pc == nil || pc.NextAttemptAt == nil || !pc.NextAttemptAt.After(now) {
-		return nil, ""
+//  1. the source that SATISFIED it (satisfied_by), when set and still present — true
+//     provenance, where the file on disk came from;
+//  2. else the highest-importance source whose FEED CARRIES this chapter_key, ranked
+//     exactly as the engine ranks candidates (importance DESC, then feed-row ID ASC —
+//     see newUpgradeTargetIndex). That is the scheduler's own primary-source rule, so
+//     the row names the source the engine really fetches from — NOT the series' top
+//     source, which lies whenever the top source has a feed gap (prod: rows labelled
+//     "Asura Scans" while the engine fetched from "Comic Asura"). Covers every
+//     unsatisfied chapter (wanted/downloading/failed) AND a downloaded chapter whose
+//     satisfier was cleared (series.RemoveProvider nulls satisfied_by, keeps the CBZ);
+//  3. else nil — no source carries the key, so nothing is fetching it (the UI renders
+//     an em-dash). A fractional chapter whose only carrier is an ignore_fractional
+//     source lands here too — newUpgradeTargetIndex drops that source's fractional
+//     feed rows exactly as the engine drops it from candidacy.
+//
+// Returning the feed row is what lets the row's N/max badge read the SAME source's
+// ProviderChapter.attempts, so the badge and the provider label it sits next to
+// always describe one source. The satisfier's feed row is looked up in the
+// eager-loaded edge (providerChapterForKey) and may be nil (a satisfier need not
+// still carry the key) — attempts then reads 0, never a query. Step 2 is a UI hint,
+// not engine state: the engine additionally skips retry-exhausted / cooling-down /
+// breaker-tripped sources, which this read model cannot see without an N+1.
+func chapterSource(ch *ent.Chapter, provByID map[uuid.UUID]*ent.SeriesProvider, idx upgradeTargetIndex) (*ent.SeriesProvider, *ent.ProviderChapter) {
+	if ch.SatisfiedByProviderID != nil {
+		if sp, ok := provByID[*ch.SatisfiedByProviderID]; ok {
+			return sp, providerChapterForKey(sp, ch.ChapterKey)
+		}
 	}
-	return pc.NextAttemptAt, pc.LastError
+	if carriers := idx[ch.ChapterKey]; len(carriers) > 0 {
+		return carriers[0].provider, carriers[0].pc
+	}
+	return nil, nil
+}
+
+// providerChapterForKey returns sp's eager-loaded ProviderChapter feed row for the
+// given chapter_key, or nil when the source does not carry it. In-memory over the
+// already-loaded edge — no query. UNIQUE(series_provider_id, chapter_key) means at
+// most one match.
+func providerChapterForKey(sp *ent.SeriesProvider, key string) *ent.ProviderChapter {
+	if sp == nil {
+		return nil
+	}
+	for _, pc := range sp.Edges.ProviderChapters {
+		if pc.ChapterKey == key {
+			return pc
+		}
+	}
+	return nil
+}
+
+// breakerKey is the circuit-breaker snapshot key for a source: the canonical
+// physical-source NAME the sourcegate keys SourceCircuitState by. It mirrors
+// download.canonicalSourceKey byte-for-byte — TrimSpace(provider_name, else
+// provider) — so a row's resolved source joins the breaker snapshot correctly (a
+// disk-reconciled "Comix " must collapse onto the live "Comix" the breaker stores).
+func breakerKey(sp *ent.SeriesProvider) string {
+	return strings.TrimSpace(series.ProviderLabel(sp))
+}
+
+// waitingStatus classifies WHY a queued chapter is not moving and when it will next
+// be eligible, unifying the two cooldown signals on the waited-on source:
+//
+//   - backoff — the source's persisted per-source next_attempt_at is in the future
+//     (download.bumpSourceFailure on a failed download / cooldownSource on a failed
+//     upgrade fetch): this chapter is inside that source's per-chapter backoff.
+//   - cooling_down — the source's circuit-breaker is tripped (breaker.CooldownUntil
+//     in the future): the WHOLE source is in anti-ban cooldown. This is the signal
+//     the persisted-only read used to miss (the now-closed KNOWN GAP): the breaker
+//     writes SourceCircuitState.cooldown_until, a different table from
+//     ProviderChapter.next_attempt_at, so a chapter held back purely by it showed no
+//     reason. The breaker snapshot is batch-loaded once per List (no N+1).
+//
+// retryAt is the EFFECTIVE next-eligible time = the LATER of the two whenever both
+// apply (the engine cannot fetch until BOTH the per-chapter backoff AND the
+// source-wide breaker have elapsed), and reason names the binding constraint (the
+// later timestamp; the breaker wins a tie, being the broader block). detail is that
+// constraint's recorded message (the breaker's last_error for cooling_down, the feed
+// row's last_error for backoff), preferring the binding one. All three are the zero
+// value when the source is ready to try next cycle — a ready row is never mislabelled
+// as waiting. breaker is nil when the source has no breaker row (or the snapshot was
+// skipped), collapsing cleanly to the backoff-only behaviour.
+func waitingStatus(fc feedCarrier, ok bool, breaker *sourcegate.BreakerState, now time.Time) (reason string, retryAt *time.Time, detail string) {
+	if !ok {
+		return "", nil, ""
+	}
+	backoff, hasBackoff := backoffSignal(fc, now)
+	cooling, hasCooling := coolingSignal(breaker, now)
+	switch {
+	case hasBackoff && hasCooling:
+		s := laterSignal(backoff, cooling)
+		return s.reason, s.until, s.detail
+	case hasCooling:
+		return cooling.reason, cooling.until, cooling.detail
+	case hasBackoff:
+		return backoff.reason, backoff.until, backoff.detail
+	default:
+		return "", nil, ""
+	}
+}
+
+// waitSignal is one cooldown reason on the waited-on source: the reason category, the
+// time it clears, and its recorded message.
+type waitSignal struct {
+	reason string
+	until  *time.Time
+	detail string
+}
+
+// backoffSignal reports the persisted per-source backoff on the waited-on feed row —
+// a future next_attempt_at (download.bumpSourceFailure / cooldownSource). ok=false
+// when there is no future backoff.
+func backoffSignal(fc feedCarrier, now time.Time) (waitSignal, bool) {
+	if fc.pc != nil && fc.pc.NextAttemptAt != nil && fc.pc.NextAttemptAt.After(now) {
+		return waitSignal{waitBackoff, fc.pc.NextAttemptAt, fc.pc.LastError}, true
+	}
+	return waitSignal{}, false
+}
+
+// coolingSignal reports the source-wide circuit-breaker cooldown — a tripped breaker
+// whose cooldown_until is still in the future. ok=false when the source has no
+// breaker row, or it is not currently tripped.
+func coolingSignal(breaker *sourcegate.BreakerState, now time.Time) (waitSignal, bool) {
+	if breaker != nil && breaker.IsCoolingDown(now) {
+		return waitSignal{waitCoolingDown, breaker.CooldownUntil, breaker.LastError}, true
+	}
+	return waitSignal{}, false
+}
+
+// laterSignal picks the binding wait signal when BOTH a backoff and a breaker
+// cooldown apply: the one with the LATER timestamp (the engine must wait out both, so
+// the later is the effective retry ETA; the breaker wins a tie as the broader block),
+// carrying its own detail and falling back to the other's when it has none.
+func laterSignal(backoff, cooling waitSignal) waitSignal {
+	if backoff.until.After(*cooling.until) {
+		backoff.detail = firstNonEmpty(backoff.detail, cooling.detail)
+		return backoff
+	}
+	cooling.detail = firstNonEmpty(cooling.detail, backoff.detail)
+	return cooling
+}
+
+// firstNonEmpty returns the first non-empty string, or "". Mirrors the identically
+// named helper in the download engine — kept local so this read model does not
+// import the engine package.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // isUpgrading reports whether a chapter state is one where an upgrade TARGET is

@@ -55,6 +55,17 @@ func (h *Handler) List(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// Summary handles GET /api/downloads/summary — the global nav-badge counts
+// (downloading / queued / failed) for a persistent badge. No params; one grouped
+// aggregate. Returns 200 with a DownloadSummaryDTO.
+func (h *Handler) Summary(c echo.Context) error {
+	out, err := h.svc.Summary(c.Request().Context())
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // RetryChapter handles POST /api/chapters/:id/retry.
 //
 // It parses the :id path param as a UUID (malformed → 400) and resets that
