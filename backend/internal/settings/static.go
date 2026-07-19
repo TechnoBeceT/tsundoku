@@ -54,6 +54,9 @@ type Static struct {
 	EngineSocksAddr   string
 	EngineSocksPortNo int
 	EngineSocksVer    int
+	// RetentionDays backs the ReportingRetentionDays accessor — days of
+	// source-operation audit-log rows the daily purge keeps.
+	RetentionDays int
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -145,3 +148,6 @@ func (s Static) EngineSocksPort(context.Context) int { return s.EngineSocksPortN
 
 // EngineSocksVersion returns the fixed engine SOCKS protocol version.
 func (s Static) EngineSocksVersion(context.Context) int { return s.EngineSocksVer }
+
+// ReportingRetentionDays returns the fixed audit-log retention window in days.
+func (s Static) ReportingRetentionDays(context.Context) int { return s.RetentionDays }

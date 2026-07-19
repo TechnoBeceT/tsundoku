@@ -75,6 +75,11 @@ func LastError(v string) predicate.SourceCircuitState {
 	return predicate.SourceCircuitState(sql.FieldEQ(FieldLastError, v))
 }
 
+// FailingSince applies equality check predicate on the "failing_since" field. It's identical to FailingSinceEQ.
+func FailingSince(v time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldEQ(FieldFailingSince, v))
+}
+
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.SourceCircuitState {
 	return predicate.SourceCircuitState(sql.FieldEQ(FieldUpdatedAt, v))
@@ -298,6 +303,56 @@ func LastErrorEqualFold(v string) predicate.SourceCircuitState {
 // LastErrorContainsFold applies the ContainsFold predicate on the "last_error" field.
 func LastErrorContainsFold(v string) predicate.SourceCircuitState {
 	return predicate.SourceCircuitState(sql.FieldContainsFold(FieldLastError, v))
+}
+
+// FailingSinceEQ applies the EQ predicate on the "failing_since" field.
+func FailingSinceEQ(v time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldEQ(FieldFailingSince, v))
+}
+
+// FailingSinceNEQ applies the NEQ predicate on the "failing_since" field.
+func FailingSinceNEQ(v time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldNEQ(FieldFailingSince, v))
+}
+
+// FailingSinceIn applies the In predicate on the "failing_since" field.
+func FailingSinceIn(vs ...time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldIn(FieldFailingSince, vs...))
+}
+
+// FailingSinceNotIn applies the NotIn predicate on the "failing_since" field.
+func FailingSinceNotIn(vs ...time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldNotIn(FieldFailingSince, vs...))
+}
+
+// FailingSinceGT applies the GT predicate on the "failing_since" field.
+func FailingSinceGT(v time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldGT(FieldFailingSince, v))
+}
+
+// FailingSinceGTE applies the GTE predicate on the "failing_since" field.
+func FailingSinceGTE(v time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldGTE(FieldFailingSince, v))
+}
+
+// FailingSinceLT applies the LT predicate on the "failing_since" field.
+func FailingSinceLT(v time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldLT(FieldFailingSince, v))
+}
+
+// FailingSinceLTE applies the LTE predicate on the "failing_since" field.
+func FailingSinceLTE(v time.Time) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldLTE(FieldFailingSince, v))
+}
+
+// FailingSinceIsNil applies the IsNil predicate on the "failing_since" field.
+func FailingSinceIsNil() predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldIsNull(FieldFailingSince))
+}
+
+// FailingSinceNotNil applies the NotNil predicate on the "failing_since" field.
+func FailingSinceNotNil() predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldNotNull(FieldFailingSince))
 }
 
 // UpdatedAtEQ applies the EQ predicate on the "updated_at" field.

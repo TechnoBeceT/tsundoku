@@ -263,12 +263,12 @@ func (_q *SourceEventQuery) Clone() *SourceEventQuery {
 // Example:
 //
 //	var v []struct {
-//		Source string `json:"source,omitempty"`
+//		SourceKey string `json:"source_key,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.SourceEvent.Query().
-//		GroupBy(sourceevent.FieldSource).
+//		GroupBy(sourceevent.FieldSourceKey).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *SourceEventQuery) GroupBy(field string, fields ...string) *SourceEventGroupBy {
@@ -286,11 +286,11 @@ func (_q *SourceEventQuery) GroupBy(field string, fields ...string) *SourceEvent
 // Example:
 //
 //	var v []struct {
-//		Source string `json:"source,omitempty"`
+//		SourceKey string `json:"source_key,omitempty"`
 //	}
 //
 //	client.SourceEvent.Query().
-//		Select(sourceevent.FieldSource).
+//		Select(sourceevent.FieldSourceKey).
 //		Scan(ctx, &v)
 func (_q *SourceEventQuery) Select(fields ...string) *SourceEventSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

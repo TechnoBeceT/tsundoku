@@ -24,6 +24,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
 
@@ -51,6 +52,10 @@ type Service struct {
 	metrics *metrics.Service
 	slow    SlowThreshold
 	gate    *sourcegate.Service
+	// events is the nil-guarded source-operation audit-log recorder. When
+	// attached (WithEventRecorder), each warm logs one `warm` event (success or
+	// failure). Nil ⇒ no audit events (existing call sites and tests unaffected).
+	events sourceevents.Recorder
 }
 
 // NewService constructs a warm-up Service. gate is the source-politeness
@@ -61,6 +66,31 @@ type Service struct {
 // default for callers that do not need the gate.
 func NewService(client sourceengine.Client, m *metrics.Service, slow SlowThreshold, gate *sourcegate.Service) *Service {
 	return &Service{client: client, metrics: m, slow: slow, gate: gate}
+}
+
+// WithEventRecorder attaches the source-operation audit-log recorder so each
+// warm logs a `warm` event. It returns the receiver for chaining off NewService.
+// A nil recorder logs nothing (best-effort — never affects the warm pass).
+func (s *Service) WithEventRecorder(r sourceevents.Recorder) *Service {
+	s.events = r
+	return s
+}
+
+// logWarmEvent records one warm outcome (best-effort, nil-guarded).
+func (s *Service) logWarmEvent(ctx context.Context, src sourceengine.Source, status sourceevents.Status, duration time.Duration, cause error) {
+	if s.events == nil {
+		return
+	}
+	s.events.Log(ctx, sourceevents.Event{
+		SourceKey:  sourceKey(src),
+		SourceID:   sourceIDString(src.ID),
+		SourceName: src.Name,
+		Language:   src.Lang,
+		Type:       sourceevents.EventWarm,
+		Status:     status,
+		Duration:   duration,
+		Err:        cause,
+	})
 }
 
 // WarmAll warms EVERY enabled online source (the seed pass). It uses the SAME
@@ -145,11 +175,14 @@ func (s *Service) warmOne(ctx context.Context, src sourceengine.Source) error {
 	_, err := s.client.Popular(ctx, src.ID, 1)
 	now := time.Now()
 	sid := sourceIDString(src.ID)
-	s.metrics.Record(ctx, sid, src.Name, now.Sub(start), err)
+	latency := now.Sub(start)
+	s.metrics.Record(ctx, sid, src.Name, latency, err)
 	if err != nil {
+		s.logWarmEvent(ctx, src, sourceevents.StatusFailed, latency, err)
 		s.gateRecordFailure(ctx, key, err, now)
 		return err
 	}
+	s.logWarmEvent(ctx, src, sourceevents.StatusSuccess, latency, nil)
 	s.gateRecordSuccess(ctx, key)
 	if serr := s.metrics.SetWarmed(ctx, sid, src.Name, now); serr != nil {
 		// Best-effort: the source WAS warmed even if the stamp write failed.

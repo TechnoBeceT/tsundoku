@@ -51,6 +51,13 @@ func (SourceCircuitState) Fields() []ent.Field {
 		// last_error is the most recent failure reason ("" when none), kept for
 		// operator visibility (mirrors SourceMetric.last_error).
 		field.String("last_error").Default(""),
+		// failing_since marks the START of the current failure streak: it is set to
+		// now on the 0->1 consecutive-failure transition (RecordFailure) and cleared
+		// on the next success (RecordSuccess). It answers "erroring since when"
+		// authoritatively for the Source Health Console WITHOUT an event-log scan,
+		// and drives proactive alerting. Nil means "not currently failing". Additive
+		// / optional / defaulted, so adding it is a zero-data migration.
+		field.Time("failing_since").Optional().Nillable(),
 		// updated_at is refreshed on every write.
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

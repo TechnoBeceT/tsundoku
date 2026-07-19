@@ -23,6 +23,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 )
 
 // retryPolicy controls how Open retries a failed connection attempt.
@@ -116,6 +117,9 @@ func runPostMigrationCleanup(ctx context.Context, client *ent.Client, db *sql.DB
 	}
 	if err := library.DropLegacyImportEntryColumns(ctx, db); err != nil {
 		return fmt.Errorf("database: drop legacy import_entries columns: %w", err)
+	}
+	if err := sourceevents.DropLegacyColumns(ctx, db); err != nil {
+		return fmt.Errorf("database: drop legacy source_events columns: %w", err)
 	}
 	if err := backfillFirstDownloadedAt(ctx, db); err != nil {
 		return err

@@ -224,6 +224,9 @@ func TestMetrics_JoinsBreakerState(t *testing.T) {
 	if byID["tripped"].Breaker.ConsecutiveFailures != 3 {
 		t.Errorf("tripped failures = %d, want 3", byID["tripped"].Breaker.ConsecutiveFailures)
 	}
+	if byID["tripped"].Breaker.FailingSince == nil {
+		t.Errorf("tripped breaker should carry a non-nil failingSince, got %+v", byID["tripped"].Breaker)
+	}
 	if byID["healthy"].Breaker != nil {
 		t.Errorf("healthy source should have no breaker, got %+v", byID["healthy"].Breaker)
 	}
@@ -298,6 +301,8 @@ func tripBreaker(t *testing.T, client *ent.Client, sourceKey string, cooldownUnt
 		SetConsecutiveFailures(3).
 		SetLastError("cloudflare block").
 		SetCooldownUntil(cooldownUntil).
+		// A tripped breaker realistically carries a failure-streak start.
+		SetFailingSince(time.Now().Add(-2 * time.Hour)).
 		Exec(context.Background()); err != nil {
 		t.Fatalf("trip breaker %q: %v", sourceKey, err)
 	}

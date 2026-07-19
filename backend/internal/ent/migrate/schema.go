@@ -407,6 +407,7 @@ var (
 		{Name: "consecutive_failures", Type: field.TypeInt, Default: 0},
 		{Name: "cooldown_until", Type: field.TypeTime, Nullable: true},
 		{Name: "last_error", Type: field.TypeString, Default: ""},
+		{Name: "failing_since", Type: field.TypeTime, Nullable: true},
 		{Name: "updated_at", Type: field.TypeTime},
 	}
 	// SourceCircuitStatesTable holds the schema information for the "source_circuit_states" table.
@@ -418,9 +419,17 @@ var (
 	// SourceEventsColumns holds the columns for the "source_events" table.
 	SourceEventsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
-		{Name: "source", Type: field.TypeString},
-		{Name: "event_type", Type: field.TypeString},
-		{Name: "payload", Type: field.TypeString, Default: ""},
+		{Name: "source_key", Type: field.TypeString},
+		{Name: "source_id", Type: field.TypeString, Default: ""},
+		{Name: "source_name", Type: field.TypeString, Default: ""},
+		{Name: "language", Type: field.TypeString, Default: ""},
+		{Name: "event_type", Type: field.TypeEnum, Enums: []string{"search", "download", "refresh", "warm", "breaker_trip", "breaker_reset"}},
+		{Name: "status", Type: field.TypeEnum, Enums: []string{"success", "failed"}},
+		{Name: "duration_ms", Type: field.TypeInt64, Default: 0},
+		{Name: "error_message", Type: field.TypeString, Nullable: true},
+		{Name: "error_category", Type: field.TypeString, Nullable: true},
+		{Name: "items_count", Type: field.TypeInt, Nullable: true},
+		{Name: "metadata", Type: field.TypeJSON, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
 	}
 	// SourceEventsTable holds the schema information for the "source_events" table.
@@ -428,6 +437,28 @@ var (
 		Name:       "source_events",
 		Columns:    SourceEventsColumns,
 		PrimaryKey: []*schema.Column{SourceEventsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "sourceevent_source_key_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{SourceEventsColumns[1], SourceEventsColumns[12]},
+			},
+			{
+				Name:    "sourceevent_event_type_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{SourceEventsColumns[5], SourceEventsColumns[12]},
+			},
+			{
+				Name:    "sourceevent_status_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{SourceEventsColumns[6], SourceEventsColumns[12]},
+			},
+			{
+				Name:    "sourceevent_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{SourceEventsColumns[12]},
+			},
+		},
 	}
 	// SourceMetricsColumns holds the columns for the "source_metrics" table.
 	SourceMetricsColumns = []*schema.Column{

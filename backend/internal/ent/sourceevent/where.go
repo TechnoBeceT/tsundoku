@@ -55,19 +55,44 @@ func IDLTE(id uuid.UUID) predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldLTE(FieldID, id))
 }
 
-// Source applies equality check predicate on the "source" field. It's identical to SourceEQ.
-func Source(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldEQ(FieldSource, v))
+// SourceKey applies equality check predicate on the "source_key" field. It's identical to SourceKeyEQ.
+func SourceKey(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldSourceKey, v))
 }
 
-// EventType applies equality check predicate on the "event_type" field. It's identical to EventTypeEQ.
-func EventType(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldEQ(FieldEventType, v))
+// SourceID applies equality check predicate on the "source_id" field. It's identical to SourceIDEQ.
+func SourceID(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldSourceID, v))
 }
 
-// Payload applies equality check predicate on the "payload" field. It's identical to PayloadEQ.
-func Payload(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldEQ(FieldPayload, v))
+// SourceName applies equality check predicate on the "source_name" field. It's identical to SourceNameEQ.
+func SourceName(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldSourceName, v))
+}
+
+// Language applies equality check predicate on the "language" field. It's identical to LanguageEQ.
+func Language(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldLanguage, v))
+}
+
+// DurationMs applies equality check predicate on the "duration_ms" field. It's identical to DurationMsEQ.
+func DurationMs(v int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldDurationMs, v))
+}
+
+// ErrorMessage applies equality check predicate on the "error_message" field. It's identical to ErrorMessageEQ.
+func ErrorMessage(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldErrorMessage, v))
+}
+
+// ErrorCategory applies equality check predicate on the "error_category" field. It's identical to ErrorCategoryEQ.
+func ErrorCategory(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldErrorCategory, v))
+}
+
+// ItemsCount applies equality check predicate on the "items_count" field. It's identical to ItemsCountEQ.
+func ItemsCount(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldItemsCount, v))
 }
 
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
@@ -75,199 +100,554 @@ func CreatedAt(v time.Time) predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldEQ(FieldCreatedAt, v))
 }
 
-// SourceEQ applies the EQ predicate on the "source" field.
-func SourceEQ(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldEQ(FieldSource, v))
+// SourceKeyEQ applies the EQ predicate on the "source_key" field.
+func SourceKeyEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldSourceKey, v))
 }
 
-// SourceNEQ applies the NEQ predicate on the "source" field.
-func SourceNEQ(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldNEQ(FieldSource, v))
+// SourceKeyNEQ applies the NEQ predicate on the "source_key" field.
+func SourceKeyNEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldSourceKey, v))
 }
 
-// SourceIn applies the In predicate on the "source" field.
-func SourceIn(vs ...string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldIn(FieldSource, vs...))
+// SourceKeyIn applies the In predicate on the "source_key" field.
+func SourceKeyIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldSourceKey, vs...))
 }
 
-// SourceNotIn applies the NotIn predicate on the "source" field.
-func SourceNotIn(vs ...string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldNotIn(FieldSource, vs...))
+// SourceKeyNotIn applies the NotIn predicate on the "source_key" field.
+func SourceKeyNotIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldSourceKey, vs...))
 }
 
-// SourceGT applies the GT predicate on the "source" field.
-func SourceGT(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldGT(FieldSource, v))
+// SourceKeyGT applies the GT predicate on the "source_key" field.
+func SourceKeyGT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldSourceKey, v))
 }
 
-// SourceGTE applies the GTE predicate on the "source" field.
-func SourceGTE(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldGTE(FieldSource, v))
+// SourceKeyGTE applies the GTE predicate on the "source_key" field.
+func SourceKeyGTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldSourceKey, v))
 }
 
-// SourceLT applies the LT predicate on the "source" field.
-func SourceLT(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldLT(FieldSource, v))
+// SourceKeyLT applies the LT predicate on the "source_key" field.
+func SourceKeyLT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldSourceKey, v))
 }
 
-// SourceLTE applies the LTE predicate on the "source" field.
-func SourceLTE(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldLTE(FieldSource, v))
+// SourceKeyLTE applies the LTE predicate on the "source_key" field.
+func SourceKeyLTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldSourceKey, v))
 }
 
-// SourceContains applies the Contains predicate on the "source" field.
-func SourceContains(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldContains(FieldSource, v))
+// SourceKeyContains applies the Contains predicate on the "source_key" field.
+func SourceKeyContains(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContains(FieldSourceKey, v))
 }
 
-// SourceHasPrefix applies the HasPrefix predicate on the "source" field.
-func SourceHasPrefix(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldHasPrefix(FieldSource, v))
+// SourceKeyHasPrefix applies the HasPrefix predicate on the "source_key" field.
+func SourceKeyHasPrefix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasPrefix(FieldSourceKey, v))
 }
 
-// SourceHasSuffix applies the HasSuffix predicate on the "source" field.
-func SourceHasSuffix(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldHasSuffix(FieldSource, v))
+// SourceKeyHasSuffix applies the HasSuffix predicate on the "source_key" field.
+func SourceKeyHasSuffix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasSuffix(FieldSourceKey, v))
 }
 
-// SourceEqualFold applies the EqualFold predicate on the "source" field.
-func SourceEqualFold(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldEqualFold(FieldSource, v))
+// SourceKeyEqualFold applies the EqualFold predicate on the "source_key" field.
+func SourceKeyEqualFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEqualFold(FieldSourceKey, v))
 }
 
-// SourceContainsFold applies the ContainsFold predicate on the "source" field.
-func SourceContainsFold(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldContainsFold(FieldSource, v))
+// SourceKeyContainsFold applies the ContainsFold predicate on the "source_key" field.
+func SourceKeyContainsFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContainsFold(FieldSourceKey, v))
+}
+
+// SourceIDEQ applies the EQ predicate on the "source_id" field.
+func SourceIDEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldSourceID, v))
+}
+
+// SourceIDNEQ applies the NEQ predicate on the "source_id" field.
+func SourceIDNEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldSourceID, v))
+}
+
+// SourceIDIn applies the In predicate on the "source_id" field.
+func SourceIDIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldSourceID, vs...))
+}
+
+// SourceIDNotIn applies the NotIn predicate on the "source_id" field.
+func SourceIDNotIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldSourceID, vs...))
+}
+
+// SourceIDGT applies the GT predicate on the "source_id" field.
+func SourceIDGT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldSourceID, v))
+}
+
+// SourceIDGTE applies the GTE predicate on the "source_id" field.
+func SourceIDGTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldSourceID, v))
+}
+
+// SourceIDLT applies the LT predicate on the "source_id" field.
+func SourceIDLT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldSourceID, v))
+}
+
+// SourceIDLTE applies the LTE predicate on the "source_id" field.
+func SourceIDLTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldSourceID, v))
+}
+
+// SourceIDContains applies the Contains predicate on the "source_id" field.
+func SourceIDContains(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContains(FieldSourceID, v))
+}
+
+// SourceIDHasPrefix applies the HasPrefix predicate on the "source_id" field.
+func SourceIDHasPrefix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasPrefix(FieldSourceID, v))
+}
+
+// SourceIDHasSuffix applies the HasSuffix predicate on the "source_id" field.
+func SourceIDHasSuffix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasSuffix(FieldSourceID, v))
+}
+
+// SourceIDEqualFold applies the EqualFold predicate on the "source_id" field.
+func SourceIDEqualFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEqualFold(FieldSourceID, v))
+}
+
+// SourceIDContainsFold applies the ContainsFold predicate on the "source_id" field.
+func SourceIDContainsFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContainsFold(FieldSourceID, v))
+}
+
+// SourceNameEQ applies the EQ predicate on the "source_name" field.
+func SourceNameEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldSourceName, v))
+}
+
+// SourceNameNEQ applies the NEQ predicate on the "source_name" field.
+func SourceNameNEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldSourceName, v))
+}
+
+// SourceNameIn applies the In predicate on the "source_name" field.
+func SourceNameIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldSourceName, vs...))
+}
+
+// SourceNameNotIn applies the NotIn predicate on the "source_name" field.
+func SourceNameNotIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldSourceName, vs...))
+}
+
+// SourceNameGT applies the GT predicate on the "source_name" field.
+func SourceNameGT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldSourceName, v))
+}
+
+// SourceNameGTE applies the GTE predicate on the "source_name" field.
+func SourceNameGTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldSourceName, v))
+}
+
+// SourceNameLT applies the LT predicate on the "source_name" field.
+func SourceNameLT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldSourceName, v))
+}
+
+// SourceNameLTE applies the LTE predicate on the "source_name" field.
+func SourceNameLTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldSourceName, v))
+}
+
+// SourceNameContains applies the Contains predicate on the "source_name" field.
+func SourceNameContains(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContains(FieldSourceName, v))
+}
+
+// SourceNameHasPrefix applies the HasPrefix predicate on the "source_name" field.
+func SourceNameHasPrefix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasPrefix(FieldSourceName, v))
+}
+
+// SourceNameHasSuffix applies the HasSuffix predicate on the "source_name" field.
+func SourceNameHasSuffix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasSuffix(FieldSourceName, v))
+}
+
+// SourceNameEqualFold applies the EqualFold predicate on the "source_name" field.
+func SourceNameEqualFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEqualFold(FieldSourceName, v))
+}
+
+// SourceNameContainsFold applies the ContainsFold predicate on the "source_name" field.
+func SourceNameContainsFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContainsFold(FieldSourceName, v))
+}
+
+// LanguageEQ applies the EQ predicate on the "language" field.
+func LanguageEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldLanguage, v))
+}
+
+// LanguageNEQ applies the NEQ predicate on the "language" field.
+func LanguageNEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldLanguage, v))
+}
+
+// LanguageIn applies the In predicate on the "language" field.
+func LanguageIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldLanguage, vs...))
+}
+
+// LanguageNotIn applies the NotIn predicate on the "language" field.
+func LanguageNotIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldLanguage, vs...))
+}
+
+// LanguageGT applies the GT predicate on the "language" field.
+func LanguageGT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldLanguage, v))
+}
+
+// LanguageGTE applies the GTE predicate on the "language" field.
+func LanguageGTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldLanguage, v))
+}
+
+// LanguageLT applies the LT predicate on the "language" field.
+func LanguageLT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldLanguage, v))
+}
+
+// LanguageLTE applies the LTE predicate on the "language" field.
+func LanguageLTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldLanguage, v))
+}
+
+// LanguageContains applies the Contains predicate on the "language" field.
+func LanguageContains(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContains(FieldLanguage, v))
+}
+
+// LanguageHasPrefix applies the HasPrefix predicate on the "language" field.
+func LanguageHasPrefix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasPrefix(FieldLanguage, v))
+}
+
+// LanguageHasSuffix applies the HasSuffix predicate on the "language" field.
+func LanguageHasSuffix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasSuffix(FieldLanguage, v))
+}
+
+// LanguageEqualFold applies the EqualFold predicate on the "language" field.
+func LanguageEqualFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEqualFold(FieldLanguage, v))
+}
+
+// LanguageContainsFold applies the ContainsFold predicate on the "language" field.
+func LanguageContainsFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContainsFold(FieldLanguage, v))
 }
 
 // EventTypeEQ applies the EQ predicate on the "event_type" field.
-func EventTypeEQ(v string) predicate.SourceEvent {
+func EventTypeEQ(v EventType) predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldEQ(FieldEventType, v))
 }
 
 // EventTypeNEQ applies the NEQ predicate on the "event_type" field.
-func EventTypeNEQ(v string) predicate.SourceEvent {
+func EventTypeNEQ(v EventType) predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldNEQ(FieldEventType, v))
 }
 
 // EventTypeIn applies the In predicate on the "event_type" field.
-func EventTypeIn(vs ...string) predicate.SourceEvent {
+func EventTypeIn(vs ...EventType) predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldIn(FieldEventType, vs...))
 }
 
 // EventTypeNotIn applies the NotIn predicate on the "event_type" field.
-func EventTypeNotIn(vs ...string) predicate.SourceEvent {
+func EventTypeNotIn(vs ...EventType) predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldNotIn(FieldEventType, vs...))
 }
 
-// EventTypeGT applies the GT predicate on the "event_type" field.
-func EventTypeGT(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldGT(FieldEventType, v))
+// StatusEQ applies the EQ predicate on the "status" field.
+func StatusEQ(v Status) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldStatus, v))
 }
 
-// EventTypeGTE applies the GTE predicate on the "event_type" field.
-func EventTypeGTE(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldGTE(FieldEventType, v))
+// StatusNEQ applies the NEQ predicate on the "status" field.
+func StatusNEQ(v Status) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldStatus, v))
 }
 
-// EventTypeLT applies the LT predicate on the "event_type" field.
-func EventTypeLT(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldLT(FieldEventType, v))
+// StatusIn applies the In predicate on the "status" field.
+func StatusIn(vs ...Status) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldStatus, vs...))
 }
 
-// EventTypeLTE applies the LTE predicate on the "event_type" field.
-func EventTypeLTE(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldLTE(FieldEventType, v))
+// StatusNotIn applies the NotIn predicate on the "status" field.
+func StatusNotIn(vs ...Status) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldStatus, vs...))
 }
 
-// EventTypeContains applies the Contains predicate on the "event_type" field.
-func EventTypeContains(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldContains(FieldEventType, v))
+// DurationMsEQ applies the EQ predicate on the "duration_ms" field.
+func DurationMsEQ(v int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldDurationMs, v))
 }
 
-// EventTypeHasPrefix applies the HasPrefix predicate on the "event_type" field.
-func EventTypeHasPrefix(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldHasPrefix(FieldEventType, v))
+// DurationMsNEQ applies the NEQ predicate on the "duration_ms" field.
+func DurationMsNEQ(v int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldDurationMs, v))
 }
 
-// EventTypeHasSuffix applies the HasSuffix predicate on the "event_type" field.
-func EventTypeHasSuffix(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldHasSuffix(FieldEventType, v))
+// DurationMsIn applies the In predicate on the "duration_ms" field.
+func DurationMsIn(vs ...int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldDurationMs, vs...))
 }
 
-// EventTypeEqualFold applies the EqualFold predicate on the "event_type" field.
-func EventTypeEqualFold(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldEqualFold(FieldEventType, v))
+// DurationMsNotIn applies the NotIn predicate on the "duration_ms" field.
+func DurationMsNotIn(vs ...int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldDurationMs, vs...))
 }
 
-// EventTypeContainsFold applies the ContainsFold predicate on the "event_type" field.
-func EventTypeContainsFold(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldContainsFold(FieldEventType, v))
+// DurationMsGT applies the GT predicate on the "duration_ms" field.
+func DurationMsGT(v int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldDurationMs, v))
 }
 
-// PayloadEQ applies the EQ predicate on the "payload" field.
-func PayloadEQ(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldEQ(FieldPayload, v))
+// DurationMsGTE applies the GTE predicate on the "duration_ms" field.
+func DurationMsGTE(v int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldDurationMs, v))
 }
 
-// PayloadNEQ applies the NEQ predicate on the "payload" field.
-func PayloadNEQ(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldNEQ(FieldPayload, v))
+// DurationMsLT applies the LT predicate on the "duration_ms" field.
+func DurationMsLT(v int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldDurationMs, v))
 }
 
-// PayloadIn applies the In predicate on the "payload" field.
-func PayloadIn(vs ...string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldIn(FieldPayload, vs...))
+// DurationMsLTE applies the LTE predicate on the "duration_ms" field.
+func DurationMsLTE(v int64) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldDurationMs, v))
 }
 
-// PayloadNotIn applies the NotIn predicate on the "payload" field.
-func PayloadNotIn(vs ...string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldNotIn(FieldPayload, vs...))
+// ErrorMessageEQ applies the EQ predicate on the "error_message" field.
+func ErrorMessageEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldErrorMessage, v))
 }
 
-// PayloadGT applies the GT predicate on the "payload" field.
-func PayloadGT(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldGT(FieldPayload, v))
+// ErrorMessageNEQ applies the NEQ predicate on the "error_message" field.
+func ErrorMessageNEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldErrorMessage, v))
 }
 
-// PayloadGTE applies the GTE predicate on the "payload" field.
-func PayloadGTE(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldGTE(FieldPayload, v))
+// ErrorMessageIn applies the In predicate on the "error_message" field.
+func ErrorMessageIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldErrorMessage, vs...))
 }
 
-// PayloadLT applies the LT predicate on the "payload" field.
-func PayloadLT(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldLT(FieldPayload, v))
+// ErrorMessageNotIn applies the NotIn predicate on the "error_message" field.
+func ErrorMessageNotIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldErrorMessage, vs...))
 }
 
-// PayloadLTE applies the LTE predicate on the "payload" field.
-func PayloadLTE(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldLTE(FieldPayload, v))
+// ErrorMessageGT applies the GT predicate on the "error_message" field.
+func ErrorMessageGT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldErrorMessage, v))
 }
 
-// PayloadContains applies the Contains predicate on the "payload" field.
-func PayloadContains(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldContains(FieldPayload, v))
+// ErrorMessageGTE applies the GTE predicate on the "error_message" field.
+func ErrorMessageGTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldErrorMessage, v))
 }
 
-// PayloadHasPrefix applies the HasPrefix predicate on the "payload" field.
-func PayloadHasPrefix(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldHasPrefix(FieldPayload, v))
+// ErrorMessageLT applies the LT predicate on the "error_message" field.
+func ErrorMessageLT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldErrorMessage, v))
 }
 
-// PayloadHasSuffix applies the HasSuffix predicate on the "payload" field.
-func PayloadHasSuffix(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldHasSuffix(FieldPayload, v))
+// ErrorMessageLTE applies the LTE predicate on the "error_message" field.
+func ErrorMessageLTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldErrorMessage, v))
 }
 
-// PayloadEqualFold applies the EqualFold predicate on the "payload" field.
-func PayloadEqualFold(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldEqualFold(FieldPayload, v))
+// ErrorMessageContains applies the Contains predicate on the "error_message" field.
+func ErrorMessageContains(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContains(FieldErrorMessage, v))
 }
 
-// PayloadContainsFold applies the ContainsFold predicate on the "payload" field.
-func PayloadContainsFold(v string) predicate.SourceEvent {
-	return predicate.SourceEvent(sql.FieldContainsFold(FieldPayload, v))
+// ErrorMessageHasPrefix applies the HasPrefix predicate on the "error_message" field.
+func ErrorMessageHasPrefix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasPrefix(FieldErrorMessage, v))
+}
+
+// ErrorMessageHasSuffix applies the HasSuffix predicate on the "error_message" field.
+func ErrorMessageHasSuffix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasSuffix(FieldErrorMessage, v))
+}
+
+// ErrorMessageIsNil applies the IsNil predicate on the "error_message" field.
+func ErrorMessageIsNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIsNull(FieldErrorMessage))
+}
+
+// ErrorMessageNotNil applies the NotNil predicate on the "error_message" field.
+func ErrorMessageNotNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotNull(FieldErrorMessage))
+}
+
+// ErrorMessageEqualFold applies the EqualFold predicate on the "error_message" field.
+func ErrorMessageEqualFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEqualFold(FieldErrorMessage, v))
+}
+
+// ErrorMessageContainsFold applies the ContainsFold predicate on the "error_message" field.
+func ErrorMessageContainsFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContainsFold(FieldErrorMessage, v))
+}
+
+// ErrorCategoryEQ applies the EQ predicate on the "error_category" field.
+func ErrorCategoryEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldErrorCategory, v))
+}
+
+// ErrorCategoryNEQ applies the NEQ predicate on the "error_category" field.
+func ErrorCategoryNEQ(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldErrorCategory, v))
+}
+
+// ErrorCategoryIn applies the In predicate on the "error_category" field.
+func ErrorCategoryIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldErrorCategory, vs...))
+}
+
+// ErrorCategoryNotIn applies the NotIn predicate on the "error_category" field.
+func ErrorCategoryNotIn(vs ...string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldErrorCategory, vs...))
+}
+
+// ErrorCategoryGT applies the GT predicate on the "error_category" field.
+func ErrorCategoryGT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldErrorCategory, v))
+}
+
+// ErrorCategoryGTE applies the GTE predicate on the "error_category" field.
+func ErrorCategoryGTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldErrorCategory, v))
+}
+
+// ErrorCategoryLT applies the LT predicate on the "error_category" field.
+func ErrorCategoryLT(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldErrorCategory, v))
+}
+
+// ErrorCategoryLTE applies the LTE predicate on the "error_category" field.
+func ErrorCategoryLTE(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldErrorCategory, v))
+}
+
+// ErrorCategoryContains applies the Contains predicate on the "error_category" field.
+func ErrorCategoryContains(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContains(FieldErrorCategory, v))
+}
+
+// ErrorCategoryHasPrefix applies the HasPrefix predicate on the "error_category" field.
+func ErrorCategoryHasPrefix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasPrefix(FieldErrorCategory, v))
+}
+
+// ErrorCategoryHasSuffix applies the HasSuffix predicate on the "error_category" field.
+func ErrorCategoryHasSuffix(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldHasSuffix(FieldErrorCategory, v))
+}
+
+// ErrorCategoryIsNil applies the IsNil predicate on the "error_category" field.
+func ErrorCategoryIsNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIsNull(FieldErrorCategory))
+}
+
+// ErrorCategoryNotNil applies the NotNil predicate on the "error_category" field.
+func ErrorCategoryNotNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotNull(FieldErrorCategory))
+}
+
+// ErrorCategoryEqualFold applies the EqualFold predicate on the "error_category" field.
+func ErrorCategoryEqualFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEqualFold(FieldErrorCategory, v))
+}
+
+// ErrorCategoryContainsFold applies the ContainsFold predicate on the "error_category" field.
+func ErrorCategoryContainsFold(v string) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldContainsFold(FieldErrorCategory, v))
+}
+
+// ItemsCountEQ applies the EQ predicate on the "items_count" field.
+func ItemsCountEQ(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldItemsCount, v))
+}
+
+// ItemsCountNEQ applies the NEQ predicate on the "items_count" field.
+func ItemsCountNEQ(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldItemsCount, v))
+}
+
+// ItemsCountIn applies the In predicate on the "items_count" field.
+func ItemsCountIn(vs ...int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldItemsCount, vs...))
+}
+
+// ItemsCountNotIn applies the NotIn predicate on the "items_count" field.
+func ItemsCountNotIn(vs ...int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldItemsCount, vs...))
+}
+
+// ItemsCountGT applies the GT predicate on the "items_count" field.
+func ItemsCountGT(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldItemsCount, v))
+}
+
+// ItemsCountGTE applies the GTE predicate on the "items_count" field.
+func ItemsCountGTE(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldItemsCount, v))
+}
+
+// ItemsCountLT applies the LT predicate on the "items_count" field.
+func ItemsCountLT(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldItemsCount, v))
+}
+
+// ItemsCountLTE applies the LTE predicate on the "items_count" field.
+func ItemsCountLTE(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldItemsCount, v))
+}
+
+// ItemsCountIsNil applies the IsNil predicate on the "items_count" field.
+func ItemsCountIsNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIsNull(FieldItemsCount))
+}
+
+// ItemsCountNotNil applies the NotNil predicate on the "items_count" field.
+func ItemsCountNotNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotNull(FieldItemsCount))
+}
+
+// MetadataIsNil applies the IsNil predicate on the "metadata" field.
+func MetadataIsNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIsNull(FieldMetadata))
+}
+
+// MetadataNotNil applies the NotNil predicate on the "metadata" field.
+func MetadataNotNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotNull(FieldMetadata))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

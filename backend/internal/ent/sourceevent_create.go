@@ -21,29 +21,125 @@ type SourceEventCreate struct {
 	hooks    []Hook
 }
 
-// SetSource sets the "source" field.
-func (_c *SourceEventCreate) SetSource(v string) *SourceEventCreate {
-	_c.mutation.SetSource(v)
+// SetSourceKey sets the "source_key" field.
+func (_c *SourceEventCreate) SetSourceKey(v string) *SourceEventCreate {
+	_c.mutation.SetSourceKey(v)
+	return _c
+}
+
+// SetSourceID sets the "source_id" field.
+func (_c *SourceEventCreate) SetSourceID(v string) *SourceEventCreate {
+	_c.mutation.SetSourceID(v)
+	return _c
+}
+
+// SetNillableSourceID sets the "source_id" field if the given value is not nil.
+func (_c *SourceEventCreate) SetNillableSourceID(v *string) *SourceEventCreate {
+	if v != nil {
+		_c.SetSourceID(*v)
+	}
+	return _c
+}
+
+// SetSourceName sets the "source_name" field.
+func (_c *SourceEventCreate) SetSourceName(v string) *SourceEventCreate {
+	_c.mutation.SetSourceName(v)
+	return _c
+}
+
+// SetNillableSourceName sets the "source_name" field if the given value is not nil.
+func (_c *SourceEventCreate) SetNillableSourceName(v *string) *SourceEventCreate {
+	if v != nil {
+		_c.SetSourceName(*v)
+	}
+	return _c
+}
+
+// SetLanguage sets the "language" field.
+func (_c *SourceEventCreate) SetLanguage(v string) *SourceEventCreate {
+	_c.mutation.SetLanguage(v)
+	return _c
+}
+
+// SetNillableLanguage sets the "language" field if the given value is not nil.
+func (_c *SourceEventCreate) SetNillableLanguage(v *string) *SourceEventCreate {
+	if v != nil {
+		_c.SetLanguage(*v)
+	}
 	return _c
 }
 
 // SetEventType sets the "event_type" field.
-func (_c *SourceEventCreate) SetEventType(v string) *SourceEventCreate {
+func (_c *SourceEventCreate) SetEventType(v sourceevent.EventType) *SourceEventCreate {
 	_c.mutation.SetEventType(v)
 	return _c
 }
 
-// SetPayload sets the "payload" field.
-func (_c *SourceEventCreate) SetPayload(v string) *SourceEventCreate {
-	_c.mutation.SetPayload(v)
+// SetStatus sets the "status" field.
+func (_c *SourceEventCreate) SetStatus(v sourceevent.Status) *SourceEventCreate {
+	_c.mutation.SetStatus(v)
 	return _c
 }
 
-// SetNillablePayload sets the "payload" field if the given value is not nil.
-func (_c *SourceEventCreate) SetNillablePayload(v *string) *SourceEventCreate {
+// SetDurationMs sets the "duration_ms" field.
+func (_c *SourceEventCreate) SetDurationMs(v int64) *SourceEventCreate {
+	_c.mutation.SetDurationMs(v)
+	return _c
+}
+
+// SetNillableDurationMs sets the "duration_ms" field if the given value is not nil.
+func (_c *SourceEventCreate) SetNillableDurationMs(v *int64) *SourceEventCreate {
 	if v != nil {
-		_c.SetPayload(*v)
+		_c.SetDurationMs(*v)
 	}
+	return _c
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (_c *SourceEventCreate) SetErrorMessage(v string) *SourceEventCreate {
+	_c.mutation.SetErrorMessage(v)
+	return _c
+}
+
+// SetNillableErrorMessage sets the "error_message" field if the given value is not nil.
+func (_c *SourceEventCreate) SetNillableErrorMessage(v *string) *SourceEventCreate {
+	if v != nil {
+		_c.SetErrorMessage(*v)
+	}
+	return _c
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (_c *SourceEventCreate) SetErrorCategory(v string) *SourceEventCreate {
+	_c.mutation.SetErrorCategory(v)
+	return _c
+}
+
+// SetNillableErrorCategory sets the "error_category" field if the given value is not nil.
+func (_c *SourceEventCreate) SetNillableErrorCategory(v *string) *SourceEventCreate {
+	if v != nil {
+		_c.SetErrorCategory(*v)
+	}
+	return _c
+}
+
+// SetItemsCount sets the "items_count" field.
+func (_c *SourceEventCreate) SetItemsCount(v int) *SourceEventCreate {
+	_c.mutation.SetItemsCount(v)
+	return _c
+}
+
+// SetNillableItemsCount sets the "items_count" field if the given value is not nil.
+func (_c *SourceEventCreate) SetNillableItemsCount(v *int) *SourceEventCreate {
+	if v != nil {
+		_c.SetItemsCount(*v)
+	}
+	return _c
+}
+
+// SetMetadata sets the "metadata" field.
+func (_c *SourceEventCreate) SetMetadata(v map[string]string) *SourceEventCreate {
+	_c.mutation.SetMetadata(v)
 	return _c
 }
 
@@ -110,9 +206,21 @@ func (_c *SourceEventCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *SourceEventCreate) defaults() {
-	if _, ok := _c.mutation.Payload(); !ok {
-		v := sourceevent.DefaultPayload
-		_c.mutation.SetPayload(v)
+	if _, ok := _c.mutation.SourceID(); !ok {
+		v := sourceevent.DefaultSourceID
+		_c.mutation.SetSourceID(v)
+	}
+	if _, ok := _c.mutation.SourceName(); !ok {
+		v := sourceevent.DefaultSourceName
+		_c.mutation.SetSourceName(v)
+	}
+	if _, ok := _c.mutation.Language(); !ok {
+		v := sourceevent.DefaultLanguage
+		_c.mutation.SetLanguage(v)
+	}
+	if _, ok := _c.mutation.DurationMs(); !ok {
+		v := sourceevent.DefaultDurationMs
+		_c.mutation.SetDurationMs(v)
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := sourceevent.DefaultCreatedAt()
@@ -126,14 +234,36 @@ func (_c *SourceEventCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *SourceEventCreate) check() error {
-	if _, ok := _c.mutation.Source(); !ok {
-		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "SourceEvent.source"`)}
+	if _, ok := _c.mutation.SourceKey(); !ok {
+		return &ValidationError{Name: "source_key", err: errors.New(`ent: missing required field "SourceEvent.source_key"`)}
+	}
+	if _, ok := _c.mutation.SourceID(); !ok {
+		return &ValidationError{Name: "source_id", err: errors.New(`ent: missing required field "SourceEvent.source_id"`)}
+	}
+	if _, ok := _c.mutation.SourceName(); !ok {
+		return &ValidationError{Name: "source_name", err: errors.New(`ent: missing required field "SourceEvent.source_name"`)}
+	}
+	if _, ok := _c.mutation.Language(); !ok {
+		return &ValidationError{Name: "language", err: errors.New(`ent: missing required field "SourceEvent.language"`)}
 	}
 	if _, ok := _c.mutation.EventType(); !ok {
 		return &ValidationError{Name: "event_type", err: errors.New(`ent: missing required field "SourceEvent.event_type"`)}
 	}
-	if _, ok := _c.mutation.Payload(); !ok {
-		return &ValidationError{Name: "payload", err: errors.New(`ent: missing required field "SourceEvent.payload"`)}
+	if v, ok := _c.mutation.EventType(); ok {
+		if err := sourceevent.EventTypeValidator(v); err != nil {
+			return &ValidationError{Name: "event_type", err: fmt.Errorf(`ent: validator failed for field "SourceEvent.event_type": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.Status(); !ok {
+		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "SourceEvent.status"`)}
+	}
+	if v, ok := _c.mutation.Status(); ok {
+		if err := sourceevent.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "SourceEvent.status": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.DurationMs(); !ok {
+		return &ValidationError{Name: "duration_ms", err: errors.New(`ent: missing required field "SourceEvent.duration_ms"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "SourceEvent.created_at"`)}
@@ -173,17 +303,49 @@ func (_c *SourceEventCreate) createSpec() (*SourceEvent, *sqlgraph.CreateSpec) {
 		_node.ID = id
 		_spec.ID.Value = &id
 	}
-	if value, ok := _c.mutation.Source(); ok {
-		_spec.SetField(sourceevent.FieldSource, field.TypeString, value)
-		_node.Source = value
+	if value, ok := _c.mutation.SourceKey(); ok {
+		_spec.SetField(sourceevent.FieldSourceKey, field.TypeString, value)
+		_node.SourceKey = value
+	}
+	if value, ok := _c.mutation.SourceID(); ok {
+		_spec.SetField(sourceevent.FieldSourceID, field.TypeString, value)
+		_node.SourceID = value
+	}
+	if value, ok := _c.mutation.SourceName(); ok {
+		_spec.SetField(sourceevent.FieldSourceName, field.TypeString, value)
+		_node.SourceName = value
+	}
+	if value, ok := _c.mutation.Language(); ok {
+		_spec.SetField(sourceevent.FieldLanguage, field.TypeString, value)
+		_node.Language = value
 	}
 	if value, ok := _c.mutation.EventType(); ok {
-		_spec.SetField(sourceevent.FieldEventType, field.TypeString, value)
+		_spec.SetField(sourceevent.FieldEventType, field.TypeEnum, value)
 		_node.EventType = value
 	}
-	if value, ok := _c.mutation.Payload(); ok {
-		_spec.SetField(sourceevent.FieldPayload, field.TypeString, value)
-		_node.Payload = value
+	if value, ok := _c.mutation.Status(); ok {
+		_spec.SetField(sourceevent.FieldStatus, field.TypeEnum, value)
+		_node.Status = value
+	}
+	if value, ok := _c.mutation.DurationMs(); ok {
+		_spec.SetField(sourceevent.FieldDurationMs, field.TypeInt64, value)
+		_node.DurationMs = value
+	}
+	if value, ok := _c.mutation.ErrorMessage(); ok {
+		_spec.SetField(sourceevent.FieldErrorMessage, field.TypeString, value)
+		_node.ErrorMessage = &value
+	}
+	if value, ok := _c.mutation.ErrorCategory(); ok {
+		_spec.SetField(sourceevent.FieldErrorCategory, field.TypeString, value)
+		_node.ErrorCategory = &value
+	}
+	if value, ok := _c.mutation.ItemsCount(); ok {
+		_spec.SetField(sourceevent.FieldItemsCount, field.TypeInt, value)
+		_node.ItemsCount = &value
+	}
+	if value, ok := _c.mutation.Metadata(); ok {
+		_spec.SetField(sourceevent.FieldMetadata, field.TypeJSON, value)
+		_node.Metadata = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(sourceevent.FieldCreatedAt, field.TypeTime, value)

@@ -217,6 +217,13 @@ func (s *Service) EngineSocksVersion(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyEngineSocksVersion)
 }
 
+// ReportingRetentionDays is how many days of source-operation audit-log rows the
+// daily retention purge keeps (DB override else default 30). Read at use-time by
+// the purge ticker, so a change hot-reloads on the next daily sweep.
+func (s *Service) ReportingRetentionDays(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyReportingRetentionDays)
+}
+
 // RetainedVersions is how many .apk versions per extension the apk cache keeps
 // — the reversible-update history depth (DB override else default 3). Read at
 // use-time by the harvest/update prune + the reinstall write-through, so a

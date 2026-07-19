@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -18,12 +19,28 @@ type SourceEvent struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID uuid.UUID `json:"id,omitempty"`
-	// Source holds the value of the "source" field.
-	Source string `json:"source,omitempty"`
+	// SourceKey holds the value of the "source_key" field.
+	SourceKey string `json:"source_key,omitempty"`
+	// SourceID holds the value of the "source_id" field.
+	SourceID string `json:"source_id,omitempty"`
+	// SourceName holds the value of the "source_name" field.
+	SourceName string `json:"source_name,omitempty"`
+	// Language holds the value of the "language" field.
+	Language string `json:"language,omitempty"`
 	// EventType holds the value of the "event_type" field.
-	EventType string `json:"event_type,omitempty"`
-	// Payload holds the value of the "payload" field.
-	Payload string `json:"payload,omitempty"`
+	EventType sourceevent.EventType `json:"event_type,omitempty"`
+	// Status holds the value of the "status" field.
+	Status sourceevent.Status `json:"status,omitempty"`
+	// DurationMs holds the value of the "duration_ms" field.
+	DurationMs int64 `json:"duration_ms,omitempty"`
+	// ErrorMessage holds the value of the "error_message" field.
+	ErrorMessage *string `json:"error_message,omitempty"`
+	// ErrorCategory holds the value of the "error_category" field.
+	ErrorCategory *string `json:"error_category,omitempty"`
+	// ItemsCount holds the value of the "items_count" field.
+	ItemsCount *int `json:"items_count,omitempty"`
+	// Metadata holds the value of the "metadata" field.
+	Metadata map[string]string `json:"metadata,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt    time.Time `json:"created_at,omitempty"`
 	selectValues sql.SelectValues
@@ -34,7 +51,11 @@ func (*SourceEvent) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case sourceevent.FieldSource, sourceevent.FieldEventType, sourceevent.FieldPayload:
+		case sourceevent.FieldMetadata:
+			values[i] = new([]byte)
+		case sourceevent.FieldDurationMs, sourceevent.FieldItemsCount:
+			values[i] = new(sql.NullInt64)
+		case sourceevent.FieldSourceKey, sourceevent.FieldSourceID, sourceevent.FieldSourceName, sourceevent.FieldLanguage, sourceevent.FieldEventType, sourceevent.FieldStatus, sourceevent.FieldErrorMessage, sourceevent.FieldErrorCategory:
 			values[i] = new(sql.NullString)
 		case sourceevent.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -61,23 +82,76 @@ func (_m *SourceEvent) assignValues(columns []string, values []any) error {
 			} else if value != nil {
 				_m.ID = *value
 			}
-		case sourceevent.FieldSource:
+		case sourceevent.FieldSourceKey:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field source", values[i])
+				return fmt.Errorf("unexpected type %T for field source_key", values[i])
 			} else if value.Valid {
-				_m.Source = value.String
+				_m.SourceKey = value.String
+			}
+		case sourceevent.FieldSourceID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field source_id", values[i])
+			} else if value.Valid {
+				_m.SourceID = value.String
+			}
+		case sourceevent.FieldSourceName:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field source_name", values[i])
+			} else if value.Valid {
+				_m.SourceName = value.String
+			}
+		case sourceevent.FieldLanguage:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field language", values[i])
+			} else if value.Valid {
+				_m.Language = value.String
 			}
 		case sourceevent.FieldEventType:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field event_type", values[i])
 			} else if value.Valid {
-				_m.EventType = value.String
+				_m.EventType = sourceevent.EventType(value.String)
 			}
-		case sourceevent.FieldPayload:
+		case sourceevent.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field payload", values[i])
+				return fmt.Errorf("unexpected type %T for field status", values[i])
 			} else if value.Valid {
-				_m.Payload = value.String
+				_m.Status = sourceevent.Status(value.String)
+			}
+		case sourceevent.FieldDurationMs:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field duration_ms", values[i])
+			} else if value.Valid {
+				_m.DurationMs = value.Int64
+			}
+		case sourceevent.FieldErrorMessage:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field error_message", values[i])
+			} else if value.Valid {
+				_m.ErrorMessage = new(string)
+				*_m.ErrorMessage = value.String
+			}
+		case sourceevent.FieldErrorCategory:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field error_category", values[i])
+			} else if value.Valid {
+				_m.ErrorCategory = new(string)
+				*_m.ErrorCategory = value.String
+			}
+		case sourceevent.FieldItemsCount:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field items_count", values[i])
+			} else if value.Valid {
+				_m.ItemsCount = new(int)
+				*_m.ItemsCount = int(value.Int64)
+			}
+		case sourceevent.FieldMetadata:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field metadata", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.Metadata); err != nil {
+					return fmt.Errorf("unmarshal field metadata: %w", err)
+				}
 			}
 		case sourceevent.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -121,14 +195,44 @@ func (_m *SourceEvent) String() string {
 	var builder strings.Builder
 	builder.WriteString("SourceEvent(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
-	builder.WriteString("source=")
-	builder.WriteString(_m.Source)
+	builder.WriteString("source_key=")
+	builder.WriteString(_m.SourceKey)
+	builder.WriteString(", ")
+	builder.WriteString("source_id=")
+	builder.WriteString(_m.SourceID)
+	builder.WriteString(", ")
+	builder.WriteString("source_name=")
+	builder.WriteString(_m.SourceName)
+	builder.WriteString(", ")
+	builder.WriteString("language=")
+	builder.WriteString(_m.Language)
 	builder.WriteString(", ")
 	builder.WriteString("event_type=")
-	builder.WriteString(_m.EventType)
+	builder.WriteString(fmt.Sprintf("%v", _m.EventType))
 	builder.WriteString(", ")
-	builder.WriteString("payload=")
-	builder.WriteString(_m.Payload)
+	builder.WriteString("status=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Status))
+	builder.WriteString(", ")
+	builder.WriteString("duration_ms=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DurationMs))
+	builder.WriteString(", ")
+	if v := _m.ErrorMessage; v != nil {
+		builder.WriteString("error_message=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ErrorCategory; v != nil {
+		builder.WriteString("error_category=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ItemsCount; v != nil {
+		builder.WriteString("items_count=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	builder.WriteString("metadata=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Metadata))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

@@ -69,6 +69,20 @@ func (_c *SourceCircuitStateCreate) SetNillableLastError(v *string) *SourceCircu
 	return _c
 }
 
+// SetFailingSince sets the "failing_since" field.
+func (_c *SourceCircuitStateCreate) SetFailingSince(v time.Time) *SourceCircuitStateCreate {
+	_c.mutation.SetFailingSince(v)
+	return _c
+}
+
+// SetNillableFailingSince sets the "failing_since" field if the given value is not nil.
+func (_c *SourceCircuitStateCreate) SetNillableFailingSince(v *time.Time) *SourceCircuitStateCreate {
+	if v != nil {
+		_c.SetFailingSince(*v)
+	}
+	return _c
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_c *SourceCircuitStateCreate) SetUpdatedAt(v time.Time) *SourceCircuitStateCreate {
 	_c.mutation.SetUpdatedAt(v)
@@ -214,6 +228,10 @@ func (_c *SourceCircuitStateCreate) createSpec() (*SourceCircuitState, *sqlgraph
 	if value, ok := _c.mutation.LastError(); ok {
 		_spec.SetField(sourcecircuitstate.FieldLastError, field.TypeString, value)
 		_node.LastError = value
+	}
+	if value, ok := _c.mutation.FailingSince(); ok {
+		_spec.SetField(sourcecircuitstate.FieldFailingSince, field.TypeTime, value)
+		_node.FailingSince = &value
 	}
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(sourcecircuitstate.FieldUpdatedAt, field.TypeTime, value)

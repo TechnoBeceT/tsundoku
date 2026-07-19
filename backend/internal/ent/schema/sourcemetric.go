@@ -18,8 +18,11 @@ import (
 // zero-data migration: existing databases gain an empty table and rows are
 // created lazily the first time a source is searched or warmed.
 //
-// NOTE: the pre-existing SourceEvent entity is a DEAD unused stub — SourceMetric
-// is unrelated and must not be confused with it.
+// NOTE: SourceMetric is a rolling SNAPSHOT (one row/source, EWMA + counters);
+// the separate SourceEvent entity is the append-only per-operation AUDIT LOG
+// (many rows/source) that backs the Source Health Console. They are distinct and
+// must not be confused — a metric answers "how is this source doing lately", an
+// event answers "what happened at 14:32".
 type SourceMetric struct {
 	ent.Schema
 }

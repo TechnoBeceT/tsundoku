@@ -27,45 +27,187 @@ func (_u *SourceEventUpdate) Where(ps ...predicate.SourceEvent) *SourceEventUpda
 	return _u
 }
 
-// SetSource sets the "source" field.
-func (_u *SourceEventUpdate) SetSource(v string) *SourceEventUpdate {
-	_u.mutation.SetSource(v)
+// SetSourceKey sets the "source_key" field.
+func (_u *SourceEventUpdate) SetSourceKey(v string) *SourceEventUpdate {
+	_u.mutation.SetSourceKey(v)
 	return _u
 }
 
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (_u *SourceEventUpdate) SetNillableSource(v *string) *SourceEventUpdate {
+// SetNillableSourceKey sets the "source_key" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableSourceKey(v *string) *SourceEventUpdate {
 	if v != nil {
-		_u.SetSource(*v)
+		_u.SetSourceKey(*v)
+	}
+	return _u
+}
+
+// SetSourceID sets the "source_id" field.
+func (_u *SourceEventUpdate) SetSourceID(v string) *SourceEventUpdate {
+	_u.mutation.SetSourceID(v)
+	return _u
+}
+
+// SetNillableSourceID sets the "source_id" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableSourceID(v *string) *SourceEventUpdate {
+	if v != nil {
+		_u.SetSourceID(*v)
+	}
+	return _u
+}
+
+// SetSourceName sets the "source_name" field.
+func (_u *SourceEventUpdate) SetSourceName(v string) *SourceEventUpdate {
+	_u.mutation.SetSourceName(v)
+	return _u
+}
+
+// SetNillableSourceName sets the "source_name" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableSourceName(v *string) *SourceEventUpdate {
+	if v != nil {
+		_u.SetSourceName(*v)
+	}
+	return _u
+}
+
+// SetLanguage sets the "language" field.
+func (_u *SourceEventUpdate) SetLanguage(v string) *SourceEventUpdate {
+	_u.mutation.SetLanguage(v)
+	return _u
+}
+
+// SetNillableLanguage sets the "language" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableLanguage(v *string) *SourceEventUpdate {
+	if v != nil {
+		_u.SetLanguage(*v)
 	}
 	return _u
 }
 
 // SetEventType sets the "event_type" field.
-func (_u *SourceEventUpdate) SetEventType(v string) *SourceEventUpdate {
+func (_u *SourceEventUpdate) SetEventType(v sourceevent.EventType) *SourceEventUpdate {
 	_u.mutation.SetEventType(v)
 	return _u
 }
 
 // SetNillableEventType sets the "event_type" field if the given value is not nil.
-func (_u *SourceEventUpdate) SetNillableEventType(v *string) *SourceEventUpdate {
+func (_u *SourceEventUpdate) SetNillableEventType(v *sourceevent.EventType) *SourceEventUpdate {
 	if v != nil {
 		_u.SetEventType(*v)
 	}
 	return _u
 }
 
-// SetPayload sets the "payload" field.
-func (_u *SourceEventUpdate) SetPayload(v string) *SourceEventUpdate {
-	_u.mutation.SetPayload(v)
+// SetStatus sets the "status" field.
+func (_u *SourceEventUpdate) SetStatus(v sourceevent.Status) *SourceEventUpdate {
+	_u.mutation.SetStatus(v)
 	return _u
 }
 
-// SetNillablePayload sets the "payload" field if the given value is not nil.
-func (_u *SourceEventUpdate) SetNillablePayload(v *string) *SourceEventUpdate {
+// SetNillableStatus sets the "status" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableStatus(v *sourceevent.Status) *SourceEventUpdate {
 	if v != nil {
-		_u.SetPayload(*v)
+		_u.SetStatus(*v)
 	}
+	return _u
+}
+
+// SetDurationMs sets the "duration_ms" field.
+func (_u *SourceEventUpdate) SetDurationMs(v int64) *SourceEventUpdate {
+	_u.mutation.ResetDurationMs()
+	_u.mutation.SetDurationMs(v)
+	return _u
+}
+
+// SetNillableDurationMs sets the "duration_ms" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableDurationMs(v *int64) *SourceEventUpdate {
+	if v != nil {
+		_u.SetDurationMs(*v)
+	}
+	return _u
+}
+
+// AddDurationMs adds value to the "duration_ms" field.
+func (_u *SourceEventUpdate) AddDurationMs(v int64) *SourceEventUpdate {
+	_u.mutation.AddDurationMs(v)
+	return _u
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (_u *SourceEventUpdate) SetErrorMessage(v string) *SourceEventUpdate {
+	_u.mutation.SetErrorMessage(v)
+	return _u
+}
+
+// SetNillableErrorMessage sets the "error_message" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableErrorMessage(v *string) *SourceEventUpdate {
+	if v != nil {
+		_u.SetErrorMessage(*v)
+	}
+	return _u
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (_u *SourceEventUpdate) ClearErrorMessage() *SourceEventUpdate {
+	_u.mutation.ClearErrorMessage()
+	return _u
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (_u *SourceEventUpdate) SetErrorCategory(v string) *SourceEventUpdate {
+	_u.mutation.SetErrorCategory(v)
+	return _u
+}
+
+// SetNillableErrorCategory sets the "error_category" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableErrorCategory(v *string) *SourceEventUpdate {
+	if v != nil {
+		_u.SetErrorCategory(*v)
+	}
+	return _u
+}
+
+// ClearErrorCategory clears the value of the "error_category" field.
+func (_u *SourceEventUpdate) ClearErrorCategory() *SourceEventUpdate {
+	_u.mutation.ClearErrorCategory()
+	return _u
+}
+
+// SetItemsCount sets the "items_count" field.
+func (_u *SourceEventUpdate) SetItemsCount(v int) *SourceEventUpdate {
+	_u.mutation.ResetItemsCount()
+	_u.mutation.SetItemsCount(v)
+	return _u
+}
+
+// SetNillableItemsCount sets the "items_count" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableItemsCount(v *int) *SourceEventUpdate {
+	if v != nil {
+		_u.SetItemsCount(*v)
+	}
+	return _u
+}
+
+// AddItemsCount adds value to the "items_count" field.
+func (_u *SourceEventUpdate) AddItemsCount(v int) *SourceEventUpdate {
+	_u.mutation.AddItemsCount(v)
+	return _u
+}
+
+// ClearItemsCount clears the value of the "items_count" field.
+func (_u *SourceEventUpdate) ClearItemsCount() *SourceEventUpdate {
+	_u.mutation.ClearItemsCount()
+	return _u
+}
+
+// SetMetadata sets the "metadata" field.
+func (_u *SourceEventUpdate) SetMetadata(v map[string]string) *SourceEventUpdate {
+	_u.mutation.SetMetadata(v)
+	return _u
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (_u *SourceEventUpdate) ClearMetadata() *SourceEventUpdate {
+	_u.mutation.ClearMetadata()
 	return _u
 }
 
@@ -101,7 +243,25 @@ func (_u *SourceEventUpdate) ExecX(ctx context.Context) {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (_u *SourceEventUpdate) check() error {
+	if v, ok := _u.mutation.EventType(); ok {
+		if err := sourceevent.EventTypeValidator(v); err != nil {
+			return &ValidationError{Name: "event_type", err: fmt.Errorf(`ent: validator failed for field "SourceEvent.event_type": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.Status(); ok {
+		if err := sourceevent.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "SourceEvent.status": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (_u *SourceEventUpdate) sqlSave(ctx context.Context) (_node int, err error) {
+	if err := _u.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(sourceevent.Table, sourceevent.Columns, sqlgraph.NewFieldSpec(sourceevent.FieldID, field.TypeUUID))
 	if ps := _u.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -110,14 +270,56 @@ func (_u *SourceEventUpdate) sqlSave(ctx context.Context) (_node int, err error)
 			}
 		}
 	}
-	if value, ok := _u.mutation.Source(); ok {
-		_spec.SetField(sourceevent.FieldSource, field.TypeString, value)
+	if value, ok := _u.mutation.SourceKey(); ok {
+		_spec.SetField(sourceevent.FieldSourceKey, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.SourceID(); ok {
+		_spec.SetField(sourceevent.FieldSourceID, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.SourceName(); ok {
+		_spec.SetField(sourceevent.FieldSourceName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Language(); ok {
+		_spec.SetField(sourceevent.FieldLanguage, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.EventType(); ok {
-		_spec.SetField(sourceevent.FieldEventType, field.TypeString, value)
+		_spec.SetField(sourceevent.FieldEventType, field.TypeEnum, value)
 	}
-	if value, ok := _u.mutation.Payload(); ok {
-		_spec.SetField(sourceevent.FieldPayload, field.TypeString, value)
+	if value, ok := _u.mutation.Status(); ok {
+		_spec.SetField(sourceevent.FieldStatus, field.TypeEnum, value)
+	}
+	if value, ok := _u.mutation.DurationMs(); ok {
+		_spec.SetField(sourceevent.FieldDurationMs, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedDurationMs(); ok {
+		_spec.AddField(sourceevent.FieldDurationMs, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.ErrorMessage(); ok {
+		_spec.SetField(sourceevent.FieldErrorMessage, field.TypeString, value)
+	}
+	if _u.mutation.ErrorMessageCleared() {
+		_spec.ClearField(sourceevent.FieldErrorMessage, field.TypeString)
+	}
+	if value, ok := _u.mutation.ErrorCategory(); ok {
+		_spec.SetField(sourceevent.FieldErrorCategory, field.TypeString, value)
+	}
+	if _u.mutation.ErrorCategoryCleared() {
+		_spec.ClearField(sourceevent.FieldErrorCategory, field.TypeString)
+	}
+	if value, ok := _u.mutation.ItemsCount(); ok {
+		_spec.SetField(sourceevent.FieldItemsCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedItemsCount(); ok {
+		_spec.AddField(sourceevent.FieldItemsCount, field.TypeInt, value)
+	}
+	if _u.mutation.ItemsCountCleared() {
+		_spec.ClearField(sourceevent.FieldItemsCount, field.TypeInt)
+	}
+	if value, ok := _u.mutation.Metadata(); ok {
+		_spec.SetField(sourceevent.FieldMetadata, field.TypeJSON, value)
+	}
+	if _u.mutation.MetadataCleared() {
+		_spec.ClearField(sourceevent.FieldMetadata, field.TypeJSON)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -139,45 +341,187 @@ type SourceEventUpdateOne struct {
 	mutation *SourceEventMutation
 }
 
-// SetSource sets the "source" field.
-func (_u *SourceEventUpdateOne) SetSource(v string) *SourceEventUpdateOne {
-	_u.mutation.SetSource(v)
+// SetSourceKey sets the "source_key" field.
+func (_u *SourceEventUpdateOne) SetSourceKey(v string) *SourceEventUpdateOne {
+	_u.mutation.SetSourceKey(v)
 	return _u
 }
 
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (_u *SourceEventUpdateOne) SetNillableSource(v *string) *SourceEventUpdateOne {
+// SetNillableSourceKey sets the "source_key" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableSourceKey(v *string) *SourceEventUpdateOne {
 	if v != nil {
-		_u.SetSource(*v)
+		_u.SetSourceKey(*v)
+	}
+	return _u
+}
+
+// SetSourceID sets the "source_id" field.
+func (_u *SourceEventUpdateOne) SetSourceID(v string) *SourceEventUpdateOne {
+	_u.mutation.SetSourceID(v)
+	return _u
+}
+
+// SetNillableSourceID sets the "source_id" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableSourceID(v *string) *SourceEventUpdateOne {
+	if v != nil {
+		_u.SetSourceID(*v)
+	}
+	return _u
+}
+
+// SetSourceName sets the "source_name" field.
+func (_u *SourceEventUpdateOne) SetSourceName(v string) *SourceEventUpdateOne {
+	_u.mutation.SetSourceName(v)
+	return _u
+}
+
+// SetNillableSourceName sets the "source_name" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableSourceName(v *string) *SourceEventUpdateOne {
+	if v != nil {
+		_u.SetSourceName(*v)
+	}
+	return _u
+}
+
+// SetLanguage sets the "language" field.
+func (_u *SourceEventUpdateOne) SetLanguage(v string) *SourceEventUpdateOne {
+	_u.mutation.SetLanguage(v)
+	return _u
+}
+
+// SetNillableLanguage sets the "language" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableLanguage(v *string) *SourceEventUpdateOne {
+	if v != nil {
+		_u.SetLanguage(*v)
 	}
 	return _u
 }
 
 // SetEventType sets the "event_type" field.
-func (_u *SourceEventUpdateOne) SetEventType(v string) *SourceEventUpdateOne {
+func (_u *SourceEventUpdateOne) SetEventType(v sourceevent.EventType) *SourceEventUpdateOne {
 	_u.mutation.SetEventType(v)
 	return _u
 }
 
 // SetNillableEventType sets the "event_type" field if the given value is not nil.
-func (_u *SourceEventUpdateOne) SetNillableEventType(v *string) *SourceEventUpdateOne {
+func (_u *SourceEventUpdateOne) SetNillableEventType(v *sourceevent.EventType) *SourceEventUpdateOne {
 	if v != nil {
 		_u.SetEventType(*v)
 	}
 	return _u
 }
 
-// SetPayload sets the "payload" field.
-func (_u *SourceEventUpdateOne) SetPayload(v string) *SourceEventUpdateOne {
-	_u.mutation.SetPayload(v)
+// SetStatus sets the "status" field.
+func (_u *SourceEventUpdateOne) SetStatus(v sourceevent.Status) *SourceEventUpdateOne {
+	_u.mutation.SetStatus(v)
 	return _u
 }
 
-// SetNillablePayload sets the "payload" field if the given value is not nil.
-func (_u *SourceEventUpdateOne) SetNillablePayload(v *string) *SourceEventUpdateOne {
+// SetNillableStatus sets the "status" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableStatus(v *sourceevent.Status) *SourceEventUpdateOne {
 	if v != nil {
-		_u.SetPayload(*v)
+		_u.SetStatus(*v)
 	}
+	return _u
+}
+
+// SetDurationMs sets the "duration_ms" field.
+func (_u *SourceEventUpdateOne) SetDurationMs(v int64) *SourceEventUpdateOne {
+	_u.mutation.ResetDurationMs()
+	_u.mutation.SetDurationMs(v)
+	return _u
+}
+
+// SetNillableDurationMs sets the "duration_ms" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableDurationMs(v *int64) *SourceEventUpdateOne {
+	if v != nil {
+		_u.SetDurationMs(*v)
+	}
+	return _u
+}
+
+// AddDurationMs adds value to the "duration_ms" field.
+func (_u *SourceEventUpdateOne) AddDurationMs(v int64) *SourceEventUpdateOne {
+	_u.mutation.AddDurationMs(v)
+	return _u
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (_u *SourceEventUpdateOne) SetErrorMessage(v string) *SourceEventUpdateOne {
+	_u.mutation.SetErrorMessage(v)
+	return _u
+}
+
+// SetNillableErrorMessage sets the "error_message" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableErrorMessage(v *string) *SourceEventUpdateOne {
+	if v != nil {
+		_u.SetErrorMessage(*v)
+	}
+	return _u
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (_u *SourceEventUpdateOne) ClearErrorMessage() *SourceEventUpdateOne {
+	_u.mutation.ClearErrorMessage()
+	return _u
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (_u *SourceEventUpdateOne) SetErrorCategory(v string) *SourceEventUpdateOne {
+	_u.mutation.SetErrorCategory(v)
+	return _u
+}
+
+// SetNillableErrorCategory sets the "error_category" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableErrorCategory(v *string) *SourceEventUpdateOne {
+	if v != nil {
+		_u.SetErrorCategory(*v)
+	}
+	return _u
+}
+
+// ClearErrorCategory clears the value of the "error_category" field.
+func (_u *SourceEventUpdateOne) ClearErrorCategory() *SourceEventUpdateOne {
+	_u.mutation.ClearErrorCategory()
+	return _u
+}
+
+// SetItemsCount sets the "items_count" field.
+func (_u *SourceEventUpdateOne) SetItemsCount(v int) *SourceEventUpdateOne {
+	_u.mutation.ResetItemsCount()
+	_u.mutation.SetItemsCount(v)
+	return _u
+}
+
+// SetNillableItemsCount sets the "items_count" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableItemsCount(v *int) *SourceEventUpdateOne {
+	if v != nil {
+		_u.SetItemsCount(*v)
+	}
+	return _u
+}
+
+// AddItemsCount adds value to the "items_count" field.
+func (_u *SourceEventUpdateOne) AddItemsCount(v int) *SourceEventUpdateOne {
+	_u.mutation.AddItemsCount(v)
+	return _u
+}
+
+// ClearItemsCount clears the value of the "items_count" field.
+func (_u *SourceEventUpdateOne) ClearItemsCount() *SourceEventUpdateOne {
+	_u.mutation.ClearItemsCount()
+	return _u
+}
+
+// SetMetadata sets the "metadata" field.
+func (_u *SourceEventUpdateOne) SetMetadata(v map[string]string) *SourceEventUpdateOne {
+	_u.mutation.SetMetadata(v)
+	return _u
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (_u *SourceEventUpdateOne) ClearMetadata() *SourceEventUpdateOne {
+	_u.mutation.ClearMetadata()
 	return _u
 }
 
@@ -226,7 +570,25 @@ func (_u *SourceEventUpdateOne) ExecX(ctx context.Context) {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (_u *SourceEventUpdateOne) check() error {
+	if v, ok := _u.mutation.EventType(); ok {
+		if err := sourceevent.EventTypeValidator(v); err != nil {
+			return &ValidationError{Name: "event_type", err: fmt.Errorf(`ent: validator failed for field "SourceEvent.event_type": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.Status(); ok {
+		if err := sourceevent.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "SourceEvent.status": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (_u *SourceEventUpdateOne) sqlSave(ctx context.Context) (_node *SourceEvent, err error) {
+	if err := _u.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(sourceevent.Table, sourceevent.Columns, sqlgraph.NewFieldSpec(sourceevent.FieldID, field.TypeUUID))
 	id, ok := _u.mutation.ID()
 	if !ok {
@@ -252,14 +614,56 @@ func (_u *SourceEventUpdateOne) sqlSave(ctx context.Context) (_node *SourceEvent
 			}
 		}
 	}
-	if value, ok := _u.mutation.Source(); ok {
-		_spec.SetField(sourceevent.FieldSource, field.TypeString, value)
+	if value, ok := _u.mutation.SourceKey(); ok {
+		_spec.SetField(sourceevent.FieldSourceKey, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.SourceID(); ok {
+		_spec.SetField(sourceevent.FieldSourceID, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.SourceName(); ok {
+		_spec.SetField(sourceevent.FieldSourceName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Language(); ok {
+		_spec.SetField(sourceevent.FieldLanguage, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.EventType(); ok {
-		_spec.SetField(sourceevent.FieldEventType, field.TypeString, value)
+		_spec.SetField(sourceevent.FieldEventType, field.TypeEnum, value)
 	}
-	if value, ok := _u.mutation.Payload(); ok {
-		_spec.SetField(sourceevent.FieldPayload, field.TypeString, value)
+	if value, ok := _u.mutation.Status(); ok {
+		_spec.SetField(sourceevent.FieldStatus, field.TypeEnum, value)
+	}
+	if value, ok := _u.mutation.DurationMs(); ok {
+		_spec.SetField(sourceevent.FieldDurationMs, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedDurationMs(); ok {
+		_spec.AddField(sourceevent.FieldDurationMs, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.ErrorMessage(); ok {
+		_spec.SetField(sourceevent.FieldErrorMessage, field.TypeString, value)
+	}
+	if _u.mutation.ErrorMessageCleared() {
+		_spec.ClearField(sourceevent.FieldErrorMessage, field.TypeString)
+	}
+	if value, ok := _u.mutation.ErrorCategory(); ok {
+		_spec.SetField(sourceevent.FieldErrorCategory, field.TypeString, value)
+	}
+	if _u.mutation.ErrorCategoryCleared() {
+		_spec.ClearField(sourceevent.FieldErrorCategory, field.TypeString)
+	}
+	if value, ok := _u.mutation.ItemsCount(); ok {
+		_spec.SetField(sourceevent.FieldItemsCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedItemsCount(); ok {
+		_spec.AddField(sourceevent.FieldItemsCount, field.TypeInt, value)
+	}
+	if _u.mutation.ItemsCountCleared() {
+		_spec.ClearField(sourceevent.FieldItemsCount, field.TypeInt)
+	}
+	if value, ok := _u.mutation.Metadata(); ok {
+		_spec.SetField(sourceevent.FieldMetadata, field.TypeJSON, value)
+	}
+	if _u.mutation.MetadataCleared() {
+		_spec.ClearField(sourceevent.FieldMetadata, field.TypeJSON)
 	}
 	_node = &SourceEvent{config: _u.config}
 	_spec.Assign = _node.assignValues

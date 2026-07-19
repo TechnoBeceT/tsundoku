@@ -3,6 +3,7 @@
 package sourceevent
 
 import (
+	"fmt"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
@@ -14,12 +15,28 @@ const (
 	Label = "source_event"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
-	// FieldSource holds the string denoting the source field in the database.
-	FieldSource = "source"
+	// FieldSourceKey holds the string denoting the source_key field in the database.
+	FieldSourceKey = "source_key"
+	// FieldSourceID holds the string denoting the source_id field in the database.
+	FieldSourceID = "source_id"
+	// FieldSourceName holds the string denoting the source_name field in the database.
+	FieldSourceName = "source_name"
+	// FieldLanguage holds the string denoting the language field in the database.
+	FieldLanguage = "language"
 	// FieldEventType holds the string denoting the event_type field in the database.
 	FieldEventType = "event_type"
-	// FieldPayload holds the string denoting the payload field in the database.
-	FieldPayload = "payload"
+	// FieldStatus holds the string denoting the status field in the database.
+	FieldStatus = "status"
+	// FieldDurationMs holds the string denoting the duration_ms field in the database.
+	FieldDurationMs = "duration_ms"
+	// FieldErrorMessage holds the string denoting the error_message field in the database.
+	FieldErrorMessage = "error_message"
+	// FieldErrorCategory holds the string denoting the error_category field in the database.
+	FieldErrorCategory = "error_category"
+	// FieldItemsCount holds the string denoting the items_count field in the database.
+	FieldItemsCount = "items_count"
+	// FieldMetadata holds the string denoting the metadata field in the database.
+	FieldMetadata = "metadata"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// Table holds the table name of the sourceevent in the database.
@@ -29,9 +46,17 @@ const (
 // Columns holds all SQL columns for sourceevent fields.
 var Columns = []string{
 	FieldID,
-	FieldSource,
+	FieldSourceKey,
+	FieldSourceID,
+	FieldSourceName,
+	FieldLanguage,
 	FieldEventType,
-	FieldPayload,
+	FieldStatus,
+	FieldDurationMs,
+	FieldErrorMessage,
+	FieldErrorCategory,
+	FieldItemsCount,
+	FieldMetadata,
 	FieldCreatedAt,
 }
 
@@ -46,13 +71,69 @@ func ValidColumn(column string) bool {
 }
 
 var (
-	// DefaultPayload holds the default value on creation for the "payload" field.
-	DefaultPayload string
+	// DefaultSourceID holds the default value on creation for the "source_id" field.
+	DefaultSourceID string
+	// DefaultSourceName holds the default value on creation for the "source_name" field.
+	DefaultSourceName string
+	// DefaultLanguage holds the default value on creation for the "language" field.
+	DefaultLanguage string
+	// DefaultDurationMs holds the default value on creation for the "duration_ms" field.
+	DefaultDurationMs int64
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 	// DefaultID holds the default value on creation for the "id" field.
 	DefaultID func() uuid.UUID
 )
+
+// EventType defines the type for the "event_type" enum field.
+type EventType string
+
+// EventType values.
+const (
+	EventTypeSearch       EventType = "search"
+	EventTypeDownload     EventType = "download"
+	EventTypeRefresh      EventType = "refresh"
+	EventTypeWarm         EventType = "warm"
+	EventTypeBreakerTrip  EventType = "breaker_trip"
+	EventTypeBreakerReset EventType = "breaker_reset"
+)
+
+func (et EventType) String() string {
+	return string(et)
+}
+
+// EventTypeValidator is a validator for the "event_type" field enum values. It is called by the builders before save.
+func EventTypeValidator(et EventType) error {
+	switch et {
+	case EventTypeSearch, EventTypeDownload, EventTypeRefresh, EventTypeWarm, EventTypeBreakerTrip, EventTypeBreakerReset:
+		return nil
+	default:
+		return fmt.Errorf("sourceevent: invalid enum value for event_type field: %q", et)
+	}
+}
+
+// Status defines the type for the "status" enum field.
+type Status string
+
+// Status values.
+const (
+	StatusSuccess Status = "success"
+	StatusFailed  Status = "failed"
+)
+
+func (s Status) String() string {
+	return string(s)
+}
+
+// StatusValidator is a validator for the "status" field enum values. It is called by the builders before save.
+func StatusValidator(s Status) error {
+	switch s {
+	case StatusSuccess, StatusFailed:
+		return nil
+	default:
+		return fmt.Errorf("sourceevent: invalid enum value for status field: %q", s)
+	}
+}
 
 // OrderOption defines the ordering options for the SourceEvent queries.
 type OrderOption func(*sql.Selector)
@@ -62,9 +143,24 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
 }
 
-// BySource orders the results by the source field.
-func BySource(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldSource, opts...).ToFunc()
+// BySourceKey orders the results by the source_key field.
+func BySourceKey(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSourceKey, opts...).ToFunc()
+}
+
+// BySourceID orders the results by the source_id field.
+func BySourceID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSourceID, opts...).ToFunc()
+}
+
+// BySourceName orders the results by the source_name field.
+func BySourceName(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSourceName, opts...).ToFunc()
+}
+
+// ByLanguage orders the results by the language field.
+func ByLanguage(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLanguage, opts...).ToFunc()
 }
 
 // ByEventType orders the results by the event_type field.
@@ -72,9 +168,29 @@ func ByEventType(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldEventType, opts...).ToFunc()
 }
 
-// ByPayload orders the results by the payload field.
-func ByPayload(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPayload, opts...).ToFunc()
+// ByStatus orders the results by the status field.
+func ByStatus(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
+// ByDurationMs orders the results by the duration_ms field.
+func ByDurationMs(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDurationMs, opts...).ToFunc()
+}
+
+// ByErrorMessage orders the results by the error_message field.
+func ByErrorMessage(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldErrorMessage, opts...).ToFunc()
+}
+
+// ByErrorCategory orders the results by the error_category field.
+func ByErrorCategory(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldErrorCategory, opts...).ToFunc()
+}
+
+// ByItemsCount orders the results by the items_count field.
+func ByItemsCount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldItemsCount, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

@@ -3179,6 +3179,13 @@ export interface components {
              * @description When the tripped breaker reopens (absent when not tripped).
              */
             cooldownUntil?: string;
+            /**
+             * Format: date-time
+             * @description Start of the current failure streak (absent when the source is not
+             *     currently failing) — answers "erroring since when" without an
+             *     event-log scan; drives the Source Health Console + alerting.
+             */
+            failingSince?: string;
             /** @description Most recent gated-fetch failure reason ("" when none). */
             lastError: string;
             /**

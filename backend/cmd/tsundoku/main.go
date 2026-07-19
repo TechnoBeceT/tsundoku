@@ -61,6 +61,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
@@ -134,6 +135,14 @@ func main() {
 	// imports search fan-out records per-source timings into it; the warm-up job
 	// reads it to target slow sources.
 	metricsSvc := metrics.NewService(entClient)
+
+	// Source-operation audit-log recorder (Source Health Console substrate): the
+	// best-effort, fire-and-forget writer + retention purger for the SourceEvent
+	// log. It is threaded (nil-guarded) into every source-access path below — the
+	// search fan-out, the download dispatcher, the refresh sweep, the warm-up job,
+	// and the circuit-breaker — so each logs a typed event at source-operation
+	// granularity. ONE shared instance so every emitter writes to the same log.
+	eventsSvc := sourceevents.NewService(entClient)
 
 	// Phase-1 native metadata engine (spec/metadata-engine-phase1): the
 	// composed registry of the 5 public-read metadata providers (AniList,
@@ -218,7 +227,8 @@ func main() {
 	// background source-access path below (download, refresh, warm-up) so a
 	// source Cloudflare starts blocking is never hammered further. Thresholds
 	// are the same settingsSvc overlay, resolved at use-time (hot reload).
-	gateSvc := sourcegate.NewService(entClient, settingsSvc)
+	gateSvc := sourcegate.NewService(entClient, settingsSvc).
+		WithEventRecorder(eventsSvc) // logs breaker_trip / breaker_reset transitions
 
 	// Shared chapter-fetch cache: memoizes the raw all-scanlators chapter list per
 	// source-manga so the INTERACTIVE coverage→configure→adopt discovery flow stops
@@ -281,11 +291,13 @@ func main() {
 	// Anti-bot session warm-up job: keeps slow (Cloudflare-protected) sources
 	// warm with a cheap Popular call so interactive search stays fast. It only
 	// needs the engine-host client and the metrics store.
-	warmupSvc := warmup.NewService(engineClient, metricsSvc, settingsSvc, gateSvc)
+	warmupSvc := warmup.NewService(engineClient, metricsSvc, settingsSvc, gateSvc).
+		WithEventRecorder(eventsSvc) // logs a `warm` audit event per warm
 
 	dispatcher := download.New(entClient, engineFetcher, hub, download.Config{
 		Storage: cfg.Storage.Folder,
-	}, settingsSvc, gateSvc)
+	}, settingsSvc, gateSvc).
+		WithEventRecorder(eventsSvc) // logs a `download` audit event per source attempt
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
 	// Web Push + new-chapter notifier (see buildNotifier). VAPID failure degrades
@@ -301,6 +313,12 @@ func main() {
 	// when no trackers are connected (RunOnce simply finds zero due rows every
 	// pass).
 	runner.StartTrackerRetry(ctx, trackerRetryQueue, syncSvc)
+
+	// Audit-log retention purge: a daily sweep that deletes SourceEvent rows older
+	// than the reporting.retention_days window (read at use-time, hot-reloadable).
+	// Independent of the engine host (pure DB maintenance), so it starts here
+	// alongside the tracker-retry worker rather than in startEngine's tickers.
+	runner.StartRetentionPurge(ctx, eventsSvc, settingsSvc.ReportingRetentionDays)
 
 	// Discovery sweep service (M5): re-fetches every monitored series' chapter
 	// list to find new releases. Refresh's ingest is the engine-agnostic
@@ -321,7 +339,8 @@ func main() {
 		hub,
 		settingsSvc,
 		gateSvc,
-	)
+	).
+		WithEventRecorder(eventsSvc) // logs a `refresh` audit event per source-manga group
 
 	// healthSvc is a stateless series.Service instance used only to supply the
 	// UnhealthyCount function to StartRefresh. A second stateless instance is
@@ -368,7 +387,7 @@ func main() {
 	// mutation so an owner's routing edit takes effect promptly.
 	onNetworkChange := func() { go netReconcile(ctx) }
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore, onNetworkChange)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore, onNetworkChange)
 
 	addr := ":" + cfg.Server.Port
 
@@ -474,6 +493,10 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		// RetainedVersions IS env-sourced (unlike the FlareSolverr/SOCKS groups):
 		// the apk-cache rollback-history depth.
 		RetainedVersions: cfg.Extensions.RetainedVersions,
+		// ReportingRetentionDays has no env var (like NotificationsEnabled): the
+		// audit-log retention window is 30 days by default, owner-tunable via the
+		// Settings UI.
+		ReportingRetentionDays: 30,
 	}
 }
 

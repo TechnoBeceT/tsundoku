@@ -18,6 +18,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
@@ -113,6 +114,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 
 	settingsSvc := settings.NewService(nil, settings.Defaults{})
 	metricsSvc := metrics.NewService(nil)
+	eventsSvc := sourceevents.NewService(nil)
 	warmupSvc := warmup.NewService(nullEngineClient{}, metricsSvc, settingsSvc, nil)
 	// No metadata providers wired for these route-level tests — an empty
 	// registry never fires an outbound call, matching the nil-DB/panic-on-use
@@ -127,7 +129,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	// Same nil-client/panic-on-use discipline as the other stubs above — no
 	// route-level test in this file exercises the Phase-4c sync endpoints.
 	trackerSyncSvc := syncsvc.NewService(nil, trackerRegistry, retry.NewQueue(nil), trackerBindSvc, settingsSvc)
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullEngineClient{}, settingsSvc, metricsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil, nil), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullEngineClient{}, settingsSvc, metricsSvc, eventsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil, nil), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

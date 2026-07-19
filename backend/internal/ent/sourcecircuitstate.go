@@ -26,6 +26,8 @@ type SourceCircuitState struct {
 	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
 	// LastError holds the value of the "last_error" field.
 	LastError string `json:"last_error,omitempty"`
+	// FailingSince holds the value of the "failing_since" field.
+	FailingSince *time.Time `json:"failing_since,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt    time.Time `json:"updated_at,omitempty"`
 	selectValues sql.SelectValues
@@ -40,7 +42,7 @@ func (*SourceCircuitState) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullInt64)
 		case sourcecircuitstate.FieldSourceKey, sourcecircuitstate.FieldLastError:
 			values[i] = new(sql.NullString)
-		case sourcecircuitstate.FieldCooldownUntil, sourcecircuitstate.FieldUpdatedAt:
+		case sourcecircuitstate.FieldCooldownUntil, sourcecircuitstate.FieldFailingSince, sourcecircuitstate.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
 		case sourcecircuitstate.FieldID:
 			values[i] = new(uuid.UUID)
@@ -89,6 +91,13 @@ func (_m *SourceCircuitState) assignValues(columns []string, values []any) error
 				return fmt.Errorf("unexpected type %T for field last_error", values[i])
 			} else if value.Valid {
 				_m.LastError = value.String
+			}
+		case sourcecircuitstate.FieldFailingSince:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field failing_since", values[i])
+			} else if value.Valid {
+				_m.FailingSince = new(time.Time)
+				*_m.FailingSince = value.Time
 			}
 		case sourcecircuitstate.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -145,6 +154,11 @@ func (_m *SourceCircuitState) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("last_error=")
 	builder.WriteString(_m.LastError)
+	builder.WriteString(", ")
+	if v := _m.FailingSince; v != nil {
+		builder.WriteString("failing_since=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")
 	builder.WriteString(_m.UpdatedAt.Format(time.ANSIC))

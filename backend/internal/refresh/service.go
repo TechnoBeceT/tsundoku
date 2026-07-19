@@ -29,6 +29,7 @@ import (
 	entsuwayomisyncstate "github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
@@ -51,6 +52,20 @@ type Service struct {
 	hub         *sse.Hub
 	concurrency Concurrency
 	gate        *sourcegate.Service
+	// events is the nil-guarded source-operation audit-log recorder. When
+	// attached (WithEventRecorder), each sweep logs one `refresh` event per
+	// source-manga group (the actual upstream fetch unit), batched and flushed
+	// once after the sweep. Nil ⇒ no audit events (existing call sites unaffected).
+	events sourceevents.Recorder
+}
+
+// WithEventRecorder attaches the source-operation audit-log recorder so each
+// sweep logs a `refresh` event per source-manga group. It returns the receiver
+// for chaining off NewService. A nil recorder logs nothing (best-effort — never
+// affects the sweep).
+func (s *Service) WithEventRecorder(r sourceevents.Recorder) *Service {
+	s.events = r
+	return s
 }
 
 // NewService constructs a Service. ingestSvc is refresh's OWN ingest instance —
@@ -109,6 +124,9 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 
 	var mu sync.Mutex
 	result := RefreshResult{SeriesRefreshed: len(seriesList)}
+	// sink collects one `refresh` audit event per group, flushed ONCE after the
+	// sweep (nil when no recorder is wired, so nothing is collected).
+	sink := s.newEventSink()
 
 	g, gctx := errgroup.WithContext(ctx)
 	// Read the parallel-refetch bound at use-time so a settings change applies to
@@ -117,13 +135,14 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	g.SetLimit(s.refreshLimit(ctx))
 	for _, grp := range groups {
 		g.Go(func() error {
-			s.refreshGroup(gctx, grp, now, &mu, &result)
+			s.refreshGroup(gctx, grp, now, &mu, &result, sink)
 			return nil
 		})
 	}
 	// Goroutines never return non-nil, so Wait never errors; parent-ctx
 	// cancellation surfaces as context.Canceled in the fetch/ingest and is skipped.
 	_ = g.Wait()
+	s.flushEventSink(ctx, sink)
 
 	s.broadcast("refresh.done", RefreshEvent{
 		Monitored:          len(seriesList),
@@ -240,7 +259,7 @@ func parseProviderSourceID(provider string) (id int64, ok bool) {
 // scanlator-provider that shares it from that single raw list. A fetch failure
 // is recorded against the breaker once and marks every provider in the group as
 // errored; a context cancellation is silently skipped (clean shutdown).
-func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.Time, mu *sync.Mutex, result *RefreshResult) {
+func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.Time, mu *sync.Mutex, result *RefreshResult, sink *refreshEventSink) {
 	// Politeness delay before the fetch — the runtime-tunable minimum gap between
 	// successive requests to this physical source. This IS the gated call for the
 	// group; AddSeriesWithChapters below is deliberately ungated (no double-Wait).
@@ -252,12 +271,16 @@ func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.T
 	// Every provider in a group shares one physical (source, manga url), so the
 	// first provider's title feeds the engine host's chapter-number recognition
 	// for the whole group's fetch (groups are never built with zero providers).
+	start := time.Now()
 	raw, fetchErr := s.ingest.FetchChaptersUncached(ctx, grp.sourceID, grp.url, grp.providers[0].title)
+	fetchDuration := time.Since(start)
 	if fetchErr != nil {
-		s.handleGroupFetchError(ctx, grp, fetchErr, now, mu, result)
+		s.handleGroupFetchError(ctx, grp, fetchErr, now, mu, result, sink, fetchDuration)
 		return
 	}
 	s.gateRecordSuccess(ctx, grp.sourceKey)
+	itemsCount := len(raw)
+	sink.add(newRefreshEvent(grp, sourceevents.StatusSuccess, fetchDuration, &itemsCount, nil))
 	for _, p := range grp.providers {
 		s.ingestProvider(ctx, grp, p, raw, mu, result)
 	}
@@ -267,13 +290,14 @@ func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.T
 // cancellation is skipped entirely (not a provider error, no breaker trip), else
 // it trips the breaker once and marks every provider in the group errored +
 // persists each one's sync-state failure.
-func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, fetchErr error, now time.Time, mu *sync.Mutex, result *RefreshResult) {
+func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, fetchErr error, now time.Time, mu *sync.Mutex, result *RefreshResult, sink *refreshEventSink, fetchDuration time.Duration) {
 	if isContextErr(fetchErr) {
 		return
 	}
 	slog.ErrorContext(ctx, "refresh: group fetch failed",
 		"source", grp.sourceID, "url", grp.url, "err", fetchErr)
 	s.gateRecordFailure(ctx, grp.sourceKey, fetchErr, now)
+	sink.add(newRefreshEvent(grp, sourceevents.StatusFailed, fetchDuration, nil, fetchErr))
 	for _, p := range grp.providers {
 		if uerr := s.upsertSyncState(ctx, p.providerID, fetchErr); uerr != nil {
 			slog.ErrorContext(ctx, "refresh: persist sync state failed",
@@ -369,6 +393,59 @@ func (s *Service) gateRecordFailure(ctx context.Context, sourceKey string, cause
 		return
 	}
 	s.gate.RecordFailure(ctx, sourceKey, cause, now)
+}
+
+// refreshEventSink accumulates the sweep's per-group audit events under its own
+// lock, so the concurrent group goroutines can append without racing, and the
+// whole batch is flushed in ONE LogBatch after the sweep. A nil sink (no recorder
+// wired) makes add a no-op, so the collection cost is skipped entirely.
+type refreshEventSink struct {
+	mu     sync.Mutex
+	events []sourceevents.Event
+}
+
+// add appends one event under the sink's lock. A nil sink is a no-op.
+func (e *refreshEventSink) add(ev sourceevents.Event) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.events = append(e.events, ev)
+	e.mu.Unlock()
+}
+
+// newEventSink returns a fresh sink when an audit recorder is wired, else nil (so
+// the sweep collects nothing).
+func (s *Service) newEventSink() *refreshEventSink {
+	if s.events == nil {
+		return nil
+	}
+	return &refreshEventSink{}
+}
+
+// flushEventSink logs the sweep's collected events in one batch (best-effort,
+// nil-guarded). Called once after the sweep's goroutines have all joined, so the
+// slice is safe to read without further locking.
+func (s *Service) flushEventSink(ctx context.Context, sink *refreshEventSink) {
+	if s.events == nil || sink == nil || len(sink.events) == 0 {
+		return
+	}
+	s.events.LogBatch(ctx, sink.events)
+}
+
+// newRefreshEvent builds a `refresh` audit event for one source-manga group.
+func newRefreshEvent(grp refreshGroup, status sourceevents.Status, duration time.Duration, itemsCount *int, cause error) sourceevents.Event {
+	return sourceevents.Event{
+		SourceKey:  grp.sourceKey,
+		SourceID:   strconv.FormatInt(grp.sourceID, 10),
+		SourceName: grp.sourceKey,
+		Type:       sourceevents.EventRefresh,
+		Status:     status,
+		Duration:   duration,
+		Err:        cause,
+		ItemsCount: itemsCount,
+		Metadata:   map[string]string{"url": grp.url},
+	}
 }
 
 // upsertSyncState records the outcome of refreshing one provider into its

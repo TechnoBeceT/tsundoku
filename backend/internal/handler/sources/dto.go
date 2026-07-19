@@ -45,6 +45,10 @@ type BreakerDTO struct {
 	ConsecutiveFailures int `json:"consecutiveFailures"`
 	// CooldownUntil is when the tripped breaker reopens; omitted when not tripped.
 	CooldownUntil *time.Time `json:"cooldownUntil,omitempty"`
+	// FailingSince marks the start of the current failure streak; omitted when the
+	// source is not currently failing. Answers "erroring since when" without an
+	// event-log scan — it drives the Source Health Console + Slice 5 alerting.
+	FailingSince *time.Time `json:"failingSince,omitempty"`
 	// LastError is the most recent gated-fetch failure reason ("" when none).
 	LastError string `json:"lastError"`
 	// IsCoolingDown is derived at read time: cooldown set and still in the future.
@@ -68,6 +72,7 @@ func toBreakerDTO(b sourcegate.BreakerState, now time.Time) BreakerDTO {
 	return BreakerDTO{
 		ConsecutiveFailures: b.ConsecutiveFailures,
 		CooldownUntil:       b.CooldownUntil,
+		FailingSince:        b.FailingSince,
 		LastError:           b.LastError,
 		IsCoolingDown:       b.IsCoolingDown(now),
 	}

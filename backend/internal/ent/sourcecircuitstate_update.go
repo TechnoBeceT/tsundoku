@@ -97,6 +97,26 @@ func (_u *SourceCircuitStateUpdate) SetNillableLastError(v *string) *SourceCircu
 	return _u
 }
 
+// SetFailingSince sets the "failing_since" field.
+func (_u *SourceCircuitStateUpdate) SetFailingSince(v time.Time) *SourceCircuitStateUpdate {
+	_u.mutation.SetFailingSince(v)
+	return _u
+}
+
+// SetNillableFailingSince sets the "failing_since" field if the given value is not nil.
+func (_u *SourceCircuitStateUpdate) SetNillableFailingSince(v *time.Time) *SourceCircuitStateUpdate {
+	if v != nil {
+		_u.SetFailingSince(*v)
+	}
+	return _u
+}
+
+// ClearFailingSince clears the value of the "failing_since" field.
+func (_u *SourceCircuitStateUpdate) ClearFailingSince() *SourceCircuitStateUpdate {
+	_u.mutation.ClearFailingSince()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SourceCircuitStateUpdate) SetUpdatedAt(v time.Time) *SourceCircuitStateUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -170,6 +190,12 @@ func (_u *SourceCircuitStateUpdate) sqlSave(ctx context.Context) (_node int, err
 	}
 	if value, ok := _u.mutation.LastError(); ok {
 		_spec.SetField(sourcecircuitstate.FieldLastError, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.FailingSince(); ok {
+		_spec.SetField(sourcecircuitstate.FieldFailingSince, field.TypeTime, value)
+	}
+	if _u.mutation.FailingSinceCleared() {
+		_spec.ClearField(sourcecircuitstate.FieldFailingSince, field.TypeTime)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(sourcecircuitstate.FieldUpdatedAt, field.TypeTime, value)
@@ -260,6 +286,26 @@ func (_u *SourceCircuitStateUpdateOne) SetNillableLastError(v *string) *SourceCi
 	if v != nil {
 		_u.SetLastError(*v)
 	}
+	return _u
+}
+
+// SetFailingSince sets the "failing_since" field.
+func (_u *SourceCircuitStateUpdateOne) SetFailingSince(v time.Time) *SourceCircuitStateUpdateOne {
+	_u.mutation.SetFailingSince(v)
+	return _u
+}
+
+// SetNillableFailingSince sets the "failing_since" field if the given value is not nil.
+func (_u *SourceCircuitStateUpdateOne) SetNillableFailingSince(v *time.Time) *SourceCircuitStateUpdateOne {
+	if v != nil {
+		_u.SetFailingSince(*v)
+	}
+	return _u
+}
+
+// ClearFailingSince clears the value of the "failing_since" field.
+func (_u *SourceCircuitStateUpdateOne) ClearFailingSince() *SourceCircuitStateUpdateOne {
+	_u.mutation.ClearFailingSince()
 	return _u
 }
 
@@ -366,6 +412,12 @@ func (_u *SourceCircuitStateUpdateOne) sqlSave(ctx context.Context) (_node *Sour
 	}
 	if value, ok := _u.mutation.LastError(); ok {
 		_spec.SetField(sourcecircuitstate.FieldLastError, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.FailingSince(); ok {
+		_spec.SetField(sourcecircuitstate.FieldFailingSince, field.TypeTime, value)
+	}
+	if _u.mutation.FailingSinceCleared() {
+		_spec.ClearField(sourcecircuitstate.FieldFailingSince, field.TypeTime)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(sourcecircuitstate.FieldUpdatedAt, field.TypeTime, value)

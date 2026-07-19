@@ -31,6 +31,7 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/fetcher"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
@@ -128,6 +129,11 @@ type Dispatcher struct {
 	cfg    Config
 	retry  RetrySettings
 	gate   *sourcegate.Service
+	// events is the nil-guarded source-operation audit-log recorder. When
+	// attached (WithEventRecorder), each per-source download attempt logs one
+	// `download` event (success or failure). Nil ⇒ no audit events (existing call
+	// sites and tests are unaffected).
+	events sourceevents.Recorder
 }
 
 // New creates a Dispatcher configured with the given client, fetcher, SSE hub,
@@ -151,6 +157,124 @@ func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config,
 		retry:  retry,
 		gate:   gate,
 	}
+}
+
+// WithEventRecorder attaches the source-operation audit-log recorder so each
+// per-source download attempt logs a `download` event. It returns the receiver
+// for chaining off New. A nil recorder logs nothing (best-effort — never affects
+// the download).
+func (d *Dispatcher) WithEventRecorder(r sourceevents.Recorder) *Dispatcher {
+	d.events = r
+	return d
+}
+
+// logDownloadEvent records one per-source download attempt outcome (best-effort,
+// nil-guarded). duration is the fetch wall-clock; itemsCount is the rendered page
+// count on success (nil on failure). The source identity is derived from the
+// SeriesProvider exactly as the scheduler keys it (canonicalSourceKey).
+//
+// When a per-cycle sink rides the context (the RunOnce path) the event is
+// ACCUMULATED and flushed as one LogBatch after the cycle; otherwise (the
+// standalone Process path) it is written immediately as a single event.
+func (d *Dispatcher) logDownloadEvent(ctx context.Context, ch *ent.Chapter, sp *ent.SeriesProvider, status sourceevents.Status, duration time.Duration, itemsCount *int, cause error) {
+	if d.events == nil {
+		return
+	}
+	ev := sourceevents.Event{
+		SourceKey:  canonicalSourceKey(sp),
+		SourceID:   providerSourceID(sp),
+		SourceName: canonicalSourceKey(sp),
+		Language:   sp.Language,
+		Type:       sourceevents.EventDownload,
+		Status:     status,
+		Duration:   duration,
+		Err:        cause,
+		ItemsCount: itemsCount,
+		Metadata:   downloadEventMetadata(ch),
+	}
+	if sink := eventSinkFrom(ctx); sink != nil {
+		sink.add(ev)
+		return
+	}
+	d.events.Log(ctx, ev)
+}
+
+// downloadEventSink accumulates a cycle's per-source download events under its own
+// lock so the concurrent dispatch goroutines append without racing, then the whole
+// batch is flushed in ONE LogBatch after the cycle (mirrors refresh's sink).
+type downloadEventSink struct {
+	mu     sync.Mutex
+	events []sourceevents.Event
+}
+
+// add appends one event under the sink's lock. A nil sink is a no-op.
+func (s *downloadEventSink) add(ev sourceevents.Event) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.events = append(s.events, ev)
+	s.mu.Unlock()
+}
+
+// eventSinkCtxKey is the private context key the per-cycle download-event sink
+// rides under (an unexported type so no other package can collide with it).
+type eventSinkCtxKey struct{}
+
+// withEventSink returns a context carrying sink so tryCandidate can accumulate
+// download events into it without threading the sink through the generic
+// per-source scheduler. A nil sink is stored as nil (eventSinkFrom returns nil).
+func withEventSink(ctx context.Context, sink *downloadEventSink) context.Context {
+	return context.WithValue(ctx, eventSinkCtxKey{}, sink)
+}
+
+// eventSinkFrom returns the per-cycle download-event sink carried by ctx, or nil
+// when none is set (the standalone Process path, or no recorder wired).
+func eventSinkFrom(ctx context.Context) *downloadEventSink {
+	sink, _ := ctx.Value(eventSinkCtxKey{}).(*downloadEventSink)
+	return sink
+}
+
+// newEventSink returns a fresh sink when an audit recorder is wired, else nil (so
+// the cycle collects nothing and rides a nil sink).
+func (d *Dispatcher) newEventSink() *downloadEventSink {
+	if d.events == nil {
+		return nil
+	}
+	return &downloadEventSink{}
+}
+
+// flushEventSink logs the cycle's collected download events in one batch
+// (best-effort, nil-guarded). Called after the cycle's goroutines have joined, so
+// the slice is safe to read without further locking.
+func (d *Dispatcher) flushEventSink(ctx context.Context, sink *downloadEventSink) {
+	if d.events == nil || sink == nil || len(sink.events) == 0 {
+		return
+	}
+	d.events.LogBatch(ctx, sink.events)
+}
+
+// downloadEventMetadata builds the forensic context for a download event: the
+// series id and title where available (never used for aggregation, only display).
+func downloadEventMetadata(ch *ent.Chapter) map[string]string {
+	meta := map[string]string{"series_id": ch.SeriesID.String()}
+	if ch.Edges.Series != nil {
+		meta["series"] = ch.Edges.Series.Title
+	}
+	return meta
+}
+
+// providerSourceID returns the numeric engine-host source id (as a string) for a
+// SeriesProvider, or "" for a disk-reconciled row. It mirrors canonicalSourceKey's
+// distinction: a live-ingested provider stores the numeric id in `provider` with
+// the name in `provider_name`, whereas a disk row stores the name in `provider`
+// and leaves `provider_name` empty — so an empty provider_name means "no numeric
+// id" (the spec's "" for disk sources).
+func providerSourceID(sp *ent.SeriesProvider) string {
+	if sp.ProviderName == "" {
+		return ""
+	}
+	return sp.Provider
 }
 
 // gateWait enforces the politeness delay for sourceKey before a fetch. A nil
@@ -357,12 +481,22 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time) (dispatched i
 		batched[key] = items[:min(len(items), batch)]
 	}
 
+	// Per-cycle audit-event sink: each per-source download outcome is accumulated
+	// (thread-safe) and flushed as ONE LogBatch after the cycle's goroutines join,
+	// instead of N synchronous single-row inserts on the dispatch goroutines
+	// (spec Write-volume: one LogBatch per cycle per-source outcome — mirrors the
+	// refresh sweep's sink). The sink rides the context so tryCandidate reaches it
+	// without threading it through the generic scheduler; nil recorder ⇒ no sink.
+	sink := d.newEventSink()
+	ctx = withEventSink(ctx, sink)
+
 	// progressed counts chapters whose wanted/failed→downloading claim SUCCEEDED.
 	// It is shared across every per-source and per-chapter goroutine (the scheduler
 	// increments it on a claim), so it must be atomic; read once with .Load() after
 	// all goroutines have joined.
 	var progressed atomic.Int64
 	d.runDownloadQueues(ctx, batched, concurrency, maxRetries, now, limiter, &progressed)
+	d.flushEventSink(ctx, sink)
 	return int(progressed.Load()), nil
 }
 
@@ -480,9 +614,12 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	// the per-source concurrency cap below).
 	d.gateWait(pctx, sourceKey)
 	release := limiter.acquire(sourceKey)
+	fetchStart := time.Now()
 	pages, fetchErr := d.f.Fetch(pctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
+	fetchDuration := time.Since(fetchStart)
 	release()
 	if fetchErr != nil {
+		d.logDownloadEvent(ctx, ch, cand.SeriesProvider, sourceevents.StatusFailed, fetchDuration, nil, fetchErr)
 		d.bumpSourceFailure(ctx, cand.ProviderChapter, fetchErr, now)
 		// Circuit-breaker bookkeeping is SEPARATE from the per-chapter retry
 		// state above: it tracks whether this source is down ENTIRELY (see
@@ -501,9 +638,12 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 		// another source deliver it. On retry RenderChapter safely upserts the CBZ.
 		// The gate is deliberately NOT touched here — the fetch itself succeeded,
 		// so this is not evidence the source is unavailable.
+		d.logDownloadEvent(ctx, ch, cand.SeriesProvider, sourceevents.StatusFailed, fetchDuration, nil, err)
 		d.bumpSourceFailure(ctx, cand.ProviderChapter, err, now)
 		return false, err
 	}
+	pageCount := pages.PageCount
+	d.logDownloadEvent(ctx, ch, cand.SeriesProvider, sourceevents.StatusSuccess, fetchDuration, &pageCount, nil)
 	d.gateRecordSuccess(ctx, sourceKey)
 	return true, nil
 }

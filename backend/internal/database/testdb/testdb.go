@@ -55,6 +55,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 )
 
 // adminDatabase is the bootstrap database the container is created with. It is
@@ -178,6 +179,9 @@ func mirrorProductionSeedSequence(t *testing.T, ctx context.Context, client *ent
 	}
 	if err := library.DropLegacyImportEntryColumns(ctx, db); err != nil {
 		t.Fatalf("testdb: drop legacy import_entries columns: %v", err)
+	}
+	if err := sourceevents.DropLegacyColumns(ctx, db); err != nil {
+		t.Fatalf("testdb: drop legacy source_events columns: %v", err)
 	}
 	if _, err := series.BackfillFirstDownloadedAt(ctx, db); err != nil {
 		t.Fatalf("testdb: backfill chapters first_downloaded_at: %v", err)

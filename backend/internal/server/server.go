@@ -19,6 +19,7 @@ import (
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
@@ -73,6 +74,7 @@ func New(
 	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
+	eventsSvc *sourceevents.Service,
 	warmupSvc *warmup.Service,
 	gate *sourcegate.Service,
 	chapterCache *ingest.ChapterCache,
@@ -108,6 +110,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore, onNetworkChange)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, apkStore, onNetworkChange)
 	return e
 }

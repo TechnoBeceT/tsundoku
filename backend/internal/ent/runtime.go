@@ -522,7 +522,7 @@ func init() {
 	// sourcecircuitstate.DefaultLastError holds the default value on creation for the last_error field.
 	sourcecircuitstate.DefaultLastError = sourcecircuitstateDescLastError.Default.(string)
 	// sourcecircuitstateDescUpdatedAt is the schema descriptor for updated_at field.
-	sourcecircuitstateDescUpdatedAt := sourcecircuitstateFields[5].Descriptor()
+	sourcecircuitstateDescUpdatedAt := sourcecircuitstateFields[6].Descriptor()
 	// sourcecircuitstate.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	sourcecircuitstate.DefaultUpdatedAt = sourcecircuitstateDescUpdatedAt.Default.(func() time.Time)
 	// sourcecircuitstate.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
@@ -533,12 +533,24 @@ func init() {
 	sourcecircuitstate.DefaultID = sourcecircuitstateDescID.Default.(func() uuid.UUID)
 	sourceeventFields := schema.SourceEvent{}.Fields()
 	_ = sourceeventFields
-	// sourceeventDescPayload is the schema descriptor for payload field.
-	sourceeventDescPayload := sourceeventFields[3].Descriptor()
-	// sourceevent.DefaultPayload holds the default value on creation for the payload field.
-	sourceevent.DefaultPayload = sourceeventDescPayload.Default.(string)
+	// sourceeventDescSourceID is the schema descriptor for source_id field.
+	sourceeventDescSourceID := sourceeventFields[2].Descriptor()
+	// sourceevent.DefaultSourceID holds the default value on creation for the source_id field.
+	sourceevent.DefaultSourceID = sourceeventDescSourceID.Default.(string)
+	// sourceeventDescSourceName is the schema descriptor for source_name field.
+	sourceeventDescSourceName := sourceeventFields[3].Descriptor()
+	// sourceevent.DefaultSourceName holds the default value on creation for the source_name field.
+	sourceevent.DefaultSourceName = sourceeventDescSourceName.Default.(string)
+	// sourceeventDescLanguage is the schema descriptor for language field.
+	sourceeventDescLanguage := sourceeventFields[4].Descriptor()
+	// sourceevent.DefaultLanguage holds the default value on creation for the language field.
+	sourceevent.DefaultLanguage = sourceeventDescLanguage.Default.(string)
+	// sourceeventDescDurationMs is the schema descriptor for duration_ms field.
+	sourceeventDescDurationMs := sourceeventFields[7].Descriptor()
+	// sourceevent.DefaultDurationMs holds the default value on creation for the duration_ms field.
+	sourceevent.DefaultDurationMs = sourceeventDescDurationMs.Default.(int64)
 	// sourceeventDescCreatedAt is the schema descriptor for created_at field.
-	sourceeventDescCreatedAt := sourceeventFields[4].Descriptor()
+	sourceeventDescCreatedAt := sourceeventFields[12].Descriptor()
 	// sourceevent.DefaultCreatedAt holds the default value on creation for the created_at field.
 	sourceevent.DefaultCreatedAt = sourceeventDescCreatedAt.Default.(func() time.Time)
 	// sourceeventDescID is the schema descriptor for id field.

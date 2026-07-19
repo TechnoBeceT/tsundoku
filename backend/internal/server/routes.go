@@ -44,6 +44,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourcecover"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
@@ -166,6 +167,7 @@ func registerRoutes(
 	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	metricsSvc *metrics.Service,
+	eventsSvc *sourceevents.Service,
 	warmupSvc *warmup.Service,
 	gate *sourcegate.Service,
 	chapterCache *ingest.ChapterCache,
@@ -445,7 +447,8 @@ func registerRoutes(
 	).
 		WithAutoIdentifier(metaSvc).         // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
 		WithDisabledSources(disabledSrcSvc). // hides owner-disabled sources from the Discover/Search/Browse pickers
-		WithSourceBreakers(gate)             // flags a cooling-down source as degraded in the picker (shared anti-ban breaker snapshot)
+		WithSourceBreakers(gate).            // flags a cooling-down source as degraded in the picker (shared anti-ban breaker snapshot)
+		WithEventRecorder(eventsSvc)         // logs a `search` audit event per source per fan-out (Source Health Console)
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, coverCache)
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)

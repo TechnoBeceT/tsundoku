@@ -196,6 +196,11 @@ const (
 	// KeyEngineSocksVersion is the SOCKS protocol version (int, MUST be 4 or 5
 	// — not a contiguous range, unlike every other int tunable — default 5).
 	KeyEngineSocksVersion = "engine.socks_version"
+	// KeyReportingRetentionDays is how many days of source-operation audit-log
+	// rows (SourceEvent) the daily retention purge keeps (int, 1..3650, default
+	// 30). Read at USE-TIME by the retention-purge ticker, so a change hot-reloads
+	// on the next daily sweep without a restart.
+	KeyReportingRetentionDays = "reporting.retention_days"
 	// KeyRetainedVersions is how many .apk versions per extension the apk cache
 	// keeps (int, 1..20, default 3) — the depth of the reversible-update history.
 	// 1 means "keep only the current version" (no rollback history). A harvest or
@@ -210,6 +215,14 @@ const (
 const (
 	retainedVersionsMin = 1
 	retainedVersionsMax = 20
+)
+
+// reportingRetentionMin/Max bound the reporting.retention_days tunable (1 day
+// up to ~10 years — an upper sanity ceiling consistent with the other bounded
+// int tunables).
+const (
+	reportingRetentionMin = 1
+	reportingRetentionMax = 3650
 )
 
 // flareSolverrTimeoutMin/Max and flareSolverrSessionTTLMin/Max bound the two
@@ -285,6 +298,9 @@ type Defaults struct {
 	// of the apk-cache rollback history (env-sourced default, unlike the
 	// FlareSolverr/SOCKS groups which have no env var).
 	RetainedVersions int
+	// ReportingRetentionDays backs the reporting.retention_days tunable — how many
+	// days of source-operation audit-log rows the daily purge keeps.
+	ReportingRetentionDays int
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -334,6 +350,7 @@ var tunableOrder = []string{
 	KeyEngineSocksHost,
 	KeyEngineSocksPort,
 	KeyEngineSocksVersion,
+	KeyReportingRetentionDays,
 	KeyRetainedVersions,
 }
 
@@ -472,6 +489,10 @@ var tunables = map[string]tunable{
 	KeyEngineSocksVersion: intEnumTunable(
 		KeyEngineSocksVersion, "version", engineSocksVersions,
 		func(d Defaults) int { return d.EngineSocksVersion },
+	),
+	KeyReportingRetentionDays: intTunable(
+		KeyReportingRetentionDays, "days", reportingRetentionMin, reportingRetentionMax,
+		func(d Defaults) int { return d.ReportingRetentionDays },
 	),
 	KeyRetainedVersions: intTunable(
 		KeyRetainedVersions, "count", retainedVersionsMin, retainedVersionsMax,

@@ -28,6 +28,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entsourcecircuitstate "github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 )
 
 // maxErrorLen caps a stored last_error so a pathologically long upstream
@@ -62,6 +63,13 @@ type Thresholds interface {
 type Service struct {
 	client *ent.Client
 	t      Thresholds
+	// events is the nil-guarded audit-log recorder. When attached (via
+	// WithEventRecorder) the breaker emits a breaker_trip on the transition into
+	// cooldown and a breaker_reset on the transition out of it (natural recovery
+	// or an owner Reset) — transition-only, never on every failure/success. Nil
+	// (the default) means no audit events are emitted, so existing call sites and
+	// tests are unaffected.
+	events sourceevents.Recorder
 
 	mu         sync.Mutex
 	lastAccess map[string]time.Time
@@ -75,6 +83,32 @@ func NewService(client *ent.Client, t Thresholds) *Service {
 		t:          t,
 		lastAccess: make(map[string]time.Time),
 	}
+}
+
+// WithEventRecorder attaches the source-operation audit-log recorder so the
+// breaker emits breaker_trip / breaker_reset events on its state transitions. It
+// returns the receiver for chaining off NewService. A nil recorder emits nothing
+// (the default). The recorder is best-effort, so a logging failure never affects
+// the breaker's own bookkeeping.
+func (s *Service) WithEventRecorder(r sourceevents.Recorder) *Service {
+	s.events = r
+	return s
+}
+
+// logBreakerEvent records a breaker transition (best-effort, nil-guarded). It
+// carries only the source_key (which IS the trimmed source name — the breaker
+// has no numeric id or language), so both source_key and source_name are the key.
+func (s *Service) logBreakerEvent(ctx context.Context, key string, eventType sourceevents.EventType, status sourceevents.Status, cause error) {
+	if s.events == nil {
+		return
+	}
+	s.events.Log(ctx, sourceevents.Event{
+		SourceKey:  key,
+		SourceName: key,
+		Type:       eventType,
+		Status:     status,
+		Err:        cause,
+	})
 }
 
 // IsAvailable reports whether key's circuit-breaker currently permits access:
@@ -112,6 +146,10 @@ type BreakerState struct {
 	ConsecutiveFailures int
 	// CooldownUntil is when the tripped breaker reopens; nil when not tripped.
 	CooldownUntil *time.Time
+	// FailingSince marks the start of the current failure streak; nil when the
+	// source is not currently failing. Answers "erroring since when" without an
+	// event-log scan (see the schema field's doc comment).
+	FailingSince *time.Time
 	// LastError is the most recent gated-fetch failure reason ("" when none).
 	LastError string
 	// UpdatedAt is when the breaker row was last written.
@@ -142,6 +180,7 @@ func (s *Service) Snapshot(ctx context.Context) (map[string]BreakerState, error)
 			SourceKey:           r.SourceKey,
 			ConsecutiveFailures: r.ConsecutiveFailures,
 			CooldownUntil:       r.CooldownUntil,
+			FailingSince:        r.FailingSince,
 			LastError:           r.LastError,
 			UpdatedAt:           r.UpdatedAt,
 		}
@@ -165,6 +204,9 @@ func (s *Service) Reset(ctx context.Context, key string) error {
 		Exec(ctx); err != nil {
 		return fmt.Errorf("sourcegate.Reset: delete breaker %q: %w", key, err)
 	}
+	// An owner reset is an explicit "breaker back to closed" transition — log it
+	// unconditionally (best-effort, nil-guarded).
+	s.logBreakerEvent(ctx, key, sourceevents.EventBreakerReset, sourceevents.StatusSuccess, nil)
 	return nil
 }
 
@@ -176,6 +218,18 @@ func (s *Service) RecordSuccess(ctx context.Context, key string) {
 	row, err := s.client.SourceCircuitState.Query().
 		Where(entsourcecircuitstate.SourceKeyEQ(key)).
 		Only(ctx)
+	// wasTripped captures the breaker's state BEFORE this success, so a
+	// breaker_reset is emitted only on the genuine "recovered from a trip"
+	// transition — not on every routine success of an already-healthy source.
+	//
+	// The predicate is CooldownUntil != nil (NOT "…&& After(now)"): a tripped
+	// breaker keeps its cooldown timestamp set for the WHOLE tripped period, and
+	// RecordSuccess is the ONLY thing that clears it. In the gated flow IsAvailable
+	// blocks every call while the cooldown is in the FUTURE, so RecordSuccess is
+	// reached only AFTER the cooldown has already expired — an "&& After(now)"
+	// narrowing would then read false and NO breaker_reset would ever fire on a
+	// natural recovery. Non-nil ⟺ still-tripped-and-not-yet-recovered.
+	wasTripped := false
 	switch {
 	case ent.IsNotFound(err):
 		err = s.client.SourceCircuitState.Create().
@@ -186,15 +240,21 @@ func (s *Service) RecordSuccess(ctx context.Context, key string) {
 	case err != nil:
 		// fall through to the warning below with the query error.
 	default:
+		wasTripped = row.CooldownUntil != nil
 		err = s.client.SourceCircuitState.UpdateOne(row).
 			SetConsecutiveFailures(0).
 			SetLastError("").
 			ClearCooldownUntil().
+			ClearFailingSince().
 			Exec(ctx)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordSuccess failed (best-effort, skipping)",
 			"source_key", key, "err", err)
+		return
+	}
+	if wasTripped {
+		s.logBreakerEvent(ctx, key, sourceevents.EventBreakerReset, sourceevents.StatusSuccess, nil)
 	}
 }
 
@@ -210,32 +270,57 @@ func (s *Service) RecordFailure(ctx context.Context, key string, cause error, no
 	row, err := s.client.SourceCircuitState.Query().
 		Where(entsourcecircuitstate.SourceKeyEQ(key)).
 		Only(ctx)
+	// tripped reports whether THIS failure trips the breaker for the first time
+	// (crossed the threshold AND was not already in cooldown) — the transition
+	// that emits a breaker_trip. wasTripped captures the pre-failure state.
+	var tripped bool
 	switch {
 	case ent.IsNotFound(err):
 		newFailures := 1
 		c := s.client.SourceCircuitState.Create().
 			SetSourceKey(key).
 			SetConsecutiveFailures(newFailures).
-			SetLastError(msg)
+			SetLastError(msg).
+			// First failure of a fresh streak — stamp when it started.
+			SetFailingSince(now)
 		if newFailures >= threshold {
 			c = c.SetCooldownUntil(now.Add(s.t.SourcesCooldown(ctx)))
+			tripped = true
 		}
 		err = c.Exec(ctx)
 	case err != nil:
 		// fall through to the warning below with the query error.
 	default:
 		newFailures := row.ConsecutiveFailures + 1
+		// wasTripped uses CooldownUntil != nil (NOT "…&& After(now)") for the same
+		// reason as RecordSuccess: an expired-but-uncleared cooldown still means the
+		// breaker is tripped (only RecordSuccess clears it). This makes tripped
+		// (below) fire exactly ONCE per outage — a post-cooldown re-failure sees a
+		// non-nil cooldown and does NOT re-emit breaker_trip; only a fresh trip
+		// after a recovery (RecordSuccess cleared the cooldown) emits again.
+		wasTripped := row.CooldownUntil != nil
 		u := s.client.SourceCircuitState.UpdateOne(row).
 			SetConsecutiveFailures(newFailures).
 			SetLastError(msg)
+		// Stamp failing_since only on the 0->1 streak start, so it marks the
+		// STREAK's beginning and is left untouched by every later failure within
+		// the same streak (RecordSuccess clears it).
+		if row.ConsecutiveFailures == 0 {
+			u = u.SetFailingSince(now)
+		}
 		if newFailures >= threshold {
 			u = u.SetCooldownUntil(now.Add(s.t.SourcesCooldown(ctx)))
+			tripped = !wasTripped
 		}
 		err = u.Exec(ctx)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordFailure failed (best-effort, skipping)",
 			"source_key", key, "err", err)
+		return
+	}
+	if tripped {
+		s.logBreakerEvent(ctx, key, sourceevents.EventBreakerTrip, sourceevents.StatusFailed, cause)
 	}
 }
 

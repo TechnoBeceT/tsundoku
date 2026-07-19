@@ -1696,6 +1696,13 @@ components:
           type: string
           format: date-time
           description: When the tripped breaker reopens (absent when not tripped).
+        failingSince:
+          type: string
+          format: date-time
+          description: |
+            Start of the current failure streak (absent when the source is not
+            currently failing) — answers "erroring since when" without an
+            event-log scan; drives the Source Health Console + alerting.
         lastError:
           type: string
           description: Most recent gated-fetch failure reason ("" when none).

@@ -43,6 +43,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
 
@@ -125,6 +126,21 @@ type Service struct {
 	// is flagged (every existing NewService/NewServiceWithCaches call site is
 	// unaffected) — attach it with WithSourceBreakers.
 	breakers SourceBreakers
+
+	// events is the nil-guarded source-operation audit-log recorder. When
+	// attached (WithEventRecorder), each Search fan-out logs one `search` event
+	// per source that ran (mirroring the metrics batch, on the same detached
+	// background context). Nil ⇒ no audit events (existing call sites unaffected).
+	events sourceevents.Recorder
+}
+
+// WithEventRecorder attaches the source-operation audit-log recorder so each
+// Search fan-out logs one `search` event per source (success + failure). It
+// returns the receiver for chaining off a NewService/NewServiceWithCaches call.
+// A nil recorder logs nothing (best-effort — never affects the search).
+func (s *Service) WithEventRecorder(r sourceevents.Recorder) *Service {
+	s.events = r
+	return s
 }
 
 // WithDisabledSources attaches the per-source disabled-flag store so the
@@ -498,6 +514,7 @@ func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []
 	// latency (sctx is cancelled by now, so recording on it would drop exactly
 	// the datapoints that flag a source slow).
 	s.recordSamples(ctx, samples)
+	s.logSearchEvents(ctx, query, samples)
 
 	// If the PARENT request context was cancelled (client disconnected / navigated
 	// away), do NOT return — and therefore do NOT let Search cache — a truncated
@@ -549,6 +566,41 @@ func (s *Service) recordSamples(ctx context.Context, samples []metrics.Sample) {
 		recCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
 		defer cancel()
 		s.recorder.RecordBatch(recCtx, samples)
+	}()
+}
+
+// logSearchEvents writes one `search` audit event per source that ran during a
+// fan-out, reusing the SAME per-source samples the metrics batch uses (source
+// id/name, latency, outcome) plus the query keyword as forensic metadata. Like
+// recordSamples it runs in the BACKGROUND on a cancellation-detached, bounded
+// context so a slow audit write never adds latency to the search response, and
+// is skipped when no recorder is wired (nil) or there is nothing to record.
+// Handing `samples` to the goroutine is race-free (g.Wait has returned).
+func (s *Service) logSearchEvents(ctx context.Context, query string, samples []metrics.Sample) {
+	if s.events == nil || len(samples) == 0 {
+		return
+	}
+	events := make([]sourceevents.Event, len(samples))
+	for i, sm := range samples {
+		status := sourceevents.StatusSuccess
+		if sm.Err != nil {
+			status = sourceevents.StatusFailed
+		}
+		events[i] = sourceevents.Event{
+			SourceKey:  strings.TrimSpace(sm.SourceName),
+			SourceID:   sm.SourceID,
+			SourceName: sm.SourceName,
+			Type:       sourceevents.EventSearch,
+			Status:     status,
+			Duration:   sm.Latency,
+			Err:        sm.Err,
+			Metadata:   map[string]string{"keyword": query},
+		}
+	}
+	go func() {
+		recCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+		defer cancel()
+		s.events.LogBatch(recCtx, events)
 	}()
 }
 

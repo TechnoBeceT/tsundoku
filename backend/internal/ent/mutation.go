@@ -15122,6 +15122,7 @@ type SourceCircuitStateMutation struct {
 	addconsecutive_failures *int
 	cooldown_until          *time.Time
 	last_error              *string
+	failing_since           *time.Time
 	updated_at              *time.Time
 	clearedFields           map[string]struct{}
 	done                    bool
@@ -15410,6 +15411,55 @@ func (m *SourceCircuitStateMutation) ResetLastError() {
 	m.last_error = nil
 }
 
+// SetFailingSince sets the "failing_since" field.
+func (m *SourceCircuitStateMutation) SetFailingSince(t time.Time) {
+	m.failing_since = &t
+}
+
+// FailingSince returns the value of the "failing_since" field in the mutation.
+func (m *SourceCircuitStateMutation) FailingSince() (r time.Time, exists bool) {
+	v := m.failing_since
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFailingSince returns the old "failing_since" field's value of the SourceCircuitState entity.
+// If the SourceCircuitState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCircuitStateMutation) OldFailingSince(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFailingSince is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFailingSince requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFailingSince: %w", err)
+	}
+	return oldValue.FailingSince, nil
+}
+
+// ClearFailingSince clears the value of the "failing_since" field.
+func (m *SourceCircuitStateMutation) ClearFailingSince() {
+	m.failing_since = nil
+	m.clearedFields[sourcecircuitstate.FieldFailingSince] = struct{}{}
+}
+
+// FailingSinceCleared returns if the "failing_since" field was cleared in this mutation.
+func (m *SourceCircuitStateMutation) FailingSinceCleared() bool {
+	_, ok := m.clearedFields[sourcecircuitstate.FieldFailingSince]
+	return ok
+}
+
+// ResetFailingSince resets all changes to the "failing_since" field.
+func (m *SourceCircuitStateMutation) ResetFailingSince() {
+	m.failing_since = nil
+	delete(m.clearedFields, sourcecircuitstate.FieldFailingSince)
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (m *SourceCircuitStateMutation) SetUpdatedAt(t time.Time) {
 	m.updated_at = &t
@@ -15480,7 +15530,7 @@ func (m *SourceCircuitStateMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SourceCircuitStateMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 6)
 	if m.source_key != nil {
 		fields = append(fields, sourcecircuitstate.FieldSourceKey)
 	}
@@ -15492,6 +15542,9 @@ func (m *SourceCircuitStateMutation) Fields() []string {
 	}
 	if m.last_error != nil {
 		fields = append(fields, sourcecircuitstate.FieldLastError)
+	}
+	if m.failing_since != nil {
+		fields = append(fields, sourcecircuitstate.FieldFailingSince)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, sourcecircuitstate.FieldUpdatedAt)
@@ -15512,6 +15565,8 @@ func (m *SourceCircuitStateMutation) Field(name string) (ent.Value, bool) {
 		return m.CooldownUntil()
 	case sourcecircuitstate.FieldLastError:
 		return m.LastError()
+	case sourcecircuitstate.FieldFailingSince:
+		return m.FailingSince()
 	case sourcecircuitstate.FieldUpdatedAt:
 		return m.UpdatedAt()
 	}
@@ -15531,6 +15586,8 @@ func (m *SourceCircuitStateMutation) OldField(ctx context.Context, name string) 
 		return m.OldCooldownUntil(ctx)
 	case sourcecircuitstate.FieldLastError:
 		return m.OldLastError(ctx)
+	case sourcecircuitstate.FieldFailingSince:
+		return m.OldFailingSince(ctx)
 	case sourcecircuitstate.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
 	}
@@ -15569,6 +15626,13 @@ func (m *SourceCircuitStateMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetLastError(v)
+		return nil
+	case sourcecircuitstate.FieldFailingSince:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFailingSince(v)
 		return nil
 	case sourcecircuitstate.FieldUpdatedAt:
 		v, ok := value.(time.Time)
@@ -15625,6 +15689,9 @@ func (m *SourceCircuitStateMutation) ClearedFields() []string {
 	if m.FieldCleared(sourcecircuitstate.FieldCooldownUntil) {
 		fields = append(fields, sourcecircuitstate.FieldCooldownUntil)
 	}
+	if m.FieldCleared(sourcecircuitstate.FieldFailingSince) {
+		fields = append(fields, sourcecircuitstate.FieldFailingSince)
+	}
 	return fields
 }
 
@@ -15641,6 +15708,9 @@ func (m *SourceCircuitStateMutation) ClearField(name string) error {
 	switch name {
 	case sourcecircuitstate.FieldCooldownUntil:
 		m.ClearCooldownUntil()
+		return nil
+	case sourcecircuitstate.FieldFailingSince:
+		m.ClearFailingSince()
 		return nil
 	}
 	return fmt.Errorf("unknown SourceCircuitState nullable field %s", name)
@@ -15661,6 +15731,9 @@ func (m *SourceCircuitStateMutation) ResetField(name string) error {
 		return nil
 	case sourcecircuitstate.FieldLastError:
 		m.ResetLastError()
+		return nil
+	case sourcecircuitstate.FieldFailingSince:
+		m.ResetFailingSince()
 		return nil
 	case sourcecircuitstate.FieldUpdatedAt:
 		m.ResetUpdatedAt()
@@ -15720,17 +15793,27 @@ func (m *SourceCircuitStateMutation) ResetEdge(name string) error {
 // SourceEventMutation represents an operation that mutates the SourceEvent nodes in the graph.
 type SourceEventMutation struct {
 	config
-	op            Op
-	typ           string
-	id            *uuid.UUID
-	source        *string
-	event_type    *string
-	payload       *string
-	created_at    *time.Time
-	clearedFields map[string]struct{}
-	done          bool
-	oldValue      func(context.Context) (*SourceEvent, error)
-	predicates    []predicate.SourceEvent
+	op             Op
+	typ            string
+	id             *uuid.UUID
+	source_key     *string
+	source_id      *string
+	source_name    *string
+	language       *string
+	event_type     *sourceevent.EventType
+	status         *sourceevent.Status
+	duration_ms    *int64
+	addduration_ms *int64
+	error_message  *string
+	error_category *string
+	items_count    *int
+	additems_count *int
+	metadata       *map[string]string
+	created_at     *time.Time
+	clearedFields  map[string]struct{}
+	done           bool
+	oldValue       func(context.Context) (*SourceEvent, error)
+	predicates     []predicate.SourceEvent
 }
 
 var _ ent.Mutation = (*SourceEventMutation)(nil)
@@ -15837,49 +15920,157 @@ func (m *SourceEventMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
 	}
 }
 
-// SetSource sets the "source" field.
-func (m *SourceEventMutation) SetSource(s string) {
-	m.source = &s
+// SetSourceKey sets the "source_key" field.
+func (m *SourceEventMutation) SetSourceKey(s string) {
+	m.source_key = &s
 }
 
-// Source returns the value of the "source" field in the mutation.
-func (m *SourceEventMutation) Source() (r string, exists bool) {
-	v := m.source
+// SourceKey returns the value of the "source_key" field in the mutation.
+func (m *SourceEventMutation) SourceKey() (r string, exists bool) {
+	v := m.source_key
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldSource returns the old "source" field's value of the SourceEvent entity.
+// OldSourceKey returns the old "source_key" field's value of the SourceEvent entity.
 // If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *SourceEventMutation) OldSource(ctx context.Context) (v string, err error) {
+func (m *SourceEventMutation) OldSourceKey(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
+		return v, errors.New("OldSourceKey is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
+		return v, errors.New("OldSourceKey requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
+		return v, fmt.Errorf("querying old value for OldSourceKey: %w", err)
 	}
-	return oldValue.Source, nil
+	return oldValue.SourceKey, nil
 }
 
-// ResetSource resets all changes to the "source" field.
-func (m *SourceEventMutation) ResetSource() {
-	m.source = nil
+// ResetSourceKey resets all changes to the "source_key" field.
+func (m *SourceEventMutation) ResetSourceKey() {
+	m.source_key = nil
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourceEventMutation) SetSourceID(s string) {
+	m.source_id = &s
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourceEventMutation) SourceID() (r string, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldSourceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourceEventMutation) ResetSourceID() {
+	m.source_id = nil
+}
+
+// SetSourceName sets the "source_name" field.
+func (m *SourceEventMutation) SetSourceName(s string) {
+	m.source_name = &s
+}
+
+// SourceName returns the value of the "source_name" field in the mutation.
+func (m *SourceEventMutation) SourceName() (r string, exists bool) {
+	v := m.source_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceName returns the old "source_name" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldSourceName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceName: %w", err)
+	}
+	return oldValue.SourceName, nil
+}
+
+// ResetSourceName resets all changes to the "source_name" field.
+func (m *SourceEventMutation) ResetSourceName() {
+	m.source_name = nil
+}
+
+// SetLanguage sets the "language" field.
+func (m *SourceEventMutation) SetLanguage(s string) {
+	m.language = &s
+}
+
+// Language returns the value of the "language" field in the mutation.
+func (m *SourceEventMutation) Language() (r string, exists bool) {
+	v := m.language
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLanguage returns the old "language" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldLanguage(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLanguage is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLanguage requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLanguage: %w", err)
+	}
+	return oldValue.Language, nil
+}
+
+// ResetLanguage resets all changes to the "language" field.
+func (m *SourceEventMutation) ResetLanguage() {
+	m.language = nil
 }
 
 // SetEventType sets the "event_type" field.
-func (m *SourceEventMutation) SetEventType(s string) {
-	m.event_type = &s
+func (m *SourceEventMutation) SetEventType(st sourceevent.EventType) {
+	m.event_type = &st
 }
 
 // EventType returns the value of the "event_type" field in the mutation.
-func (m *SourceEventMutation) EventType() (r string, exists bool) {
+func (m *SourceEventMutation) EventType() (r sourceevent.EventType, exists bool) {
 	v := m.event_type
 	if v == nil {
 		return
@@ -15890,7 +16081,7 @@ func (m *SourceEventMutation) EventType() (r string, exists bool) {
 // OldEventType returns the old "event_type" field's value of the SourceEvent entity.
 // If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *SourceEventMutation) OldEventType(ctx context.Context) (v string, err error) {
+func (m *SourceEventMutation) OldEventType(ctx context.Context) (v sourceevent.EventType, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldEventType is only allowed on UpdateOne operations")
 	}
@@ -15909,40 +16100,313 @@ func (m *SourceEventMutation) ResetEventType() {
 	m.event_type = nil
 }
 
-// SetPayload sets the "payload" field.
-func (m *SourceEventMutation) SetPayload(s string) {
-	m.payload = &s
+// SetStatus sets the "status" field.
+func (m *SourceEventMutation) SetStatus(s sourceevent.Status) {
+	m.status = &s
 }
 
-// Payload returns the value of the "payload" field in the mutation.
-func (m *SourceEventMutation) Payload() (r string, exists bool) {
-	v := m.payload
+// Status returns the value of the "status" field in the mutation.
+func (m *SourceEventMutation) Status() (r sourceevent.Status, exists bool) {
+	v := m.status
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldPayload returns the old "payload" field's value of the SourceEvent entity.
+// OldStatus returns the old "status" field's value of the SourceEvent entity.
 // If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *SourceEventMutation) OldPayload(ctx context.Context) (v string, err error) {
+func (m *SourceEventMutation) OldStatus(ctx context.Context) (v sourceevent.Status, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPayload is only allowed on UpdateOne operations")
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPayload requires an ID field in the mutation")
+		return v, errors.New("OldStatus requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPayload: %w", err)
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
 	}
-	return oldValue.Payload, nil
+	return oldValue.Status, nil
 }
 
-// ResetPayload resets all changes to the "payload" field.
-func (m *SourceEventMutation) ResetPayload() {
-	m.payload = nil
+// ResetStatus resets all changes to the "status" field.
+func (m *SourceEventMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetDurationMs sets the "duration_ms" field.
+func (m *SourceEventMutation) SetDurationMs(i int64) {
+	m.duration_ms = &i
+	m.addduration_ms = nil
+}
+
+// DurationMs returns the value of the "duration_ms" field in the mutation.
+func (m *SourceEventMutation) DurationMs() (r int64, exists bool) {
+	v := m.duration_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDurationMs returns the old "duration_ms" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldDurationMs(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDurationMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDurationMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDurationMs: %w", err)
+	}
+	return oldValue.DurationMs, nil
+}
+
+// AddDurationMs adds i to the "duration_ms" field.
+func (m *SourceEventMutation) AddDurationMs(i int64) {
+	if m.addduration_ms != nil {
+		*m.addduration_ms += i
+	} else {
+		m.addduration_ms = &i
+	}
+}
+
+// AddedDurationMs returns the value that was added to the "duration_ms" field in this mutation.
+func (m *SourceEventMutation) AddedDurationMs() (r int64, exists bool) {
+	v := m.addduration_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDurationMs resets all changes to the "duration_ms" field.
+func (m *SourceEventMutation) ResetDurationMs() {
+	m.duration_ms = nil
+	m.addduration_ms = nil
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (m *SourceEventMutation) SetErrorMessage(s string) {
+	m.error_message = &s
+}
+
+// ErrorMessage returns the value of the "error_message" field in the mutation.
+func (m *SourceEventMutation) ErrorMessage() (r string, exists bool) {
+	v := m.error_message
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldErrorMessage returns the old "error_message" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldErrorMessage(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldErrorMessage is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldErrorMessage requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldErrorMessage: %w", err)
+	}
+	return oldValue.ErrorMessage, nil
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (m *SourceEventMutation) ClearErrorMessage() {
+	m.error_message = nil
+	m.clearedFields[sourceevent.FieldErrorMessage] = struct{}{}
+}
+
+// ErrorMessageCleared returns if the "error_message" field was cleared in this mutation.
+func (m *SourceEventMutation) ErrorMessageCleared() bool {
+	_, ok := m.clearedFields[sourceevent.FieldErrorMessage]
+	return ok
+}
+
+// ResetErrorMessage resets all changes to the "error_message" field.
+func (m *SourceEventMutation) ResetErrorMessage() {
+	m.error_message = nil
+	delete(m.clearedFields, sourceevent.FieldErrorMessage)
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (m *SourceEventMutation) SetErrorCategory(s string) {
+	m.error_category = &s
+}
+
+// ErrorCategory returns the value of the "error_category" field in the mutation.
+func (m *SourceEventMutation) ErrorCategory() (r string, exists bool) {
+	v := m.error_category
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldErrorCategory returns the old "error_category" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldErrorCategory(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldErrorCategory is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldErrorCategory requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldErrorCategory: %w", err)
+	}
+	return oldValue.ErrorCategory, nil
+}
+
+// ClearErrorCategory clears the value of the "error_category" field.
+func (m *SourceEventMutation) ClearErrorCategory() {
+	m.error_category = nil
+	m.clearedFields[sourceevent.FieldErrorCategory] = struct{}{}
+}
+
+// ErrorCategoryCleared returns if the "error_category" field was cleared in this mutation.
+func (m *SourceEventMutation) ErrorCategoryCleared() bool {
+	_, ok := m.clearedFields[sourceevent.FieldErrorCategory]
+	return ok
+}
+
+// ResetErrorCategory resets all changes to the "error_category" field.
+func (m *SourceEventMutation) ResetErrorCategory() {
+	m.error_category = nil
+	delete(m.clearedFields, sourceevent.FieldErrorCategory)
+}
+
+// SetItemsCount sets the "items_count" field.
+func (m *SourceEventMutation) SetItemsCount(i int) {
+	m.items_count = &i
+	m.additems_count = nil
+}
+
+// ItemsCount returns the value of the "items_count" field in the mutation.
+func (m *SourceEventMutation) ItemsCount() (r int, exists bool) {
+	v := m.items_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldItemsCount returns the old "items_count" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldItemsCount(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldItemsCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldItemsCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldItemsCount: %w", err)
+	}
+	return oldValue.ItemsCount, nil
+}
+
+// AddItemsCount adds i to the "items_count" field.
+func (m *SourceEventMutation) AddItemsCount(i int) {
+	if m.additems_count != nil {
+		*m.additems_count += i
+	} else {
+		m.additems_count = &i
+	}
+}
+
+// AddedItemsCount returns the value that was added to the "items_count" field in this mutation.
+func (m *SourceEventMutation) AddedItemsCount() (r int, exists bool) {
+	v := m.additems_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearItemsCount clears the value of the "items_count" field.
+func (m *SourceEventMutation) ClearItemsCount() {
+	m.items_count = nil
+	m.additems_count = nil
+	m.clearedFields[sourceevent.FieldItemsCount] = struct{}{}
+}
+
+// ItemsCountCleared returns if the "items_count" field was cleared in this mutation.
+func (m *SourceEventMutation) ItemsCountCleared() bool {
+	_, ok := m.clearedFields[sourceevent.FieldItemsCount]
+	return ok
+}
+
+// ResetItemsCount resets all changes to the "items_count" field.
+func (m *SourceEventMutation) ResetItemsCount() {
+	m.items_count = nil
+	m.additems_count = nil
+	delete(m.clearedFields, sourceevent.FieldItemsCount)
+}
+
+// SetMetadata sets the "metadata" field.
+func (m *SourceEventMutation) SetMetadata(value map[string]string) {
+	m.metadata = &value
+}
+
+// Metadata returns the value of the "metadata" field in the mutation.
+func (m *SourceEventMutation) Metadata() (r map[string]string, exists bool) {
+	v := m.metadata
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMetadata returns the old "metadata" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldMetadata(ctx context.Context) (v map[string]string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMetadata is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMetadata requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMetadata: %w", err)
+	}
+	return oldValue.Metadata, nil
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (m *SourceEventMutation) ClearMetadata() {
+	m.metadata = nil
+	m.clearedFields[sourceevent.FieldMetadata] = struct{}{}
+}
+
+// MetadataCleared returns if the "metadata" field was cleared in this mutation.
+func (m *SourceEventMutation) MetadataCleared() bool {
+	_, ok := m.clearedFields[sourceevent.FieldMetadata]
+	return ok
+}
+
+// ResetMetadata resets all changes to the "metadata" field.
+func (m *SourceEventMutation) ResetMetadata() {
+	m.metadata = nil
+	delete(m.clearedFields, sourceevent.FieldMetadata)
 }
 
 // SetCreatedAt sets the "created_at" field.
@@ -16015,15 +16479,39 @@ func (m *SourceEventMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SourceEventMutation) Fields() []string {
-	fields := make([]string, 0, 4)
-	if m.source != nil {
-		fields = append(fields, sourceevent.FieldSource)
+	fields := make([]string, 0, 12)
+	if m.source_key != nil {
+		fields = append(fields, sourceevent.FieldSourceKey)
+	}
+	if m.source_id != nil {
+		fields = append(fields, sourceevent.FieldSourceID)
+	}
+	if m.source_name != nil {
+		fields = append(fields, sourceevent.FieldSourceName)
+	}
+	if m.language != nil {
+		fields = append(fields, sourceevent.FieldLanguage)
 	}
 	if m.event_type != nil {
 		fields = append(fields, sourceevent.FieldEventType)
 	}
-	if m.payload != nil {
-		fields = append(fields, sourceevent.FieldPayload)
+	if m.status != nil {
+		fields = append(fields, sourceevent.FieldStatus)
+	}
+	if m.duration_ms != nil {
+		fields = append(fields, sourceevent.FieldDurationMs)
+	}
+	if m.error_message != nil {
+		fields = append(fields, sourceevent.FieldErrorMessage)
+	}
+	if m.error_category != nil {
+		fields = append(fields, sourceevent.FieldErrorCategory)
+	}
+	if m.items_count != nil {
+		fields = append(fields, sourceevent.FieldItemsCount)
+	}
+	if m.metadata != nil {
+		fields = append(fields, sourceevent.FieldMetadata)
 	}
 	if m.created_at != nil {
 		fields = append(fields, sourceevent.FieldCreatedAt)
@@ -16036,12 +16524,28 @@ func (m *SourceEventMutation) Fields() []string {
 // schema.
 func (m *SourceEventMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case sourceevent.FieldSource:
-		return m.Source()
+	case sourceevent.FieldSourceKey:
+		return m.SourceKey()
+	case sourceevent.FieldSourceID:
+		return m.SourceID()
+	case sourceevent.FieldSourceName:
+		return m.SourceName()
+	case sourceevent.FieldLanguage:
+		return m.Language()
 	case sourceevent.FieldEventType:
 		return m.EventType()
-	case sourceevent.FieldPayload:
-		return m.Payload()
+	case sourceevent.FieldStatus:
+		return m.Status()
+	case sourceevent.FieldDurationMs:
+		return m.DurationMs()
+	case sourceevent.FieldErrorMessage:
+		return m.ErrorMessage()
+	case sourceevent.FieldErrorCategory:
+		return m.ErrorCategory()
+	case sourceevent.FieldItemsCount:
+		return m.ItemsCount()
+	case sourceevent.FieldMetadata:
+		return m.Metadata()
 	case sourceevent.FieldCreatedAt:
 		return m.CreatedAt()
 	}
@@ -16053,12 +16557,28 @@ func (m *SourceEventMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *SourceEventMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case sourceevent.FieldSource:
-		return m.OldSource(ctx)
+	case sourceevent.FieldSourceKey:
+		return m.OldSourceKey(ctx)
+	case sourceevent.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourceevent.FieldSourceName:
+		return m.OldSourceName(ctx)
+	case sourceevent.FieldLanguage:
+		return m.OldLanguage(ctx)
 	case sourceevent.FieldEventType:
 		return m.OldEventType(ctx)
-	case sourceevent.FieldPayload:
-		return m.OldPayload(ctx)
+	case sourceevent.FieldStatus:
+		return m.OldStatus(ctx)
+	case sourceevent.FieldDurationMs:
+		return m.OldDurationMs(ctx)
+	case sourceevent.FieldErrorMessage:
+		return m.OldErrorMessage(ctx)
+	case sourceevent.FieldErrorCategory:
+		return m.OldErrorCategory(ctx)
+	case sourceevent.FieldItemsCount:
+		return m.OldItemsCount(ctx)
+	case sourceevent.FieldMetadata:
+		return m.OldMetadata(ctx)
 	case sourceevent.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	}
@@ -16070,26 +16590,82 @@ func (m *SourceEventMutation) OldField(ctx context.Context, name string) (ent.Va
 // type.
 func (m *SourceEventMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case sourceevent.FieldSource:
+	case sourceevent.FieldSourceKey:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetSource(v)
+		m.SetSourceKey(v)
+		return nil
+	case sourceevent.FieldSourceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourceevent.FieldSourceName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceName(v)
+		return nil
+	case sourceevent.FieldLanguage:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLanguage(v)
 		return nil
 	case sourceevent.FieldEventType:
-		v, ok := value.(string)
+		v, ok := value.(sourceevent.EventType)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetEventType(v)
 		return nil
-	case sourceevent.FieldPayload:
+	case sourceevent.FieldStatus:
+		v, ok := value.(sourceevent.Status)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case sourceevent.FieldDurationMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDurationMs(v)
+		return nil
+	case sourceevent.FieldErrorMessage:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetPayload(v)
+		m.SetErrorMessage(v)
+		return nil
+	case sourceevent.FieldErrorCategory:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetErrorCategory(v)
+		return nil
+	case sourceevent.FieldItemsCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetItemsCount(v)
+		return nil
+	case sourceevent.FieldMetadata:
+		v, ok := value.(map[string]string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMetadata(v)
 		return nil
 	case sourceevent.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -16105,13 +16681,26 @@ func (m *SourceEventMutation) SetField(name string, value ent.Value) error {
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *SourceEventMutation) AddedFields() []string {
-	return nil
+	var fields []string
+	if m.addduration_ms != nil {
+		fields = append(fields, sourceevent.FieldDurationMs)
+	}
+	if m.additems_count != nil {
+		fields = append(fields, sourceevent.FieldItemsCount)
+	}
+	return fields
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *SourceEventMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourceevent.FieldDurationMs:
+		return m.AddedDurationMs()
+	case sourceevent.FieldItemsCount:
+		return m.AddedItemsCount()
+	}
 	return nil, false
 }
 
@@ -16120,6 +16709,20 @@ func (m *SourceEventMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *SourceEventMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case sourceevent.FieldDurationMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDurationMs(v)
+		return nil
+	case sourceevent.FieldItemsCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddItemsCount(v)
+		return nil
 	}
 	return fmt.Errorf("unknown SourceEvent numeric field %s", name)
 }
@@ -16127,7 +16730,20 @@ func (m *SourceEventMutation) AddField(name string, value ent.Value) error {
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *SourceEventMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(sourceevent.FieldErrorMessage) {
+		fields = append(fields, sourceevent.FieldErrorMessage)
+	}
+	if m.FieldCleared(sourceevent.FieldErrorCategory) {
+		fields = append(fields, sourceevent.FieldErrorCategory)
+	}
+	if m.FieldCleared(sourceevent.FieldItemsCount) {
+		fields = append(fields, sourceevent.FieldItemsCount)
+	}
+	if m.FieldCleared(sourceevent.FieldMetadata) {
+		fields = append(fields, sourceevent.FieldMetadata)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -16140,6 +16756,20 @@ func (m *SourceEventMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *SourceEventMutation) ClearField(name string) error {
+	switch name {
+	case sourceevent.FieldErrorMessage:
+		m.ClearErrorMessage()
+		return nil
+	case sourceevent.FieldErrorCategory:
+		m.ClearErrorCategory()
+		return nil
+	case sourceevent.FieldItemsCount:
+		m.ClearItemsCount()
+		return nil
+	case sourceevent.FieldMetadata:
+		m.ClearMetadata()
+		return nil
+	}
 	return fmt.Errorf("unknown SourceEvent nullable field %s", name)
 }
 
@@ -16147,14 +16777,38 @@ func (m *SourceEventMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *SourceEventMutation) ResetField(name string) error {
 	switch name {
-	case sourceevent.FieldSource:
-		m.ResetSource()
+	case sourceevent.FieldSourceKey:
+		m.ResetSourceKey()
+		return nil
+	case sourceevent.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourceevent.FieldSourceName:
+		m.ResetSourceName()
+		return nil
+	case sourceevent.FieldLanguage:
+		m.ResetLanguage()
 		return nil
 	case sourceevent.FieldEventType:
 		m.ResetEventType()
 		return nil
-	case sourceevent.FieldPayload:
-		m.ResetPayload()
+	case sourceevent.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case sourceevent.FieldDurationMs:
+		m.ResetDurationMs()
+		return nil
+	case sourceevent.FieldErrorMessage:
+		m.ResetErrorMessage()
+		return nil
+	case sourceevent.FieldErrorCategory:
+		m.ResetErrorCategory()
+		return nil
+	case sourceevent.FieldItemsCount:
+		m.ResetItemsCount()
+		return nil
+	case sourceevent.FieldMetadata:
+		m.ResetMetadata()
 		return nil
 	case sourceevent.FieldCreatedAt:
 		m.ResetCreatedAt()
