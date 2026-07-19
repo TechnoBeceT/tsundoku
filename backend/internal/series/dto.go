@@ -48,12 +48,13 @@ type SeriesSummaryDTO struct {
 	CoverURL    string `json:"coverUrl"`
 	Monitored   bool   `json:"monitored"`
 	Completed   bool   `json:"completed"`
-	// NeedsSource is true when the series has NO live download source — zero
-	// SeriesProvider rows satisfying IsLinkedProvider (see needsSource). It is
-	// COVER-INDEPENDENT: a Kaizoku-migration series can carry a metadata cover
-	// (via AutoIdentify/SetCover) while still lacking a real engine to fetch
-	// new chapters from, and the owner needs that fact visible regardless of
-	// whether a cover renders (handover 2026-07-13#15).
+	// NeedsSource is true when the series has ≥1 dangling (disk-origin,
+	// unlinked) provider — files not backed by a live source — OR no providers
+	// at all, EVEN IF another provider is already matched/live (see
+	// needsSource). It is COVER-INDEPENDENT: a Kaizoku-migration series can
+	// carry a metadata cover (via AutoIdentify/SetCover) while still having a
+	// source gap, and the owner needs that fact visible regardless of whether a
+	// cover renders (handover 2026-07-13#15).
 	NeedsSource   bool          `json:"needsSource"`
 	ChapterCounts ChapterCounts `json:"chapterCounts"`
 	// CreatedAt is when the series entered the library (RFC3339). Powers the
@@ -435,21 +436,28 @@ func newSummaryDTO(s *ent.Series, rollup seriesRollup) SeriesSummaryDTO {
 	}
 }
 
-// needsSource is true when NONE of the given providers is a live download
-// source — i.e. every provider is disk-origin (fails IsLinkedProvider,
-// created by library import/reconcile/Kaizoku migration, never a real
-// engine-host source). Cover state is deliberately irrelevant here (handover
-// 2026-07-13#15): a series can have a metadata cover via
-// AutoIdentify/SetCover while still having zero live engine to fetch new
-// chapters from — "needs source" tracks that gap independently. A series
-// with no providers at all also needs one.
+// needsSource is true when the series has ≥1 DANGLING provider — a disk-origin,
+// unlinked row (fails IsLinkedProvider: created by library import/reconcile/the
+// Kaizoku migration, its files not backed by a real engine-host source) — OR no
+// providers at all. Crucially this holds EVEN WHEN the series already has a live
+// source: a partially-consolidated series (the exact kaliscan mid-migration
+// state — some domains matched, one still dangling) must surface so the owner
+// can find it and finish consolidating (QCAT-295 Part C; the old rule "NONE of
+// the providers is live" hid these and made them unfindable). Cover state is
+// deliberately irrelevant (handover 2026-07-13#15): a series can carry a
+// metadata cover via AutoIdentify/SetCover while still having a source gap —
+// "needs source" tracks that gap independently, regardless of download/
+// completion state. Zero-provider series keep needing one.
 func needsSource(providers []*ent.SeriesProvider) bool {
+	if len(providers) == 0 {
+		return true
+	}
 	for _, p := range providers {
-		if IsLinkedProvider(p) {
-			return false
+		if !IsLinkedProvider(p) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // formatRFC3339 renders a timestamp as a UTC RFC3339 string — the wire form for

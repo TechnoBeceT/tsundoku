@@ -12,7 +12,8 @@ export interface LibraryFilters {
   unread: boolean
   /** Only series the owner marked finished. */
   completed: boolean
-  /** Only series with no live download source (every provider disk-origin). */
+  /** Only series with ≥1 dangling (disk-origin, unlinked) provider — even when
+   * another source is already matched (the partially-consolidated case). */
   needsSource: boolean
 }
 

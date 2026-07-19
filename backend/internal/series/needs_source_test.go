@@ -10,12 +10,13 @@ import (
 	"github.com/technobecet/tsundoku/internal/series"
 )
 
-// TestNeedsSource proves the "Needs source" signal (handover 2026-07-13#15) is
-// COVER-INDEPENDENT and computed purely from whether a series has a live
-// download source (series.IsLinkedProvider true — Provider parses as a
-// numeric source id), across the three cases the definition covers, and that
-// ListSeries + GetSeries agree (no N+1: both already eager-load providers for
-// display resolution, so NeedsSource costs nothing extra).
+// TestNeedsSource proves the "Needs source" signal (handover 2026-07-13#15,
+// QCAT-295 Part C) is COVER-INDEPENDENT and true when the series has ≥1
+// DANGLING (disk-origin, unlinked — series.IsLinkedProvider false) provider,
+// EVEN WHEN another live source is already attached (the partially-consolidated
+// case — the core Part C fix). It covers every case the definition spans and
+// asserts ListSeries + GetSeries agree (no N+1: both already eager-load
+// providers for display resolution, so NeedsSource costs nothing extra).
 func TestNeedsSource(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -37,8 +38,10 @@ func TestNeedsSource(t *testing.T) {
 		SetImportance(5).
 		SaveX(ctx)
 
-	// Case 3: both a disk-origin AND a live provider -> does not need a source
-	// (one live source is enough, regardless of how many disk-origin rows exist).
+	// Case 3: both a disk-origin AND a live provider -> STILL needs a source.
+	// This is the core QCAT-295 Part C fix: a partially-consolidated series (one
+	// domain matched, one still dangling) must remain findable so the owner can
+	// finish folding the dangling provider into the live one.
 	both := db.Series.Create().SetTitle("Both Sources").SetSlug("both-sources").SaveX(ctx)
 	db.SeriesProvider.Create().
 		SetSeriesID(both.ID).
@@ -50,6 +53,9 @@ func TestNeedsSource(t *testing.T) {
 		SetProvider("99").
 		SetImportance(5).
 		SaveX(ctx)
+
+	// Case 4: no providers at all -> needs a source (nothing to fetch from).
+	empty := db.Series.Create().SetTitle("No Providers").SetSlug("no-providers").SaveX(ctx)
 
 	svc := series.NewService(db, t.TempDir(), 14)
 
@@ -69,7 +75,8 @@ func TestNeedsSource(t *testing.T) {
 	}{
 		{"disk-origin only", diskOnly.ID, true},
 		{"live only", liveOnly.ID, false},
-		{"disk-origin + live", both.ID, false},
+		{"disk-origin + live", both.ID, true},
+		{"no providers", empty.ID, true},
 	}
 	for _, tc := range cases {
 		got, ok := byID[tc.id.String()]
