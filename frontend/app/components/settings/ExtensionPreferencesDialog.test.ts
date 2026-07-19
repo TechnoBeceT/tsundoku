@@ -97,4 +97,48 @@ describe('ExtensionPreferencesDialog', () => {
     const wrapper = mountDialog({ enableError: 'Failed to update source' })
     expect(wrapper.text()).toContain('Failed to update source')
   })
+
+  // ---- per-source ignore-scanlator Toggle (QCAT-287 Slice A) -----------------
+
+  it('forwards toggle-ignore-scanlator when a group\'s Toggle is flipped', async () => {
+    const wrapper = mountDialog() // preferenceGroup.ignoreScanlator is false
+    await wrapper.find('[aria-label="Ignore scanlator for MangaDex (en)"]').trigger('click')
+    const emitted = wrapper.emitted('toggle-ignore-scanlator')
+    expect(emitted).toBeTruthy()
+    // An unflagged source flips to flagged.
+    expect(emitted![0]![0]).toEqual({ sourceId: 'src-en', ignoreScanlator: true })
+  })
+
+  it('shows the ignore-scanlator Toggle even for a disabled group (independent of enable state)', () => {
+    // preferenceGroups[1] (ja) is disabled — its ignore-scanlator Toggle must
+    // still render (the flag is independent of the enable/disable state).
+    const wrapper = mountDialog({ groups: preferenceGroups })
+    expect(wrapper.find('[aria-label="Ignore scanlator for MangaDex (ja)"]').exists()).toBe(true)
+  })
+
+  it('disables the ignore-scanlator Toggle being written (ignoringKey)', () => {
+    const wrapper = mountDialog({ ignoringKey: 'src-en' })
+    expect(wrapper.find('[aria-label="Ignore scanlator for MangaDex (en)"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('surfaces an ignore-scanlator failure banner (ignoreError)', () => {
+    const wrapper = mountDialog({ ignoreError: 'Failed to update source' })
+    expect(wrapper.text()).toContain('Failed to update source')
+  })
+
+  it('surfaces the on-enable collapse migration summary as a success banner (migrationMessage)', () => {
+    const wrapper = mountDialog({
+      migrationMessage: { message: 'Merged 4 per-uploader providers across 3 series and relabeled their files.', tone: 'success' },
+    })
+    expect(wrapper.text()).toContain('Merged 4 per-uploader providers across 3 series')
+    expect(wrapper.find('.prefs__migration--success').exists()).toBe(true)
+  })
+
+  it('surfaces a total-failure migration as a warning banner, not silently (migrationMessage tone=warning)', () => {
+    const wrapper = mountDialog({
+      migrationMessage: { message: 'Couldn\'t collapse 3 series — nothing was relabeled. Check the logs and try again.', tone: 'warning' },
+    })
+    expect(wrapper.text()).toContain('nothing was relabeled')
+    expect(wrapper.find('.prefs__migration--warning').exists()).toBe(true)
+  })
 })

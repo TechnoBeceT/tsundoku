@@ -62,6 +62,31 @@ type SourceToggleStore interface {
 	SetEnabled(ctx context.Context, sourceID int64, enabled bool) error
 }
 
+// IgnoreScanlatorStore is the narrow surface the Handler needs for the
+// TSUNDOKU-SIDE per-source "ignore scanlator" flag (the Configure dialog's
+// per-source toggle, sibling of the enable/disable Switch). It reads the flagged
+// set (for the Preferences group's ignoreScanlator field) and writes one
+// source's flag (SetSourceIgnoreScanlator). *ignorescanlator.Service satisfies
+// it. A nil store (focused proxy tests) makes every group report
+// ignoreScanlator=false and SetSourceIgnoreScanlator a no-op-if-unwired path.
+type IgnoreScanlatorStore interface {
+	IgnoreScanlatorSet(ctx context.Context) (map[int64]bool, error)
+	SetIgnore(ctx context.Context, sourceID int64, ignore bool) error
+}
+
+// ScanlatorCollapser runs the Slice-B on-enable migration when a source is
+// flagged ignore-scanlator ON: it folds that source's already-adopted
+// per-uploader SeriesProvider rows across ALL series into one [Source] provider
+// and relabels the affected CBZs (see library.Service.CollapseIgnoredScanlatorSource).
+// It returns how many series were collapsed, how many per-uploader rows were
+// folded, and how many series were skipped after an error. *library.Service
+// satisfies it. A nil collapser (focused proxy tests, or a deployment without the
+// library service) makes flip-ON persist the flag WITHOUT migrating existing
+// series — the apply-forward Slice-A behaviour, still correct.
+type ScanlatorCollapser interface {
+	CollapseIgnoredScanlatorSource(ctx context.Context, sourceID int64) (seriesProcessed, merged, skipped int, err error)
+}
+
 // Handler serves the extension-management endpoints. It holds the engine-host
 // client, plus the durable engine-topology store (Ent client + apk byte cache
 // + an httpGet for repo indexes/.apk downloads) that the best-effort
@@ -78,6 +103,16 @@ type Handler struct {
 	// disabled is the Tsundoku-side per-source enable/disable store. Nil ⇒ every
 	// group reports enabled=true and the enable/disable route is unavailable.
 	disabled SourceToggleStore
+	// ignoreScanlator is the Tsundoku-side per-source ignore-scanlator flag store.
+	// Nil ⇒ every group reports ignoreScanlator=false and the flag route is
+	// unavailable.
+	ignoreScanlator IgnoreScanlatorStore
+	// collapser runs the Slice-B on-enable migration (fold existing per-uploader
+	// providers + relabel CBZs) when a source is flagged ON. Nil ⇒ flip-ON only
+	// persists the flag (apply-forward, Slice A) without migrating existing series.
+	// Attach it with WithScanlatorCollapser (wired after the library service is
+	// constructed — see server/routes.go).
+	collapser ScanlatorCollapser
 	// retained resolves the apk-cache rollback-history depth
 	// (extensions.retained_versions) at use-time — the prune count for the
 	// install/update write-through and the reinstall path. Nil ⇒ the built-in
@@ -87,19 +122,35 @@ type Handler struct {
 
 // NewHandler constructs a Handler bound to an engine client, the durable
 // engine-topology store (Ent client, apk cache, and the httpGet used to fetch
-// repo indexes + .apk bytes — http.Get in production), and the Tsundoku-side
-// per-source disabled-flag store. db/cache/httpGet may be nil, which turns the
+// repo indexes + .apk bytes — http.Get in production), the Tsundoku-side
+// per-source disabled-flag store, and the Tsundoku-side per-source
+// ignore-scanlator flag store. db/cache/httpGet may be nil, which turns the
 // write-through into a no-op (pure passthrough); disabled may be nil, which
-// makes every group enabled and disables the enable/disable route.
+// makes every group enabled and disables the enable/disable route;
+// ignoreScanlator may be nil, which makes every group report
+// ignoreScanlator=false and disables the ignore-scanlator route.
 func NewHandler(
 	sw sourceengine.Client,
 	db *ent.Client,
 	cache *apkcache.Store,
 	httpGet func(url string) (*http.Response, error),
 	disabled SourceToggleStore,
+	ignoreScanlator IgnoreScanlatorStore,
 	retained func(context.Context) int,
 ) *Handler {
-	return &Handler{sw: sw, db: db, cache: cache, httpGet: httpGet, disabled: disabled, retained: retained}
+	return &Handler{sw: sw, db: db, cache: cache, httpGet: httpGet, disabled: disabled, ignoreScanlator: ignoreScanlator, retained: retained}
+}
+
+// WithScanlatorCollapser attaches the Slice-B on-enable migration runner so
+// flagging a source ignore-scanlator ON also folds its already-adopted
+// per-uploader providers + relabels their CBZs (see ScanlatorCollapser). It is a
+// setter (not a NewHandler param) because the library service that satisfies it
+// is constructed AFTER this handler in server/routes.go — the route closures
+// capture the *Handler pointer, so setting the field afterwards is safe. Returns
+// the receiver for chaining.
+func (h *Handler) WithScanlatorCollapser(collapser ScanlatorCollapser) *Handler {
+	h.collapser = collapser
+	return h
 }
 
 // retainedCount resolves the rollback-history depth at use-time, falling back to

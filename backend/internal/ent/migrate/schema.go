@@ -132,6 +132,18 @@ var (
 		Columns:    HarvestedReposColumns,
 		PrimaryKey: []*schema.Column{HarvestedReposColumns[0]},
 	}
+	// IgnoreScanlatorSourcesColumns holds the columns for the "ignore_scanlator_sources" table.
+	IgnoreScanlatorSourcesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeInt64, Unique: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// IgnoreScanlatorSourcesTable holds the schema information for the "ignore_scanlator_sources" table.
+	IgnoreScanlatorSourcesTable = &schema.Table{
+		Name:       "ignore_scanlator_sources",
+		Columns:    IgnoreScanlatorSourcesColumns,
+		PrimaryKey: []*schema.Column{IgnoreScanlatorSourcesColumns[0]},
+	}
 	// ImportEntriesColumns holds the columns for the "import_entries" table.
 	ImportEntriesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -600,6 +612,7 @@ var (
 		EtagCachesTable,
 		HarvestedExtensionsTable,
 		HarvestedReposTable,
+		IgnoreScanlatorSourcesTable,
 		ImportEntriesTable,
 		LatestSeriesTable,
 		NetworkEndpointsTable,

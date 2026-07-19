@@ -22,6 +22,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
+	"github.com/technobecet/tsundoku/internal/ent/ignorescanlatorsource"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/networkendpoint"
@@ -60,6 +61,8 @@ type Client struct {
 	HarvestedExtension *HarvestedExtensionClient
 	// HarvestedRepo is the client for interacting with the HarvestedRepo builders.
 	HarvestedRepo *HarvestedRepoClient
+	// IgnoreScanlatorSource is the client for interacting with the IgnoreScanlatorSource builders.
+	IgnoreScanlatorSource *IgnoreScanlatorSourceClient
 	// ImportEntry is the client for interacting with the ImportEntry builders.
 	ImportEntry *ImportEntryClient
 	// LatestSeries is the client for interacting with the LatestSeries builders.
@@ -115,6 +118,7 @@ func (c *Client) init() {
 	c.EtagCache = NewEtagCacheClient(c.config)
 	c.HarvestedExtension = NewHarvestedExtensionClient(c.config)
 	c.HarvestedRepo = NewHarvestedRepoClient(c.config)
+	c.IgnoreScanlatorSource = NewIgnoreScanlatorSourceClient(c.config)
 	c.ImportEntry = NewImportEntryClient(c.config)
 	c.LatestSeries = NewLatestSeriesClient(c.config)
 	c.NetworkEndpoint = NewNetworkEndpointClient(c.config)
@@ -224,33 +228,34 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:                  ctx,
-		config:               cfg,
-		Category:             NewCategoryClient(cfg),
-		Chapter:              NewChapterClient(cfg),
-		DisabledSource:       NewDisabledSourceClient(cfg),
-		EtagCache:            NewEtagCacheClient(cfg),
-		HarvestedExtension:   NewHarvestedExtensionClient(cfg),
-		HarvestedRepo:        NewHarvestedRepoClient(cfg),
-		ImportEntry:          NewImportEntryClient(cfg),
-		LatestSeries:         NewLatestSeriesClient(cfg),
-		NetworkEndpoint:      NewNetworkEndpointClient(cfg),
-		Owner:                NewOwnerClient(cfg),
-		PendingTrackPush:     NewPendingTrackPushClient(cfg),
-		ProviderChapter:      NewProviderChapterClient(cfg),
-		PushSubscription:     NewPushSubscriptionClient(cfg),
-		Series:               NewSeriesClient(cfg),
-		SeriesProvider:       NewSeriesProviderClient(cfg),
-		Settings:             NewSettingsClient(cfg),
-		SourceCircuitState:   NewSourceCircuitStateClient(cfg),
-		SourceEvent:          NewSourceEventClient(cfg),
-		SourceMetric:         NewSourceMetricClient(cfg),
-		SourceNetworkBinding: NewSourceNetworkBindingClient(cfg),
-		SourcePreference:     NewSourcePreferenceClient(cfg),
-		SourceSeedState:      NewSourceSeedStateClient(cfg),
-		SuwayomiSyncState:    NewSuwayomiSyncStateClient(cfg),
-		TrackBinding:         NewTrackBindingClient(cfg),
-		TrackerConnection:    NewTrackerConnectionClient(cfg),
+		ctx:                   ctx,
+		config:                cfg,
+		Category:              NewCategoryClient(cfg),
+		Chapter:               NewChapterClient(cfg),
+		DisabledSource:        NewDisabledSourceClient(cfg),
+		EtagCache:             NewEtagCacheClient(cfg),
+		HarvestedExtension:    NewHarvestedExtensionClient(cfg),
+		HarvestedRepo:         NewHarvestedRepoClient(cfg),
+		IgnoreScanlatorSource: NewIgnoreScanlatorSourceClient(cfg),
+		ImportEntry:           NewImportEntryClient(cfg),
+		LatestSeries:          NewLatestSeriesClient(cfg),
+		NetworkEndpoint:       NewNetworkEndpointClient(cfg),
+		Owner:                 NewOwnerClient(cfg),
+		PendingTrackPush:      NewPendingTrackPushClient(cfg),
+		ProviderChapter:       NewProviderChapterClient(cfg),
+		PushSubscription:      NewPushSubscriptionClient(cfg),
+		Series:                NewSeriesClient(cfg),
+		SeriesProvider:        NewSeriesProviderClient(cfg),
+		Settings:              NewSettingsClient(cfg),
+		SourceCircuitState:    NewSourceCircuitStateClient(cfg),
+		SourceEvent:           NewSourceEventClient(cfg),
+		SourceMetric:          NewSourceMetricClient(cfg),
+		SourceNetworkBinding:  NewSourceNetworkBindingClient(cfg),
+		SourcePreference:      NewSourcePreferenceClient(cfg),
+		SourceSeedState:       NewSourceSeedStateClient(cfg),
+		SuwayomiSyncState:     NewSuwayomiSyncStateClient(cfg),
+		TrackBinding:          NewTrackBindingClient(cfg),
+		TrackerConnection:     NewTrackerConnectionClient(cfg),
 	}, nil
 }
 
@@ -268,33 +273,34 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:                  ctx,
-		config:               cfg,
-		Category:             NewCategoryClient(cfg),
-		Chapter:              NewChapterClient(cfg),
-		DisabledSource:       NewDisabledSourceClient(cfg),
-		EtagCache:            NewEtagCacheClient(cfg),
-		HarvestedExtension:   NewHarvestedExtensionClient(cfg),
-		HarvestedRepo:        NewHarvestedRepoClient(cfg),
-		ImportEntry:          NewImportEntryClient(cfg),
-		LatestSeries:         NewLatestSeriesClient(cfg),
-		NetworkEndpoint:      NewNetworkEndpointClient(cfg),
-		Owner:                NewOwnerClient(cfg),
-		PendingTrackPush:     NewPendingTrackPushClient(cfg),
-		ProviderChapter:      NewProviderChapterClient(cfg),
-		PushSubscription:     NewPushSubscriptionClient(cfg),
-		Series:               NewSeriesClient(cfg),
-		SeriesProvider:       NewSeriesProviderClient(cfg),
-		Settings:             NewSettingsClient(cfg),
-		SourceCircuitState:   NewSourceCircuitStateClient(cfg),
-		SourceEvent:          NewSourceEventClient(cfg),
-		SourceMetric:         NewSourceMetricClient(cfg),
-		SourceNetworkBinding: NewSourceNetworkBindingClient(cfg),
-		SourcePreference:     NewSourcePreferenceClient(cfg),
-		SourceSeedState:      NewSourceSeedStateClient(cfg),
-		SuwayomiSyncState:    NewSuwayomiSyncStateClient(cfg),
-		TrackBinding:         NewTrackBindingClient(cfg),
-		TrackerConnection:    NewTrackerConnectionClient(cfg),
+		ctx:                   ctx,
+		config:                cfg,
+		Category:              NewCategoryClient(cfg),
+		Chapter:               NewChapterClient(cfg),
+		DisabledSource:        NewDisabledSourceClient(cfg),
+		EtagCache:             NewEtagCacheClient(cfg),
+		HarvestedExtension:    NewHarvestedExtensionClient(cfg),
+		HarvestedRepo:         NewHarvestedRepoClient(cfg),
+		IgnoreScanlatorSource: NewIgnoreScanlatorSourceClient(cfg),
+		ImportEntry:           NewImportEntryClient(cfg),
+		LatestSeries:          NewLatestSeriesClient(cfg),
+		NetworkEndpoint:       NewNetworkEndpointClient(cfg),
+		Owner:                 NewOwnerClient(cfg),
+		PendingTrackPush:      NewPendingTrackPushClient(cfg),
+		ProviderChapter:       NewProviderChapterClient(cfg),
+		PushSubscription:      NewPushSubscriptionClient(cfg),
+		Series:                NewSeriesClient(cfg),
+		SeriesProvider:        NewSeriesProviderClient(cfg),
+		Settings:              NewSettingsClient(cfg),
+		SourceCircuitState:    NewSourceCircuitStateClient(cfg),
+		SourceEvent:           NewSourceEventClient(cfg),
+		SourceMetric:          NewSourceMetricClient(cfg),
+		SourceNetworkBinding:  NewSourceNetworkBindingClient(cfg),
+		SourcePreference:      NewSourcePreferenceClient(cfg),
+		SourceSeedState:       NewSourceSeedStateClient(cfg),
+		SuwayomiSyncState:     NewSuwayomiSyncStateClient(cfg),
+		TrackBinding:          NewTrackBindingClient(cfg),
+		TrackerConnection:     NewTrackerConnectionClient(cfg),
 	}, nil
 }
 
@@ -325,11 +331,12 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.HarvestedExtension,
-		c.HarvestedRepo, c.ImportEntry, c.LatestSeries, c.NetworkEndpoint, c.Owner,
-		c.PendingTrackPush, c.ProviderChapter, c.PushSubscription, c.Series,
-		c.SeriesProvider, c.Settings, c.SourceCircuitState, c.SourceEvent,
-		c.SourceMetric, c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
-		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
+		c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry, c.LatestSeries,
+		c.NetworkEndpoint, c.Owner, c.PendingTrackPush, c.ProviderChapter,
+		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourceNetworkBinding,
+		c.SourcePreference, c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding,
+		c.TrackerConnection,
 	} {
 		n.Use(hooks...)
 	}
@@ -340,11 +347,12 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.HarvestedExtension,
-		c.HarvestedRepo, c.ImportEntry, c.LatestSeries, c.NetworkEndpoint, c.Owner,
-		c.PendingTrackPush, c.ProviderChapter, c.PushSubscription, c.Series,
-		c.SeriesProvider, c.Settings, c.SourceCircuitState, c.SourceEvent,
-		c.SourceMetric, c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
-		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
+		c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry, c.LatestSeries,
+		c.NetworkEndpoint, c.Owner, c.PendingTrackPush, c.ProviderChapter,
+		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourceNetworkBinding,
+		c.SourcePreference, c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding,
+		c.TrackerConnection,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -365,6 +373,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.HarvestedExtension.mutate(ctx, m)
 	case *HarvestedRepoMutation:
 		return c.HarvestedRepo.mutate(ctx, m)
+	case *IgnoreScanlatorSourceMutation:
+		return c.IgnoreScanlatorSource.mutate(ctx, m)
 	case *ImportEntryMutation:
 		return c.ImportEntry.mutate(ctx, m)
 	case *LatestSeriesMutation:
@@ -1251,6 +1261,139 @@ func (c *HarvestedRepoClient) mutate(ctx context.Context, m *HarvestedRepoMutati
 		return (&HarvestedRepoDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown HarvestedRepo mutation op: %q", m.Op())
+	}
+}
+
+// IgnoreScanlatorSourceClient is a client for the IgnoreScanlatorSource schema.
+type IgnoreScanlatorSourceClient struct {
+	config
+}
+
+// NewIgnoreScanlatorSourceClient returns a client for the IgnoreScanlatorSource from the given config.
+func NewIgnoreScanlatorSourceClient(c config) *IgnoreScanlatorSourceClient {
+	return &IgnoreScanlatorSourceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `ignorescanlatorsource.Hooks(f(g(h())))`.
+func (c *IgnoreScanlatorSourceClient) Use(hooks ...Hook) {
+	c.hooks.IgnoreScanlatorSource = append(c.hooks.IgnoreScanlatorSource, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `ignorescanlatorsource.Intercept(f(g(h())))`.
+func (c *IgnoreScanlatorSourceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.IgnoreScanlatorSource = append(c.inters.IgnoreScanlatorSource, interceptors...)
+}
+
+// Create returns a builder for creating a IgnoreScanlatorSource entity.
+func (c *IgnoreScanlatorSourceClient) Create() *IgnoreScanlatorSourceCreate {
+	mutation := newIgnoreScanlatorSourceMutation(c.config, OpCreate)
+	return &IgnoreScanlatorSourceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of IgnoreScanlatorSource entities.
+func (c *IgnoreScanlatorSourceClient) CreateBulk(builders ...*IgnoreScanlatorSourceCreate) *IgnoreScanlatorSourceCreateBulk {
+	return &IgnoreScanlatorSourceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *IgnoreScanlatorSourceClient) MapCreateBulk(slice any, setFunc func(*IgnoreScanlatorSourceCreate, int)) *IgnoreScanlatorSourceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &IgnoreScanlatorSourceCreateBulk{err: fmt.Errorf("calling to IgnoreScanlatorSourceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*IgnoreScanlatorSourceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &IgnoreScanlatorSourceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for IgnoreScanlatorSource.
+func (c *IgnoreScanlatorSourceClient) Update() *IgnoreScanlatorSourceUpdate {
+	mutation := newIgnoreScanlatorSourceMutation(c.config, OpUpdate)
+	return &IgnoreScanlatorSourceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *IgnoreScanlatorSourceClient) UpdateOne(_m *IgnoreScanlatorSource) *IgnoreScanlatorSourceUpdateOne {
+	mutation := newIgnoreScanlatorSourceMutation(c.config, OpUpdateOne, withIgnoreScanlatorSource(_m))
+	return &IgnoreScanlatorSourceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *IgnoreScanlatorSourceClient) UpdateOneID(id uuid.UUID) *IgnoreScanlatorSourceUpdateOne {
+	mutation := newIgnoreScanlatorSourceMutation(c.config, OpUpdateOne, withIgnoreScanlatorSourceID(id))
+	return &IgnoreScanlatorSourceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for IgnoreScanlatorSource.
+func (c *IgnoreScanlatorSourceClient) Delete() *IgnoreScanlatorSourceDelete {
+	mutation := newIgnoreScanlatorSourceMutation(c.config, OpDelete)
+	return &IgnoreScanlatorSourceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *IgnoreScanlatorSourceClient) DeleteOne(_m *IgnoreScanlatorSource) *IgnoreScanlatorSourceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *IgnoreScanlatorSourceClient) DeleteOneID(id uuid.UUID) *IgnoreScanlatorSourceDeleteOne {
+	builder := c.Delete().Where(ignorescanlatorsource.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &IgnoreScanlatorSourceDeleteOne{builder}
+}
+
+// Query returns a query builder for IgnoreScanlatorSource.
+func (c *IgnoreScanlatorSourceClient) Query() *IgnoreScanlatorSourceQuery {
+	return &IgnoreScanlatorSourceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeIgnoreScanlatorSource},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a IgnoreScanlatorSource entity by its id.
+func (c *IgnoreScanlatorSourceClient) Get(ctx context.Context, id uuid.UUID) (*IgnoreScanlatorSource, error) {
+	return c.Query().Where(ignorescanlatorsource.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *IgnoreScanlatorSourceClient) GetX(ctx context.Context, id uuid.UUID) *IgnoreScanlatorSource {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *IgnoreScanlatorSourceClient) Hooks() []Hook {
+	return c.hooks.IgnoreScanlatorSource
+}
+
+// Interceptors returns the client interceptors.
+func (c *IgnoreScanlatorSourceClient) Interceptors() []Interceptor {
+	return c.inters.IgnoreScanlatorSource
+}
+
+func (c *IgnoreScanlatorSourceClient) mutate(ctx context.Context, m *IgnoreScanlatorSourceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&IgnoreScanlatorSourceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&IgnoreScanlatorSourceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&IgnoreScanlatorSourceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&IgnoreScanlatorSourceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown IgnoreScanlatorSource mutation op: %q", m.Op())
 	}
 }
 
@@ -3961,17 +4104,17 @@ func (c *TrackerConnectionClient) mutate(ctx context.Context, m *TrackerConnecti
 type (
 	hooks struct {
 		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
-		ImportEntry, LatestSeries, NetworkEndpoint, Owner, PendingTrackPush,
-		ProviderChapter, PushSubscription, Series, SeriesProvider, Settings,
-		SourceCircuitState, SourceEvent, SourceMetric, SourceNetworkBinding,
+		IgnoreScanlatorSource, ImportEntry, LatestSeries, NetworkEndpoint, Owner,
+		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
+		Settings, SourceCircuitState, SourceEvent, SourceMetric, SourceNetworkBinding,
 		SourcePreference, SourceSeedState, SuwayomiSyncState, TrackBinding,
 		TrackerConnection []ent.Hook
 	}
 	inters struct {
 		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
-		ImportEntry, LatestSeries, NetworkEndpoint, Owner, PendingTrackPush,
-		ProviderChapter, PushSubscription, Series, SeriesProvider, Settings,
-		SourceCircuitState, SourceEvent, SourceMetric, SourceNetworkBinding,
+		IgnoreScanlatorSource, ImportEntry, LatestSeries, NetworkEndpoint, Owner,
+		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
+		Settings, SourceCircuitState, SourceEvent, SourceMetric, SourceNetworkBinding,
 		SourcePreference, SourceSeedState, SuwayomiSyncState, TrackBinding,
 		TrackerConnection []ent.Interceptor
 	}

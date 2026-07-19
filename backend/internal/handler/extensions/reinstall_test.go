@@ -53,7 +53,7 @@ func newReinstallEnv(t *testing.T, exts []sourceengine.Extension) *reinstallEnv 
 
 	authSvc := auth.NewService("reinstall-test-secret")
 	// retained resolver returns 3 (the default depth).
-	h := handler.NewHandler(fake, db, cache, http.Get, nil, func(context.Context) int { return 3 })
+	h := handler.NewHandler(fake, db, cache, http.Get, nil, nil, func(context.Context) int { return 3 })
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler

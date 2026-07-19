@@ -47,21 +47,27 @@ type testEnv struct {
 	e     *echo.Echo
 	fake  *sourceenginefake.Client
 	store *fakeToggleStore
+	h     *handler.Handler
 	token string
 }
 
-// fakeToggleStore is an in-memory extensions.SourceToggleStore — the
-// Tsundoku-side per-source disabled-flag store — for the handler tests, so the
-// enable/disable toggle + the Preferences `enabled` field are exercised without
-// a real DB. A row's presence in disabled = disabled. Errors can be forced.
+// fakeToggleStore is an in-memory extensions.SourceToggleStore AND
+// extensions.IgnoreScanlatorStore — the two Tsundoku-side per-source flag stores
+// — for the handler tests, so the enable/disable toggle, the ignore-scanlator
+// toggle, and the Preferences `enabled`/`ignoreScanlator` fields are exercised
+// without a real DB. A row's presence in disabled = disabled; in ignore =
+// flagged. Errors can be forced independently per store.
 type fakeToggleStore struct {
-	disabled map[int64]bool
-	disErr   error
-	setErr   error
+	disabled  map[int64]bool
+	disErr    error
+	setErr    error
+	ignore    map[int64]bool
+	ignErr    error
+	ignSetErr error
 }
 
 func newFakeToggleStore() *fakeToggleStore {
-	return &fakeToggleStore{disabled: map[int64]bool{}}
+	return &fakeToggleStore{disabled: map[int64]bool{}, ignore: map[int64]bool{}}
 }
 
 func (f *fakeToggleStore) Disabled(_ context.Context) (map[int64]bool, error) {
@@ -89,6 +95,31 @@ func (f *fakeToggleStore) SetEnabled(_ context.Context, sourceID int64, enabled 
 	return nil
 }
 
+func (f *fakeToggleStore) IgnoreScanlatorSet(_ context.Context) (map[int64]bool, error) {
+	if f.ignErr != nil {
+		return nil, f.ignErr
+	}
+	out := make(map[int64]bool, len(f.ignore))
+	for k, v := range f.ignore {
+		if v {
+			out[k] = true
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeToggleStore) SetIgnore(_ context.Context, sourceID int64, ignore bool) error {
+	if f.ignSetErr != nil {
+		return f.ignSetErr
+	}
+	if ignore {
+		f.ignore[sourceID] = true
+	} else {
+		delete(f.ignore, sourceID)
+	}
+	return nil
+}
+
 // newTestEnv wires an Echo instance whose Handler holds fc directly (nil durable
 // topology store: db/cache/httpGet) plus an in-memory disabled-flag store — the
 // pure-proxy behaviour and the Tsundoku-side enable/disable toggle; the
@@ -98,7 +129,7 @@ func newTestEnv(t *testing.T, fc *sourceenginefake.Client) *testEnv {
 	t.Helper()
 	authSvc := auth.NewService(testSecret)
 	store := newFakeToggleStore()
-	h := handler.NewHandler(fc, nil, nil, nil, store, nil)
+	h := handler.NewHandler(fc, nil, nil, nil, store, store, nil)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -113,12 +144,13 @@ func newTestEnv(t *testing.T, fc *sourceenginefake.Client) *testEnv {
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", h.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", h.SetPreference)
 	authed.PATCH("/sources/:sourceId/enabled", h.SetSourceEnabled)
+	authed.PATCH("/sources/:sourceId/ignore-scanlator", h.SetSourceIgnoreScanlator)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
 		t.Fatalf("Issue token: %v", err)
 	}
-	return &testEnv{e: e, fake: fc, store: store, token: token}
+	return &testEnv{e: e, fake: fc, store: store, h: h, token: token}
 }
 
 func (env *testEnv) do(method, target, body string) *httptest.ResponseRecorder {

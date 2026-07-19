@@ -30,6 +30,7 @@ import (
 	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	trackersh "github.com/technobecet/tsundoku/internal/handler/trackers"
+	"github.com/technobecet/tsundoku/internal/ignorescanlator"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
@@ -124,6 +125,7 @@ import (
 //   - /api/suwayomi/extensions/:pkgName/preferences (GET)   — per-source preferences, grouped by source (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/preferences (PATCH) — write one preference by key (RequireOwner).
 //   - /api/sources/:sourceId/enabled (PATCH)                — Tsundoku-side per-language enable/disable toggle (RequireOwner).
+//   - /api/sources/:sourceId/ignore-scanlator (PATCH)       — Tsundoku-side per-source ignore-scanlator flag (RequireOwner).
 //   - /api/downloads (GET)                         — cross-library chapter activity by state (RequireOwner).
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
@@ -372,7 +374,13 @@ func registerRoutes(
 	// DisabledSource entity) and applied as a picker filter in internal/imports;
 	// it is NEVER pushed to the engine (internal/enginetopo does not read it).
 	disabledSrcSvc := disabledsource.NewService(client)
-	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get, disabledSrcSvc, settingsSvc.RetainedVersions)
+	// ignoreScanlatorSvc is the sibling Tsundoku-side per-source flag: it collapses
+	// an uploader-in-scanlator source (e.g. Hive Scans) into one [Source] provider
+	// on future adopts (see internal/ignorescanlator). Like disabledSrcSvc it is a
+	// pure Tsundoku interpretation flag, never pushed to the engine, and is also
+	// attached to the shared ingest below so adopt/attach honour it.
+	ignoreScanlatorSvc := ignorescanlator.NewService(client)
+	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get, disabledSrcSvc, ignoreScanlatorSvc, settingsSvc.RetainedVersions)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
@@ -384,6 +392,7 @@ func registerRoutes(
 	authed.GET("/suwayomi/extensions/:pkgName/preferences", extensionsH.Preferences)
 	authed.PATCH("/suwayomi/extensions/:pkgName/preferences", extensionsH.SetPreference)
 	authed.PATCH("/sources/:sourceId/enabled", extensionsH.SetSourceEnabled)
+	authed.PATCH("/sources/:sourceId/ignore-scanlator", extensionsH.SetSourceIgnoreScanlator)
 
 	// Category CRUD API. The service owns the Ent client + storage root so a
 	// rename moves the on-disk category folder in lockstep with the DB.
@@ -416,7 +425,14 @@ func registerRoutes(
 	// (Task C2 — the SAME instance the imports coverage paths use, so a
 	// coverage→configure→adopt session fetches a source-manga once). imports uses
 	// NewServiceWithCaches so its coverage + Search paths are cached too (C1/C2).
-	ingestSvc := ingest.NewIngestWithGate(engineClient, client, chapterCache, gate)
+	// WithIgnoreScanlator: the adopt/attach ingest honours the per-source
+	// ignore-scanlator flag (collapses a flagged source to a single [Source]
+	// provider — see ingest.Ingest.EffectiveScanlator). Deliberately attached to
+	// THIS ingest only; refresh's own ingest (main.go) does not get it, so a
+	// flagged source's already-adopted per-uploader rows keep refreshing untouched
+	// (Slice A is apply-forward only).
+	ingestSvc := ingest.NewIngestWithGate(engineClient, client, chapterCache, gate).
+		WithIgnoreScanlator(ignoreScanlatorSvc)
 	importsSvc := imports.NewServiceWithCaches(
 		engineClient, ingestSvc, client, cfg.Storage.Folder, cfg.Engine.SearchTimeout, metricsSvc, chapterCache,
 		// Search-cache TTL read per Get from the settings overlay (jobs.search_cache_ttl,
@@ -443,6 +459,11 @@ func registerRoutes(
 	librarySvc := library.NewService(client, ingestSvc, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub).
 		WithAutoIdentifier(metaSvc).   // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
 		WithSourceLister(engineClient) // membership check for AddProvider/MatchDiskProvider — true 404 only on a real miss (not a cooled-down source)
+	// Wire the Slice-B ignore-scanlator on-enable migration into the extensions
+	// handler now that the library service exists (it owns the provider-merge +
+	// CBZ-relabel machinery). extensionsH was constructed earlier; its route
+	// closures capture the pointer, so this setter reaches SetSourceIgnoreScanlator.
+	extensionsH.WithScanlatorCollapser(librarySvc)
 	libraryH := libraryh.NewHandler(librarySvc)
 	authed.POST("/library/scan", libraryH.Scan)
 	authed.GET("/library/imports", libraryH.ListImports)

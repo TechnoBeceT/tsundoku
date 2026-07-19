@@ -33,6 +33,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,92 @@ type Ingest struct {
 	db     *ent.Client
 	cache  *ChapterCache
 	gate   *sourcegate.Service
+	// ignoreScanlator is the TSUNDOKU-SIDE per-source "ignore scanlator" flag
+	// store (internal/ignorescanlator). When a source is flagged, the adopt/
+	// attach entries (AddSeries/AddSeriesUngated) force that source's scanlator
+	// to "" so it collapses to a single [Source] provider — see
+	// EffectiveScanlator. Nil ⇒ nothing is flagged (today's split-by-scanlator
+	// behaviour); attach it with WithIgnoreScanlator.
+	ignoreScanlator IgnoreScanlatorStore
+}
+
+// IgnoreScanlatorStore is the narrow read surface Ingest needs to know which
+// sources the owner has flagged "ignore scanlator" (uploader-in-scanlator
+// sources — see internal/ignorescanlator). It returns the set of flagged
+// engine-host source ids (a row's presence = flagged). *ignorescanlator.Service
+// satisfies it; a nil store means "nothing is flagged" — every source keeps its
+// per-scanlator split (today's behaviour).
+type IgnoreScanlatorStore interface {
+	IgnoreScanlatorSet(ctx context.Context) (map[int64]bool, error)
+}
+
+// WithIgnoreScanlator attaches the per-source ignore-scanlator flag store so the
+// adopt/attach entries collapse a flagged source's providers to a single
+// [Source] row (see EffectiveScanlator). It returns the receiver for chaining
+// off a NewIngest/NewIngestWithGate call. A nil store is tolerated (nothing
+// flagged). Attach it only to the adopt/attach-facing ingest (imports/library);
+// the refresh sweep's ingest deliberately does NOT get it — see
+// EffectiveScanlator's doc for why refresh must pass the STORED scanlator.
+func (i *Ingest) WithIgnoreScanlator(store IgnoreScanlatorStore) *Ingest {
+	i.ignoreScanlator = store
+	return i
+}
+
+// IgnoredSources returns the set of source ids flagged ignore-scanlator, read in
+// ONE query. BEST-EFFORT: a nil receiver, a nil store, or a store read failure
+// all yield an empty (non-nil) map (never a panic, never an error) — the flag is
+// a display/organisation preference, not a correctness rule, and must never break
+// an ingest or a coverage read. It is the single read behind IgnoreScanlator and
+// EffectiveScanlator, and lets a BATCH caller (imports.Adopt, which normalises
+// many providers at once) resolve the flag with one query instead of one per
+// provider (no N+1).
+func (i *Ingest) IgnoredSources(ctx context.Context) map[int64]bool {
+	if i == nil || i.ignoreScanlator == nil {
+		return map[int64]bool{}
+	}
+	set, err := i.ignoreScanlator.IgnoreScanlatorSet(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "ingest: ignore-scanlator flag read failed; keeping per-scanlator split", "err", err)
+		return map[int64]bool{}
+	}
+	return set
+}
+
+// IgnoreScanlator reports whether the owner has flagged sourceID
+// "ignore scanlator" (an uploader-in-scanlator source whose per-uploader
+// providers should collapse to one [Source] provider). Best-effort + nil-safe
+// via IgnoredSources — see its doc comment.
+func (i *Ingest) IgnoreScanlator(ctx context.Context, sourceID int64) bool {
+	return i.IgnoredSources(ctx)[sourceID]
+}
+
+// EffectiveScanlator returns the scanlator ingest will actually key a
+// SeriesProvider on for a (sourceID, requested-scanlator) pair: "" when the
+// source is flagged ignore-scanlator (so it collapses to a single [Source]
+// provider), else the requested value unchanged.
+//
+// It is the SINGLE authority for the flag's effect on scanlator, so a caller
+// that does its OWN SeriesProvider lookups by scanlator AFTER an ingest —
+// imports.Adopt.setImportances, library.AddProvider — MUST resolve its query key
+// through this, otherwise it would look up the (source, "Admin") row ingest
+// never created and get a spurious "not found". Best-effort (see
+// IgnoreScanlator) and nil-receiver-safe.
+//
+// APPLY-FORWARD ONLY: this is invoked from the adopt/attach entries
+// (AddSeries/AddSeriesUngated), NEVER from the refresh entry
+// (AddSeriesWithChapters). The sweep must pass each SeriesProvider's STORED
+// scanlator so an already-adopted per-uploader row keeps refreshing its own
+// row and is left untouched (Slice A). A source flagged today therefore only
+// affects NEW providers — created here with "" — while pre-flag per-uploader
+// rows refresh unchanged.
+func (i *Ingest) EffectiveScanlator(ctx context.Context, sourceID int64, scanlator string) string {
+	if scanlator == "" {
+		return ""
+	}
+	if i.IgnoreScanlator(ctx, sourceID) {
+		return ""
+	}
+	return scanlator
 }
 
 // NewIngest constructs an Ingest backed by the given engine-host client and ent
@@ -151,6 +238,11 @@ func (i *Ingest) AddSeries(
 		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeries: fetch chapters for source %d url %q: %w", sourceID, url, err)
 	}
 
+	// Ignore-scanlator collapse: a flagged source's provider is keyed with
+	// scanlator="" so its per-uploader chapters merge into one [Source] provider
+	// (see EffectiveScanlator). Applied here (the adopt/attach entry), never in
+	// the shared refresh body — Slice A is apply-forward only.
+	scanlator = i.EffectiveScanlator(ctx, sourceID, scanlator)
 	return i.addSeriesWithChapters(ctx, sourceID, url, title, scanlator, providerName, swChapters)
 }
 
@@ -186,6 +278,11 @@ func (i *Ingest) AddSeriesUngated(
 		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeriesUngated: fetch chapters for source %d url %q: %w", sourceID, url, err)
 	}
 
+	// Ignore-scanlator collapse — same as AddSeries (see EffectiveScanlator).
+	// This is the owner attach path (library.AddProvider); AddSeriesWithChapters
+	// (refresh) deliberately keeps the STORED scanlator, so pre-flag per-uploader
+	// rows are never migrated (Slice A).
+	scanlator = i.EffectiveScanlator(ctx, sourceID, scanlator)
 	return i.addSeriesWithChapters(ctx, sourceID, url, title, scanlator, providerName, swChapters)
 }
 

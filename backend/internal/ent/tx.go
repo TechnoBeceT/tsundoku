@@ -24,6 +24,8 @@ type Tx struct {
 	HarvestedExtension *HarvestedExtensionClient
 	// HarvestedRepo is the client for interacting with the HarvestedRepo builders.
 	HarvestedRepo *HarvestedRepoClient
+	// IgnoreScanlatorSource is the client for interacting with the IgnoreScanlatorSource builders.
+	IgnoreScanlatorSource *IgnoreScanlatorSourceClient
 	// ImportEntry is the client for interacting with the ImportEntry builders.
 	ImportEntry *ImportEntryClient
 	// LatestSeries is the client for interacting with the LatestSeries builders.
@@ -199,6 +201,7 @@ func (tx *Tx) init() {
 	tx.EtagCache = NewEtagCacheClient(tx.config)
 	tx.HarvestedExtension = NewHarvestedExtensionClient(tx.config)
 	tx.HarvestedRepo = NewHarvestedRepoClient(tx.config)
+	tx.IgnoreScanlatorSource = NewIgnoreScanlatorSourceClient(tx.config)
 	tx.ImportEntry = NewImportEntryClient(tx.config)
 	tx.LatestSeries = NewLatestSeriesClient(tx.config)
 	tx.NetworkEndpoint = NewNetworkEndpointClient(tx.config)

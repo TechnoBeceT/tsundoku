@@ -172,9 +172,13 @@ const {
   saveError: prefsSaveError,
   enablingKey: prefsEnablingKey,
   enableError: prefsEnableError,
+  ignoringKey: prefsIgnoringKey,
+  ignoreError: prefsIgnoreError,
+  migrationMessage: prefsMigrationMessage,
   load: loadPreferences,
   setPreference,
   setEnabled,
+  setIgnoreScanlator,
   reset: resetPreferences,
 } = useSourcePreferences()
 
@@ -297,8 +301,12 @@ function closePreferences() {
     :save-error="prefsSaveError"
     :enabling-key="prefsEnablingKey"
     :enable-error="prefsEnableError"
+    :ignoring-key="prefsIgnoringKey"
+    :ignore-error="prefsIgnoreError"
+    :migration-message="prefsMigrationMessage"
     @change="setPreference($event.sourceId, $event.key, $event.value)"
     @toggle-enabled="setEnabled($event.sourceId, $event.enabled)"
+    @toggle-ignore-scanlator="setIgnoreScanlator($event.sourceId, $event.ignoreScanlator)"
   />
 </template>
 

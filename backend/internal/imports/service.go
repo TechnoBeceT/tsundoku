@@ -776,6 +776,14 @@ func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url stri
 		return SourceBreakdownDTO{}, err
 	}
 
+	// When the source is flagged ignore-scanlator (an uploader-in-scanlator
+	// source), EVERY chapter is attributed to the source itself — the scanlator
+	// field is noise, so the breakdown returns ONE row keyed by src.Name. The FE
+	// then shows a single [Source] row and adopts it with scanlator="" (matching
+	// what ingest forces). Resolved through the ingest authority (the single home
+	// of the collapse rule); best-effort (a read failure leaves the split intact).
+	ignoreScanlator := s.ingest.IgnoreScanlator(ctx, src.ID)
+
 	type group struct {
 		numbers []float64
 		count   int
@@ -784,7 +792,7 @@ func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url stri
 	order := make([]string, 0)
 	for _, ch := range chapters {
 		key := ch.Scanlator
-		if key == "" {
+		if ignoreScanlator || key == "" {
 			key = src.Name
 		}
 		g, ok := groups[key]
@@ -872,6 +880,12 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 		return uuid.UUID{}, err
 	}
 
+	// 1a. Collapse the scanlator of any ignore-scanlator-flagged source to "" so
+	//     it adopts as a single [Source] provider — AND so the post-ingest
+	//     importance lookup (setImportances) keys the SAME row ingest creates.
+	//     Resolved through the ingest authority so the two stay in lockstep.
+	req.Providers = s.normalizeIgnoredScanlators(ctx, req.Providers)
+
 	// 2. Ingest each provider under the shared canonical title.
 	if err := s.ingestProviders(ctx, req); err != nil {
 		return uuid.UUID{}, err
@@ -908,6 +922,42 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (uuid.UUID, error
 	s.fireAutoIdentify(ctx, series.ID)
 
 	return series.ID, nil
+}
+
+// normalizeIgnoredScanlators returns a copy of providers with each
+// ignore-scanlator-flagged source's Scanlator forced to "" (mirrors
+// ingest.Ingest.EffectiveScanlator's rule), so a flagged source collapses to one
+// [Source] provider AND the post-ingest importance lookup (setImportances) keys
+// the SAME (series, provider, "") row ingest creates — matching on a stale
+// "Admin" scanlator would otherwise miss the collapsed row. The flag SET is read
+// ONCE up front (ingest.Ingest.IgnoredSources) and applied in memory, so a batch
+// of N providers costs one query, not N (no N+1 — mirrors SourceBreakdown's
+// single flag read before its loop). A source id that does not parse is left
+// unchanged (ingestProviders surfaces the parse error with context); best-effort
+// — a flag-store read failure yields an empty set, keeping every scanlator.
+//
+// SAME-SOURCE MULTI-UPLOADER: two providers for the same flagged source under
+// different uploader scanlators (e.g. {src,"Admin"} + {src,"Aero"}) both collapse
+// to (src,"") and therefore fold into ONE SeriesProvider row — the last one's
+// importance wins (setImportances updates the same row twice). This is the
+// intended behaviour for a flagged source: it has exactly one real provider.
+func (s *Service) normalizeIgnoredScanlators(ctx context.Context, providers []AdoptProvider) []AdoptProvider {
+	ignored := s.ingest.IgnoredSources(ctx)
+	out := make([]AdoptProvider, len(providers))
+	for idx, p := range providers {
+		out[idx] = p
+		if p.Scanlator == "" {
+			continue
+		}
+		sourceID, err := strconv.ParseInt(p.Source, 10, 64)
+		if err != nil {
+			continue
+		}
+		if ignored[sourceID] {
+			out[idx].Scanlator = ""
+		}
+	}
+	return out
 }
 
 // validateCategory returns nil when cat is empty (meaning "keep the configured

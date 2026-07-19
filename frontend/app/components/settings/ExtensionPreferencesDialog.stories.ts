@@ -25,6 +25,8 @@ const meta = {
     saveError: null,
     enablingKey: null,
     enableError: null,
+    ignoringKey: null,
+    ignoreError: null,
   },
 } satisfies Meta<typeof ExtensionPreferencesDialog>
 
@@ -53,6 +55,56 @@ export const EnableToggling: Story = {
 /** An enable/disable write failed; the error banners at the top of the dialog. */
 export const EnableError: Story = {
   args: { enableError: 'Failed to update source' },
+}
+
+/**
+ * The EN source flagged ignore-scanlator (its per-source Toggle is on) — future
+ * adopts collapse its per-uploader providers into one [Source] provider.
+ */
+export const IgnoreScanlatorOn: Story = {
+  args: {
+    groups: preferenceGroups.map(g => (g.sourceId === 'src-en' ? { ...g, ignoreScanlator: true } : g)),
+  },
+}
+
+/** The EN source's ignore-scanlator Toggle write is in flight (spinner + disabled). */
+export const IgnoreScanlatorToggling: Story = {
+  args: { ignoringKey: 'src-en' },
+}
+
+/** An ignore-scanlator write failed; the error banners at the top of the dialog. */
+export const IgnoreScanlatorError: Story = {
+  args: { ignoreError: 'Failed to update source' },
+}
+
+/**
+ * The on-enable collapse migration ran: flipping the flag ON folded already-
+ * adopted per-uploader providers into one [Source] provider and relabeled their
+ * files — surfaced as a success banner so the destructive migration is not silent.
+ */
+export const IgnoreScanlatorMigrated: Story = {
+  args: {
+    groups: preferenceGroups.map(g => (g.sourceId === 'src-en' ? { ...g, ignoreScanlator: true } : g)),
+    migrationMessage: {
+      message: 'Merged 4 per-uploader providers across 3 series and relabeled their files.',
+      tone: 'success',
+    },
+  },
+}
+
+/**
+ * The on-enable migration FAILED for every affected series — nothing was
+ * relabeled. A warning banner makes the total failure loud (not a silent success)
+ * so the owner knows to check the logs and retry.
+ */
+export const IgnoreScanlatorMigrationFailed: Story = {
+  args: {
+    groups: preferenceGroups.map(g => (g.sourceId === 'src-en' ? { ...g, ignoreScanlator: true } : g)),
+    migrationMessage: {
+      message: 'Couldn\'t collapse 3 series — nothing was relabeled. Check the logs and try again.',
+      tone: 'warning',
+    },
+  },
 }
 
 /** The initial load is in flight. */

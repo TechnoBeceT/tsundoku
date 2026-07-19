@@ -984,6 +984,32 @@ export interface paths {
         patch: operations["setSourceEnabled"];
         trace?: never;
     };
+    "/api/sources/{sourceId}/ignore-scanlator": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Flag or unflag a source as ignore-scanlator
+         * @description Sets a source's TSUNDOKU-SIDE ignore-scanlator flag (the Configure
+         *     dialog's per-source toggle). Flagging ON collapses the source's
+         *     per-uploader providers into one [Source] provider on FUTURE adopts (an
+         *     uploader-in-scanlator source, e.g. Hive Scans). APPLY-FORWARD ONLY: it
+         *     never migrates an already-adopted per-uploader series or its files, and
+         *     is NEVER pushed to the engine (a Tsundoku-only interpretation flag).
+         *     Applies the write then re-reads the authoritative state.
+         */
+        patch: operations["setSourceIgnoreScanlator"];
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -3400,6 +3426,13 @@ export interface components {
              *     the owner has disabled this source; the FE hides its preferences.
              */
             enabled: boolean;
+            /**
+             * @description The per-source ignore-scanlator flag (Tsundoku-side). true collapses
+             *     this source's per-uploader providers into one [Source] provider on
+             *     future adopts (an uploader-in-scanlator source, e.g. Hive Scans). The
+             *     FE seeds its per-source toggle from this.
+             */
+            ignoreScanlator: boolean;
             /** @description This source's configurable preferences, in array order. */
             preferences: components["schemas"]["SourcePreference"][];
         };
@@ -3422,6 +3455,47 @@ export interface components {
         SourceEnabledUpdate: {
             /** @description The new per-language enable/disable state. */
             enabled: boolean;
+        };
+        /**
+         * @description The authoritative per-source ignore-scanlator state after a PATCH
+         *     /api/sources/{sourceId}/ignore-scanlator write (re-read from Tsundoku's
+         *     ignore-scanlator store, never the request echo).
+         */
+        SourceIgnoreScanlator: {
+            /** @description The engine host source id (stringified). */
+            sourceId: string;
+            /** @description The ignore-scanlator flag state as re-read after the write. */
+            ignoreScanlator: boolean;
+            /**
+             * @description The Slice-B on-enable migration summary — present ONLY when the flag
+             *     was flipped ON (it folds already-adopted per-uploader providers into
+             *     one [Source] provider and relabels their CBZs). Absent when flipping
+             *     OFF (one-way — no un-merge).
+             */
+            migration?: components["schemas"]["ScanlatorMigration"];
+        };
+        /**
+         * @description Summary of the ignore-scanlator on-enable collapse migration — how many
+         *     already-adopted series had their per-uploader providers folded into one
+         *     [Source] provider (with CBZs relabeled), and how many were skipped after
+         *     an error. Mirrors the dedup-providers sweep summary shape.
+         */
+        ScanlatorMigration: {
+            /** @description How many series had at least one per-uploader provider folded. */
+            seriesProcessed: number;
+            /** @description Total per-uploader provider rows folded away across all series. */
+            merged: number;
+            /** @description How many series errored during the sweep and were skipped. */
+            skipped: number;
+        };
+        /**
+         * @description The PATCH /api/sources/{sourceId}/ignore-scanlator body — the new
+         *     per-source ignore-scanlator flag. `ignoreScanlator` is required (an
+         *     absent field is a 400, never a silent un-flag).
+         */
+        SourceIgnoreScanlatorUpdate: {
+            /** @description The new per-source ignore-scanlator flag state. */
+            ignoreScanlator: boolean;
         };
         /** @description An extension's per-source preferences, grouped by the (per-language) source they belong to. */
         SourcePreferencesBySource: {
@@ -6140,6 +6214,60 @@ export interface operations {
                 };
             };
             /** @description The disabled-source store read/write failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setSourceIgnoreScanlator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Engine-host source ID, stringified decimal int64. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceIgnoreScanlatorUpdate"];
+            };
+        };
+        responses: {
+            /** @description The authoritative post-write ignore-scanlator state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceIgnoreScanlator"];
+                };
+            };
+            /** @description Malformed sourceId, or a missing `ignoreScanlator` field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The ignore-scanlator store read/write failed. */
             502: {
                 headers: {
                     [name: string]: unknown;

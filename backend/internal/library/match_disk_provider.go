@@ -109,6 +109,18 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 		return series.SeriesDetailDTO{}, ErrNotADiskProvider
 	}
 
+	// Collapse the scanlator to "" when the source is flagged ignore-scanlator, so
+	// attachRealSource's ingest (EffectiveScanlator) AND its OWN post-ingest lookup
+	// (SeriesProvider by (source, scanlator)) agree on the single [Source] provider
+	// key — matching a stale per-uploader scanlator would otherwise query a row
+	// ingest never created ("ent: not found") and orphan the collapsed "" row. This
+	// is the third sibling of the ingest-then-lookup-by-scanlator pattern already
+	// fixed in AddProvider + imports.Adopt. A non-numeric source is left unchanged —
+	// resolveAndIngestSource surfaces the real 404.
+	if sourceID, perr := parseSourceID(source); perr == nil {
+		scanlator = s.ingest.EffectiveScanlator(ctx, sourceID, scanlator)
+	}
+
 	newSP, err := s.attachRealSource(ctx, seriesID, row.Title, source, url, scanlator)
 	if err != nil {
 		return series.SeriesDetailDTO{}, err

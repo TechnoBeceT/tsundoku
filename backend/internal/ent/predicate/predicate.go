@@ -24,6 +24,9 @@ type HarvestedExtension func(*sql.Selector)
 // HarvestedRepo is the predicate function for harvestedrepo builders.
 type HarvestedRepo func(*sql.Selector)
 
+// IgnoreScanlatorSource is the predicate function for ignorescanlatorsource builders.
+type IgnoreScanlatorSource func(*sql.Selector)
+
 // ImportEntry is the predicate function for importentry builders.
 type ImportEntry func(*sql.Selector)
 

@@ -122,6 +122,24 @@ func validateSourceEnabledUpdate(req SourceEnabledUpdateRequest) (bool, error) {
 	return *req.Enabled, nil
 }
 
+// SourceIgnoreScanlatorUpdateRequest is the PATCH
+// /api/sources/:sourceId/ignore-scanlator body. IgnoreScanlator is a pointer so
+// a missing key is rejected rather than silently defaulting to false (which
+// would look like an owner-initiated clear).
+type SourceIgnoreScanlatorUpdateRequest struct {
+	// IgnoreScanlator is the new per-source ignore-scanlator flag state.
+	IgnoreScanlator *bool `json:"ignoreScanlator"`
+}
+
+// validateSourceIgnoreScanlatorUpdate fail-closes the ignore-scanlator write
+// body: ignoreScanlator must be present (non-nil). It returns the requested state.
+func validateSourceIgnoreScanlatorUpdate(req SourceIgnoreScanlatorUpdateRequest) (bool, error) {
+	if req.IgnoreScanlator == nil {
+		return false, httperr.BadRequest("ignoreScanlator required")
+	}
+	return *req.IgnoreScanlator, nil
+}
+
 // coercePreferenceValue decodes the raw request value into the correctly-typed
 // Go value for the variant at the target key: a bool for a checkbox/switch, a
 // string for a list/edittext, a string array for a multi-select — the

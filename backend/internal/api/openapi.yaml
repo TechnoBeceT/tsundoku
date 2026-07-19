@@ -2069,6 +2069,7 @@ components:
         - sourceName
         - lang
         - enabled
+        - ignoreScanlator
         - preferences
       properties:
         sourceId:
@@ -2085,6 +2086,13 @@ components:
           description: |
             The per-language enable/disable state (Tsundoku-side). false when
             the owner has disabled this source; the FE hides its preferences.
+        ignoreScanlator:
+          type: boolean
+          description: |
+            The per-source ignore-scanlator flag (Tsundoku-side). true collapses
+            this source's per-uploader providers into one [Source] provider on
+            future adopts (an uploader-in-scanlator source, e.g. Hive Scans). The
+            FE seeds its per-source toggle from this.
         preferences:
           type: array
           description: This source's configurable preferences, in array order.
@@ -2120,6 +2128,65 @@ components:
         enabled:
           type: boolean
           description: The new per-language enable/disable state.
+
+    SourceIgnoreScanlator:
+      type: object
+      description: |
+        The authoritative per-source ignore-scanlator state after a PATCH
+        /api/sources/{sourceId}/ignore-scanlator write (re-read from Tsundoku's
+        ignore-scanlator store, never the request echo).
+      required:
+        - sourceId
+        - ignoreScanlator
+      properties:
+        sourceId:
+          type: string
+          description: The engine host source id (stringified).
+        ignoreScanlator:
+          type: boolean
+          description: The ignore-scanlator flag state as re-read after the write.
+        migration:
+          $ref: "#/components/schemas/ScanlatorMigration"
+          description: |
+            The Slice-B on-enable migration summary — present ONLY when the flag
+            was flipped ON (it folds already-adopted per-uploader providers into
+            one [Source] provider and relabels their CBZs). Absent when flipping
+            OFF (one-way — no un-merge).
+
+    ScanlatorMigration:
+      type: object
+      description: |
+        Summary of the ignore-scanlator on-enable collapse migration — how many
+        already-adopted series had their per-uploader providers folded into one
+        [Source] provider (with CBZs relabeled), and how many were skipped after
+        an error. Mirrors the dedup-providers sweep summary shape.
+      required:
+        - seriesProcessed
+        - merged
+        - skipped
+      properties:
+        seriesProcessed:
+          type: integer
+          description: How many series had at least one per-uploader provider folded.
+        merged:
+          type: integer
+          description: Total per-uploader provider rows folded away across all series.
+        skipped:
+          type: integer
+          description: How many series errored during the sweep and were skipped.
+
+    SourceIgnoreScanlatorUpdate:
+      type: object
+      description: |
+        The PATCH /api/sources/{sourceId}/ignore-scanlator body — the new
+        per-source ignore-scanlator flag. `ignoreScanlator` is required (an
+        absent field is a 400, never a silent un-flag).
+      required:
+        - ignoreScanlator
+      properties:
+        ignoreScanlator:
+          type: boolean
+          description: The new per-source ignore-scanlator flag state.
 
     SourcePreferencesBySource:
       type: object
@@ -5257,6 +5324,61 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: The disabled-source store read/write failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/ignore-scanlator:
+    patch:
+      operationId: setSourceIgnoreScanlator
+      summary: Flag or unflag a source as ignore-scanlator
+      description: |
+        Sets a source's TSUNDOKU-SIDE ignore-scanlator flag (the Configure
+        dialog's per-source toggle). Flagging ON collapses the source's
+        per-uploader providers into one [Source] provider on FUTURE adopts (an
+        uploader-in-scanlator source, e.g. Hive Scans). APPLY-FORWARD ONLY: it
+        never migrates an already-adopted per-uploader series or its files, and
+        is NEVER pushed to the engine (a Tsundoku-only interpretation flag).
+        Applies the write then re-reads the authoritative state.
+      tags:
+        - extensions
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          description: Engine-host source ID, stringified decimal int64.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceIgnoreScanlatorUpdate"
+      responses:
+        "200":
+          description: The authoritative post-write ignore-scanlator state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceIgnoreScanlator"
+        "400":
+          description: Malformed sourceId, or a missing `ignoreScanlator` field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The ignore-scanlator store read/write failed.
           content:
             application/json:
               schema:

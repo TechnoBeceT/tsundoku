@@ -12,6 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
+	"github.com/technobecet/tsundoku/internal/ent/ignorescanlatorsource"
 	"github.com/technobecet/tsundoku/internal/ent/importentry"
 	"github.com/technobecet/tsundoku/internal/ent/latestseries"
 	"github.com/technobecet/tsundoku/internal/ent/networkendpoint"
@@ -178,6 +179,16 @@ func init() {
 	harvestedrepoDescID := harvestedrepoFields[0].Descriptor()
 	// harvestedrepo.DefaultID holds the default value on creation for the id field.
 	harvestedrepo.DefaultID = harvestedrepoDescID.Default.(func() uuid.UUID)
+	ignorescanlatorsourceFields := schema.IgnoreScanlatorSource{}.Fields()
+	_ = ignorescanlatorsourceFields
+	// ignorescanlatorsourceDescCreatedAt is the schema descriptor for created_at field.
+	ignorescanlatorsourceDescCreatedAt := ignorescanlatorsourceFields[2].Descriptor()
+	// ignorescanlatorsource.DefaultCreatedAt holds the default value on creation for the created_at field.
+	ignorescanlatorsource.DefaultCreatedAt = ignorescanlatorsourceDescCreatedAt.Default.(func() time.Time)
+	// ignorescanlatorsourceDescID is the schema descriptor for id field.
+	ignorescanlatorsourceDescID := ignorescanlatorsourceFields[0].Descriptor()
+	// ignorescanlatorsource.DefaultID holds the default value on creation for the id field.
+	ignorescanlatorsource.DefaultID = ignorescanlatorsourceDescID.Default.(func() uuid.UUID)
 	importentryFields := schema.ImportEntry{}.Fields()
 	_ = importentryFields
 	// importentryDescTitle is the schema descriptor for title field.

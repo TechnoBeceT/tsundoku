@@ -70,6 +70,16 @@ func parseSourceID(source string) (int64, error) {
 // the ingest call); url is the source-relative manga URL (P2 Suwayomi-removal,
 // slice 3b — this replaces the retired mangaID int parameter).
 func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source string, url string, importance int, scanlator string) (series.SeriesDetailDTO, error) {
+	// Collapse the scanlator to "" when the source is flagged ignore-scanlator, so
+	// the whole attach — the duplicate guard, the ingest, and the post-ingest
+	// SeriesProvider lookup — agrees on a single [Source] provider key (see
+	// ingest.Ingest.EffectiveScanlator; matching a stale per-uploader scanlator
+	// would otherwise miss the collapsed row ingest creates). A non-numeric source
+	// is left unchanged — resolveAndIngestSource surfaces the real 404.
+	if sourceID, perr := parseSourceID(source); perr == nil {
+		scanlator = s.ingest.EffectiveScanlator(ctx, sourceID, scanlator)
+	}
+
 	// WithCategory so a merge-at-attach fold (mergeDiskIntoLive → relabelOverlap)
 	// can resolve the on-disk series folder <storage>/<Category>/<Title>/.
 	ser, err := s.db.Series.Query().

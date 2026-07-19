@@ -18,6 +18,13 @@
  * the authoritative response rather than optimistically flipping the local
  * flag (§16).
  *
+ * It likewise owns the per-source ignore-scanlator toggle: PATCH
+ * /api/sources/{sourceId}/ignore-scanlator flags an uploader-in-scanlator source
+ * (e.g. Hive Scans) so future adopts collapse its per-uploader providers into one
+ * [Source] provider. Also TSUNDOKU-SIDE and apply-forward only (it never migrates
+ * an already-adopted series); it reseeds the group's `ignoreScanlator` from the
+ * authoritative response (§16).
+ *
  * Public surface:
  *   groups        — the sources + their preferences (reactive)
  *   pending       — the initial load is in flight
@@ -26,9 +33,12 @@
  *   saveError     — a write failure message (or null)
  *   enablingKey   — the sourceId whose enable/disable toggle is being written (or null)
  *   enableError   — an enable/disable write failure message (or null)
+ *   ignoringKey   — the sourceId whose ignore-scanlator toggle is being written (or null)
+ *   ignoreError   — an ignore-scanlator write failure message (or null)
  *   load(pkg)     — fetch an extension's preferences (opens the dialog session)
  *   setPreference(sourceId, key, value) — write one preference (§16)
  *   setEnabled(sourceId, enabled) — toggle a source's enable/disable state (§16)
+ *   setIgnoreScanlator(sourceId, ignoreScanlator) — toggle a source's ignore-scanlator flag (§16)
  *   reset()       — clear all state (on dialog close)
  */
 import { ref } from 'vue'
@@ -37,6 +47,7 @@ import type { components } from '~/utils/api/schema.d.ts'
 
 type Group = components['schemas']['SourcePreferencesGroup']
 type Preference = components['schemas']['SourcePreference']
+type ScanlatorMigration = components['schemas']['ScanlatorMigration']
 
 /** The value a write can carry — a boolean, a string, or an array of strings. */
 export type SourcePreferenceValue = boolean | string | string[]
@@ -44,6 +55,38 @@ export type SourcePreferenceValue = boolean | string | string[]
 /** The busy-key for a preference being written: `${sourceId}:${key}`. */
 export function preferenceKey(sourceId: string, key: string): string {
   return `${sourceId}:${key}`
+}
+
+/** A migration-result banner: the message plus a tone that drives its styling. */
+export interface MigrationBanner {
+  message: string
+  /** `success` = at least one series collapsed; `warning` = nothing collapsed. */
+  tone: 'success' | 'warning'
+}
+
+/**
+ * Builds the ignore-scanlator on-enable migration banner so the destructive
+ * migration is never silent (§16):
+ *   - merged > 0 → a SUCCESS banner ("Merged N … across M series …"), with a
+ *     skipped suffix when some series could not be migrated.
+ *   - merged === 0 && skipped > 0 → a WARNING banner: EVERY affected series
+ *     failed, so NOTHING was relabeled — the owner must not think it worked.
+ *   - merged === 0 && skipped === 0 → null (nothing to migrate, or flag OFF).
+ */
+export function formatMigration(migration: ScanlatorMigration | undefined): MigrationBanner | null {
+  if (!migration || (migration.merged === 0 && migration.skipped === 0)) return null
+  if (migration.merged === 0) {
+    return {
+      message: `Couldn't collapse ${migration.skipped} series — nothing was relabeled. Check the logs and try again.`,
+      tone: 'warning',
+    }
+  }
+  const providers = migration.merged === 1 ? 'provider' : 'providers'
+  let message = `Merged ${migration.merged} per-uploader ${providers} across ${migration.seriesProcessed} series and relabeled their files.`
+  if (migration.skipped > 0) {
+    message += ` ${migration.skipped} series could not be migrated and were skipped — check the logs and try again.`
+  }
+  return { message, tone: 'success' }
 }
 
 export function useSourcePreferences() {
@@ -54,6 +97,9 @@ export function useSourcePreferences() {
   const saveError = ref<string | null>(null)
   const enablingKey = ref<string | null>(null)
   const enableError = ref<string | null>(null)
+  const ignoringKey = ref<string | null>(null)
+  const ignoreError = ref<string | null>(null)
+  const migrationMessage = ref<MigrationBanner | null>(null)
 
   // The pkgName of the currently-loaded extension (the PATCH path param).
   const pkgName = ref('')
@@ -141,6 +187,37 @@ export function useSourcePreferences() {
     }
   }
 
+  /**
+   * Toggles a source's ignore-scanlator flag. Drives ignoringKey (the toggle's
+   * spinner) and surfaces any failure in ignoreError (§16). On success applies
+   * the RE-READ flag from the response, never the optimistic request value. When
+   * flipping ON, the response also carries the Slice-B migration summary (how many
+   * already-adopted series were collapsed) — surfaced in migrationMessage so the
+   * owner sees that existing files were relabeled, not just future adopts.
+   */
+  async function setIgnoreScanlator(sourceId: string, ignoreScanlator: boolean): Promise<void> {
+    ignoringKey.value = sourceId
+    ignoreError.value = null
+    migrationMessage.value = null
+    try {
+      const res = await apiClient.PATCH('/api/sources/{sourceId}/ignore-scanlator', {
+        params: { path: { sourceId } },
+        body: { ignoreScanlator },
+      })
+      if (res.error || !res.data) throw new Error(res.error?.message ?? 'Failed to update source')
+      const authoritative = res.data.ignoreScanlator
+      groups.value = groups.value.map(g =>
+        g.sourceId === sourceId ? { ...g, ignoreScanlator: authoritative } : g,
+      )
+      migrationMessage.value = formatMigration(res.data.migration)
+      ignoringKey.value = null
+    }
+    catch (e) {
+      ignoreError.value = e instanceof Error ? e.message : 'Failed to update source'
+      ignoringKey.value = null
+    }
+  }
+
   /** Clears all state — call when the dialog closes to bound the session. */
   function reset(): void {
     groups.value = []
@@ -149,6 +226,9 @@ export function useSourcePreferences() {
     savingKey.value = null
     enablingKey.value = null
     enableError.value = null
+    ignoringKey.value = null
+    ignoreError.value = null
+    migrationMessage.value = null
     pkgName.value = ''
   }
 
@@ -160,9 +240,13 @@ export function useSourcePreferences() {
     saveError,
     enablingKey,
     enableError,
+    ignoringKey,
+    ignoreError,
+    migrationMessage,
     load,
     setPreference,
     setEnabled,
+    setIgnoreScanlator,
     reset,
   }
 }

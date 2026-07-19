@@ -58,6 +58,12 @@ type SourcePreferencesGroupDTO struct {
 	// inverse of a DisabledSource row). Defaults to true when no disabled-flag
 	// store is wired.
 	Enabled bool `json:"enabled"`
+	// IgnoreScanlator is the per-source "ignore scanlator" flag (Tsundoku-side;
+	// presence of an IgnoreScanlatorSource row). true collapses this source's
+	// per-uploader providers into one [Source] provider on future adopts (an
+	// uploader-in-scanlator source, e.g. Hive Scans). Defaults to false when no
+	// ignore-scanlator store is wired. The FE seeds its per-source toggle from it.
+	IgnoreScanlator bool `json:"ignoreScanlator"`
 	// Preferences are this source's configurable preferences, in array order.
 	Preferences []SourcePreferenceDTO `json:"preferences"`
 }
@@ -70,6 +76,36 @@ type SourceEnabledDTO struct {
 	SourceID string `json:"sourceId"`
 	// Enabled is the enable/disable state as re-read after the write.
 	Enabled bool `json:"enabled"`
+}
+
+// SourceIgnoreScanlatorDTO is the response of PATCH
+// /api/sources/:sourceId/ignore-scanlator — the authoritative per-source
+// ignore-scanlator state after the write (re-read from Tsundoku's
+// ignore-scanlator store, never the request echo).
+type SourceIgnoreScanlatorDTO struct {
+	// SourceID is the engine host source id (stringified).
+	SourceID string `json:"sourceId"`
+	// IgnoreScanlator is the flag state as re-read after the write.
+	IgnoreScanlator bool `json:"ignoreScanlator"`
+	// Migration is the Slice-B on-enable migration summary — present ONLY when
+	// flipping the flag ON with a collapser wired (it folds already-adopted
+	// per-uploader providers into one [Source] provider + relabels their CBZs).
+	// Absent (nil) when flipping OFF (one-way — no un-merge) or when no collapser
+	// is configured. Surfaced by the FE so the owner sees what the toggle did (§16).
+	Migration *ScanlatorMigrationDTO `json:"migration,omitempty"`
+}
+
+// ScanlatorMigrationDTO summarises the on-enable collapse migration: how many
+// series were collapsed, how many per-uploader provider rows were folded in
+// total, and how many series were skipped after an error (left for a re-run).
+// Mirrors library.DedupAllProviders' (seriesProcessed, merged, skipped) shape.
+type ScanlatorMigrationDTO struct {
+	// SeriesProcessed is how many series had at least one per-uploader row folded.
+	SeriesProcessed int `json:"seriesProcessed"`
+	// Merged is the total number of per-uploader provider rows folded away.
+	Merged int `json:"merged"`
+	// Skipped is how many series errored during the sweep and were skipped.
+	Skipped int `json:"skipped"`
 }
 
 // SourcePreferencesBySourceDTO is the GET response: an extension's preferences

@@ -81,6 +81,18 @@ func (f HarvestedRepoFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Valu
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.HarvestedRepoMutation", m)
 }
 
+// The IgnoreScanlatorSourceFunc type is an adapter to allow the use of ordinary
+// function as IgnoreScanlatorSource mutator.
+type IgnoreScanlatorSourceFunc func(context.Context, *ent.IgnoreScanlatorSourceMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f IgnoreScanlatorSourceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.IgnoreScanlatorSourceMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.IgnoreScanlatorSourceMutation", m)
+}
+
 // The ImportEntryFunc type is an adapter to allow the use of ordinary
 // function as ImportEntry mutator.
 type ImportEntryFunc func(context.Context, *ent.ImportEntryMutation) (ent.Value, error)

@@ -62,6 +62,7 @@ export const preferenceGroup: Group = {
   sourceName: 'MangaDex',
   lang: 'en',
   enabled: true,
+  ignoreScanlator: false,
   preferences: [switchPref, listPref, multiPref, editPref],
 }
 
@@ -77,6 +78,7 @@ export const preferenceGroups: Group[] = [
     sourceName: 'MangaDex',
     lang: 'ja',
     enabled: false,
+    ignoreScanlator: false,
     preferences: [{ ...switchPref, currentValue: false }],
   },
 ]

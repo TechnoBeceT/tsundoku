@@ -5,7 +5,7 @@ import FormError from '../ui/FormError.vue'
 import EmptyState from '../ui/EmptyState.vue'
 import Toggle from '../ui/Toggle.vue'
 import SourcePreferenceControl from './SourcePreferenceControl.vue'
-import { preferenceKey, type SourcePreferenceValue } from '~/composables/useSourcePreferences'
+import { preferenceKey, type MigrationBanner, type SourcePreferenceValue } from '~/composables/useSourcePreferences'
 import type { components } from '~/utils/api/schema.d.ts'
 
 type Group = components['schemas']['SourcePreferencesGroup']
@@ -23,6 +23,12 @@ type Group = components['schemas']['SourcePreferencesGroup']
  * touching series already adopted from it, and COLLAPSES the group's preference
  * block (a disabled language's settings are irrelevant until it is re-enabled).
  *
+ * Each group also carries a per-source "Ignore scanlator" Toggle — flagging it
+ * ON collapses that source's per-uploader providers into one [Source] provider
+ * on FUTURE adopts (an uploader-in-scanlator source, e.g. Hive Scans). It is
+ * apply-forward only (never migrates an already-adopted series) and always
+ * visible (independent of the enable/disable state).
+ *
  *   - `open` (v-model:open): whether the dialog is shown.
  *   - `extensionName`: the extension's display name (dialog title).
  *   - `groups`: the per-source preference groups.
@@ -32,9 +38,12 @@ type Group = components['schemas']['SourcePreferencesGroup']
  *   - `saveError`: a write failure message (or null).
  *   - `enablingKey`: the sourceId whose enable/disable toggle is being written (or null).
  *   - `enableError`: an enable/disable write failure message (or null).
+ *   - `ignoringKey`: the sourceId whose ignore-scanlator toggle is being written (or null).
+ *   - `ignoreError`: an ignore-scanlator write failure message (or null).
  *
- * Emits `update:open` (v-model), `change` (a committed preference edit), and
- * `toggle-enabled` (a committed enable/disable flip).
+ * Emits `update:open` (v-model), `change` (a committed preference edit),
+ * `toggle-enabled` (a committed enable/disable flip), and
+ * `toggle-ignore-scanlator` (a committed ignore-scanlator flip).
  */
 const props = withDefaults(defineProps<{
   /** Whether the dialog is shown (v-model:open). */
@@ -55,6 +64,12 @@ const props = withDefaults(defineProps<{
   enablingKey?: string | null
   /** An enable/disable write failure message. */
   enableError?: string | null
+  /** The sourceId whose ignore-scanlator toggle is being written. */
+  ignoringKey?: string | null
+  /** An ignore-scanlator write failure message. */
+  ignoreError?: string | null
+  /** The on-enable collapse migration banner (message + tone), or null when none ran. */
+  migrationMessage?: MigrationBanner | null
 }>(), {
   extensionName: '',
   groups: () => [],
@@ -64,6 +79,9 @@ const props = withDefaults(defineProps<{
   saveError: null,
   enablingKey: null,
   enableError: null,
+  ignoringKey: null,
+  ignoreError: null,
+  migrationMessage: null,
 })
 
 const emit = defineEmits<{
@@ -73,6 +91,8 @@ const emit = defineEmits<{
   'change': [payload: { sourceId: string, key: string, value: SourcePreferenceValue }]
   /** A committed enable/disable flip — forwarded from a group's Switch. */
   'toggle-enabled': [payload: { sourceId: string, enabled: boolean }]
+  /** A committed ignore-scanlator flip — forwarded from a group's Toggle. */
+  'toggle-ignore-scanlator': [payload: { sourceId: string, ignoreScanlator: boolean }]
 }>()
 
 // A control is busy when its (sourceId, key) matches the saving key.
@@ -85,8 +105,17 @@ function enableBusy(sourceId: string): boolean {
   return props.enablingKey === sourceId
 }
 
+// A group's ignore-scanlator Toggle is busy while its own write is in flight.
+function ignoreBusy(sourceId: string): boolean {
+  return props.ignoringKey === sourceId
+}
+
 function toggleEnabled(sourceId: string, enabled: boolean): void {
   emit('toggle-enabled', { sourceId, enabled })
+}
+
+function toggleIgnoreScanlator(sourceId: string, ignoreScanlator: boolean): void {
+  emit('toggle-ignore-scanlator', { sourceId, ignoreScanlator })
 }
 </script>
 
@@ -103,6 +132,16 @@ function toggleEnabled(sourceId: string, enabled: boolean): void {
     <div v-if="enableError" class="prefs__saveerror">
       <FormError :message="enableError" />
     </div>
+    <div v-if="ignoreError" class="prefs__saveerror">
+      <FormError :message="ignoreError" />
+    </div>
+    <!-- The on-enable collapse migration result. A SUCCESS banner confirms
+         already-adopted files were relabeled; a WARNING banner (tone) makes a
+         total failure loud instead of silent (nothing relabeled → owner retries). -->
+    <p
+      v-if="migrationMessage"
+      :class="['prefs__migration', `prefs__migration--${migrationMessage.tone}`]"
+    >{{ migrationMessage.message }}</p>
     <div v-if="pending" class="prefs__loading">
       <Spinner :size="20" tone="accent" />
       <span>Loading preferences…</span>
@@ -135,6 +174,27 @@ function toggleEnabled(sourceId: string, enabled: boolean): void {
           />
           <!-- eslint-enable vue/attribute-hyphenation -->
         </header>
+
+        <!-- Per-source "Ignore scanlator" flag. Always visible (independent of
+             the enable/disable state): it changes how FUTURE adopts interpret
+             this source's chapters, collapsing per-uploader providers into one.
+             Apply-forward only — it never migrates an already-adopted series. -->
+        <div class="prefs__flagrow">
+          <div class="prefs__flaglabel">
+            <span class="prefs__flagname">Ignore scanlator</span>
+            <span class="prefs__flaghint">Merge per-uploader chapters into one provider — for sources that put the uploader in the scanlator field (applies to new adopts).</span>
+          </div>
+          <Spinner v-if="ignoreBusy(group.sourceId)" :size="15" tone="accent" />
+          <!-- eslint-disable vue/attribute-hyphenation -->
+          <!-- camelCase :ariaLabel is required (see the enable Switch above). -->
+          <Toggle
+            :model-value="group.ignoreScanlator"
+            :disabled="ignoreBusy(group.sourceId)"
+            :ariaLabel="`Ignore scanlator for ${group.sourceName} (${group.lang})`"
+            @update:model-value="toggleIgnoreScanlator(group.sourceId, $event)"
+          />
+          <!-- eslint-enable vue/attribute-hyphenation -->
+        </div>
 
         <!-- A disabled source's preferences are collapsed — they are irrelevant
              until the language is re-enabled (feature #2). -->
@@ -205,6 +265,55 @@ function toggleEnabled(sourceId: string, enabled: boolean): void {
   font-size: var(--text-sm);
   color: var(--faint);
   font-style: italic;
+}
+
+/* Per-source ignore-scanlator flag row — a label + hint on the left, the Toggle
+   on the right, sitting between the group header and its preference block. */
+.prefs__flagrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.prefs__flaglabel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.prefs__flagname {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+
+.prefs__flaghint {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* On-enable collapse migration result banner. Success = positive confirmation
+   that already-adopted files were merged + relabeled; warning = nothing was
+   relabeled (a total failure) so it reads as a problem, not a success. */
+.prefs__migration {
+  font-size: var(--text-sm);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 8px;
+}
+
+.prefs__migration--success {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.prefs__migration--warning {
+  color: var(--danger-text);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
 }
 
 .prefs__lang {
