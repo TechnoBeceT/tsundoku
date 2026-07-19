@@ -14,7 +14,14 @@ import { ref } from 'vue'
  *     (no hub-level interpretation); useDownloads maps it to the row's % + counter.
  *   cycle.start    | cycle.done
  *   refresh.start  | refresh.done
- *   health.summary  → payload { unhealthy: number }
+ *   health.summary  → payload { unhealthy: number } — SERIES-health signal (stale
+ *     sync), refreshed on the 2h sweep. Drives the amber "N need attention" pill.
+ *   sources.summary → payload { erroring: number, coolingDown: number } — SOURCE
+ *     signal, pushed IMMEDIATELY on a circuit-breaker trip/clear (and re-emitted on
+ *     each refresh tick, belt-and-braces). `erroring` = sources in a failure streak
+ *     right now; `coolingDown` = sources whose breaker is tripped and still in
+ *     cooldown. Drives the DANGER Health-rail badge — the "a source broke, I need to
+ *     KNOW" alert, distinct from and complementary to health.summary.
  *   chapter.new     → payload { groups:[{seriesId,title,count,url}], total, digest,
  *     title, body } — one or more armed monitored series gained new readable
  *     chapters this cycle. Forwarded raw via `on()`; the default layout renders it
@@ -31,7 +38,9 @@ import { ref } from 'vue'
  *     shared hub.
  *
  * What each prop can and cannot drive:
- *   - `unhealthyCount`  ← health.summary payload { unhealthy } — exact, server-authoritative.
+ *   - `unhealthyCount`   ← health.summary payload { unhealthy } — exact, server-authoritative.
+ *   - `erroringSources`  ← sources.summary payload { erroring } — exact, server-authoritative.
+ *   - `coolingDownSources` ← sources.summary payload { coolingDown } — exact, server-authoritative.
  *   - `syncing`         ← true on refresh.start, false on refresh.done — accurate for the
  *                          "Syncing sources…" header indicator.
  *   - `lastCycle`       ← 'start'/'done' on cycle.start/cycle.done — available for callers
@@ -46,6 +55,8 @@ import { ref } from 'vue'
 
 const connected = ref(false)
 const unhealthyCount = ref(0)
+const erroringSources = ref(0)
+const coolingDownSources = ref(0)
 const syncing = ref(false)
 const cycleActive = ref(false)
 const lastCycle = ref<'start' | 'done' | null>(null)
@@ -64,6 +75,7 @@ const NAMED_EVENTS = [
   'refresh.start',
   'refresh.done',
   'health.summary',
+  'sources.summary',
   'extensions.checked',
   'chapter.new',
   'scan.start',
@@ -103,6 +115,11 @@ export function useProgressStream() {
         if (name === 'health.summary' && typeof (data as { unhealthy?: unknown }).unhealthy === 'number') {
           unhealthyCount.value = (data as { unhealthy: number }).unhealthy
         }
+        if (name === 'sources.summary') {
+          const p = data as { erroring?: unknown, coolingDown?: unknown }
+          if (typeof p.erroring === 'number') erroringSources.value = p.erroring
+          if (typeof p.coolingDown === 'number') coolingDownSources.value = p.coolingDown
+        }
         if (name === 'refresh.start') syncing.value = true
         if (name === 'refresh.done') syncing.value = false
         if (name === 'cycle.start') { cycleActive.value = true; lastCycle.value = 'start' }
@@ -129,5 +146,5 @@ export function useProgressStream() {
     return () => listeners.get(event)?.delete(cb)
   }
 
-  return { connected, unhealthyCount, syncing, cycleActive, lastCycle, connect, disconnect, on }
+  return { connected, unhealthyCount, erroringSources, coolingDownSources, syncing, cycleActive, lastCycle, connect, disconnect, on }
 }

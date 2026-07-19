@@ -112,6 +112,63 @@ export const Syncing: Story = {
 }
 
 /**
+ * A live source outage: a source's circuit-breaker just tripped, so the SOLID
+ * danger "N sources down" pill is shown (deep-links to the Health console's
+ * Sources tab). No series are stale, so the amber "need attention" pill is absent
+ * — proving the source signal stands on its own, distinct from the series one.
+ */
+export const SourceOutage: Story = {
+  render: () => ({
+    components: { AppShell, Placeholder },
+    setup() {
+      const theme = ref<'dark' | 'light'>('dark')
+      return { theme, navItems }
+    },
+    template: `
+      <AppShell
+        :nav-items="navItems"
+        active-route="library"
+        :theme="theme"
+        header-title="Library"
+        :erroring-sources="2"
+        @toggle-theme="theme = theme === 'dark' ? 'light' : 'dark'"
+      >
+        <Placeholder />
+      </AppShell>
+    `,
+  }),
+}
+
+/**
+ * Both alerts at once: three series need attention (amber, soft-tinted pill →
+ * Library tab) AND two sources are down (solid danger pill → Sources tab). The
+ * two co-exist and read as clearly distinct signals — the whole point of the
+ * separate source-outage alert.
+ */
+export const BothAlerts: Story = {
+  render: () => ({
+    components: { AppShell, Placeholder },
+    setup() {
+      const theme = ref<'dark' | 'light'>('dark')
+      return { theme, navItems }
+    },
+    template: `
+      <AppShell
+        :nav-items="navItems"
+        active-route="library"
+        :theme="theme"
+        header-title="Library"
+        :unhealthy="3"
+        :erroring-sources="2"
+        @toggle-theme="theme = theme === 'dark' ? 'light' : 'dark'"
+      >
+        <Placeholder />
+      </AppShell>
+    `,
+  }),
+}
+
+/**
  * The real proof: the LibraryList screen sitting inside the chrome, framed by the
  * rail + header exactly as it will appear in the running app. The category tabs
  * and the search + sort toolbar stay interactive (wired to local state, the

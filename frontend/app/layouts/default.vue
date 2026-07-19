@@ -5,7 +5,7 @@ const route = useRoute()
 
 // Live backend progress stream — connects once on mount, drives shell indicators.
 // (The app-global ChapterNotifier in app.vue owns the chapter.new in-app toast.)
-const { connect, unhealthyCount, syncing } = useProgressStream()
+const { connect, unhealthyCount, erroringSources, syncing } = useProgressStream()
 onMounted(connect)
 
 // PWA install affordance — captures beforeinstallprompt (Android Chrome) and
@@ -95,6 +95,7 @@ function handleOpenAdopt(): void {
     :theme="theme"
     :header-title="headerTitle"
     :unhealthy="unhealthyCount"
+    :erroring-sources="erroringSources"
     :syncing="syncing"
     :active-downloads="0"
     :failed-downloads="0"

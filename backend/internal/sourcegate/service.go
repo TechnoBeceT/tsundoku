@@ -71,6 +71,13 @@ type Service struct {
 	// tests are unaffected.
 	events sourceevents.Recorder
 
+	// onTransition is the nil-guarded breaker-transition hook (see
+	// WithTransitionHook / alert.go). It fires once per breaker STATE TRANSITION —
+	// a trip and a clear — so an owner (the job.Runner) can push an immediate
+	// sources.summary alert. sourcegate stays SSE-free: this is an opaque func(),
+	// never the hub. Nil (the default) fires nothing.
+	onTransition func()
+
 	mu         sync.Mutex
 	lastAccess map[string]time.Time
 }
@@ -207,6 +214,8 @@ func (s *Service) Reset(ctx context.Context, key string) error {
 	// An owner reset is an explicit "breaker back to closed" transition — log it
 	// unconditionally (best-effort, nil-guarded).
 	s.logBreakerEvent(ctx, key, sourceevents.EventBreakerReset, sourceevents.StatusSuccess, nil)
+	// …and push the immediate sources.summary alert (best-effort, nil-guarded).
+	s.fireTransition()
 	return nil
 }
 
@@ -255,6 +264,7 @@ func (s *Service) RecordSuccess(ctx context.Context, key string) {
 	}
 	if wasTripped {
 		s.logBreakerEvent(ctx, key, sourceevents.EventBreakerReset, sourceevents.StatusSuccess, nil)
+		s.fireTransition()
 	}
 }
 
@@ -321,6 +331,7 @@ func (s *Service) RecordFailure(ctx context.Context, key string, cause error, no
 	}
 	if tripped {
 		s.logBreakerEvent(ctx, key, sourceevents.EventBreakerTrip, sourceevents.StatusFailed, cause)
+		s.fireTransition()
 	}
 }
 

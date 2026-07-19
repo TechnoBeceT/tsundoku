@@ -31,8 +31,15 @@ const props = withDefaults(defineProps<{
   headerTitle: string
   /** Optional parent crumb shown above the title (e.g. "Library" on a detail). */
   breadcrumb?: string
-  /** Count of sources needing attention — drives the header pill (hidden at 0). */
+  /** Count of series needing attention — drives the amber header pill (hidden at 0). */
   unhealthy?: number
+  /**
+   * Count of sources currently erroring (circuit-breaker tripped) — drives the
+   * separate DANGER source-alert pill (hidden at 0). A live "a source broke"
+   * signal, distinct from `unhealthy` (slow series-health); it deep-links to the
+   * Sources tab, whereas `unhealthy` deep-links to the Library tab.
+   */
+  erroringSources?: number
   /** Whether a sync/download cycle is active — shows the header spinner. */
   syncing?: boolean
   /** Label beside the sync spinner (e.g. "Syncing sources…"). */
@@ -46,6 +53,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   breadcrumb: '',
   unhealthy: 0,
+  erroringSources: 0,
   syncing: false,
   syncLabel: '',
   activeDownloads: 0,
@@ -145,6 +153,17 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
               <Spinner :size="13" aria-hidden="true" />
               {{ syncLabel }}
             </div>
+
+            <!-- Source-outage alert → Health console (Sources tab). A SEPARATE,
+                 more-urgent signal from the series "need attention" pill: it fires
+                 the instant a source's circuit-breaker trips (sources.summary SSE),
+                 so it is a SOLID danger chip (vs the series pill's soft tint) with
+                 a warning glyph, and DETERMINISTICALLY lands on the Sources tab via
+                 `?tab=sources`. The series pill below is left exactly as-is. -->
+            <button v-if="erroringSources > 0" type="button" class="head__source-alert" @click="emit('navigate', 'health?tab=sources')">
+              <Icon name="lucide:triangle-alert" class="head__source-alert-icon" aria-hidden="true" />
+              {{ erroringSources }} {{ erroringSources === 1 ? 'source' : 'sources' }} down
+            </button>
 
             <!-- "Need attention" pill → Health console. This is a SERIES-health
                  signal, so it DETERMINISTICALLY lands on the Library tab (the
@@ -339,6 +358,38 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
   color: var(--accentBright);
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
+}
+
+/* Source-outage alert — a SOLID danger chip, deliberately higher-contrast than
+   the soft-tinted series `head__attention` pill so the two co-existing signals
+   read as distinct: this one means "a source broke NOW", the more urgent alert. */
+.head__source-alert {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 13px;
+  border-radius: var(--radius-pill);
+  background: var(--danger);
+  border: 1px solid var(--danger);
+  color: var(--on-danger);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+
+.head__source-alert:hover {
+  filter: brightness(1.08);
+}
+
+.head__source-alert:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
+.head__source-alert-icon {
+  width: 15px;
+  height: 15px;
 }
 
 .head__attention {

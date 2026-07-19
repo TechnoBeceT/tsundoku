@@ -102,6 +102,11 @@ type Runner struct {
 	notifier interface {
 		NotifyNewChapters(context.Context) error
 	}
+	// breakers reads every source's circuit-breaker state for the sources.summary
+	// alert counts. Optional (nil when unset — the summary is then a no-op); set
+	// via SetBreakerSnapshotter. Held as the narrow BreakerSnapshotter interface
+	// (see sources_summary.go).
+	breakers BreakerSnapshotter
 }
 
 // SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
@@ -368,6 +373,11 @@ func (r *Runner) runRefreshSweep(ctx context.Context, svc *refresh.Service, heal
 	} else {
 		r.broadcastHealthSummary(n)
 	}
+	// Belt-and-braces periodic source-health alert (mirrors broadcastHealthSummary):
+	// besides the immediate breaker-transition push, re-emit the current
+	// erroring/coolingDown counts each sweep so a badge that missed a dropped SSE
+	// event self-heals. No-op when no breaker snapshotter is wired.
+	r.broadcastSourcesSummary(ctx)
 }
 
 // broadcastHealthSummary emits a health.summary SSE event with the count of

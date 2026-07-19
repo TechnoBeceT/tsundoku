@@ -300,6 +300,16 @@ func main() {
 		WithEventRecorder(eventsSvc) // logs a `download` audit event per source attempt
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
+	// Wire the breaker→SSE alert seam (Source Health Console proactive alerting):
+	// the runner reads its erroring/coolingDown counts from the gate's snapshot,
+	// and the gate fires runner.SourcesSummaryHook on every breaker trip/clear so a
+	// sources.summary push reaches the owner's danger badge the instant a source
+	// breaks. Kept OUT of NewService/NewRunner so sourcegate stays SSE-free and the
+	// runner's signature is untouched; the hook does its work on a detached
+	// goroutine, so a broadcast can never slow or break a breaker record.
+	runner.SetBreakerSnapshotter(gateSvc)
+	gateSvc.WithTransitionHook(runner.SourcesSummaryHook)
+
 	// Web Push + new-chapter notifier (see buildNotifier). VAPID failure degrades
 	// gracefully — the notifier still broadcasts over SSE; only Web Push is off.
 	// The returned public key + subscription store are threaded into the push
