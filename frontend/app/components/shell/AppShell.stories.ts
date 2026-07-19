@@ -23,7 +23,7 @@ const navItems: NavItem[] = [
   { key: 'library', label: 'Library', icon: 'book' },
   { key: 'discover', label: 'Discover', icon: 'compass' },
   { key: 'downloads', label: 'Downloads', icon: 'download', badge: { count: 1, tone: 'warn' } },
-  { key: 'health', label: 'Library Health', icon: 'activity', badge: { count: 3, tone: 'danger' } },
+  { key: 'health', label: 'Health', icon: 'activity', badge: { count: 3, tone: 'danger' } },
   { key: 'fractionals', label: 'Fractionals', icon: 'scissors' },
   { key: 'categories', label: 'Categories', icon: 'layout-grid' },
   { key: 'settings', label: 'Settings', icon: 'settings', pinned: true },

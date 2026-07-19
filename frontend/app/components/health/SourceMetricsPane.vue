@@ -3,7 +3,7 @@ import AppButton from '../ui/AppButton.vue'
 import FormError from '../ui/FormError.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import SourceMetricRow from './SourceMetricRow.vue'
-import type { SourceMetric } from '../screens/settings.types'
+import type { SourceMetric } from '../screens/sourceHealth.types'
 
 /**
  * SourceMetricsPane — the Source Metrics pane: per-source search-performance

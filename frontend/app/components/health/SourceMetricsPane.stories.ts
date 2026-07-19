@@ -13,7 +13,7 @@ import '../../assets/css/tokens/settings.css'
  * states, plus the warm-up and breaker-reset §16 states.
  */
 const meta = {
-  title: 'Settings/SourceMetricsPane',
+  title: 'Health/SourceMetricsPane',
   component: SourceMetricsPane,
   parameters: { layout: 'padded' },
   args: { metrics: sourceMetrics },

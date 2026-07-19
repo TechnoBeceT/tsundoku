@@ -5,7 +5,6 @@ import CategoriesPane from '../settings/CategoriesPane.vue'
 import EnginePane from '../settings/EnginePane.vue'
 import SuwayomiPane from '../settings/SuwayomiPane.vue'
 import ExtensionsPane from '../settings/ExtensionsPane.vue'
-import SourceMetricsPane from '../settings/SourceMetricsPane.vue'
 import SourcesSettingsPane from '../settings/SourcesSettingsPane.vue'
 import NetworkPane from '../settings/NetworkPane.vue'
 import TrackersPane from '../settings/TrackersPane.vue'
@@ -28,7 +27,6 @@ import type {
   SettingsCategory,
   SettingsPane,
   SourceBinding,
-  SourceMetric,
   SourcesSettings,
   SystemInfo,
   TrackerActionState,
@@ -49,9 +47,10 @@ import type {
  *                   with the P2 Suwayomi-removal backend cutover)
  *   - extensions  → ExtensionsPane    (installed / available / repositories)
  *   - sources     → SourcesSettingsPane (warm-up + circuit-breaker knobs +
- *                   the library-wide dedup-sweep trigger)
- *                   + SourceMetricsPane (per-source search metrics + Warm now),
- *                   stacked — mirrors how LibraryPane stacks its own two cards
+ *                   the library-wide dedup-sweep trigger). The per-source search
+ *                   metrics + Warm-now UI RELOCATED to the /health Source Health
+ *                   tab (Source Health Console, slice 3); only the CONFIG knobs
+ *                   remain here.
  *   - network     → NetworkPane      (per-source SOCKS/FlareSolverr routing:
  *                   the reusable-endpoint manager + the per-source assignment
  *                   table, two stacked cards, QCAT-283)
@@ -111,22 +110,6 @@ withDefaults(defineProps<{
   sourcesSettings: SourcesSettings
   /** §16 state of the Sources-pane Save button. */
   sourcesSettingsSave?: SaveState
-  /** Per-source search metrics (2f), slowest-first. */
-  sourceMetrics?: SourceMetric[]
-  /** Whether the source-metrics list is loading. */
-  sourceMetricsPending?: boolean
-  /** A source-metrics load failure, surfaced inline in the pane. */
-  sourceMetricsError?: string | null
-  /** Whether a manual warm-up pass is in flight. */
-  warming?: boolean
-  /** The last warm-up's success note (the warmed count). */
-  warmMessage?: string | null
-  /** The last warm-up's failure message. */
-  warmError?: string | null
-  /** The source id whose breaker reset is in flight (null when none). */
-  resetting?: string | null
-  /** The last breaker-reset failure message. */
-  resetError?: string | null
   /** True while the library-wide dedup sweep request is in flight. */
   dedupAllBusy?: boolean
   /** Started/success message from the last dedup sweep trigger. */
@@ -194,12 +177,6 @@ withDefaults(defineProps<{
   repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
   sourcesSettingsSave: () => ({ status: 'idle' }),
-  sourceMetrics: () => [],
-  sourceMetricsPending: false,
-  sourceMetricsError: null,
-  warming: false,
-  warmMessage: null,
-  warmError: null,
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
@@ -268,10 +245,6 @@ const emit = defineEmits<{
   'update:ext-check-interval': [DurationValue]
   /** Persist the edited Sources-pane warm-up/circuit-breaker knobs. */
   'save-sources-settings': [settings: SourcesSettings]
-  /** Trigger a manual warm-up pass across all sources. */
-  'warm-now': []
-  /** Reset a source's tripped circuit-breaker — carries the source id. */
-  'reset-breaker': [id: string]
   /** Trigger the library-wide duplicate-source dedup sweep. */
   'dedup-all': []
   /** The OAuth "Connect" button was pressed for a tracker id. */
@@ -383,19 +356,6 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             @save="emit('save-sources-settings', $event)"
             @dedup-all="emit('dedup-all')"
           />
-
-          <SourceMetricsPane
-            :metrics="sourceMetrics"
-            :pending="sourceMetricsPending"
-            :error="sourceMetricsError"
-            :warming="warming"
-            :warm-message="warmMessage"
-            :warm-error="warmError"
-            :resetting="resetting"
-            :reset-error="resetError"
-            @warm-now="emit('warm-now')"
-            @reset-breaker="emit('reset-breaker', $event)"
-          />
         </div>
 
         <NetworkPane
@@ -483,8 +443,9 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   }
 }
 
-/* The Sources pane stacks two cards (settings + metrics) with the shared
-   16px inter-card rhythm — same shape as LibraryPane's own pane-stack. */
+/* The Sources pane hosts SourcesSettingsPane, whose two SurfaceCards
+   (anti-block knobs + library maintenance) get the shared 16px inter-card
+   rhythm from this flex gap — same shape as LibraryPane's own pane-stack. */
 .pane-stack {
   display: flex;
   flex-direction: column;

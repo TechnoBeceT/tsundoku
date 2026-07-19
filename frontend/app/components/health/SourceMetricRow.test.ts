@@ -13,7 +13,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SourceMetricRow from './SourceMetricRow.vue'
-import type { SourceMetric } from '../screens/settings.types'
+import type { SourceMetric } from '../screens/sourceHealth.types'
 
 // A base healthy snapshot; individual tests override the breaker.
 function metric(overrides: Partial<SourceMetric> = {}): SourceMetric {

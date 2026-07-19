@@ -24,11 +24,16 @@
  * source" action that force-clears a source's tripped anti-ban circuit-breaker,
  * then refetches so the row's cooling-down state clears. Its §16 state:
  * `resetting` (the source id in flight) + `resetError` (failure).
+ *
+ * By default the initial load fires on creation (`immediate: true`). Pass
+ * `{ immediate: false }` to defer it — the Source Health tab does this so the
+ * metrics only load when the tab is first shown (LAZY tab data), then triggers
+ * the load itself via `refetch()`.
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { SourceBreaker, SourceMetric } from '~/components/screens/settings.types'
+import type { SourceBreaker, SourceMetric } from '~/components/screens/sourceHealth.types'
 
 type SourceMetricDTO = components['schemas']['SourceMetric']
 type SourceBreakerDTO = components['schemas']['SourceBreaker']
@@ -67,7 +72,9 @@ function mapMetric(dto: SourceMetricDTO): SourceMetric {
 
 // ── Composable ────────────────────────────────────────────────────────────────
 
-export function useSourceMetrics() {
+export function useSourceMetrics(options: { immediate?: boolean } = {}) {
+  const { immediate = true } = options
+
   const metrics = ref<SourceMetric[]>([])
 
   const pending = ref(false)
@@ -153,7 +160,7 @@ export function useSourceMetrics() {
     }
   }
 
-  void refetch()
+  if (immediate) void refetch()
 
   return {
     metrics,

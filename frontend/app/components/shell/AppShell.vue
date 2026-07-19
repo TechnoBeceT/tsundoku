@@ -146,8 +146,13 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
               {{ syncLabel }}
             </div>
 
-            <!-- "Need attention" pill → Library Health -->
-            <button v-if="unhealthy > 0" type="button" class="head__attention" @click="emit('navigate', 'health')">
+            <!-- "Need attention" pill → Health console. This is a SERIES-health
+                 signal, so it DETERMINISTICALLY lands on the Library tab (the
+                 sick-series view) by carrying an explicit `?tab=library` in the
+                 nav key — it must never drop the owner on the persisted Sources
+                 tab. (The nav-rail Health item, by contrast, emits plain
+                 'health' so it restores the last-viewed tab.) -->
+            <button v-if="unhealthy > 0" type="button" class="head__attention" @click="emit('navigate', 'health?tab=library')">
               <span class="head__attention-dot" aria-hidden="true" />
               {{ unhealthy }} need attention
             </button>

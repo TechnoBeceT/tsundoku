@@ -12,7 +12,7 @@ import '../../assets/css/tokens/settings.css'
  * the fixture timestamps are relative to now.
  */
 const meta = {
-  title: 'Settings/SourceMetricRow',
+  title: 'Health/SourceMetricRow',
   component: SourceMetricRow,
   parameters: { layout: 'padded' },
 } satisfies Meta<typeof SourceMetricRow>

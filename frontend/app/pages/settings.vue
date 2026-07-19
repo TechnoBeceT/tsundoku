@@ -19,7 +19,6 @@
  *                           P2 Suwayomi-removal backend cutover)
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
  *                           extCheckInterval — that moved to useSettings)
- *   useSourceMetrics()    → sourceMetrics + pending/error + warmNow (Warm now)
  *   useLibraryMaintenance() → dedupAllBusy/Message/Error + dedupAllProviders
  *                           (library-wide duplicate-source dedup sweep)
  *   useTrackers()         → trackers + trackerAction (busyId/error) + misconfigured
@@ -53,18 +52,8 @@
  *   :checking-updates     — checkingUpdates from useExtensions
  *   :sources-settings     — sourcesSettings from useSettings (shares its `pending`
  *                           with library/system — same GET /api/settings call, so
- *                           it stays in the global loading gate, unlike sourceMetrics)
+ *                           it stays in the global loading gate)
  *   :sources-settings-save — sourcesSettingsSave from useSettings
- *   :source-metrics       — metrics from useSourceMetrics
- *   :source-metrics-pending — pending from useSourceMetrics (pane-owned, NOT in
- *                           the global loading gate so a warm refetch never
- *                           skeletons the whole screen)
- *   :source-metrics-error — error from useSourceMetrics
- *   :warming              — warming from useSourceMetrics
- *   :warm-message         — warmMessage from useSourceMetrics
- *   :warm-error           — warmError from useSourceMetrics
- *   :resetting            — resetting (source id) from useSourceMetrics
- *   :reset-error          — resetError from useSourceMetrics
  *   :dedup-all-busy       — dedupAllBusy from useLibraryMaintenance
  *   :dedup-all-message    — dedupAllMessage from useLibraryMaintenance
  *   :dedup-all-error      — dedupAllError from useLibraryMaintenance
@@ -73,7 +62,7 @@
  *   :misconfigured-tracker-ids — [...misconfigured] from useTrackers
  *   :tracker-redirect-url — trackerRedirectUrl (computed, this instance's OAuth callback URL)
  *   :trackers-pending     — pending from useTrackers (pane-owned, NOT in the
- *                           global loading gate — mirrors source-metrics-pending)
+ *                           global loading gate — its own pane-local skeleton)
  *   :trackers-error       — error from useTrackers
  *   :auto-update-track    — autoUpdateTrack from useSettings (Phase 4)
  *   :auto-update-track-busy — computed, autoUpdateTrackSave.status === 'saving'
@@ -99,8 +88,6 @@
  *   @reorder-repo                → reorderRepo
  *   @update:ext-check-interval   → saveExtensionCheckInterval
  *   @save-sources-settings       → saveSourcesSettings
- *   @warm-now                    → warmNow
- *   @reset-breaker               → resetBreaker
  *   @dedup-all                   → dedupAllProviders
  *   @connect-tracker             → onConnectTracker (authUrl() → full-tab redirect;
  *                                   stashes the tracker id first — see trackerCallback.ts)
@@ -179,19 +166,6 @@ const {
 function onReinstallExtension({ id, versionCode }: { id: string, versionCode: number }): void {
   void reinstallExtension(id, versionCode)
 }
-
-const {
-  metrics: sourceMetrics,
-  pending: sourceMetricsPending,
-  error: sourceMetricsError,
-  warming,
-  warmMessage,
-  warmError,
-  warmNow,
-  resetting: sourceResetting,
-  resetError: sourceResetError,
-  resetBreaker,
-} = useSourceMetrics()
 
 const {
   dedupAllBusy,
@@ -359,14 +333,6 @@ const loading = computed(
       :checking-updates="checkingUpdates"
       :sources-settings="sourcesSettings"
       :sources-settings-save="sourcesSettingsSave"
-      :source-metrics="sourceMetrics"
-      :source-metrics-pending="sourceMetricsPending"
-      :source-metrics-error="sourceMetricsError"
-      :warming="warming"
-      :warm-message="warmMessage"
-      :warm-error="warmError"
-      :resetting="sourceResetting"
-      :reset-error="sourceResetError"
       :dedup-all-busy="dedupAllBusy"
       :dedup-all-message="dedupAllMessage"
       :dedup-all-error="dedupAllError"
@@ -414,8 +380,6 @@ const loading = computed(
       @reorder-repo="reorderRepo"
       @update:ext-check-interval="saveExtensionCheckInterval"
       @save-sources-settings="saveSourcesSettings"
-      @warm-now="warmNow"
-      @reset-breaker="resetBreaker"
       @dedup-all="dedupAllProviders"
       @connect-tracker="onConnectTracker"
       @login-tracker-credentials="onLoginTrackerCredentials"

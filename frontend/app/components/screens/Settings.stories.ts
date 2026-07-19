@@ -106,7 +106,8 @@ export const Extensions: Story = {
   render: () => withPane('extensions'),
 }
 
-/** Sources pane — warm-up/circuit-breaker knobs stacked above search metrics. */
+/** Sources pane — the warm-up/circuit-breaker CONFIG knobs + library-maintenance
+ *  dedup sweep (the search-metrics report moved to the /health Source Health tab). */
 export const Sources: Story = {
   render: () => withPane('sources'),
 }

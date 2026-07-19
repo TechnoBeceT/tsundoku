@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useNow } from '../../composables/useNow'
 import { formatRetryEta } from '../../utils/retryEta'
 import AppButton from '../ui/AppButton.vue'
-import type { SourceMetric, SourceWarmth } from '../screens/settings.types'
+import type { SourceMetric, SourceWarmth } from '../screens/sourceHealth.types'
 
 /**
  * SourceMetricRow — one source's search-performance line in the Source Metrics

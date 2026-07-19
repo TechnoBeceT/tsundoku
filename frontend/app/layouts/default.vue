@@ -23,7 +23,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'library', label: 'Library', icon: 'book' },
   { key: 'discover', label: 'Discover', icon: 'compass' },
   { key: 'downloads', label: 'Downloads', icon: 'download' },
-  { key: 'health', label: 'Library Health', icon: 'activity' },
+  { key: 'health', label: 'Health', icon: 'activity' },
   { key: 'fractionals', label: 'Fractionals', icon: 'scissors' },
   { key: 'categories', label: 'Categories', icon: 'layout-grid' },
   { key: 'import', label: 'Import', icon: 'file-plus' },
@@ -65,8 +65,12 @@ const theme = computed<'dark' | 'light'>(() =>
 )
 
 function handleNavigate(key: string): void {
-  const path = KEY_TO_PATH[key]
-  if (path) void navigateTo(path)
+  // A nav key may carry a query suffix (e.g. the attention pill emits
+  // 'health?tab=library' to force the Library tab); split it off, resolve the
+  // base key to its path, and pass the query straight through to navigateTo.
+  const [navKey, query] = key.split('?')
+  const path = KEY_TO_PATH[navKey ?? '']
+  if (path) void navigateTo(query ? `${path}?${query}` : path)
 }
 
 function handleToggleTheme(): void {

@@ -20,12 +20,12 @@ import type {
   Repo,
   SettingsCategory,
   SourceBinding,
-  SourceMetric,
   SourcesSettings,
   SystemInfo,
   TrackerStatus,
   UpgradeStep,
 } from '../components/screens/settings.types'
+import type { SourceMetric } from '../components/screens/sourceHealth.types'
 
 /** The runtime-editable library knobs (2a). */
 export const librarySettings: LibrarySettings = {
