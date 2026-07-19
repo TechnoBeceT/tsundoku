@@ -1569,6 +1569,100 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reporting/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Source Health Console period overview
+         * @description Returns the period dashboard for the Source Health Console: headline KPIs
+         *     (total/success/failed events, success rate, active sources), the per-
+         *     operation breakdown, the slowest-source and currently-failing-source
+         *     leaderboards, and a preview of the most recent errors. Every aggregation
+         *     is computed in SQL over the SourceEvent audit log — the whole log is never
+         *     loaded into memory.
+         */
+        get: operations["getReportingOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reporting/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-source event-log rollup
+         * @description Returns each source's rollup for the window — overall + per-operation
+         *     success/fail counts (from the event log), joined rolling latency (metrics)
+         *     and the current failure streak (breaker) — sorted by the requested key.
+         *     SQL-aggregated; the query count does not grow with the number of sources.
+         */
+        get: operations["listReportingSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reporting/source/{sourceKey}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Paginated raw source-event feed
+         * @description Returns one filtered, paginated page of the raw event feed for a source,
+         *     newest first, plus the total matching count. The sentinel sourceKey
+         *     "__all__" returns the GLOBAL feed across every source. Runs exactly two
+         *     queries (count + page) regardless of page size.
+         */
+        get: operations["listSourceEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reporting/source/{sourceKey}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Bucketed success/fail timeline
+         * @description Returns the window's success/fail counts bucketed by hour or day — the
+         *     data behind the stacked green/red histogram. The sentinel sourceKey
+         *     "__all__" spans every source. Bucketing is done in SQL (a date_trunc
+         *     GROUP BY); only the per-bucket summed rows cross the wire.
+         */
+        get: operations["getSourceTimeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/push/vapid-key": {
         parameters: {
             query?: never;
@@ -3216,6 +3310,215 @@ export interface components {
              * @example true
              */
             started: boolean;
+        };
+        /**
+         * @description The Source Health Console period dashboard: headline KPIs, the per-
+         *     operation breakdown, the slowest + currently-failing leaderboards, and a
+         *     preview of the most recent errors. Aggregated in SQL over the SourceEvent
+         *     audit log for the requested period window.
+         */
+        ReportingOverview: {
+            /**
+             * @description The window this report covers.
+             * @enum {string}
+             */
+            period: "24h" | "7d" | "30d";
+            /**
+             * Format: date-time
+             * @description The inclusive lower bound of the window (now minus period).
+             */
+            since: string;
+            kpis: components["schemas"]["ReportingKPIs"];
+            /** @description Per-operation success/fail tally (search vs download vs …). */
+            eventsByType: components["schemas"]["EventTypeBreakdown"][];
+            /** @description The slowest sources by rolling EWMA latency (from the metrics snapshot). */
+            slowestSources: components["schemas"]["SlowSource"][];
+            /** @description Sources currently in a failure streak (from the circuit breaker), longest-failing first. */
+            failingSources: components["schemas"]["FailingSource"][];
+            /** @description The most recent failed events in the window, newest first. */
+            recentErrors: components["schemas"]["SourceEventRecord"][];
+        };
+        /** @description The headline numbers for a reporting window. */
+        ReportingKPIs: {
+            /** @description How many source operations ran in the window. */
+            totalEvents: number;
+            /** @description How many succeeded. */
+            successEvents: number;
+            /** @description How many failed. */
+            failedEvents: number;
+            /**
+             * Format: double
+             * @description successEvents / totalEvents as a 0..1 fraction (0 when none).
+             */
+            successRate: number;
+            /** @description How many distinct sources produced any event in the window. */
+            activeSources: number;
+        };
+        /** @description One operation type's success/fail tally for the window. */
+        EventTypeBreakdown: {
+            /**
+             * @description The source-operation type.
+             * @enum {string}
+             */
+            eventType: "search" | "download" | "refresh" | "warm" | "breaker_trip" | "breaker_reset";
+            total: number;
+            success: number;
+            failed: number;
+        };
+        /** @description One entry of the slowest-sources leaderboard (rolling EWMA snapshot). */
+        SlowSource: {
+            /** @description Canonical source key (the join key across events/metrics/breaker). */
+            sourceKey: string;
+            /** @description The source's display name. */
+            sourceName: string;
+            /** @description Exponentially-weighted rolling search latency, in milliseconds. */
+            ewmaLatencyMs: number;
+        };
+        /**
+         * @description One entry of the currently-failing leaderboard, from the circuit-breaker
+         *     state — the authoritative "erroring since when" without an event-log scan.
+         */
+        FailingSource: {
+            /** @description Canonical source key. */
+            sourceKey: string;
+            /**
+             * Format: date-time
+             * @description Start of the current failure streak (absent when not failing).
+             */
+            failingSince?: string;
+            /** @description How many gated fetches failed in a row. */
+            consecutiveFailures: number;
+            /** @description Most recent gated-fetch failure reason ("" when none). */
+            lastError: string;
+            /**
+             * Format: date-time
+             * @description When the tripped breaker reopens (absent when not tripped).
+             */
+            cooldownUntil?: string;
+            /** @description Derived — a cooldown is set and still in the future. */
+            isCoolingDown: boolean;
+        };
+        /**
+         * @description One row of the append-only source-operation audit log. The three optional
+         *     fields are absent when the column is NULL (a success has no error; a warm
+         *     has no items count). "metadata" is always present (possibly empty).
+         */
+        SourceEventRecord: {
+            /**
+             * Format: uuid
+             * @description The event's unique id.
+             */
+            id: string;
+            /** @description Canonical source key. */
+            sourceKey: string;
+            /** @description The numeric engine-host source id as a string ("" for a disk source). */
+            sourceId: string;
+            /** @description The source's display name captured at write time. */
+            sourceName: string;
+            /** @description The source's language code ("" when unknown). */
+            language: string;
+            /**
+             * @description The source-operation type.
+             * @enum {string}
+             */
+            eventType: "search" | "download" | "refresh" | "warm" | "breaker_trip" | "breaker_reset";
+            /**
+             * @description The operation's binary outcome.
+             * @enum {string}
+             */
+            status: "success" | "failed";
+            /**
+             * Format: int64
+             * @description The operation's wall-clock duration in milliseconds (0 when not timed).
+             */
+            durationMs: number;
+            /** @description The (truncated) failure reason; absent on success. */
+            errorMessage?: string;
+            /** @description The classified error bucket (captcha/rate_limit/…); absent on success. */
+            errorCategory?: string;
+            /** @description The operation's result cardinality where meaningful; absent otherwise. */
+            itemsCount?: number;
+            /** @description Small operation-specific forensic context (keyword, url, chapter, series). */
+            metadata: {
+                [key: string]: string;
+            };
+            /**
+             * Format: date-time
+             * @description The immutable event timestamp.
+             */
+            createdAt: string;
+        };
+        /**
+         * @description One source's rollup for the window: identity, overall + per-operation
+         *     success/fail tallies (from the event log), joined rolling latency (metrics),
+         *     and the current failure streak (breaker).
+         */
+        SourceReport: {
+            /** @description Canonical source key. */
+            sourceKey: string;
+            /** @description The numeric engine-host source id as a string ("" for a disk source). */
+            sourceId: string;
+            /** @description The source's display name. */
+            sourceName: string;
+            /** @description The source's language code ("" when unknown). */
+            language: string;
+            totalEvents: number;
+            successEvents: number;
+            failedEvents: number;
+            /**
+             * Format: double
+             * @description successEvents / totalEvents as a 0..1 fraction (0 when none).
+             */
+            successRate: number;
+            /** @description Per-operation breakdown, sorted by total descending. */
+            byType: components["schemas"]["EventTypeBreakdown"][];
+            /** @description Rolling EWMA search latency, in milliseconds (0 when never measured). */
+            ewmaLatencyMs: number;
+            /** @description Most recent measured search latency, in milliseconds. */
+            lastLatencyMs: number;
+            /**
+             * Format: date-time
+             * @description Start of the current failure streak (absent when not failing).
+             */
+            failingSince?: string;
+            /** @description How many gated fetches failed in a row. */
+            consecutiveFailures: number;
+            /** @description Most recent gated-fetch failure reason ("" when none). */
+            lastError: string;
+            /**
+             * Format: date-time
+             * @description When the tripped breaker reopens (absent when not tripped).
+             */
+            cooldownUntil?: string;
+            /** @description Derived — a cooldown is set and still in the future. */
+            isCoolingDown: boolean;
+        };
+        /**
+         * @description A page of the raw event feed plus the total matching count (so the UI can
+         *     paginate without a second call).
+         */
+        SourceEventList: {
+            /** @description Total number of events matching the filter (ignores pagination). */
+            total: number;
+            items: components["schemas"]["SourceEventRecord"][];
+        };
+        /**
+         * @description The window's success/fail counts bucketed by hour or day — the data behind
+         *     the stacked green/red histogram. Buckets are ascending by start time.
+         */
+        SourceTimeline: {
+            buckets: components["schemas"]["TimelineBucket"][];
+        };
+        /** @description One time slot's success/fail tally. */
+        TimelineBucket: {
+            /**
+             * Format: date-time
+             * @description The slot's start (a date_trunc boundary).
+             */
+            bucket: string;
+            success: number;
+            failed: number;
+            total: number;
         };
         RunDownloadsResult: {
             /**
@@ -7356,6 +7659,186 @@ export interface operations {
             };
             /** @description The engine host could not be reached to resolve the source. */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getReportingOverview: {
+        parameters: {
+            query?: {
+                /** @description The time window (defaults to 24h). */
+                period?: "24h" | "7d" | "30d";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The period overview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportingOverview"];
+                };
+            };
+            /** @description The period is not one of the allowed values. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listReportingSources: {
+        parameters: {
+            query?: {
+                /** @description The time window (defaults to 24h). */
+                period?: "24h" | "7d" | "30d";
+                /** @description The rollup ordering (defaults to failures). */
+                sort?: "failures" | "latency" | "events";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The per-source rollup, sorted per "sort". */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceReport"][];
+                };
+            };
+            /** @description The period or sort is not one of the allowed values. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSourceEvents: {
+        parameters: {
+            query?: {
+                /** @description Filter by outcome (omit for any). */
+                status?: "success" | "failed";
+                /** @description Filter by operation type (omit for any). */
+                eventType?: "search" | "download" | "refresh" | "warm" | "breaker_trip" | "breaker_reset";
+                /** @description Page size (default 50, capped at 200). */
+                limit?: number;
+                /** @description Page offset. */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description The canonical source key, or "__all__" for the global feed. */
+                sourceKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the event feed plus the total match count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceEventList"];
+                };
+            };
+            /** @description A path/query parameter is invalid (blank sourceKey, unknown status/eventType, bad pagination). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSourceTimeline: {
+        parameters: {
+            query?: {
+                /** @description The bucket granularity (defaults to hour). */
+                bucket?: "hour" | "day";
+                /** @description The time window (defaults to 24h). */
+                period?: "24h" | "7d" | "30d";
+            };
+            header?: never;
+            path: {
+                /** @description The canonical source key, or "__all__" for the global timeline. */
+                sourceKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bucketed success/fail series (ascending by bucket start). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceTimeline"];
+                };
+            };
+            /** @description A path/query parameter is invalid (blank sourceKey, unknown bucket/period). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

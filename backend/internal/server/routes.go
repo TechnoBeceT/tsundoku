@@ -25,6 +25,7 @@ import (
 	networkh "github.com/technobecet/tsundoku/internal/handler/network"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	pushh "github.com/technobecet/tsundoku/internal/handler/push"
+	reportingh "github.com/technobecet/tsundoku/internal/handler/reporting"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
 	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
@@ -40,6 +41,7 @@ import (
 	networksvc "github.com/technobecet/tsundoku/internal/network"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
+	"github.com/technobecet/tsundoku/internal/reporting"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourcecover"
@@ -104,6 +106,10 @@ import (
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
 //   - /api/sources/metrics (GET)                   — per-source performance metrics + isSlow (RequireOwner).
 //   - /api/sources/warmup (POST)                   — trigger a full anti-bot warm-up pass (RequireOwner).
+//   - /api/reporting/overview (GET)                — Source Health Console period KPI overview (RequireOwner).
+//   - /api/reporting/sources (GET)                 — per-source event-log rollup, sorted (RequireOwner).
+//   - /api/reporting/source/:sourceKey/events (GET)   — paginated raw event feed (:sourceKey=__all__ = global) (RequireOwner).
+//   - /api/reporting/source/:sourceKey/timeline (GET) — bucketed success/fail timeline histogram (RequireOwner).
 //   - /api/push/vapid-key (GET)                     — server VAPID public key for Web Push subscribe (RequireOwner).
 //   - /api/push/subscriptions (POST)               — upsert this device's Web Push subscription (RequireOwner).
 //   - /api/push/subscriptions (DELETE)             — remove this device's Web Push subscription (RequireOwner).
@@ -321,6 +327,19 @@ func registerRoutes(
 	authed.GET("/sources/metrics", sourcesH.Metrics)
 	authed.POST("/sources/warmup", sourcesH.Warmup)
 	authed.POST("/sources/:sourceId/reset-breaker", sourcesH.ResetBreaker)
+
+	// Source Health Console reporting API — read-only, SQL-aggregated views over
+	// the SourceEvent audit log: the period KPI overview, the per-source rollup,
+	// the paginated raw event feed (":sourceKey"=="__all__" is the global feed),
+	// and the success/fail timeline histogram. The service aggregates in the DB
+	// (Ent GroupBy/Aggregate + a date_trunc bucket modifier) and joins the metrics
+	// EWMA + breaker snapshots by canonical source key.
+	reportingSvc := reporting.NewService(client, metricsSvc, gate)
+	reportingH := reportingh.NewHandler(reportingSvc)
+	authed.GET("/reporting/overview", reportingH.Overview)
+	authed.GET("/reporting/sources", reportingH.Sources)
+	authed.GET("/reporting/source/:sourceKey/events", reportingH.Events)
+	authed.GET("/reporting/source/:sourceKey/timeline", reportingH.Timeline)
 
 	// Web Push registration API. The handler serves the server VAPID public key
 	// and upserts/removes a device's subscription (internal/push store); the

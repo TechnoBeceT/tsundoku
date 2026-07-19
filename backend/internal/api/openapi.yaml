@@ -1745,6 +1745,320 @@ components:
             GET /api/sources/metrics (lastWarmedAt / lastError), not here.
           example: true
 
+    ReportingOverview:
+      type: object
+      description: |
+        The Source Health Console period dashboard: headline KPIs, the per-
+        operation breakdown, the slowest + currently-failing leaderboards, and a
+        preview of the most recent errors. Aggregated in SQL over the SourceEvent
+        audit log for the requested period window.
+      required:
+        - period
+        - since
+        - kpis
+        - eventsByType
+        - slowestSources
+        - failingSources
+        - recentErrors
+      properties:
+        period:
+          type: string
+          enum: [24h, 7d, 30d]
+          description: The window this report covers.
+        since:
+          type: string
+          format: date-time
+          description: The inclusive lower bound of the window (now minus period).
+        kpis:
+          $ref: "#/components/schemas/ReportingKPIs"
+        eventsByType:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventTypeBreakdown"
+          description: Per-operation success/fail tally (search vs download vs …).
+        slowestSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SlowSource"
+          description: The slowest sources by rolling EWMA latency (from the metrics snapshot).
+        failingSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/FailingSource"
+          description: Sources currently in a failure streak (from the circuit breaker), longest-failing first.
+        recentErrors:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceEventRecord"
+          description: The most recent failed events in the window, newest first.
+
+    ReportingKPIs:
+      type: object
+      description: The headline numbers for a reporting window.
+      required:
+        - totalEvents
+        - successEvents
+        - failedEvents
+        - successRate
+        - activeSources
+      properties:
+        totalEvents:
+          type: integer
+          description: How many source operations ran in the window.
+        successEvents:
+          type: integer
+          description: How many succeeded.
+        failedEvents:
+          type: integer
+          description: How many failed.
+        successRate:
+          type: number
+          format: double
+          description: successEvents / totalEvents as a 0..1 fraction (0 when none).
+        activeSources:
+          type: integer
+          description: How many distinct sources produced any event in the window.
+
+    EventTypeBreakdown:
+      type: object
+      description: One operation type's success/fail tally for the window.
+      required: [eventType, total, success, failed]
+      properties:
+        eventType:
+          type: string
+          enum: [search, download, refresh, warm, breaker_trip, breaker_reset]
+          description: The source-operation type.
+        total:
+          type: integer
+        success:
+          type: integer
+        failed:
+          type: integer
+
+    SlowSource:
+      type: object
+      description: One entry of the slowest-sources leaderboard (rolling EWMA snapshot).
+      required: [sourceKey, sourceName, ewmaLatencyMs]
+      properties:
+        sourceKey:
+          type: string
+          description: Canonical source key (the join key across events/metrics/breaker).
+        sourceName:
+          type: string
+          description: The source's display name.
+        ewmaLatencyMs:
+          type: integer
+          description: Exponentially-weighted rolling search latency, in milliseconds.
+
+    FailingSource:
+      type: object
+      description: |
+        One entry of the currently-failing leaderboard, from the circuit-breaker
+        state — the authoritative "erroring since when" without an event-log scan.
+      required: [sourceKey, consecutiveFailures, lastError, isCoolingDown]
+      properties:
+        sourceKey:
+          type: string
+          description: Canonical source key.
+        failingSince:
+          type: string
+          format: date-time
+          description: Start of the current failure streak (absent when not failing).
+        consecutiveFailures:
+          type: integer
+          description: How many gated fetches failed in a row.
+        lastError:
+          type: string
+          description: Most recent gated-fetch failure reason ("" when none).
+        cooldownUntil:
+          type: string
+          format: date-time
+          description: When the tripped breaker reopens (absent when not tripped).
+        isCoolingDown:
+          type: boolean
+          description: Derived — a cooldown is set and still in the future.
+
+    SourceEventRecord:
+      type: object
+      description: |
+        One row of the append-only source-operation audit log. The three optional
+        fields are absent when the column is NULL (a success has no error; a warm
+        has no items count). "metadata" is always present (possibly empty).
+      required:
+        - id
+        - sourceKey
+        - sourceId
+        - sourceName
+        - language
+        - eventType
+        - status
+        - durationMs
+        - metadata
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The event's unique id.
+        sourceKey:
+          type: string
+          description: Canonical source key.
+        sourceId:
+          type: string
+          description: The numeric engine-host source id as a string ("" for a disk source).
+        sourceName:
+          type: string
+          description: The source's display name captured at write time.
+        language:
+          type: string
+          description: The source's language code ("" when unknown).
+        eventType:
+          type: string
+          enum: [search, download, refresh, warm, breaker_trip, breaker_reset]
+          description: The source-operation type.
+        status:
+          type: string
+          enum: [success, failed]
+          description: The operation's binary outcome.
+        durationMs:
+          type: integer
+          format: int64
+          description: The operation's wall-clock duration in milliseconds (0 when not timed).
+        errorMessage:
+          type: string
+          description: The (truncated) failure reason; absent on success.
+        errorCategory:
+          type: string
+          description: The classified error bucket (captcha/rate_limit/…); absent on success.
+        itemsCount:
+          type: integer
+          description: The operation's result cardinality where meaningful; absent otherwise.
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Small operation-specific forensic context (keyword, url, chapter, series).
+        createdAt:
+          type: string
+          format: date-time
+          description: The immutable event timestamp.
+
+    SourceReport:
+      type: object
+      description: |
+        One source's rollup for the window: identity, overall + per-operation
+        success/fail tallies (from the event log), joined rolling latency (metrics),
+        and the current failure streak (breaker).
+      required:
+        - sourceKey
+        - sourceId
+        - sourceName
+        - language
+        - totalEvents
+        - successEvents
+        - failedEvents
+        - successRate
+        - byType
+        - ewmaLatencyMs
+        - lastLatencyMs
+        - consecutiveFailures
+        - lastError
+        - isCoolingDown
+      properties:
+        sourceKey:
+          type: string
+          description: Canonical source key.
+        sourceId:
+          type: string
+          description: The numeric engine-host source id as a string ("" for a disk source).
+        sourceName:
+          type: string
+          description: The source's display name.
+        language:
+          type: string
+          description: The source's language code ("" when unknown).
+        totalEvents:
+          type: integer
+        successEvents:
+          type: integer
+        failedEvents:
+          type: integer
+        successRate:
+          type: number
+          format: double
+          description: successEvents / totalEvents as a 0..1 fraction (0 when none).
+        byType:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventTypeBreakdown"
+          description: Per-operation breakdown, sorted by total descending.
+        ewmaLatencyMs:
+          type: integer
+          description: Rolling EWMA search latency, in milliseconds (0 when never measured).
+        lastLatencyMs:
+          type: integer
+          description: Most recent measured search latency, in milliseconds.
+        failingSince:
+          type: string
+          format: date-time
+          description: Start of the current failure streak (absent when not failing).
+        consecutiveFailures:
+          type: integer
+          description: How many gated fetches failed in a row.
+        lastError:
+          type: string
+          description: Most recent gated-fetch failure reason ("" when none).
+        cooldownUntil:
+          type: string
+          format: date-time
+          description: When the tripped breaker reopens (absent when not tripped).
+        isCoolingDown:
+          type: boolean
+          description: Derived — a cooldown is set and still in the future.
+
+    SourceEventList:
+      type: object
+      description: |
+        A page of the raw event feed plus the total matching count (so the UI can
+        paginate without a second call).
+      required: [total, items]
+      properties:
+        total:
+          type: integer
+          description: Total number of events matching the filter (ignores pagination).
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceEventRecord"
+
+    SourceTimeline:
+      type: object
+      description: |
+        The window's success/fail counts bucketed by hour or day — the data behind
+        the stacked green/red histogram. Buckets are ascending by start time.
+      required: [buckets]
+      properties:
+        buckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimelineBucket"
+
+    TimelineBucket:
+      type: object
+      description: One time slot's success/fail tally.
+      required: [bucket, success, failed, total]
+      properties:
+        bucket:
+          type: string
+          format: date-time
+          description: The slot's start (a date_trunc boundary).
+        success:
+          type: integer
+        failed:
+          type: integer
+        total:
+          type: integer
+
     RunDownloadsResult:
       type: object
       required: [started]
@@ -6479,6 +6793,227 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: The engine host could not be reached to resolve the source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/reporting/overview:
+    get:
+      operationId: getReportingOverview
+      summary: Source Health Console period overview
+      description: |
+        Returns the period dashboard for the Source Health Console: headline KPIs
+        (total/success/failed events, success rate, active sources), the per-
+        operation breakdown, the slowest-source and currently-failing-source
+        leaderboards, and a preview of the most recent errors. Every aggregation
+        is computed in SQL over the SourceEvent audit log — the whole log is never
+        loaded into memory.
+      tags:
+        - reporting
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 24h
+          description: The time window (defaults to 24h).
+      responses:
+        "200":
+          description: The period overview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingOverview"
+        "400":
+          description: The period is not one of the allowed values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/reporting/sources:
+    get:
+      operationId: listReportingSources
+      summary: Per-source event-log rollup
+      description: |
+        Returns each source's rollup for the window — overall + per-operation
+        success/fail counts (from the event log), joined rolling latency (metrics)
+        and the current failure streak (breaker) — sorted by the requested key.
+        SQL-aggregated; the query count does not grow with the number of sources.
+      tags:
+        - reporting
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 24h
+          description: The time window (defaults to 24h).
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [failures, latency, events]
+            default: failures
+          description: The rollup ordering (defaults to failures).
+      responses:
+        "200":
+          description: The per-source rollup, sorted per "sort".
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceReport"
+        "400":
+          description: The period or sort is not one of the allowed values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/reporting/source/{sourceKey}/events:
+    get:
+      operationId: listSourceEvents
+      summary: Paginated raw source-event feed
+      description: |
+        Returns one filtered, paginated page of the raw event feed for a source,
+        newest first, plus the total matching count. The sentinel sourceKey
+        "__all__" returns the GLOBAL feed across every source. Runs exactly two
+        queries (count + page) regardless of page size.
+      tags:
+        - reporting
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceKey
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The canonical source key, or "__all__" for the global feed.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [success, failed]
+          description: Filter by outcome (omit for any).
+        - name: eventType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [search, download, refresh, warm, breaker_trip, breaker_reset]
+          description: Filter by operation type (omit for any).
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+          description: Page size (default 50, capped at 200).
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: Page offset.
+      responses:
+        "200":
+          description: A page of the event feed plus the total match count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceEventList"
+        "400":
+          description: A path/query parameter is invalid (blank sourceKey, unknown status/eventType, bad pagination).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/reporting/source/{sourceKey}/timeline:
+    get:
+      operationId: getSourceTimeline
+      summary: Bucketed success/fail timeline
+      description: |
+        Returns the window's success/fail counts bucketed by hour or day — the
+        data behind the stacked green/red histogram. The sentinel sourceKey
+        "__all__" spans every source. Bucketing is done in SQL (a date_trunc
+        GROUP BY); only the per-bucket summed rows cross the wire.
+      tags:
+        - reporting
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceKey
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The canonical source key, or "__all__" for the global timeline.
+        - name: bucket
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [hour, day]
+            default: hour
+          description: The bucket granularity (defaults to hour).
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 24h
+          description: The time window (defaults to 24h).
+      responses:
+        "200":
+          description: The bucketed success/fail series (ascending by bucket start).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceTimeline"
+        "400":
+          description: A path/query parameter is invalid (blank sourceKey, unknown bucket/period).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
           content:
             application/json:
               schema:
