@@ -231,6 +231,88 @@ func TestRunner_DownloadCycle_UpgradeAll_Parallel(t *testing.T) {
 	}
 }
 
+// TestRunner_DownloadCycle_ProcessesPreflaggedUpgrade_WhenDetectFlagsZero is the
+// Dreaming-Freedom regression proof for fix ⑧. It reproduces a CONVERGED library
+// where the only better source was down when the chapter was first flagged: the
+// chapter already sits in state=upgrade_available (from an earlier cycle) and NO
+// downloaded chapter is eligible, so DetectUpgrades flags ZERO new chapters this
+// cycle (flagged==0). Before the fix, UpgradeAll was gated on flagged>0 and was
+// therefore never called — the chapter stayed stranded in upgrade_available
+// forever, even after its target source recovered. After the fix, UpgradeAll runs
+// unconditionally and converges the pre-flagged chapter to its higher source.
+func TestRunner_DownloadCycle_ProcessesPreflaggedUpgrade_WhenDetectFlagsZero(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	// A converged series: one chapter already satisfied by a low-importance
+	// source and ALREADY flagged upgrade_available, with a strictly higher source
+	// (now reachable again) carrying the same key.
+	s := client.Series.Create().SetTitle("Dreaming Freedom").SetSlug("dreaming-freedom").SaveX(ctx)
+	spLow := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-low").SetImportance(2).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spLow.ID).
+		SetChapterKey("ch-df-1").
+		SetURL("https://low.example.com/ch-df-1").
+		SetProviderIndex(0).
+		SaveX(ctx)
+	spHigh := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-high").SetImportance(10).SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(spHigh.ID).
+		SetChapterKey("ch-df-1").
+		SetURL("https://high.example.com/ch-df-1").
+		SetProviderIndex(0).
+		SaveX(ctx)
+	ch := client.Chapter.Create().
+		SetSeries(s).
+		SetChapterKey("ch-df-1").
+		SetState(entchapter.StateUpgradeAvailable).
+		SetSatisfiedByID(spLow.ID).
+		SetSatisfiedImportance(2).
+		SaveX(ctx)
+
+	events, unsub := hub.Subscribe()
+	defer unsub()
+
+	d := download.New(client, fake.New(), hub, download.Config{
+		Storage: storage,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
+
+	if err := r.RunDownloadCycle(ctx); err != nil {
+		t.Fatalf("RunDownloadCycle: %v", err)
+	}
+
+	// The pre-flagged chapter must have been upgraded to the higher source and
+	// returned to downloaded — no longer stranded.
+	final := client.Chapter.GetX(ctx, ch.ID)
+	if final.State != entchapter.StateDownloaded {
+		t.Errorf("state after cycle: want downloaded (upgrade converged), got %s", final.State)
+	}
+	if final.SatisfiedImportance == nil || *final.SatisfiedImportance != 10 {
+		t.Errorf("satisfied_importance after cycle: want 10 (upgraded to prov-high), got %v", final.SatisfiedImportance)
+	}
+
+	evt := waitCycleDoneEvent(events, 2*time.Second)
+	if evt == nil {
+		t.Fatal("expected a cycle.done SSE event, got none")
+	}
+	// The load-bearing precondition: DetectUpgrades flagged ZERO new chapters (the
+	// only chapter was already in upgrade_available, a disjoint set from the
+	// downloaded chapters it scans) — yet the pre-flagged chapter was still
+	// upgraded. This is exactly the gate the old flagged>0 guard failed.
+	if evt.Flagged != 0 {
+		t.Errorf("cycle.done Flagged: want 0 (nothing newly eligible), got %d", evt.Flagged)
+	}
+	if evt.Upgraded != 1 {
+		t.Errorf("cycle.done Upgraded: want 1 (the pre-flagged chapter processed despite flagged==0), got %d", evt.Upgraded)
+	}
+	if evt.Error != "" {
+		t.Errorf("cycle.done Error: want empty, got %q", evt.Error)
+	}
+}
+
 // seededUpgradeChapter is one series+chapter seeded by
 // seedUpgradeParallelChapters, wired to a single low-importance provider.
 type seededUpgradeChapter struct {

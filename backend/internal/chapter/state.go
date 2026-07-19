@@ -23,6 +23,7 @@ import (
 //	downloading        → permanently_failed  (last live source exhausted this cycle — see below)
 //	downloaded         → upgrade_available
 //	upgrade_available  → upgrading
+//	upgrade_available  → downloaded      (boot orphan-recovery only — see below)
 //	upgrading          → downloaded      (success or failure; working copy retained)
 //	failed             → downloading
 //	failed             → permanently_failed
@@ -58,6 +59,16 @@ import (
 // carrier reappears (the owner un-ticks the toggle, or adds a source). The
 // resurrection guard is EVERY-carrier-ignored: a fractional a non-ignored source
 // also carries stays wanted and downloads normally, so it never lands in ignored.
+//
+// Boot orphan-recovery edge (upgrade_available→downloaded): a chapter is left in
+// upgrade_available only between DetectUpgrades (which flags it) and UpgradeAll
+// (which drives it back to downloaded). If a source that was the upgrade target
+// is down, or the process restarts mid-cycle, a chapter can strand in
+// upgrade_available. chapter.ResetOrphanedChapters resets it → downloaded at boot
+// (the pre-upgrade CBZ is intact on disk, so nothing is lost); DetectUpgrades
+// re-flags it next cycle if a strictly-better source still exists. Like the other
+// two orphan-recovery edges (downloading→wanted, upgrading→downloaded), this is a
+// SANCTIONED, startup-only bulk bypass — no live in-cycle transition uses it.
 var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	entchapter.StateWanted: {
 		entchapter.StateDownloading:       {},
@@ -75,7 +86,8 @@ var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 		entchapter.StateSuperseded:       {}, // an already-downloaded part superseded by its whole
 	},
 	entchapter.StateUpgradeAvailable: {
-		entchapter.StateUpgrading: {},
+		entchapter.StateUpgrading:  {},
+		entchapter.StateDownloaded: {}, // boot orphan-recovery: un-flag a stranded upgrade (see below)
 	},
 	entchapter.StateUpgrading: {
 		entchapter.StateDownloaded: {},

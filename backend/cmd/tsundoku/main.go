@@ -117,7 +117,7 @@ func main() {
 	if result, err := chapter.ResetOrphanedChapters(ctx, entClient); err != nil {
 		slog.Error("startup: reset orphaned chapters failed", "error", err)
 	} else {
-		slog.Info("startup: reset orphaned chapters", "requeued", result.Requeued, "upgrades_reset", result.UpgradesReset)
+		slog.Info("startup: reset orphaned chapters", "requeued", result.Requeued, "upgrades_reset", result.UpgradesReset, "upgrades_unflagged", result.UpgradesUnflagged)
 	}
 
 	// Page-staging root: a hidden per-chapter byte-cache dir under the library

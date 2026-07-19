@@ -149,7 +149,15 @@ func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub
 //     waiting out one giant unbounded drain.
 //  3. Calls download.DetectUpgrades — flags any downloaded chapters that now
 //     have a strictly better source.
-//  4. Calls dispatcher.Upgrade for each newly-flagged chapter.
+//  4. Calls dispatcher.UpgradeAll UNCONDITIONALLY — it processes every chapter
+//     already in upgrade_available, which is a DISJOINT set from the downloaded
+//     chapters DetectUpgrades scans. Gating this on "DetectUpgrades flagged
+//     something this cycle" would strand a chapter whose upgrade target was down
+//     when it was first flagged: once the library converges, DetectUpgrades flags
+//     zero new chapters every cycle, so a conditional call would never re-drive
+//     the already-flagged rows even after the target recovers. UpgradeAll is a
+//     cheap no-op (one indexed query, zero source calls) when nothing is
+//     upgrade_available, so running it every cycle is free.
 //  5. Calls dispatcher.DetectSupersededParts — fractional-part suppression:
 //     supersedes split parts of a downloaded whole (and reverts when the whole
 //     is gone or the setting is off).
@@ -185,14 +193,18 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 		return fmt.Errorf("job.Runner.RunDownloadCycle: DetectUpgrades: %w", err)
 	}
 
-	// Step 3: upgrade each flagged chapter.
-	upgraded := 0
-	if flagged > 0 {
-		upgraded, err = r.upgradeAll(ctx)
-		if err != nil {
-			r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Error: err.Error()})
-			return fmt.Errorf("job.Runner.RunDownloadCycle: upgrade: %w", err)
-		}
+	// Step 3: upgrade every chapter currently in upgrade_available. Called
+	// UNCONDITIONALLY (NOT gated on flagged>0): DetectUpgrades scans downloaded
+	// chapters and UpgradeAll scans upgrade_available ones — disjoint sets. A
+	// chapter flagged on an earlier cycle whose target source was then down would
+	// otherwise sit in upgrade_available forever, because a converged library flags
+	// zero new chapters (flagged==0) yet still has stranded rows to re-drive.
+	// UpgradeAll early-returns after one indexed query (zero source calls) when
+	// nothing is upgrade_available, so the unconditional call is a cheap no-op.
+	upgraded, err := r.upgradeAll(ctx)
+	if err != nil {
+		r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Error: err.Error()})
+		return fmt.Errorf("job.Runner.RunDownloadCycle: upgrade: %w", err)
 	}
 
 	// Step 4: fractional-part suppression — supersede split parts of downloaded

@@ -99,14 +99,61 @@ func TestResetOrphanedChapters_upgrading_to_downloaded(t *testing.T) {
 	}
 }
 
-// TestResetOrphanedChapters_resets_both_states_in_one_call verifies the two
-// bulk updates compose in a single call: a downloading chapter and an
-// upgrading chapter seeded in the same DB are BOTH swept in one invocation,
-// each to its own target state, with both counts reported.
-func TestResetOrphanedChapters_resets_both_states_in_one_call(t *testing.T) {
+// TestResetOrphanedChapters_upgrade_available_to_downloaded verifies fix ⑨: a
+// chapter stranded in upgrade_available (DetectUpgrades flagged it, but UpgradeAll
+// never converged it — e.g. its better source was down) is reset to downloaded at
+// boot, so it does not survive a restart still flagged. The pre-upgrade CBZ +
+// provenance are intact and must be preserved; DetectUpgrades re-flags it next
+// cycle if a strictly-better source is reachable again.
+func TestResetOrphanedChapters_upgrade_available_to_downloaded(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
-	s := newOrphanTestSeries(ctx, t, client, "both-states")
+	s := newOrphanTestSeries(ctx, t, client, "upgrade-available-orphan")
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("p").SetImportance(5).SaveX(ctx)
+	ch := client.Chapter.Create().
+		SetSeries(s).
+		SetChapterKey("c1").
+		SetState(entchapter.StateUpgradeAvailable).
+		SetFilename("[p] Series 001.cbz").
+		SetSatisfiedByID(sp.ID).
+		SetSatisfiedImportance(5).
+		SetPageCount(20).
+		SaveX(ctx)
+
+	result, err := chapter.ResetOrphanedChapters(ctx, client)
+	if err != nil {
+		t.Fatalf("ResetOrphanedChapters: %v", err)
+	}
+	if result.UpgradesUnflagged != 1 {
+		t.Errorf("want UpgradesUnflagged=1, got %d", result.UpgradesUnflagged)
+	}
+	if result.Requeued != 0 || result.UpgradesReset != 0 {
+		t.Errorf("want Requeued=0 UpgradesReset=0, got %+v", result)
+	}
+
+	got := client.Chapter.GetX(ctx, ch.ID)
+	if got.State != entchapter.StateDownloaded {
+		t.Errorf("want state downloaded, got %s", got.State)
+	}
+	if got.Filename != "[p] Series 001.cbz" {
+		t.Errorf("filename must be preserved, got %q", got.Filename)
+	}
+	if got.SatisfiedByProviderID == nil || *got.SatisfiedByProviderID != sp.ID {
+		t.Errorf("satisfied_by_provider_id must be preserved, got %v", got.SatisfiedByProviderID)
+	}
+	// page_count preservation on a bulk SetState is already proven by the
+	// sibling upgrading→downloaded test (identical mechanism); not re-asserted
+	// here.
+}
+
+// TestResetOrphanedChapters_resets_all_states_in_one_call verifies the three
+// bulk updates compose in a single call: a downloading, an upgrading, and an
+// upgrade_available chapter seeded in the same DB are ALL swept in one
+// invocation, each to its own target state, with every count reported.
+func TestResetOrphanedChapters_resets_all_states_in_one_call(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	s := newOrphanTestSeries(ctx, t, client, "all-states")
 	downloading := client.Chapter.Create().
 		SetSeries(s).
 		SetChapterKey("c1").
@@ -117,13 +164,18 @@ func TestResetOrphanedChapters_resets_both_states_in_one_call(t *testing.T) {
 		SetChapterKey("c2").
 		SetState(entchapter.StateUpgrading).
 		SaveX(ctx)
+	upgradeAvailable := client.Chapter.Create().
+		SetSeries(s).
+		SetChapterKey("c3").
+		SetState(entchapter.StateUpgradeAvailable).
+		SaveX(ctx)
 
 	result, err := chapter.ResetOrphanedChapters(ctx, client)
 	if err != nil {
 		t.Fatalf("ResetOrphanedChapters: %v", err)
 	}
-	if result.Requeued != 1 || result.UpgradesReset != 1 {
-		t.Fatalf("want {Requeued:1, UpgradesReset:1}, got %+v", result)
+	if result.Requeued != 1 || result.UpgradesReset != 1 || result.UpgradesUnflagged != 1 {
+		t.Fatalf("want {Requeued:1, UpgradesReset:1, UpgradesUnflagged:1}, got %+v", result)
 	}
 
 	if got := client.Chapter.GetX(ctx, downloading.ID); got.State != entchapter.StateWanted {
@@ -132,12 +184,16 @@ func TestResetOrphanedChapters_resets_both_states_in_one_call(t *testing.T) {
 	if got := client.Chapter.GetX(ctx, upgrading.ID); got.State != entchapter.StateDownloaded {
 		t.Errorf("upgrading chapter: want state downloaded, got %s", got.State)
 	}
+	if got := client.Chapter.GetX(ctx, upgradeAvailable.ID); got.State != entchapter.StateDownloaded {
+		t.Errorf("upgrade_available chapter: want state downloaded, got %s", got.State)
+	}
 }
 
 // TestResetOrphanedChapters_leaves_non_orphan_states verifies the sweep never
-// touches a chapter outside the two orphan states — wanted, failed,
-// downloaded, upgrade_available, and permanently_failed rows must all be
-// left exactly as they were (no accidental over-broad sweep).
+// touches a chapter outside the three stranded states — wanted, failed,
+// downloaded, and permanently_failed rows must all be left exactly as they were
+// (no accidental over-broad sweep). upgrade_available is deliberately EXCLUDED
+// here: it IS a swept state (→downloaded), proven by its own test below.
 func TestResetOrphanedChapters_leaves_non_orphan_states(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -147,7 +203,6 @@ func TestResetOrphanedChapters_leaves_non_orphan_states(t *testing.T) {
 		entchapter.StateWanted,
 		entchapter.StateFailed,
 		entchapter.StateDownloaded,
-		entchapter.StateUpgradeAvailable,
 		entchapter.StatePermanentlyFailed,
 	}
 	ids := make([]uuid.UUID, len(states))

@@ -25,6 +25,7 @@ func TestCanTransition(t *testing.T) {
 		{"downloading→failed", entchapter.StateDownloading, entchapter.StateFailed, true},
 		{"downloaded→upgrade_available", entchapter.StateDownloaded, entchapter.StateUpgradeAvailable, true},
 		{"upgrade_available→upgrading", entchapter.StateUpgradeAvailable, entchapter.StateUpgrading, true},
+		{"upgrade_available→downloaded (boot orphan-recovery)", entchapter.StateUpgradeAvailable, entchapter.StateDownloaded, true},
 		{"upgrading→downloaded", entchapter.StateUpgrading, entchapter.StateDownloaded, true},
 		{"failed→downloading", entchapter.StateFailed, entchapter.StateDownloading, true},
 		{"failed→permanently_failed", entchapter.StateFailed, entchapter.StatePermanentlyFailed, true},
