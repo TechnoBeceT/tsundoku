@@ -17,8 +17,9 @@ import (
 // folder consistent — the category is disk-folder-determining (Komga contract),
 // so the rename physically moves <storage>/<oldName> to <storage>/<newName>.
 //
-// newName is validated (filesystem-safe) and must be unique. The protected
-// default ("Other") cannot be renamed (ErrCategoryProtected). A missing id
+// newName is validated (filesystem-safe) and must be unique. ANY category is
+// renameable, including the current default (QCAT-296: the fallback role is the
+// is_default invariant, not a name-lock, so nothing is name-locked). A missing id
 // returns ErrCategoryNotFound; a duplicate name returns ErrCategoryNameTaken.
 //
 // Disk↔DB coordination mirrors series.SetCategory: the folder is moved on disk
@@ -55,8 +56,8 @@ func (s *Service) Rename(ctx context.Context, id uuid.UUID, newName string) erro
 // prepareRename validates a rename and loads the target category. It returns the
 // loaded row and the cleaned new name, or noop=true when the rename is a no-op
 // (the name is unchanged). Errors: ErrInvalidCategoryName (bad name),
-// ErrCategoryNotFound (unknown id), ErrCategoryProtected (the default), or
-// ErrCategoryNameTaken (duplicate). Extracted so Rename stays within the
+// ErrCategoryNotFound (unknown id), or ErrCategoryNameTaken (duplicate).
+// Extracted so Rename stays within the
 // cyclomatic-complexity budget (cyclop ≤ 10).
 func (s *Service) prepareRename(ctx context.Context, id uuid.UUID, newName string) (row *ent.Category, clean string, noop bool, err error) {
 	clean, err = ValidateName(newName)
@@ -66,9 +67,6 @@ func (s *Service) prepareRename(ctx context.Context, id uuid.UUID, newName strin
 	row, err = s.byID(ctx, id)
 	if err != nil {
 		return nil, "", false, err
-	}
-	if row.Protected {
-		return nil, "", false, ErrCategoryProtected
 	}
 	if clean == row.Name {
 		// No-op: same name. (A pure-whitespace edit normalises to the same value.)

@@ -20,7 +20,7 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** The seed category list — "Other" is protected + the default landing. */
+/** The seed category list — "Other" is the default landing. */
 export const Default: Story = {
   args: { categoryAction: { busyId: null } },
 }

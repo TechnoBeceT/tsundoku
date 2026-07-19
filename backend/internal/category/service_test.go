@@ -37,7 +37,7 @@ func TestCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if dto.Name != "Indie Comics" || dto.SortOrder != 7 || dto.Protected || dto.Count != 0 {
+	if dto.Name != "Indie Comics" || dto.SortOrder != 7 || dto.Count != 0 {
 		t.Fatalf("Create dto mismatch: %+v", dto)
 	}
 
@@ -73,8 +73,8 @@ func TestListWithCounts(t *testing.T) {
 	if got[0].Name != "Manga" || got[0].Count != 2 {
 		t.Fatalf("List[0]: want Manga count 2, got %+v", got[0])
 	}
-	if got[4].Name != "Other" || !got[4].Protected {
-		t.Fatalf("List[4]: want Other protected, got %+v", got[4])
+	if got[4].Name != "Other" || !got[4].IsDefault {
+		t.Fatalf("List[4]: want Other (the seeded default), got %+v", got[4])
 	}
 }
 
@@ -97,7 +97,7 @@ func TestReorder(t *testing.T) {
 }
 
 // TestDelete verifies an empty category is deletable, a non-empty one is 409, and
-// the protected default is 400.
+// the current default is 400.
 func TestDelete(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -223,17 +223,14 @@ func TestRenameMovesFolderAndUpdatesDB(t *testing.T) {
 	}
 }
 
-// TestRenameProtectedAndConflicts verifies the rename guards: protected default
-// → 400, duplicate name → 409, unknown id → 404, invalid name → 400.
-func TestRenameProtectedAndConflicts(t *testing.T) {
+// TestRenameConflicts verifies the rename guards: duplicate name → 409, unknown
+// id → 404, invalid name → 400. (Renaming the default is proven separately by
+// TestRenameCurrentDefaultSucceeds — QCAT-296 dropped the protected-blocks-rename
+// rule, so nothing is name-locked.)
+func TestRenameConflicts(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	svc := category.NewService(client, t.TempDir())
-
-	otherID := catIDByName(ctx, t, client, "Other")
-	if err := svc.Rename(ctx, otherID, "Misc"); !errors.Is(err, category.ErrCategoryProtected) {
-		t.Fatalf("Rename protected: want ErrCategoryProtected, got %v", err)
-	}
 
 	mangaID := catIDByName(ctx, t, client, "Manga")
 	if err := svc.Rename(ctx, mangaID, "Manhwa"); !errors.Is(err, category.ErrCategoryNameTaken) {
@@ -244,6 +241,42 @@ func TestRenameProtectedAndConflicts(t *testing.T) {
 	}
 	if err := svc.Rename(ctx, uuid.New(), "Whatever"); !errors.Is(err, category.ErrCategoryNotFound) {
 		t.Fatalf("Rename unknown: want ErrCategoryNotFound, got %v", err)
+	}
+}
+
+// TestRenameCurrentDefaultSucceeds is the QCAT-296 proof that the current default
+// (the former-protected "Other") is renameable: the rename moves the folder AND
+// updates the DB, and the row stays the default (rename never touches is_default).
+func TestRenameCurrentDefaultSucceeds(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	svc := category.NewService(client, storage)
+
+	// "Other" is the seeded default; give it a real on-disk folder.
+	otherID := catIDByName(ctx, t, client, "Other")
+	client.Series.Create().SetTitle("Loose").SetSlug("loose").SetCategoryID(otherID).SaveX(ctx)
+	if err := os.MkdirAll(filepath.Join(storage, "Other", "Loose"), 0o750); err != nil {
+		t.Fatalf("seed dir: %v", err)
+	}
+
+	if err := svc.Rename(ctx, otherID, "Miscellaneous"); err != nil {
+		t.Fatalf("Rename current default: %v", err)
+	}
+
+	row := client.Category.GetX(ctx, otherID)
+	if row.Name != "Miscellaneous" {
+		t.Fatalf("Rename default: DB name = %q, want Miscellaneous", row.Name)
+	}
+	if !row.IsDefault {
+		t.Fatalf("Rename default: is_default flipped off, want it preserved")
+	}
+	// Folder moved with the category.
+	if _, err := os.Stat(filepath.Join(storage, "Miscellaneous", "Loose")); err != nil {
+		t.Fatalf("series should have moved with the renamed default: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(storage, "Other")); !os.IsNotExist(err) {
+		t.Fatalf("old default dir should be gone, stat err = %v", err)
 	}
 }
 

@@ -3,7 +3,7 @@
  * by Storybook stories — so the screen stays props-driven and backend-free.
  *
  * Mirrors the Claude Design prototype's seed state: the M12 library knobs, the
- * five seed categories (Other protected + default), an embedded engine with an
+ * five seed categories (Other is the default landing), an embedded engine with an
  * upgrade available, the Tsundoku-owned FlareSolverr config (on, QCAT-238 —
  * the only card left in the "Server config" pane; the proxied Suwayomi SOCKS
  * card was RETIRED with the P2 Suwayomi-removal backend cutover), and the
@@ -45,13 +45,13 @@ export const systemInfo: SystemInfo = {
   database: 'db:5432 / tsundoku',
 }
 
-/** The five seed categories — "Other" is protected + the default landing. */
+/** The five seed categories — "Other" is the default landing. */
 export const settingsCategories: SettingsCategory[] = [
-  { id: 'cat-manga', name: 'Manga', count: 42, isDefault: false, protected: false },
-  { id: 'cat-manhwa', name: 'Manhwa', count: 28, isDefault: false, protected: false },
-  { id: 'cat-manhua', name: 'Manhua', count: 11, isDefault: false, protected: false },
-  { id: 'cat-comic', name: 'Comic', count: 0, isDefault: false, protected: false },
-  { id: 'cat-other', name: 'Other', count: 6, isDefault: true, protected: true },
+  { id: 'cat-manga', name: 'Manga', count: 42, isDefault: false },
+  { id: 'cat-manhwa', name: 'Manhwa', count: 28, isDefault: false },
+  { id: 'cat-manhua', name: 'Manhua', count: 11, isDefault: false },
+  { id: 'cat-comic', name: 'Comic', count: 0, isDefault: false },
+  { id: 'cat-other', name: 'Other', count: 6, isDefault: true },
 ]
 
 /** An embedded engine, running, with a newer pinned version available. */

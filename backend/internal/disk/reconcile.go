@@ -308,9 +308,9 @@ func upsertTrackBinding(ctx context.Context, client *ent.Client, seriesID uuid.U
 // user-named folder round-trips: the category is find-or-created by name
 // (mirroring findOrCreateSeriesProvider) and linked via category_id. category is
 // "" only for an orphan series directly under the storage root (no category dir,
-// no sidecar category): on CREATE it defaults to "Other" (the protected
-// fallback) so a series is never left category-less; on UPDATE an empty disk
-// category is ignored so it never clobbers a real category with Other.
+// no sidecar category): on CREATE it defaults to the owner-chosen is_default
+// category (resolveDefaultCategoryID) so a series is never left category-less; on
+// UPDATE an empty disk category is ignored so it never clobbers a real category.
 //
 // Returns the existing or newly created row.
 func upsertSeries(ctx context.Context, client *ent.Client, title, diskCategory string) (*ent.Series, error) {

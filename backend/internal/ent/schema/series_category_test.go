@@ -44,9 +44,10 @@ func TestCategoryNameIsUnique(t *testing.T) {
 	}
 }
 
-// TestEnsureDefaultsSeedsFiveProtectedOther verifies the seed: exactly the five
-// defaults exist with "Other" protected, and EnsureDefaults is idempotent.
-func TestEnsureDefaultsSeedsFiveProtectedOther(t *testing.T) {
+// TestEnsureDefaultsSeedsFiveDefaultOther verifies the seed on a fresh DB: exactly
+// the five defaults exist with "Other" as the single is_default landing (QCAT-296
+// retired the protected flag), and EnsureDefaults is idempotent.
+func TestEnsureDefaultsSeedsFiveDefaultOther(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 
@@ -58,14 +59,12 @@ func TestEnsureDefaultsSeedsFiveProtectedOther(t *testing.T) {
 	if n := client.Category.Query().CountX(ctx); n != 5 {
 		t.Fatalf("expected 5 seeded categories, got %d", n)
 	}
-	other := client.Category.Query().Where(entcategory.Name("Other")).OnlyX(ctx)
-	if !other.Protected {
-		t.Fatal("expected the Other category to be protected")
+	// Exactly one is_default, and on a fresh seed it is "Other".
+	if n := client.Category.Query().Where(entcategory.IsDefault(true)).CountX(ctx); n != 1 {
+		t.Fatalf("expected exactly 1 default category, got %d", n)
 	}
-	for _, name := range []string{"Manga", "Manhwa", "Manhua", "Comic"} {
-		c := client.Category.Query().Where(entcategory.Name(name)).OnlyX(ctx)
-		if c.Protected {
-			t.Errorf("category %q should not be protected", name)
-		}
+	other := client.Category.Query().Where(entcategory.Name("Other")).OnlyX(ctx)
+	if !other.IsDefault {
+		t.Fatal("expected the seeded Other category to be the default")
 	}
 }

@@ -49,8 +49,8 @@ func (h *Handler) Create(c echo.Context) error {
 // Update handles PATCH /api/categories/:id — rename and/or reorder. A name moves
 // the on-disk category folder (rename); a sortOrder is a DB-only reorder; both
 // may be present. On success it returns 200 with the updated CategoryDTO (§16).
-// A missing id yields 404; a duplicate name yields 409; renaming/deleting the
-// protected default yields 400; an invalid name yields 400.
+// ANY category is renameable, including the current default (QCAT-296). A missing
+// id yields 404; a duplicate name yields 409; an invalid name yields 400.
 func (h *Handler) Update(c echo.Context) error {
 	id, err := validateID(c.Param("id"))
 	if err != nil {
@@ -121,17 +121,14 @@ func (h *Handler) Delete(c echo.Context) error {
 
 // mapServiceError translates a category.Service sentinel into the matching HTTP
 // status, leaving any unexpected error to the central middleware as a 500.
-// ErrCategoryNotFound → 404; ErrInvalidCategoryName → 400; ErrCategoryProtected
-// → 400; ErrCategoryIsDefault → 400; ErrCategoryNameTaken → 409;
-// ErrCategoryNotEmpty → 409.
+// ErrCategoryNotFound → 404; ErrInvalidCategoryName → 400; ErrCategoryIsDefault
+// → 400; ErrCategoryNameTaken → 409; ErrCategoryNotEmpty → 409.
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, categorysvc.ErrCategoryNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "category not found")
 	case errors.Is(err, categorysvc.ErrInvalidCategoryName):
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid category name")
-	case errors.Is(err, categorysvc.ErrCategoryProtected):
-		return echo.NewHTTPError(http.StatusBadRequest, "category is protected")
 	case errors.Is(err, categorysvc.ErrCategoryIsDefault):
 		return echo.NewHTTPError(http.StatusBadRequest, "category is the default")
 	case errors.Is(err, categorysvc.ErrCategoryNameTaken):

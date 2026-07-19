@@ -131,10 +131,11 @@ func (s *Service) Reorder(ctx context.Context, id uuid.UUID, sortOrder int) erro
 // Delete removes a category. It is allowed ONLY when no series is filed under it
 // (else ErrCategoryNotEmpty) and never for the current default (else
 // ErrCategoryIsDefault) — so new / uncategorized series always have a landing
-// spot. A demoted "Other" (protected but no longer the default) IS deletable. It
-// is DB-only: it deletes no series, no CBZ, and leaves any on-disk folder
-// untouched (an empty category folder, if present, is left as is). A missing id
-// returns ErrCategoryNotFound.
+// spot. ANY non-default category is deletable, INCLUDING a demoted "Other"
+// (QCAT-296) — which then STAYS deleted across restarts (see the tombstone
+// below). It is DB-only: it deletes no series, no CBZ, and leaves any on-disk
+// folder untouched (an empty category folder, if present, is left as is). A
+// missing id returns ErrCategoryNotFound.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	row, err := s.byID(ctx, id)
 	if err != nil {
@@ -157,7 +158,8 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	// inert — EnsureDefaults only ever CREATES missing categories, never consults
 	// the tombstone for one that already exists). This is what makes a deleted
 	// default (e.g. Comic, Manhua) stay deleted across restarts instead of being
-	// re-seeded by EnsureDefaults. A no-op for user-created and "Other" names.
+	// re-seeded by EnsureDefaults — this now covers "Other" too (QCAT-296), so a
+	// deliberately-deleted "Other" stays gone. A no-op for user-created names.
 	if err := tombstoneDefault(ctx, s.client, row.Name); err != nil {
 		return fmt.Errorf("category.Delete: tombstone %q: %w", row.Name, err)
 	}

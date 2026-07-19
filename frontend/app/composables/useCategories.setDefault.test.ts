@@ -19,7 +19,6 @@ const CATEGORY = {
   id: 'cat-manga',
   name: 'Manga',
   count: 3,
-  protected: false,
   isDefault: false,
   sortOrder: 0,
 }

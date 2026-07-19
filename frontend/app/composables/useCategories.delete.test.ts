@@ -23,7 +23,6 @@ const CATEGORY = {
   id: 'cat-1',
   name: 'Manga',
   count: 250,
-  protected: false,
   sortOrder: 0,
 }
 

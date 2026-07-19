@@ -781,8 +781,9 @@ export interface paths {
         post?: never;
         /**
          * Delete an empty category
-         * @description Deletes a category only when no series is filed under it. The protected
-         *     default ("Other") can never be deleted. No series or CBZ is removed.
+         * @description Deletes a category only when no series is filed under it. The current
+         *     default category can never be deleted (promote another first). No series
+         *     or CBZ is removed.
          */
         delete: operations["deleteCategory"];
         options?: never;
@@ -791,8 +792,8 @@ export interface paths {
          * Rename and/or reorder a category
          * @description Renames the category (moving its on-disk folder, with compensation so DB
          *     and disk never drift) and/or updates its sort order. At least one of name
-         *     or sortOrder must be present. The protected default ("Other") cannot be
-         *     renamed. Returns the updated category.
+         *     or sortOrder must be present. ANY category is renameable, including the
+         *     current default. Returns the updated category.
          */
         patch: operations["updateCategory"];
         trace?: never;
@@ -2648,8 +2649,6 @@ export interface components {
             name: string;
             /** @description Owner-chosen display order (ascending; ties break by name). */
             sortOrder: number;
-            /** @description True for the seeded "Other" — it can never be renamed. */
-            protected: boolean;
             /** @description True for the single default landing category (new / uncategorized series file here). It can never be deleted; promote another category (PATCH /api/categories/{id}/default) to make this one deletable. */
             isDefault: boolean;
             /** @description Number of series filed under this category. */
@@ -6110,7 +6109,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Malformed id or the protected default. */
+            /** @description Malformed id or the current default category. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6173,7 +6172,7 @@ export interface operations {
                     "application/json": components["schemas"]["Category"];
                 };
             };
-            /** @description Malformed id, empty body, invalid name, or the protected default. */
+            /** @description Malformed id, empty body, or invalid name. */
             400: {
                 headers: {
                     [name: string]: unknown;

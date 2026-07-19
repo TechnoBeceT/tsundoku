@@ -22,8 +22,9 @@ const deletedDefaultsKey = "categories.deleted_defaults"
 // the next startup (the reappearing-defaults bug). A missing, blank, or corrupt
 // row is treated as an EMPTY set: a fresh install has never deleted anything, so
 // all five defaults seed; and a corrupt value must never wedge startup — the
-// worst case of treating it as empty is a benign one-time re-seed, never a crash
-// and never a lost "Other" fallback.
+// worst case of treating it as empty is a benign one-time re-seed of a
+// previously-deleted default (the is_default invariant still guarantees a
+// fallback exists), never a crash.
 func loadDeletedDefaults(ctx context.Context, client *ent.Client) (map[string]bool, error) {
 	row, err := client.Settings.Query().Where(entsettings.KeyEQ(deletedDefaultsKey)).Only(ctx)
 	if ent.IsNotFound(err) {
@@ -47,17 +48,18 @@ func loadDeletedDefaults(ctx context.Context, client *ent.Client) (map[string]bo
 }
 
 // tombstoneDefault persists that a seeded default category (by name) has been
-// deleted so EnsureDefaults will not re-create it on the next startup. It is a
-// no-op for:
-//   - a non-default name (only seeded defaults are ever auto-created, so only
-//     they need a tombstone — a user-created category simply stays deleted), and
-//   - the protected "Other" fallback, which must ALWAYS exist and is therefore
-//     NEVER tombstoned (belt-and-braces: EnsureDefaults also always seeds it).
+// deleted so EnsureDefaults will not re-create it on the next startup. Every
+// seeded default — INCLUDING "Other" (QCAT-296) — is tombstone-able, so a
+// deliberate delete sticks across deploys; the always-present fallback is the
+// is_default invariant (ensureSingleDefault), not a name-locked "Other".
 //
-// Re-tombstoning an already-recorded name is idempotent. It uses the same
-// query-then-write pattern as the settings service (no generated upsert helper).
+// It is a no-op for a non-default name (only seeded defaults are ever
+// auto-created, so only they need a tombstone — a user-created category simply
+// stays deleted). Re-tombstoning an already-recorded name is idempotent. It uses
+// the same query-then-write pattern as the settings service (no generated upsert
+// helper).
 func tombstoneDefault(ctx context.Context, client *ent.Client, name string) error {
-	if name == DefaultCategoryName || !isDefaultName(name) {
+	if !isDefaultName(name) {
 		return nil
 	}
 	set, err := loadDeletedDefaults(ctx, client)

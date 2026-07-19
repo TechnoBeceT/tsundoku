@@ -80,8 +80,9 @@ const emit = defineEmits<{
       <span v-if="busy" class="row-busy"><Spinner :size="13" tone="current" />Working…</span>
       <div class="cat-actions">
         <AppButton v-if="!category.isDefault" variant="text" size="sm" :disabled="busy" @click="emit('set-default')">Set default</AppButton>
+        <!-- Rename shows for EVERY category, including the default (QCAT-296). -->
         <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
-        <IconButton v-if="!category.protected" :ariaLabel="'Rename'" :disabled="busy" @click="emit('start-rename')">
+        <IconButton :ariaLabel="'Rename'" :disabled="busy" @click="emit('start-rename')">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
         </IconButton>
         <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->

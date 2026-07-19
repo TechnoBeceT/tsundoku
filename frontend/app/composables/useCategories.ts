@@ -16,9 +16,9 @@
  *   id        ← dto.id
  *   name      ← dto.name
  *   count     ← dto.count
- *   protected ← dto.protected  (the seeded "Other" — can never be renamed)
  *   isDefault ← dto.isDefault  (the single default landing category — can never be
- *                               deleted; any category can be promoted to it)
+ *                               deleted, but ANY category can be renamed and any can
+ *                               be promoted to the default)
  *
  * CRUD mutations (§16 pattern — busy flag + inline error via categoryAction):
  *   addCategory(name)             POST /api/categories {name}
@@ -48,16 +48,14 @@ function mapCategory(dto: CategoryDTO): CategorySummary {
   }
 }
 
-// protected → can never be renamed (the seeded "Other"); isDefault → the single
-// default landing category, which can never be deleted. Both come straight from
-// the backend DTO — they are independent flags now (a demoted "Other" is
-// protected but not the default).
+// isDefault → the single default landing category, which can never be deleted
+// (QCAT-296). Every category — including the default — can be renamed, so there
+// is no longer a rename-blocking flag.
 function mapSettingsCategory(dto: CategoryDTO): SettingsCategory {
   return {
     id: dto.id,
     name: dto.name,
     count: dto.count,
-    protected: dto.protected,
     isDefault: dto.isDefault,
   }
 }

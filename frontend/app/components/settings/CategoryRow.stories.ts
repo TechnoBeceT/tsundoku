@@ -9,7 +9,8 @@ import '../../assets/css/tokens/settings.css'
 /**
  * Stories for a single category row. Flip the Storybook theme toolbar to confirm
  * both dark and light. The current default row hides its set-default + delete
- * actions and carries the DEFAULT pill; a protected row hides only rename.
+ * actions and carries the DEFAULT pill but STILL shows rename (QCAT-296 — every
+ * category is renameable); every non-default row has all three actions.
  */
 const meta = {
   title: 'Settings/CategoryRow',
@@ -32,18 +33,22 @@ export const Default: Story = {
   args: { category: settingsCategories[0]! },
 }
 
-/** The current default category — no set-default/delete; carries the DEFAULT pill. */
+/**
+ * The current default category — no set-default/delete; carries the DEFAULT pill.
+ * It STILL shows the rename action (QCAT-296: the default is renameable).
+ */
 export const DefaultCategory: Story = {
   args: { category: settingsCategories[4]! },
 }
 
 /**
- * A demoted "Other": protected (can't rename) but no longer the default, so it
- * regains its delete + set-default actions. Proves the two flags are independent.
+ * A demoted "Other" (no longer the default) — a fully ordinary category: rename,
+ * delete, and set-default are all available. Proves QCAT-296: once "Other" loses
+ * the default role it can be renamed and deleted like any other category.
  */
-export const ProtectedButNotDefault: Story = {
+export const DemotedOther: Story = {
   args: {
-    category: { id: 'cat-other', name: 'Other', count: 0, protected: true, isDefault: false },
+    category: { id: 'cat-other', name: 'Other', count: 0, isDefault: false },
   },
 }
 

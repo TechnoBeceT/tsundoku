@@ -13,8 +13,19 @@ import (
 	entcategory "github.com/technobecet/tsundoku/internal/ent/category"
 )
 
+// ensureDefaultsNTimes runs EnsureDefaults n times (simulating n restarts),
+// failing the test on any error.
+func ensureDefaultsNTimes(ctx context.Context, t *testing.T, client *ent.Client, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if err := category.EnsureDefaults(ctx, client); err != nil {
+			t.Fatalf("EnsureDefaults restart %d: %v", i, err)
+		}
+	}
+}
+
 // TestEnsureDefaultsIdempotent verifies that EnsureDefaults always leaves exactly
-// the five defaults (run twice → still five) with Other protected.
+// the five defaults (run twice → still five).
 func TestEnsureDefaultsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -118,11 +129,13 @@ func TestDeletedDefaultStaysDeletedAcrossRestart(t *testing.T) {
 	}
 }
 
-// TestOtherAlwaysReEnsuredEvenAfterDelete proves the protected "Other" fallback is
-// NEVER persistently deleted: even after it is demoted (so the delete-guard allows
-// removing it) and deleted, EnsureDefaults re-creates it on the next startup. The
-// fallback can never vanish.
-func TestOtherAlwaysReEnsuredEvenAfterDelete(t *testing.T) {
+// TestDeletedOtherStaysDeletedAcrossRestart is the QCAT-296 (GAP-097) core
+// bug-fix proof: once the owner demotes "Other" (so the is_default delete-guard
+// allows removing it) and deletes it, EnsureDefaults must NOT re-create it on any
+// subsequent startup — the deletion sticks across deploys (the reported bug was
+// "Other" coming back every deploy). A fallback still always exists: the promoted
+// is_default (Manhwa) remains, so no series is ever orphaned.
+func TestDeletedOtherStaysDeletedAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	svc := category.NewService(client, t.TempDir())
@@ -135,7 +148,8 @@ func TestOtherAlwaysReEnsuredEvenAfterDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IDByName(Manhwa): %v", err)
 	}
-	// Demote Other so the is_default delete-guard no longer protects it.
+	// Demote Other (promote Manhwa) so the is_default delete-guard no longer
+	// blocks removing it, then delete it for good.
 	if err := svc.SetDefault(ctx, manhwaID); err != nil {
 		t.Fatalf("SetDefault(Manhwa): %v", err)
 	}
@@ -143,18 +157,52 @@ func TestOtherAlwaysReEnsuredEvenAfterDelete(t *testing.T) {
 		t.Fatalf("Delete(Other): %v", err)
 	}
 
-	if err := category.EnsureDefaults(ctx, client); err != nil {
-		t.Fatalf("EnsureDefaults (restart): %v", err)
+	// Simulate several restarts — "Other" must stay gone every time.
+	ensureDefaultsNTimes(ctx, t, client, 3)
+
+	if n := client.Category.Query().Where(entcategory.Name("Other")).CountX(ctx); n != 0 {
+		t.Fatalf("deleted Other reappeared: count = %d, want 0", n)
+	}
+	// A fallback still exists (exactly one is_default) and it is Manhwa.
+	if n := client.Category.Query().Where(entcategory.IsDefault(true)).CountX(ctx); n != 1 {
+		t.Fatalf("want exactly 1 default after Other deleted + restarts, got %d", n)
+	}
+	def, err := category.ResolveDefault(ctx, client)
+	if err != nil || def.ID != manhwaID {
+		t.Fatalf("fallback after Other deleted = %+v (err %v), want Manhwa", def, err)
+	}
+}
+
+// TestEnsureSingleDefaultPromotesWhenDefaultRemoved proves ensureSingleDefault
+// never leaves the DB with zero defaults: if the is_default row is gone on
+// startup (a pathological state — SetDefault + the delete-guard prevent it in
+// normal use), EnsureDefaults promotes a surviving category so a fallback always
+// exists.
+func TestEnsureSingleDefaultPromotesWhenDefaultRemoved(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	// Force the zero-default state directly (bypass the service guards).
+	if _, err := client.Category.Update().Where(entcategory.IsDefault(true)).SetIsDefault(false).Save(ctx); err != nil {
+		t.Fatalf("clear default: %v", err)
+	}
+	if n := client.Category.Query().Where(entcategory.IsDefault(true)).CountX(ctx); n != 0 {
+		t.Fatalf("precondition: want 0 defaults, got %d", n)
 	}
 
-	if n := client.Category.Query().Where(entcategory.Name("Other")).CountX(ctx); n != 1 {
-		t.Fatalf("Other must always be re-ensured: count = %d, want 1", n)
+	if err := category.EnsureDefaults(ctx, client); err != nil {
+		t.Fatalf("EnsureDefaults: %v", err)
+	}
+
+	if n := client.Category.Query().Where(entcategory.IsDefault(true)).CountX(ctx); n != 1 {
+		t.Fatalf("ensureSingleDefault must promote exactly one, got %d", n)
 	}
 }
 
 // TestBackfillSeriesIntactAfterDefaultDeleted proves that deleting a default does
 // not break the NULL-category backfill: BackfillSeries still links an unlinked
-// series to the protected "Other" fallback.
+// series to the is_default fallback (here still "Other", since only Manhua was
+// deleted).
 func TestBackfillSeriesIntactAfterDefaultDeleted(t *testing.T) {
 	ctx := context.Background()
 	client, db := testdb.NewWithSQL(t)
@@ -187,6 +235,37 @@ func TestBackfillSeriesIntactAfterDefaultDeleted(t *testing.T) {
 	// Manhua stayed deleted through the restart.
 	if n := client.Category.Query().Where(entcategory.Name("Manhua")).CountX(ctx); n != 0 {
 		t.Fatalf("deleted Manhua reappeared: count = %d, want 0", n)
+	}
+}
+
+// TestBackfillSeriesLandsOnChosenDefaultNotOther is the QCAT-296 decoupling
+// proof: when the owner has promoted a non-Other default, an unlinked series
+// backfills onto that is_default category, NOT the name-matched "Other".
+func TestBackfillSeriesLandsOnChosenDefaultNotOther(t *testing.T) {
+	ctx := context.Background()
+	client, db := testdb.NewWithSQL(t)
+	svc := category.NewService(client, t.TempDir())
+
+	// Owner promotes "Manga" as the default landing.
+	mangaID, err := category.IDByName(ctx, client, "Manga")
+	if err != nil {
+		t.Fatalf("IDByName(Manga): %v", err)
+	}
+	if err := svc.SetDefault(ctx, mangaID); err != nil {
+		t.Fatalf("SetDefault(Manga): %v", err)
+	}
+
+	// An unlinked series must backfill onto Manga (the is_default), not "Other".
+	s := client.Series.Create().SetTitle("Orphan").SetSlug("orphan").SaveX(ctx)
+	if _, err := db.ExecContext(ctx, `UPDATE series SET category_id = NULL WHERE id = $1`, s.ID); err != nil {
+		t.Fatalf("null the category_id: %v", err)
+	}
+	if err := category.BackfillSeries(ctx, db); err != nil {
+		t.Fatalf("BackfillSeries: %v", err)
+	}
+	got := client.Series.Query().WithCategory().OnlyX(ctx)
+	if got.Edges.Category == nil || got.Edges.Category.ID != mangaID {
+		t.Fatalf("backfill landed on %+v, want the is_default (Manga)", got.Edges.Category)
 	}
 }
 
@@ -243,7 +322,7 @@ func TestBackfillSeriesFromLegacyEnumColumn(t *testing.T) {
 
 // TestBackfillSeriesNoLegacyColumnDefaultsOther verifies that on a fresh DB (no
 // legacy column), a series that somehow has a NULL category_id is defaulted to
-// the protected "Other" fallback rather than left category-less.
+// the is_default fallback (the seeded "Other") rather than left category-less.
 func TestBackfillSeriesNoLegacyColumnDefaultsOther(t *testing.T) {
 	ctx := context.Background()
 	client, db := testdb.NewWithSQL(t)

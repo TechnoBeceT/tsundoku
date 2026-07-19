@@ -18,8 +18,8 @@ import { useCategories } from './useCategories'
 
 // Two categories that (pathologically) SHARE sortOrder 0 — the deployed tie.
 const TIED = [
-  { id: 'cat-manga', name: 'Manga', count: 0, protected: false, isDefault: false, sortOrder: 0 },
-  { id: 'cat-nsfw', name: 'NSFW', count: 0, protected: false, isDefault: false, sortOrder: 0 },
+  { id: 'cat-manga', name: 'Manga', count: 0, isDefault: false, sortOrder: 0 },
+  { id: 'cat-nsfw', name: 'NSFW', count: 0, isDefault: false, sortOrder: 0 },
 ]
 
 // Records each PATCH's { id, sortOrder } so the test can assert distinct values.

@@ -32,10 +32,13 @@ func (Category) Fields() []ent.Field {
 		// sort_order controls the owner's preferred display order (ascending);
 		// ties break by name. Pure presentation — never disk-determining.
 		field.Int("sort_order").Default(0),
-		// protected marks a category that can never be RENAMED (the seeded "Other"
-		// fallback). It is NOT the delete-guard — deletion is guarded by is_default
-		// instead — so a demoted "Other" (protected but no longer the default)
-		// becomes deletable while staying unrenameable.
+		// protected is a RETIRED flag (QCAT-296). It formerly marked the "Other"
+		// fallback as unrenameable; the fallback role is now the is_default
+		// invariant + the can't-delete-current-default guard, so NO code path sets
+		// or reads it any more (rename works for every category, seeding no longer
+		// force-re-creates "Other"). The column is KEPT — not dropped — to avoid a
+		// migration on existing DBs (a future cleanup may DROP it); it is absent
+		// from the wire CategoryDTO.
 		field.Bool("protected").Default(false),
 		// is_default marks the single category that new / uncategorized series land
 		// in and that can never be deleted. EXACTLY ONE row carries is_default=true,

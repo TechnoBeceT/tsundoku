@@ -86,7 +86,7 @@ export const Library: Story = {
   render: () => withPane('library'),
 }
 
-/** Categories pane — the user-definable category CRUD list (Other protected). */
+/** Categories pane — the user-definable category CRUD list (Other is the default). */
 export const Categories: Story = {
   render: () => withPane('categories'),
 }

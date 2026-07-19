@@ -177,14 +177,22 @@ func TestUpdate_EmptyBody(t *testing.T) {
 	}
 }
 
-// TestUpdate_Protected verifies renaming the protected default yields 400.
-func TestUpdate_Protected(t *testing.T) {
+// TestUpdate_RenameDefault verifies the current default ("Other") is renameable
+// (QCAT-296: the protected-blocks-rename rule was dropped) — 200 + updated DTO.
+func TestUpdate_RenameDefault(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 	id := env.catID(ctx, t, "Other")
 	rec := env.do(http.MethodPatch, "/api/categories/"+id.String(), `{"name":"Misc"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("Update protected: want 400, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Update rename default: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got categorysvc.CategoryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Name != "Misc" || !got.IsDefault {
+		t.Fatalf("Update rename default: got %+v, want name Misc + isDefault true", got)
 	}
 }
 

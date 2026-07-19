@@ -568,7 +568,6 @@ components:
         - id
         - name
         - sortOrder
-        - protected
         - isDefault
         - count
       properties:
@@ -582,9 +581,6 @@ components:
         sortOrder:
           type: integer
           description: Owner-chosen display order (ascending; ties break by name).
-        protected:
-          type: boolean
-          description: True for the seeded "Other" — it can never be renamed.
         isDefault:
           type: boolean
           description: >-
@@ -5157,8 +5153,8 @@ paths:
       description: |
         Renames the category (moving its on-disk folder, with compensation so DB
         and disk never drift) and/or updates its sort order. At least one of name
-        or sortOrder must be present. The protected default ("Other") cannot be
-        renamed. Returns the updated category.
+        or sortOrder must be present. ANY category is renameable, including the
+        current default. Returns the updated category.
       tags:
         - categories
       security:
@@ -5185,7 +5181,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Category"
         "400":
-          description: Malformed id, empty body, invalid name, or the protected default.
+          description: Malformed id, empty body, or invalid name.
           content:
             application/json:
               schema:
@@ -5212,8 +5208,9 @@ paths:
       operationId: deleteCategory
       summary: Delete an empty category
       description: |
-        Deletes a category only when no series is filed under it. The protected
-        default ("Other") can never be deleted. No series or CBZ is removed.
+        Deletes a category only when no series is filed under it. The current
+        default category can never be deleted (promote another first). No series
+        or CBZ is removed.
       tags:
         - categories
       security:
@@ -5230,7 +5227,7 @@ paths:
         "204":
           description: Deleted.
         "400":
-          description: Malformed id or the protected default.
+          description: Malformed id or the current default category.
           content:
             application/json:
               schema:

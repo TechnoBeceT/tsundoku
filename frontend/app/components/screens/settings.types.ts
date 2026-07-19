@@ -110,8 +110,9 @@ export interface SourcesSettings {
 /* ---- 2b. Categories ------------------------------------------------------- */
 
 /**
- * SettingsCategory — one row in the user-definable category list. A `protected`
- * category (the default landing, e.g. "Other") cannot be renamed or deleted.
+ * SettingsCategory — one row in the user-definable category list. The `isDefault`
+ * category (the landing for new/uncategorised series) cannot be deleted; every
+ * category, including the default, can be renamed (QCAT-296).
  */
 export interface SettingsCategory {
   /** Category UUID (the mutation target). */
@@ -120,10 +121,8 @@ export interface SettingsCategory {
   name: string
   /** How many series currently sit in this category. */
   count: number
-  /** Whether new/uncategorised series land here (drives the DEFAULT pill). */
+  /** Whether new/uncategorised series land here (drives the DEFAULT pill; can't be deleted). */
   isDefault: boolean
-  /** Protected categories can't be renamed or deleted (and can't lose default). */
-  protected: boolean
 }
 
 /* ---- 2c. Engine / Suwayomi management ------------------------------------- */

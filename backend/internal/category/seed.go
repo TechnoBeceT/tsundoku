@@ -9,36 +9,37 @@ import (
 	entcategory "github.com/technobecet/tsundoku/internal/ent/category"
 )
 
-// DefaultCategoryName is the protected fallback category every series can always
-// be filed under. It is the only protected default and the backfill target for
-// any legacy row whose category cannot be matched.
+// DefaultCategoryName is the name of the "Other" category seeded on a FRESH DB
+// and preferred as the is_default landing when no default is set. It is NOT a
+// name-lock: the fallback role is the is_default invariant, so "Other" can be
+// renamed, demoted, and deleted-for-good like any other default (QCAT-296).
 const DefaultCategoryName = "Other"
 
 // defaultCategory describes one of the five seeded categories.
 type defaultCategory struct {
 	name      string
 	sortOrder int
-	protected bool
 }
 
 // defaultCategories is the ordered seed set. It reproduces the former
 // Series.category enum exactly (same names, same order) so an existing-enum-era
 // library backfills with ZERO data migration — every legacy enum string matches
-// a seeded category of the same name. Only "Other" is protected.
+// a seeded category of the same name. None is name-locked: a deliberately-deleted
+// default (including "Other") is tombstoned and never re-seeded (QCAT-296).
 var defaultCategories = []defaultCategory{
 	{name: "Manga", sortOrder: 0},
 	{name: "Manhwa", sortOrder: 1},
 	{name: "Manhua", sortOrder: 2},
 	{name: "Comic", sortOrder: 3},
-	{name: DefaultCategoryName, sortOrder: 4, protected: true},
+	{name: DefaultCategoryName, sortOrder: 4},
 }
 
 // EnsureDefaults idempotently creates any of the five default categories that
-// are missing, with their canonical sort order and the protected flag on
-// "Other". Running it twice is a no-op (find-or-create by name). It is invoked
-// at startup (after Ent auto-migration) so a fresh DB and an existing DB both
-// end with the five defaults present; new owner-created categories are never
-// touched.
+// are missing, with their canonical sort order. Running it twice is a no-op
+// (find-or-create by name). It is invoked at startup (after Ent auto-migration)
+// so a FRESH DB ends with the five defaults present; on an established DB a
+// default the owner deliberately deleted stays deleted (tombstoned) and new
+// owner-created categories are never touched.
 //
 // It then enforces two startup invariants:
 //   - ensureSingleDefault — EXACTLY ONE category carries is_default=true (the
@@ -47,10 +48,10 @@ var defaultCategories = []defaultCategory{
 //   - NormalizeSortOrder — sort_order values are contiguous and unique, repairing
 //     the deployed collisions that broke the frontend reorder swap (F3).
 func EnsureDefaults(ctx context.Context, client *ent.Client) error {
-	// A deleted non-protected default must STAY deleted across restarts. Load the
-	// owner's tombstone set once so a re-seed skips any default they removed. The
-	// protected "Other" fallback is never tombstoned (tombstoneDefault refuses it)
-	// AND is re-checked below regardless, so the fallback can never vanish.
+	// A deleted default must STAY deleted across restarts. Load the owner's
+	// tombstone set once so a re-seed skips any default they removed — including
+	// "Other" (QCAT-296): the fallback role is guaranteed by the is_default
+	// invariant (ensureSingleDefault) below, not by force-re-creating "Other".
 	deleted, err := loadDeletedDefaults(ctx, client)
 	if err != nil {
 		return err
@@ -64,15 +65,13 @@ func EnsureDefaults(ctx context.Context, client *ent.Client) error {
 		if exists {
 			continue
 		}
-		// Skip re-seeding a default the owner deliberately deleted — but NEVER the
-		// protected "Other" fallback, which must always be re-created if missing.
-		if !d.protected && deleted[d.name] {
+		// Skip re-seeding any default the owner deliberately deleted (tombstoned).
+		if deleted[d.name] {
 			continue
 		}
 		if err := client.Category.Create().
 			SetName(d.name).
 			SetSortOrder(d.sortOrder).
-			SetProtected(d.protected).
 			Exec(ctx); err != nil {
 			// A concurrent startup could win the unique-name race between the
 			// Exist check and Create; treat an already-created row as success.
@@ -187,8 +186,10 @@ func ResolveDefault(ctx context.Context, client *ent.Client) (*ent.Category, err
 // It runs at startup AFTER EnsureDefaults. For each unlinked series it sets
 // category_id to the Category whose name matches the legacy enum value (every
 // legacy value — Manga…Other — has a same-named seeded category), falling back
-// to "Other" when the legacy column is absent (a brand-new DB never had it) or a
-// row's value does not match. The work is a single UPDATE; it is idempotent
+// to the owner-chosen is_default category when the legacy column is absent (a
+// brand-new DB never had it) or a row's value does not match a surviving
+// category (QCAT-296: the fallback is the is_default, never a name-matched
+// "Other"). The work is a single UPDATE; it is idempotent
 // (a second run finds no NULL rows) and does ZERO disk I/O — it cannot move a
 // folder, so an existing series' on-disk location is provably untouched by the
 // migration.
@@ -196,7 +197,7 @@ func ResolveDefault(ctx context.Context, client *ent.Client) (*ent.Category, err
 // It takes the raw *sql.DB because the legacy `category` column no longer exists
 // in the Ent schema and so cannot be read through the typed client.
 func BackfillSeries(ctx context.Context, db *sql.DB) error {
-	otherID, err := otherCategoryID(ctx, db)
+	defaultID, err := defaultCategoryID(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -208,31 +209,32 @@ func BackfillSeries(ctx context.Context, db *sql.DB) error {
 
 	var query string
 	if legacyExists {
-		// Match each unlinked series to the same-named category; fall back to
-		// "Other" for any value that does not match a seeded category.
+		// Match each unlinked series to the same-named category; fall back to the
+		// is_default category for any value that does not match a surviving one.
 		query = `UPDATE series
 		         SET category_id = COALESCE(
 		             (SELECT c.id FROM categories c WHERE c.name = series.category),
 		             $1)
 		         WHERE category_id IS NULL`
 	} else {
-		// No legacy column (fresh DB): any unlinked row defaults to "Other".
+		// No legacy column (fresh DB): any unlinked row defaults to is_default.
 		query = `UPDATE series SET category_id = $1 WHERE category_id IS NULL`
 	}
 
-	if _, err := db.ExecContext(ctx, query, otherID); err != nil {
+	if _, err := db.ExecContext(ctx, query, defaultID); err != nil {
 		return fmt.Errorf("category.BackfillSeries: backfill update: %w", err)
 	}
 	return nil
 }
 
-// otherCategoryID returns the id of the protected "Other" category, the backfill
-// fallback. EnsureDefaults must have run first.
-func otherCategoryID(ctx context.Context, db *sql.DB) (string, error) {
+// defaultCategoryID returns the id of the owner-chosen default category (the
+// single is_default=true row), the backfill fallback. EnsureDefaults must have
+// run first (it guarantees exactly one is_default exists).
+func defaultCategoryID(ctx context.Context, db *sql.DB) (string, error) {
 	var id string
-	err := db.QueryRowContext(ctx, `SELECT id FROM categories WHERE name = $1`, DefaultCategoryName).Scan(&id)
+	err := db.QueryRowContext(ctx, `SELECT id FROM categories WHERE is_default = true LIMIT 1`).Scan(&id)
 	if err != nil {
-		return "", fmt.Errorf("category.BackfillSeries: load %q id: %w", DefaultCategoryName, err)
+		return "", fmt.Errorf("category.BackfillSeries: load default category id: %w", err)
 	}
 	return id, nil
 }
