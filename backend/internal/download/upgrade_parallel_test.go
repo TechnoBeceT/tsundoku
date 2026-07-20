@@ -189,7 +189,10 @@ func TestUpgradeAll_PerSourceParallelism(t *testing.T) {
 		t.Fatalf("DetectUpgrades flagged %d, want %d", flagged, sources*chaptersPerSource)
 	}
 
-	upgraded, err := d.UpgradeAll(ctx)
+	// nil downloadsConsumed: no downloads ran this cycle, so every target source
+	// gets its full per-cycle budget (batchPerSource(2)=4 >= 3 chapters/source),
+	// leaving this test's per-source-parallelism assertions unchanged.
+	upgraded, err := d.UpgradeAll(ctx, nil)
 	if err != nil {
 		t.Fatalf("UpgradeAll: %v", err)
 	}

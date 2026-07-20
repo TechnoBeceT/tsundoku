@@ -178,6 +178,14 @@ func TestRunner_DownloadCycle_UpgradePass(t *testing.T) {
 // download_concurrency is set below N so the bounded-concurrency pool must
 // actually run multiple batches, exercising the parallel path rather than a
 // single batch that happens to cover everything.
+//
+// All N chapters target the SAME upgrade source (prov-high), so the shared
+// per-source per-cycle fetch budget batchPerSource(concurrency)=2*concurrency
+// must be >= N for a single cycle to upgrade all N (and, symmetrically, for the
+// first cycle to download all N from prov-low). concurrency=3 gives a budget of
+// 6 == N: the whole set upgrades in one cycle while the pool cap (3 < N) still
+// runs multiple waves. (A smaller concurrency would correctly split the work
+// across cycles — proven separately by the convergence test.)
 func TestRunner_DownloadCycle_UpgradeAll_Parallel(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -185,7 +193,7 @@ func TestRunner_DownloadCycle_UpgradeAll_Parallel(t *testing.T) {
 	hub := sse.NewHub()
 
 	const n = 6
-	const concurrency = 2
+	const concurrency = 3
 
 	seeded := seedUpgradeParallelChapters(ctx, client, n)
 
@@ -989,23 +997,29 @@ func (f *slowThenFastFetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (
 }
 
 // TestRunner_RunDownloadCycle_DrainLoopPicksUpMidCycleAdopt proves the Slice 2
-// fix for bug #2 (mid-cycle adopt starvation): while source A's big backlog is
-// still mid-drain (spanning multiple bounded RunOnce passes), a brand-new
-// source B is inserted directly into the DB — simulating an owner adopting a
-// series mid-cycle. B's chapters must reach downloaded WITHIN THIS SAME
-// RunDownloadCycle call, and — the "ran in parallel, not after" assertion — at
-// the moment B finishes, A must NOT yet be fully drained (proving B joined a
-// later pass alongside A's remaining backlog rather than waiting for all of A
-// to finish first, which is exactly what the pre-Slice-2 unbounded RunOnce
-// would have forced).
+// fix for bug #2 (mid-cycle adopt starvation) STILL holds under the per-source
+// per-cycle fetch cap: while source A's bounded pass-1 batch is still in flight,
+// a brand-new source B is inserted directly into the DB — simulating an owner
+// adopting a series mid-cycle. B's chapters must reach downloaded WITHIN THIS SAME
+// RunDownloadCycle call (a later pass picks them up), not be deferred to the next
+// cycle behind A. The pre-Slice-2 unbounded RunOnce would have drained all of A's
+// backlog in one pass before B could start.
+//
+// The per-source per-cycle cap (batchPerSource(cap)=2*cap) also bounds A itself:
+// A downloads exactly its per-cycle budget this cycle and defers the rest to a
+// later cycle — so A is NEVER fully drained when B finishes, which is exactly the
+// "B ran in a later pass, not starved behind A" property (now guaranteed by the
+// cap rather than by fetch timing). A's deferred remainder is the intended
+// convergence behaviour, not a regression.
 func TestRunner_RunDownloadCycle_DrainLoopPicksUpMidCycleAdopt(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	storage := t.TempDir()
 	hub := sse.NewHub()
 
-	const cap = 2                // batch = 2*cap = 4 per source per pass
-	const aTotal = 2 * (2 * cap) // 8 chapters: exactly two bounded passes for A alone
+	const cap = 2 // per-source per-cycle budget = 2*cap = 4
+	const perCycleBudget = 2 * cap
+	const aTotal = 2 * perCycleBudget // 8 chapters: MORE than A's one-cycle budget
 	const aDelay = 300 * time.Millisecond
 
 	sA := seedMidCycleSourceBacklog(ctx, t, client, "series-a-midcycle", "A", aTotal)
@@ -1028,18 +1042,25 @@ func TestRunner_RunDownloadCycle_DrainLoopPicksUpMidCycleAdopt(t *testing.T) {
 	waitAllDownloaded(t, ctx, client, bIDs, 15*time.Second,
 		"source B's chapters did not reach downloaded within the deadline — the mid-cycle adopt was not picked up by the drain loop")
 
-	// At the instant B finished, A must still have undownloaded chapters — proof
-	// B ran ALONGSIDE A's remaining backlog (a later pass), not after it drained
-	// entirely (each of A's two passes takes ~aDelay; B's fetches are instant).
+	// At the instant B finished, A must NOT be fully drained — proof B ran in a
+	// LATER pass (picked up mid-cycle), not after A's whole backlog. Under the
+	// per-source per-cycle cap A can only ever reach its one-cycle budget here, so
+	// this holds by construction (A's remainder is deferred to a later cycle).
 	if aDownloaded := downloadedCount(ctx, client, sA); aDownloaded >= aTotal {
-		t.Errorf("source A's entire backlog (%d) already finished before B completed — B did not run in parallel with a still-draining backlog, it ran only after", aTotal)
+		t.Errorf("source A's entire backlog (%d) already finished before B completed — B did not run in a later pass, it ran only after A fully drained", aTotal)
 	}
 
 	if err := <-cycleDone; err != nil {
 		t.Fatalf("RunDownloadCycle: %v", err)
 	}
-	if finalA := downloadedCount(ctx, client, sA); finalA != aTotal {
-		t.Errorf("source A: want all %d downloaded once the cycle finishes, got %d", aTotal, finalA)
+	// A downloads exactly its per-source per-cycle budget this cycle; the rest stay
+	// wanted for a later cycle (the shared-budget cap — an anti-ban bound, NOT a
+	// starvation regression). B is unaffected: a different source has its own budget.
+	if finalA := downloadedCount(ctx, client, sA); finalA != perCycleBudget {
+		t.Errorf("source A: want exactly its per-cycle budget %d downloaded this cycle, got %d", perCycleBudget, finalA)
+	}
+	if remaining := client.Chapter.Query().Where(entchapter.SeriesIDEQ(sA.ID), entchapter.StateEQ(entchapter.StateWanted)).CountX(ctx); remaining != aTotal-perCycleBudget {
+		t.Errorf("source A: want %d chapters still wanted (deferred past the per-cycle budget), got %d", aTotal-perCycleBudget, remaining)
 	}
 }
 

@@ -176,8 +176,13 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 
 	slog.InfoContext(ctx, "job.Runner: download cycle started")
 
-	// Step 1: drain all actionable chapters via bounded passes.
-	if err := r.drainDownloads(ctx); err != nil {
+	// Step 1: drain all actionable chapters via bounded passes. It returns the
+	// per-source dispatch tally for the cycle (canonicalSourceKey → chapters
+	// fetched), which the upgrade pass consumes so downloads + upgrades share ONE
+	// per-source per-cycle fetch budget (an upgrade fetch hits the same protected
+	// endpoint as a download fetch).
+	consumed, err := r.drainDownloads(ctx)
+	if err != nil {
 		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: RunOnce: %w", err)
 	}
@@ -201,7 +206,7 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 	// zero new chapters (flagged==0) yet still has stranded rows to re-drive.
 	// UpgradeAll early-returns after one indexed query (zero source calls) when
 	// nothing is upgrade_available, so the unconditional call is a cheap no-op.
-	upgraded, err := r.upgradeAll(ctx)
+	upgraded, err := r.upgradeAll(ctx, consumed)
 	if err != nil {
 		r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Error: err.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: upgrade: %w", err)
@@ -252,18 +257,28 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 // backoff (next_attempt_at) set on an early pass could already be in the past
 // by a later pass of the SAME cycle, re-qualifying the source and burning its
 // whole retry budget in one cycle instead of one attempt per cycle.
-func (r *Runner) drainDownloads(ctx context.Context) error {
+//
+// It returns the cycle-scoped per-source dispatch tally (canonicalSourceKey →
+// chapters dispatched this cycle). The same map is passed to EVERY RunOnceAt pass
+// (so a source is capped at batchPerSource(concurrency) dispatches across the
+// whole cycle, not merely per pass) and then handed to the upgrade pass, which
+// draws upgrades from the REMAINDER of that same per-source budget. Because the
+// cap is per source, other sources are unaffected and the drain still terminates:
+// a pass dispatches 0 exactly when every source is at its budget or has no live
+// candidate.
+func (r *Runner) drainDownloads(ctx context.Context) (map[string]int, error) {
 	now := time.Now()
+	consumed := make(map[string]int)
 	for {
-		dispatched, err := r.dispatcher.RunOnceAt(ctx, now)
+		dispatched, err := r.dispatcher.RunOnceAt(ctx, now, consumed)
 		if err != nil {
-			return err
+			return consumed, err
 		}
 		if dispatched == 0 {
-			return nil
+			return consumed, nil
 		}
 		if ctx.Err() != nil {
-			return nil
+			return consumed, nil
 		}
 	}
 }
@@ -281,8 +296,12 @@ func (r *Runner) drainDownloads(ctx context.Context) error {
 // contract: individual upgrade failures are handled inside the engine (working copy
 // kept, chapter returns to downloaded), so only hard infrastructure errors surface
 // here and abort the cycle.
-func (r *Runner) upgradeAll(ctx context.Context) (int, error) {
-	return r.dispatcher.UpgradeAll(ctx)
+//
+// downloadsConsumed is the drain pass's per-source dispatch tally, forwarded so the
+// upgrade pass caps each target source to the remainder of its shared per-cycle
+// fetch budget (see download.Dispatcher.UpgradeAll).
+func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]int) (int, error) {
+	return r.dispatcher.UpgradeAll(ctx, downloadsConsumed)
 }
 
 // Start launches a background goroutine that calls RunDownloadCycle on a dynamic

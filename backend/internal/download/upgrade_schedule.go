@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -23,9 +24,28 @@ import (
 // source's queue where they would otherwise consume a start slot.
 const unresolvedTargetKey = ""
 
-// UpgradeAll upgrades every chapter currently in state=upgrade_available, with
-// PER-SOURCE concurrency, and returns the number of upgrades that completed
-// without a hard error.
+// UpgradeAll upgrades chapters currently in state=upgrade_available, with
+// PER-SOURCE concurrency AND a per-source per-cycle VOLUME cap, returning the
+// number of upgrades that completed without a hard error.
+//
+// # Why the per-cycle volume cap (the ban-loop fix)
+//
+// An upgrade fetch and a download fetch hit the SAME protected source endpoint, so
+// they must draw from ONE per-source budget per cycle. downloadsConsumed carries
+// how many of each physical source's chapters the DOWNLOAD drain already fetched
+// this cycle (canonicalSourceKey → count, produced by job.Runner.drainDownloads);
+// each upgrade-target source is then allowed at most
+// max(0, batchPerSource(concurrency) - downloadsConsumed[key]) upgrades THIS cycle.
+// The rest stay upgrade_available (already flagged) and are picked up next cycle, so
+// the flagged count converges by at most the budget per cycle instead of the engine
+// firing every eligible upgrade at once. Without this a library where hundreds of
+// chapters are all upgrade_available toward one higher source (a fallback source's
+// whole backlog) fetched that entire backlog in a single cycle, re-banning the
+// source; the failed upgrades reverted to downloaded, DetectUpgrades re-flagged them,
+// and the loop never converged. A nil/empty downloadsConsumed simply means no
+// downloads ran this cycle — each source still gets the full per-cycle budget.
+// The unresolvedTargetKey group (no live target) is never capped: it fetches
+// nothing (it only resolves a stale flag), so it costs no source budget.
 //
 // # Why per-source (the throughput fix)
 //
@@ -58,9 +78,18 @@ const unresolvedTargetKey = ""
 // cooled down without spending retry budget) and does NOT abort the pass. Only a
 // hard infrastructure error propagates — it cancels the pass (no further upgrade is
 // STARTED) and is returned along with the count of upgrades that did complete.
-func (d *Dispatcher) UpgradeAll(ctx context.Context) (int, error) {
+func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[string]int) (int, error) {
 	chapters, err := d.client.Chapter.Query().
 		Where(entchapter.StateEQ(entchapter.StateUpgradeAvailable)).
+		// Stable order (chapter number ascending, nulls last, id tiebreak — the same
+		// order the download path uses in chapter.WantedChapters): each target
+		// source's group is built in this order, so the per-source cap deterministically
+		// takes the lowest-numbered chapters first and the leftover set next cycle is
+		// stable rather than Postgres-row-order-dependent.
+		Order(
+			entchapter.ByNumber(sql.OrderAsc(), sql.OrderNullsLast()),
+			entchapter.ByID(),
+		).
 		All(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("download.Dispatcher.UpgradeAll: query upgrade_available chapters: %w", err)
@@ -74,6 +103,7 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context) (int, error) {
 	now := time.Now()
 
 	groups := d.groupByUpgradeTarget(ctx, chapters, maxRetries, now)
+	capUpgradeGroups(groups, batchPerSource(concurrency), downloadsConsumed)
 	limiter := newProviderLimiter(concurrency)
 
 	// Shared across every per-source goroutine — incremented once per upgrade that
@@ -121,4 +151,29 @@ func (d *Dispatcher) groupByUpgradeTarget(ctx context.Context, chapters []*ent.C
 		groups[key] = append(groups[key], ch.ID)
 	}
 	return groups
+}
+
+// capUpgradeGroups truncates each REAL upgrade-target source's queue to the
+// remainder of its shared per-cycle fetch budget: budget minus what the download
+// drain already fetched from that physical source this cycle (consumed, keyed by
+// canonicalSourceKey; a nil map reads as all-zero). Chapters dropped from a group
+// stay upgrade_available and are handled next cycle. The unresolvedTargetKey group
+// (no live target — it fetches nothing, only clears a stale flag) is left uncapped
+// so a stale flag always resolves regardless of any source's budget. Groups are
+// ordered lowest-chapter-number-first (see UpgradeAll's query), so truncation keeps
+// the earliest chapters and defers the rest deterministically.
+func capUpgradeGroups(groups map[string][]uuid.UUID, budget int, consumed map[string]int) {
+	for key, ids := range groups {
+		if key == unresolvedTargetKey {
+			continue
+		}
+		remaining := budget - consumed[key]
+		if remaining <= 0 {
+			delete(groups, key)
+			continue
+		}
+		if len(ids) > remaining {
+			groups[key] = ids[:remaining]
+		}
+	}
 }

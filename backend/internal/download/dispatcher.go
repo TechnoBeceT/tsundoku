@@ -445,19 +445,38 @@ func batchPerSource(concurrency int) int {
 // moment only up to DownloadConcurrency of a source's chapters are downloading and
 // the rest remain queued, draining in round-robin-across-series order (see
 // schedule.go).
+//
+// A single RunOnce call is one cycle in itself: it allocates a FRESH per-source
+// budget, so a source may dispatch up to batchPerSource(concurrency) of its
+// chapters in this one pass (the standalone entry point used by tests and the
+// Process path). The cross-pass per-CYCLE cap is applied by the drain loop, which
+// calls RunOnceAt with a shared budget map — see RunOnceAt.
 func (d *Dispatcher) RunOnce(ctx context.Context) (dispatched int, err error) {
-	return d.RunOnceAt(ctx, time.Now())
+	return d.RunOnceAt(ctx, time.Now(), make(map[string]int))
 }
 
-// RunOnceAt runs one bounded dispatch pass anchored to the given now. The job
-// runner's drain loop (job.Runner.drainDownloads) snapshots now ONCE per
+// RunOnceAt runs one bounded dispatch pass anchored to the given now, honouring
+// (and updating) the shared per-source per-CYCLE dispatch budget in consumed.
+//
+// consumed maps a canonicalSourceKey to how many of that physical source's
+// chapters have ALREADY been dispatched earlier in THIS cycle (across prior
+// passes of the same drain loop). A source's batch this pass is capped to the
+// REMAINDER of its per-cycle budget batchPerSource(concurrency) — so however many
+// passes the drain loop runs, one physical source is fetched at most
+// batchPerSource(concurrency) times per cycle, and this same budget is shared with
+// the upgrade pass (see UpgradeAll). Without this the drain loop, which re-calls
+// RunOnceAt until a pass dispatches 0, would let one source's large backlog be
+// dispatched far beyond the per-pass batch and re-ban an anti-bot source. RunOnceAt
+// mutates consumed in place (adding this pass's per-source dispatch counts), so the
+// caller passes the SAME map to every pass of a cycle then hands it to UpgradeAll.
+//
+// The job runner's drain loop (job.Runner.drainDownloads) snapshots now ONCE per
 // download cycle and passes the SAME value to every pass in that cycle, so a
 // source's per-source backoff (next_attempt_at) cannot elapse mid-cycle and
 // collapse its retry spacing — a slow-timeout source gets one attempt per
-// cycle, not one per pass. RunOnce is the thin time.Now()-anchored entry point
-// used by tests and the Process path; all candidacy + backoff decisions in
-// this pass use the now passed here.
-func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time) (dispatched int, err error) {
+// cycle, not one per pass. All candidacy + backoff decisions in this pass use the
+// now passed here.
+func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[string]int) (dispatched int, err error) {
 	maxRetries := d.retry.MaxRetries(ctx)
 	concurrency := d.downloadConcurrency(ctx)
 
@@ -476,11 +495,23 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time) (dispatched i
 	// provider's fetch cap holds even for fall-through candidates.
 	groups := d.groupBySource(ctx, chapters, maxRetries, now)
 	limiter := newProviderLimiter(concurrency)
-	batch := batchPerSource(concurrency)
+	budget := batchPerSource(concurrency)
 
+	// Cap each source to the REMAINDER of its per-cycle budget (batchPerSource
+	// already consumed earlier this cycle), and record what this pass selects so
+	// the next pass — and the upgrade pass — see the running total. A source at
+	// budget contributes an empty batch (no goroutine, no dispatch), which is what
+	// lets the drain loop terminate once every source is at budget or has no live
+	// candidate.
 	batched := make(map[string][]resolvedChapter, len(groups))
 	for key, items := range groups {
-		batched[key] = items[:min(len(items), batch)]
+		remaining := budget - consumed[key]
+		if remaining <= 0 {
+			continue
+		}
+		take := items[:min(len(items), remaining)]
+		batched[key] = take
+		consumed[key] += len(take)
 	}
 
 	// Per-cycle audit-event sink: each per-source download outcome is accumulated

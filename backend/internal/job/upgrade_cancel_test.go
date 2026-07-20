@@ -78,7 +78,7 @@ func TestUpgradeAll_CancelSkipsQueuedUpgrade(t *testing.T) {
 	upCtx, cancel := context.WithCancel(ctx)
 	done := make(chan upgradeAllResult, 1)
 	go func() {
-		c, e := r.upgradeAll(upCtx)
+		c, e := r.upgradeAll(upCtx, nil)
 		done <- upgradeAllResult{c, e}
 	}()
 

@@ -781,7 +781,7 @@ func TestRunOnceAt_UsesPassedNowForCandidacy(t *testing.T) {
 
 	// Passed now is still before the cooldown horizon: the source is not yet a
 	// live candidate, regardless of real wall-clock time.
-	dispatched, err := d.RunOnceAt(ctx, cooldownUntil.Add(-time.Minute))
+	dispatched, err := d.RunOnceAt(ctx, cooldownUntil.Add(-time.Minute), make(map[string]int))
 	if err != nil {
 		t.Fatalf("RunOnceAt (before cooldown): %v", err)
 	}
@@ -794,7 +794,7 @@ func TestRunOnceAt_UsesPassedNowForCandidacy(t *testing.T) {
 	}
 
 	// Passed now is past the cooldown horizon: the source re-qualifies.
-	dispatched, err = d.RunOnceAt(ctx, cooldownUntil.Add(time.Minute))
+	dispatched, err = d.RunOnceAt(ctx, cooldownUntil.Add(time.Minute), make(map[string]int))
 	if err != nil {
 		t.Fatalf("RunOnceAt (after cooldown): %v", err)
 	}
