@@ -42,3 +42,23 @@ export const AlmostDue: Story = {
     reason: 'timeout waiting for page list',
   },
 }
+
+/** A tripped circuit-breaker: "waiting on ‹source› — cooling down, retry ~Nm". */
+export const CoolingDown: Story = {
+  args: {
+    deferredUntil: new Date(Date.now() + 15 * 60_000).toISOString(),
+    source: 'Asura Scans',
+    reason: 'rate limited (429)',
+    reasonKind: 'cooling_down',
+  },
+}
+
+/** A per-chapter fetch backoff: "retrying ~Nm" (the source rides in the tooltip). */
+export const Backoff: Story = {
+  args: {
+    deferredUntil: new Date(Date.now() + 4 * 60_000).toISOString(),
+    source: 'MangaDex',
+    reason: 'read tcp: connection reset by peer',
+    reasonKind: 'backoff',
+  },
+}

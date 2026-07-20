@@ -44,7 +44,6 @@ const ERROR_LABELS: Record<ErrorCategory, string> = {
 
 // Terminal rows "Reset", retryable rows "Retry".
 const retryLabel = computed(() => (props.item.state === 'permanently_failed' ? 'Reset' : 'Retry'))
-const hasRetries = computed(() => (props.item.retries ?? 0) > 0)
 const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props.item.errorCategory] : 'Error'))
 </script>
 
@@ -52,7 +51,9 @@ const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props
   <div class="dl-card">
     <ChapterDownloadRow bare :item="item" @open-series="emit('open-series', $event)">
       <template #before-badge>
-        <span v-if="hasRetries" class="retry-badge">Retry #{{ item.retries }}</span>
+        <!-- The per-source attempt/max badge renders inside ChapterDownloadRow itself
+             (strictly better than the legacy "Retry #N"); here we only add the
+             scheduled next-attempt ETA for a backing-off failed row. -->
         <span v-if="item.nextAttempt" class="next-attempt">{{ item.nextAttempt }}</span>
       </template>
       <template #after-badge>
@@ -84,16 +85,6 @@ const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props
 }
 
 /* ---- Failed-row extras (before the badge) --------------------------------- */
-.retry-badge {
-  flex: none;
-  font-size: 0.65625rem; /* 10.5px @16 — off-ladder, byte-identical rem literal */
-  font-weight: var(--weight-bold);
-  padding: var(--space-3xs) var(--space-xs);
-  border-radius: var(--radius-pill);
-  background: var(--dl-queued-bg);
-  color: var(--dl-queued-text);
-}
-
 .next-attempt {
   flex: none;
   font-size: var(--text-xs);

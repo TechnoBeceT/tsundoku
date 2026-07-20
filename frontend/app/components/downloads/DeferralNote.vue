@@ -27,20 +27,47 @@ const props = defineProps<{
   source: string
   /** The source's last error, surfaced as a tooltip; omitted when empty. */
   reason?: string
+  /**
+   * WHY the source is deferred, choosing the wording:
+   *   'cooling_down' — the source's circuit-breaker is tripped (whole source in
+   *      anti-ban cooldown): "waiting on ‹source› — cooling down, retry ~Nm".
+   *   'backoff'      — a failed-fetch per-chapter backoff on that source:
+   *      "retrying ~Nm" (the source rides in the tooltip).
+   *   undefined      — legacy/unclassified: "waiting on ‹source› · retry ~Nm".
+   */
+  reasonKind?: 'backoff' | 'cooling_down'
 }>()
 
 const { now } = useNow()
 
 // Live "~Nm" / "~Ns" / "~Nh" until the source's cooldown elapses (recomputes each tick).
 const eta = computed(() => formatRetryEta(props.deferredUntil, now.value))
+
+// For 'backoff' the source is not in the visible text, so fold it into the tooltip
+// alongside the reason; the other branches show the source inline (tooltip = reason).
+const title = computed(() => {
+  if (props.reasonKind === 'backoff') {
+    return props.reason ? `${props.source} — ${props.reason}` : props.source
+  }
+  // reason is already "" → undefined at the mapper, so this is just the reason.
+  return props.reason
+})
 </script>
 
 <template>
-  <span class="defer" :title="reason || undefined">
+  <span class="defer" :class="reasonKind === 'cooling_down' ? 'defer--cooling' : undefined" :title="title">
     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M5 22h14M5 2h14M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2" />
     </svg>
-    waiting on <span class="defer__source">{{ source }}</span> · retry {{ eta }}
+    <template v-if="reasonKind === 'backoff'">
+      retrying {{ eta }}
+    </template>
+    <template v-else-if="reasonKind === 'cooling_down'">
+      waiting on <span class="defer__source">{{ source }}</span> — cooling down, retry {{ eta }}
+    </template>
+    <template v-else>
+      waiting on <span class="defer__source">{{ source }}</span> · retry {{ eta }}
+    </template>
   </span>
 </template>
 
@@ -59,6 +86,12 @@ const eta = computed(() => formatRetryEta(props.deferredUntil, now.value))
   background: var(--surface3);
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* A tripped breaker (whole-source cooldown) is a shade more notable than a plain
+   per-chapter backoff — tint the cooling-down pill toward warn. */
+.defer--cooling {
+  color: var(--warn);
 }
 
 /* The waited-on source is the load-bearing word — lift it out of the muted run. */

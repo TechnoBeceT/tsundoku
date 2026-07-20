@@ -34,4 +34,31 @@ describe('DeferralNote', () => {
     expect(wrapper.find('.defer').attributes('title')).toBeUndefined()
     wrapper.unmount()
   })
+
+  it('reads "cooling down" wording for a tripped breaker', () => {
+    const deferredUntil = new Date(Date.now() + 15 * 60_000).toISOString()
+    const wrapper = mount(DeferralNote, {
+      props: { deferredUntil, source: 'Asura Scans', reason: 'rate limited', reasonKind: 'cooling_down' },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('waiting on')
+    expect(text).toContain('Asura Scans')
+    expect(text).toContain('cooling down')
+    expect(text).toContain('retry ~15m')
+    expect(wrapper.find('.defer').classes()).toContain('defer--cooling')
+    wrapper.unmount()
+  })
+
+  it('reads "retrying" wording for a per-chapter backoff, with the source in the tooltip', () => {
+    const deferredUntil = new Date(Date.now() + 4 * 60_000).toISOString()
+    const wrapper = mount(DeferralNote, {
+      props: { deferredUntil, source: 'MangaDex', reason: 'connection reset', reasonKind: 'backoff' },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('retrying ~4m')
+    // Source is not in the visible text for a backoff — it rides in the tooltip.
+    expect(text).not.toContain('waiting on')
+    expect(wrapper.find('.defer').attributes('title')).toContain('MangaDex')
+    wrapper.unmount()
+  })
 })

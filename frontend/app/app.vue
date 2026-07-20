@@ -9,5 +9,8 @@
     <!-- App-global in-app new-chapter toast — active under every layout (incl.
          the reader's bare layout), unlike a layout-scoped handler. -->
     <ChapterNotifier />
+    <!-- App-global download-failure toast — throttled/aggregated danger card off
+         the download.fail SSE event (nothing else consumed it). -->
+    <DownloadFailNotifier />
   </div>
 </template>

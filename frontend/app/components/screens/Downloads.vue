@@ -13,6 +13,7 @@ import ChapterDownloadRow from '../downloads/ChapterDownloadRow.vue'
 import CycleBanner from '../downloads/CycleBanner.vue'
 import DeferralNote from '../downloads/DeferralNote.vue'
 import FailedDownloadCard from '../downloads/FailedDownloadCard.vue'
+import ActiveFailureBanner from '../downloads/ActiveFailureBanner.vue'
 import RequeueConfirmModal from '../downloads/RequeueConfirmModal.vue'
 import { useNow } from '../../composables/useNow'
 import type { DownloadItem, DownloadState, DownloadTab, RetryAllState } from './downloads.types'
@@ -65,6 +66,12 @@ const props = withDefaults(defineProps<{
   runMessage?: string
   /** The last "Download now" failure message, surfaced inline + never swallowed (§16). */
   runError?: string
+  /**
+   * Sources whose circuit-breaker is tripped (anti-ban cooldown) right now, from the
+   * live SSE `sources.summary` signal. Drives the Active-tab "M sources cooling down"
+   * awareness banner — so an empty Active list reads as WAITING, not "up to date".
+   */
+  coolingDownSources?: number
 }>(), {
   activeTab: 'active',
   cycleActive: false,
@@ -80,6 +87,7 @@ const props = withDefaults(defineProps<{
   running: false,
   runMessage: '',
   runError: '',
+  coolingDownSources: 0,
 })
 
 const emit = defineEmits<{
@@ -97,6 +105,8 @@ const emit = defineEmits<{
   'load-more': []
   /** Trigger an immediate download cycle ("Download now"). */
   'run-now': []
+  /** Open the source-health view (from the Active-tab cooling-down banner). */
+  'open-health': []
 }>()
 
 // ---- Local view state (presentation only, never round-trips) ----------------
@@ -173,6 +183,14 @@ const deferralSummary = computed(() => {
   return { count: deferred.length, soonestIso: new Date(soonest).toISOString() }
 })
 
+// ---- Active-tab failure awareness -------------------------------------------
+// When the Active list is empty, "up to date" is a LIE if chapters are failing or
+// sources are cooling down. Total failing = all failed states (retryable + terminal).
+const failingCount = computed(() => counts.value.failed + counts.value.terminal)
+const showActiveBanner = computed(
+  () => activeRows.value.length === 0 && (failingCount.value > 0 || props.coolingDownSources > 0),
+)
+
 // ---- Actions ----------------------------------------------------------------
 const selectTab = (tab: DownloadTab): void => {
   expandedId.value = null
@@ -237,10 +255,20 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 
       <!-- ===================== ACTIVE ===================== -->
       <div v-else-if="activeTab === 'active'" class="downloads__list">
+        <!-- Failure awareness: the Active list can be empty while chapters FAIL or
+             sources cool down — say so instead of a misleading "up to date". -->
+        <ActiveFailureBanner
+          v-if="showActiveBanner"
+          :failing="failingCount"
+          :cooling-down="coolingDownSources"
+          @view-failed="selectTab('failed')"
+          @view-sources="emit('open-health')"
+        />
+
         <EmptyState
           v-if="activeRows.length === 0"
           title="No active downloads"
-          sub="Waiting for the next download cycle."
+          :sub="showActiveBanner ? 'Nothing is fetching right now — see above.' : 'Waiting for the next download cycle.'"
           icon-tone="accentBright"
         >
           <template #icon>
@@ -385,6 +413,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
                   :deferred-until="row.deferredUntil"
                   :source="row.upgradeTarget || row.providerName"
                   :reason="row.deferReason"
+                  :reason-kind="row.waitingReason"
                 />
                 <span v-else-if="row.state === 'upgrade_available'" class="upgrade-tag">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

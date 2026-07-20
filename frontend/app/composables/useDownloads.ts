@@ -89,6 +89,13 @@ function mapItem(dto: DownloadChapterDTO): DownloadItem {
     // down live). null (not deferred) → undefined so the row shows no waiting note.
     deferredUntil: dto.deferredUntil ?? undefined,
     deferReason: dto.deferReason || undefined,
+    // Backend "" (not waiting) → undefined so a ready row shows no chip.
+    waitingReason: dto.waitingReason === 'backoff' || dto.waitingReason === 'cooling_down'
+      ? dto.waitingReason
+      : undefined,
+    attempts: dto.attempts ?? 0,
+    maxRetries: dto.maxRetries ?? 0,
+    isUpgrade: dto.isUpgrade ?? false,
     retries: dto.retries,
     nextAttempt: formatNextAttempt(dto.nextAttemptAt),
     // Empty string means "no error" — map to undefined so optional fields stay absent.
@@ -200,6 +207,9 @@ export function useDownloads() {
   // Auto-refetch whenever a download cycle completes or a chapter download finishes.
   const unsubCycleDone = on('cycle.done', () => void refresh())
   const unsubDownloadDone = on('download.done', () => void refresh())
+  // A chapter just failed — pull the fresh Failed list + counts so the row (and its
+  // last_error) appears without waiting for the coarse cycle.done refetch.
+  const unsubDownloadFail = on('download.fail', () => void refresh())
 
   // Live per-page progress: update the matching row IN PLACE (no refetch) so the
   // Active bar climbs smoothly between the coarse start/done refetches. The SSE
@@ -217,6 +227,7 @@ export function useDownloads() {
   onUnmounted(() => {
     unsubCycleDone()
     unsubDownloadDone()
+    unsubDownloadFail()
     unsubProgress()
   })
 

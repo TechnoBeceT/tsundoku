@@ -55,6 +55,12 @@ const {
   runNow,
   dismissError,
 } = useDownloads()
+
+// Live count of sources whose circuit-breaker is tripped (anti-ban cooldown) — feeds
+// the Active-tab "M sources cooling down" awareness banner so an empty Active list
+// reads as WAITING, not "up to date". connect() is idempotent (the layout connects too).
+const { coolingDownSources, connect } = useProgressStream()
+onMounted(connect)
 </script>
 
 <template>
@@ -75,6 +81,7 @@ const {
       :running="running"
       :run-message="runMessage"
       :run-error="runError"
+      :cooling-down-sources="coolingDownSources"
       @set-tab="setTab"
       @retry="retry"
       @retry-all="retryAll"
@@ -82,6 +89,7 @@ const {
       @dismiss-error="dismissError"
       @load-more="loadMore"
       @run-now="runNow"
+      @open-health="navigateTo('/health?tab=sources')"
     />
   </div>
 </template>

@@ -5,7 +5,7 @@ import AppButton from '../ui/AppButton.vue'
 import ProgressBar from '../ui/ProgressBar.vue'
 import Spinner from '../ui/Spinner.vue'
 import NavRailItem from './NavRailItem.vue'
-import RailActivityIndicator from './RailActivityIndicator.vue'
+import DownloadCounter from './DownloadCounter.vue'
 import type { NavItem } from './types'
 
 /**
@@ -40,13 +40,21 @@ const props = withDefaults(defineProps<{
    * Sources tab, whereas `unhealthy` deep-links to the Library tab.
    */
   erroringSources?: number
+  /**
+   * Count of sources whose breaker is tripped and still in anti-ban cooldown —
+   * drives the softer "N cooling down" header chip (hidden at 0). The "queue is
+   * WAITING, not broken" signal; deep-links to the Downloads screen.
+   */
+  coolingDown?: number
   /** Whether a sync/download cycle is active — shows the header spinner. */
   syncing?: boolean
   /** Label beside the sync spinner (e.g. "Syncing sources…"). */
   syncLabel?: string
-  /** Active downloads — shown as the accent rail-bottom indicator (hidden at 0). */
-  activeDownloads?: number
-  /** Failed downloads — shown as the amber rail-bottom indicator (hidden at 0). */
+  /** Chapters currently downloading — the blue count in the rail download counter. */
+  downloading?: number
+  /** Chapters queued/waiting — the yellow count in the rail download counter. */
+  queued?: number
+  /** Failed downloads — the red count in the rail download counter (hidden at 0 half). */
   failedDownloads?: number
   /** Whether a mutation is in flight — shows the header's indeterminate bar. */
   mutating?: boolean
@@ -54,9 +62,11 @@ const props = withDefaults(defineProps<{
   breadcrumb: '',
   unhealthy: 0,
   erroringSources: 0,
+  coolingDown: 0,
   syncing: false,
   syncLabel: '',
-  activeDownloads: 0,
+  downloading: 0,
+  queued: 0,
   failedDownloads: 0,
   mutating: false,
 })
@@ -110,8 +120,13 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
 
       <!-- Bottom-pinned controls -->
       <div class="rail__foot">
-        <!-- Live download-activity indicators -->
-        <RailActivityIndicator :active="activeDownloads" :failed="failedDownloads" />
+        <!-- Always-visible download counter (downloading / queued / failed) → Downloads -->
+        <DownloadCounter
+          :downloading="downloading"
+          :queued="queued"
+          :failed="failedDownloads"
+          @navigate="emit('navigate', 'downloads')"
+        />
 
         <!-- Pinned nav (e.g. Settings) -->
         <NavRailItem
@@ -163,6 +178,16 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
             <button v-if="erroringSources > 0" type="button" class="head__source-alert" @click="emit('navigate', 'health?tab=sources')">
               <Icon name="lucide:triangle-alert" class="head__source-alert-icon" aria-hidden="true" />
               {{ erroringSources }} {{ erroringSources === 1 ? 'source' : 'sources' }} down
+            </button>
+
+            <!-- Cooling-down chip: sources in anti-ban cooldown right now. Softer than
+                 the source-outage danger pill — the queue is WAITING, not broken — so
+                 it is a muted amber chip that deep-links to the Downloads screen (where
+                 the waiting queue reads). Distinct from `erroringSources`: a breaker can
+                 be cooling down without being reported as an active outage. -->
+            <button v-if="coolingDown > 0" type="button" class="head__cooling" @click="emit('navigate', 'downloads')">
+              <Icon name="lucide:hourglass" class="head__cooling-icon" aria-hidden="true" />
+              {{ coolingDown }} cooling down
             </button>
 
             <!-- "Need attention" pill → Health console. This is a SERIES-health
@@ -390,6 +415,37 @@ const themeLabel = computed(() => (props.theme === 'dark' ? 'Switch to light the
 .head__source-alert-icon {
   width: 15px;
   height: 15px;
+}
+
+/* Cooling-down chip — a muted amber "waiting, not broken" signal, deliberately
+   lower-contrast than the solid source-outage danger pill. */
+.head__cooling {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: var(--radius-pill);
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  color: var(--warn);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.head__cooling:hover {
+  background: var(--surface2);
+}
+
+.head__cooling:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
+.head__cooling-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .head__attention {

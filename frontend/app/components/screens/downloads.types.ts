@@ -75,6 +75,31 @@ export interface DownloadItem {
   /** The waited-on source's last error, shown as the deferral tooltip. Undefined when none. */
   deferReason?: string
   /**
+   * Why a QUEUED chapter is deferred, classifying the cooldown on the waited-on
+   * source: `'backoff'` = that source has a persisted per-source next_attempt_at in
+   * the future (a failed fetch's per-chapter backoff); `'cooling_down'` = that
+   * source's circuit-breaker is tripped (the WHOLE source is in anti-ban cooldown).
+   * Undefined when the chapter is not waiting (backend "" → undefined). Drives the
+   * DeferralNote wording ("cooling down, retry …" vs "retrying …").
+   */
+  waitingReason?: 'backoff' | 'cooling_down'
+  /**
+   * Per-source download attempts against THIS chapter by the resolved source
+   * (`ProviderChapter.attempts` — the engine's per-source retry budget, NOT the
+   * legacy top-level `retries`). Paired with `maxRetries` for the "‹source› · N/max"
+   * badge. 0 when the resolved source has no feed row (or none is resolved).
+   */
+  attempts?: number
+  /** Current per-source retry budget (jobs.max_retries) — the N/max denominator. 0 when unwired. */
+  maxRetries?: number
+  /**
+   * True when this row is a convergence UPGRADE (state upgrade_available/upgrading)
+   * rather than a fresh download. NOT equivalent to "upgradeTarget is non-empty" —
+   * a chapter can be an upgrade with no nameable target (the higher source has a
+   * feed gap), so `isUpgrade` can be true while `upgradeTarget` is undefined.
+   */
+  isUpgrade?: boolean
+  /**
    * Live download percentage (0–100), driven by the `download.progress` SSE
    * event (round(100 * pagesCurrent / pagesTotal)). Undefined before the first
    * event → the Active bar stays indeterminate until pages start arriving.

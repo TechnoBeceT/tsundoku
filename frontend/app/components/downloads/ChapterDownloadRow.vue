@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import Chip from '../ui/Chip.vue'
 import CoverImage from '../ui/CoverImage.vue'
 import StatusBadge from '../ui/StatusBadge.vue'
+import AttemptBadge from './AttemptBadge.vue'
 import type { DownloadItem } from '../screens/downloads.types'
 
 /**
@@ -46,6 +47,13 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
 // It reads as "no source", which is exactly the truth and makes a sourceless-stuck
 // chapter visible instead of falsely crediting the series' top source.
 const providerLabel = computed(() => props.item.providerName || '—')
+
+// Show the per-source attempt/max badge only when a budget is known (max > 0).
+const showAttempts = computed(() => (props.item.maxRetries ?? 0) > 0)
+
+// The upgrade destination text: the named target, else a generic label when the
+// row is an upgrade with no nameable target (the higher source has a feed gap).
+const upgradeTargetLabel = computed(() => props.item.upgradeTarget ?? 'higher source')
 </script>
 
 <template>
@@ -70,7 +78,16 @@ const providerLabel = computed(() => props.item.providerName || '—')
         {{ metaLine }}
         <span class="dl-row__provider">
           · {{ providerLabel }}
-          <template v-if="item.upgradeTarget">
+          <!-- An upgrade row reads "<current> → <target> · Upgrade" — using isUpgrade,
+               so a targetless upgrade still reads as an upgrade (falls back to a
+               generic destination). A non-upgrade row that somehow carries a target
+               keeps the plain arrow. -->
+          <template v-if="item.isUpgrade">
+            <span class="dl-row__arrow" aria-hidden="true">→</span>
+            <span class="dl-row__target">{{ upgradeTargetLabel }}</span>
+            <span class="dl-row__upgrade">Upgrade</span>
+          </template>
+          <template v-else-if="item.upgradeTarget">
             <span class="dl-row__arrow" aria-hidden="true">→</span>
             <span class="dl-row__target">{{ item.upgradeTarget }}</span>
           </template>
@@ -85,6 +102,12 @@ const providerLabel = computed(() => props.item.providerName || '—')
          button) — a plain flex-wrap on the individual siblings can't guarantee
          that grouping since the slot contents vary per caller. -->
     <div class="dl-row__controls">
+      <AttemptBadge
+        v-if="showAttempts"
+        :provider="item.providerName"
+        :attempts="item.attempts ?? 0"
+        :max="item.maxRetries ?? 0"
+      />
       <slot name="before-badge" />
       <StatusBadge :state="item.state" />
       <slot name="after-badge" />
@@ -167,6 +190,20 @@ const providerLabel = computed(() => props.item.providerName || '—')
 .dl-row__target {
   color: var(--accent);
   font-weight: var(--weight-medium);
+}
+
+/* The explicit "Upgrade" marker after the target — a compact accent tag so a
+   convergence row reads unmistakably as an upgrade, not a fresh download. */
+.dl-row__upgrade {
+  margin-left: var(--space-2xs);
+  padding: 0 var(--space-2xs);
+  border-radius: var(--radius-xs);
+  background: var(--accentSoft);
+  color: var(--accentBright);
+  font-size: 0.65625rem; /* 10.5px @16 — off-ladder, byte-identical rem literal */
+  font-weight: var(--weight-extrabold);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 /* The trailing cluster (before-badge slot + status badge + after-badge slot) —

@@ -16,7 +16,7 @@ import type { DownloadItem } from '../screens/downloads.types'
 
 // The child atoms are exercised by their own stories/tests — stub them so this test
 // asserts only the row's own source line.
-const stubs = { CoverImage: true, Chip: true, StatusBadge: true }
+const stubs = { CoverImage: true, Chip: true, StatusBadge: true, AttemptBadge: true }
 
 const item = (overrides: Partial<DownloadItem> = {}): DownloadItem => ({
   chapterId: 'c-1',
@@ -55,6 +55,38 @@ describe('ChapterDownloadRow', () => {
     expect(meta).toContain('MangaDex')
     expect(meta).not.toContain('→')
     expect(wrapper.find('.dl-row__target').exists()).toBe(false)
+  })
+
+  it('marks an upgrade row with an "Upgrade" label and its target', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: { item: item({ state: 'upgrade_available', isUpgrade: true, upgradeTarget: 'Asura Scans' }) },
+      global: { stubs },
+    })
+    const meta = wrapper.find('.dl-row__meta').text()
+    expect(meta).toContain('Upgrade')
+    expect(meta).toContain('→')
+    expect(wrapper.find('.dl-row__target').text()).toBe('Asura Scans')
+  })
+
+  it('marks a targetless upgrade as an upgrade to a generic destination', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: { item: item({ state: 'upgrade_available', isUpgrade: true, upgradeTarget: undefined }) },
+      global: { stubs },
+    })
+    const meta = wrapper.find('.dl-row__meta').text()
+    expect(meta).toContain('Upgrade')
+    expect(meta).toContain('higher source')
+  })
+
+  it('renders the per-source attempt badge when a retry budget is known', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: { item: item({ state: 'downloading', maxRetries: 3, attempts: 1 }) },
+      // Do NOT stub AttemptBadge here so we can prove it is rendered.
+      global: { stubs: { CoverImage: true, Chip: true, StatusBadge: true } },
+    })
+    // AttemptBadge's root carries `.attempts`; its N/max reads "1/3".
+    expect(wrapper.find('.attempts').exists()).toBe(true)
+    expect(wrapper.find('.attempts').text()).toContain('1/3')
   })
 
   // The backend reports an EMPTY providerName when no source's feed carries the

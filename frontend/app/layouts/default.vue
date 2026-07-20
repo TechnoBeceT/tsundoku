@@ -5,8 +5,13 @@ const route = useRoute()
 
 // Live backend progress stream — connects once on mount, drives shell indicators.
 // (The app-global ChapterNotifier in app.vue owns the chapter.new in-app toast.)
-const { connect, unhealthyCount, erroringSources, syncing } = useProgressStream()
+const { connect, unhealthyCount, erroringSources, coolingDownSources, syncing } = useProgressStream()
 onMounted(connect)
+
+// Persistent download counter (downloading / queued / failed) — polled ~10s and
+// reconciled with the live SSE stream, so the rail badge trio is current on EVERY
+// page. Replaces the old hardcoded 0/0 rail indicator.
+const { downloading, queued, failed } = useDownloadSummary()
 
 // PWA install affordance — captures beforeinstallprompt (Android Chrome) and
 // shows the floating "Install app" button until installed.
@@ -96,17 +101,16 @@ function handleOpenAdopt(): void {
     :header-title="headerTitle"
     :unhealthy="unhealthyCount"
     :erroring-sources="erroringSources"
+    :cooling-down="coolingDownSources"
     :syncing="syncing"
-    :active-downloads="0"
-    :failed-downloads="0"
+    :downloading="downloading"
+    :queued="queued"
+    :failed-downloads="failed"
     @navigate="handleNavigate"
     @toggle-theme="handleToggleTheme"
     @lock="handleLock"
     @open-adopt="handleOpenAdopt"
   >
-    <!-- active-downloads / failed-downloads stay 0: download.* events carry no running
-         total in their payload, so a reliable per-event count cannot be maintained here.
-         Authoritative counts come from the Downloads screen (Milestone B). -->
     <slot />
     <InstallButton :installable="installable" @install="promptInstall" />
     <UpdateToast :update-available="updateAvailable" @reload="applyUpdate" />

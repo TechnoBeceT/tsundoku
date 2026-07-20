@@ -54,8 +54,8 @@ const Placeholder = {
 
 /**
  * The resting chrome: Library active, three sources need attention (header pill +
- * Health rail badge), one failed download (Downloads rail badge), two active
- * downloads (rail-bottom indicator), no sync in progress.
+ * Health rail badge), and the always-visible rail download counter shows 2
+ * downloading / 5 queued / 1 failed, no sync in progress.
  */
 export const Default: Story = {
   render: () => ({
@@ -71,7 +71,9 @@ export const Default: Story = {
         :theme="theme"
         header-title="Library"
         :unhealthy="3"
-        :active-downloads="2"
+        :downloading="2"
+        :queued="5"
+        :failed-downloads="1"
         @toggle-theme="theme = theme === 'dark' ? 'light' : 'dark'"
       >
         <Placeholder />
@@ -82,8 +84,9 @@ export const Default: Story = {
 
 /**
  * A discovery sweep / download cycle in flight: the header spinner announces via
- * `aria-live`, the indeterminate mutation bar runs, and two downloads have failed
- * (rail-bottom amber indicator).
+ * `aria-live`, the indeterminate mutation bar runs, the rail counter shows 4
+ * downloading / 12 queued / 2 failed, and one source is cooling down (soft amber
+ * header chip).
  */
 export const Syncing: Story = {
   render: () => ({
@@ -100,8 +103,10 @@ export const Syncing: Story = {
         header-title="Downloads"
         :syncing="true"
         sync-label="Syncing sources…"
-        :active-downloads="4"
+        :downloading="4"
+        :queued="12"
         :failed-downloads="2"
+        :cooling-down="1"
         :mutating="true"
         @toggle-theme="theme = theme === 'dark' ? 'light' : 'dark'"
       >
@@ -238,7 +243,8 @@ export const InShell: Story = {
         :theme="theme"
         header-title="Library"
         :unhealthy="3"
-        :active-downloads="2"
+        :downloading="2"
+        :queued="5"
         @toggle-theme="theme = theme === 'dark' ? 'light' : 'dark'"
       >
         <LibraryList
