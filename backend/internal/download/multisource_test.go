@@ -22,19 +22,26 @@ import (
 // providerScopedFetcher fails for the named providers (per FetchRef.Provider) and
 // succeeds for everyone else with a single deterministic page. It lets a test
 // model "source X can't serve this chapter, source Y can" precisely, which the
-// fake fetcher's global fail modes cannot express. Its failure is a not_found, but
-// under the Kaizoku-style model every fetch failure spends the per-source retry
-// budget (bumpSourceFailure), which is what drives the exhaustion / fall-through /
-// permanent-failure paths these tests exercise. Safe for concurrent use (read-only
-// after construction).
+// fake fetcher's global fail modes cannot express. Its DEFAULT failure is a
+// CHAPTER-SPECIFIC not_found (which BUMPS the per-source budget, driving the
+// exhaustion / fall-through / permanent-failure paths these tests exercise); set
+// `err` to inject a SOURCE-WIDE error instead (which only cools the source down —
+// used by the upgrade-recovery tests). Safe for concurrent use (read-only after
+// construction).
 type providerScopedFetcher struct {
 	failProviders map[string]bool
+	// err overrides the failure returned for a failing provider. Nil ⇒ the default
+	// chapter-specific not_found.
+	err error
 }
 
-// Fetch returns a chapter-specific (not_found) error when ref.Provider is in the
-// fail set, else a minimal valid one-page ChapterPages.
+// Fetch returns the configured failure (default: a chapter-specific not_found) when
+// ref.Provider is in the fail set, else a minimal valid one-page ChapterPages.
 func (f *providerScopedFetcher) Fetch(_ context.Context, ref fetcher.FetchRef) (fetcher.ChapterPages, error) {
 	if f.failProviders[ref.Provider] {
+		if f.err != nil {
+			return fetcher.ChapterPages{}, f.err
+		}
 		return fetcher.ChapterPages{}, errors.New("provider " + ref.Provider + ": chapter not found")
 	}
 	return fetcher.ChapterPages{

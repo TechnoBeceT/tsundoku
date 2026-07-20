@@ -79,31 +79,57 @@ import (
 // is already on the row (UpgradeTarget for an upgrade defer, ProviderName for a wanted
 // one), so it is not duplicated here.
 type DownloadChapterDTO struct {
-	ID             uuid.UUID  `json:"id"`
-	SeriesID       uuid.UUID  `json:"seriesId"`
-	SeriesTitle    string     `json:"seriesTitle"`
-	SeriesCategory string     `json:"seriesCategory"`
-	SeriesCoverURL string     `json:"seriesCoverUrl"`
-	ChapterKey     string     `json:"chapterKey"`
-	Number         *float64   `json:"number"`
-	Name           string     `json:"name"`
-	State          string     `json:"state"`
-	Provider       string     `json:"provider"`
-	ProviderName   string     `json:"providerName"`
-	Attempts       int        `json:"attempts"`
-	MaxRetries     int        `json:"maxRetries"`
-	IsUpgrade      bool       `json:"isUpgrade"`
-	UpgradeTarget  string     `json:"upgradeTarget"`
-	WaitingReason  string     `json:"waitingReason"`
-	DeferredUntil  *time.Time `json:"deferredUntil"`
-	DeferReason    string     `json:"deferReason"`
-	Retries        int        `json:"retries"`
-	NextAttemptAt  *time.Time `json:"nextAttemptAt"`
-	LastError      string     `json:"lastError"`
-	ErrorCategory  string     `json:"errorCategory"`
-	Filename       string     `json:"filename"`
-	PageCount      *int       `json:"pageCount"`
-	DownloadDate   *time.Time `json:"downloadDate"`
+	ID             uuid.UUID `json:"id"`
+	SeriesID       uuid.UUID `json:"seriesId"`
+	SeriesTitle    string    `json:"seriesTitle"`
+	SeriesCategory string    `json:"seriesCategory"`
+	SeriesCoverURL string    `json:"seriesCoverUrl"`
+	ChapterKey     string    `json:"chapterKey"`
+	Number         *float64  `json:"number"`
+	Name           string    `json:"name"`
+	State          string    `json:"state"`
+	Provider       string    `json:"provider"`
+	ProviderName   string    `json:"providerName"`
+	Attempts       int       `json:"attempts"`
+	MaxRetries     int       `json:"maxRetries"`
+	IsUpgrade      bool      `json:"isUpgrade"`
+	UpgradeTarget  string    `json:"upgradeTarget"`
+
+	// FailingProvider / FailingProviderName / FailingAttempts / FailingLastError /
+	// FailingErrorCategory describe the FAILING source (the honest fail list, PART D):
+	// the source with a chapter-specific per-source failure (ProviderChapter.attempts>0)
+	// for this chapter — the highest-importance such carrier (see failingCarrier). They
+	// are populated for ANY chapter with such a source REGARDLESS of the chapter's own
+	// state (a DOWNLOADED chapter whose UPGRADE source keeps failing is surfaced here,
+	// tagged IsUpgrade with the target = FailingProviderName), and are the zero value
+	// when no source has failed this chapter chapter-specifically. This is DISTINCT from
+	// Provider/ProviderName (the source actually SUPPLYING the chapter): for a downloaded
+	// chapter the supplier is its satisfier while the failing source is a broken upgrade
+	// target. FailingErrorCategory is derived from FailingLastError via the shared
+	// errorclass kernel (ProviderChapter carries no category column).
+	FailingProvider      string `json:"failingProvider"`
+	FailingProviderName  string `json:"failingProviderName"`
+	FailingAttempts      int    `json:"failingAttempts"`
+	FailingLastError     string `json:"failingLastError"`
+	FailingErrorCategory string `json:"failingErrorCategory"`
+	// Retryable / Terminal classify a surfaced failing source against the current
+	// per-source budget: Retryable = FailingAttempts < MaxRetries (a later cycle, or an
+	// owner retry, will try it again), Terminal = FailingAttempts >= MaxRetries (this
+	// source has given up on this chapter until an owner retry resets it). Both are false
+	// when the row has no failing source.
+	Retryable bool `json:"retryable"`
+	Terminal  bool `json:"terminal"`
+
+	WaitingReason string     `json:"waitingReason"`
+	DeferredUntil *time.Time `json:"deferredUntil"`
+	DeferReason   string     `json:"deferReason"`
+	Retries       int        `json:"retries"`
+	NextAttemptAt *time.Time `json:"nextAttemptAt"`
+	LastError     string     `json:"lastError"`
+	ErrorCategory string     `json:"errorCategory"`
+	Filename      string     `json:"filename"`
+	PageCount     *int       `json:"pageCount"`
+	DownloadDate  *time.Time `json:"downloadDate"`
 }
 
 // DownloadSummaryDTO is the GET /api/downloads/summary response: the three global
@@ -130,6 +156,15 @@ type rowContext struct {
 	maxRetries    int
 	isUpgrade     bool
 	upgradeTarget string
+
+	failingProvider      string
+	failingProviderName  string
+	failingAttempts      int
+	failingLastError     string
+	failingErrorCategory string
+	retryable            bool
+	terminal             bool
+
 	waitingReason string
 	retryAt       *time.Time
 	deferReason   string
@@ -190,15 +225,24 @@ func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolutio
 		MaxRetries:     rc.maxRetries,
 		IsUpgrade:      rc.isUpgrade,
 		UpgradeTarget:  rc.upgradeTarget,
-		WaitingReason:  rc.waitingReason,
-		DeferredUntil:  rc.retryAt,
-		DeferReason:    rc.deferReason,
-		Retries:        ch.Retries,
-		NextAttemptAt:  ch.NextAttemptAt,
-		LastError:      ch.LastError,
-		ErrorCategory:  ch.ErrorCategory,
-		Filename:       ch.Filename,
-		PageCount:      ch.PageCount,
-		DownloadDate:   ch.DownloadDate,
+
+		FailingProvider:      rc.failingProvider,
+		FailingProviderName:  rc.failingProviderName,
+		FailingAttempts:      rc.failingAttempts,
+		FailingLastError:     rc.failingLastError,
+		FailingErrorCategory: rc.failingErrorCategory,
+		Retryable:            rc.retryable,
+		Terminal:             rc.terminal,
+
+		WaitingReason: rc.waitingReason,
+		DeferredUntil: rc.retryAt,
+		DeferReason:   rc.deferReason,
+		Retries:       ch.Retries,
+		NextAttemptAt: ch.NextAttemptAt,
+		LastError:     ch.LastError,
+		ErrorCategory: ch.ErrorCategory,
+		Filename:      ch.Filename,
+		PageCount:     ch.PageCount,
+		DownloadDate:  ch.DownloadDate,
 	}
 }

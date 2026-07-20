@@ -1,13 +1,21 @@
-// Package download_test — upgrade retry/recovery semantics. The key invariant:
-// UPGRADE failures must NEVER permanently give up on improving a chapter to a
-// better source (unlike DOWNLOAD failures, which stick toward per-source
-// exhaustion). A preferred source temporarily down during upgrade attempts only
-// cools down and always recovers as an upgrade target.
+// Package download_test — upgrade retry/recovery semantics under the classified
+// model (an upgrade is a download: the fetch error's class, not the path, decides):
+//   - A SOURCE-WIDE upgrade fetch failure (ban / source down) only cools the target
+//     down — attempts UNCHANGED — so the engine never permanently gives up on
+//     IMPROVING a chapter: a preferred source temporarily down recovers as the swap
+//     target once it is back (TestUpgrade_SourceWideFailuresNeverExhaust_ThenRecovers).
+//   - A CHAPTER-SPECIFIC upgrade fetch failure (the target's copy of THIS chapter is
+//     broken) BUMPS the target's attempts, so it exhausts at max_retries and
+//     DetectUpgrades STOPS re-flagging it — ending the perpetual
+//     downloaded↔upgrade_available oscillation
+//     (TestUpgrade_ChapterSpecificFailuresExhaust_StopsOscillating).
+//
 // Tests require Docker (via testcontainers) for an ephemeral PostgreSQL instance.
 package download_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -66,18 +74,19 @@ func assertFailingUpgradePreservesWorkingCopy(ctx context.Context, t *testing.T,
 	}
 }
 
-// TestUpgrade_FailuresNeverExhaustSource_ThenRecovers proves the core Finding-1
-// fix: a better source that fails upgrade fetches MANY more times than max_retries
-// never exhausts (attempts stays put), so once it recovers the chapter still
-// upgrades to it.
-func TestUpgrade_FailuresNeverExhaustSource_ThenRecovers(t *testing.T) {
+// TestUpgrade_SourceWideFailuresNeverExhaust_ThenRecovers proves the recovery
+// guarantee for SOURCE-WIDE upgrade failures: a better source that fails upgrade
+// fetches with a ban/source-down class error MANY more times than max_retries never
+// exhausts (attempts stays put — a source-wide failure only cools it down), so once
+// it recovers the chapter still upgrades to it.
+func TestUpgrade_SourceWideFailuresNeverExhaust_ThenRecovers(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	ch := seedDownloadedLowWithHighSource(ctx, t, client, 0, nil)
 
-	// The high source is down; Backoff:0 so its cooldown always elapses by the next
-	// cycle and it is re-attempted each pass.
-	f := &providerScopedFetcher{failProviders: map[string]bool{"high": true}}
+	// The high source is down with a SOURCE-WIDE error (cloudflare/captcha); Backoff:0
+	// so its cooldown always elapses by the next cycle and it is re-attempted each pass.
+	f := &providerScopedFetcher{failProviders: map[string]bool{"high": true}, err: errors.New("cloudflare challenge")}
 	d := download.New(client, f, sse.NewHub(), download.Config{
 		Storage: mustTempDir(t),
 	}, settings.Static{Retries: 3, Backoff: 0}, nil)
@@ -86,13 +95,13 @@ func TestUpgrade_FailuresNeverExhaustSource_ThenRecovers(t *testing.T) {
 	for i := 0; i < cycles; i++ {
 		assertFailingUpgradePreservesWorkingCopy(ctx, t, client, d, ch.ID, i)
 	}
-	// The high source must NEVER have accrued attempts from upgrade failures.
+	// The high source must NEVER have accrued attempts from source-wide upgrade failures.
 	if a := pcByProvider(ctx, t, client, "high").Attempts; a != 0 {
-		t.Fatalf("high attempts must stay 0 across %d failed upgrades (upgrade must not exhaust a source), got %d", cycles, a)
+		t.Fatalf("high attempts must stay 0 across %d source-wide failed upgrades (a ban must not exhaust a source), got %d", cycles, a)
 	}
 
 	// High recovers → the next upgrade swaps to it.
-	delete(f.failProviders, "high")
+	f.failProviders = map[string]bool{}
 	n, err := download.DetectUpgrades(ctx, client, 3)
 	if err != nil {
 		t.Fatalf("DetectUpgrades (recovered): %v", err)
@@ -106,6 +115,55 @@ func TestUpgrade_FailuresNeverExhaustSource_ThenRecovers(t *testing.T) {
 	final := client.Chapter.GetX(ctx, ch.ID)
 	if final.SatisfiedImportance == nil || *final.SatisfiedImportance != 10 {
 		t.Fatalf("after recovery: want upgraded to high (importance 10), got %v", final.SatisfiedImportance)
+	}
+}
+
+// TestUpgrade_ChapterSpecificFailuresExhaust_StopsOscillating is the PART C proof:
+// a CHAPTER-SPECIFIC upgrade fetch failure (the target's copy of this chapter is
+// broken) BUMPS the target's attempts, so after max_retries it exhausts and
+// DetectUpgrades no longer flags the chapter — ending the perpetual
+// downloaded↔upgrade_available oscillation a never-give-up upgrade used to cause.
+func TestUpgrade_ChapterSpecificFailuresExhaust_StopsOscillating(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	ch := seedDownloadedLowWithHighSource(ctx, t, client, 0, nil)
+
+	const maxRetries = 3
+	// The high source's copy is broken (default not_found = CHAPTER-SPECIFIC); Backoff:0
+	// so its per-source cooldown elapses each cycle and it is re-tried until exhausted.
+	f := &providerScopedFetcher{failProviders: map[string]bool{"high": true}}
+	d := download.New(client, f, sse.NewHub(), download.Config{
+		Storage: mustTempDir(t),
+	}, settings.Static{Retries: maxRetries, Backoff: 0}, nil)
+
+	// Each cycle: DetectUpgrades flags it (1) and Upgrade fails, bumping high's attempts.
+	for i := 0; i < maxRetries; i++ {
+		n, err := download.DetectUpgrades(ctx, client, maxRetries)
+		if err != nil {
+			t.Fatalf("cycle %d DetectUpgrades: %v", i, err)
+		}
+		if n != 1 {
+			t.Fatalf("cycle %d: want the broken target still flagged (attempts %d < max), got %d flagged", i, i, n)
+		}
+		if err := d.Upgrade(ctx, ch.ID); err != nil {
+			t.Fatalf("cycle %d Upgrade: %v", i, err)
+		}
+		if a := pcByProvider(ctx, t, client, "high").Attempts; a != i+1 {
+			t.Fatalf("cycle %d: high attempts = %d, want %d (a chapter-specific upgrade failure bumps)", i, a, i+1)
+		}
+	}
+
+	// High is now exhausted (attempts == maxRetries) → DetectUpgrades stops flagging:
+	// the oscillation ends, the working copy stays downloaded.
+	n, err := download.DetectUpgrades(ctx, client, maxRetries)
+	if err != nil {
+		t.Fatalf("DetectUpgrades (exhausted): %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("want 0 flagged once the broken upgrade target is exhausted (oscillation must stop), got %d", n)
+	}
+	if st := client.Chapter.GetX(ctx, ch.ID).State; st != entchapter.StateDownloaded {
+		t.Fatalf("chapter state = %s, want downloaded (working copy preserved, no longer flapping)", st)
 	}
 }
 

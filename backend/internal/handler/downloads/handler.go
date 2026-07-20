@@ -42,12 +42,17 @@ func (h *Handler) List(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	includeSourceFailures, err := parseOptionalBool(c.QueryParam("include_source_failures"), "include_source_failures")
+	if err != nil {
+		return err
+	}
 
 	out, err := h.svc.List(c.Request().Context(), downloadssvc.ListFilter{
-		States: states,
-		Limit:  limit,
-		Offset: offset,
-		Query:  c.QueryParam("q"),
+		States:                states,
+		Limit:                 limit,
+		Offset:                offset,
+		Query:                 c.QueryParam("q"),
+		IncludeSourceFailures: includeSourceFailures,
 	})
 	if err != nil {
 		return mapServiceError(err)
@@ -102,10 +107,15 @@ func (h *Handler) RetryAll(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	includeSourceFailures, err := parseOptionalBool(c.QueryParam("include_source_failures"), "include_source_failures")
+	if err != nil {
+		return err
+	}
 
 	n, err := h.svc.RetryAll(c.Request().Context(), downloadssvc.RetryAllFilter{
-		States:   states,
-		SeriesID: seriesID,
+		States:                states,
+		SeriesID:              seriesID,
+		IncludeSourceFailures: includeSourceFailures,
 	})
 	if err != nil {
 		return mapServiceError(err)

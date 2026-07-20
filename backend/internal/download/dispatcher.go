@@ -342,14 +342,21 @@ func gateFilterCandidates(ctx context.Context, gate *sourcegate.Service, cands [
 }
 
 // shouldRecordGateFailure reports whether a fetch error should count against
-// the source's circuit-breaker. A fetch error that arrives because the PARENT
-// context was cancelled (graceful shutdown) is NOT evidence the source is down,
-// so it must not trip the breaker — mirroring refresh.RefreshAll's ctx-cancel
-// skip. A per-fetch deadline that fires while the parent context is still alive
-// DOES count: that slow/blocked latency is exactly the signal the breaker
-// exists to catch.
-func shouldRecordGateFailure(ctx context.Context) bool {
-	return ctx.Err() == nil
+// the source's circuit-breaker. TWO conditions must both hold:
+//
+//   - The PARENT context is still alive. A fetch error that arrives because the
+//     parent context was cancelled (graceful shutdown) is NOT evidence the source
+//     is down — mirroring refresh.RefreshAll's ctx-cancel skip. A per-fetch
+//     deadline that fires while the parent context is still alive DOES count: that
+//     slow/blocked latency is exactly the signal the breaker exists to catch.
+//   - The failure is SOURCE-WIDE, not chapter-specific. A broken page / not_found /
+//     no_pages / parse means THIS chapter is broken on this source, NOT that the
+//     source is down — tripping the breaker on it would wrongly pause the whole
+//     source (and every other series it serves). Only ban/source-down class errors
+//     (rate_limit / captcha / timeout / network / server_error / unknown) count
+//     toward the breaker. Shared by the download and upgrade fetch paths.
+func shouldRecordGateFailure(ctx context.Context, cause error) bool {
+	return ctx.Err() == nil && !isChapterSpecificFailure(cause)
 }
 
 // downloadConcurrency reads the current per-source download concurrency cap from
@@ -637,21 +644,25 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 // source. The concurrency slot is held only for the network fetch; rendering is
 // local disk work and does not contend for the provider's API.
 //
-// Failure accounting (Kaizoku-style "count every retry, terminal at max" —
-// owner-ratified):
-//   - A FETCH failure ALWAYS charges the source (chargeFetchFailure →
-//     bumpSourceFailure): attempts++, regardless of whether it is a ban/source-down
-//     class (rate_limit / captcha / timeout / network / server_error / unknown / a
-//     broken page) or a chapter-specific class (not_found / no_pages / parse). A
-//     chapter goes terminal (permanently_failed) once EVERY source offering it has
-//     spent its whole max_retries budget. The drain-prevention against an anti-bot
-//     ban is the circuit-breaker (filterGated EXCLUDES a tripped source so its
-//     chapters stay wanted and burn NO attempts while excluded), NOT the retry
-//     classification — the per-chapter max mainly bites a chapter a source
-//     genuinely can't serve while the source is UP.
+// Failure accounting (owner-ratified: error class drives TWO separate things —
+// the per-(chapter,source) counter AND the circuit-breaker — see
+// isChapterSpecificFailure):
+//   - A CHAPTER-SPECIFIC fetch failure (not_found / no_pages / parse / broken page /
+//     no live source) charges the source (chargeFetchFailure → bumpSourceFailure:
+//     attempts++) and does NOT trip the breaker — this chapter is broken on this
+//     source, so this source gives up on THIS chapter at max_retries while staying
+//     available for its other chapters. A chapter goes terminal (permanently_failed)
+//     once EVERY source offering it has exhausted its budget.
+//   - A SOURCE-WIDE/ban fetch failure (rate_limit / captcha / timeout / network /
+//     server_error / unknown) only cools the source down (chargeFetchFailure →
+//     cooldownSource: next_attempt_at, attempts UNCHANGED) and DOES trip the breaker
+//     (gateRecordFailure). The chapter is fine, so a ban never exhausts it; the
+//     breaker (filterGated) EXCLUDES the tripped source so its chapters stay wanted
+//     and burn NO attempts while it is down — this is the drain-prevention.
 //   - A render/persist (finishDownload) failure is a LOCAL fault (disk/NFS/DB), NOT
-//     the source's — the source is NOT charged at all, so a persistent infra fault
-//     can never drain the library. The staging dir is KEPT so the retry resumes.
+//     the source's — the source is NOT charged at all and the breaker NOT touched, so
+//     a persistent infra fault can never drain the library. The staging dir is KEPT
+//     so the retry resumes.
 //   - On SUCCESS the staging dir is deleted (its bytes are now in the CBZ).
 func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time) (done bool, cause error) {
 	// Carry a per-chapter progress sink so the fetcher can report live per-page
@@ -677,10 +688,12 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 		d.chargeFetchFailure(ctx, cand.ProviderChapter, pages.StagingDir, fetchErr, now)
 		// Circuit-breaker bookkeeping is SEPARATE from the per-chapter retry
 		// state above: it tracks whether this source is down ENTIRELY (see
-		// filterGated), not whether it can serve this one chapter. Skip it on a
-		// shutdown-induced cancellation (parent ctx done) so a graceful stop
-		// never trips the breaker; a real per-fetch timeout still counts.
-		if shouldRecordGateFailure(ctx) {
+		// filterGated), not whether it can serve this one chapter. Recorded ONLY
+		// for a SOURCE-WIDE/ban-class failure (shouldRecordGateFailure gates on
+		// !isChapterSpecificFailure) — a broken-chapter failure must not pause the
+		// whole source — and skipped on a shutdown-induced cancellation (parent ctx
+		// done) so a graceful stop never trips the breaker.
+		if shouldRecordGateFailure(ctx, fetchErr) {
 			d.gateRecordFailure(ctx, sourceKey, fetchErr, now)
 		}
 		return false, fetchErr
@@ -711,21 +724,29 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	return true, nil
 }
 
-// chargeFetchFailure applies the per-source retry accounting for a FETCH failure.
-// EVERY fetch failure charges the source (bumpSourceFailure → attempts++),
-// regardless of class — the Kaizoku-style "count every retry, terminal at max"
-// model (owner-ratified): a chapter goes permanently_failed once every source
-// offering it has spent its whole max_retries budget. Draining a banned source's
-// whole backlog is prevented NOT by exempting ban-class errors here but by the
-// circuit-breaker (filterGated) excluding a tripped source from candidacy, so its
-// chapters stay wanted and burn no attempts while it is excluded.
+// chargeFetchFailure applies the per-(chapter,source) retry accounting for a FETCH
+// failure, CLASSIFIED (owner-ratified — see isChapterSpecificFailure):
+//   - CHAPTER-SPECIFIC (this chapter is broken on this source) → bumpSourceFailure
+//     (attempts++), so this source is abandoned for THIS chapter at max_retries.
+//   - SOURCE-WIDE/ban (the source is down/blocking) → cooldownSource (next_attempt_at
+//     only, attempts UNCHANGED), so a ban never spends the chapter's budget and never
+//     drains the queue — the breaker (recorded separately by the caller) is what
+//     holds a banned source out of candidacy.
+//
+// It is shared by BOTH the download path (tryCandidate) and the upgrade path
+// (handleUpgradeFailure), so a fetch failure is accounted identically wherever it
+// happens (an upgrade is a download).
 //
 // A not_found is treated as a STALE RESOLUTION: the stored page links, and the
 // pages already staged from them, may point at moved/renamed resources, so BOTH are
 // invalidated (links cleared, staging dir wiped) and the next attempt re-resolves +
 // re-downloads from scratch. stagingDir is the failed fetch's staging directory ("" if none).
 func (d *Dispatcher) chargeFetchFailure(ctx context.Context, pc *ent.ProviderChapter, stagingDir string, cause error, now time.Time) {
-	d.bumpSourceFailure(ctx, pc, cause, now)
+	if isChapterSpecificFailure(cause) {
+		d.bumpSourceFailure(ctx, pc, cause, now)
+	} else {
+		d.cooldownSource(ctx, pc, cause, now)
+	}
 	if errorclass.Classify(cause) == errorclass.CategoryNotFound {
 		// Wipe the staging dir FIRST and clear the page links ONLY if the wipe
 		// succeeded: the two must stay consistent. If the links were cleared but the
@@ -905,13 +926,18 @@ func (d *Dispatcher) finishDownload(ctx context.Context, ch *ent.Chapter, chapte
 	return nil
 }
 
-// bumpSourceFailure records one failed attempt against a single source's
-// ProviderChapter row: attempts++, last_error, and next_attempt_at = now +
-// backoffCurve(base) (the flat retry interval). The backoff base is read at
-// use-time so a settings change applies immediately. Per-source retry state lives ONLY on the
-// ProviderChapter row (the Chapter-identity invariant keeps per-source state off
-// the Chapter). A DB write failure is logged, not propagated — the cycle's other
-// work must not be aborted by one source's bookkeeping error.
+// bumpSourceFailure records one CHAPTER-SPECIFIC failed attempt against a single
+// source's ProviderChapter row: attempts++, last_error, and next_attempt_at = now +
+// backoffCurve(base) (the flat retry interval). It is charged for a failure that is
+// specific to THIS chapter on THIS source (a broken page / not_found / no_pages /
+// parse / no-live-source), on BOTH the download and upgrade paths — so this source
+// is abandoned for this chapter at max_retries (and, on the upgrade path, stops
+// being re-flagged, ending the downloaded↔upgrade_available oscillation). The
+// backoff base is read at use-time so a settings change applies immediately.
+// Per-source retry state lives ONLY on the ProviderChapter row (the Chapter-identity
+// invariant keeps per-source state off the Chapter). A DB write failure is logged,
+// not propagated — the cycle's other work must not be aborted by one source's
+// bookkeeping error.
 func (d *Dispatcher) bumpSourceFailure(ctx context.Context, pc *ent.ProviderChapter, cause error, now time.Time) {
 	newAttempts := pc.Attempts + 1
 	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx)))
@@ -930,17 +956,18 @@ func (d *Dispatcher) bumpSourceFailure(ctx context.Context, pc *ent.ProviderChap
 	pc.Attempts = newAttempts
 }
 
-// cooldownSource records an UPGRADE fetch failure against a source's
+// cooldownSource records a SOURCE-WIDE/ban fetch failure against a source's
 // ProviderChapter row WITHOUT spending its retry budget: it sets last_error and a
 // backoff cooldown (next_attempt_at = now + backoffCurve(base), the flat retry
-// interval) but leaves attempts UNCHANGED. This is the deliberate asymmetry with
-// bumpSourceFailure: a
-// download failure sticks (attempts increments toward exhaustion, so the owner's
-// "give up on a chapter this source can't provide" is honoured), whereas an
-// upgrade failure only defers the next try — the engine must NEVER permanently
-// give up on IMPROVING a chapter to a better source, so a preferred source that is
-// temporarily down during upgrade attempts recovers as an upgrade target once it
-// is back and past its cooldown. A DB write failure is logged, not propagated.
+// interval) but leaves attempts UNCHANGED. It is charged (on BOTH the download and
+// upgrade paths) when the SOURCE is down/blocking (rate_limit / captcha / timeout /
+// network / server_error / unknown) rather than the chapter being broken: the
+// chapter is fine, so a ban must never nudge it toward exhaustion or drain the
+// queue — only defer the next try until the source recovers (and, for an upgrade
+// target, keep it eligible so a preferred source temporarily down recovers as the
+// swap target). The circuit-breaker, recorded separately by the caller, is what
+// holds the whole source out of candidacy while it is down. A DB write failure is
+// logged, not propagated.
 func (d *Dispatcher) cooldownSource(ctx context.Context, pc *ent.ProviderChapter, cause error, now time.Time) {
 	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx)))
 	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).

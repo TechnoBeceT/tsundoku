@@ -102,3 +102,19 @@ func parseOptionalID(raw, subject string) (*uuid.UUID, error) {
 	}
 	return &id, nil
 }
+
+// parseOptionalBool parses an OPTIONAL boolean query param. An empty value yields
+// (false, nil) — the flag is simply off. Only "true"/"false" are accepted (case-
+// insensitive); anything else yields a 400 naming the param.
+func parseOptionalBool(raw, subject string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return false, nil
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, echo.NewHTTPError(http.StatusBadRequest, "invalid "+subject)
+	}
+}

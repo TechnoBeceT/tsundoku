@@ -1,16 +1,19 @@
-// Package download_test — the retry-accounting proofs for the Kaizoku-style
-// "count every retry, terminal at max" model (owner-ratified, replacing the old
-// ban-vs-chapter classification of GAP-099):
-//   - EVERY fetch failure BUMPS the per-source retry budget, regardless of class
-//     (rate_limit / captcha / timeout / network / server_error / unknown / broken
-//     page / not_found / no_pages / parse). A chapter goes permanently_failed once
-//     every source offering it has spent its whole max_retries budget.
-//   - The drain-prevention against an anti-bot ban is the CIRCUIT-BREAKER, not the
-//     retry classification: a source whose breaker is TRIPPED is excluded from
-//     candidacy (filterGated), so its chapters stay wanted and burn NO attempts
-//     while it is excluded (TestBreakerTripped_HoldsTheLine_NoAttemptsBurned). The
-//     per-chapter max mainly bites a chapter the source genuinely can't serve while
-//     it is UP (TestSourceAvailable_TerminatesAtMax).
+// Package download_test — the CLASSIFIED retry-accounting proofs (owner-ratified:
+// a fetch's error class drives TWO separate things — the per-(chapter,source)
+// counter AND the circuit-breaker):
+//   - A CHAPTER-SPECIFIC failure (not_found / no_pages / parse / broken page / no
+//     live source) BUMPS the per-source budget (attempts++, terminal at max) and does
+//     NOT trip the breaker — the source stays available for its other chapters
+//     (TestFetchFailure_ChapterSpecific_BumpsBudget_NoBreaker).
+//   - A SOURCE-WIDE/ban failure (rate_limit / captcha / timeout / network /
+//     server_error / unknown) does NOT bump the budget (only cools the chapter down)
+//     and DOES trip the breaker — so a ban never drains the queue and the whole
+//     source is paused (TestFetchFailure_SourceWide_CooldownsNoBump_TripsBreaker).
+//   - A source whose breaker is TRIPPED is excluded from candidacy (filterGated), so
+//     its chapters stay wanted and burn NO attempts while it is excluded
+//     (TestBreakerTripped_HoldsTheLine_NoAttemptsBurned). The per-chapter max bites a
+//     chapter the source genuinely can't serve (chapter-specifically) while it is UP
+//     (TestSourceAvailable_TerminatesAtMax).
 //   - A local render/persist fault (finishDownload) charges NO source at all (⑥).
 //
 // Requires Docker (via testcontainers).
@@ -48,35 +51,39 @@ func singleSourceChapter(ctx context.Context, t *testing.T, client *ent.Client) 
 	return ch, pc
 }
 
-// TestFetchFailure_EveryClassBumpsBudget proves the Kaizoku-style model: EVERY
-// fetch-failure class — ban/source-down AND chapter-specific alike — bumps the
-// per-source retry budget (attempts 0→1) and sets a cooldown. There is no longer a
-// class that leaves attempts untouched (that was the retired classification).
-func TestFetchFailure_EveryClassBumpsBudget(t *testing.T) {
+// classifiedSettings satisfies BOTH download.RetrySettings and sourcegate.Thresholds
+// with a failure threshold of 1, so a SINGLE source-wide failure trips the breaker
+// (letting the tests assert the breaker axis directly).
+func classifiedSettings() settings.Static {
+	return settings.Static{
+		Retries: 3, Backoff: 30 * time.Minute, DownloadConc: 1,
+		SourcesFailureThresh: 1, SourcesCooldownIv: time.Hour, SourcesMinDelay: 0,
+	}
+}
+
+// TestFetchFailure_ChapterSpecific_BumpsBudget_NoBreaker proves the chapter-specific
+// half of the classified model: a broken-page / not_found / no_pages / parse failure
+// BUMPS the per-source budget (attempts 0→1, cooldown set) but NEVER trips the
+// source's circuit-breaker — the source stays available for its other chapters.
+func TestFetchFailure_ChapterSpecific_BumpsBudget_NoBreaker(t *testing.T) {
 	cases := []struct {
 		name   string
 		errMsg string
 	}{
-		{"rate_limit bumps", "429 too many requests"},
-		{"captcha bumps", "cloudflare challenge detected"},
-		{"timeout bumps", "request timed out: deadline exceeded"},
-		{"network bumps", "connection reset by peer"},
-		{"server_error bumps", "502 bad gateway"},
-		{"unknown bumps", "something inexplicable happened"},
-		{"not_found bumps", "chapter not found"},
-		{"no_pages bumps", "chapter has no pages"},
-		{"parse bumps", "malformed response body"},
+		{"not_found", "chapter not found"},
+		{"no_pages", "chapter has no pages"},
+		{"parse", "malformed response body"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			client := testdb.New(t)
-			_, pc := singleSourceChapter(ctx, t, client)
+			_, pc := singleSourceChapter(ctx, t, client) // provider "mangadex" ⇒ breaker key "mangadex"
 
+			rs := classifiedSettings()
+			gate := sourcegate.NewService(client, rs)
 			f := fake.New(fake.WithError(errors.New(tc.errMsg)))
-			d := download.New(client, f, sse.NewHub(),
-				download.Config{Storage: mustTempDir(t)},
-				settings.Static{Retries: 3, Backoff: 30 * time.Minute, DownloadConc: 1}, nil)
+			d := download.New(client, f, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, rs, gate)
 
 			if _, err := d.RunOnce(ctx); err != nil {
 				t.Fatalf("RunOnce: %v", err)
@@ -84,11 +91,58 @@ func TestFetchFailure_EveryClassBumpsBudget(t *testing.T) {
 
 			got := client.ProviderChapter.GetX(ctx, pc.ID)
 			if got.Attempts != 1 {
-				t.Errorf("attempts = %d, want 1 (every failure class charges the budget)", got.Attempts)
+				t.Errorf("attempts = %d, want 1 (a chapter-specific failure charges the budget)", got.Attempts)
 			}
-			// The source is put on a cooldown so it is not re-hit immediately.
 			if got.NextAttemptAt == nil {
 				t.Error("next_attempt_at should be set (the flat backoff cooldown)")
+			}
+			if !gate.IsAvailable(ctx, "mangadex", time.Now()) {
+				t.Error("breaker tripped on a chapter-specific failure — the source must stay available for its other chapters")
+			}
+		})
+	}
+}
+
+// TestFetchFailure_SourceWide_CooldownsNoBump_TripsBreaker proves the source-wide
+// half: a rate_limit / captcha / timeout / network / server_error / unknown failure
+// does NOT spend the chapter's budget (attempts stays 0 — a ban never drains the
+// queue) but DOES trip the source's circuit-breaker (paused at threshold 1).
+func TestFetchFailure_SourceWide_CooldownsNoBump_TripsBreaker(t *testing.T) {
+	cases := []struct {
+		name   string
+		errMsg string
+	}{
+		{"rate_limit", "429 too many requests"},
+		{"captcha", "cloudflare challenge detected"},
+		{"timeout", "request timed out: deadline exceeded"},
+		{"network", "connection reset by peer"},
+		{"server_error", "502 bad gateway"},
+		{"unknown", "something inexplicable happened"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := testdb.New(t)
+			_, pc := singleSourceChapter(ctx, t, client)
+
+			rs := classifiedSettings()
+			gate := sourcegate.NewService(client, rs)
+			f := fake.New(fake.WithError(errors.New(tc.errMsg)))
+			d := download.New(client, f, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, rs, gate)
+
+			if _, err := d.RunOnce(ctx); err != nil {
+				t.Fatalf("RunOnce: %v", err)
+			}
+
+			got := client.ProviderChapter.GetX(ctx, pc.ID)
+			if got.Attempts != 0 {
+				t.Errorf("attempts = %d, want 0 (a source-wide/ban failure must not spend the budget)", got.Attempts)
+			}
+			if got.NextAttemptAt == nil {
+				t.Error("next_attempt_at should be set (the source-wide cooldown still defers this chapter)")
+			}
+			if gate.IsAvailable(ctx, "mangadex", time.Now()) {
+				t.Error("breaker did NOT trip on a source-wide failure — the whole source must be paused")
 			}
 		})
 	}
@@ -140,23 +194,23 @@ func TestBreakerTripped_HoldsTheLine_NoAttemptsBurned(t *testing.T) {
 	}
 }
 
-// TestSourceAvailable_TerminatesAtMax proves the other half of the model: while a
-// source's breaker is NOT tripped (it is available), a chapter it repeatedly fails
-// DOES exhaust — its per-source attempts climb by one each cycle and it reaches
-// permanently_failed exactly at max_retries. The failure threshold is set high so
-// the breaker never trips on this tiny backlog (per the tunables' documented
-// small-backlog carve-out), isolating the per-chapter max as the terminal driver.
+// TestSourceAvailable_TerminatesAtMax proves the chapter-specific terminal path:
+// while a source is available (its breaker never trips — a chapter-specific failure
+// does not record a breaker failure at all), a chapter it repeatedly fails
+// CHAPTER-SPECIFICALLY DOES exhaust — its per-source attempts climb by one each
+// cycle and it reaches permanently_failed exactly at max_retries.
 func TestSourceAvailable_TerminatesAtMax(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
 	ch, pc := singleSourceChapter(ctx, t, client)
 
 	const maxRetries = 3
-	// High SourcesFailureThresh ⇒ the breaker never trips over this single-chapter
-	// run, so the source stays AVAILABLE every cycle and the per-chapter max bites.
+	// A chapter-specific error ("not found") never records a breaker failure, so the
+	// source stays AVAILABLE every cycle regardless of threshold and the per-chapter
+	// max is the sole terminal driver.
 	rs := settings.Static{Retries: maxRetries, Backoff: 0, DownloadConc: 1, SourcesFailureThresh: 100, SourcesCooldownIv: time.Hour}
 	gate := sourcegate.NewService(client, rs)
-	f := &gateCallCountFetcher{err: errors.New("cloudflare challenge")}
+	f := &gateCallCountFetcher{err: errors.New("chapter not found")}
 	d := download.New(client, f, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, rs, gate)
 
 	var final entchapter.State

@@ -157,6 +157,30 @@ func upgradeTargetCarrier(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[
 	return feedCarrier{}, false
 }
 
+// failingCarrier returns the feed carrier the FAILURES read-model surfaces for a
+// chapter: the source with a CHAPTER-SPECIFIC per-source failure to report. The
+// deterministic rule (documented) is the HIGHEST-IMPORTANCE carrier whose feed row
+// has attempts>0 — ties broken by feed-row ID ASC, mirroring the engine's own
+// candidate ordering (newUpgradeTargetIndex is already sorted importance DESC then
+// ID ASC, so the FIRST attempts>0 carrier is that source). attempts>0 is exactly the
+// chapter-specific signal: a SOURCE-WIDE/ban failure only cools the source down
+// (attempts untouched) and already surfaces via waitingReason=cooling_down, so it is
+// deliberately excluded here. Returns ok=false when no carrier has failed this
+// chapter. Reuses the same in-memory index every other resolution uses — ZERO queries.
+func failingCarrier(ch *ent.Chapter, idx upgradeTargetIndex) (feedCarrier, bool) {
+	for _, c := range idx[ch.ChapterKey] {
+		if c.pc != nil && c.pc.Attempts > 0 {
+			return c, true
+		}
+	}
+	return feedCarrier{}, false
+}
+
+// isSatisfier reports whether sp is the chapter's current satisfying source.
+func isSatisfier(ch *ent.Chapter, sp *ent.SeriesProvider) bool {
+	return ch.SatisfiedByProviderID != nil && sp != nil && sp.ID == *ch.SatisfiedByProviderID
+}
+
 // waitedOnCarrier returns the feed carrier (source + its ProviderChapter feed row)
 // of the source the engine is WAITING ON to advance a queued chapter — the source
 // whose cooldown, if any, is why the row is not moving:

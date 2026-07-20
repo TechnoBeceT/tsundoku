@@ -128,12 +128,12 @@ func assertSuccessProvenance(
 	}
 }
 
-// TestDispatcher_FailFirstThenSucceed verifies that a failure on the first attempt
-// is recorded correctly — state=failed, last_error set, the per-source retry state
-// CHARGED (attempts 0→1, next_attempt_at set for the flat cooldown; the Kaizoku-
-// style model counts every retry) — and that a second RunOnce (once the zero-
-// backoff cooldown is past) succeeds, resetting the winning source's retry state
-// and ending with state=downloaded.
+// TestDispatcher_FailFirstThenSucceed verifies that a transient (unclassifiable ⇒
+// SOURCE-WIDE) failure on the first attempt is recorded correctly — state=failed,
+// last_error set, the per-source retry state COOLED DOWN (next_attempt_at set for the
+// flat cooldown, but attempts UNCHANGED at 0 — a source-wide/ban failure never spends
+// the chapter's budget) — and that a second RunOnce (once the zero-backoff cooldown is
+// past) succeeds, resetting the winning source's retry state and ending downloaded.
 func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -168,10 +168,10 @@ func TestDispatcher_FailFirstThenSucceed(t *testing.T) {
 		t.Error("after first run: last_error should be set")
 	}
 	pc1 := providerChapterFor(ctx, t, client, "ch-retry")
-	// Every fetch failure charges the budget: attempts 0→1 and next_attempt_at is
-	// set (the flat retry cooldown).
-	if pc1.Attempts != 1 {
-		t.Errorf("after first run: want source attempts=1 (every failure charges the budget), got %d", pc1.Attempts)
+	// A source-wide/unclassifiable failure cools the source down (next_attempt_at set)
+	// WITHOUT spending the chapter's budget — attempts stays 0.
+	if pc1.Attempts != 0 {
+		t.Errorf("after first run: want source attempts=0 (a source-wide failure must not charge the budget), got %d", pc1.Attempts)
 	}
 	if pc1.NextAttemptAt == nil {
 		t.Error("after first run: source next_attempt_at should be set (cooldown)")

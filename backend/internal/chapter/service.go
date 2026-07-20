@@ -212,13 +212,15 @@ func isLiveCandidate(pc *ent.ProviderChapter, maxRetries int, now time.Time) boo
 //   - Download uses it to pick which source to fetch a wanted/failed chapter from.
 //   - Upgrade uses it to pick a better source to swap a downloaded chapter to.
 //
-// The two paths differ only in what they WRITE on failure, never in candidacy: a
-// download failure sticks (bumpSourceFailure increments attempts, so a source that
-// truly can't deliver a chapter eventually exhausts and is dropped), whereas an
-// upgrade failure only cools the source down (cooldownSource leaves attempts
-// untouched), so a preferred source temporarily down during upgrade attempts never
-// exhausts and always recovers as an upgrade target once it is back and past its
-// cooldown.
+// Both paths account a failure identically (an upgrade is a download): the FETCH
+// error's class, not the path, decides. A CHAPTER-SPECIFIC failure (broken page /
+// not_found / no_pages / parse) bumps attempts (bumpSourceFailure), so a source that
+// truly can't deliver a chapter eventually exhausts and is dropped from candidacy on
+// BOTH paths (which is what stops a downloaded↔upgrade_available oscillation on a
+// broken upgrade target). A SOURCE-WIDE/ban failure only cools the source down
+// (cooldownSource leaves attempts untouched), so a preferred source temporarily down
+// never exhausts and always recovers — as a download candidate or an upgrade target —
+// once it is back and past its cooldown.
 //
 // An empty slice means "nothing to act on this instant": a caller must then
 // distinguish (via HasAnyProviderChapter / AllProvidersExhausted) between "no

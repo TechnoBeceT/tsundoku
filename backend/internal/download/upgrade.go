@@ -52,11 +52,14 @@ type upgradeResult struct {
 // satisfied_importance snapshot). An equal-importance source does NOT trigger an
 // upgrade (comparison is >, not >=). A LIVE source is one that still has retry budget
 // (attempts < maxRetries) AND is past its per-source cooldown — the same predicate
-// the download path uses (chapter.RankedLiveCandidates). So a source that failed
-// out of the download path (exhausted) is never chosen as an upgrade target, and a
-// source merely on cooldown after an upgrade attempt is skipped THIS cycle but
-// re-considered once its cooldown elapses (upgrade failures never spend budget, so
-// a preferred source always recovers as an upgrade target).
+// the download path uses (chapter.RankedLiveCandidates). So a source that exhausted
+// its budget — whether against the download path OR against repeated CHAPTER-SPECIFIC
+// upgrade failures (an upgrade is a download: a broken-on-this-source chapter bumps
+// attempts and eventually stops being flagged, ending the oscillation) — is never
+// chosen as an upgrade target. A source merely on cooldown after a SOURCE-WIDE upgrade
+// failure is skipped THIS cycle but re-considered once its cooldown elapses (a ban
+// never spends budget, so a preferred source temporarily down always recovers as an
+// upgrade target).
 //
 // Chapters with a nil satisfied_importance are skipped with a warning — this is
 // a defensive case, because a successful download always sets satisfied_importance.
@@ -334,10 +337,12 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 // fetchAndRender resolves the best LIVE source for chapterID, fetches pages, and
 // renders the new CBZ atomically. It returns an upgradeResult on success, or an
 // error to route to handleUpgradeFailure. On a FETCH failure the returned result
-// carries the attempted source's pc so the caller can COOL IT DOWN (defer the next
-// try) — upgrade failures never spend retry budget, so a preferred source recovers
-// as an upgrade target once it is back. A render failure returns no pc (not the
-// source's fault, so no cooldown).
+// carries the attempted source's pc so the caller can CHARGE it with the same
+// classified rule as the download path — a chapter-specific upgrade failure BUMPS
+// attempts (so the target exhausts and DetectUpgrades stops re-flagging it), a
+// source-wide one only COOLS IT DOWN (so a preferred source temporarily down
+// recovers as the swap target). A render failure returns no pc (not the source's
+// fault, so no charge).
 func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter) (upgradeResult, error) {
 	now := time.Now()
 	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), now)
@@ -386,15 +391,17 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	pages, err := d.f.Fetch(pctx, buildFetchRef(pc, sp))
 	release()
 	if err != nil {
-		// Circuit-breaker: a failed upgrade fetch is a "source down entirely"
-		// signal, same as the download path. Skip on a shutdown-induced
-		// cancellation (parent ctx done); a real per-fetch timeout still counts.
-		if shouldRecordGateFailure(ctx) {
+		// Circuit-breaker: recorded ONLY for a SOURCE-WIDE/ban-class upgrade fetch
+		// failure (same rule as the download path — shouldRecordGateFailure gates on
+		// !isChapterSpecificFailure), so a broken-chapter upgrade failure never pauses
+		// the whole source. Skipped on a shutdown-induced cancellation (parent ctx done).
+		if shouldRecordGateFailure(ctx, err) {
 			d.gateRecordFailure(ctx, sourceKey, err, time.Now())
 		}
-		// Carry pc so handleUpgradeFailure COOLS DOWN this source's per-source retry
-		// state (an upgrade failure never spends budget), and stagingDir so the caller
-		// wipes the partially-staged pages — Fetch populates StagingDir even on error.
+		// Carry pc so handleUpgradeFailure CHARGES this source's per-source retry state
+		// with the SAME classified rule as the download path (chapter-specific → bump,
+		// source-wide → cooldown), and stagingDir so the caller wipes the
+		// partially-staged pages — Fetch populates StagingDir even on error.
 		return upgradeResult{pc: pc, sp: sp, stagingDir: pages.StagingDir}, err
 	}
 	// The fetch succeeded → the source is reachable; clear its breaker state.
@@ -548,18 +555,24 @@ func (d *Dispatcher) finishStaleUpgrade(ctx context.Context, chapterID uuid.UUID
 
 // handleUpgradeFailure is the upgrade-specific failure handler.
 //
-// Unlike a download failure, an upgrade failure MUST keep the working copy
-// intact: it transitions upgrading → downloaded (the chapter stays usable with
-// its original CBZ and provenance), records last_error, and broadcasts
-// upgrade.fail. When the failure came from a fetch attempt (failedPC non-nil) it
-// COOLS THE SOURCE DOWN (cooldownSource — defers the next upgrade try) WITHOUT
-// spending its retry budget, so a source temporarily down during upgrade attempts
-// never exhausts and always recovers as an upgrade target once it is back (the
-// "preferred source recovers → swap back" guarantee). It always returns nil so
-// callers treat upgrade failures as handled outcomes, not infrastructure errors.
+// It keeps the working copy intact: it transitions upgrading → downloaded (the
+// chapter stays usable with its original CBZ and provenance), records last_error,
+// and broadcasts upgrade.fail. When the failure came from a fetch attempt (failedPC
+// non-nil) it CHARGES the source with the SAME classified rule as the download path
+// (chargeFetchFailure — an upgrade is a download): a CHAPTER-SPECIFIC upgrade
+// failure BUMPS attempts (so the target exhausts at max_retries and DetectUpgrades
+// stops re-flagging it, ending the perpetual downloaded↔upgrade_available
+// oscillation), while a SOURCE-WIDE/ban upgrade failure only COOLS IT DOWN
+// (attempts untouched — a preferred source temporarily down recovers as the swap
+// target once it is back). A render/persist fault passes failedPC==nil, so it
+// charges nothing (⑥). It always returns nil so callers treat upgrade failures as
+// handled outcomes, not infrastructure errors.
 func (d *Dispatcher) handleUpgradeFailure(ctx context.Context, chapterID uuid.UUID, failedPC *ent.ProviderChapter, cause error) error {
 	if failedPC != nil {
-		d.cooldownSource(ctx, failedPC, cause, time.Now())
+		// stagingDir "" — the upgrade path already wiped the target's staging dir before
+		// calling this (a failed upgrade never resumes); chargeFetchFailure then only
+		// clears stale page_links on a not_found.
+		d.chargeFetchFailure(ctx, failedPC, "", cause, time.Now())
 	}
 
 	// Transition upgrading → downloaded (restores working state).

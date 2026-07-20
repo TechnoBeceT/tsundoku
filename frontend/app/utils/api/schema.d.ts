@@ -2808,8 +2808,22 @@ export interface components {
             maxRetries: number;
             /** @description True when this row is a convergence UPGRADE (state upgrade_available or upgrading) rather than a fresh download — the explicit fresh-vs-upgrade discriminator for the queue UI. NOT equivalent to "upgradeTarget is non-empty": a chapter can be upgrade_available yet have no nameable target (the higher source has a feed gap), so isUpgrade can be true while upgradeTarget is "". */
             isUpgrade: boolean;
-            /** @description Display name of the source this chapter is upgrading TO — the highest-importance source (other than the current one) whose feed carries the chapter and which outranks it. Empty for every chapter not in upgrade_available/upgrading. The UI renders "providerName → upgradeTarget". It is the INTENDED target: the engine additionally excludes retry-exhausted, cooled-down, or circuit-broken sources, which this read model does not know about, so it may name a source the engine defers this cycle. */
+            /** @description Display name of the source this chapter is upgrading TO — the highest-importance source (other than the current one) whose feed carries the chapter and which outranks it. Empty for every chapter not in upgrade_available/upgrading. The UI renders "providerName → upgradeTarget". It is the INTENDED target: the engine additionally excludes retry-exhausted, cooled-down, or circuit-broken sources, which this read model does not know about, so it may name a source the engine defers this cycle. ALSO set for a DOWNLOADED chapter surfaced by the honest failures set whose failing source is a broken upgrade target (isUpgrade is then true and this names failingProviderName). */
             upgradeTarget: string;
+            /** @description Raw source-ID key of the FAILING source: the highest-importance source whose feed carries this chapter with a chapter-specific per-source failure (ProviderChapter.attempts > 0). DISTINCT from `provider` (the source SUPPLYING the chapter): for a downloaded chapter the supplier is its satisfier while the failing source is a broken upgrade target. Empty when no source has failed this chapter chapter-specifically (a source-wide/ban cooldown is surfaced via waitingReason instead, not here). */
+            failingProvider: string;
+            /** @description Human-readable display name of the source `failingProvider` names (falls back to the id). Empty when there is no failing source. */
+            failingProviderName: string;
+            /** @description The failing source's per-source attempt count (ProviderChapter.attempts). The numerator of the failing "N/max" badge; 0 when there is no failing source. */
+            failingAttempts: number;
+            /** @description The failing source's last recorded per-source error message (ProviderChapter.last_error). Empty when there is no failing source. */
+            failingLastError: string;
+            /** @description Coarse classification of failingLastError via the shared error taxonomy (e.g. "not_found", "parse"). Empty when there is no failing source (ProviderChapter carries no category column, so it is derived from the message). */
+            failingErrorCategory: string;
+            /** @description True when a failing source exists and has budget left (failingAttempts < maxRetries) — a later cycle or an owner retry will try it again. False when there is no failing source, or it is terminal. */
+            retryable: boolean;
+            /** @description True when a failing source has spent its whole budget (failingAttempts >= maxRetries) — it has given up on this chapter until an owner retry resets it. False when there is no failing source, or it is still retryable. */
+            terminal: boolean;
             /**
              * @description Why a QUEUED chapter is not moving, classifying the cooldown on the source the engine is waiting on (the upgrade TARGET for an upgrade_available/upgrading chapter, else the PRIMARY candidate for a wanted one). "backoff": that source has a persisted per-source next_attempt_at in the future (a failed fetch's per-chapter backoff). "cooling_down": that source's circuit-breaker is tripped — the WHOLE source is in anti-ban cooldown (a batch-joined read of SourceCircuitState, a different table from next_attempt_at). "": the source is ready to try next cycle (never mislabelled as waiting).
              * @enum {string}
@@ -6974,6 +6988,8 @@ export interface operations {
                 offset?: number;
                 /** @description Free-text filter on the series title (case-insensitive contains). */
                 q?: string;
+                /** @description When true, widen the result to the HONEST FAILURES set: in addition to the `state` filter, ANY chapter that has a source with a chapter-specific per-source failure (ProviderChapter.attempts > 0) is included regardless of its own state or source importance — e.g. a downloaded chapter whose upgrade source keeps failing. Each such row's failing* / retryable / terminal fields name that source. Default false (state-only view). */
+                include_source_failures?: boolean;
             };
             header?: never;
             path?: never;
@@ -7049,6 +7065,8 @@ export interface operations {
                 state?: string;
                 /** @description Restrict the reset to a single series. */
                 series_id?: string;
+                /** @description When true, ALSO reset every chapter with a chapter-specific failing source (ProviderChapter.attempts > 0) not already covered by `state` — e.g. a downloaded chapter whose upgrade source failed. Those chapters keep their state; only their failing sources get a fresh budget (so DetectUpgrades re-flags the upgrade). The returned count includes them. Default false. */
+                include_source_failures?: boolean;
             };
             header?: never;
             path?: never;

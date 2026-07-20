@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/category"
@@ -16,6 +17,7 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/pkg/errorclass"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
@@ -24,8 +26,9 @@ import (
 // The HTTP handler maps it to a 404.
 var ErrChapterNotFound = errors.New("chapter not found")
 
-// ErrNotRetryable is returned by RetryChapter when the chapter exists but is not
-// in a retryable state (only failed and permanently_failed may be retried). The
+// ErrNotRetryable is returned by RetryChapter when the chapter is neither in a
+// retryable state (failed / permanently_failed) NOR carries a chapter-specific
+// per-source failure (a downloaded chapter whose upgrade source is failing). The
 // HTTP handler maps it to a 409.
 var ErrNotRetryable = errors.New("chapter is not in a retryable state")
 
@@ -100,6 +103,14 @@ type ListFilter struct {
 	Limit  int
 	Offset int
 	Query  string
+	// IncludeSourceFailures widens the result to the HONEST FAILURES set (PART D):
+	// in addition to the state filter, ANY chapter that has a ProviderChapter with
+	// attempts>0 (a chapter-specific per-source failure) is included, regardless of
+	// the chapter's own state (a DOWNLOADED chapter whose upgrade source keeps failing
+	// is a failure too) or of source importance. Each such row's FailingProvider*/
+	// Retryable/Terminal fields name that failing source. Default false = the plain
+	// state-only view (existing behaviour, byte-for-byte).
+	IncludeSourceFailures bool
 }
 
 // RetryAllFilter scopes a bulk RetryAll. States defaults to the retryable set
@@ -108,6 +119,12 @@ type ListFilter struct {
 type RetryAllFilter struct {
 	States   []entchapter.State
 	SeriesID *uuid.UUID
+	// IncludeSourceFailures also resets every chapter with a chapter-specific failing
+	// source (ProviderChapter.attempts>0) that is NOT already covered by the state set —
+	// e.g. a DOWNLOADED chapter whose upgrade source failed. Those chapters keep their
+	// state (a downloaded chapter stays downloaded) but their failing sources get a fresh
+	// budget so DetectUpgrades re-flags the upgrade. Default false = state-only reset.
+	IncludeSourceFailures bool
 }
 
 // IsRetryableState reports whether a chapter in the given state may be reset to
@@ -226,6 +243,26 @@ func resolveRow(ch *ent.Chapter, res seriesResolution, provByID map[uuid.UUID]*e
 		rc.attempts = pc.Attempts
 	}
 
+	// Honest failures (PART D): if any source has a chapter-specific failure on this
+	// chapter, surface the highest-importance failing source with its N/max badge,
+	// last_error + derived category, and retryable/terminal classification — for ANY
+	// chapter state. A failing source on a DOWNLOADED chapter that is NOT its satisfier
+	// is a broken UPGRADE fetch, so tag the row as an upgrade converging TO it (the
+	// upgrade_available/upgrading states already carry their own target above).
+	if fc, ok := failingCarrier(ch, res.upgradeTargets); ok {
+		rc.failingProvider = fc.provider.Provider
+		rc.failingProviderName = series.ProviderLabel(fc.provider)
+		rc.failingAttempts = fc.pc.Attempts
+		rc.failingLastError = fc.pc.LastError
+		rc.failingErrorCategory = errorclass.ClassifyMessage(fc.pc.LastError)
+		rc.retryable = fc.pc.Attempts < maxRetries
+		rc.terminal = fc.pc.Attempts >= maxRetries
+		if ch.State == entchapter.StateDownloaded && !isSatisfier(ch, fc.provider) {
+			rc.isUpgrade = true
+			rc.upgradeTarget = rc.failingProviderName
+		}
+	}
+
 	// The waited-on source (upgrade target for an upgrade, primary candidate for a
 	// wanted) carries BOTH cooldown signals: its persisted per-source backoff and its
 	// source-wide circuit-breaker (joined from the snapshot by canonical name).
@@ -240,14 +277,44 @@ func resolveRow(ch *ent.Chapter, res seriesResolution, provByID map[uuid.UUID]*e
 	return rc
 }
 
-// listPredicates builds the Chapter predicates for List: the required state set,
-// plus (when a query is given) a series-title-contains filter via the series edge.
+// listPredicates builds the Chapter predicates for List: the required state set
+// (widened with the honest-failures OR when IncludeSourceFailures is set), plus
+// (when a query is given) a series-title-contains filter via the series edge.
 func listPredicates(filter ListFilter) []predicate.Chapter {
-	preds := []predicate.Chapter{entchapter.StateIn(filter.States...)}
+	main := entchapter.StateIn(filter.States...)
+	if filter.IncludeSourceFailures {
+		main = entchapter.Or(main, hasFailingSource())
+	}
+	preds := []predicate.Chapter{main}
 	if filter.Query != "" {
 		preds = append(preds, entchapter.HasSeriesWith(entseries.TitleContainsFold(filter.Query)))
 	}
 	return preds
+}
+
+// hasFailingSource is the correlated predicate behind the honest failures set: a
+// chapter matches when ANY source offering its (series_id, chapter_key) has a
+// per-source failure (ProviderChapter.attempts>0). There is no Ent edge from Chapter
+// to ProviderChapter (they are linked structurally by series_id + chapter_key, not a
+// FK), so this is an EXISTS subquery joining provider_chapters → series_providers and
+// correlating on the outer chapter's series_id + chapter_key. It stays ONE predicate
+// (ONE count query, ONE page query) — the failing-source resolution itself is then
+// done in memory over the already-batch-loaded feeds (no N+1).
+func hasFailingSource() predicate.Chapter {
+	return predicate.Chapter(func(s *sql.Selector) {
+		pc := sql.Table(entproviderchapter.Table)
+		sp := sql.Table(entseriesprovider.Table)
+		s.Where(sql.Exists(
+			sql.Select().
+				From(pc).
+				Join(sp).On(pc.C(entproviderchapter.FieldSeriesProviderID), sp.C(entseriesprovider.FieldID)).
+				Where(sql.And(
+					sql.GT(pc.C(entproviderchapter.FieldAttempts), 0),
+					sql.ColumnsEQ(sp.C(entseriesprovider.FieldSeriesID), s.C(entchapter.FieldSeriesID)),
+					sql.ColumnsEQ(pc.C(entproviderchapter.FieldChapterKey), s.C(entchapter.FieldChapterKey)),
+				)),
+		))
+	})
 }
 
 // distinctSeries collects the distinct series of a chapter page (from the
@@ -346,17 +413,24 @@ func (s *Service) Summary(ctx context.Context) (DownloadSummaryDTO, error) {
 	return out, nil
 }
 
-// RetryChapter resets one failed/permanently_failed chapter back to wanted so the
-// next download cycle re-attempts it. It clears the chapter's failure bookkeeping
-// (last_error, error_category, legacy retries→0, next_attempt_at→null) AND resets
-// the per-source retry state on every ProviderChapter offering this chapter
-// (attempts→0, last_error→"", next_attempt_at→null) so EVERY source gets a fresh
-// budget — otherwise a source that had exhausted its attempts would still be
-// excluded and the retry would silently do nothing. It is a RESET, never a delete
-// (the never-auto-delete invariant holds — a failed chapter has no CBZ). Chapter +
+// RetryChapter re-attempts one chapter, resetting the per-source retry state on
+// every ProviderChapter offering it (attempts→0, last_error→"", next_attempt_at→null)
+// so EVERY source — including the one being retried — gets a fresh budget (otherwise
+// an exhausted source stays excluded and the retry silently does nothing). Two shapes,
+// by the chapter's state:
+//
+//   - failed / permanently_failed → reset back to WANTED and clear the chapter's
+//     failure bookkeeping (last_error, error_category, legacy retries→0,
+//     next_attempt_at→null) so the next download cycle re-attempts it.
+//   - any other state WITH a chapter-specific failing source (attempts>0) — a
+//     DOWNLOADED chapter whose upgrade source keeps failing — keeps its state (its CBZ
+//     is intact) but clears the chapter's last_error/error_category and resets the
+//     failing sources, so DetectUpgrades re-flags the upgrade and it is re-attempted.
+//
+// It is a RESET, never a delete (the never-auto-delete invariant holds). Chapter +
 // source resets run in one transaction so they can never half-apply. Returns
 // ErrChapterNotFound (→404) for an unknown id, or ErrNotRetryable (→409) when the
-// chapter is in a non-retryable state.
+// chapter is neither a retryable state nor carries a failing source.
 func (s *Service) RetryChapter(ctx context.Context, id uuid.UUID) error {
 	ch, err := s.client.Chapter.Get(ctx, id)
 	if err != nil {
@@ -365,15 +439,33 @@ func (s *Service) RetryChapter(ctx context.Context, id uuid.UUID) error {
 		}
 		return fmt.Errorf("downloads.RetryChapter: load chapter %s: %w", id, err)
 	}
-	if !IsRetryableState(ch.State) {
-		return ErrNotRetryable
+
+	retryableState := IsRetryableState(ch.State)
+	if !retryableState {
+		hasFailing, err := chapterHasFailingSource(ctx, s.client, ch)
+		if err != nil {
+			return fmt.Errorf("downloads.RetryChapter: %w", err)
+		}
+		if !hasFailing {
+			return ErrNotRetryable
+		}
 	}
 
 	err = withTx(ctx, s.client, func(tx *ent.Tx) error {
-		// The state guard above makes failed/permanently_failed → wanted legal (the
-		// owner-retry edges); the field clears accompany the transition in one update.
-		if _, err := applyChapterRetryReset(tx.Chapter.Update().Where(entchapter.IDEQ(id))).Save(ctx); err != nil {
-			return fmt.Errorf("reset chapter %s: %w", id, err)
+		if retryableState {
+			// failed/permanently_failed → wanted (the owner-retry edges); the field clears
+			// accompany the transition in one update.
+			if _, err := applyChapterRetryReset(tx.Chapter.Update().Where(entchapter.IDEQ(id))).Save(ctx); err != nil {
+				return fmt.Errorf("reset chapter %s: %w", id, err)
+			}
+		} else {
+			// A downloaded (etc.) chapter with a failing upgrade source: keep the state,
+			// just clear the chapter's failure message so the retried source's fresh budget
+			// takes over.
+			if _, err := tx.Chapter.Update().Where(entchapter.IDEQ(id)).
+				SetLastError("").SetErrorCategory("").Save(ctx); err != nil {
+				return fmt.Errorf("clear chapter error %s: %w", id, err)
+			}
 		}
 		return resetProviderChapters(ctx, tx, map[uuid.UUID][]string{ch.SeriesID: {ch.ChapterKey}})
 	})
@@ -381,6 +473,24 @@ func (s *Service) RetryChapter(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("downloads.RetryChapter: %w", err)
 	}
 	return nil
+}
+
+// chapterHasFailingSource reports whether any source offering ch's (series_id,
+// chapter_key) has a chapter-specific per-source failure (ProviderChapter.attempts>0)
+// — the single-chapter form of hasFailingSource, used by RetryChapter to admit a
+// downloaded chapter whose upgrade source is failing.
+func chapterHasFailingSource(ctx context.Context, client *ent.Client, ch *ent.Chapter) (bool, error) {
+	n, err := client.ProviderChapter.Query().
+		Where(
+			entproviderchapter.ChapterKeyEQ(ch.ChapterKey),
+			entproviderchapter.AttemptsGT(0),
+			entproviderchapter.HasSeriesProviderWith(entseriesprovider.SeriesIDEQ(ch.SeriesID)),
+		).
+		Count(ctx)
+	if err != nil {
+		return false, fmt.Errorf("count failing sources for chapter %s: %w", ch.ID, err)
+	}
+	return n > 0, nil
 }
 
 // RetryAll bulk-resets every chapter in the filter's states back to wanted
@@ -395,31 +505,88 @@ func (s *Service) RetryAll(ctx context.Context, filter RetryAllFilter) (int, err
 	if len(states) == 0 {
 		states = retryableStates
 	}
-	preds := []predicate.Chapter{entchapter.StateIn(states...)}
-	if filter.SeriesID != nil {
-		preds = append(preds, entchapter.SeriesID(*filter.SeriesID))
-	}
+	statePreds := retryAllStatePreds(filter, states)
 
-	// Snapshot the affected (series, chapter_key) pairs BEFORE the reset so the
-	// per-source reset targets exactly the chapters being retried.
-	affected, err := s.client.Chapter.Query().Where(preds...).All(ctx)
+	// Snapshot the state-failed chapters BEFORE the reset so the per-source reset
+	// targets exactly the chapters being retried (they move to wanted).
+	stateFailed, err := s.client.Chapter.Query().Where(statePreds...).All(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("downloads.RetryAll: load target chapters: %w", err)
+	}
+	// Honest failures (PART D/E): chapters with a chapter-specific failing source not
+	// already in the state set (e.g. a downloaded chapter whose upgrade source failed).
+	// They keep their state; only their failing sources are reset.
+	sourceFailed, err := s.loadSourceFailingForRetry(ctx, filter, states)
+	if err != nil {
+		return 0, fmt.Errorf("downloads.RetryAll: %w", err)
 	}
 
 	var n int
 	err = withTx(ctx, s.client, func(tx *ent.Tx) error {
-		reset, err := applyChapterRetryReset(tx.Chapter.Update().Where(preds...)).Save(ctx)
-		if err != nil {
-			return fmt.Errorf("reset chapters: %w", err)
-		}
-		n = reset
-		return resetProviderChapters(ctx, tx, groupKeysBySeries(affected))
+		return s.applyRetryAll(ctx, tx, statePreds, stateFailed, sourceFailed, &n)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("downloads.RetryAll: %w", err)
 	}
 	return n, nil
+}
+
+// retryAllStatePreds builds the state-failed predicate set (state IN states, plus the
+// optional series scope) that RetryAll resets to wanted.
+func retryAllStatePreds(filter RetryAllFilter, states []entchapter.State) []predicate.Chapter {
+	preds := []predicate.Chapter{entchapter.StateIn(states...)}
+	if filter.SeriesID != nil {
+		preds = append(preds, entchapter.SeriesID(*filter.SeriesID))
+	}
+	return preds
+}
+
+// loadSourceFailingForRetry loads the chapters with a chapter-specific failing source
+// that are NOT already in the state set (so RetryAll does not double-count / re-touch
+// them), honouring the optional series scope. Nil when IncludeSourceFailures is off.
+func (s *Service) loadSourceFailingForRetry(ctx context.Context, filter RetryAllFilter, states []entchapter.State) ([]*ent.Chapter, error) {
+	if !filter.IncludeSourceFailures {
+		return nil, nil
+	}
+	preds := []predicate.Chapter{hasFailingSource(), entchapter.Not(entchapter.StateIn(states...))}
+	if filter.SeriesID != nil {
+		preds = append(preds, entchapter.SeriesID(*filter.SeriesID))
+	}
+	chapters, err := s.client.Chapter.Query().Where(preds...).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load source-failing chapters: %w", err)
+	}
+	return chapters, nil
+}
+
+// applyRetryAll performs the two RetryAll writes in one tx: state-failed chapters →
+// wanted (+ field clears), source-failing chapters keep their state but clear their
+// error, and BOTH groups' per-source retry state is reset. It writes the reset count
+// into *n.
+func (s *Service) applyRetryAll(ctx context.Context, tx *ent.Tx, statePreds []predicate.Chapter, stateFailed, sourceFailed []*ent.Chapter, n *int) error {
+	reset, err := applyChapterRetryReset(tx.Chapter.Update().Where(statePreds...)).Save(ctx)
+	if err != nil {
+		return fmt.Errorf("reset chapters: %w", err)
+	}
+	*n = reset
+	if len(sourceFailed) > 0 {
+		if _, err := tx.Chapter.Update().
+			Where(entchapter.IDIn(chapterIDs(sourceFailed)...)).
+			SetLastError("").SetErrorCategory("").Save(ctx); err != nil {
+			return fmt.Errorf("clear source-failing chapter errors: %w", err)
+		}
+		*n += len(sourceFailed)
+	}
+	return resetProviderChapters(ctx, tx, groupKeysBySeries(append(stateFailed, sourceFailed...)))
+}
+
+// chapterIDs projects a chapter slice to its ids.
+func chapterIDs(chapters []*ent.Chapter) []uuid.UUID {
+	ids := make([]uuid.UUID, len(chapters))
+	for i, ch := range chapters {
+		ids[i] = ch.ID
+	}
+	return ids
 }
 
 // applyChapterRetryReset applies the shared Chapter-side retry mutation: state→
