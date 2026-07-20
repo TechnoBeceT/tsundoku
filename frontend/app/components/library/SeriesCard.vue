@@ -94,6 +94,18 @@ const progressPct = computed(() => {
           </template>
           NEEDS SOURCE
         </Tag>
+        <!-- Stalled: monitored + not completed + no new chapter from ANY source
+             within the threshold (QCAT-297). Purely informational — a "you're
+             waiting and nothing has come" marker, never an action. -->
+        <Tag v-if="series.isStalled" tone="warn">
+          <template #icon>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="13" r="8" />
+              <path d="M12 9v4M12 2h.01M5 3L3 5M19 3l2 2" />
+            </svg>
+          </template>
+          STALLED
+        </Tag>
       </div>
     </div>
 

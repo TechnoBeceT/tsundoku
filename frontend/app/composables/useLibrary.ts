@@ -58,6 +58,8 @@ function mapSeriesItem(dto: SeriesSummaryDTO): SeriesSummary {
     },
     createdAt: dto.createdAt,
     lastChapterDownloadedAt: dto.lastChapterDownloadedAt,
+    latestChapterAt: dto.latestChapterAt,
+    isStalled: dto.isStalled,
   }
 }
 

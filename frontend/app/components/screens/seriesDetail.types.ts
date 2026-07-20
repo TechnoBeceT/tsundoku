@@ -53,6 +53,12 @@ export interface Chapter {
   lastReadPage: number
   /** ISO timestamp the chapter was marked read; null until then (cleared when `read` flips back to false). */
   readAt: string | null
+  /**
+   * Effective release date (ISO, Komikku-style — QCAT-297): the satisfying/best
+   * provider's upload date for this chapter, else its download date. Null only
+   * for a chapter no source dated that was never downloaded. Shown under the row.
+   */
+  releaseDate: string | null
 }
 
 /**

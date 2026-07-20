@@ -24,6 +24,8 @@ const base: SeriesSummary = {
   chapterCounts: { total: 20, downloaded: 20, wanted: 0, failed: 0, unread: 0 },
   createdAt: '2024-01-01T00:00:00Z',
   lastChapterDownloadedAt: null,
+  latestChapterAt: null,
+  isStalled: false,
 }
 
 function render(unread: number) {
@@ -70,5 +72,19 @@ describe('SeriesCard — needs-source badge', () => {
     })
 
     expect(w.text()).toContain('NEEDS SOURCE')
+  })
+})
+
+describe('SeriesCard — stalled badge', () => {
+  it('renders the "STALLED" badge when isStalled is true', () => {
+    const w = mount(SeriesCard, { props: { series: { ...base, isStalled: true } } })
+
+    expect(w.text()).toContain('STALLED')
+  })
+
+  it('is hidden when isStalled is false', () => {
+    const w = mount(SeriesCard, { props: { series: { ...base, isStalled: false } } })
+
+    expect(w.text()).not.toContain('STALLED')
   })
 })

@@ -76,6 +76,11 @@ const (
 	KeyRetryBackoff = "jobs.retry_backoff"
 	// KeyStaleGraceDays tunes the M7 source-health stale threshold (int, 0..365).
 	KeyStaleGraceDays = "health.stale_grace_days"
+	// KeyStalledThresholdDays tunes the QCAT-297 series-bound stalled threshold —
+	// how old a series' newest chapter release must be before the series is flagged
+	// stalled (int, 1..365, default 30). Read at use-time by series.Service so a
+	// change hot-reloads on the next library list/detail read. Informational only.
+	KeyStalledThresholdDays = "health.stalled_threshold_days"
 	// KeyExtensionCheckInterval is the extension auto-check ticker period
 	// (duration, 0 = disabled or >= 1h).
 	KeyExtensionCheckInterval = "jobs.extension_check_interval"
@@ -257,6 +262,7 @@ type Defaults struct {
 	MaxRetries              int
 	RetryBackoff            time.Duration
 	StaleGraceDays          int
+	StalledThresholdDays    int
 	ExtensionCheckInterval  time.Duration
 	WarmupInterval          time.Duration
 	WarmupSlowThresholdMs   int
@@ -329,6 +335,7 @@ var tunableOrder = []string{
 	KeyMaxRetries,
 	KeyRetryBackoff,
 	KeyStaleGraceDays,
+	KeyStalledThresholdDays,
 	KeyExtensionCheckInterval,
 	KeyWarmupInterval,
 	KeyWarmupSlowThresholdMs,
@@ -386,6 +393,10 @@ var tunables = map[string]tunable{
 	KeyStaleGraceDays: intTunable(
 		KeyStaleGraceDays, "days", 0, 365,
 		func(d Defaults) int { return d.StaleGraceDays },
+	),
+	KeyStalledThresholdDays: intTunable(
+		KeyStalledThresholdDays, "days", 1, 365,
+		func(d Defaults) int { return d.StalledThresholdDays },
 	),
 	KeyExtensionCheckInterval: durationTunableMinOrZero(
 		KeyExtensionCheckInterval, "duration", time.Hour,

@@ -96,9 +96,10 @@ func TestListSeriesQueryCountIsSeriesCountIndependent(t *testing.T) {
 	if small != large {
 		t.Errorf("N+1: ListSeries issued %d queries for a 2-item page but %d for a 20-item page — the query count must not scale with page size", small, large)
 	}
-	// Bounded shape: the series page (+ its providers/category eager loads) + ONE
-	// grouped chapter-rollup aggregate. A generous ceiling still fails an N+1.
-	const maxQueries = 6
+	// Bounded shape: the series page (+ its providers/category eager loads) + the
+	// grouped chapter-rollup aggregate + the QCAT-297 provider-upload-date
+	// aggregate (both page-size independent). A generous ceiling still fails an N+1.
+	const maxQueries = 7
 	if large > maxQueries {
 		t.Errorf("ListSeries issued %d queries for one page, want <= %d (bounded, page-size independent)", large, maxQueries)
 	}

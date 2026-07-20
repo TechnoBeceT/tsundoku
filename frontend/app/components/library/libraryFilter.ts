@@ -15,6 +15,9 @@ export interface LibraryFilters {
   /** Only series with ≥1 dangling (disk-origin, unlinked) provider — even when
    * another source is already matched (the partially-consolidated case). */
   needsSource: boolean
+  /** Only series flagged stalled (QCAT-297): no new chapter from any source
+   * within the stalled threshold, while still monitored + not completed. */
+  stalled: boolean
 }
 
 /** The all-off filter state — the default view (whole library). */
@@ -23,6 +26,7 @@ export const NO_FILTERS: LibraryFilters = {
   unread: false,
   completed: false,
   needsSource: false,
+  stalled: false,
 }
 
 /** Case-insensitive, trimmed title search. A blank query matches everything. */
@@ -51,12 +55,13 @@ export function applyFilters(items: SeriesSummary[], f: LibraryFilters): SeriesS
   if (f.unread) out = out.filter((s) => s.chapterCounts.unread > 0)
   if (f.completed) out = out.filter((s) => s.completed)
   if (f.needsSource) out = out.filter((s) => s.needsSource)
+  if (f.stalled) out = out.filter((s) => s.isStalled)
   return out
 }
 
 /** True when any toggle-filter is active (drives the "no matches" empty state). */
 export function anyFilterActive(f: LibraryFilters): boolean {
-  return f.downloaded || f.unread || f.completed || f.needsSource
+  return f.downloaded || f.unread || f.completed || f.needsSource || f.stalled
 }
 
 /**

@@ -64,6 +64,12 @@ func (s *Service) StaleGraceDays(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyStaleGraceDays)
 }
 
+// StalledThresholdDays tunes the series-bound stalled threshold in days
+// (DB override else default). Read at use-time by series.Service (hot reload).
+func (s *Service) StalledThresholdDays(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyStalledThresholdDays)
+}
+
 // ExtensionCheckInterval is the extension auto-check ticker period; 0 = disabled
 // (DB override else default).
 func (s *Service) ExtensionCheckInterval(ctx context.Context) time.Duration {

@@ -243,7 +243,8 @@ func registerRoutes(
 	seriesSvc := series.NewService(client, cfg.Storage.Folder, cfg.Health.StaleGraceDays).
 		WithCoverFetcher(engineClient).
 		WithSourceLister(sourceengine.NewSourceLister(engineClient)).
-		WithProgressPusher(trackerSyncSvc)
+		WithProgressPusher(trackerSyncSvc).
+		WithStalledThreshold(settingsSvc.StalledThresholdDays)
 	// WithViewSyncer wires the detail-open tracker reconcile: opening a series'
 	// detail page fires a detached, best-effort syncsvc.Service.SyncOnView IN
 	// ADDITION to the existing reading-triggered push (series.ProgressPusher —

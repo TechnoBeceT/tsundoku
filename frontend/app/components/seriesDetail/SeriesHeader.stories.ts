@@ -30,3 +30,15 @@ export const NoCover: Story = {
 export const Saving: Story = {
   args: { series: richSeries, categoryOptions, saving: true },
 }
+
+/**
+ * Stalled (QCAT-297): monitored + not completed but no new chapter from any
+ * source in ~5 months — the "Last chapter …" line + the amber Stalled marker
+ * render under the title. Purely informational.
+ */
+export const Stalled: Story = {
+  args: {
+    series: { ...richSeries, isStalled: true, latestChapterAt: '2026-02-14T00:00:00Z' },
+    categoryOptions,
+  },
+}

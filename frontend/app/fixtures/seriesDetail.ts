@@ -34,6 +34,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 0,
     readAt: null,
+    releaseDate: daysAgo(120),
   },
   {
     id: 'chapter-0002',
@@ -46,6 +47,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 15,
     readAt: null,
+    releaseDate: daysAgo(90),
   },
   {
     id: 'chapter-0003',
@@ -58,6 +60,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 0,
     readAt: null,
+    releaseDate: daysAgo(60),
   },
   {
     id: 'chapter-0004',
@@ -70,6 +73,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 0,
     readAt: null,
+    releaseDate: daysAgo(50),
   },
   {
     id: 'chapter-0005',
@@ -82,6 +86,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 0,
     readAt: null,
+    releaseDate: daysAgo(20),
   },
   {
     id: 'chapter-0006',
@@ -94,6 +99,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 0,
     readAt: null,
+    releaseDate: daysAgo(10),
   },
   {
     id: 'chapter-0007',
@@ -106,6 +112,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 0,
     readAt: null,
+    releaseDate: daysAgo(5),
   },
   {
     id: 'chapter-0008',
@@ -118,6 +125,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 0,
     readAt: null,
+    releaseDate: daysAgo(2),
   },
   {
     id: 'chapter-0009',
@@ -130,6 +138,7 @@ const chapters: Chapter[] = [
     read: false,
     lastReadPage: 0,
     readAt: null,
+    releaseDate: null,
   },
 ]
 
@@ -240,6 +249,8 @@ export const richSeries: SeriesDetail = {
   chapterCounts: { total: 9, downloaded: 2, wanted: 2, failed: 2, unread: 1 },
   createdAt: '2024-01-15T10:00:00Z',
   lastChapterDownloadedAt: '2024-11-20T08:30:00Z',
+  latestChapterAt: daysAgo(2),
+  isStalled: false,
   chapters,
   providers,
   metadataProviderId: null,

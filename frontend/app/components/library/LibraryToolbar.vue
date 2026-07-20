@@ -54,6 +54,7 @@ const SORT_OPTIONS = [
   { value: 'title', label: 'Alphabetical' },
   { value: 'added', label: 'Date added' },
   { value: 'updated', label: 'Latest chapter' },
+  { value: 'waiting', label: 'Last release' },
   { value: 'total', label: 'Total chapters' },
   { value: 'unread', label: 'Unread count' },
   { value: 'random', label: 'Random' },
@@ -70,6 +71,7 @@ const FILTER_CHIPS = [
   { key: 'unread', label: 'Unread', icon: 'lucide:book-open' },
   { key: 'completed', label: 'Completed', icon: 'lucide:flag' },
   { key: 'needsSource', label: 'Needs source', icon: 'lucide:triangle-alert' },
+  { key: 'stalled', label: 'Stalled', icon: 'lucide:clock-alert' },
 ] as const satisfies readonly { key: keyof LibraryFilters; label: string; icon: string }[]
 
 // Selecting a field applies that field's canonical default direction; the

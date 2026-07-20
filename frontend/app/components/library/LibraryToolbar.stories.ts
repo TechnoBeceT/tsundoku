@@ -98,6 +98,6 @@ export const FiltersActive: Story = {
     search: '',
     sortKey: 'title',
     sortDir: 'asc',
-    filters: { downloaded: true, unread: true, completed: false, needsSource: true },
+    filters: { downloaded: true, unread: true, completed: false, needsSource: true, stalled: false },
   },
 }

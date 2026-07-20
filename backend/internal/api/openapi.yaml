@@ -132,6 +132,8 @@ components:
         - chapterCounts
         - createdAt
         - lastChapterDownloadedAt
+        - latestChapterAt
+        - isStalled
       properties:
         id:
           type: string
@@ -188,6 +190,26 @@ components:
             first-downloaded time. NOT MAX(download_date): a download_date is a fetch timestamp a
             convergence upgrade rewrites on an old chapter, which would float a series to the top
             with nothing new to read. Always present as a key; its value may be null.
+        latestChapterAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this series' newest chapter was RELEASED — the series-bound MAX
+            across ANY provider of the source's provider_upload_date, else a
+            chapter's download_date fallback (QCAT-297). Powers the
+            longest-waiting / recently-released sort and the "waiting Nd" / stalled
+            badge. Distinct from lastChapterDownloadedAt (a fetch timestamp): this
+            is the SOURCE's publish date. Always present as a key; null when no
+            chapter carries any date.
+        isStalled:
+          type: boolean
+          description: >-
+            True when latestChapterAt is older than the stalled threshold
+            (health.stalled_threshold_days, default 30) AND the series is still
+            monitored AND not completed. SERIES-BOUND: a series with one dead
+            source but another still publishing is NOT stalled. Purely
+            informational — nothing auto-drops.
 
     Chapter:
       type: object
@@ -203,6 +225,7 @@ components:
         - lastReadPage
         - readAt
         - pageVersion
+        - releaseDate
       properties:
         id:
           type: string
@@ -243,6 +266,14 @@ components:
             (empty for a not-yet-downloaded chapter). The client appends it as
             ?v= on every page request so a Library-Convergence upgrade that
             replaces the CBZ mid-read is never served from a stale cache entry.
+        releaseDate:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            This chapter's effective release date (Komikku-style, QCAT-297): the
+            satisfying/best provider's provider_upload_date for the chapter's key,
+            else the chapter's download_date. Null only for a chapter no source
+            dated that was never downloaded.
 
     ChapterProgress:
       type: object
@@ -424,6 +455,8 @@ components:
         - chapterCounts
         - createdAt
         - lastChapterDownloadedAt
+        - latestChapterAt
+        - isStalled
         - chapters
         - providers
         - status
@@ -493,6 +526,23 @@ components:
             first-downloaded time. NOT MAX(download_date): a download_date is a fetch timestamp a
             convergence upgrade rewrites on an old chapter, which would float a series to the top
             with nothing new to read. Always present as a key; its value may be null.
+        latestChapterAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this series' newest chapter was RELEASED — the series-bound MAX
+            across ANY provider of the source's provider_upload_date, else a
+            chapter's download_date fallback (QCAT-297). Distinct from
+            lastChapterDownloadedAt (a fetch timestamp): this is the SOURCE's
+            publish date. Always present as a key; null when no chapter carries any
+            date.
+        isStalled:
+          type: boolean
+          description: >-
+            True when latestChapterAt is older than the stalled threshold
+            (health.stalled_threshold_days, default 30) AND the series is still
+            monitored AND not completed. SERIES-BOUND. Purely informational.
         chapters:
           type: array
           description: The series' chapters, ordered by number then chapter key.
@@ -2987,6 +3037,7 @@ components:
         - unread
         - completed
         - needsSource
+        - stalled
       properties:
         downloaded:
           type: boolean
@@ -3000,6 +3051,9 @@ components:
         needsSource:
           type: boolean
           description: Narrow to series with no live download source (every provider is disk-origin).
+        stalled:
+          type: boolean
+          description: Narrow to series flagged stalled (QCAT-297) — no new chapter from any source within the stalled threshold while still monitored + not completed.
 
     LibraryPrefs:
       type: object
@@ -3017,12 +3071,14 @@ components:
           type: string
           description: >-
             The active sort field. One of title (Alphabetical), added (date
-            added), updated (latest chapter), unread (unread count), total
+            added), updated (latest chapter), waiting (last released — longest
+            waiting / recently released, QCAT-297), unread (unread count), total
             (total chapters), random (shuffle).
           enum:
             - title
             - added
             - updated
+            - waiting
             - unread
             - total
             - random

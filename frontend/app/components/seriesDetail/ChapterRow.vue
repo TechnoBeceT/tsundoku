@@ -4,6 +4,7 @@ import AppButton from '../ui/AppButton.vue'
 import IconButton from '../ui/IconButton.vue'
 import type { Chapter } from '../screens/seriesDetail.types'
 import { isReadableState } from '~/utils/readableStates'
+import { relativeTime, absoluteTime } from '~/utils/timeFormat'
 
 /**
  * ChapterRow — one row in the Series-Detail chapter table: the (display) number,
@@ -71,6 +72,12 @@ const resumeLine = (): string => {
   const shown = props.chapter.lastReadPage + 1
   return props.chapter.pageCount == null ? `Page ${shown}` : `Page ${shown} / ${props.chapter.pageCount}`
 }
+
+// Release date (QCAT-297): a short "3d ago" relative label, with the full local
+// timestamp on hover (both from the shared timeFormat util). Empty for a chapter
+// no source dated that was never downloaded (releaseDate === null).
+const released = (): string => (props.chapter.releaseDate == null ? '' : relativeTime(props.chapter.releaseDate))
+const releasedTitle = (): string => absoluteTime(props.chapter.releaseDate)
 </script>
 
 <template>
@@ -90,6 +97,7 @@ const resumeLine = (): string => {
          render — a plain flex-wrap on the individual siblings can't guarantee
          that grouping since which items are even present varies per row. -->
     <div class="chapter__controls">
+      <span v-if="released()" class="chapter__released" :title="releasedTitle()">{{ released() }}</span>
       <span v-if="pages()" class="chapter__pages">{{ pages() }}</span>
       <AppButton
         v-if="isReadableState(chapter.state)"
@@ -195,6 +203,15 @@ const resumeLine = (): string => {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--faint);
+}
+
+/* Release date — a subtle "3d ago" marker (absolute date on hover). Muted so it
+ * reads as row metadata, not a control. */
+.chapter__released {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--faint);
+  white-space: nowrap;
 }
 
 /* The page-count / Read / status-badge cluster — flex:none on desktop, same

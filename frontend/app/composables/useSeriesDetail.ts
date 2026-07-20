@@ -79,6 +79,7 @@ function mapChapter(dto: ChapterDTO): Chapter {
     read: dto.read,
     lastReadPage: dto.lastReadPage,
     readAt: dto.readAt,
+    releaseDate: dto.releaseDate,
   }
 }
 
@@ -126,6 +127,8 @@ function mapDetail(dto: SeriesDetailDTO): SeriesDetail {
     },
     createdAt: dto.createdAt,
     lastChapterDownloadedAt: dto.lastChapterDownloadedAt,
+    latestChapterAt: dto.latestChapterAt,
+    isStalled: dto.isStalled,
     chapters: dto.chapters.map(mapChapter),
     providers: dto.providers.map(mapProvider),
     metadataProviderId: dto.providers.find((p) => p.isMetadataSource)?.id ?? null,

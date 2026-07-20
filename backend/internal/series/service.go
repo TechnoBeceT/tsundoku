@@ -63,6 +63,12 @@ type Service struct {
 	sourceLister SourceLister
 
 	staleGrace func(ctx context.Context) int
+
+	// stalledThreshold resolves the QCAT-297 stalled threshold (days) AT USE-TIME
+	// so it can be runtime-tuned via the settings overlay (health.stalled_threshold_days)
+	// without a restart. Defaults to a constant (defaultStalledThresholdDays); prod
+	// upgrades it with WithStalledThreshold(settings.Service.StalledThresholdDays).
+	stalledThreshold func(ctx context.Context) int
 }
 
 // NewService builds the series library service with a FIXED stale-grace (the
@@ -77,7 +83,12 @@ func NewService(client *ent.Client, storage string, staleGraceDays int) *Service
 // an owner's change via the settings API takes effect on the next health read
 // without a restart. Production wires this variant; NewService is the fixed form.
 func NewServiceWithStaleGrace(client *ent.Client, storage string, staleGrace func(ctx context.Context) int) *Service {
-	return &Service{client: client, storage: storage, staleGrace: staleGrace}
+	return &Service{
+		client:           client,
+		storage:          storage,
+		staleGrace:       staleGrace,
+		stalledThreshold: func(context.Context) int { return defaultStalledThresholdDays },
+	}
 }
 
 // importanceStep is the spacing between adjacent providers on the clean
@@ -530,8 +541,12 @@ func (s *Service) ListSeries(ctx context.Context, filter ListFilter) ([]SeriesSu
 	}
 
 	ids := make([]uuid.UUID, len(rows))
+	providerToSeries := make(map[uuid.UUID]uuid.UUID)
 	for i, r := range rows {
 		ids[i] = r.ID
+		for _, p := range r.Edges.Providers {
+			providerToSeries[p.ID] = r.ID
+		}
 	}
 
 	rollups, err := s.chapterRollups(ctx, ids)
@@ -539,9 +554,66 @@ func (s *Service) ListSeries(ctx context.Context, filter ListFilter) ([]SeriesSu
 		return nil, err
 	}
 
+	// latestChapterAt (QCAT-297) is derived NO-N+1 from two bounded aggregates —
+	// never a per-series load: the newest source-published date (uploadMax, one
+	// grouped ProviderChapter aggregate folded per series) coalesced with the
+	// newest download_date (DownloadMax, folded into the SAME chapter rollup).
+	// Upload date wins so a convergence upgrade's rewritten download_date can never
+	// inflate the value while a real release date exists; download_date is the
+	// fallback for a fully-legacy series no source ever dated.
+	uploadMax, err := s.providerUploadMax(ctx, ids, providerToSeries)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	threshold := s.stalledThreshold(ctx) // read once at use-time (hot-reloadable)
+
 	out := make([]SeriesSummaryDTO, len(rows))
 	for i, r := range rows {
-		out[i] = newSummaryDTO(r, rollups[r.ID])
+		rollup := rollups[r.ID]
+		latest := coalesceTime(uploadMax[r.ID], rollup.DownloadMax)
+		stalled := stalledSeries(latest, r.Monitored, r.Completed, now, threshold)
+		out[i] = newSummaryDTO(r, rollup, latest, stalled)
+	}
+	return out, nil
+}
+
+// providerUploadRow is the scan target for the series-wide upload-date aggregate:
+// one row per SeriesProvider with the newest provider_upload_date in its feed.
+type providerUploadRow struct {
+	SeriesProviderID uuid.UUID  `json:"series_provider_id"`
+	Max              *time.Time `json:"max"`
+}
+
+// providerUploadMax returns, per series id, the newest provider_upload_date
+// across ALL its providers' feeds (nil when none) — the upload component of
+// latestChapterAt. It runs ONE grouped aggregate over the page's provider feeds
+// (GROUP BY series_provider_id, MAX(provider_upload_date)) and folds the
+// per-provider maxima onto their series via the caller-built providerToSeries
+// map (from the already-eager-loaded providers). Query count is bounded and
+// page-size independent (no N+1). Returns an empty map when there are no ids.
+func (s *Service) providerUploadMax(ctx context.Context, ids []uuid.UUID, providerToSeries map[uuid.UUID]uuid.UUID) (map[uuid.UUID]*time.Time, error) {
+	out := make(map[uuid.UUID]*time.Time, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	var rows []providerUploadRow
+	err := s.client.ProviderChapter.Query().
+		Where(entproviderchapter.HasSeriesProviderWith(entseriesprovider.SeriesIDIn(ids...))).
+		GroupBy(entproviderchapter.FieldSeriesProviderID).
+		Aggregate(ent.As(ent.Max(entproviderchapter.FieldProviderUploadDate), "max")).
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("series.providerUploadMax: aggregate upload dates: %w", err)
+	}
+
+	for _, r := range rows {
+		seriesID, ok := providerToSeries[r.SeriesProviderID]
+		if !ok {
+			continue // a provider not on this page (defensive — the predicate scopes to ids)
+		}
+		out[seriesID] = laterTime(out[seriesID], r.Max)
 	}
 	return out, nil
 }
@@ -583,12 +655,13 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 	}
 
 	titles := ChapterTitles(row.Edges.Providers)
+	releaseDates := chapterReleaseDates(row) // QCAT-297 per-chapter effective release date
 
 	chapters := make([]ChapterDTO, len(row.Edges.Chapters))
 	counts := ChapterCounts{}
 	var lastDownloaded *time.Time // MAX(first_downloaded_at) over non-superseded chapters
 	for i, ch := range row.Edges.Chapters {
-		chapters[i] = newChapterDTO(ch, titles[ch.ChapterKey])
+		chapters[i] = newChapterDTO(ch, titles[ch.ChapterKey], releaseDates[ch.ID])
 		if ch.State == entchapter.StateSuperseded || ch.State == entchapter.StateIgnored {
 			// superseded parts are merged into their whole; ignored fractionals are
 			// suppressed re-uploads — neither is counted (mirrors chapterRollups) and
@@ -603,8 +676,14 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 	metaProv := MetadataProvider(row)
 	dispName, coverURL := SeriesDisplay(row, metaProv)
 
+	// latestChapterAt + isStalled (QCAT-297): SERIES-BOUND — the newest release
+	// across ANY provider (upload date, else download_date fallback), and whether
+	// it is older than the stalled threshold while still monitored + not completed.
+	latestChapterAt := coalesceTime(providersUploadMax(row.Edges.Providers), chaptersDownloadMax(row.Edges.Chapters))
+
 	keys, maxNumber, multi := seriesHealthInputs(row)
 	now := time.Now().UTC()
+	stalled := stalledSeries(latestChapterAt, row.Monitored, row.Completed, now, s.stalledThreshold(ctx))
 	grace := s.staleGrace(ctx)             // read at use-time (hot-reloadable)
 	loaded, active := s.loadedSources(ctx) // one engine call for the whole detail (fail-safe)
 	chapterCounts := providerChapterCounts(row)
@@ -628,6 +707,8 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 		ChapterCounts:           counts,
 		CreatedAt:               formatRFC3339(row.CreatedAt),
 		LastChapterDownloadedAt: formatRFC3339Ptr(lastDownloaded),
+		LatestChapterAt:         formatRFC3339Ptr(latestChapterAt),
+		IsStalled:               stalled,
 		Chapters:                chapters,
 		Providers:               providers,
 
@@ -873,15 +954,25 @@ type chapterRollupRow struct {
 	// → nil. The caller folds the per-group maxima into ONE per-series maximum,
 	// ignoring nils.
 	MaxFirstDownloadedAt *time.Time `json:"max"`
+	// MaxDownloadDate is the newest download_date within this (state, read) group
+	// (NULLABLE — a group of never-downloaded chapters yields SQL NULL → nil). It
+	// is the download fallback of latestChapterAt (QCAT-297) — folded into a
+	// per-series maximum, used only when no source dated any chapter. Distinct
+	// from MaxFirstDownloadedAt: download_date is a fetch timestamp a convergence
+	// upgrade rewrites (which is exactly why it is only a FALLBACK behind the
+	// source's upload date, never the primary release signal).
+	MaxDownloadDate *time.Time `json:"max_download"`
 }
 
 // seriesRollup is the per-series result of chapterRollups: the chapter-state
 // counts plus the newest first_downloaded_at across all the series' chapters
 // (nil when no chapter ever carried one). LastChapterDownloadedAt is deliberately
-// MAX(first_downloaded_at), NOT MAX(download_date) — see the DTO doc.
+// MAX(first_downloaded_at), NOT MAX(download_date) — see the DTO doc. DownloadMax
+// is MAX(download_date) — the QCAT-297 latestChapterAt download fallback.
 type seriesRollup struct {
 	Counts                  ChapterCounts
 	LastChapterDownloadedAt *time.Time
+	DownloadMax             *time.Time
 }
 
 // chapterRollups runs ONE grouped aggregate (GROUP BY series_id, state, read)
@@ -900,7 +991,11 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 	err := s.client.Chapter.Query().
 		Where(entchapter.SeriesIDIn(ids...)).
 		GroupBy(entchapter.FieldSeriesID, entchapter.FieldState, entchapter.FieldRead).
-		Aggregate(ent.Count(), ent.As(ent.Max(entchapter.FieldFirstDownloadedAt), "max")).
+		Aggregate(
+			ent.Count(),
+			ent.As(ent.Max(entchapter.FieldFirstDownloadedAt), "max"),
+			ent.As(ent.Max(entchapter.FieldDownloadDate), "max_download"),
+		).
 		Scan(ctx, &rows)
 	if err != nil {
 		return nil, fmt.Errorf("series.chapterRollups: aggregate chapter states: %w", err)
@@ -924,6 +1019,7 @@ func (s *Service) chapterRollups(ctx context.Context, ids []uuid.UUID) (map[uuid
 			agg.Counts.Failed += r.Count
 		}
 		agg.LastChapterDownloadedAt = laterTime(agg.LastChapterDownloadedAt, r.MaxFirstDownloadedAt)
+		agg.DownloadMax = laterTime(agg.DownloadMax, r.MaxDownloadDate)
 		out[r.SeriesID] = agg
 	}
 	return out, nil

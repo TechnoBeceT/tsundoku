@@ -18,6 +18,7 @@ type Static struct {
 	Retries      int
 	Backoff      time.Duration
 	StaleGrace   int
+	StalledDays  int
 	ExtCheck     time.Duration
 	WarmupIv     time.Duration
 	WarmupSlow   int
@@ -79,6 +80,9 @@ func (s Static) RetryBackoff(context.Context) time.Duration { return s.Backoff }
 
 // StaleGraceDays returns the fixed source-health stale threshold.
 func (s Static) StaleGraceDays(context.Context) int { return s.StaleGrace }
+
+// StalledThresholdDays returns the fixed series-bound stalled threshold in days.
+func (s Static) StalledThresholdDays(context.Context) int { return s.StalledDays }
 
 // ExtensionCheckInterval returns the fixed extension-check ticker period; 0 = disabled.
 func (s Static) ExtensionCheckInterval(context.Context) time.Duration { return s.ExtCheck }

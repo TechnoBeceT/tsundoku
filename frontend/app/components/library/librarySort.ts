@@ -16,7 +16,7 @@ import type { SeriesSummary } from '../screens/types'
  * deterministically from `hashSeed(id, seed)` — the CALLER bumps `seed` when it
  * wants a fresh shuffle (e.g. re-selecting the Random option).
  */
-export type SortKey = 'title' | 'added' | 'updated' | 'unread' | 'total' | 'random'
+export type SortKey = 'title' | 'added' | 'updated' | 'waiting' | 'unread' | 'total' | 'random'
 export type SortDir = 'asc' | 'desc'
 
 function cmpDate(a: string, b: string): number {
@@ -55,6 +55,17 @@ function compareBy(key: SortKey, a: SeriesSummary, b: SeriesSummary, sign: numbe
       const y = b.lastChapterDownloadedAt
       if (x === null && y === null) return 0
       if (x === null) return 1 // nulls last — deliberately NOT multiplied by sign
+      if (y === null) return -1
+      return sign * cmpDate(x, y)
+    }
+    case 'waiting': {
+      // Over latestChapterAt (the source's release date, QCAT-297): desc =
+      // recently released, asc = longest waiting. Nulls sort last in BOTH
+      // directions (same rule as 'updated' — the null branch is OUTSIDE the sign).
+      const x = a.latestChapterAt
+      const y = b.latestChapterAt
+      if (x === null && y === null) return 0
+      if (x === null) return 1
       if (y === null) return -1
       return sign * cmpDate(x, y)
     }

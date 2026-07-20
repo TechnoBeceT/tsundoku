@@ -17,6 +17,8 @@ function series(over: Partial<SeriesSummary> & { id: string }): SeriesSummary {
     },
     createdAt: over.createdAt ?? '2020-01-01T00:00:00Z',
     lastChapterDownloadedAt: over.lastChapterDownloadedAt ?? null,
+    latestChapterAt: over.latestChapterAt ?? null,
+    isStalled: over.isStalled ?? false,
   }
 }
 
@@ -67,6 +69,30 @@ describe('applyFilters — needsSource', () => {
   it('needsSource is cover-independent: a needsSource series WITH a cover is still kept', () => {
     const withCover = series({ id: 'z', needsSource: true, coverUrl: '/api/series/z/cover?v=abc' })
     expect(applyFilters([withCover], { ...NO_FILTERS, needsSource: true })).toEqual([withCover])
+  })
+})
+
+describe('applyFilters — stalled', () => {
+  const mixed: SeriesSummary[] = [
+    series({ id: 'a', isStalled: true }),
+    series({ id: 'b', isStalled: false }),
+    series({ id: 'c', isStalled: true }),
+  ]
+
+  it('stalled keeps only stalled series', () => {
+    expect(applyFilters(mixed, { ...NO_FILTERS, stalled: true }).map((s) => s.id)).toEqual(['a', 'c'])
+  })
+
+  it('is a pass-through when off', () => {
+    expect(applyFilters(mixed, NO_FILTERS)).toBe(mixed)
+  })
+
+  it('stacks with another filter (logical AND)', () => {
+    const rows = [
+      series({ id: 'x', isStalled: true, completed: true }),
+      series({ id: 'y', isStalled: true, completed: false }),
+    ]
+    expect(applyFilters(rows, { ...NO_FILTERS, stalled: true, completed: true }).map((s) => s.id)).toEqual(['x'])
   })
 })
 

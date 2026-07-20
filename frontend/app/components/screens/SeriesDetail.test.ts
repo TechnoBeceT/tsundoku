@@ -26,6 +26,7 @@ const supersededChapter: Chapter = {
   read: false,
   lastReadPage: 0,
   readAt: null,
+    releaseDate: null,
 }
 
 function seriesWithSuperseded(): SeriesDetailModel {

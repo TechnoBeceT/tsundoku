@@ -57,6 +57,22 @@ export interface SeriesSummary {
   /** When this series' newest chapter became readable (ISO date-time), or null when
    * no chapter ever carried a first-downloaded time. Powers the "recently updated" sort. */
   lastChapterDownloadedAt: string | null
+  /**
+   * When this series' newest chapter was RELEASED (ISO date-time) — the
+   * series-bound max across ANY provider of the source's upload date, else a
+   * download-date fallback (QCAT-297). Null when no chapter carries any date.
+   * Powers the longest-waiting / recently-released sort + the "waiting" badge.
+   * Distinct from `lastChapterDownloadedAt` (a fetch timestamp): this is when the
+   * SOURCE published, which is what "how long am I waiting" is measured on.
+   */
+  latestChapterAt: string | null
+  /**
+   * True when `latestChapterAt` is older than the stalled threshold AND the
+   * series is still monitored AND not completed — the owner is waiting and no
+   * source has published in the window. SERIES-BOUND: a series with one dead
+   * source but another still publishing is NOT stalled. Purely informational.
+   */
+  isStalled: boolean
 }
 
 /**

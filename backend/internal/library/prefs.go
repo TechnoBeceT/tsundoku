@@ -31,6 +31,7 @@ var validSortKeys = map[string]bool{
 	"title":   true, // Alphabetical
 	"added":   true, // createdAt
 	"updated": true, // lastChapterDownloadedAt (latest chapter)
+	"waiting": true, // latestChapterAt (longest-waiting / recently-released, QCAT-297)
 	"unread":  true, // unread count
 	"total":   true, // total chapters
 	"random":  true, // shuffle
@@ -49,6 +50,9 @@ type LibraryFilters struct {
 	Completed bool `json:"completed"`
 	// NeedsSource narrows to series with no live download source.
 	NeedsSource bool `json:"needsSource"`
+	// Stalled narrows to series flagged stalled (QCAT-297): no new chapter from
+	// ANY source within the stalled threshold while still monitored + not completed.
+	Stalled bool `json:"stalled"`
 }
 
 // LibraryPrefs is the persisted library-list view state: the active sort field

@@ -33,6 +33,8 @@ interface Row {
   chapterCounts: { total: number, downloaded: number, wanted: number, failed: number, unread: number }
   createdAt: string
   lastChapterDownloadedAt: string | null
+  latestChapterAt: string | null
+  isStalled: boolean
 }
 
 interface Cat { id: string, name: string, sortOrder: number, protected: boolean, isDefault: boolean, count: number }
@@ -50,6 +52,8 @@ const makeRow = (n: number, over: Partial<Row> = {}): Row => ({
   chapterCounts: { total: 0, downloaded: 0, wanted: 0, failed: 0, unread: 0 },
   createdAt: '2024-01-01T00:00:00Z',
   lastChapterDownloadedAt: null,
+  latestChapterAt: null,
+  isStalled: false,
   ...over,
 })
 
@@ -65,7 +69,7 @@ const makeCat = (name: string, isDefault: boolean, count = 0): Cat => ({
 interface Prefs {
   sortKey: string
   sortDir: string
-  filters: { downloaded: boolean, unread: boolean, completed: boolean, needsSource: boolean }
+  filters: { downloaded: boolean, unread: boolean, completed: boolean, needsSource: boolean, stalled: boolean }
 }
 
 // Mutable per-test state the mock reads at call time.
@@ -150,7 +154,7 @@ describe('useLibrary — no refetch on interaction', () => {
     lib.setCategory('Manga')
     lib.setSearch('solo')
     lib.setSort('unread', 'desc')
-    lib.setFilters({ downloaded: false, unread: false, completed: false, needsSource: true })
+    lib.setFilters({ downloaded: false, unread: false, completed: false, needsSource: true, stalled: false })
     await Promise.resolve()
 
     expect(seriesGetSpy.mock.calls.length).toBe(calls)
@@ -219,7 +223,7 @@ describe('useLibrary — in-memory filter/search/sort + escape hatch', () => {
 })
 
 describe('useLibrary — toggle filters', () => {
-  const ALL_OFF = { downloaded: false, unread: false, completed: false, needsSource: false }
+  const ALL_OFF = { downloaded: false, unread: false, completed: false, needsSource: false, stalled: false }
 
   beforeEach(() => {
     categoriesData = [] // All (null) so both rows below are in view
@@ -261,7 +265,7 @@ describe('useLibrary — persisted prefs', () => {
       makeRow(2, { title: 'Bravo', displayName: 'Bravo', chapterCounts: { total: 9, downloaded: 9, wanted: 0, failed: 0, unread: 8 } }),
     ]
     seriesTotalHeader = '2'
-    libraryPrefsData = { sortKey: 'unread', sortDir: 'desc', filters: { downloaded: false, unread: false, completed: false, needsSource: false } }
+    libraryPrefsData = { sortKey: 'unread', sortDir: 'desc', filters: { downloaded: false, unread: false, completed: false, needsSource: false, stalled: false } }
 
     const lib = await mountSettled()
     expect(lib.sortKey.value).toBe('unread')
@@ -275,6 +279,6 @@ describe('useLibrary — persisted prefs', () => {
     const lib = await mountSettled()
     expect(lib.sortKey.value).toBe('title')
     expect(lib.sortDir.value).toBe('asc')
-    expect(lib.filters.value).toEqual({ downloaded: false, unread: false, completed: false, needsSource: false })
+    expect(lib.filters.value).toEqual({ downloaded: false, unread: false, completed: false, needsSource: false, stalled: false })
   })
 })

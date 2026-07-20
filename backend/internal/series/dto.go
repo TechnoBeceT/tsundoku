@@ -69,6 +69,20 @@ type SeriesSummaryDTO struct {
 	// nothing new to read. A nil value serializes as JSON null, never the zero
 	// time and never "".
 	LastChapterDownloadedAt *string `json:"lastChapterDownloadedAt"`
+	// LatestChapterAt is when this series' newest chapter was RELEASED — the
+	// series-bound MAX(effectiveReleaseDate) across ANY provider (the source's
+	// provider_upload_date, else a chapter's download_date fallback). It answers
+	// "when did I last get a new chapter" and powers the longest-waiting /
+	// recently-updated sort. RFC3339; null when no chapter carries any date.
+	// Distinct from LastChapterDownloadedAt (a FETCH timestamp): this tracks the
+	// SOURCE's publish date, which is what "am I waiting" is really measured on.
+	LatestChapterAt *string `json:"latestChapterAt"`
+	// IsStalled is true when LatestChapterAt is older than the stalled threshold
+	// (health.stalled_threshold_days, default 30) AND the series is still monitored
+	// AND not completed — i.e. the owner is waiting and no source has published in
+	// the window. SERIES-BOUND: a series with one dead source but another still
+	// publishing is NOT stalled. Purely informational — nothing auto-drops.
+	IsStalled bool `json:"isStalled"`
 }
 
 // SeriesDetailDTO is the full series view: the summary fields plus the series'
@@ -99,10 +113,14 @@ type SeriesDetailDTO struct {
 	// handler uses) never drops them (§16). See the SeriesSummaryDTO fields for
 	// the semantics — LastChapterDownloadedAt is MAX(first_downloaded_at), NOT
 	// MAX(download_date).
-	CreatedAt               string        `json:"createdAt"`
-	LastChapterDownloadedAt *string       `json:"lastChapterDownloadedAt"`
-	Chapters                []ChapterDTO  `json:"chapters"`
-	Providers               []ProviderDTO `json:"providers"`
+	CreatedAt               string  `json:"createdAt"`
+	LastChapterDownloadedAt *string `json:"lastChapterDownloadedAt"`
+	// LatestChapterAt / IsStalled mirror SeriesSummaryDTO (see its field docs) —
+	// carried here too so detailToSummary never drops them (§16).
+	LatestChapterAt *string       `json:"latestChapterAt"`
+	IsStalled       bool          `json:"isStalled"`
+	Chapters        []ChapterDTO  `json:"chapters"`
+	Providers       []ProviderDTO `json:"providers"`
 
 	// Status is the metadata-engine normalized publication status
 	// ("ongoing"|"completed"|"hiatus"|"cancelled"|""). Distinct from Completed
@@ -314,6 +332,11 @@ type ChapterDTO struct {
 	// cleared when read flips back to false).
 	ReadAt      *time.Time `json:"readAt"`
 	PageVersion string     `json:"pageVersion"`
+	// ReleaseDate is this chapter's effective release date (QCAT-297,
+	// Komikku-style): the satisfying/best provider's provider_upload_date for the
+	// chapter's key, else the chapter's download_date. Null only for a chapter no
+	// source dated that was never downloaded. Rendered under each chapter row.
+	ReleaseDate *time.Time `json:"releaseDate"`
 }
 
 // ProviderDTO is one SeriesProvider in a series-detail response. ID is the
@@ -417,7 +440,7 @@ type SeriesHealthDTO struct {
 // + SeriesDisplay resolve DisplayName and CoverURL from the provider set, and
 // category.NameOf resolves the category name from the edge. rollup carries the
 // chapter-state counts and the newest first_downloaded_at (nil when unknown).
-func newSummaryDTO(s *ent.Series, rollup seriesRollup) SeriesSummaryDTO {
+func newSummaryDTO(s *ent.Series, rollup seriesRollup, latestChapterAt *time.Time, isStalled bool) SeriesSummaryDTO {
 	meta := MetadataProvider(s)
 	dispName, coverURL := SeriesDisplay(s, meta)
 	return SeriesSummaryDTO{
@@ -433,6 +456,8 @@ func newSummaryDTO(s *ent.Series, rollup seriesRollup) SeriesSummaryDTO {
 		ChapterCounts:           rollup.Counts,
 		CreatedAt:               formatRFC3339(s.CreatedAt),
 		LastChapterDownloadedAt: formatRFC3339Ptr(rollup.LastChapterDownloadedAt),
+		LatestChapterAt:         formatRFC3339Ptr(latestChapterAt),
+		IsStalled:               isStalled,
 	}
 }
 
@@ -484,7 +509,7 @@ func formatRFC3339Ptr(t *time.Time) *string {
 // number — a frozen 0-provider series (all sources removed via M6) keeps its CBZs
 // and Chapter rows but loses the title source, so the number is the only display
 // name left. If even the number is absent (a rare corner) the name stays blank.
-func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
+func newChapterDTO(c *ent.Chapter, name string, releaseDate *time.Time) ChapterDTO {
 	return ChapterDTO{
 		ID:           c.ID.String(),
 		ChapterKey:   c.ChapterKey,
@@ -497,6 +522,7 @@ func newChapterDTO(c *ent.Chapter, name string) ChapterDTO {
 		LastReadPage: c.LastReadPage,
 		ReadAt:       c.ReadAt,
 		PageVersion:  PageVersion(c.Filename, c.DownloadDate),
+		ReleaseDate:  releaseDate,
 	}
 }
 

@@ -391,6 +391,8 @@ func detailToSummary(d seriessvc.SeriesDetailDTO) seriessvc.SeriesSummaryDTO {
 		ChapterCounts:           d.ChapterCounts,
 		CreatedAt:               d.CreatedAt,
 		LastChapterDownloadedAt: d.LastChapterDownloadedAt,
+		LatestChapterAt:         d.LatestChapterAt,
+		IsStalled:               d.IsStalled,
 	}
 }
 

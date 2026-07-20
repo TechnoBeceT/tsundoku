@@ -7,6 +7,7 @@ import SelectField from '../ui/SelectField.vue'
 import Toggle from '../ui/Toggle.vue'
 import type { SelectOption } from '../ui/forms.types'
 import type { SeriesDetail } from '../screens/seriesDetail.types'
+import { relativeTime, absoluteTime } from '~/utils/timeFormat'
 
 /**
  * SeriesHeader — the Series-Detail header card: the cover, the category chip +
@@ -53,6 +54,23 @@ const categorySelectOptions = computed<SelectOption[]>(() =>
         <div class="header__titlebox">
           <Chip variant="category">{{ series.category }}</Chip>
           <h1 class="header__title">{{ series.title }}</h1>
+          <!-- Last-release line (QCAT-297): when the source published the newest
+               chapter, plus a Stalled marker when the owner is waiting past the
+               threshold. Both informational; omitted when no chapter is dated. -->
+          <div v-if="series.latestChapterAt || series.isStalled" class="header__released">
+            <span
+              v-if="series.latestChapterAt"
+              class="header__released-when"
+              :title="absoluteTime(series.latestChapterAt)"
+            >Last chapter {{ relativeTime(series.latestChapterAt) }}</span>
+            <span v-if="series.isStalled" class="header__stalled">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="13" r="8" />
+                <path d="M12 9v4M12 2h.01M5 3L3 5M19 3l2 2" />
+              </svg>
+              Stalled
+            </span>
+          </div>
         </div>
         <AppButton variant="danger-ghost" size="sm" @click="emit('requestDelete')">
           <template #icon>
@@ -177,6 +195,35 @@ const categorySelectOptions = computed<SelectOption[]>(() =>
   font-size: var(--text-3xl);
   line-height: 1.12;
   color: var(--text);
+}
+
+/* Last-release + stalled marker row under the title. */
+.header__released {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.header__released-when {
+  font-size: var(--text-sm);
+  color: var(--faint);
+}
+
+/* Stalled pill — amber "attention" treatment (token-only, both themes). */
+.header__stalled {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 /* ---- Stats ---------------------------------------------------------------- */

@@ -22,6 +22,7 @@ const base: Chapter = {
   read: false,
   lastReadPage: 0,
   readAt: null,
+  releaseDate: null,
 }
 
 function render(over: Partial<Chapter> = {}) {
@@ -93,5 +94,21 @@ describe('ChapterRow — read button visibility', () => {
 
   it('hides the read button for a non-readable state (failed)', () => {
     expect(readButton({ state: 'failed' })).toBeUndefined()
+  })
+})
+
+describe('ChapterRow — release date (QCAT-297)', () => {
+  it('renders a relative release date when releaseDate is set', () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString()
+    const w = render({ releaseDate: threeDaysAgo })
+
+    expect(w.find('.chapter__released').exists()).toBe(true)
+    expect(w.find('.chapter__released').text()).toBe('3d ago')
+  })
+
+  it('shows no release marker when releaseDate is null (never dated, never downloaded)', () => {
+    const w = render({ releaseDate: null })
+
+    expect(w.find('.chapter__released').exists()).toBe(false)
   })
 })

@@ -2649,6 +2649,13 @@ export interface components {
              * @description When this series' newest chapter became readable — MAX(first_downloaded_at) across its chapters. Powers the "recently updated" sort. Null when no chapter ever carried a first-downloaded time. NOT MAX(download_date): a download_date is a fetch timestamp a convergence upgrade rewrites on an old chapter, which would float a series to the top with nothing new to read. Always present as a key; its value may be null.
              */
             lastChapterDownloadedAt: string | null;
+            /**
+             * Format: date-time
+             * @description When this series' newest chapter was RELEASED — the series-bound MAX across ANY provider of the source's provider_upload_date, else a chapter's download_date fallback (QCAT-297). Powers the longest-waiting / recently-released sort and the "waiting Nd" / stalled badge. Distinct from lastChapterDownloadedAt (a fetch timestamp): this is the SOURCE's publish date. Always present as a key; null when no chapter carries any date.
+             */
+            latestChapterAt: string | null;
+            /** @description True when latestChapterAt is older than the stalled threshold (health.stalled_threshold_days, default 30) AND the series is still monitored AND not completed. SERIES-BOUND: a series with one dead source but another still publishing is NOT stalled. Purely informational — nothing auto-drops. */
+            isStalled: boolean;
         };
         Chapter: {
             /**
@@ -2684,6 +2691,11 @@ export interface components {
              *     replaces the CBZ mid-read is never served from a stale cache entry.
              */
             pageVersion: string;
+            /**
+             * Format: date-time
+             * @description This chapter's effective release date (Komikku-style, QCAT-297): the satisfying/best provider's provider_upload_date for the chapter's key, else the chapter's download_date. Null only for a chapter no source dated that was never downloaded.
+             */
+            releaseDate: string | null;
         };
         ChapterProgress: {
             /** @description Chapter UUID. */
@@ -2797,6 +2809,13 @@ export interface components {
              * @description When this series' newest chapter became readable — MAX(first_downloaded_at) across its chapters. Powers the "recently updated" sort. Null when no chapter ever carried a first-downloaded time. NOT MAX(download_date): a download_date is a fetch timestamp a convergence upgrade rewrites on an old chapter, which would float a series to the top with nothing new to read. Always present as a key; its value may be null.
              */
             lastChapterDownloadedAt: string | null;
+            /**
+             * Format: date-time
+             * @description When this series' newest chapter was RELEASED — the series-bound MAX across ANY provider of the source's provider_upload_date, else a chapter's download_date fallback (QCAT-297). Distinct from lastChapterDownloadedAt (a fetch timestamp): this is the SOURCE's publish date. Always present as a key; null when no chapter carries any date.
+             */
+            latestChapterAt: string | null;
+            /** @description True when latestChapterAt is older than the stalled threshold (health.stalled_threshold_days, default 30) AND the series is still monitored AND not completed. SERIES-BOUND. Purely informational. */
+            isStalled: boolean;
             /** @description The series' chapters, ordered by number then chapter key. */
             chapters: components["schemas"]["Chapter"][];
             /** @description The series' providers. */
@@ -4333,14 +4352,16 @@ export interface components {
             completed: boolean;
             /** @description Narrow to series with no live download source (every provider is disk-origin). */
             needsSource: boolean;
+            /** @description Narrow to series flagged stalled (QCAT-297) — no new chapter from any source within the stalled threshold while still monitored + not completed. */
+            stalled: boolean;
         };
         /** @description The owner's persisted library-list view state — sort field, direction, and active toggle-filters. A single-owner server-side preference (GET/PUT /api/library/prefs) so the chosen sort + filters survive a refresh/restart and are shared cross-device. */
         LibraryPrefs: {
             /**
-             * @description The active sort field. One of title (Alphabetical), added (date added), updated (latest chapter), unread (unread count), total (total chapters), random (shuffle).
+             * @description The active sort field. One of title (Alphabetical), added (date added), updated (latest chapter), waiting (last released — longest waiting / recently released, QCAT-297), unread (unread count), total (total chapters), random (shuffle).
              * @enum {string}
              */
-            sortKey: "title" | "added" | "updated" | "unread" | "total" | "random";
+            sortKey: "title" | "added" | "updated" | "waiting" | "unread" | "total" | "random";
             /**
              * @description The sort direction.
              * @enum {string}

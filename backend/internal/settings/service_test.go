@@ -5,6 +5,7 @@ package settings_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ func testDefaults() settings.Defaults {
 		MaxRetries:              3,
 		RetryBackoff:            time.Minute,
 		StaleGraceDays:          14,
+		StalledThresholdDays:    30,
 		ExtensionCheckInterval:  24 * time.Hour,
 		WarmupInterval:          15 * time.Minute,
 		WarmupSlowThresholdMs:   5000,
@@ -47,29 +49,52 @@ func testDefaults() settings.Defaults {
 	}
 }
 
-// TestRetainedVersions proves the extensions.retained_versions accessor returns
-// the injected default, hot-reloads a valid Set override at use-time, and
-// fail-closes an out-of-bounds value (bounds 1..20).
-func TestRetainedVersions(t *testing.T) {
+// assertIntTunable exercises one int-typed tunable end-to-end: its injected
+// default, a valid override hot-reloading through the typed accessor, and
+// fail-closed rejection of a below-min AND an above-max value. Shared by the
+// int-tunable tests so the identical default→set→bounds pattern lives once
+// (§2 DRY — extracting it also removes the dupl the copies would otherwise be).
+// get selects the accessor under test so the SAME body covers any int key.
+func assertIntTunable(t *testing.T, key string, get func(*settings.Service, context.Context) int, def, override, belowMin, aboveMax int) {
+	t.Helper()
 	db := testdb.New(t)
 	svc := settings.NewService(db, testDefaults())
 	ctx := context.Background()
 
-	if got := svc.RetainedVersions(ctx); got != 3 {
-		t.Errorf("RetainedVersions default = %d, want 3", got)
+	if got := get(svc, ctx); got != def {
+		t.Errorf("%s default = %d, want %d", key, got, def)
 	}
-	if err := svc.Set(ctx, settings.KeyRetainedVersions, "7"); err != nil {
-		t.Fatalf("Set(7): %v", err)
+	if err := svc.Set(ctx, key, strconv.Itoa(override)); err != nil {
+		t.Fatalf("Set(%d): %v", override, err)
 	}
-	if got := svc.RetainedVersions(ctx); got != 7 {
-		t.Errorf("after Set, RetainedVersions = %d, want 7 (read-at-use hot reload)", got)
+	if got := get(svc, ctx); got != override {
+		t.Errorf("after Set, %s = %d, want %d (read-at-use hot reload)", key, got, override)
 	}
-	if err := svc.Set(ctx, settings.KeyRetainedVersions, "0"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Errorf("Set(0) below the min: err = %v, want ErrInvalidSetting", err)
+	if err := svc.Set(ctx, key, strconv.Itoa(belowMin)); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Errorf("Set(%d) below the min: err = %v, want ErrInvalidSetting", belowMin, err)
 	}
-	if err := svc.Set(ctx, settings.KeyRetainedVersions, "21"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Errorf("Set(21) above the max: err = %v, want ErrInvalidSetting", err)
+	if err := svc.Set(ctx, key, strconv.Itoa(aboveMax)); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Errorf("Set(%d) above the max: err = %v, want ErrInvalidSetting", aboveMax, err)
 	}
+}
+
+// TestRetainedVersions proves the extensions.retained_versions accessor returns
+// the injected default, hot-reloads a valid override, and fail-closes out of
+// bounds (1..20).
+func TestRetainedVersions(t *testing.T) {
+	assertIntTunable(t, settings.KeyRetainedVersions,
+		func(s *settings.Service, ctx context.Context) int { return s.RetainedVersions(ctx) },
+		3, 7, 0, 21)
+}
+
+// TestStalledThresholdDays proves the QCAT-297 health.stalled_threshold_days
+// accessor returns the injected default (30), hot-reloads a valid override, and
+// fail-closes out of bounds (1..365 — NOT 0, unlike stale_grace_days: a 0-day
+// stalled window would flag the whole library).
+func TestStalledThresholdDays(t *testing.T) {
+	assertIntTunable(t, settings.KeyStalledThresholdDays,
+		func(s *settings.Service, ctx context.Context) int { return s.StalledThresholdDays(ctx) },
+		30, 45, 0, 366)
 }
 
 // TestAccessorsReturnDefaultsWhenNoRow proves every typed accessor falls back to
@@ -271,8 +296,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 32 {
-		t.Fatalf("List len = %d, want 32", len(list))
+	if len(list) != 33 {
+		t.Fatalf("List len = %d, want 33", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {

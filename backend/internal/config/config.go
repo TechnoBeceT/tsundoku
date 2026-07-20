@@ -235,6 +235,12 @@ type HealthConfig struct {
 	// the source having fallen behind the series' leading edge — before it is
 	// reported "stale". Default 14. Set via TSUNDOKU_HEALTH_STALEGRACEDAYS.
 	StaleGraceDays int
+	// StalledThresholdDays is how old a series' newest chapter release must be —
+	// series-bound, across ANY provider (QCAT-297) — before the series is flagged
+	// "stalled" (informational only; nothing auto-drops). Default 30. Bounds
+	// 1..365 are enforced by the settings overlay. Set via
+	// TSUNDOKU_HEALTH_STALLEDTHRESHOLDDAYS.
+	StalledThresholdDays int
 }
 
 // MetadataConfig holds credentials for the Phase-1 native metadata engine's
@@ -470,8 +476,9 @@ func defaults() map[string]any {
 		"jobs.trackretryinterval":     "5m",
 		"jobs.autoupdatetrack":        true,
 		// Health — M7 source-health computation.
-		"health.stalegracedays": 14,
-		"storage.folder":        "/data/manga",
+		"health.stalegracedays":       14,
+		"health.stalledthresholddays": 30,
+		"storage.folder":              "/data/manga",
 		// Sources — source-politeness circuit-breaker + delay defaults.
 		"sources.failurethreshold": 5,
 		"sources.cooldown":         "30m",

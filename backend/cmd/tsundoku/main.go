@@ -497,6 +497,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		MaxRetries:              cfg.Jobs.MaxRetries,
 		RetryBackoff:            cfg.Jobs.RetryBackoff,
 		StaleGraceDays:          cfg.Health.StaleGraceDays,
+		StalledThresholdDays:    cfg.Health.StalledThresholdDays,
 		ExtensionCheckInterval:  cfg.Jobs.ExtensionCheckInterval,
 		WarmupInterval:          cfg.Jobs.WarmupInterval,
 		WarmupSlowThresholdMs:   cfg.Jobs.WarmupSlowThresholdMs,

@@ -18,6 +18,8 @@ function series(over: Partial<SeriesSummary> & { id: string }): SeriesSummary {
     },
     createdAt: over.createdAt ?? '2020-01-01T00:00:00Z',
     lastChapterDownloadedAt: over.lastChapterDownloadedAt ?? null,
+    latestChapterAt: over.latestChapterAt ?? null,
+    isStalled: over.isStalled ?? false,
   }
 }
 
@@ -96,6 +98,19 @@ describe('sortSeries', () => {
     // Null tie broken by title: Bravo < Echo.
     expect(sortSeries(items, 'updated', 'asc').map((s) => s.id)).toEqual(['d', 'a', 'c', 'b', 'e'])
     expect(sortSeries(items, 'updated', 'desc').map((s) => s.id)).toEqual(['c', 'a', 'd', 'b', 'e'])
+  })
+
+  it('waiting (latestChapterAt) orders longest-waiting/recently-released, nulls last both ways', () => {
+    const w = [
+      series({ id: 'p', title: 'Papa', latestChapterAt: '2024-01-01T00:00:00Z' }),
+      series({ id: 'q', title: 'Quebec', latestChapterAt: null }),
+      series({ id: 'r', title: 'Romeo', latestChapterAt: '2026-01-01T00:00:00Z' }),
+      series({ id: 's', title: 'Sierra', latestChapterAt: '2025-01-01T00:00:00Z' }),
+    ]
+    // asc = LONGEST waiting first (oldest release): p(2024) < s(2025) < r(2026); null last.
+    expect(sortSeries(w, 'waiting', 'asc').map((x) => x.id)).toEqual(['p', 's', 'r', 'q'])
+    // desc = RECENTLY released first: r(2026) > s(2025) > p(2024); null STILL last (not sign-flipped).
+    expect(sortSeries(w, 'waiting', 'desc').map((x) => x.id)).toEqual(['r', 's', 'p', 'q'])
   })
 
   it('unread orders correctly in both directions', () => {

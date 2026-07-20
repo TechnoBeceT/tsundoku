@@ -24,6 +24,7 @@ function chapter(over: Partial<Chapter> & { chapterKey: string }): Chapter {
     read: over.read ?? false,
     lastReadPage: over.lastReadPage ?? 0,
     readAt: over.readAt ?? null,
+    releaseDate: over.releaseDate ?? null,
   }
 }
 

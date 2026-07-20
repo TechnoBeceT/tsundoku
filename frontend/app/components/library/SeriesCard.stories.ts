@@ -11,12 +11,13 @@ import { seriesPage } from '../../fixtures/series'
 // stories showcase and assert they exist so each `series` arg is a defined
 // SeriesSummary (noUncheckedIndexedAccess types a bare index as possibly-undefined).
 const monitored = seriesPage[0]
+const stalled = seriesPage[1]
 const noUnread = seriesPage[2]
 const pausedCompleted = seriesPage[3]
 const needsSource = seriesPage[4]
 const freshlyAdopted = seriesPage[5]
-if (!monitored || !noUnread || !pausedCompleted || !needsSource || !freshlyAdopted) {
-  throw new Error('seriesPage fixture must have entries at indices 0, 2, 3, 4, and 5')
+if (!monitored || !stalled || !noUnread || !pausedCompleted || !needsSource || !freshlyAdopted) {
+  throw new Error('seriesPage fixture must have entries at indices 0, 1, 2, 3, 4, and 5')
 }
 
 const meta = {
@@ -69,6 +70,15 @@ export const FreshlyAdopted: Story = {
  */
 export const NeedsSource: Story = {
   args: { series: needsSource },
+}
+
+/**
+ * `isStalled: true` — the amber "STALLED" badge (QCAT-297): a monitored,
+ * not-completed series whose newest chapter released longer than the threshold
+ * ago. Purely informational — "you're waiting and nothing has come".
+ */
+export const Stalled: Story = {
+  args: { series: stalled },
 }
 
 /** Every card in the fixture page, laid out in the library grid. */
