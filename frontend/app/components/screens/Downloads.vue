@@ -17,6 +17,7 @@ import ActiveFailureBanner from '../downloads/ActiveFailureBanner.vue'
 import RequeueConfirmModal from '../downloads/RequeueConfirmModal.vue'
 import { useNow } from '../../composables/useNow'
 import type { DownloadItem, DownloadState, DownloadTab, RetryAllState } from './downloads.types'
+import { isFailureRow, isRetryableFailure, isTerminalFailure, failSubTabPredicate } from './downloads.failures'
 
 /**
  * Downloads — the cross-library download-activity screen. ONE screen, three tabs
@@ -50,10 +51,12 @@ const props = withDefaults(defineProps<{
   /** When true, render skeleton rows instead of content. */
   loading?: boolean
   /**
-   * Exact per-state server counts for tab badges + bulk-action gating. Defaulted to zeros
-   * so existing Storybook stories that omit this prop still render without errors.
+   * Server badge counts. `allFailures` is the HONEST failed-set total (state-failed
+   * ∪ source-failing) — so the Failed badge counts broken UPGRADES too. The
+   * retryable/terminal sub-tab split is derived over the loaded failed page (the API
+   * offers no per-flag count). Defaulted to zeros so stories that omit it still render.
    */
-  counts?: { active: number; failed: number; terminal: number; queued: number }
+  counts?: { active: number; queued: number; allFailures: number }
   /** Server total for the active tab — drives the load-more affordance. */
   total?: number
   /** Whether more pages exist for the active tab (items.length < server total). */
@@ -80,7 +83,7 @@ const props = withDefaults(defineProps<{
   retryingAll: null,
   retryError: '',
   loading: false,
-  counts: () => ({ active: 0, failed: 0, terminal: 0, queued: 0 }),
+  counts: () => ({ active: 0, queued: 0, allFailures: 0 }),
   total: 0,
   hasMore: false,
   loadingMore: false,
@@ -133,30 +136,35 @@ const applySearch = (list: DownloadItem[]): DownloadItem[] => {
 // counts.x) continue to work without further change throughout the file.
 const counts = computed(() => props.counts)
 
+// The loaded failed set — every failure row on the current Failed page (state-failed
+// ∪ source-failing). The retryable/terminal sub-tab counts are DERIVED from it (the
+// documented loaded-page caveat) since the API offers no per-flag server count; the
+// "All failures" badge stays the exact server total (counts.allFailures).
+const loadedFailures = computed(() => props.items.filter(isFailureRow))
+const retryableCount = computed(() => loadedFailures.value.filter(isRetryableFailure).length)
+const terminalCount = computed(() => loadedFailures.value.filter(isTerminalFailure).length)
+
 const mainTabs = computed(() => [
   { key: 'active', label: 'Active', count: counts.value.active },
-  { key: 'failed', label: 'Failed', count: counts.value.failed + counts.value.terminal },
+  { key: 'failed', label: 'Failed', count: counts.value.allFailures },
   { key: 'queued', label: 'Queued', count: counts.value.queued },
 ])
 
 const failTabs = computed(() => [
-  { key: 'all', label: 'All failures', count: counts.value.failed + counts.value.terminal },
-  { key: 'retryable', label: 'Retryable', count: counts.value.failed },
-  { key: 'terminal', label: 'Terminal', count: counts.value.terminal },
+  { key: 'all', label: 'All failures', count: counts.value.allFailures },
+  { key: 'retryable', label: 'Retryable', count: retryableCount.value },
+  { key: 'terminal', label: 'Terminal', count: terminalCount.value },
 ])
 
 // ---- Per-tab rows -----------------------------------------------------------
 const activeRows = computed(() => applySearch(byState(['downloading', 'upgrading'])))
 
-const failedRows = computed(() => {
-  const states: DownloadState[]
-    = failSubTab.value === 'retryable'
-      ? ['failed']
-      : failSubTab.value === 'terminal'
-        ? ['permanently_failed']
-        : ['failed', 'permanently_failed']
-  return applySearch(byState(states))
-})
+// The Failed tab routes by the FAILING SOURCE's budget (retryable/terminal), not by
+// chapter state — so a downloaded broken-upgrade row lands in Retryable instead of
+// vanishing. This is the fix for the empty-Retryable bug.
+const failedRows = computed(() =>
+  applySearch(loadedFailures.value.filter(failSubTabPredicate(failSubTab.value))),
+)
 
 const queuedRows = computed(() => {
   let list = byState(['wanted', 'upgrade_available'])
@@ -185,8 +193,9 @@ const deferralSummary = computed(() => {
 
 // ---- Active-tab failure awareness -------------------------------------------
 // When the Active list is empty, "up to date" is a LIE if chapters are failing or
-// sources are cooling down. Total failing = all failed states (retryable + terminal).
-const failingCount = computed(() => counts.value.failed + counts.value.terminal)
+// sources are cooling down. Total failing = the honest failed-set total (state-failed
+// ∪ source-failing) — so a wave of broken upgrades still lights the banner.
+const failingCount = computed(() => counts.value.allFailures)
 const showActiveBanner = computed(
   () => activeRows.value.length === 0 && (failingCount.value > 0 || props.coolingDownSources > 0),
 )
@@ -311,8 +320,8 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
                 variant="mini"
                 size="sm"
                 :loading="retryingAll === 'failed'"
-                :disabled="counts.failed === 0 || retryingAll !== null"
-                @click="openConfirm('failed', counts.failed)"
+                :disabled="retryableCount === 0 || retryingAll !== null"
+                @click="openConfirm('failed', retryableCount)"
               >
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -326,8 +335,8 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
                 variant="mini"
                 size="sm"
                 :loading="retryingAll === 'permanently_failed'"
-                :disabled="counts.terminal === 0 || retryingAll !== null"
-                @click="openConfirm('permanently_failed', counts.terminal)"
+                :disabled="terminalCount === 0 || retryingAll !== null"
+                @click="openConfirm('permanently_failed', terminalCount)"
               >
                 {{ retryingAll === 'permanently_failed' ? 'Resetting…' : 'Reset all terminal' }}
               </AppButton>

@@ -10,12 +10,16 @@
 
 /**
  * DownloadState — the subset of `Chapter.state` the Downloads screen surfaces.
- * `downloaded` is intentionally absent (completed chapters live in the per-series
- * library view, not here).
+ * `downloaded` is normally hidden (completed chapters live in the per-series
+ * library view), but the Failed tab's HONEST FAILURES set (fetched with
+ * `include_source_failures=true`) surfaces `downloaded` chapters whose source
+ * fetch — most often a failed UPGRADE — keeps failing. So `downloaded` is a
+ * legal state HERE, carried by those source-failing rows.
  */
 export type DownloadState =
   | 'wanted'
   | 'downloading'
+  | 'downloaded'
   | 'upgrading'
   | 'upgrade_available'
   | 'failed'
@@ -117,4 +121,36 @@ export interface DownloadItem {
   lastError?: string
   /** Machine error category (failed rows) — mapped to a human label. */
   errorCategory?: ErrorCategory
+
+  // ---- Honest per-source failure (the Failed tab, include_source_failures) ----
+  // These name the source ACTUALLY failing this chapter — which, for a downloaded
+  // chapter whose upgrade is broken, is a DIFFERENT source from `provider` (the
+  // satisfier). Undefined for every row that has no failing source.
+  /** Raw source-ID key of the failing source (distinct from `provider`). */
+  failingProvider?: string
+  /** Display name of the failing source — drives the "‹source› · N/max" badge + upgrade target. */
+  failingProviderName?: string
+  /** The failing source's per-source attempt count (ProviderChapter.attempts) — the badge numerator. */
+  failingAttempts?: number
+  /** The failing source's last per-source error message (shown truncated, full on expand). */
+  failingLastError?: string
+  /**
+   * Coarse classification of `failingLastError` via the shared BACKEND error
+   * taxonomy (e.g. "not_found", "no_pages", "rate_limit") — a WIDER set than the
+   * frontend `ErrorCategory`, so this stays a raw string mapped to a label with a
+   * fallback. Undefined when there is no failing source.
+   */
+  failingErrorCategory?: string
+  /**
+   * True when a failing source has budget left (failingAttempts < maxRetries) — a
+   * later cycle or an owner retry will try it again. Routes the row to the
+   * Retryable sub-tab.
+   */
+  retryable?: boolean
+  /**
+   * True when a failing source has spent its whole budget (failingAttempts >=
+   * maxRetries) — given up until an owner retry resets it. Routes the row to the
+   * Terminal sub-tab.
+   */
+  terminal?: boolean
 }

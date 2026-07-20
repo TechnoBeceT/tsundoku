@@ -1,19 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import AppButton from '../ui/AppButton.vue'
+import AttemptBadge from './AttemptBadge.vue'
 import ChapterDownloadRow from './ChapterDownloadRow.vue'
-import type { DownloadItem, ErrorCategory } from '../screens/downloads.types'
+import type { DownloadItem } from '../screens/downloads.types'
 
 /**
  * FailedDownloadCard — the failed-tab row variant: a (bare) ChapterDownloadRow
- * carrying the retry-count + next-attempt before its badge and a retry/reset
- * button after it, plus an expandable last-error panel below.
+ * carrying the FAILING source's attempt badge + next-attempt before its badge and
+ * a retry/reset button after it, plus an expandable last-error panel below.
+ *
+ * HONEST FAILURES: the badge + error name the source ACTUALLY failing this chapter
+ * (`failing*` fields), NOT the satisfier. For a downloaded chapter whose UPGRADE
+ * keeps failing those are different sources — the row reads e.g. "Comix → Hive
+ * Scans · 5/5 · broken pages" (the meta's Upgrade→target comes from
+ * ChapterDownloadRow via `isUpgrade`). A plain failed-state row falls back to its
+ * own provider/attempts/lastError.
  *
  * The retry button surfaces its in-flight state (§16): while `retrying` it spins
- * and reads "Retrying…". Terminal (`permanently_failed`) rows label the action
- * "Reset" instead of "Retry". The error panel's expansion is owner-controlled —
- * the parent keeps the single-open `expanded` flag and handles `toggle-expand`
- * so only one card opens at a time.
+ * and reads "Retrying…". Terminal rows label the action "Reset" instead of "Retry".
+ * The error panel's expansion is owner-controlled — the parent keeps the
+ * single-open `expanded` flag and handles `toggle-expand`.
  */
 const props = defineProps<{
   /** The failed/terminal chapter-activity item. */
@@ -33,27 +40,56 @@ const emit = defineEmits<{
   'toggle-expand': []
 }>()
 
-/** The error category a failed chapter carries → a human-readable label. */
-const ERROR_LABELS: Record<ErrorCategory, string> = {
+/**
+ * Error-category → human label. Covers BOTH the frontend `ErrorCategory` set and
+ * the wider backend `failingErrorCategory` taxonomy (not_found, no_pages, …);
+ * unknown values fall back to a title-cased form, then "Error".
+ */
+const CATEGORY_LABELS: Record<string, string> = {
   network: 'Network error',
   source: 'Source error',
   cloudflare: 'Cloudflare block',
   timeout: 'Timed out',
   parse: 'Parse error',
+  captcha: 'Captcha / block',
+  rate_limit: 'Rate limited',
+  not_found: 'Not found',
+  server_error: 'Server error',
+  no_pages: 'No pages',
+  unknown: 'Error',
 }
 
-// Terminal rows "Reset", retryable rows "Retry".
-const retryLabel = computed(() => (props.item.state === 'permanently_failed' ? 'Reset' : 'Retry'))
-const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props.item.errorCategory] : 'Error'))
+// The FAILING source (broken-upgrade target for a downloaded row) drives the badge;
+// fall back to the row's own satisfying source for a plain failed-state chapter.
+const badgeProvider = computed(() => props.item.failingProviderName ?? props.item.providerName)
+const badgeAttempts = computed(() =>
+  props.item.failingProviderName ? (props.item.failingAttempts ?? 0) : (props.item.attempts ?? 0),
+)
+const badgeMax = computed(() => props.item.maxRetries ?? 0)
+const showBadge = computed(() => badgeMax.value > 0)
+
+// Terminal (budget spent) rows "Reset"; retryable rows "Retry". Terminal is the
+// backend flag OR a permanently_failed chapter state.
+const isTerminal = computed(() => props.item.terminal === true || props.item.state === 'permanently_failed')
+const retryLabel = computed(() => (isTerminal.value ? 'Reset' : 'Retry'))
+
+// Prefer the FAILING source's error over the chapter-level one (the honest cause).
+const displayError = computed(() => props.item.failingLastError ?? props.item.lastError ?? '')
+const displayCategory = computed(() => props.item.failingErrorCategory ?? props.item.errorCategory ?? '')
+const errorLabel = computed(() => {
+  const c = displayCategory.value
+  if (!c) return 'Error'
+  return CATEGORY_LABELS[c] ?? c.replace(/_/g, ' ').replace(/^\w/, (m) => m.toUpperCase())
+})
 </script>
 
 <template>
   <div class="dl-card">
-    <ChapterDownloadRow bare :item="item" @open-series="emit('open-series', $event)">
+    <ChapterDownloadRow bare hide-attempts :item="item" @open-series="emit('open-series', $event)">
       <template #before-badge>
-        <!-- The per-source attempt/max badge renders inside ChapterDownloadRow itself
-             (strictly better than the legacy "Retry #N"); here we only add the
-             scheduled next-attempt ETA for a backing-off failed row. -->
+        <!-- The FAILING source's attempt/max badge (ChapterDownloadRow's own is
+             suppressed via hide-attempts) + the scheduled next-attempt ETA. -->
+        <AttemptBadge v-if="showBadge" :provider="badgeProvider" :attempts="badgeAttempts" :max="badgeMax" />
         <span v-if="item.nextAttempt" class="next-attempt">{{ item.nextAttempt }}</span>
       </template>
       <template #after-badge>
@@ -63,14 +99,14 @@ const errorLabel = computed(() => (props.item.errorCategory ? ERROR_LABELS[props
       </template>
     </ChapterDownloadRow>
 
-    <div v-if="item.lastError" class="dl-card__error">
+    <div v-if="displayError" class="dl-card__error">
       <button type="button" class="err-toggle" @click="emit('toggle-expand')">
         <span class="err-toggle__label">{{ errorLabel }}</span>
-        <span class="err-toggle__msg">{{ item.lastError }}</span>
+        <span class="err-toggle__msg">{{ displayError }}</span>
       </button>
       <div v-if="expanded" class="err-panel">
-        <div class="err-panel__msg">{{ item.lastError }}</div>
-        <div>category: {{ errorLabel }} · retries: {{ item.retries ?? 0 }}<template v-if="item.nextAttempt"> · next attempt {{ item.nextAttempt }}</template></div>
+        <div class="err-panel__msg">{{ displayError }}</div>
+        <div>source: {{ badgeProvider || '—' }} · category: {{ errorLabel }} · attempts: {{ badgeAttempts }}/{{ badgeMax }}<template v-if="item.nextAttempt"> · next attempt {{ item.nextAttempt }}</template></div>
       </div>
     </div>
   </div>

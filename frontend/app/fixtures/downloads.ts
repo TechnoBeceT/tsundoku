@@ -110,6 +110,56 @@ export const downloadItems: DownloadItem[] = [
     errorCategory: 'timeout',
   },
 
+  // ---- Failed: honest source-failure (a downloaded chapter whose UPGRADE fails) ----
+  // The prod bug: this chapter IS on disk (satisfied by Comix) but its higher-ranked
+  // upgrade source keeps failing. It never had a failed chapter STATE, so it used to
+  // be invisible — now surfaced via include_source_failures. Retryable (3/5 budget).
+  {
+    chapterId: 'c-0021',
+    seriesId: '0a4d1c8e-2222-4a00-9000-000000000002',
+    seriesTitle: 'Solo Leveling',
+    seriesCategory: 'Manhwa',
+    coverUrl: cover('solo-leveling'),
+    number: 91,
+    name: 'Chapter 91',
+    state: 'downloaded',
+    provider: 'comix-id',
+    providerName: 'Comix',
+    isUpgrade: true,
+    upgradeTarget: 'Hive Scans',
+    failingProvider: 'hive-id',
+    failingProviderName: 'Hive Scans',
+    failingAttempts: 3,
+    maxRetries: 5,
+    failingLastError: 'broken page: empty image response',
+    failingErrorCategory: 'no_pages',
+    retryable: true,
+    terminal: false,
+  },
+  // A TERMINAL source-failure: the upgrade target exhausted its whole budget (5/5).
+  {
+    chapterId: 'c-0022',
+    seriesId: '0a4d1c8e-2222-4a00-9000-000000000002',
+    seriesTitle: 'Solo Leveling',
+    seriesCategory: 'Manhwa',
+    coverUrl: cover('solo-leveling'),
+    number: 90,
+    name: 'Chapter 90',
+    state: 'downloaded',
+    provider: 'comix-id',
+    providerName: 'Comix',
+    isUpgrade: true,
+    upgradeTarget: 'Hive Scans',
+    failingProvider: 'hive-id',
+    failingProviderName: 'Hive Scans',
+    failingAttempts: 5,
+    maxRetries: 5,
+    failingLastError: 'chapter not found on source',
+    failingErrorCategory: 'not_found',
+    retryable: false,
+    terminal: true,
+  },
+
   // ---- Queued: wanted ----
   {
     chapterId: 'c-0030',
@@ -156,9 +206,16 @@ export const activeItems: DownloadItem[] = downloadItems.filter(
   (i) => i.state === 'downloading' || i.state === 'upgrading',
 )
 
-/** Only the failed/terminal rows — for the Failed story. */
+/**
+ * The honest failed set — for the Failed story. State-failed/permanently_failed
+ * rows PLUS downloaded chapters with a failing source (broken upgrades), exactly
+ * what `include_source_failures=true` surfaces.
+ */
 export const failedItems: DownloadItem[] = downloadItems.filter(
-  (i) => i.state === 'failed' || i.state === 'permanently_failed',
+  (i) =>
+    i.state === 'failed'
+    || i.state === 'permanently_failed'
+    || (i.failingProviderName ?? '') !== '',
 )
 
 /** Only the queued rows — for the Scheduled story. */

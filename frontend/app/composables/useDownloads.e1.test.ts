@@ -134,7 +134,7 @@ describe('useDownloads – E1 fields + download.fail', () => {
 
     const before = getCount
     stubSource!.fire('download.fail', { chapter_id: WAITING_ID, state: 'failed', error: 'boom' })
-    // refresh() = 1 page fetch + 4 count probes = 5 GETs.
+    // refresh() = 1 page fetch + 3 count probes.
     await vi.waitFor(() => expect(getCount).toBeGreaterThan(before))
   })
 })

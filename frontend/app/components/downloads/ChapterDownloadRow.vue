@@ -29,6 +29,13 @@ const props = defineProps<{
   item: DownloadItem
   /** Drop the standalone card surface (when nested inside a card wrapper). */
   bare?: boolean
+  /**
+   * Suppress the row's own per-source AttemptBadge. FailedDownloadCard sets this so
+   * it can render the FAILING source's badge (failing* fields) in the before-badge
+   * slot instead of this row's satisfying-source one — for a broken-upgrade row the
+   * two are DIFFERENT sources and the satisfier's "0/5" would mislead.
+   */
+  hideAttempts?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -48,8 +55,9 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
 // chapter visible instead of falsely crediting the series' top source.
 const providerLabel = computed(() => props.item.providerName || '—')
 
-// Show the per-source attempt/max badge only when a budget is known (max > 0).
-const showAttempts = computed(() => (props.item.maxRetries ?? 0) > 0)
+// Show the per-source attempt/max badge only when a budget is known (max > 0) and
+// the caller hasn't taken over the badge (FailedDownloadCard renders its own).
+const showAttempts = computed(() => !props.hideAttempts && (props.item.maxRetries ?? 0) > 0)
 
 // The upgrade destination text: the named target, else a generic label when the
 // row is an upgrade with no nameable target (the higher source has a feed gap).

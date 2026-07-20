@@ -50,7 +50,7 @@ const ACTIVE_ITEMS = Array.from({ length: 3 }, (_, i) => makeDto(i + 1, 'downloa
 // ---- Call tracking ----------------------------------------------------------
 
 // Mutable binding — the mock closes over this variable; beforeEach reassigns it.
-let getCalls: { path: string; state: string; limit: number | undefined; offset: number | undefined }[] = []
+let getCalls: { path: string; state: string; limit: number | undefined; offset: number | undefined; include: boolean }[] = []
 let postCount = 0
 let runError = false
 
@@ -63,8 +63,9 @@ vi.mock('~/utils/api/client', () => ({
       const state = (q.state as string | undefined) ?? ''
       const limit = q.limit as number | undefined
       const offset = q.offset as number | undefined
+      const include = q.include_source_failures === true
 
-      getCalls.push({ path, state, limit, offset })
+      getCalls.push({ path, state, limit, offset, include })
 
       if (path !== '/api/downloads') {
         return Promise.resolve({ data: null, error: null })
@@ -74,8 +75,10 @@ vi.mock('~/utils/api/client', () => ({
       if (limit === 1) {
         const totals: Record<string, number> = {
           'downloading,upgrading': 3,
-          'failed': 5,
-          'permanently_failed': 2,
+          // The honest failed-set probe passes include_source_failures=true; its
+          // total (7) exceeds the 5 state-failed + 2 permanently-failed because it
+          // also counts downloaded broken-upgrade rows.
+          'failed,permanently_failed': 7,
           'wanted,upgrade_available': 250,
         }
         return Promise.resolve({ data: { total: totals[state] ?? 0, items: [] }, error: null })
@@ -114,36 +117,42 @@ describe('useDownloads – per-tab pagination + server counts', () => {
     runError = false
   })
 
-  it('initial load fires active-tab page fetch + 4 count probes', async () => {
+  it('initial load fires active-tab page fetch + 3 count probes', async () => {
     const { loading, counts } = useDownloads()
 
     await vi.waitFor(() => {
       expect(loading.value).toBe(false)
-      // All 4 count probes settled; queued is the most distinctive assertion.
+      // All 3 count probes settled; queued is the most distinctive assertion.
       expect(counts.value.queued).toBe(250)
     })
 
     const dlCalls = getCalls.filter((c) => c.path === '/api/downloads')
-    expect(dlCalls).toHaveLength(5)
+    expect(dlCalls).toHaveLength(4)
 
-    // Exactly one page fetch (limit 50) for the active tab.
+    // Exactly one page fetch (limit 50) for the active tab — state-only, no widening.
     const pageFetches = dlCalls.filter((c) => c.limit !== 1)
     expect(pageFetches).toHaveLength(1)
     expect(pageFetches[0]!.state).toBe('downloading,upgrading')
     expect(pageFetches[0]!.offset ?? 0).toBe(0)
+    expect(pageFetches[0]!.include).toBe(false)
 
-    // Exactly four count probes (limit 1), one per state group.
+    // Exactly three count probes (limit 1), one per group.
     const probes = dlCalls.filter((c) => c.limit === 1)
-    expect(probes).toHaveLength(4)
+    expect(probes).toHaveLength(3)
     const probeStates = probes.map((p) => p.state).sort()
     expect(probeStates).toEqual(
-      ['downloading,upgrading', 'failed', 'permanently_failed', 'wanted,upgrade_available'].sort(),
+      ['downloading,upgrading', 'failed,permanently_failed', 'wanted,upgrade_available'].sort(),
     )
 
-    // All four counts populated from server totals.
+    // Only the failed-set probe widens to the honest failures set.
+    const failedProbe = probes.find((p) => p.state === 'failed,permanently_failed')!
+    expect(failedProbe.include).toBe(true)
+    const activeProbe = probes.find((p) => p.state === 'downloading,upgrading')!
+    expect(activeProbe.include).toBe(false)
+
+    // Counts populated from server totals.
     expect(counts.value.active).toBe(3)
-    expect(counts.value.failed).toBe(5)
-    expect(counts.value.terminal).toBe(2)
+    expect(counts.value.allFailures).toBe(7)
     expect(counts.value.queued).toBe(250)
   })
 

@@ -14,10 +14,10 @@ import '../../assets/css/tokens/downloads.css'
  * confirm it reads correctly in BOTH dark and light. Each story opens on its
  * tab; the tab bar is interactive (clicking re-filters the shared fixture).
  *
- * The `counts` prop is now required for exact badges + bulk-action gating;
- * all interactive stories derive it from the fixture for correct badge display.
- * Existing stories that use `args` (FailedRetrying, Empty) omit `counts` and
- * receive the zero default (`{ active:0, failed:0, terminal:0, queued:0 }`).
+ * The `counts` prop drives the badges + bulk-action gating; all interactive
+ * stories derive it from the fixture for correct badge display. Stories that omit
+ * `counts` receive the zero default (`{ active:0, queued:0, allFailures:0 }`); the
+ * retryable/terminal sub-tab badges are derived from the loaded items regardless.
  */
 const meta = {
   title: 'Screens/Downloads',
@@ -31,12 +31,13 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Fixture-derived exact counts — matches the downloadItems fixture data. */
+/** Fixture-derived counts — matches the downloadItems fixture data. */
 const fixtureCounts = {
   active: downloadItems.filter((i) => i.state === 'downloading' || i.state === 'upgrading').length,
-  failed: downloadItems.filter((i) => i.state === 'failed').length,
-  terminal: downloadItems.filter((i) => i.state === 'permanently_failed').length,
   queued: downloadItems.filter((i) => i.state === 'wanted' || i.state === 'upgrade_available').length,
+  allFailures: downloadItems.filter(
+    (i) => i.state === 'failed' || i.state === 'permanently_failed' || (i.failingProviderName ?? '') !== '',
+  ).length,
 }
 
 /** Renders the screen with a live `activeTab` so the tab bar actually switches. */
@@ -83,7 +84,7 @@ export const QueuedDeferred: Story = {
   args: {
     items: queuedDeferredItems,
     activeTab: 'queued',
-    counts: { active: 0, failed: 0, terminal: 0, queued: queuedDeferredItems.length },
+    counts: { active: 0, queued: queuedDeferredItems.length, allFailures: 0 },
   },
 }
 
@@ -121,7 +122,7 @@ export const WithLoadMore: Story = {
     activeTab: 'queued',
     hasMore: true,
     total: 250,
-    counts: { active: 2, failed: 5, terminal: 1, queued: 250 },
+    counts: { active: 2, queued: 250, allFailures: 6 },
   },
 }
 
@@ -133,7 +134,7 @@ export const DownloadNowIdle: Story = {
   args: {
     items: queuedItems,
     activeTab: 'queued',
-    counts: { active: 2, failed: 5, terminal: 1, queued: 3 },
+    counts: { active: 2, queued: 3, allFailures: 6 },
   },
 }
 
@@ -146,7 +147,7 @@ export const DownloadNowBusy: Story = {
   args: {
     items: queuedItems,
     activeTab: 'queued',
-    counts: { active: 2, failed: 5, terminal: 1, queued: 3 },
+    counts: { active: 2, queued: 3, allFailures: 6 },
     running: true,
   },
 }
@@ -155,7 +156,7 @@ export const DownloadNowStarted: Story = {
   args: {
     items: queuedItems,
     activeTab: 'queued',
-    counts: { active: 2, failed: 5, terminal: 1, queued: 3 },
+    counts: { active: 2, queued: 3, allFailures: 6 },
     runMessage: 'Download cycle started',
   },
 }
@@ -165,7 +166,7 @@ export const DownloadNowFailed: Story = {
   args: {
     items: queuedItems,
     activeTab: 'queued',
-    counts: { active: 2, failed: 5, terminal: 1, queued: 3 },
+    counts: { active: 2, queued: 3, allFailures: 6 },
     runError: 'Failed to start download cycle',
   },
 }

@@ -15,7 +15,7 @@
  *   :retrying-all     — bulk retry scope in flight, or null
  *   :retry-error      — surfaced retry/load failure (dismissible banner)
  *   :loading          — true during the initial fetch
- *   :counts           — exact per-state server counts for badges + bulk gating
+ *   :counts           — server badge counts { active, queued, allFailures }
  *   :total            — server total for the active tab (load-more affordance)
  *   :has-more         — whether more pages exist for the active tab
  *   :loading-more     — whether a load-more fetch is in flight

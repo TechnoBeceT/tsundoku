@@ -2,8 +2,14 @@
  * useDownloads — data layer for the downloads screen.
  *
  * Per-tab paginated loader: fetches GET /api/downloads?state=<tab-states>&limit=50&offset=N
- * for the active tab, plus 4 parallel count probes (limit:1) for exact badge counts.
+ * for the active tab, plus 3 parallel count probes (limit:1) for badge counts.
  * Switching tabs resets to offset 0; loadMore() appends the next page.
+ *
+ * HONEST FAILURES: the Failed tab's List fetch, its `allFailures` count probe, and
+ * retry-all all pass `include_source_failures=true`, so DOWNLOADED chapters whose
+ * source fetch (esp. a broken UPGRADE) keeps failing surface as failed rows — the
+ * fix for the "Retryable sub-tab empty while the engine fails constantly" bug. The
+ * retryable/terminal split is derived client-side over the loaded failed page.
  *
  * Maps the generated DownloadChapter DTO → DownloadItem, unwrapping the
  * { total, items } envelope.
@@ -103,6 +109,18 @@ function mapItem(dto: DownloadChapterDTO): DownloadItem {
     errorCategory: VALID_ERROR_CATEGORIES.has(dto.errorCategory)
       ? (dto.errorCategory as ErrorCategory)
       : undefined,
+    // ---- Honest per-source failure (Failed tab, include_source_failures) ----
+    // The source ACTUALLY failing this chapter (a broken upgrade target for a
+    // downloaded row) — distinct from `provider` (the satisfier). "" → undefined so
+    // a row with no failing source omits these.
+    failingProvider: dto.failingProvider || undefined,
+    failingProviderName: dto.failingProviderName || undefined,
+    failingAttempts: dto.failingAttempts ?? 0,
+    failingLastError: dto.failingLastError || undefined,
+    // Raw backend taxonomy (wider than ErrorCategory) — kept verbatim, labelled downstream.
+    failingErrorCategory: dto.failingErrorCategory || undefined,
+    retryable: dto.retryable ?? false,
+    terminal: dto.terminal ?? false,
   }
 }
 
@@ -124,8 +142,12 @@ export function useDownloads() {
   const offset = ref(0)
   const loadingMore = ref(false)
 
-  // Exact per-state badge counts from 4 parallel server probes.
-  const counts = ref({ active: 0, failed: 0, terminal: 0, queued: 0 })
+  // Badge counts from 3 parallel server probes (limit:1). `allFailures` is the
+  // HONEST failed-set total: state-failed ∪ source-failing (include_source_failures)
+  // — so the Failed badge counts broken UPGRADES too, not just failed-state chapters.
+  // The retryable/terminal split is derived client-side over the loaded failed page
+  // (the documented loaded-page caveat) since the API offers no per-flag count.
+  const counts = ref({ active: 0, queued: 0, allFailures: 0 })
 
   // More results exist when the loaded page is shorter than the server total.
   const hasMore = computed(() => items.value.length < total.value)
@@ -153,7 +175,17 @@ export function useDownloads() {
     }
     try {
       const res = await apiClient.GET('/api/downloads', {
-        params: { query: { state: TAB_STATES[tab], limit: PAGE, offset: offset.value } },
+        params: {
+          query: {
+            state: TAB_STATES[tab],
+            limit: PAGE,
+            offset: offset.value,
+            // The Failed tab widens to the HONEST failures set so downloaded
+            // chapters whose upgrade keeps failing appear. Active/Queued are
+            // state-only (the flag stays off there).
+            ...(tab === 'failed' ? { include_source_failures: true } : {}),
+          },
+        },
       })
       if (res.error || !res.data) throw new Error('Failed to load downloads')
       const mapped = res.data.items.map(mapItem)
@@ -170,21 +202,26 @@ export function useDownloads() {
   }
 
   /**
-   * 4 parallel count probes (limit:1, read only total) so tab badges + bulk-action
-   * gating are exact server totals — not derived from the loaded page subset.
+   * 3 parallel count probes (limit:1, read only total) for the tab badges. The
+   * failed probe passes `include_source_failures=true` so `allFailures` is the true
+   * honest-failed total (state-failed ∪ source-failing) — the exact number the
+   * Failed badge + "All failures" sub-tab show. active/queued stay state-only.
    */
   async function loadCounts(): Promise<void> {
-    const probe = async (state: string): Promise<number> => {
-      const res = await apiClient.GET('/api/downloads', { params: { query: { state, limit: 1 } } })
+    const probe = async (state: string, includeSourceFailures = false): Promise<number> => {
+      const res = await apiClient.GET('/api/downloads', {
+        params: {
+          query: { state, limit: 1, ...(includeSourceFailures ? { include_source_failures: true } : {}) },
+        },
+      })
       return res.data?.total ?? 0
     }
-    const [active, failed, terminal, queued] = await Promise.all([
+    const [active, queued, allFailures] = await Promise.all([
       probe('downloading,upgrading'),
-      probe('failed'),
-      probe('permanently_failed'),
       probe('wanted,upgrade_available'),
+      probe('failed,permanently_failed', true),
     ])
-    counts.value = { active, failed, terminal, queued }
+    counts.value = { active, queued, allFailures }
   }
 
   /** Full reload of the active tab + refresh all badge counts. */
@@ -255,7 +292,10 @@ export function useDownloads() {
     retryError.value = ''
     try {
       const res = await apiClient.POST('/api/downloads/retry-all', {
-        params: { query: { state } },
+        // include_source_failures: retry-all is a Failed-tab-only action, so it
+        // always widens to reset the honest failures set (the broken-upgrade
+        // downloaded chapters' failing sources), not just the state-failed rows.
+        params: { query: { state, include_source_failures: true } },
       })
       if (res.error) throw new Error('Retry all failed')
       await refresh()
