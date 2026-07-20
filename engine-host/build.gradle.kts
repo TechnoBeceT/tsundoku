@@ -29,6 +29,12 @@ dependencies {
     // JCEF types (CefCookieManager) referenced by the KCEF cookie-seed handler. compileOnly:
     // the actual classes ride Suwayomi server's runtime classpath. Pinned to Suwayomi's libs.
     compileOnly("org.jetbrains.intellij.deps.jcef:jcef:144.0.15-g72717cf-chromium-144.0.7559.172-api-1.21-262-b37")
+    // ASM — DexStackFrameRewriter recomputes the StackMapTable dex2jar leaves broken on newer
+    // extension APKs (GAP-100). compileOnly, same reasoning as the JCEF/bcprov deps below: asm
+    // already rides Suwayomi server's RUNTIME classpath transitively (its own BytecodeEditor uses
+    // org.objectweb.asm.*), so this only makes the classes visible to the compiler — it adds no new
+    // runtime artifact. Version pinned to Suwayomi's libs.versions.toml (`asm = org.ow2.asm:asm`).
+    compileOnly("org.ow2.asm:asm:9.9.1")
     // BouncyCastleProvider (Main.kt bootstrap, B22 in the P2 bootstrap-hardening audit): the JCE
     // provider at least one real Mihon extension (zh.copymanga) needs for image-URL decryption.
     // compileOnly, same reasoning as the JCEF dep above: bcprov-jdk18on already rides Suwayomi
@@ -46,6 +52,9 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
 
     testImplementation(kotlin("test"))
+    // DexStackFrameRewriterTest builds a synthetic broken class with ASM to pin the VerifyError; asm
+    // is compileOnly in main (rides Suwayomi's runtime), so the test source needs its own compile dep.
+    testImplementation("org.ow2.asm:asm:9.9.1")
 }
 
 application {

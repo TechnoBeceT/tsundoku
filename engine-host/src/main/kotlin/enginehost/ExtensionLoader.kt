@@ -93,6 +93,11 @@ class ExtensionLoader(
         dex2jar(apkFile.absolutePath, jarFile.absolutePath, fileNameWithoutType)
         extractAssetsFromApk(apkFile, jarFile)
 
+        // Repair the StackMapTable dex2jar (+ Suwayomi's BytecodeEditor) leaves broken on newer
+        // extension APKs, which otherwise fails class verification with "Expecting a stackmap frame
+        // at branch target N" (GAP-100 — e.g. Asura Scans 1.6.66). See DexStackFrameRewriter.
+        DexStackFrameRewriter.repairStackFrames(jarFile.toPath(), javaClass.classLoader)
+
         val instance = loadExtensionSources(jarFile.absolutePath, className)
         val loaded: List<Source> =
             when (instance) {
