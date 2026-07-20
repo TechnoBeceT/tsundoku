@@ -700,6 +700,7 @@ components:
         - maxRetries
         - isUpgrade
         - upgradeTarget
+        - upgradeTargetAttempts
         - failingProvider
         - failingProviderName
         - failingAttempts
@@ -813,6 +814,16 @@ components:
             defers this cycle. ALSO set for a DOWNLOADED chapter surfaced by the honest
             failures set whose failing source is a broken upgrade target (isUpgrade is then
             true and this names failingProviderName).
+        upgradeTargetAttempts:
+          type: integer
+          description: >-
+            The upgrade TARGET's own per-source attempt count (ProviderChapter.attempts)
+            against THIS chapter — the numerator for badging the source the chapter is
+            converging TO ("Asura Scans · 2/5"), the one actually being fetched, rather
+            than the satisfier it replaces (whose `attempts` would read a misleading 0).
+            Pairs with maxRetries exactly as `attempts` does, only for the target. 0 when
+            the chapter has no upgrade target, or the target has no failed attempt yet;
+            always describes the same source `upgradeTarget` names.
         failingProvider:
           type: string
           description: >-

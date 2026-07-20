@@ -89,6 +89,67 @@ describe('ChapterDownloadRow', () => {
     expect(wrapper.find('.attempts').text()).toContain('1/3')
   })
 
+  // An upgrade row is fetched from the TARGET source, so its attempt badge must name
+  // the target + the target's attempts — not the satisfier's misleading "Comix · 0/5".
+  it('badges the upgrade TARGET and its attempts on a named-target upgrade row', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: {
+        item: item({
+          state: 'upgrade_available',
+          isUpgrade: true,
+          upgradeTarget: 'Asura Scans',
+          upgradeTargetAttempts: 2,
+          providerName: 'Comix',
+          attempts: 0,
+          maxRetries: 5,
+        }),
+      },
+      // Render the real AttemptBadge so we can read the source it names + its count.
+      global: { stubs: { CoverImage: true, Chip: true, StatusBadge: true } },
+    })
+    expect(wrapper.find('.attempts__src').text()).toBe('Asura Scans')
+    expect(wrapper.find('.attempts__count').text()).toBe('2/5')
+  })
+
+  // A plain (non-upgrade) row badges its current satisfying source, unchanged.
+  it('badges the current satisfying source on a non-upgrade row', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: {
+        item: item({
+          state: 'downloading',
+          providerName: 'Comix',
+          attempts: 1,
+          maxRetries: 5,
+          upgradeTargetAttempts: 9, // must be ignored on a non-upgrade row
+        }),
+      },
+      global: { stubs: { CoverImage: true, Chip: true, StatusBadge: true } },
+    })
+    expect(wrapper.find('.attempts__src').text()).toBe('Comix')
+    expect(wrapper.find('.attempts__count').text()).toBe('1/5')
+  })
+
+  // A targetless upgrade (the higher source has a feed gap) has no source to name, so
+  // the badge falls back to the current source rather than a blank target.
+  it('falls back to the current source badge on a targetless upgrade', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: {
+        item: item({
+          state: 'upgrade_available',
+          isUpgrade: true,
+          upgradeTarget: undefined,
+          providerName: 'Comix',
+          attempts: 3,
+          maxRetries: 5,
+          upgradeTargetAttempts: 9, // no target ⇒ must be ignored
+        }),
+      },
+      global: { stubs: { CoverImage: true, Chip: true, StatusBadge: true } },
+    })
+    expect(wrapper.find('.attempts__src').text()).toBe('Comix')
+    expect(wrapper.find('.attempts__count').text()).toBe('3/5')
+  })
+
   // The backend reports an EMPTY providerName when no source's feed carries the
   // chapter — nothing is fetching it. The row must say so with an em-dash, not
   // leave a dangling "· " separator.

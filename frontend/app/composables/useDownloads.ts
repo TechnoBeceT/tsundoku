@@ -91,6 +91,9 @@ function mapItem(dto: DownloadChapterDTO): DownloadItem {
     // "" means "not upgrading / no nameable target" — map to undefined so the row
     // simply omits the "→ target" half.
     upgradeTarget: dto.upgradeTarget || undefined,
+    // The upgrade target's own attempt count — badges the source being fetched, not
+    // the satisfier. Backend always sends it (0 when no target).
+    upgradeTargetAttempts: dto.upgradeTargetAttempts ?? 0,
     // The waited-on source's cooldown: raw ISO through to the row (which counts it
     // down live). null (not deferred) → undefined so the row shows no waiting note.
     deferredUntil: dto.deferredUntil ?? undefined,

@@ -59,6 +59,17 @@ const providerLabel = computed(() => props.item.providerName || '—')
 // the caller hasn't taken over the badge (FailedDownloadCard renders its own).
 const showAttempts = computed(() => !props.hideAttempts && (props.item.maxRetries ?? 0) > 0)
 
+// The source the attempt badge describes. On an upgrade row with a NAMED target that
+// is the TARGET (the source actually being fetched, e.g. "Asura Scans · 2/5"), NOT the
+// satisfier it replaces — whose "Comix · 0/5" would misreport the upgrade. A targetless
+// upgrade (the higher source has a feed gap) or a plain download keeps the satisfying
+// source's badge. Resolved as one object so provider + attempts always name one source.
+const attemptBadge = computed(() =>
+  props.item.isUpgrade && props.item.upgradeTarget
+    ? { provider: props.item.upgradeTarget, attempts: props.item.upgradeTargetAttempts ?? 0 }
+    : { provider: props.item.providerName, attempts: props.item.attempts ?? 0 },
+)
+
 // The upgrade destination text: the named target, else a generic label when the
 // row is an upgrade with no nameable target (the higher source has a feed gap).
 const upgradeTargetLabel = computed(() => props.item.upgradeTarget ?? 'higher source')
@@ -112,8 +123,8 @@ const upgradeTargetLabel = computed(() => props.item.upgradeTarget ?? 'higher so
     <div class="dl-row__controls">
       <AttemptBadge
         v-if="showAttempts"
-        :provider="item.providerName"
-        :attempts="item.attempts ?? 0"
+        :provider="attemptBadge.provider"
+        :attempts="attemptBadge.attempts"
         :max="item.maxRetries ?? 0"
       />
       <slot name="before-badge" />

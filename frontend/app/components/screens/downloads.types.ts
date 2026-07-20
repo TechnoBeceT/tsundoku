@@ -68,6 +68,15 @@ export interface DownloadItem {
    */
   upgradeTarget?: string
   /**
+   * The upgrade TARGET's own per-source attempt count (`ProviderChapter.attempts`)
+   * against this chapter — so the row can badge the source it is converging TO
+   * ("Asura Scans · 2/5"), the one actually being fetched, instead of the satisfier's
+   * misleading 0. Pairs with `maxRetries` exactly as `attempts` does, only for the
+   * target. 0/undefined when there is no upgrade target; describes the same source
+   * `upgradeTarget` names.
+   */
+  upgradeTargetAttempts?: number
+  /**
    * Why a QUEUED chapter is not moving: the source the engine is waiting on (the
    * `upgradeTarget` for an upgrading chapter, else the primary source =
    * `providerName` for a wanted one) is under a persisted cooldown, and this is its

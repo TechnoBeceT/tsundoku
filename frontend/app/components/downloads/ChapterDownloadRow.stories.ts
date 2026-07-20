@@ -37,11 +37,15 @@ export const PlaceholderCover: Story = {
 /**
  * An UPGRADING row: the meta line names both sides of the convergence —
  * "MangaDex → Asura Scans" — so during an upgrade wave the owner sees where each
- * chapter is HEADED, not the source being replaced. A row with no `upgradeTarget`
- * (every other story) shows just its current source.
+ * chapter is HEADED, not the source being replaced. The attempt badge names the
+ * TARGET being fetched ("Asura Scans · 1/5"), NOT the satisfier it replaces (whose
+ * "MangaDex · 0/5" would misreport the upgrade). A row with no `upgradeTarget`
+ * (every other story) shows just its current source + that source's badge.
  */
 export const UpgradeTarget: Story = {
-  args: { item: noCover }, // the Berserk fixture is upgrading → Asura Scans
+  // the Berserk fixture is upgrading → Asura Scans; enrich it with a retry budget +
+  // the target's spent attempts so the target-source badge renders.
+  args: { item: { ...noCover, isUpgrade: true, maxRetries: 5, attempts: 0, upgradeTargetAttempts: 1 } },
 }
 
 /**

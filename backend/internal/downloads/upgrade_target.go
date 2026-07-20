@@ -96,18 +96,20 @@ func newUpgradeTargetIndex(provs []*ent.SeriesProvider) upgradeTargetIndex {
 	return idx
 }
 
-// upgradeTargetLabel resolves the display label of the source a chapter is
-// upgrading TO, or "" when the chapter is not upgrading (or no better source can be
-// named). It is what lets the UI render "Comix → Asura Scans" instead of showing
-// only the source being REPLACED (satisfied_by, which is where the file came from).
+// upgradeTargetCarrier picks the feed carrier a chapter is upgrading TO: the source
+// the row shows it converging to, whose label (series.ProviderLabel) and per-source
+// attempt count (its ProviderChapter) both feed the UI's "Comix → Asura Scans · N/max".
+// It returns ok=false when the chapter is not upgrading, or no carrier clears the bar.
+// This is what lets the UI show where the chapter is HEADED instead of only the source
+// being REPLACED (satisfied_by, where the file came from).
 //
 // The rule — the INTENDED target, deliberately NOT the engine's authoritative pick:
 // among the sources whose feed carries this chapter's chapter_key (ranked exactly as
 // the engine ranks them — see upgradeTargetIndex), take the highest-importance one
-// that is (a) NOT the chapter's current satisfier and (b)
-// strictly higher than the satisfier's CURRENT importance (its frozen
-// satisfied_importance watermark when the satisfier was removed or is parked at the
-// importance-0 merge sentinel — mirroring download.effectiveSatisfiedImportance).
+// that is (a) NOT the chapter's current satisfier and (b) strictly higher than the
+// satisfier's CURRENT importance (its frozen satisfied_importance watermark when the
+// satisfier was removed or is parked at the importance-0 merge sentinel — mirroring
+// download.effectiveSatisfiedImportance).
 //
 // GOTCHA — where this can disagree with the engine, and where it MUST NOT. The
 // engine's STRUCTURAL exclusions are mirrored here, because they are permanent: a
@@ -123,21 +125,9 @@ func newUpgradeTargetIndex(provs []*ent.SeriesProvider) upgradeTargetIndex {
 // temporarily deferred the engine may fetch from a lower one — or defer the upgrade
 // entirely — as the row still shows the intended target. Treat this as a UI hint,
 // never as engine state.
-func upgradeTargetLabel(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uuid.UUID]*ent.SeriesProvider) string {
-	if c, ok := upgradeTargetCarrier(ch, idx, provByID); ok {
-		return series.ProviderLabel(c.provider)
-	}
-	return ""
-}
-
-// upgradeTargetCarrier picks the feed carrier a chapter is upgrading TO, applying
-// the exact rule upgradeTargetLabel documents: the highest-importance carrier that
-// is (a) not the current satisfier and (b) strictly outranks the satisfier's
-// current importance (frozen watermark when removed / parked at the merge sentinel).
-// It returns ok=false when the chapter is not upgrading, or no carrier clears the
-// bar. Extracted so upgradeTargetLabel (which wants the NAME) and waitedOnCarrier
-// (which wants the ProviderChapter row, to read its cooldown) share one definition
-// (§2 DRY) and can never disagree on which source is the target.
+//
+// waitedOnCarrier reuses this same pick to read the target's cooldown (§2 DRY), so the
+// two can never disagree on which source is the target.
 func upgradeTargetCarrier(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uuid.UUID]*ent.SeriesProvider) (feedCarrier, bool) {
 	if !isUpgrading(ch.State) {
 		return feedCarrier{}, false
@@ -155,6 +145,23 @@ func upgradeTargetCarrier(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[
 		return c, true
 	}
 	return feedCarrier{}, false
+}
+
+// resolveUpgradeTarget returns the upgrade target's display label AND its own
+// per-source attempt count against this chapter, both from the SINGLE carrier pick —
+// so the badge names the source the chapter is converging TO (the one actually
+// fetched), never the satisfier it replaces. Both are the zero value ("" / 0) when the
+// chapter has no upgrade target, or the target carries no failed attempt yet. In memory
+// over the already-loaded feed index — no query.
+func resolveUpgradeTarget(ch *ent.Chapter, idx upgradeTargetIndex, provByID map[uuid.UUID]*ent.SeriesProvider) (label string, attempts int) {
+	tc, ok := upgradeTargetCarrier(ch, idx, provByID)
+	if !ok {
+		return "", 0
+	}
+	if tc.pc != nil {
+		attempts = tc.pc.Attempts
+	}
+	return series.ProviderLabel(tc.provider), attempts
 }
 
 // failingCarrier returns the feed carrier the FAILURES read-model surfaces for a
@@ -186,7 +193,7 @@ func isSatisfier(ch *ent.Chapter, sp *ent.SeriesProvider) bool {
 // whose cooldown, if any, is why the row is not moving:
 //
 //   - upgrade_available / upgrading → the UPGRADE TARGET (the source it is
-//     converging to; the same carrier upgradeTargetLabel names). While that target
+//     converging to; the same carrier upgradeTargetCarrier names). While that target
 //     is cooling down after a failed upgrade fetch (download.cooldownSource), the
 //     upgrade is deferred and the row sits still.
 //   - wanted → the PRIMARY live candidate (highest-importance source whose feed

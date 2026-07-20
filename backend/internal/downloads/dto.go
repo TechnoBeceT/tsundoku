@@ -55,8 +55,16 @@ import (
 // for every chapter that is not in upgrade_available / upgrading. Without it the
 // row would show only the source being REPLACED, which is exactly the wrong one
 // during a convergence wave. It is the INTENDED target, not the engine's
-// authoritative pick — see upgradeTargetLabel for the resolution rule and where
+// authoritative pick — see upgradeTargetCarrier for the resolution rule and where
 // the two can differ.
+//
+// UpgradeTargetAttempts is that TARGET source's own per-source ProviderChapter.attempts
+// against THIS chapter — so the queue UI can badge the source the chapter is converging
+// TO ("Asura Scans · 2/5"), the one actually being fetched, instead of the satisfier it
+// replaces (whose Attempts would read a misleading 0). It pairs with MaxRetries exactly
+// as Attempts does, only for the target. It is 0 when the chapter has no upgrade target,
+// or the target has no failed attempt recorded yet, and always describes the SAME source
+// UpgradeTarget names.
 //
 // WaitingReason + DeferredUntil + DeferReason answer WHY a queued chapter is not
 // moving. They read the source the engine is waiting on (the upgrade TARGET for an
@@ -94,6 +102,9 @@ type DownloadChapterDTO struct {
 	MaxRetries     int       `json:"maxRetries"`
 	IsUpgrade      bool      `json:"isUpgrade"`
 	UpgradeTarget  string    `json:"upgradeTarget"`
+	// UpgradeTargetAttempts is the upgrade TARGET's per-source attempt count (0 when
+	// there is no target). It describes the same source UpgradeTarget names.
+	UpgradeTargetAttempts int `json:"upgradeTargetAttempts"`
 
 	// FailingProvider / FailingProviderName / FailingAttempts / FailingLastError /
 	// FailingErrorCategory describe the FAILING source (the honest fail list, PART D):
@@ -150,12 +161,13 @@ type DownloadSummaryDTO struct {
 // status (reason category + retry ETA + detail message). Passing one struct keeps the
 // mapper's signature small as the enrichment grows.
 type rowContext struct {
-	provider      string
-	providerName  string
-	attempts      int
-	maxRetries    int
-	isUpgrade     bool
-	upgradeTarget string
+	provider              string
+	providerName          string
+	attempts              int
+	maxRetries            int
+	isUpgrade             bool
+	upgradeTarget         string
+	upgradeTargetAttempts int
 
 	failingProvider      string
 	failingProviderName  string
@@ -190,7 +202,7 @@ type RetryAllResultDTO struct {
 // engine orders candidates: importance DESC, then ProviderChapter.ID ASC).
 //
 // upgradeTargets serves BOTH source questions a row asks, from the one index:
-// which source an upgrading chapter is converging TO (upgradeTargetLabel), and —
+// which source an upgrading chapter is converging TO (upgradeTargetCarrier), and —
 // for a chapter with no satisfier — which source is actually FETCHING it
 // (chapterSource). Both answers are "the highest-importance source whose feed
 // carries this key", which is exactly the scheduler's primary-source rule, so they
@@ -210,21 +222,22 @@ type seriesResolution struct {
 // lookups — it only projects fields, ensuring every contract field is populated (§16).
 func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolution, rc rowContext) DownloadChapterDTO {
 	return DownloadChapterDTO{
-		ID:             ch.ID,
-		SeriesID:       ch.SeriesID,
-		SeriesTitle:    res.displayName,
-		SeriesCategory: category,
-		SeriesCoverURL: res.coverURL,
-		ChapterKey:     ch.ChapterKey,
-		Number:         ch.Number,
-		Name:           res.names[ch.ChapterKey],
-		State:          ch.State.String(),
-		Provider:       rc.provider,
-		ProviderName:   rc.providerName,
-		Attempts:       rc.attempts,
-		MaxRetries:     rc.maxRetries,
-		IsUpgrade:      rc.isUpgrade,
-		UpgradeTarget:  rc.upgradeTarget,
+		ID:                    ch.ID,
+		SeriesID:              ch.SeriesID,
+		SeriesTitle:           res.displayName,
+		SeriesCategory:        category,
+		SeriesCoverURL:        res.coverURL,
+		ChapterKey:            ch.ChapterKey,
+		Number:                ch.Number,
+		Name:                  res.names[ch.ChapterKey],
+		State:                 ch.State.String(),
+		Provider:              rc.provider,
+		ProviderName:          rc.providerName,
+		Attempts:              rc.attempts,
+		MaxRetries:            rc.maxRetries,
+		IsUpgrade:             rc.isUpgrade,
+		UpgradeTarget:         rc.upgradeTarget,
+		UpgradeTargetAttempts: rc.upgradeTargetAttempts,
 
 		FailingProvider:      rc.failingProvider,
 		FailingProviderName:  rc.failingProviderName,

@@ -112,6 +112,80 @@ func TestListUpgradeTarget(t *testing.T) {
 	}
 }
 
+// seedUpgradeAttempts builds one series whose UPGRADE TARGET has spent attempts on a
+// chapter, so a row must badge the TARGET's attempt count (not the satisfier's 0):
+//   - a-1 upgrade_available, satisfied by Comix (imp 5); the target Asura (imp 10) has
+//     attempts=3 on its own feed row for the chapter → UpgradeTargetAttempts 3
+//   - a-2 downloading (a non-upgrade row), satisfied by Comix → UpgradeTargetAttempts 0
+//   - a-3 upgrade_available, only in Comix's feed (a targetless upgrade) → 0
+func seedUpgradeAttempts(ctx context.Context, t *testing.T, client *ent.Client) {
+	t.Helper()
+	s := client.Series.Create().SetTitle("Attempt Wave").SetSlug("attempt-wave").
+		SetCategoryID(catID(ctx, client, "Manga")).SaveX(ctx)
+	low := client.SeriesProvider.Create().SetSeries(s).
+		SetProvider("low").SetProviderName("Comix").SetImportance(5).SaveX(ctx)
+	high := client.SeriesProvider.Create().SetSeries(s).
+		SetProvider("high").SetProviderName("Asura Scans").SetImportance(10).SaveX(ctx)
+
+	// a-1: both feeds; the TARGET (Asura) has 3 spent attempts on this chapter.
+	client.ProviderChapter.Create().SetSeriesProviderID(low.ID).SetChapterKey("a-1").
+		SetURL("https://comix/a-1").SetProviderIndex(0).SaveX(ctx)
+	client.ProviderChapter.Create().SetSeriesProviderID(high.ID).SetChapterKey("a-1").
+		SetURL("https://asura/a-1").SetProviderIndex(0).SetAttempts(3).SaveX(ctx)
+	// a-2: both feeds, no attempts anywhere.
+	client.ProviderChapter.Create().SetSeriesProviderID(low.ID).SetChapterKey("a-2").
+		SetURL("https://comix/a-2").SetProviderIndex(1).SaveX(ctx)
+	client.ProviderChapter.Create().SetSeriesProviderID(high.ID).SetChapterKey("a-2").
+		SetURL("https://asura/a-2").SetProviderIndex(1).SaveX(ctx)
+	// a-3: only the low source carries it → no upgrade target.
+	client.ProviderChapter.Create().SetSeriesProviderID(low.ID).SetChapterKey("a-3").
+		SetURL("https://comix/a-3").SetProviderIndex(2).SaveX(ctx)
+
+	client.Chapter.Create().SetSeries(s).SetChapterKey("a-1").SetState(entchapter.StateUpgradeAvailable).
+		SetSatisfiedByProviderID(low.ID).SetSatisfiedImportance(low.Importance).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("a-2").SetState(entchapter.StateDownloading).
+		SetSatisfiedByProviderID(low.ID).SetSatisfiedImportance(low.Importance).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("a-3").SetState(entchapter.StateUpgradeAvailable).
+		SetSatisfiedByProviderID(low.ID).SetSatisfiedImportance(low.Importance).SaveX(ctx)
+}
+
+// TestListUpgradeTargetAttempts proves UpgradeTargetAttempts reports the UPGRADE
+// TARGET's own per-source attempt count — the source the row is converging TO, which is
+// the one actually being fetched — so the UI can badge "Asura Scans · 3/5" instead of
+// the satisfier's misleading "Comix · 0/5". A non-upgrade row and a targetless upgrade
+// (no source outranks the satisfier) both report 0, matching their empty UpgradeTarget.
+func TestListUpgradeTargetAttempts(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedUpgradeAttempts(ctx, t, client)
+
+	res, err := downloads.NewService(client).List(ctx, downloads.ListFilter{States: upgradeStates, Limit: 50})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	want := map[string]struct {
+		target   string
+		attempts int
+	}{
+		"a-1": {"Asura Scans", 3}, // upgrading → the target's own attempt count
+		"a-2": {"", 0},            // downloading (non-upgrade) → no target, 0
+		"a-3": {"", 0},            // targetless upgrade (gapped feed) → 0
+	}
+	for key, w := range want {
+		item, ok := itemByKey(res.Items, key)
+		if !ok {
+			t.Fatalf("chapter %s missing from the list", key)
+		}
+		if item.UpgradeTarget != w.target {
+			t.Errorf("chapter %s upgradeTarget = %q, want %q", key, item.UpgradeTarget, w.target)
+		}
+		if item.UpgradeTargetAttempts != w.attempts {
+			t.Errorf("chapter %s upgradeTargetAttempts = %d, want %d", key, item.UpgradeTargetAttempts, w.attempts)
+		}
+	}
+}
+
 // countingDriver wraps an Ent SQL driver and counts every read query issued
 // through it (eager-loading sub-queries included — Ent runs them through the same
 // driver). Test-only: it exists solely to PROVE the downloads list's query count is
@@ -149,7 +223,9 @@ func seedManyUpgrades(ctx context.Context, t *testing.T, client *ent.Client, n i
 		client.ProviderChapter.Create().SetSeriesProviderID(low.ID).SetChapterKey(key).
 			SetNillableNumber(&num).SetURL("https://comix/" + key).SetProviderIndex(i).SaveX(ctx)
 		client.ProviderChapter.Create().SetSeriesProviderID(high.ID).SetChapterKey(key).
-			SetNillableNumber(&num).SetURL("https://asura/" + key).SetProviderIndex(i).SaveX(ctx)
+			SetNillableNumber(&num).SetURL("https://asura/" + key).SetProviderIndex(i).
+			SetAttempts(2). // the target has spent attempts → every row also resolves UpgradeTargetAttempts
+			SaveX(ctx)
 		client.Chapter.Create().SetSeries(s).SetChapterKey(key).SetNillableNumber(&num).
 			SetState(entchapter.StateUpgradeAvailable).
 			SetSatisfiedByProviderID(low.ID).SetSatisfiedImportance(low.Importance).SaveX(ctx)
@@ -157,8 +233,8 @@ func seedManyUpgrades(ctx context.Context, t *testing.T, client *ent.Client, n i
 }
 
 // TestListQueryCountIsPageSizeIndependent is the NO-N+1 proof — including for the
-// new upgradeTarget field, which is resolved IN MEMORY from the feeds the list
-// already batch-loads.
+// upgradeTarget AND upgradeTargetAttempts fields, both resolved IN MEMORY from the
+// SAME carrier pick over the feeds the list already batch-loads (zero extra queries).
 //
 // It counts the SQL reads (via countingDriver, which sees Ent's eager-loading
 // sub-queries too) issued by one List call at page size 2 and again at page size
@@ -184,6 +260,9 @@ func TestListQueryCountIsPageSizeIndependent(t *testing.T) {
 		for _, it := range res.Items {
 			if it.UpgradeTarget != "Asura Scans" {
 				t.Fatalf("chapter %s upgradeTarget = %q, want %q (every row must resolve a target)", it.ChapterKey, it.UpgradeTarget, "Asura Scans")
+			}
+			if it.UpgradeTargetAttempts != 2 {
+				t.Fatalf("chapter %s upgradeTargetAttempts = %d, want 2 (every row must resolve the target's attempts)", it.ChapterKey, it.UpgradeTargetAttempts)
 			}
 		}
 		return drv.queries.Load()

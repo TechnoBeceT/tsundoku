@@ -231,10 +231,14 @@ func (s *Service) loadBreakers(ctx context.Context) map[string]sourcegate.Breake
 func resolveRow(ch *ent.Chapter, res seriesResolution, provByID map[uuid.UUID]*ent.SeriesProvider, breakerByKey map[string]sourcegate.BreakerState, maxRetries int, now time.Time) rowContext {
 	sp, pc := chapterSource(ch, provByID, res.upgradeTargets)
 	rc := rowContext{
-		maxRetries:    maxRetries,
-		isUpgrade:     isUpgrading(ch.State),
-		upgradeTarget: upgradeTargetLabel(ch, res.upgradeTargets, provByID),
+		maxRetries: maxRetries,
+		isUpgrade:  isUpgrading(ch.State),
 	}
+	// The upgrade TARGET's label AND its own per-source attempt count both come from
+	// the single carrier pick, so the UI badges the source the chapter is converging
+	// TO (the one actually fetched), not the satisfier it replaces — in memory over the
+	// already-loaded feed index, no extra query.
+	rc.upgradeTarget, rc.upgradeTargetAttempts = resolveUpgradeTarget(ch, res.upgradeTargets, provByID)
 	if sp != nil {
 		rc.provider = sp.Provider
 		rc.providerName = series.ProviderLabel(sp)
@@ -260,6 +264,9 @@ func resolveRow(ch *ent.Chapter, res seriesResolution, provByID map[uuid.UUID]*e
 		if ch.State == entchapter.StateDownloaded && !isSatisfier(ch, fc.provider) {
 			rc.isUpgrade = true
 			rc.upgradeTarget = rc.failingProviderName
+			// Keep upgradeTargetAttempts describing the source upgradeTarget names — here
+			// the failing upgrade target, whose attempts are the failing count.
+			rc.upgradeTargetAttempts = rc.failingAttempts
 		}
 	}
 
