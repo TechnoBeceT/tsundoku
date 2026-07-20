@@ -36,30 +36,10 @@ import { ref, computed } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import { chaptersToUnmountDirectional, MAX_MOUNTED } from '~/components/reader/ReaderStrip.logic'
+import { isReadableState } from '~/utils/readableStates'
 
 type SeriesDetailDTO = components['schemas']['SeriesDetail']
 type ChapterDTO = components['schemas']['Chapter']
-
-/**
- * READABLE_STATES — the chapter states the reader will list and page through.
- * A chapter is readable whenever a valid CBZ is on disk, which is true for all
- * three of these states, NOT just `downloaded`:
- *   - `downloaded`        — the settled state.
- *   - `upgrade_available` — a better source was detected; the OLD source's CBZ
- *     is still intact (the convergence engine deletes it only AFTER the new one
- *     succeeds — `tryDeleteOldCBZ` runs on convergence success only).
- *   - `upgrading`         — the upgrade fetch is in flight; the old CBZ likewise
- *     stays on disk until the replacement lands.
- * Excluding the latter two made a chapter pending/undergoing an upgrade (and a
- * whole series parked in `upgrade_available` by a source ban) unreadable for no
- * reason. `filename`/`pageCount`/`pageVersion` are all intact across an upgrade,
- * so the page-bytes endpoint serves them unchanged.
- */
-const READABLE_STATES: ReadonlySet<ChapterDTO['state']> = new Set([
-  'downloaded',
-  'upgrade_available',
-  'upgrading',
-])
 
 /**
  * ReaderChapter — one chapter in the reader's ordered list. `id` is the Chapter
@@ -297,7 +277,7 @@ export function useReader(seriesId: string, startChapterId: string) {
       const detail: SeriesDetailDTO = res.data
       seriesTitle.value = detail.displayName || detail.title || ''
       const list = detail.chapters
-        .filter((ch) => READABLE_STATES.has(ch.state))
+        .filter((ch) => isReadableState(ch.state))
         .map(mapReaderChapter)
         .sort(byNumberAsc)
       chapters.value = list

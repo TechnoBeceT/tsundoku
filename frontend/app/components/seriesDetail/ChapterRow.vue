@@ -3,6 +3,7 @@ import StatusBadge from '../ui/StatusBadge.vue'
 import AppButton from '../ui/AppButton.vue'
 import IconButton from '../ui/IconButton.vue'
 import type { Chapter } from '../screens/seriesDetail.types'
+import { isReadableState } from '~/utils/readableStates'
 
 /**
  * ChapterRow — one row in the Series-Detail chapter table: the (display) number,
@@ -91,7 +92,7 @@ const resumeLine = (): string => {
     <div class="chapter__controls">
       <span v-if="pages()" class="chapter__pages">{{ pages() }}</span>
       <AppButton
-        v-if="chapter.state === 'downloaded'"
+        v-if="isReadableState(chapter.state)"
         variant="mini"
         size="sm"
         @click="emit('read', chapter.id)"

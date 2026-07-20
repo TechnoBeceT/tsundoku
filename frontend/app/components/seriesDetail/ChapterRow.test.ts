@@ -58,3 +58,40 @@ describe('ChapterRow — read state', () => {
     expect(w.find('.chapter__resume').exists()).toBe(false)
   })
 })
+
+/**
+ * The "Read" button gates on the reader's READABLE_STATES (a CBZ is on disk),
+ * NOT `downloaded` alone: `upgrade_available`/`upgrading` keep their old CBZ on
+ * disk while a better source is pending, so the owner can still read them.
+ */
+describe('ChapterRow — read button visibility', () => {
+  const readButton = (over: Partial<Chapter>) =>
+    render(over).findAll('button').find((b) => b.text() === 'Read')
+
+  it('renders the read button for a downloaded chapter', () => {
+    expect(readButton({ state: 'downloaded' })?.exists()).toBe(true)
+  })
+
+  it('renders the read button for an upgrade_available chapter (old CBZ still on disk)', () => {
+    expect(readButton({ state: 'upgrade_available' })?.exists()).toBe(true)
+  })
+
+  it('renders the read button for an upgrading chapter (old CBZ still on disk)', () => {
+    expect(readButton({ state: 'upgrading' })?.exists()).toBe(true)
+  })
+
+  it('emits `read` with the chapter id when the button is clicked', async () => {
+    const w = render({ state: 'upgrade_available' })
+    await w.findAll('button').find((b) => b.text() === 'Read')!.trigger('click')
+
+    expect(w.emitted('read')?.[0]).toEqual(['chapter-1'])
+  })
+
+  it('hides the read button for a non-readable state (wanted)', () => {
+    expect(readButton({ state: 'wanted' })).toBeUndefined()
+  })
+
+  it('hides the read button for a non-readable state (failed)', () => {
+    expect(readButton({ state: 'failed' })).toBeUndefined()
+  })
+})

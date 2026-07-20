@@ -22,9 +22,30 @@ export const Downloaded: Story = {
   args: { chapter: richSeries.chapters[0]! },
 }
 
-/** Upgrade available: a better source is now ranked higher. */
+/**
+ * Upgrade available: a better source is now ranked higher. The old CBZ is still
+ * on disk, so the "Read" button stays visible (readable state, not `downloaded`).
+ */
 export const UpgradeAvailable: Story = {
   args: { chapter: richSeries.chapters[2]! },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    // Readable-state chapters keep the Read button (the bug fix): the reader
+    // opens `upgrade_available`/`upgrading`, not just `downloaded`.
+    await canvas.findByRole('button', { name: 'Read' })
+  },
+}
+
+/**
+ * Upgrading: the replacement fetch is in flight; the old CBZ likewise stays on
+ * disk, so the chapter remains readable and the "Read" button shows.
+ */
+export const Upgrading: Story = {
+  args: { chapter: richSeries.chapters[3]! },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await canvas.findByRole('button', { name: 'Read' })
+  },
 }
 
 /** Wanted, no resolved name: falls back to "Chapter N", no filename/pages. */
