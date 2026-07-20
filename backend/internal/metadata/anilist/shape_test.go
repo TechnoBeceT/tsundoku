@@ -15,8 +15,8 @@ import (
 // byIDQuery this package sends and logs the decoded response, so a human
 // can confirm the field shapes mapper.go assumes are still accurate before
 // trusting it. It is build-tagged out of the default `go test ./...` gate
-// (see backend/CLAUDE.md's metadata_shape convention) and is NEVER run in
-// CI. Run manually with:
+// (see the repo architecture notes' metadata_shape convention) and is NEVER
+// run in CI. Run manually with:
 //
 //	go test -tags metadata_shape -run TestShapeAniList ./internal/metadata/anilist/ -v
 //

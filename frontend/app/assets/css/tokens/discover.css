@@ -7,7 +7,7 @@
  * re-declared per theme) — keeping every Discover card referencing one `var(--…)`
  * and never an inline cover hex.
  *
- * Source of truth: the Claude Design prototype's `disc-card` / `disc-pop`. */
+ * Source of truth: the design prototype's `disc-card` / `disc-pop`. */
 :root {
   /* Faint white initial letter behind a grid card's cover. */
   --disc-initial: rgba(255, 255, 255, 0.13);

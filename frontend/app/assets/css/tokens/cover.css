@@ -7,7 +7,7 @@
  * re-declared per theme). Factoring them here keeps every card referencing one
  * `var(--…)` and never an inline cover hex.
  *
- * Source of truth: the Claude Design prototype's library card. */
+ * Source of truth: the design prototype's library card. */
 :root {
   /* Bottom-up scrim that darkens the lower cover so overlaid text stays legible
    * over any image. Applied to real images AND the placeholder. */

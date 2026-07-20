@@ -7,7 +7,7 @@
  * correctly in BOTH dark and light, so the hues live here once and every badge
  * references a `var(--…)` — never an inline state hex.
  *
- * Source of truth: the Claude Design prototype's `STATES` map. */
+ * Source of truth: the design prototype's `STATES` map. */
 :root {
   /* wanted — neutral grey (queued, never downloaded). */
   --dl-wanted-text: #b3b1c4;

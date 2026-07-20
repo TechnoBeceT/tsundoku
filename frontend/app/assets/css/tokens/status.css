@@ -5,7 +5,7 @@
  * These hues are THEME-INDEPENDENT (held on :root, not re-declared per theme),
  * exactly like cover.css — a rose/amber status reads correctly on both the dark
  * and light surfaces, so factoring them here keeps every status chip referencing
- * one `var(--…)` and never an inline status hex. Source: the Claude Design
+ * one `var(--…)` and never an inline status hex. Source: the design
  * prototype's rail badges + header attention pill. */
 :root {
   /* Danger / attention (rose). */
@@ -28,7 +28,7 @@
    * `Chapter.state` enum value. THEME-INDEPENDENT (held on :root, not
    * re-declared per theme) like the rose/amber chrome above — each soft-tinted
    * chip reads correctly on both the dark and light surfaces. Source palette:
-   * the Claude Design prototype's `STATES` map (the seriesDetail/downloads
+   * the design prototype's `STATES` map (the seriesDetail/downloads
    * token files carry the same hues under per-screen names; this is the
    * unified set). */
 

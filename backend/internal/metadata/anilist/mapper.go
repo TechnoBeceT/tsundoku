@@ -11,7 +11,7 @@ import (
 // selection so the two entry points decode into the identical gqlMedia
 // shape and the mapper logic never forks (mirrors suwayomi's
 // gqlMangaNode/mangaFieldSelection reuse across its own Search/Browse/
-// MangaMeta operations — see backend/CLAUDE.md). Fields chosen per
+// MangaMeta operations — see the repo architecture notes). Fields chosen per
 // brief/komf-metadata-engine-reference's documented AniList field list,
 // confirmed live against the real API before this file was written
 // (TestShapeAniList).

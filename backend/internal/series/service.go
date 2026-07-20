@@ -93,7 +93,8 @@ func NewServiceWithStaleGrace(client *ent.Client, storage string, staleGrace fun
 
 // importanceStep is the spacing between adjacent providers on the clean
 // importance spread ReorderProviders normalizes to. Higher importance = higher
-// priority (see CLAUDE.md "Provider importance — higher number = higher priority").
+// priority (see the repo architecture notes, "Provider importance — higher
+// number = higher priority").
 const importanceStep = 10
 
 // ProviderRank pairs a SeriesProvider UUID with the desired importance value. Used

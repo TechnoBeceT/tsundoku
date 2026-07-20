@@ -5,7 +5,7 @@
  *
  * These are THEME-INDEPENDENT (held on :root, not re-declared per theme) — the
  * pre-boot screen reads the same dramatic backdrop in dark and light, exactly
- * like the prototype. Source: the Claude Design prototype's `notBooted` block.
+ * like the prototype. Source: the design prototype's `notBooted` block.
  *
  * The cyan stop is the only colour here NOT already in the palette, which is why
  * the auth backdrop earns its own token file. */

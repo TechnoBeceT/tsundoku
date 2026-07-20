@@ -3,7 +3,8 @@
 # the frontend, so a type-check regression (like the ~78-error debt this workflow
 # was added to prevent recurring) can never land silently again.
 #
-# Mirrors the local gate documented in frontend/package.json + the repo CLAUDE.md:
+# Mirrors the local gate documented in frontend/package.json + the repo
+# architecture notes:
 #   bun run lint            -> ESLint (0 problems)
 #   bun run typecheck       -> nuxt typecheck / vue-tsc (0 errors)  <-- the re-armed gate
 #   bun run test            -> Vitest unit suite

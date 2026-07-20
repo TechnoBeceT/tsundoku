@@ -1,6 +1,6 @@
 /* settings.css — the Settings screen's two extra status palettes: the engine
  * "running / healthy / migration-done" emerald and the extension "update
- * available" amber. Mirrors the Claude Design prototype's engine status dot +
+ * available" amber. Mirrors the design prototype's engine status dot +
  * UPDATE badge.
  *
  * THEME-INDEPENDENT (held on :root, not re-declared per theme) — exactly like

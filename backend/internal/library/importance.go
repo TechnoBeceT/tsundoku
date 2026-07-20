@@ -1,8 +1,8 @@
 package library
 
 // importanceStep is the spacing between adjacent providers on a clean importance
-// spread. Higher importance = higher priority (see CLAUDE.md "Provider
-// importance — higher number = higher priority").
+// spread. Higher importance = higher priority (see the repo architecture notes,
+// "Provider importance — higher number = higher priority").
 const importanceStep = 10
 
 // belowExistingImportances plans NON-NEGATIVE importances for `count` newly

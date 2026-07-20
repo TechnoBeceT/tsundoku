@@ -2,7 +2,7 @@
  * Story-only fixtures for the Settings screen. NOT imported by app code — only
  * by Storybook stories — so the screen stays props-driven and backend-free.
  *
- * Mirrors the Claude Design prototype's seed state: the M12 library knobs, the
+ * Mirrors the design prototype's seed state: the M12 library knobs, the
  * five seed categories (Other is the default landing), an embedded engine with an
  * upgrade available, the Tsundoku-owned FlareSolverr config (on, QCAT-238 —
  * the only card left in the "Server config" pane; the proxied Suwayomi SOCKS

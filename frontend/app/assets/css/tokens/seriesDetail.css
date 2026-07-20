@@ -5,8 +5,8 @@
  * status.css/cover.css these hues are THEME-INDEPENDENT (held on :root, not
  * re-declared per theme) — a soft-tinted status chip reads correctly on both the
  * dark and light surfaces, so factoring them here keeps every badge referencing
- * one `var(--…)` and never an inline status hex. Source of truth: the Claude
- * Design prototype's `STATES` + `HEALTH` maps. (status.css already covers the
+ * one `var(--…)` and never an inline status hex. Source of truth: the design
+ * prototype's `STATES` + `HEALTH` maps. (status.css already covers the
  * shared rose/amber chrome; these are the extra emerald/sky/violet badge hues
  * the detail screen needs.) */
 :root {

@@ -21,8 +21,8 @@ import (
 // disk-reconciled provider stores the display NAME instead. Matching
 // provider IN {id, name} covers both without over-matching on provider_name —
 // which would risk purging a same-named source in another language (see the
-// source-identity-drift note in CLAUDE.md). When sourceName is "" (not yet
-// resolved) only the id is matched.
+// source-identity-drift note in the repo architecture notes). When sourceName
+// is "" (not yet resolved) only the id is matched.
 func sourceProviders(sourceID, sourceName string) predicate.SeriesProvider {
 	if sourceName == "" || sourceName == sourceID {
 		return entseriesprovider.Provider(sourceID)

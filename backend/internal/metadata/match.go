@@ -94,7 +94,8 @@ func NameSimilarity(query MatchQuery, candidate string) MatchType {
 // This mirrors internal/imports/match.go's levenshtein (which stays
 // unexported there); it is re-implemented here rather than extracted to a
 // shared package because this task's scope is limited to internal/metadata
-// (see backend/CLAUDE.md — imports is a sibling domain, not touched here).
+// (see the repo architecture notes — imports is a sibling domain, not touched
+// here).
 func levenshtein(a, b []rune) int {
 	la, lb := len(a), len(b)
 	if la == 0 {
