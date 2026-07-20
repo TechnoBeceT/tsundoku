@@ -161,6 +161,7 @@ import (
 //   - /api/series/:id/tracking/:recordId/update (POST) — owner's manual tracking-sheet edit (RequireOwner).
 //   - /api/series/:id/tracking/sync (POST)         — pull + converge every binding for a series (RequireOwner).
 //   - /api/engine/topology-status (GET)          — read-only captured-engine-topology status (RequireOwner).
+//   - /api/engine/sources (GET)                  — live per-source status strip (downloading / cooling); pure DB + breaker-snapshot read, no engine call (RequireOwner).
 //   - /internal/extensions/apk/:pkg/:file (GET) — cached extension .apk bytes for engine recovery; :file = "<pkg>-<version>.apk" (RequireOwner; NOT in the OpenAPI spec).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
@@ -528,8 +529,12 @@ func registerRoutes(
 	//     last segment is the collision-free filename "<pkg>-<version>.apk" (the
 	//     engine-host loader names the installed file from it); the handler parses
 	//     (pkg, version) back out.
-	engineH := engineh.NewHandler(apkStore, client)
+	engineH := engineh.NewHandler(apkStore, client).
+		WithSourceStatus(downloadsSvc, gate, settingsSvc)
 	authed.GET("/engine/topology-status", engineH.TopologyStatus)
+	// GET /api/engine/sources — the live per-source status strip (downloading /
+	// cooling), a pure DB + circuit-breaker-snapshot read (no engine call).
+	authed.GET("/engine/sources", engineH.Sources)
 	internalAPI := e.Group("/internal", mw.RequireOwner(authSvc, cfg.Auth.CookieSecure))
 	internalAPI.GET("/extensions/apk/:pkg/:file", engineH.ServeAPK)
 

@@ -11,6 +11,9 @@ import Skeleton from '../ui/Skeleton.vue'
 import Toggle from '../ui/Toggle.vue'
 import ChapterDownloadRow from '../downloads/ChapterDownloadRow.vue'
 import CycleBanner from '../downloads/CycleBanner.vue'
+import CycleTimers from '../downloads/CycleTimers.vue'
+import SourceStatusStrip from '../downloads/SourceStatusStrip.vue'
+import type { SourceStatus } from '../downloads/sourceStatus.types'
 import DeferralNote from '../downloads/DeferralNote.vue'
 import FailedDownloadCard from '../downloads/FailedDownloadCard.vue'
 import ActiveFailureBanner from '../downloads/ActiveFailureBanner.vue'
@@ -75,6 +78,16 @@ const props = withDefaults(defineProps<{
    * awareness banner — so an empty Active list reads as WAITING, not "up to date".
    */
   coolingDownSources?: number
+  /** Whether a download cycle is running now (SSE) — drives the CycleTimers header. */
+  downloadRunning?: boolean
+  /** Whether a refresh sweep is running now (SSE) — drives the CycleTimers header. */
+  refreshRunning?: boolean
+  /** Milliseconds until the next download cycle; null → "waiting…". */
+  downloadRemainingMs?: number | null
+  /** Milliseconds until the next refresh sweep; null → "waiting…". */
+  refreshRemainingMs?: number | null
+  /** The live per-source status strip (sources downloading / cooling right now). */
+  sourceStatuses?: SourceStatus[]
 }>(), {
   activeTab: 'active',
   cycleActive: false,
@@ -91,6 +104,11 @@ const props = withDefaults(defineProps<{
   runMessage: '',
   runError: '',
   coolingDownSources: 0,
+  downloadRunning: false,
+  refreshRunning: false,
+  downloadRemainingMs: null,
+  refreshRemainingMs: null,
+  sourceStatuses: () => [],
 })
 
 const emit = defineEmits<{
@@ -244,6 +262,19 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           </template>
           {{ running ? 'Starting…' : 'Download now' }}
         </AppButton>
+      </div>
+
+      <!-- Engine visibility (near the header): the two live cycle countdowns and
+           the per-source status strip (which sources are downloading / cooling
+           right now). Both are additive to the existing CycleBanner. -->
+      <div class="downloads__status">
+        <CycleTimers
+          :download-running="downloadRunning"
+          :refresh-running="refreshRunning"
+          :download-remaining-ms="downloadRemainingMs"
+          :refresh-remaining-ms="refreshRemainingMs"
+        />
+        <SourceStatusStrip :sources="sourceStatuses" />
       </div>
 
       <!-- §16 "Download now" result: success note or failure, never swallowed. -->
@@ -486,6 +517,15 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
    right of the head row. */
 .downloads__cycle {
   margin-left: auto;
+}
+
+/* ---- Engine-visibility status row (timers + source strip) ----------------- */
+.downloads__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-lg);
 }
 
 /* ---- "Download now" result (§16) ------------------------------------------ */

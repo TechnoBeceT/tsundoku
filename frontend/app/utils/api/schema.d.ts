@@ -1813,6 +1813,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/engine/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live per-source status strip (downloading / cooling)
+         * @description Returns the sources that are DOING something right now — actively
+         *     downloading (≥1 chapter in flight) or in an anti-ban cooldown — omitting
+         *     the fully-idle majority so the strip never becomes a wall of rows. The
+         *     active counts come from the download read-model (chapters in
+         *     downloading/upgrading, attributed to their fetching source, no-N+1); the
+         *     cooling half from the persisted circuit-breaker snapshot. It makes ZERO
+         *     calls to the engine/sources — a pure DB + in-memory read.
+         */
+        get: operations["getEngineSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system": {
         parameters: {
             query?: never;
@@ -3257,6 +3283,54 @@ export interface components {
              *     ]
              */
             gaps: string[];
+        };
+        /**
+         * @description One row of the live engine source-status strip: a physical source that is
+         *     DOING something right now — actively downloading (activeCount>0) or in an
+         *     anti-ban cooldown. Computed from DB + the persisted circuit-breaker snapshot
+         *     alone (no engine call); fully-idle sources are omitted.
+         */
+        SourceStatus: {
+            /**
+             * @description Canonical physical-source name (the breaker/metrics key).
+             * @example Asura Scans
+             */
+            sourceKey: string;
+            /**
+             * @description Whether the source is actively fetching or in an anti-ban cooldown.
+             * @enum {string}
+             */
+            state: "downloading" | "cooling";
+            /**
+             * @description How many chapters are being fetched from this source now (0 for a cooling source).
+             * @example 5
+             */
+            activeCount: number;
+            /**
+             * @description The current per-source download-concurrency cap (the "N/cap" denominator).
+             * @example 5
+             */
+            cap: number;
+            /**
+             * @description Seconds until a cooling source's breaker reopens (0 for a downloading source).
+             * @example 720
+             */
+            cooldownRemainingSeconds: number;
+            /**
+             * @description Classified failure category of a cooling source's last error (e.g. "rate_limit", "server_error"); "" for a downloading source.
+             * @example rate_limit
+             */
+            reason: string;
+            /**
+             * @description The source's current failure streak (0 when no breaker row exists).
+             * @example 3
+             */
+            consecutiveFailures: number;
+            /**
+             * @description The source's most recent recorded failure message ("" when none).
+             * @example 429 rate limit exceeded
+             */
+            lastError: string;
         };
         System: {
             /**
@@ -8189,6 +8263,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EngineTopologyStatus"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getEngineSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The live per-source status rows (empty when nothing is active or cooling). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceStatus"][];
                 };
             };
             /** @description Missing or invalid Bearer token. */

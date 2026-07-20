@@ -27,11 +27,19 @@ const apkContentType = "application/vnd.android.package-archive"
 
 // Handler serves the engine-topology endpoints. It holds the APK cache store
 // directly (the /internal apk bytes come straight off disk) and the Ent client
-// (the /api topology-status readout counts captured topology rows). Neither
-// endpoint calls the engine.
+// (the /api topology-status readout counts captured topology rows). The live
+// source-status strip (GET /api/engine/sources) needs three extra read ports,
+// attached via WithSourceStatus (nil for the constructor's plain call sites).
+// No endpoint here calls the engine.
 type Handler struct {
 	cache *apkcache.Store
 	db    *entpkg.Client
+
+	// Optional source-status ports (WithSourceStatus). Used only by GET
+	// /api/engine/sources; nil for the topology-status/apk endpoints.
+	activeCounts activeSourceCounter
+	breakers     breakerSnapshotter
+	concurrency  downloadConcurrencyProvider
 }
 
 // NewHandler constructs a Handler bound to the APK cache store (serves the

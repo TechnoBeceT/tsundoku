@@ -1636,6 +1636,49 @@ components:
             type: string
           example: ["3 extensions not cached", "1 sources' preferences could not be read: Comix"]
 
+    SourceStatus:
+      type: object
+      description: |
+        One row of the live engine source-status strip: a physical source that is
+        DOING something right now — actively downloading (activeCount>0) or in an
+        anti-ban cooldown. Computed from DB + the persisted circuit-breaker snapshot
+        alone (no engine call); fully-idle sources are omitted.
+      required:
+        [sourceKey, state, activeCount, cap, cooldownRemainingSeconds, reason, consecutiveFailures, lastError]
+      properties:
+        sourceKey:
+          type: string
+          description: Canonical physical-source name (the breaker/metrics key).
+          example: Asura Scans
+        state:
+          type: string
+          enum: [downloading, cooling]
+          description: Whether the source is actively fetching or in an anti-ban cooldown.
+        activeCount:
+          type: integer
+          description: How many chapters are being fetched from this source now (0 for a cooling source).
+          example: 5
+        cap:
+          type: integer
+          description: The current per-source download-concurrency cap (the "N/cap" denominator).
+          example: 5
+        cooldownRemainingSeconds:
+          type: integer
+          description: Seconds until a cooling source's breaker reopens (0 for a downloading source).
+          example: 720
+        reason:
+          type: string
+          description: Classified failure category of a cooling source's last error (e.g. "rate_limit", "server_error"); "" for a downloading source.
+          example: rate_limit
+        consecutiveFailures:
+          type: integer
+          description: The source's current failure streak (0 when no breaker row exists).
+          example: 3
+        lastError:
+          type: string
+          description: The source's most recent recorded failure message ("" when none).
+          example: "429 rate limit exceeded"
+
     System:
       type: object
       required: [storageFolder, serverPort, database]
@@ -7426,6 +7469,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EngineTopologyStatus"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/engine/sources:
+    get:
+      operationId: getEngineSources
+      summary: Live per-source status strip (downloading / cooling)
+      description: |
+        Returns the sources that are DOING something right now — actively
+        downloading (≥1 chapter in flight) or in an anti-ban cooldown — omitting
+        the fully-idle majority so the strip never becomes a wall of rows. The
+        active counts come from the download read-model (chapters in
+        downloading/upgrading, attributed to their fetching source, no-N+1); the
+        cooling half from the persisted circuit-breaker snapshot. It makes ZERO
+        calls to the engine/sources — a pure DB + in-memory read.
+      tags:
+        - engine
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The live per-source status rows (empty when nothing is active or cooling).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceStatus"
         "401":
           description: Missing or invalid Bearer token.
           content:
