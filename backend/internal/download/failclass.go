@@ -17,10 +17,14 @@ import (
 //     source, but the source is fine for every other series/chapter:
 //     errorclass not_found / no_pages / parse, plus the engine sentinels
 //     ErrBrokenPage (a page failed image validation), ErrNoPages (the chapter
-//     resolved to zero pages), and ErrNotLiveSource (a disk-origin provider that is
+//     resolved to zero pages), ErrNotLiveSource (a disk-origin provider that is
 //     not a real source id — it structurally can never serve this or any chapter,
 //     so it must EXHAUST rather than loop forever; see
-//     TestDiskOriginProvider_ExhaustsNotLoops).
+//     TestDiskOriginProvider_ExhaustsNotLoops), and ErrImageFetch (a per-image byte
+//     fetch that survived stagePages' transient retries — reaching the image stage
+//     proves the source session is alive, so a persistent single-image failure is
+//     about this page/chapter, not the source; one flaky page must never trip the
+//     breaker).
 //     Consequence: the per-source counter is BUMPED (bumpSourceFailure → attempts++,
 //     so this source gives up on this chapter at max_retries) and the breaker is NOT
 //     tripped (the source stays available for its other chapters).
@@ -41,7 +45,8 @@ import (
 func isChapterSpecificFailure(err error) bool {
 	if errors.Is(err, sourceengine.ErrBrokenPage) ||
 		errors.Is(err, sourceengine.ErrNoPages) ||
-		errors.Is(err, sourceengine.ErrNotLiveSource) {
+		errors.Is(err, sourceengine.ErrNotLiveSource) ||
+		errors.Is(err, sourceengine.ErrImageFetch) {
 		return true
 	}
 	switch errorclass.Classify(err) {

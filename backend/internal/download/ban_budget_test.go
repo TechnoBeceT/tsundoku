@@ -336,6 +336,84 @@ func TestRenderFault_DoesNotChargeSource(t *testing.T) {
 	}
 }
 
+// TestFetchFailure_TransientImage_ChapterSpecific_NoBreaker proves the per-image
+// retry + chapter-specific classification end-to-end through the REAL staging
+// Fetcher: a persistent transient IMAGE failure (a 502 on every page byte fetch) is
+// retried in stagePages, then surfaces wrapped in ErrImageFetch — so it BUMPS the
+// per-source budget (attempts 0→1) but NEVER trips the source breaker (threshold 1),
+// even though a bare 502 is a source-wide errorclass category. One flaky page can
+// therefore never pause an otherwise-healthy source.
+func TestFetchFailure_TransientImage_ChapterSpecific_NoBreaker(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	s := client.Series.Create().SetTitle("Flaky").SetSlug("flaky").SaveX(ctx)
+	// Numeric provider ⇒ the real Fetcher parses it as a live source id; breaker key "7".
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("7").SetImportance(10).SaveX(ctx)
+	pc := client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("c1").
+		SetURL("/ch/c1").SetProviderIndex(0).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("c1").SaveX(ctx)
+
+	rs := classifiedSettings() // SourcesFailureThresh 1 ⇒ any source-wide failure would trip the breaker
+	gate := sourcegate.NewService(client, rs)
+	engineClient := enginefake.New(
+		enginefake.WithPages(7, "/ch/c1", []sourceengine.Page{{Index: 0, URL: "u0"}}),
+		enginefake.WithError("Image", errors.New("502 bad gateway")), // transient, on every attempt
+	)
+	d := download.New(client, sourceengine.NewFetcher(engineClient, mustTempDir(t)), sse.NewHub(),
+		download.Config{Storage: mustTempDir(t)}, rs, gate)
+
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	if a := client.ProviderChapter.GetX(ctx, pc.ID).Attempts; a != 1 {
+		t.Errorf("attempts = %d, want 1 (a surviving image failure is chapter-specific → charges the budget)", a)
+	}
+	if !gate.IsAvailable(ctx, "7", time.Now()) {
+		t.Error("breaker tripped on a per-image failure — one flaky page must never pause a healthy source")
+	}
+	if n := engineClient.CallCount("Image"); n != 4 {
+		t.Errorf("Image called %d times, want 4 (1 initial + 3 retries against the flaky source)", n)
+	}
+}
+
+// TestFetchFailure_PagesResolution_SourceWide_TripsBreaker proves the ban-detection
+// carve-out survives the change: a page-RESOLUTION (Client.Pages) failure — an
+// EARLIER session stage where a real ban blocks the whole source — stays SOURCE-WIDE
+// through the real Fetcher (it is NEVER wrapped in ErrImageFetch), so it does not
+// spend the chapter budget and DOES trip the source breaker (threshold 1).
+func TestFetchFailure_PagesResolution_SourceWide_TripsBreaker(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	s := client.Series.Create().SetTitle("Banned").SetSlug("banned").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("7").SetImportance(10).SaveX(ctx)
+	pc := client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("c1").
+		SetURL("/ch/c1").SetProviderIndex(0).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("c1").SaveX(ctx)
+
+	rs := classifiedSettings()
+	gate := sourcegate.NewService(client, rs)
+	engineClient := enginefake.New(enginefake.WithError("Pages", errors.New("502 bad gateway")))
+	d := download.New(client, sourceengine.NewFetcher(engineClient, mustTempDir(t)), sse.NewHub(),
+		download.Config{Storage: mustTempDir(t)}, rs, gate)
+
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	if a := client.ProviderChapter.GetX(ctx, pc.ID).Attempts; a != 0 {
+		t.Errorf("attempts = %d, want 0 (a source-wide page-resolution failure must not spend the budget)", a)
+	}
+	if gate.IsAvailable(ctx, "7", time.Now()) {
+		t.Error("breaker did NOT trip on a page-resolution failure — a real ban at the session stage must pause the source")
+	}
+	if n := engineClient.CallCount("Image"); n != 0 {
+		t.Errorf("Image called %d times, want 0 (a Pages failure fails before any image fetch)", n)
+	}
+}
+
 // TestStagingDir_DeletedAfterCBZCompleted proves the byte cache self-cleans: with
 // the real staging Fetcher, a successful download assembles the CBZ and then DELETES
 // the chapter's staging directory (bytes are held only for in-progress chapters).

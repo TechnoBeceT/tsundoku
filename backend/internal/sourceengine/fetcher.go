@@ -83,8 +83,15 @@ func NewFetcher(client Client, stagingRoot string) *Fetcher {
 //     wrapped error without downloading any pages.
 //   - If the source reports ZERO pages, Fetch returns an error wrapping
 //     ErrNoPages — never a "downloaded" empty CBZ.
-//   - If Image returns an error on any page, Fetch returns the wrapped error and
-//     an empty Pages slice. No partial page set is ever returned.
+//   - If Image returns a TRANSIENT error on a page (timeout / network /
+//     server_error), that ONE page is retried up to imageRetries times with a flat
+//     imageRetryBackoff (respecting ctx) before the chapter fails; a survivor is
+//     wrapped in ErrImageFetch so the dispatcher treats it as CHAPTER-SPECIFIC (it
+//     charges the budget but never trips the source breaker — see ErrImageFetch). A
+//     ban-class image error (captcha / rate_limit) or a chapter-specific one
+//     (not_found / parse) is NOT retried and falls straight through. On any surviving
+//     Image error Fetch returns an empty Pages slice — no partial page set is ever
+//     returned.
 //   - If any page fails image validation (empty, truncated, non-image, or a
 //     decompression-bomb-sized body — see imagevalidate.go), Fetch returns an
 //     error wrapping ErrBrokenPage, so the whole chapter attempt fails cleanly
@@ -181,8 +188,26 @@ func (f *Fetcher) stagePages(ctx context.Context, sourceID int64, links []fetche
 			continue
 		}
 
-		data, contentType, err := f.client.Image(ctx, sourceID, link.URL, link.ImageURL)
+		data, contentType, err := f.fetchImageRetrying(ctx, sourceID, link)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				// The parent context was cancelled/expired mid-fetch (graceful
+				// shutdown) — NOT the page's fault. Return the context error
+				// unwrapped so the dispatcher neither charges this chapter's budget
+				// nor trips the breaker (both gate on ctx.Err()==nil / classification).
+				return fmt.Errorf("sourceengine fetcher: context: %w", ctxErr)
+			}
+			if isTransientImageError(err) {
+				// A transient byte-fetch failure that survived the retries. Reaching
+				// this stage proves the source session is alive (Pages already
+				// succeeded), so mark it CHAPTER-SPECIFIC via ErrImageFetch: the
+				// dispatcher charges the per-source budget but does NOT trip the
+				// breaker for one flaky page. See ErrImageFetch.
+				return fmt.Errorf("sourceengine fetcher: image: %w: %v", ErrImageFetch, err)
+			}
+			// A ban-class image failure (captcha / rate_limit) stays SOURCE-WIDE so it
+			// still trips the breaker; a chapter-specific one (not_found / parse) is
+			// already classified chapter-specific by errorclass. Neither is wrapped.
 			return fmt.Errorf("sourceengine fetcher: image: %w", err)
 		}
 		// Prove the page is a complete, decodable image BEFORE it is staged, so a
