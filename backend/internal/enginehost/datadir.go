@@ -27,6 +27,11 @@ func fsSafeKey(key string) string {
 // "<base>/profiles/<fsSafeKey>". Each non-default instance gets its own dir so
 // its single-instance file lock and extensions working-set never collide with
 // another instance's (or the default instance's, which lives directly at base).
+//
+// The path segment is the HASH of the profile Key, never the Key itself: a Key is a
+// composite of endpoint UUIDs joined by "|" (see engineroute.profileKey), and neither
+// that separator nor the raw UUID soup is safe or sane to put in a filesystem path.
+// See fsSafeKey for why hashing beats sanitizing.
 func dataDirFor(base, key string) string {
 	return filepath.Join(base, "profiles", fsSafeKey(key))
 }

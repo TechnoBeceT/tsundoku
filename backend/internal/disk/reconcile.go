@@ -78,6 +78,16 @@ func Slugify(title string) string {
 //
 // Missing files (sidecar entries whose CBZ is absent) are counted in
 // ReconcileResult.MissingFiles. No illegal state transition is forced.
+//
+// BOUNDARY — what reconcile deliberately does NOT restore. Series.completed,
+// Series.monitored and Series.metadata_provider_id are PURE DB PREFERENCES: they
+// have no disk or sidecar representation, they do not determine the series folder,
+// and they are therefore out of scope here by design, not by omission. They are
+// owner intent about a series, not facts about the library on disk, so a rebuild
+// restores the library and resets those preferences to their schema defaults
+// (monitored=true, completed=false, metadata source=auto). Do not add them to the
+// sidecar to "improve" reconcile — that would make owner preferences
+// folder-determining and put them on the disk round-trip contract.
 func Reconcile(ctx context.Context, client *ent.Client, storage string) (ReconcileResult, error) {
 	var result ReconcileResult
 

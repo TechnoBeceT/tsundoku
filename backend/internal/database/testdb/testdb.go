@@ -33,6 +33,32 @@
 //
 // The shared container is reaped by the testcontainers Ryuk sidecar when the test
 // process exits, so no TestMain is required in any consumer package.
+//
+// # Running the suite: `go test ./... -count=1 -p 1`
+//
+// Use -p 1 (serial packages). With -p 4 several ephemeral-Postgres containers race
+// each other for host ports under RootlessKit and produce SUB-SECOND false failures.
+// The duration is the tell: a real assertion in a container-backed test CANNOT fail
+// that fast, because the container has not finished starting. On such a failure run
+// `docker container prune -f` and re-run that package in isolation BEFORE treating it
+// as a real defect. (runContainer retries the transient bind error, but the race is
+// mitigated, not eliminated — see its doc comment.)
+//
+// NO -timeout flag is needed. The old `-timeout 25m` is dead; do not restore it. And
+// do NOT "split the slow packages" — that intuitive fix is aimed at the wrong cause.
+// internal/series once took ~625s not because the package was too big, but because
+// this helper started a FRESH container per TEST: ~6.0s each, ~94% of every test's
+// wall-clock, while the test BODIES ran in under 100ms. Splitting a package would only
+// ADD another container start and make it worse. If the suite ever slows down again,
+// MEASURE where the time actually goes before reshaping any code.
+//
+// # Test conventions (fleet standard, recorded here as the de-facto testing home)
+//
+// Tests are co-located `*_test.go` and black-box (`package x_test`) by default.
+// Target near-100% coverage of REACHABLE code. A branch that is provably unreachable
+// (a compiler-required terminal return, a defensive guard no caller can trigger) must
+// be DOCUMENTED as such in a comment — never faked with a bogus test, and never made
+// reachable by adding a production injection seam purely to move the coverage number.
 package testdb
 
 import (
@@ -69,6 +95,12 @@ type shared struct {
 	adminDSN string  // DSN of adminDatabase; the template every per-test DSN is derived from
 }
 
+// NEVER set TESTCONTAINERS_RYUK_DISABLED for this package. The container behind the
+// singleton below has NO other teardown: Go gives no package-level hook to stop it
+// (that would need a TestMain in every consumer package), so the Ryuk reaper is the
+// only thing that removes it when the test process exits. Disabling Ryuk leaks a
+// postgres container per test binary, permanently, until the host is cleaned by hand.
+//
 //nolint:gochecknoglobals // package-level singleton is the whole point: one container per test binary.
 var (
 	sharedOnce sync.Once

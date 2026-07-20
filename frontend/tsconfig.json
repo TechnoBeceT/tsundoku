@@ -3,6 +3,12 @@
   // Nuxt generates the real project configs under .nuxt/ (run `nuxi prepare`).
   // This root config only wires the references so `vue-tsc -p tsconfig.json`
   // and `nuxt typecheck` resolve the app, server, shared and node projects.
+  //
+  // THE TYPE GATE IS `bun run typecheck` (= `nuxt typecheck`) — nothing else.
+  // A bare `bunx vue-tsc --noEmit` is a NO-OP here: this is a solution-style config
+  // with "files": [] below, so that command type-checks ZERO files and exits 0 no
+  // matter how broken the code is. It looks like a passing gate and guards nothing.
+  // Only `bun run typecheck` walks the "references" and actually checks the projects.
   "files": [],
   "references": [
     { "path": "./.nuxt/tsconfig.app.json" },

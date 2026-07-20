@@ -9,7 +9,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// SeriesProvider holds the schema definition for the SeriesProvider entity.
+// SeriesProvider holds the schema definition for the SeriesProvider entity: one
+// (source, scanlator) pair followed for one series.
+//
+// NO JSON chapters blob may ever be added to this entity — nor anywhere else.
+// Per-provider chapter availability lives in ProviderChapter rows, keyed
+// UNIQUE(series_provider_id, chapter_key). That constraint is what makes
+// deduplication STRUCTURAL: the database refuses a duplicate outright, so no
+// application-layer "have we seen this chapter?" logic exists to drift, race, or be
+// forgotten by a new code path. A blob would move that guarantee back into
+// application code and silently lose it.
 type SeriesProvider struct {
 	ent.Schema
 }
@@ -44,6 +53,13 @@ func (SeriesProvider) Fields() []ent.Field {
 		field.Bool("metadata").Default(false),
 		field.String("status").Default(""),
 		field.Uint32("flags").Default(0),
+		// importance ranks this source against the series' other sources.
+		// HIGHER NUMBER = HIGHER PRIORITY. This is the INVERSE of a typical priority
+		// queue and of the legacy Kaizoku.GO behaviour, so it is the direction a
+		// newcomer is most likely to assume backwards. Never reverse it: the whole
+		// candidate/upgrade engine reads it this way — disk.RenderChapter,
+		// chapter.BestProviderChapter, download.buildFetchRef, series.ChapterTitles
+		// and imports.Adopt all depend on this ordering.
 		field.Int("importance").Default(0),
 		// ignore_fractional marks this source, FOR THIS SERIES, as a fractional
 		// re-uploader: a mirror that republishes whole chapter N as a lone "N.1"

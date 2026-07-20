@@ -49,6 +49,23 @@ type HTTPDoer interface {
 //     UninstallExtension/Repos/SetRepos: extension package management.
 //   - SetFlareSolverr/SetSocks: the FlareSolverr + SOCKS-proxy config
 //     passthrough (replaces the retired Suwayomi settings-proxy).
+//
+// FOOTGUN — adding a method here is never a local change. Every implementor
+// across the tree must gain it, and only two of them are production code that
+// a plain `go build ./...` will flag:
+//
+//	PRODUCTION  sourceengine.httpClient   (this file)
+//	PRODUCTION  engineroute.Router        (the per-source routing decorator)
+//	TEST        sourceengine/fake.Client  (the shared double ~40 test files use)
+//	TEST        imports.fakeClient        (imports/service_test.go)
+//	TEST        library.fakeAddProviderClient (library/provider_test.go)
+//	TEST        server.nullEngineClient   (server/static_test.go)
+//
+// The four test doubles live in _test.go files, so `go build` stays green while
+// those packages fail to COMPILE THEIR TESTS. Run `go vet ./...` (which type-checks
+// test files) or `go test ./...` before believing an interface change is complete.
+// Prefer extending sourceengine/fake.Client over hand-rolling a new bespoke double —
+// each bespoke fake is one more site every future method has to reach.
 type Client interface {
 	// Health reports the engine host's liveness and how many sources it has
 	// loaded. It never fails on a healthy host.
