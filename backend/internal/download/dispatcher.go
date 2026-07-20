@@ -14,7 +14,6 @@ package download
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -35,7 +34,6 @@ import (
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/pkg/errorclass"
-	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -73,9 +71,9 @@ type RetrySettings interface {
 	// has been abandoned (see chapter.AllProvidersExhausted) — this is not a global
 	// per-chapter counter.
 	MaxRetries(ctx context.Context) int
-	// RetryBackoff is the BASE delay fed to backoffCurve, applied PER SOURCE. The
-	// delay before a source's retry attempt n is base×2^n (capped at 1h): the first
-	// retry (n=1) = 2×base, n=2 = 4×base, and so on.
+	// RetryBackoff is the FLAT delay before every retry, applied PER SOURCE: the
+	// gap between a source's successive tries for one chapter is constant = this
+	// value (no per-attempt growth — see backoffCurve). Default 30m.
 	RetryBackoff(ctx context.Context) time.Duration
 	// DownloadConcurrency is the PER-SOURCE download concurrency cap: how many of a
 	// source's chapters the dispatcher fetches in parallel (and, equivalently, how
@@ -88,25 +86,16 @@ type RetrySettings interface {
 	SuppressSplitParts(ctx context.Context) bool
 }
 
-// backoffCurve returns the delay for the given attempt: base×2^attempt, capped at
-// 1 hour. So attempt 0 yields base, the first retry (attempt=1) yields 2×base,
-// attempt=2 yields 4×base, and so on. A base of 0 yields 0 (immediate retry — used
-// by tests). It is the single backoff curve, parameterised by the runtime base
-// instead of a hardcoded constant.
-//
-// Overflow analysis: shift is capped at 12 so base×2^12 stays well within int64
-// (even base=1h ⇒ 1h×4096 ≈ 1.5e16 ns << int64 max ≈9.2e18 ns); the hour ceiling
-// then clamps the result.
-func backoffCurve(base time.Duration, attempt int) time.Duration {
-	shift := attempt
-	if shift > 12 {
-		shift = 12
-	}
-	d := base * (1 << uint(shift)) //nolint:gosec // shift is capped at 12; base×2^12 << int64 max.
-	if d > time.Hour {
-		d = time.Hour
-	}
-	return d
+// backoffCurve returns the FLAT retry interval: the configured base delay itself,
+// applied identically before every retry attempt (Kaizoku-style "count every
+// retry, terminal at max" model — owner-ratified). There is no per-attempt
+// growth: the gap between a source's successive tries for one chapter is constant
+// = base. A base of 0 yields 0 (immediate retry — used by tests). The retry MODEL
+// gives up on a chapter after jobs.max_retries attempts (permanently_failed); the
+// drain-prevention against an anti-bot ban is the circuit-breaker (sourcegate),
+// NOT a growing backoff.
+func backoffCurve(base time.Duration) time.Duration {
+	return base
 }
 
 // DownloadEvent is the SSE payload broadcast for every download lifecycle
@@ -617,14 +606,18 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 // source. The concurrency slot is held only for the network fetch; rendering is
 // local disk work and does not contend for the provider's API.
 //
-// Failure accounting is deliberately asymmetric (the ban fix, GAP-099):
-//   - A FETCH failure is CLASSIFIED (chargeFetchFailure): a ban/source-down class
-//     (rate_limit / captcha / timeout / network / server_error / unknown AND a
-//     broken page — an anti-bot challenge served as a 200 image) only COOLS THE
-//     SOURCE DOWN (defers the next try, retry budget UNTOUCHED), so a banned
-//     source's chapters wait for the cooldown and never drain to permanently_failed;
-//     a chapter-specific class (not_found / no_pages / parse / a disk-origin
-//     non-source) BUMPS the budget as before.
+// Failure accounting (Kaizoku-style "count every retry, terminal at max" —
+// owner-ratified):
+//   - A FETCH failure ALWAYS charges the source (chargeFetchFailure →
+//     bumpSourceFailure): attempts++, regardless of whether it is a ban/source-down
+//     class (rate_limit / captcha / timeout / network / server_error / unknown / a
+//     broken page) or a chapter-specific class (not_found / no_pages / parse). A
+//     chapter goes terminal (permanently_failed) once EVERY source offering it has
+//     spent its whole max_retries budget. The drain-prevention against an anti-bot
+//     ban is the circuit-breaker (filterGated EXCLUDES a tripped source so its
+//     chapters stay wanted and burn NO attempts while excluded), NOT the retry
+//     classification — the per-chapter max mainly bites a chapter a source
+//     genuinely can't serve while the source is UP.
 //   - A render/persist (finishDownload) failure is a LOCAL fault (disk/NFS/DB), NOT
 //     the source's — the source is NOT charged at all, so a persistent infra fault
 //     can never drain the library. The staging dir is KEPT so the retry resumes.
@@ -687,24 +680,21 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	return true, nil
 }
 
-// chargeFetchFailure applies the per-source retry accounting for a FETCH failure,
-// classifying the cause (internal/pkg/errorclass) to decide whether it spends the
-// source's retry budget. A chapter-specific failure (the source genuinely cannot
-// serve THIS chapter) BUMPS the budget; a ban / source-down failure (the source is
-// unavailable right now) only COOLS THE SOURCE DOWN, leaving the budget untouched
-// so the chapter waits for the cooldown instead of exhausting — the core of the
-// ban fix (GAP-099).
+// chargeFetchFailure applies the per-source retry accounting for a FETCH failure.
+// EVERY fetch failure charges the source (bumpSourceFailure → attempts++),
+// regardless of class — the Kaizoku-style "count every retry, terminal at max"
+// model (owner-ratified): a chapter goes permanently_failed once every source
+// offering it has spent its whole max_retries budget. Draining a banned source's
+// whole backlog is prevented NOT by exempting ban-class errors here but by the
+// circuit-breaker (filterGated) excluding a tripped source from candidacy, so its
+// chapters stay wanted and burn no attempts while it is excluded.
 //
 // A not_found is treated as a STALE RESOLUTION: the stored page links, and the
 // pages already staged from them, may point at moved/renamed resources, so BOTH are
 // invalidated (links cleared, staging dir wiped) and the next attempt re-resolves +
 // re-downloads from scratch. stagingDir is the failed fetch's staging directory ("" if none).
 func (d *Dispatcher) chargeFetchFailure(ctx context.Context, pc *ent.ProviderChapter, stagingDir string, cause error, now time.Time) {
-	if isChapterSpecificFailure(cause) {
-		d.bumpSourceFailure(ctx, pc, cause, now)
-	} else {
-		d.cooldownSource(ctx, pc, cause, now)
-	}
+	d.bumpSourceFailure(ctx, pc, cause, now)
 	if errorclass.Classify(cause) == errorclass.CategoryNotFound {
 		// Wipe the staging dir FIRST and clear the page links ONLY if the wipe
 		// succeeded: the two must stay consistent. If the links were cleared but the
@@ -722,44 +712,6 @@ func (d *Dispatcher) chargeFetchFailure(ctx context.Context, pc *ent.ProviderCha
 			return
 		}
 		d.clearPageLinks(ctx, pc)
-	}
-}
-
-// isChapterSpecificFailure reports whether a fetch error is the source's problem
-// with THIS chapter (so it should spend the per-source retry budget) rather than
-// the source being down/blocked entirely (so it should only cool down).
-//
-// ErrBrokenPage is deliberately NOT chapter-specific: it is the IMAGE-step
-// manifestation of an anti-bot block — an HTML Cloudflare challenge served as
-// HTTP 200 fails validateImagePage exactly like a genuinely corrupt panel (see
-// sourceengine/imagevalidate.go). Charging it would relocate the very ban-drain
-// this classification exists to prevent to the image step, draining a banned
-// source's whole backlog to permanently_failed. A persistent ErrBrokenPage is far
-// more often a CF challenge than a corrupt image, and the owner's ratified
-// priority is "nothing forgotten" (never exhaust on a source-side condition); the
-// genuinely-corrupt-page corner has a manual owner escape (delete). It is checked
-// EXPLICITLY (not left to the taxonomy) so the wrapped decode message can never
-// reclassify it as chapter-specific.
-//
-// ErrNotLiveSource (a disk-origin, non-numeric provider) IS chapter-specific: that
-// candidate can never be fetched live, so a wanted chapter whose only candidate is
-// disk-origin must exhaust rather than retry forever on a cooldown. ErrNoPages
-// (zero-page chapter) is chapter-specific too. Otherwise the shared error taxonomy
-// decides — not_found / no_pages / parse are chapter-specific, while rate_limit,
-// captcha, timeout, network, server_error, and the ambiguous unknown are treated
-// as source-down (cooldown, never drain).
-func isChapterSpecificFailure(err error) bool {
-	if errors.Is(err, sourceengine.ErrBrokenPage) {
-		return false
-	}
-	if errors.Is(err, sourceengine.ErrNoPages) || errors.Is(err, sourceengine.ErrNotLiveSource) {
-		return true
-	}
-	switch errorclass.Classify(err) {
-	case errorclass.CategoryNotFound, errorclass.CategoryNoPages, errorclass.CategoryParse:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -924,14 +876,14 @@ func (d *Dispatcher) finishDownload(ctx context.Context, ch *ent.Chapter, chapte
 
 // bumpSourceFailure records one failed attempt against a single source's
 // ProviderChapter row: attempts++, last_error, and next_attempt_at = now +
-// backoffCurve(base, newAttempts). The backoff base is read at use-time so a
-// settings change applies immediately. Per-source retry state lives ONLY on the
+// backoffCurve(base) (the flat retry interval). The backoff base is read at
+// use-time so a settings change applies immediately. Per-source retry state lives ONLY on the
 // ProviderChapter row (the Chapter-identity invariant keeps per-source state off
 // the Chapter). A DB write failure is logged, not propagated — the cycle's other
 // work must not be aborted by one source's bookkeeping error.
 func (d *Dispatcher) bumpSourceFailure(ctx context.Context, pc *ent.ProviderChapter, cause error, now time.Time) {
 	newAttempts := pc.Attempts + 1
-	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx), newAttempts))
+	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx)))
 	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).
 		SetAttempts(newAttempts).
 		SetLastError(cause.Error()).
@@ -949,8 +901,9 @@ func (d *Dispatcher) bumpSourceFailure(ctx context.Context, pc *ent.ProviderChap
 
 // cooldownSource records an UPGRADE fetch failure against a source's
 // ProviderChapter row WITHOUT spending its retry budget: it sets last_error and a
-// backoff cooldown (next_attempt_at = now + backoffCurve(base, 1)) but leaves
-// attempts UNCHANGED. This is the deliberate asymmetry with bumpSourceFailure: a
+// backoff cooldown (next_attempt_at = now + backoffCurve(base), the flat retry
+// interval) but leaves attempts UNCHANGED. This is the deliberate asymmetry with
+// bumpSourceFailure: a
 // download failure sticks (attempts increments toward exhaustion, so the owner's
 // "give up on a chapter this source can't provide" is honoured), whereas an
 // upgrade failure only defers the next try — the engine must NEVER permanently
@@ -958,7 +911,7 @@ func (d *Dispatcher) bumpSourceFailure(ctx context.Context, pc *ent.ProviderChap
 // temporarily down during upgrade attempts recovers as an upgrade target once it
 // is back and past its cooldown. A DB write failure is logged, not propagated.
 func (d *Dispatcher) cooldownSource(ctx context.Context, pc *ent.ProviderChapter, cause error, now time.Time) {
-	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx), 1))
+	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx)))
 	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).
 		SetLastError(cause.Error()).
 		SetNextAttemptAt(nextAttempt).

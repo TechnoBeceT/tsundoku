@@ -4,10 +4,10 @@
 // with a missing/broken panel" invariant: with the REAL, validating
 // sourceengine.Fetcher wired in, a multi-page chapter whose middle page is a
 // truncated image fails the WHOLE attempt cleanly — the chapter never reaches
-// downloaded, NO CBZ is written, and the source is COOLED DOWN (retry budget
-// untouched, next_attempt_at set) so a later cycle retries it. A broken page is
-// the image-step manifestation of an anti-bot block, so it must never spend the
-// per-source retry budget (ban-fix, GAP-099) — see download.isChapterSpecificFailure.
+// downloaded and NO CBZ is written. Under the Kaizoku-style "count every retry,
+// terminal at max" model the failure CHARGES the source (attempts 0→1) and sets a
+// cooldown; with a budget of 3 the chapter is still retryable (failed), and a
+// later cycle retries it.
 //
 // Ported from the retired suwayomi-era internal/download/brokenimage_test.go
 // (GAP-083) onto the P2 engine-host Fetcher — same guarantee, different
@@ -68,8 +68,8 @@ func encodeTestJPEG(t *testing.T) []byte {
 // TestRunOnce_BrokenPage_ChapterFailsNoCBZ wires the real validating Fetcher and a
 // client whose second page is a truncated JPEG. After one RunOnce pass the chapter
 // must NOT be downloaded, no .cbz may exist under storage, the chapter must carry no
-// filename, and the source must be COOLED DOWN (attempts stay 0, next_attempt_at
-// set) — a broken page is treated as a source-side block, never a budget charge.
+// filename, and the source must be CHARGED (attempts 0→1, next_attempt_at set) —
+// every fetch failure counts toward the per-source max_retries budget.
 func TestRunOnce_BrokenPage_ChapterFailsNoCBZ(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -126,12 +126,12 @@ func TestRunOnce_BrokenPage_ChapterFailsNoCBZ(t *testing.T) {
 		t.Errorf("found CBZ files %v, want none (broken chapter must write no file)", cbz)
 	}
 
-	// The source is COOLED DOWN, not bumped: a broken page is a suspected anti-bot
-	// block, so the retry budget is untouched (attempts stay 0) and only a cooldown
-	// (next_attempt_at) is set, so a later cycle retries without ever exhausting.
+	// The source is CHARGED: every fetch failure — a broken page included — counts
+	// toward the per-source budget (attempts 0→1) and sets a cooldown, so with a
+	// budget of 3 the chapter stays retryable and a later cycle re-attempts it.
 	got2 := client.ProviderChapter.GetX(ctx, pc.ID)
-	if got2.Attempts != 0 {
-		t.Errorf("ProviderChapter.attempts = %d, want 0 (a broken page cools down, never charges the budget)", got2.Attempts)
+	if got2.Attempts != 1 {
+		t.Errorf("ProviderChapter.attempts = %d, want 1 (a broken page charges the budget like any failure)", got2.Attempts)
 	}
 	if got2.NextAttemptAt == nil {
 		t.Error("ProviderChapter.next_attempt_at = nil, want set (cooldown scheduled)")

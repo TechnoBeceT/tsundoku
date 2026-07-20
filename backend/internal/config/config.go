@@ -133,16 +133,19 @@ type JobsConfig struct {
 	// TSUNDOKU_JOBS_REFRESHCONCURRENCY.
 	RefreshConcurrency int
 
-	// MaxRetries is how many times a failed chapter download is retried before it
-	// is parked in permanently_failed. Default 3. This is the env-sourced DEFAULT
-	// the runtime settings overlay (internal/settings) can override per-deployment
+	// MaxRetries is the PER-SOURCE retry budget: how many times a chapter is
+	// retried from ONE source before that source is abandoned for it. EVERY fetch
+	// failure counts toward it (Kaizoku-style "count every retry, terminal at max"
+	// model); a chapter is parked in permanently_failed only once every source
+	// offering it is exhausted. Default 5. This is the env-sourced DEFAULT the
+	// runtime settings overlay (internal/settings) can override per-deployment
 	// without a restart. Set via TSUNDOKU_JOBS_MAXRETRIES.
 	MaxRetries int
 
-	// RetryBackoff is the BASE delay before the first retry of a failed chapter;
-	// the dispatcher doubles it per attempt (capped at 1h). Default 1m. Like
-	// MaxRetries it is the env default behind the runtime settings overlay. Set
-	// via TSUNDOKU_JOBS_RETRYBACKOFF.
+	// RetryBackoff is the FLAT delay before every retry of a failed chapter from a
+	// source: the gap between successive tries is constant (no per-attempt growth).
+	// Default 30m. Like MaxRetries it is the env default behind the runtime
+	// settings overlay. Set via TSUNDOKU_JOBS_RETRYBACKOFF.
 	RetryBackoff time.Duration
 
 	// ExtensionCheckInterval is the tick period for the extension auto-check job,
@@ -456,8 +459,8 @@ func defaults() map[string]any {
 		"jobs.downloadconcurrency":    5,
 		"jobs.refreshinterval":        "2h",
 		"jobs.refreshconcurrency":     4,
-		"jobs.maxretries":             3,
-		"jobs.retrybackoff":           "1m",
+		"jobs.maxretries":             5,
+		"jobs.retrybackoff":           "30m",
 		"jobs.extensioncheckinterval": "24h",
 		"jobs.warmupinterval":         "15m",
 		"jobs.warmupslowthresholdms":  5000,

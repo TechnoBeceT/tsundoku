@@ -370,8 +370,8 @@ func TestJobsRetryConfig(t *testing.T) {
 	}
 }
 
-// TestJobsRetryDefaults confirms sensible defaults (3 retries, 1m backoff) when
-// the retry env vars are unset.
+// TestJobsRetryDefaults confirms the Kaizoku-style defaults (5 retries, flat 30m
+// backoff) when the retry env vars are unset.
 func TestJobsRetryDefaults(t *testing.T) {
 	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
 	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
@@ -380,11 +380,11 @@ func TestJobsRetryDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Jobs.MaxRetries != 3 {
-		t.Errorf("Jobs.MaxRetries default = %d, want 3", cfg.Jobs.MaxRetries)
+	if cfg.Jobs.MaxRetries != 5 {
+		t.Errorf("Jobs.MaxRetries default = %d, want 5", cfg.Jobs.MaxRetries)
 	}
-	if cfg.Jobs.RetryBackoff != time.Minute {
-		t.Errorf("Jobs.RetryBackoff default = %v, want 1m", cfg.Jobs.RetryBackoff)
+	if cfg.Jobs.RetryBackoff != 30*time.Minute {
+		t.Errorf("Jobs.RetryBackoff default = %v, want 30m", cfg.Jobs.RetryBackoff)
 	}
 }
 

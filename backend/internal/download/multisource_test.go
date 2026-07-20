@@ -22,13 +22,11 @@ import (
 // providerScopedFetcher fails for the named providers (per FetchRef.Provider) and
 // succeeds for everyone else with a single deterministic page. It lets a test
 // model "source X can't serve this chapter, source Y can" precisely, which the
-// fake fetcher's global fail modes cannot express. Its failure is a CHAPTER-
-// SPECIFIC one (a not_found — the source genuinely lacks the chapter), so it
-// spends the per-source retry budget (bumpSourceFailure), which is what drives the
-// exhaustion / fall-through / permanent-failure paths these tests exercise. A
-// source-DOWN (ban-class) failure, by contrast, only cools the source down without
-// spending budget — see TestMultiSource_BanClassNeverDrains. Safe for concurrent
-// use (read-only after construction).
+// fake fetcher's global fail modes cannot express. Its failure is a not_found, but
+// under the Kaizoku-style model every fetch failure spends the per-source retry
+// budget (bumpSourceFailure), which is what drives the exhaustion / fall-through /
+// permanent-failure paths these tests exercise. Safe for concurrent use (read-only
+// after construction).
 type providerScopedFetcher struct {
 	failProviders map[string]bool
 }

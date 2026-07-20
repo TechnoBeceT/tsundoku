@@ -70,7 +70,9 @@ const (
 	// make every fresh source exhausted before any fetch, driving the whole library
 	// straight to permanently_failed — so a source must always get at least one try.
 	KeyMaxRetries = "jobs.max_retries"
-	// KeyRetryBackoff is the base retry backoff delay (duration, >= 1s).
+	// KeyRetryBackoff is the FLAT retry interval (duration, >= 1s): the constant
+	// gap before every retry of a chapter from a source (no per-attempt growth).
+	// Default 30m.
 	KeyRetryBackoff = "jobs.retry_backoff"
 	// KeyStaleGraceDays tunes the M7 source-health stale threshold (int, 0..365).
 	KeyStaleGraceDays = "health.stale_grace_days"
