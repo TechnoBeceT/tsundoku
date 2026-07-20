@@ -1839,6 +1839,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/engine/purge-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Purge all Tsundoku DB state for one source
+         * @description Removes every trace of one physical source from Tsundoku's database: each
+         *     SeriesProvider on the source (via the sanctioned RemoveProvider cascade —
+         *     clearing satisfied_by, keeping the satisfied_importance watermark, deleting
+         *     the ProviderChapter feed + SuwayomiSyncState + the provider row), the
+         *     source's SourceMetric row (Sources pane) and its circuit-breaker row, and it
+         *     honestly resets any chapter left SOURCELESS from failed/permanently_failed
+         *     back to wanted. It NEVER deletes a CBZ file or a Chapter row
+         *     (never-auto-delete) — every downloaded file stays on disk. Preview the blast
+         *     radius first with GET /api/engine/purge-source/preview.
+         */
+        post: operations["purgeSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine/purge-source/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dry-run counts for a source purge
+         * @description Counts what POST /api/engine/purge-source WOULD remove without mutating
+         *     anything — the blast-radius figures behind the confirm dialog. sourceName
+         *     is optional (resolved from the metric/provider rows when absent).
+         */
+        get: operations["previewPurgeSource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine/purge-extension": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Purge all Tsundoku DB state for an extension's sources
+         * @description Resolves the extension's sources from Tsundoku's durable HarvestedExtension
+         *     store (NOT a live engine call — a purge often runs after the extension is
+         *     already uninstalled) and purges each — the same cascade as purge-source,
+         *     applied to every source the extension provides. Per-source failures are
+         *     isolated (one bad source never aborts the rest) and reported in the summary's
+         *     errors. Uninstalling an extension via the app runs this cascade
+         *     automatically. Keeps all CBZs/Chapter rows.
+         */
+        post: operations["purgeExtension"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine/purge-extension/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dry-run counts for an extension purge
+         * @description Aggregates the dry-run counts across every source the extension provides.
+         */
+        get: operations["previewPurgeExtension"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system": {
         parameters: {
             query?: never;
@@ -3285,6 +3381,83 @@ export interface components {
              *     ]
              */
             gaps: string[];
+        };
+        PurgeSourceRequest: {
+            /**
+             * @description The numeric source id (keys the metric row + live providers).
+             * @example 5183977075356529815
+             */
+            sourceId: string;
+            /**
+             * @description The source's display name (keys the breaker row + disk providers).
+             * @example Lunar Manga
+             */
+            sourceName: string;
+        };
+        PurgeExtensionRequest: {
+            /**
+             * @description The extension package name.
+             * @example eu.kanade.tachiyomi.extension.en.lunarmanga
+             */
+            pkgName: string;
+        };
+        /**
+         * @description What a source purge actually removed. Every count is of Tsundoku DB rows
+         *     only — never a CBZ file or a Chapter row (never-auto-delete).
+         */
+        SourcePurgeSummary: {
+            sourceId: string;
+            sourceName: string;
+            /** @description Distinct series that lost at least one provider. */
+            seriesAffected: number;
+            providersRemoved: number;
+            /** @description Sourceless PHANTOM chapters cleaned up (never-downloaded, no-CBZ rows no remaining source can supply). Downloaded chapters and CBZ files are never deleted. */
+            chaptersDeleted: number;
+            /** @description SourceMetric rows deleted (0 or 1). */
+            metricsDeleted: number;
+            /** @description SourceCircuitState (breaker) rows deleted (0 or 1). */
+            breakerCleared: number;
+        };
+        /** @description What a source purge WOULD remove (a dry run) — mutates nothing. */
+        SourcePurgePreview: {
+            sourceId: string;
+            sourceName: string;
+            seriesAffected: number;
+            /** @description SeriesProvider rows on this source. */
+            providers: number;
+            /** @description The source's total feed rows across those providers (chapters it supplies). */
+            providerChapters: number;
+            /** @description Sourceless phantom chapters that would be deleted (never-downloaded, no-CBZ, no remaining source). */
+            chaptersDeleted: number;
+            metrics: number;
+            breaker: number;
+        };
+        /**
+         * @description A completed extension purge aggregated across every source the extension
+         *     provides, with a per-source breakdown. Totals are summed across the
+         *     extension's sources.
+         */
+        ExtensionPurgeSummary: {
+            pkgName: string;
+            sources: components["schemas"]["SourcePurgeSummary"][];
+            seriesAffected: number;
+            providersRemoved: number;
+            chaptersDeleted: number;
+            metricsDeleted: number;
+            breakerCleared: number;
+            /** @description Per-source failure messages (a failing source never aborts the others). */
+            errors: string[];
+        };
+        /** @description An extension purge dry run aggregated across the extension's sources. */
+        ExtensionPurgePreview: {
+            pkgName: string;
+            sources: components["schemas"]["SourcePurgePreview"][];
+            seriesAffected: number;
+            providers: number;
+            providerChapters: number;
+            chaptersDeleted: number;
+            metrics: number;
+            breaker: number;
         };
         /**
          * @description One row of the live engine source-status strip: a physical source that is
@@ -8294,6 +8467,174 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceStatus"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    purgeSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurgeSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description The purge completed; the body reports exactly what was removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePurgeSummary"];
+                };
+            };
+            /** @description sourceId or sourceName missing. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    previewPurgeSource: {
+        parameters: {
+            query: {
+                /** @description The numeric Suwayomi source id. */
+                sourceId: string;
+                /** @description The source's display name (the circuit-breaker key); resolved when absent. */
+                sourceName?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The dry-run counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePurgePreview"];
+                };
+            };
+            /** @description sourceId missing. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    purgeExtension: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurgeExtensionRequest"];
+            };
+        };
+        responses: {
+            /** @description The purge completed; the body aggregates the per-source results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionPurgeSummary"];
+                };
+            };
+            /** @description pkgName missing. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    previewPurgeExtension: {
+        parameters: {
+            query: {
+                /** @description The extension package name. */
+                pkgName: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The aggregated dry-run counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionPurgePreview"];
+                };
+            };
+            /** @description pkgName missing. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Missing or invalid Bearer token. */

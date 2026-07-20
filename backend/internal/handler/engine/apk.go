@@ -20,6 +20,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
+	"github.com/technobecet/tsundoku/internal/sourcepurge"
 )
 
 // apkContentType is the standard MIME type for an Android package.
@@ -40,6 +41,10 @@ type Handler struct {
 	activeCounts activeSourceCounter
 	breakers     breakerSnapshotter
 	concurrency  downloadConcurrencyProvider
+
+	// Optional source-purge service (WithPurge). Used only by the
+	// /api/engine/purge-* endpoints; nil for every other endpoint.
+	purge *sourcepurge.Service
 }
 
 // NewHandler constructs a Handler bound to the APK cache store (serves the

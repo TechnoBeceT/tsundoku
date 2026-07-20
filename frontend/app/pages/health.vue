@@ -48,6 +48,14 @@ const {
   resetBreaker,
 } = useSourceMetrics({ immediate: false })
 
+// ── Per-source PURGE (destructive: remove all DB state for a source, keep CBZs) ─
+const purge = useSourcePurge()
+
+/** Confirm the purge, then refetch metrics so the purged source's row vanishes. */
+async function confirmPurge(): Promise<void> {
+  if (await purge.confirm()) void refetchMetrics()
+}
+
 // ── Kaizoku-grade Source Metrics report (LAZY — one reactive bundle) ───────────
 // Restore the last-used reporting window before the first fetch so it loads at
 // that period, not the default. `metrics` joins into the accordion for the
@@ -115,6 +123,19 @@ watch(activeTab, (tab) => {
       @refresh="refresh"
       @warm-now="warmNow"
       @reset-breaker="resetBreaker"
+      @purge-source="purge.start"
+    />
+
+    <!-- Destructive per-source purge (owns its own preview + confirm flow). -->
+    <PurgeSourceDialog
+      :open="purge.open.value"
+      :source-name="purge.target.value?.name ?? ''"
+      :preview="purge.preview.value"
+      :previewing="purge.previewing.value"
+      :busy="purge.purging.value"
+      :error="purge.error.value"
+      @update:open="(v: boolean) => { if (!v) purge.close() }"
+      @confirm="confirmPurge"
     />
   </div>
 </template>

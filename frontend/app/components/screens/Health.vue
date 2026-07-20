@@ -78,6 +78,8 @@ const emit = defineEmits<{
   'refresh': []
   /** Trigger a manual warm-up pass across all sources (Sources tab). */
   'warm-now': []
+  /** Purge all of Tsundoku's DB state for a source — carries its id + name. */
+  'purge-source': [source: { id: string, name: string }]
   /** Reset a source's tripped circuit-breaker — carries the source id (Sources tab). */
   'reset-breaker': [id: string]
 }>()
@@ -119,6 +121,7 @@ const emit = defineEmits<{
       :reset-error="resetError"
       @warm-now="emit('warm-now')"
       @reset-breaker="emit('reset-breaker', $event)"
+      @purge-source="emit('purge-source', $event)"
     />
   </div>
 </template>

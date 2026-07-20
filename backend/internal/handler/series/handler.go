@@ -247,7 +247,9 @@ func (h *Handler) RemoveProvider(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	if err := h.svc.RemoveProvider(ctx, id, providerID); err != nil {
+	// The phantom-deletion count is a side effect the HTTP response does not carry
+	// (the endpoint returns the refreshed series detail below); ignore it here.
+	if _, err := h.svc.RemoveProvider(ctx, id, providerID); err != nil {
 		return mapServiceError(err)
 	}
 

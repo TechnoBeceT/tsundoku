@@ -165,6 +165,21 @@ func (s *Service) SetWarmed(ctx context.Context, sourceID, sourceName string, at
 	return nil
 }
 
+// Delete removes the rolling snapshot row for sourceID and returns how many rows
+// were deleted (0 when the source was never measured, else 1). Unlike the
+// best-effort Record* writes this RETURNS its error: it is called from the
+// owner-initiated source purge, which must report exactly what it removed
+// (§16 — no silent operation). Idempotent — deleting zero rows is not an error.
+func (s *Service) Delete(ctx context.Context, sourceID string) (int, error) {
+	n, err := s.client.SourceMetric.Delete().
+		Where(entsourcemetric.SourceIDEQ(sourceID)).
+		Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("metrics.Delete: delete %q: %w", sourceID, err)
+	}
+	return n, nil
+}
+
 // List returns every source metric sorted by EWMA latency descending (slowest
 // first) — the order the source-metrics screen renders.
 func (s *Service) List(ctx context.Context) ([]*ent.SourceMetric, error) {

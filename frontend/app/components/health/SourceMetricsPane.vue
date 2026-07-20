@@ -58,6 +58,8 @@ const emit = defineEmits<{
   'warm-now': []
   /** Reset a source's tripped circuit-breaker — carries the source id. */
   'reset-breaker': [id: string]
+  /** Purge all of Tsundoku's DB state for a source — carries its id + name. */
+  'purge-source': [source: { id: string, name: string }]
 }>()
 
 // A few skeleton rows while the metrics list loads.
@@ -112,6 +114,7 @@ const skeletons = [0, 1, 2, 3]
         :source="m"
         :resetting="resetting === m.id"
         @reset="emit('reset-breaker', $event)"
+        @purge="emit('purge-source', $event)"
       />
     </div>
   </SurfaceCard>

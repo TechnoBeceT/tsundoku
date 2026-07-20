@@ -48,6 +48,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
+	"github.com/technobecet/tsundoku/internal/sourcepurge"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
@@ -256,6 +257,16 @@ func registerRoutes(
 	seriesH := seriesh.NewHandler(seriesSvc, trigger, coverCache).
 		WithViewSyncer(trackerSyncSvc).
 		WithTrackerProgressSetter(trackerSyncSvc)
+
+	// Source/extension PURGE cascade (GAP-101). purgeSvc composes the sanctioned
+	// series.RemoveProvider per-provider primitive with the metric-row + breaker-row
+	// deletions (metricsSvc / gate) and reads the durable HarvestedExtension store
+	// for the pkgName→source-ids map. It NEVER deletes a CBZ or a Chapter row
+	// (never-auto-delete). It is wired into BOTH the engine handler (the owner-
+	// triggered purge + preview endpoints) and the extensions handler (so an in-app
+	// uninstall auto-cascades the DB cleanup).
+	purgeSvc := sourcepurge.NewService(client, seriesSvc, metricsSvc, gate)
+
 	authed.GET("/series", seriesH.List)
 	authed.GET("/series/:id", seriesH.Detail)
 	authed.PATCH("/series/:id/category", seriesH.SetCategory)
@@ -407,7 +418,8 @@ func registerRoutes(
 	// pure Tsundoku interpretation flag, never pushed to the engine, and is also
 	// attached to the shared ingest below so adopt/attach honour it.
 	ignoreScanlatorSvc := ignorescanlator.NewService(client)
-	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get, disabledSrcSvc, ignoreScanlatorSvc, settingsSvc.RetainedVersions)
+	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get, disabledSrcSvc, ignoreScanlatorSvc, settingsSvc.RetainedVersions).
+		WithPurge(purgeSvc)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
@@ -530,11 +542,19 @@ func registerRoutes(
 	//     engine-host loader names the installed file from it); the handler parses
 	//     (pkg, version) back out.
 	engineH := engineh.NewHandler(apkStore, client).
-		WithSourceStatus(downloadsSvc, gate, settingsSvc)
+		WithSourceStatus(downloadsSvc, gate, settingsSvc).
+		WithPurge(purgeSvc)
 	authed.GET("/engine/topology-status", engineH.TopologyStatus)
 	// GET /api/engine/sources — the live per-source status strip (downloading /
 	// cooling), a pure DB + circuit-breaker-snapshot read (no engine call).
 	authed.GET("/engine/sources", engineH.Sources)
+	// Source/extension PURGE cascade (GAP-101): remove all of Tsundoku's DB state
+	// for a source or an extension's sources (keeps every CBZ), with dry-run
+	// previews backing the confirm dialog.
+	authed.POST("/engine/purge-source", engineH.PurgeSource)
+	authed.GET("/engine/purge-source/preview", engineH.PreviewSource)
+	authed.POST("/engine/purge-extension", engineH.PurgeExtension)
+	authed.GET("/engine/purge-extension/preview", engineH.PreviewExtension)
 	internalAPI := e.Group("/internal", mw.RequireOwner(authSvc, cfg.Auth.CookieSecure))
 	internalAPI.GET("/extensions/apk/:pkg/:file", engineH.ServeAPK)
 

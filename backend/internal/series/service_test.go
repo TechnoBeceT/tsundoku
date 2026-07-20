@@ -1219,7 +1219,7 @@ func TestRemoveProvider_KeepsChaptersAndSibling(t *testing.T) {
 	svc := series.NewService(db, t.TempDir(), 14)
 	sid, aID, bID := seedTwoProviderSeries(t, ctx, db)
 
-	if err := svc.RemoveProvider(ctx, sid, aID); err != nil {
+	if _, err := svc.RemoveProvider(ctx, sid, aID); err != nil {
 		t.Fatalf("RemoveProvider: %v", err)
 	}
 
@@ -1247,6 +1247,61 @@ func TestRemoveProvider_KeepsChaptersAndSibling(t *testing.T) {
 	}
 }
 
+// TestRemoveProvider_DeletesSourcelessPhantoms proves that removing a source also
+// deletes the never-downloaded, no-CBZ chapters it orphans (a phantom = no content
+// + no remaining source), while KEEPING a downloaded chapter (its CBZ) and a
+// chapter a surviving provider still carries. This is the owner-observed cleanup:
+// a plain RemoveProvider must not leave phantom "wanted" rows behind.
+func TestRemoveProvider_DeletesSourcelessPhantoms(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	svc := series.NewService(db, t.TempDir(), 14)
+
+	s := db.Series.Create().SetTitle("Phantom").SetSlug("phantom").SetMonitored(true).SaveX(ctx)
+	a := db.SeriesProvider.Create().SetSeries(s).SetProvider("src-a").SetSuwayomiID(1).SetImportance(50).SaveX(ctx)
+	b := db.SeriesProvider.Create().SetSeries(s).SetProvider("src-b").SetSuwayomiID(2).SetImportance(10).SaveX(ctx)
+	// A offers 1, 5, 9; B offers only 5.
+	for _, k := range []string{"1", "5", "9"} {
+		db.ProviderChapter.Create().SetSeriesProviderID(a.ID).SetChapterKey(k).SaveX(ctx)
+	}
+	db.ProviderChapter.Create().SetSeriesProviderID(b.ID).SetChapterKey("5").SaveX(ctx)
+
+	// ch1: wanted, no CBZ, carried only by A → phantom after A is removed.
+	ch1 := db.Chapter.Create().SetSeries(s).SetChapterKey("1").SetState(entchapter.StateWanted).SaveX(ctx)
+	// ch5: failed, no CBZ, carried by A AND B → KEPT (B still supplies it).
+	ch5 := db.Chapter.Create().SetSeries(s).SetChapterKey("5").SetState(entchapter.StateFailed).SaveX(ctx)
+	// ch9: downloaded, WITH a CBZ, satisfied by A → sourceless after removal but
+	// KEPT (never-delete-CBZ is absolute).
+	ch9 := db.Chapter.Create().SetSeries(s).SetChapterKey("9").SetState(entchapter.StateDownloaded).
+		SetSatisfiedByProviderID(a.ID).SetSatisfiedImportance(50).SetFilename("[src-a][en] Phantom 0009.cbz").SaveX(ctx)
+
+	deleted, err := svc.RemoveProvider(ctx, s.ID, a.ID)
+	if err != nil {
+		t.Fatalf("RemoveProvider: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("phantoms deleted = %d, want 1 (only ch1)", deleted)
+	}
+
+	// ch1 (sourceless phantom) is gone.
+	if n := db.Chapter.Query().Where(entchapter.IDEQ(ch1.ID)).CountX(ctx); n != 0 {
+		t.Errorf("sourceless phantom ch1 still present (%d), want 0 (deleted)", n)
+	}
+	// ch5 is KEPT (B still carries key 5).
+	got5 := db.Chapter.Query().Where(entchapter.IDEQ(ch5.ID)).OnlyX(ctx)
+	if got5.State != entchapter.StateFailed {
+		t.Errorf("still-carried ch5 state = %s, want failed (kept, B supplies it)", got5.State)
+	}
+	// ch9 is KEPT with its CBZ intact (downloaded — never-delete-CBZ).
+	got9 := db.Chapter.Query().Where(entchapter.IDEQ(ch9.ID)).OnlyX(ctx)
+	if got9.State != entchapter.StateDownloaded {
+		t.Errorf("downloaded ch9 state = %s, want downloaded (never deleted)", got9.State)
+	}
+	if got9.Filename == "" {
+		t.Error("downloaded ch9 filename was cleared; the CBZ reference must survive")
+	}
+}
+
 // TestRemoveProvider_LastSourceLeavesZeroProviderSeries removes the only
 // provider and asserts the series row persists with zero providers.
 func TestRemoveProvider_LastSourceLeavesZeroProviderSeries(t *testing.T) {
@@ -1256,7 +1311,7 @@ func TestRemoveProvider_LastSourceLeavesZeroProviderSeries(t *testing.T) {
 	s := db.Series.Create().SetTitle("Solo").SetSlug("solo").SetMonitored(true).SaveX(ctx)
 	p := db.SeriesProvider.Create().SetSeries(s).SetProvider("only").SetSuwayomiID(9).SetImportance(10).SaveX(ctx)
 
-	if err := svc.RemoveProvider(ctx, s.ID, p.ID); err != nil {
+	if _, err := svc.RemoveProvider(ctx, s.ID, p.ID); err != nil {
 		t.Fatalf("RemoveProvider: %v", err)
 	}
 	if n := db.Series.Query().Where(entseries.IDEQ(s.ID)).CountX(ctx); n != 1 {
@@ -1281,7 +1336,7 @@ func TestRemoveProvider_ProviderNotInSeries(t *testing.T) {
 	s2 := db.Series.Create().SetTitle("Two").SetSlug("two").SaveX(ctx)
 	pOther := db.SeriesProvider.Create().SetSeries(s2).SetProvider("x").SetImportance(10).SaveX(ctx)
 
-	err := svc.RemoveProvider(ctx, s1.ID, pOther.ID)
+	_, err := svc.RemoveProvider(ctx, s1.ID, pOther.ID)
 	if !errors.Is(err, series.ErrProviderNotInSeries) {
 		t.Fatalf("err = %v, want ErrProviderNotInSeries", err)
 	}
@@ -1295,7 +1350,7 @@ func TestRemoveProvider_UnknownSeries(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	svc := series.NewService(db, t.TempDir(), 14)
-	if err := svc.RemoveProvider(ctx, uuid.New(), uuid.New()); !errors.Is(err, series.ErrSeriesNotFound) {
+	if _, err := svc.RemoveProvider(ctx, uuid.New(), uuid.New()); !errors.Is(err, series.ErrSeriesNotFound) {
 		t.Fatalf("err = %v, want ErrSeriesNotFound", err)
 	}
 }

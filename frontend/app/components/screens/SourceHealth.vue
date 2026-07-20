@@ -70,6 +70,8 @@ const emit = defineEmits<{
   'warm-now': []
   /** Reset a source's tripped circuit-breaker — carries the source id. */
   'reset-breaker': [id: string]
+  /** Purge all of Tsundoku's DB state for a source — carries its id + name. */
+  'purge-source': [source: { id: string, name: string }]
 }>()
 
 // Convenience alias — the template reads `r.*` for the report bundle.
@@ -254,6 +256,7 @@ function onModalOpen(open: boolean): void {
       :reset-error="resetError"
       @warm-now="emit('warm-now')"
       @reset-breaker="emit('reset-breaker', $event)"
+      @purge-source="emit('purge-source', $event)"
     />
   </div>
 </template>

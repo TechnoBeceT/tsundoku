@@ -35,6 +35,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Reset this source's tripped circuit-breaker — carries the source id. */
   reset: [id: string]
+  /** Purge ALL of Tsundoku's DB state for this source — carries its id + name. */
+  purge: [source: { id: string, name: string }]
 }>()
 
 const { now } = useNow()
@@ -114,6 +116,15 @@ const successLabel = computed(() =>
       <span v-if="isCoolingDown" class="metric__badge metric__badge--cooling">Cooling down</span>
       <span v-if="source.isSlow" class="metric__badge metric__badge--slow">Slow</span>
       <span v-if="hasError" class="metric__badge metric__badge--error" :title="source.lastError">Erroring</span>
+      <AppButton
+        class="metric__purge"
+        variant="danger-ghost"
+        size="xs"
+        title="Remove all of Tsundoku's data for this source (keeps downloaded files)"
+        @click="emit('purge', { id: source.id, name: source.name })"
+      >
+        Purge
+      </AppButton>
     </div>
 
     <div class="metric__stats">
@@ -178,6 +189,11 @@ const successLabel = computed(() =>
   font-weight: var(--weight-bold);
   font-size: 13.5px;
   color: var(--text);
+}
+
+/* Push the purge action to the right edge of the row head. */
+.metric__purge {
+  margin-left: auto;
 }
 
 /* ---- Warm/cold session badge ---------------------------------------------- */

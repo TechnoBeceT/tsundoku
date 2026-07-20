@@ -219,6 +219,24 @@ func (s *Service) Reset(ctx context.Context, key string) error {
 	return nil
 }
 
+// Clear DELETES key's breaker row and returns how many rows were removed (0 or
+// 1). It is the source-PURGE counterpart to Reset: Reset is the owner's "un-trip
+// this still-present source" override (and so logs a breaker_reset transition +
+// fires the sources.summary alert), whereas Clear removes a source that is being
+// DELETED entirely — so it emits NO transition event/alert (a breaker_reset for a
+// source that no longer exists would be a misleading audit entry). Error-RETURNING
+// (unlike the best-effort recorders) so the purge reports exactly what it removed
+// (§16). Idempotent — deleting zero rows is not an error.
+func (s *Service) Clear(ctx context.Context, key string) (int, error) {
+	n, err := s.client.SourceCircuitState.Delete().
+		Where(entsourcecircuitstate.SourceKeyEQ(key)).
+		Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("sourcegate.Clear: delete breaker %q: %w", key, err)
+	}
+	return n, nil
+}
+
 // RecordSuccess resets key's consecutive-failure counter and clears any
 // cooldown, upserting the row if it does not yet exist. Best-effort: a DB
 // failure is logged and swallowed — breaker bookkeeping must never break or

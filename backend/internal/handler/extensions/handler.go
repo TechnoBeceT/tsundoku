@@ -49,6 +49,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourcepurge"
 )
 
 // SourceToggleStore is the narrow surface the Handler needs for the TSUNDOKU-SIDE
@@ -118,6 +119,19 @@ type Handler struct {
 	// install/update write-through and the reinstall path. Nil ⇒ the built-in
 	// default (enginetopo.defaultRetainedVersions).
 	retained func(context.Context) int
+	// purge cascades the DB cleanup (dangling SeriesProviders + feeds, the
+	// source's metric + breaker rows) for an uninstalled extension's now-orphaned
+	// sources — keeping every CBZ (never-auto-delete). Nil ⇒ uninstall does NOT
+	// auto-cascade (pure passthrough; focused proxy tests). Attach with WithPurge.
+	purge extensionPurger
+}
+
+// extensionPurger is the narrow surface the uninstall auto-cascade needs — the
+// pkgName→sources purge. *sourcepurge.Service satisfies it. A narrow port keeps
+// the extension handler from importing the whole purge package surface and lets
+// tests supply a lightweight fake.
+type extensionPurger interface {
+	PurgeExtension(ctx context.Context, pkgName string) (sourcepurge.ExtensionSummary, error)
 }
 
 // NewHandler constructs a Handler bound to an engine client, the durable
@@ -150,6 +164,16 @@ func NewHandler(
 // the receiver for chaining.
 func (h *Handler) WithScanlatorCollapser(collapser ScanlatorCollapser) *Handler {
 	h.collapser = collapser
+	return h
+}
+
+// WithPurge attaches the source-purge service so that uninstalling an extension
+// also CASCADE-purges all of Tsundoku's DB state for its now-orphaned source(s)
+// (see Uninstall). Like WithScanlatorCollapser it is a setter (not a NewHandler
+// param) because the purge service is constructed alongside the other library
+// services in server/routes.go. Returns the receiver for chaining.
+func (h *Handler) WithPurge(purge extensionPurger) *Handler {
+	h.purge = purge
 	return h
 }
 
@@ -236,6 +260,15 @@ func (h *Handler) Update(c echo.Context) error {
 // Uninstall handles DELETE /api/suwayomi/extensions/:pkgName. It skips the
 // shared install/update write-through capture (captureInstallOrUpdate) —
 // uninstall removes the durable row + cached apk instead (OnExtensionUninstalled).
+//
+// It ALSO cascade-purges all of Tsundoku's DB state for the extension's
+// now-orphaned source(s) (dangling SeriesProviders + feeds, their metric + breaker
+// rows), keeping every CBZ (never-auto-delete), so the owner no longer has to
+// clean those up series-by-series by hand. The purge runs BEFORE
+// OnExtensionUninstalled because the purge reads the extension's source ids from
+// the HarvestedExtension row that OnExtensionUninstalled then deletes. Best-effort:
+// a purge failure is logged, never fails the uninstall (mirrors the write-through's
+// own best-effort discipline).
 func (h *Handler) Uninstall(c echo.Context) error {
 	pkgName, err := validatePkgName(c.Param("pkgName"))
 	if err != nil {
@@ -245,6 +278,17 @@ func (h *Handler) Uninstall(c echo.Context) error {
 	exts, err := h.sw.UninstallExtension(ctx, pkgName)
 	if err != nil {
 		return httperr.Upstream(err)
+	}
+	if h.purge != nil {
+		if sum, pErr := h.purge.PurgeExtension(ctx, pkgName); pErr != nil {
+			slog.WarnContext(ctx, "extensions: uninstall purge cascade failed (DB state may be left behind)",
+				"pkg_name", pkgName, "err", pErr)
+		} else if sum.ProvidersRemoved > 0 || sum.MetricsDeleted > 0 || sum.BreakerCleared > 0 {
+			slog.InfoContext(ctx, "extensions: purged orphaned source state after uninstall",
+				"pkg_name", pkgName, "seriesAffected", sum.SeriesAffected, "providersRemoved", sum.ProvidersRemoved,
+				"chaptersDeleted", sum.ChaptersDeleted, "metricsDeleted", sum.MetricsDeleted, "breakerCleared", sum.BreakerCleared,
+				"errors", sum.Errors)
+		}
 	}
 	if h.db != nil {
 		enginetopo.OnExtensionUninstalled(ctx, h.db, h.cache, pkgName)

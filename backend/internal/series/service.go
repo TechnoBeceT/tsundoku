@@ -228,48 +228,54 @@ func reorderProvidersInTx(ctx context.Context, tx *ent.Tx, id uuid.UUID, ranks [
 // all-or-nothing transaction: it clears the satisfied_by edge on any chapters
 // that source satisfied (keeping satisfied_importance as a quality watermark),
 // deletes the source's ProviderChapter availability feed and its
-// SuwayomiSyncState, then deletes the SeriesProvider row. It performs NO disk
-// I/O — every downloaded CBZ and every Chapter row is preserved (M6
-// keep-CBZs invariant). Removing the last source is allowed and leaves a
-// 0-provider series in place. Returns ErrSeriesNotFound if id is unknown, or
-// ErrProviderNotInSeries if providerID does not belong to the series.
-func (s *Service) RemoveProvider(ctx context.Context, id, providerID uuid.UUID) error {
+// SuwayomiSyncState, then deletes the SeriesProvider row. Finally it deletes any
+// chapter left a SOURCELESS PHANTOM by the removal (deleteSourcelessPhantoms) —
+// a never-downloaded, no-CBZ chapter no remaining provider can supply. It performs
+// NO disk I/O and NEVER deletes a downloaded CBZ or a downloaded Chapter row (the
+// keep-CBZs invariant is absolute). Removing the last source is allowed and leaves
+// a 0-provider series in place. Returns the number of phantom chapters deleted,
+// plus ErrSeriesNotFound if id is unknown or ErrProviderNotInSeries if providerID
+// does not belong to the series.
+func (s *Service) RemoveProvider(ctx context.Context, id, providerID uuid.UUID) (int, error) {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
-		return fmt.Errorf("series.RemoveProvider: begin tx: %w", err)
+		return 0, fmt.Errorf("series.RemoveProvider: begin tx: %w", err)
 	}
-	if err := removeProviderInTx(ctx, tx, id, providerID); err != nil {
+	deleted, err := removeProviderInTx(ctx, tx, id, providerID)
+	if err != nil {
 		_ = tx.Rollback()
-		return err
+		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("series.RemoveProvider: commit tx: %w", err)
+		return 0, fmt.Errorf("series.RemoveProvider: commit tx: %w", err)
 	}
-	return nil
+	return deleted, nil
 }
 
 // removeProviderInTx performs the FK-safe ordered deletion. Order matters: the
 // SeriesProvider row can only be deleted after every row that references it
 // (ProviderChapter, SuwayomiSyncState) is gone and the Chapter.satisfied_by FK
 // pointing at it is cleared — there is no DB-level cascade (deliberately, since
-// a cascade would destroy downloaded Chapter rows).
-func removeProviderInTx(ctx context.Context, tx *ent.Tx, id, providerID uuid.UUID) error {
+// a cascade would destroy downloaded Chapter rows). After the source is gone it
+// deletes any sourceless phantom chapter the removal orphaned (see
+// deleteSourcelessPhantoms) and returns how many were deleted.
+func removeProviderInTx(ctx context.Context, tx *ent.Tx, id, providerID uuid.UUID) (int, error) {
 	exists, err := tx.Series.Query().Where(entseries.IDEQ(id)).Exist(ctx)
 	if err != nil {
-		return fmt.Errorf("series.RemoveProvider: check series %s: %w", id, err)
+		return 0, fmt.Errorf("series.RemoveProvider: check series %s: %w", id, err)
 	}
 	if !exists {
-		return ErrSeriesNotFound
+		return 0, ErrSeriesNotFound
 	}
 
 	owned, err := tx.SeriesProvider.Query().
 		Where(entseriesprovider.IDEQ(providerID), entseriesprovider.SeriesID(id)).
 		Exist(ctx)
 	if err != nil {
-		return fmt.Errorf("series.RemoveProvider: check provider %s: %w", providerID, err)
+		return 0, fmt.Errorf("series.RemoveProvider: check provider %s: %w", providerID, err)
 	}
 	if !owned {
-		return ErrProviderNotInSeries
+		return 0, ErrProviderNotInSeries
 	}
 
 	// Dangling-pointer guard: if the series' metadata_provider_id currently points
@@ -280,7 +286,7 @@ func removeProviderInTx(ctx context.Context, tx *ent.Tx, id, providerID uuid.UUI
 		Where(entseries.IDEQ(id), entseries.MetadataProviderIDEQ(providerID)).
 		ClearMetadataProviderID().
 		Exec(ctx); err != nil {
-		return fmt.Errorf("series.RemoveProvider: clear dangling metadata_provider_id for %s: %w", providerID, err)
+		return 0, fmt.Errorf("series.RemoveProvider: clear dangling metadata_provider_id for %s: %w", providerID, err)
 	}
 
 	// 1. Clear satisfied_by on chapters this source satisfied — keep the
@@ -289,28 +295,113 @@ func removeProviderInTx(ctx context.Context, tx *ent.Tx, id, providerID uuid.UUI
 		Where(entchapter.SatisfiedByProviderID(providerID)).
 		ClearSatisfiedBy().
 		Exec(ctx); err != nil {
-		return fmt.Errorf("series.RemoveProvider: clear satisfied_by for provider %s: %w", providerID, err)
+		return 0, fmt.Errorf("series.RemoveProvider: clear satisfied_by for provider %s: %w", providerID, err)
 	}
 
 	// 2. Delete the source's availability feed.
 	if _, err := tx.ProviderChapter.Delete().
 		Where(entproviderchapter.SeriesProviderID(providerID)).
 		Exec(ctx); err != nil {
-		return fmt.Errorf("series.RemoveProvider: delete provider chapters for %s: %w", providerID, err)
+		return 0, fmt.Errorf("series.RemoveProvider: delete provider chapters for %s: %w", providerID, err)
 	}
 
 	// 3. Delete its sync state (0 or 1 row).
 	if _, err := tx.SuwayomiSyncState.Delete().
 		Where(entsuwayomisyncstate.SeriesProviderID(providerID)).
 		Exec(ctx); err != nil {
-		return fmt.Errorf("series.RemoveProvider: delete sync state for %s: %w", providerID, err)
+		return 0, fmt.Errorf("series.RemoveProvider: delete sync state for %s: %w", providerID, err)
 	}
 
 	// 4. Delete the source row itself.
 	if err := tx.SeriesProvider.DeleteOneID(providerID).Exec(ctx); err != nil {
-		return fmt.Errorf("series.RemoveProvider: delete provider %s: %w", providerID, err)
+		return 0, fmt.Errorf("series.RemoveProvider: delete provider %s: %w", providerID, err)
 	}
-	return nil
+
+	// 5. Delete any chapter left a sourceless phantom by the removal (no content,
+	//    no remaining source that could ever supply it).
+	return deleteSourcelessPhantoms(ctx, tx, id)
+}
+
+// phantomChapterStates are the NEVER-DOWNLOADED chapter states a removal may
+// orphan into a phantom: the chapter has never produced a CBZ and, once its only
+// source is gone, nothing can. Downloaded/downloading/upgrading states are
+// excluded — they have (or are producing) a file and the keep-CBZs invariant
+// protects them absolutely.
+var phantomChapterStates = []entchapter.State{
+	entchapter.StateWanted,
+	entchapter.StateFailed,
+	entchapter.StatePermanentlyFailed,
+}
+
+// PhantomChapterStates returns the never-downloaded chapter states a source
+// removal may orphan into a phantom (a fresh copy so callers can't mutate the
+// package var). Exported so the source-purge dry-run counts would-be phantoms
+// against the EXACT same state set the deletion uses (§2 DRY).
+func PhantomChapterStates() []entchapter.State {
+	out := make([]entchapter.State, len(phantomChapterStates))
+	copy(out, phantomChapterStates)
+	return out
+}
+
+// deleteSourcelessPhantoms deletes every "phantom" chapter of the series: a
+// chapter in a never-downloaded state (wanted/failed/permanently_failed) with NO
+// CBZ (filename == "") that is now SOURCELESS — no ProviderChapter in any of the
+// series' REMAINING providers carries its chapter_key. Such a chapter has no
+// content and no source that could ever supply it, so leaving it as a "wanted"
+// row would strand a phantom in the queue forever (the owner-observed orphans left
+// behind when a source is removed). It is the narrow sanctioned Chapter-row
+// deletion of the never-auto-delete invariant.
+//
+// It KEEPS — and MUST keep — a downloaded chapter (filename != "": the keep-CBZs
+// invariant is absolute, even when that chapter's source was just removed) and any
+// chapter a surviving provider still carries. It NEVER touches a CBZ file (no disk
+// I/O). Runs inside the caller's tx AFTER the provider row is gone, so "remaining
+// providers" already excludes the removed source. Returns the number of phantoms
+// deleted.
+func deleteSourcelessPhantoms(ctx context.Context, tx *ent.Tx, seriesID uuid.UUID) (int, error) {
+	// chapter_keys still carried by the series' REMAINING providers.
+	remaining, err := tx.SeriesProvider.Query().
+		Where(entseriesprovider.SeriesID(seriesID)).
+		WithProviderChapters().
+		All(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("series.RemoveProvider: load remaining providers for %s: %w", seriesID, err)
+	}
+	carried := make(map[string]struct{})
+	for _, p := range remaining {
+		for _, pc := range p.Edges.ProviderChapters {
+			carried[pc.ChapterKey] = struct{}{}
+		}
+	}
+
+	// Candidate phantoms: never-downloaded, no CBZ. (The empty-filename guard is
+	// belt-and-braces with the state guard — a never-downloaded state never carries
+	// a filename — so the keep-CBZs invariant holds even if state ever drifts.)
+	candidates, err := tx.Chapter.Query().
+		Where(
+			entchapter.SeriesID(seriesID),
+			entchapter.StateIn(phantomChapterStates...),
+			entchapter.Filename(""),
+		).All(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("series.RemoveProvider: load candidate phantoms for %s: %w", seriesID, err)
+	}
+
+	var phantomIDs []uuid.UUID
+	for _, ch := range candidates {
+		if _, ok := carried[ch.ChapterKey]; !ok {
+			phantomIDs = append(phantomIDs, ch.ID)
+		}
+	}
+	if len(phantomIDs) == 0 {
+		return 0, nil
+	}
+
+	n, err := tx.Chapter.Delete().Where(entchapter.IDIn(phantomIDs...)).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("series.RemoveProvider: delete sourceless phantoms for %s: %w", seriesID, err)
+	}
+	return n, nil
 }
 
 // DeleteSeries permanently removes a whole series. It always deletes every DB

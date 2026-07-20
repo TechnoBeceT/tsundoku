@@ -207,7 +207,7 @@ func TestRemoveProvider_ClearsDanglingMetadataSource(t *testing.T) {
 	}
 
 	// Remove the pinned provider.
-	if err := svc.RemoveProvider(ctx, seriesID, highID); err != nil {
+	if _, err := svc.RemoveProvider(ctx, seriesID, highID); err != nil {
 		t.Fatalf("RemoveProvider: %v", err)
 	}
 
