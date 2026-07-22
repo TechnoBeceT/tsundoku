@@ -62,7 +62,7 @@ type LibraryFractionalsDTO struct {
 // already-loaded rows, never a per-series query. Pinned by
 // TestLibraryFractionalsQueryCountIsSeriesCountIndependent.
 func (s *Service) LibraryFractionals(ctx context.Context) (LibraryFractionalsDTO, error) {
-	rows, err := s.loadAllSeriesForFractionals(ctx)
+	rows, err := s.loadAllSeriesForCleanup(ctx)
 	if err != nil {
 		return LibraryFractionalsDTO{}, err
 	}
@@ -92,13 +92,14 @@ func (s *Service) LibraryFractionals(ctx context.Context) (LibraryFractionalsDTO
 	return out, nil
 }
 
-// loadAllSeriesForFractionals loads every series with the edges the fractionals
-// rollup needs, in one bounded query set (Ent batch-loads each edge in a single
-// query regardless of series count): chapters (the fractional tallies + the
-// page-count median), providers WITH their availability feeds (the carriers
-// behind the resurrection guard), and category (the display + folder name).
+// loadAllSeriesForCleanup loads every series with the edges the library-wide
+// cleanup rollups (fractional + sourceless) need, in one bounded query set (Ent
+// batch-loads each edge in a single query regardless of series count): chapters
+// (the fractional/sourceless tallies + the page-count median), providers WITH
+// their availability feeds (the carriers behind the resurrection guard / the
+// zero-carrier sourceless rule), and category (the display + folder name).
 // Mirrors loadSeriesWithHealthData's no-N+1 shape.
-func (s *Service) loadAllSeriesForFractionals(ctx context.Context) ([]*ent.Series, error) {
+func (s *Service) loadAllSeriesForCleanup(ctx context.Context) ([]*ent.Series, error) {
 	rows, err := s.client.Series.Query().
 		Order(entseries.ByTitle()).
 		WithChapters().
@@ -108,7 +109,7 @@ func (s *Service) loadAllSeriesForFractionals(ctx context.Context) ([]*ent.Serie
 		WithCategory().
 		All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("series.loadAllSeriesForFractionals: %w", err)
+		return nil, fmt.Errorf("series.loadAllSeriesForCleanup: %w", err)
 	}
 	return rows, nil
 }
