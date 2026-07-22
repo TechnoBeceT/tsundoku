@@ -218,21 +218,28 @@ func validateSetIgnoreFractional(req SetIgnoreFractionalRequest) error {
 	return nil
 }
 
-// FractionalCleanupRequest is the POST /api/series/{id}/fractional-cleanup request
-// body: the chapters the owner ticked in the cleanup dialog.
-type FractionalCleanupRequest struct {
+// ChapterIDsRequest is a {chapterIds: [uuid]} body — a SELECTION from a cleanup
+// preview, never an authorisation (the service re-computes the removable set).
+// Shared by the fractional and sourceless cleanup POSTs (§2 DRY).
+type ChapterIDsRequest struct {
 	// ChapterIDs are the Chapter UUIDs to remove. They are a SELECTION from the
 	// preview, never an authorisation: the service re-computes the removable set
 	// and rejects any id outside it.
 	ChapterIDs []string `json:"chapterIds"`
 }
 
-// validateFractionalCleanup validates the cleanup POST body: at least one chapter id
-// is required (an empty list is a no-op the client should not have sent, so it is a
-// 400 rather than a silent 0-removal) and each must parse as a UUID. Returns the
-// parsed ids ready for the service, or a 400 echo.HTTPError. Whether an id is
-// actually REMOVABLE is decided by the service — never here, and never by the client.
-func validateFractionalCleanup(req FractionalCleanupRequest) ([]uuid.UUID, error) {
+// FractionalCleanupRequest is the POST /api/series/{id}/fractional-cleanup request
+// body: the chapters the owner ticked in the cleanup dialog. It is a thin alias of
+// ChapterIDsRequest (§2 DRY) so existing fractional callers/tests are untouched.
+type FractionalCleanupRequest = ChapterIDsRequest
+
+// validateChapterIDs requires at least one chapter id (an empty list is a no-op
+// the client should not have sent, so it is a 400 rather than a silent
+// 0-removal) and parses each as a UUID. Returns the parsed ids ready for the
+// service, or a 400 echo.HTTPError. Whether an id is actually REMOVABLE is
+// decided by the service — never here, and never by the client. Shared by the
+// fractional and sourceless cleanup POSTs.
+func validateChapterIDs(req ChapterIDsRequest) ([]uuid.UUID, error) {
 	if len(req.ChapterIDs) == 0 {
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "chapterIds must have at least one entry")
 	}

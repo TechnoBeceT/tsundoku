@@ -113,6 +113,9 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/chapters/:id/progress", h.SetProgress)
 	authed.GET("/health", h.LibraryHealth)
 	authed.GET("/library/fractionals", h.LibraryFractionals)
+	authed.GET("/series/:id/sourceless-cleanup", h.SourcelessCleanupPreview)
+	authed.POST("/series/:id/sourceless-cleanup", h.RemoveSourcelessChapters)
+	authed.GET("/library/sourceless", h.LibrarySourceless)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -432,6 +435,9 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodPatch, "/api/series/" + id + "/ignore-fractional"},
 		{http.MethodGet, "/api/health"},
 		{http.MethodGet, "/api/library/fractionals"},
+		{http.MethodGet, "/api/series/" + id + "/sourceless-cleanup"},
+		{http.MethodPost, "/api/series/" + id + "/sourceless-cleanup"},
+		{http.MethodGet, "/api/library/sourceless"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {

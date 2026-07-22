@@ -22,16 +22,7 @@ type FractionalCleanupResult struct {
 // series' typical (median) whole-chapter page count as the yardstick. It DELETES
 // NOTHING. A missing series yields 404.
 func (h *Handler) FractionalCleanupPreview(c echo.Context) error {
-	id, err := validateID(c.Param("id"), "series id")
-	if err != nil {
-		return err
-	}
-
-	out, err := h.svc.FractionalCleanupPreview(c.Request().Context(), id)
-	if err != nil {
-		return mapServiceError(err)
-	}
-	return c.JSON(http.StatusOK, out)
+	return cleanupPreview(c, h.svc.FractionalCleanupPreview)
 }
 
 // RemoveFractionalChapters handles POST /api/series/:id/fractional-cleanup with a
@@ -44,23 +35,9 @@ func (h *Handler) FractionalCleanupPreview(c echo.Context) error {
 // is rejected with 400 and nothing is deleted. A missing series yields 404; an
 // empty or malformed chapterIds list yields 400.
 func (h *Handler) RemoveFractionalChapters(c echo.Context) error {
-	id, err := validateID(c.Param("id"), "series id")
+	removed, err := removeCleanupChapters(c, h.svc.RemoveFractionalChapters)
 	if err != nil {
 		return err
-	}
-
-	var req FractionalCleanupRequest
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-	}
-	chapterIDs, err := validateFractionalCleanup(req)
-	if err != nil {
-		return err
-	}
-
-	removed, err := h.svc.RemoveFractionalChapters(c.Request().Context(), id, chapterIDs)
-	if err != nil {
-		return mapServiceError(err)
 	}
 	return c.JSON(http.StatusOK, FractionalCleanupResult{Removed: removed})
 }

@@ -103,6 +103,9 @@ import (
 //   - /api/categories/:id (DELETE)                 — delete an empty category (RequireOwner).
 //   - /api/health                                  — library source-health scan (RequireOwner).
 //   - /api/library/fractionals                     — library-wide list of series with downloaded fractional chapters (RequireOwner).
+//   - /api/series/:id/sourceless-cleanup (GET)      — preview a series' removable sourceless chapters (RequireOwner).
+//   - /api/series/:id/sourceless-cleanup (POST)     — remove selected sourceless chapters (CBZ + row) (RequireOwner).
+//   - /api/library/sourceless                       — library-wide list of series with downloaded sourceless chapters (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
 //   - /api/sources/metrics (GET)                   — per-source performance metrics + isSlow (RequireOwner).
@@ -290,6 +293,9 @@ func registerRoutes(
 	authed.POST("/series/:id/reading-progress", seriesH.SetReadingProgress)
 	authed.GET("/health", seriesH.LibraryHealth)
 	authed.GET("/library/fractionals", seriesH.LibraryFractionals)
+	authed.GET("/series/:id/sourceless-cleanup", seriesH.SourcelessCleanupPreview)
+	authed.POST("/series/:id/sourceless-cleanup", seriesH.RemoveSourcelessChapters)
+	authed.GET("/library/sourceless", seriesH.LibrarySourceless)
 
 	// Phase-1 native metadata engine (spec/metadata-engine-phase1): cross-
 	// provider search, per-series identify, cover-candidate gallery, and cover
