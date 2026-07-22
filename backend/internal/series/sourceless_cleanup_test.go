@@ -125,3 +125,61 @@ func TestRemoveSourcelessChapters_RemovesRowAndRejectsCarried(t *testing.T) {
 		t.Error("carried chapter 10 was deleted, want kept")
 	}
 }
+
+// TestRemoveSourcelessChapters_NilNumberIsOfferedAndRemoved pins the bug fixed
+// alongside this test: deleteRemovableTargets' DELETE guard used to include
+// entchapter.NumberNotNil(), a predicate the fractional-cleanup rule can always
+// satisfy (isDownloadedFractional requires a non-nil fractional Number) but the
+// sourceless rule does NOT require (a sourceless chapter may lack a parsed
+// number — see SourcelessCleanupChapterDTO.Number's doc). A nil-number sourceless
+// chapter was therefore OFFERED by the preview but EXCLUDED by the DELETE, so
+// deleted != len(targets) and the whole call failed with ErrChapterNotRemovable,
+// deleting nothing. This chapter is created WITHOUT SetNumber (so Number is nil),
+// downloaded, filed, and carried by no provider — it must be both offered by the
+// preview and actually removed.
+func TestRemoveSourcelessChapters_NilNumberIsOfferedAndRemoved(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+
+	s := db.Series.Create().SetTitle("NilNumber").SetSlug("nil-number").SetMonitored(true).SaveX(ctx)
+	ch := db.Chapter.Create().
+		SetSeries(s).SetChapterKey("no-number").
+		SetState(entchapter.StateDownloaded).
+		SetFilename("[src] NilNumber no-number.cbz").
+		SaveX(ctx)
+	if ch.Number != nil {
+		t.Fatalf("seeded chapter has a Number, want nil: %v", *ch.Number)
+	}
+	writeFakeCBZ(t, storage, "", "NilNumber", "[src] NilNumber no-number.cbz")
+
+	svc := series.NewService(db, storage, 7)
+
+	preview, err := svc.SourcelessCleanupPreview(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	found := false
+	for _, c := range preview.Chapters {
+		if c.ChapterID == ch.ID.String() {
+			found = true
+			if c.Number != nil {
+				t.Errorf("previewed chapter Number = %v, want nil", *c.Number)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("nil-number sourceless chapter not offered by preview")
+	}
+
+	n, err := svc.RemoveSourcelessChapters(ctx, s.ID, []uuid.UUID{ch.ID})
+	if err != nil {
+		t.Fatalf("remove: %v, want the nil-number chapter to be removable", err)
+	}
+	if n != 1 {
+		t.Fatalf("removed = %d, want 1", n)
+	}
+	if exists, _ := db.Chapter.Query().Where(entchapter.ID(ch.ID)).Exist(ctx); exists {
+		t.Error("nil-number sourceless chapter row still present after removal")
+	}
+}

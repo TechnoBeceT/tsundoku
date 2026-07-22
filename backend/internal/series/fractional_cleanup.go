@@ -149,10 +149,14 @@ func (s *Service) FractionalCleanupPreview(ctx context.Context, id uuid.UUID) (F
 // already-deleted file is a no-op.
 //
 // TOCTOU: the removable set is recomputed from a load taken INSIDE the transaction and
-// the DELETE re-asserts the rule's row-level half (this series, still downloaded, still
-// has a filename, still numbered) as SQL predicates, so a concurrent change cannot slip
-// a now-protected chapter past the check. A mismatch between the selected and the
-// deleted count fails the whole call (ErrChapterNotRemovable) — nothing is deleted.
+// the DELETE re-asserts the rule's row-level half shared by every caller of
+// deleteRemovableTargets (this series, still downloaded, still has a filename) as SQL
+// predicates, so a concurrent change cannot slip a now-protected chapter past the
+// check. Number-ness is NOT one of those SQL predicates — see the comment on the
+// DELETE itself for why — but it is guaranteed at selection time here: every chapter
+// in this call's removable set passed isDownloadedFractional, which requires a
+// non-nil fractional Number. A mismatch between the selected and the deleted count
+// fails the whole call (ErrChapterNotRemovable) — nothing is deleted.
 func (s *Service) RemoveFractionalChapters(ctx context.Context, id uuid.UUID, chapterIDs []uuid.UUID) (int, error) {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
@@ -206,15 +210,26 @@ func (s *Service) deleteRemovableTargets(ctx context.Context, tx *ent.Tx, id uui
 
 	// Belt and braces: the in-tx snapshot makes the decision correct, these predicates
 	// make the DELETE itself un-bypassable — it can only ever touch a downloaded,
-	// filed, numbered chapter OF THIS SERIES, whatever the caller sent. (The rule's
-	// remaining halves — fractional-ness and "every carrier ignored" — are not
-	// expressible as Ent predicates; they are enforced by removableFractionals above.)
+	// filed chapter OF THIS SERIES, whatever the caller sent. This is shared by TWO
+	// callers (RemoveFractionalChapters and RemoveSourcelessChapters) so the guard
+	// only asserts what BOTH rules require. Number-ness is NOT asserted here on
+	// purpose: for the fractional rule it is a decision-layer guarantee
+	// (isDownloadedFractional requires ch.Number != nil before a chapter ever reaches
+	// this set), so re-asserting it in SQL would be redundant, not protective — but
+	// for the sourceless rule a target may legitimately have a nil Number (a
+	// sourceless chapter can lack a parsed number, see SourcelessCleanupChapterDTO),
+	// so an entchapter.NumberNotNil() predicate here would wrongly exclude it from the
+	// DELETE, making deleted != len(targets) and failing the WHOLE call with
+	// ErrChapterNotRemovable even though the preview just offered it. Do not
+	// reintroduce it. (The remaining rule halves — fractional-ness and "every carrier
+	// ignored" for the fractional path, "zero carriers" for the sourceless path — are
+	// not expressible as Ent predicates either way; they are enforced by
+	// removableFractionals / removableSourceless above.)
 	deleted, err := tx.Chapter.Delete().Where(
 		entchapter.IDIn(ids...),
 		entchapter.SeriesID(id),
 		entchapter.StateEQ(entchapter.StateDownloaded),
 		entchapter.FilenameNEQ(""),
-		entchapter.NumberNotNil(),
 	).Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("series: delete removable fractional chapters of series %s: %w", id, err)
