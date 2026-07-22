@@ -1150,6 +1150,63 @@ components:
             source feed rows are kept, so un-ticking the ignore-fractional toggle
             restores them.
 
+    SourcelessCleanupChapter:
+      type: object
+      required:
+        - chapterId
+        - number
+        - pageCount
+        - provider
+        - filename
+      properties:
+        chapterId:
+          type: string
+          format: uuid
+          description: Chapter UUID — the id the cleanup POST names.
+        number:
+          type: number
+          format: double
+          nullable: true
+          description: The chapter number, or null when a sourceless chapter lacks a parsed number.
+        pageCount:
+          type: integer
+          nullable: true
+          description: How many pages the downloaded file has, or null when never recorded.
+        provider:
+          type: string
+          description: >-
+            Display label of the former satisfying source; "" once that source is
+            gone, which is the normal case for a sourceless chapter.
+        filename:
+          type: string
+          description: The CBZ filename that will be deleted.
+
+    SourcelessCleanupPreview:
+      type: object
+      description: |
+        The series' removable sourceless chapters: every DOWNLOADED chapter whose
+        chapter_key NO remaining source carries — the CBZs stranded when every
+        source that supplied them was removed. This endpoint deletes nothing.
+      required: [chapters]
+      properties:
+        chapters:
+          type: array
+          description: The removable sourceless chapters; empty when there is nothing to clean.
+          items:
+            $ref: "#/components/schemas/SourcelessCleanupChapter"
+
+    SourcelessCleanupResult:
+      type: object
+      required:
+        - removed
+      properties:
+        removed:
+          type: integer
+          description: >-
+            Number of sourceless chapters removed (CBZ file + Chapter row). There
+            are no source feed rows to keep — a sourceless chapter has no carrier
+            by definition.
+
     Source:
       type: object
       required:
@@ -1637,6 +1694,49 @@ components:
         allProvidersIgnoring:
           type: boolean
           description: True when every source ignores fractionals (the toggle's ON state).
+
+    LibrarySourceless:
+      type: object
+      description: |
+        The library-wide Sourceless page: every series that has at least one
+        DOWNLOADED chapter no remaining source carries, sorted most-actionable
+        first (sourcelessCount desc, then title).
+      required: [series]
+      properties:
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeriesSourcelessRow"
+
+    SeriesSourcelessRow:
+      type: object
+      description: |
+        One series with downloaded sourceless chapters — CBZs left behind when
+        every source that once supplied them was removed.
+      required:
+        - seriesId
+        - title
+        - displayName
+        - category
+        - coverUrl
+        - sourcelessCount
+      properties:
+        seriesId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        displayName:
+          type: string
+          description: Resolved display title (falls back to the canonical title).
+        category:
+          type: string
+        coverUrl:
+          type: string
+          description: Series cover proxy path, or "" when no cover is available.
+        sourcelessCount:
+          type: integer
+          description: How many downloaded sourceless chapters this series has.
 
     EngineTopologyStatus:
       type: object
@@ -4935,6 +5035,117 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/series/{id}/sourceless-cleanup:
+    get:
+      operationId: previewSourcelessCleanup
+      summary: Preview the series' removable sourceless chapters
+      description: |
+        Lists the series' REMOVABLE sourceless chapters — every DOWNLOADED chapter
+        (filename != "") whose chapter_key NO remaining source's feed carries. These
+        are CBZs stranded when a source that once supplied them was removed
+        (removing a source keeps its downloaded chapters by the keep-CBZs
+        invariant, so they persist with no source that could ever re-supply them).
+
+        This is the exact inverse of the fractional-cleanup rule, which by design
+        refuses zero-carrier chapters: a sourceless chapter is irreplaceable by any
+        current source, and this endpoint exists precisely to let the owner remove
+        it deliberately. This endpoint deletes nothing.
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The removable sourceless chapters (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourcelessCleanupPreview"
+        "400":
+          description: Malformed series id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: removeSourcelessChapters
+      summary: Remove the selected sourceless chapters (files + rows)
+      description: |
+        Owner-triggered removal of the sourceless chapters selected in the cleanup
+        dialog: each chapter's CBZ file and its Chapter row are deleted. There are
+        no source feed rows to keep — a sourceless chapter has no carrier by
+        definition, so the removal is permanent.
+
+        The removable set is RE-COMPUTED server-side: any chapterId outside it (a
+        chapter a live source still carries, a chapter of another series) is
+        rejected with 400 and NOTHING is deleted (all-or-nothing). Nothing
+        automatic ever calls this endpoint.
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Series UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FractionalCleanupRequest"
+      responses:
+        "200":
+          description: Removal complete. Returns the number of chapters removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourcelessCleanupResult"
+        "400":
+          description: >-
+            Malformed series id or body, an empty chapterIds list, or a chapter that
+            is not in the server-recomputed removable set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/series/{id}/providers/{providerId}:
     delete:
       operationId: removeSeriesProvider
@@ -6355,6 +6566,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LibraryFractionals"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/library/sourceless:
+    get:
+      operationId: getLibrarySourceless
+      summary: Library-wide list of series with downloaded sourceless chapters
+      description: |
+        Returns every series that has at least one DOWNLOADED chapter no remaining
+        source carries, so the owner can clean stranded CBZs from one place. Sorted
+        most-actionable first (sourcelessCount desc, then title). It deletes
+        nothing.
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The series with downloaded sourceless chapters (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibrarySourceless"
         "401":
           description: Missing or invalid Bearer token.
           content:

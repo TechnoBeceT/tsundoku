@@ -508,6 +508,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/sourceless-cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview the series' removable sourceless chapters
+         * @description Lists the series' REMOVABLE sourceless chapters — every DOWNLOADED chapter
+         *     (filename != "") whose chapter_key NO remaining source's feed carries. These
+         *     are CBZs stranded when a source that once supplied them was removed
+         *     (removing a source keeps its downloaded chapters by the keep-CBZs
+         *     invariant, so they persist with no source that could ever re-supply them).
+         *
+         *     This is the exact inverse of the fractional-cleanup rule, which by design
+         *     refuses zero-carrier chapters: a sourceless chapter is irreplaceable by any
+         *     current source, and this endpoint exists precisely to let the owner remove
+         *     it deliberately. This endpoint deletes nothing.
+         */
+        get: operations["previewSourcelessCleanup"];
+        put?: never;
+        /**
+         * Remove the selected sourceless chapters (files + rows)
+         * @description Owner-triggered removal of the sourceless chapters selected in the cleanup
+         *     dialog: each chapter's CBZ file and its Chapter row are deleted. There are
+         *     no source feed rows to keep — a sourceless chapter has no carrier by
+         *     definition, so the removal is permanent.
+         *
+         *     The removable set is RE-COMPUTED server-side: any chapterId outside it (a
+         *     chapter a live source still carries, a chapter of another series) is
+         *     rejected with 400 and NOTHING is deleted (all-or-nothing). Nothing
+         *     automatic ever calls this endpoint.
+         */
+        post: operations["removeSourcelessChapters"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}": {
         parameters: {
             query?: never;
@@ -1129,6 +1170,29 @@ export interface paths {
          *     title). It deletes nothing.
          */
         get: operations["getLibraryFractionals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/sourceless": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library-wide list of series with downloaded sourceless chapters
+         * @description Returns every series that has at least one DOWNLOADED chapter no remaining
+         *     source carries, so the owner can clean stranded CBZs from one place. Sorted
+         *     most-actionable first (sourcelessCount desc, then title). It deletes
+         *     nothing.
+         */
+        get: operations["getLibrarySourceless"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3079,6 +3143,37 @@ export interface components {
             /** @description Number of fractional chapters removed (CBZ file + Chapter row). The source feed rows are kept, so un-ticking the ignore-fractional toggle restores them. */
             removed: number;
         };
+        SourcelessCleanupChapter: {
+            /**
+             * Format: uuid
+             * @description Chapter UUID — the id the cleanup POST names.
+             */
+            chapterId: string;
+            /**
+             * Format: double
+             * @description The chapter number, or null when a sourceless chapter lacks a parsed number.
+             */
+            number: number | null;
+            /** @description How many pages the downloaded file has, or null when never recorded. */
+            pageCount: number | null;
+            /** @description Display label of the former satisfying source; "" once that source is gone, which is the normal case for a sourceless chapter. */
+            provider: string;
+            /** @description The CBZ filename that will be deleted. */
+            filename: string;
+        };
+        /**
+         * @description The series' removable sourceless chapters: every DOWNLOADED chapter whose
+         *     chapter_key NO remaining source carries — the CBZs stranded when every
+         *     source that supplied them was removed. This endpoint deletes nothing.
+         */
+        SourcelessCleanupPreview: {
+            /** @description The removable sourceless chapters; empty when there is nothing to clean. */
+            chapters: components["schemas"]["SourcelessCleanupChapter"][];
+        };
+        SourcelessCleanupResult: {
+            /** @description Number of sourceless chapters removed (CBZ file + Chapter row). There are no source feed rows to keep — a sourceless chapter has no carrier by definition. */
+            removed: number;
+        };
         Source: {
             /**
              * @description Suwayomi source identifier (64-bit integer serialised as string).
@@ -3338,6 +3433,30 @@ export interface components {
             providersIgnoring: number;
             /** @description True when every source ignores fractionals (the toggle's ON state). */
             allProvidersIgnoring: boolean;
+        };
+        /**
+         * @description The library-wide Sourceless page: every series that has at least one
+         *     DOWNLOADED chapter no remaining source carries, sorted most-actionable
+         *     first (sourcelessCount desc, then title).
+         */
+        LibrarySourceless: {
+            series: components["schemas"]["SeriesSourcelessRow"][];
+        };
+        /**
+         * @description One series with downloaded sourceless chapters — CBZs left behind when
+         *     every source that once supplied them was removed.
+         */
+        SeriesSourcelessRow: {
+            /** Format: uuid */
+            seriesId: string;
+            title: string;
+            /** @description Resolved display title (falls back to the canonical title). */
+            displayName: string;
+            category: string;
+            /** @description Series cover proxy path, or "" when no cover is available. */
+            coverUrl: string;
+            /** @description How many downloaded sourceless chapters this series has. */
+            sourcelessCount: number;
         };
         /**
          * @description Read-only snapshot of how much engine topology Tsundoku has captured into
@@ -5896,6 +6015,110 @@ export interface operations {
             };
         };
     };
+    previewSourcelessCleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The removable sourceless chapters (possibly empty). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcelessCleanupPreview"];
+                };
+            };
+            /** @description Malformed series id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    removeSourcelessChapters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FractionalCleanupRequest"];
+            };
+        };
+        responses: {
+            /** @description Removal complete. Returns the number of chapters removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcelessCleanupResult"];
+                };
+            };
+            /** @description Malformed series id or body, an empty chapterIds list, or a chapter that is not in the server-recomputed removable set. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No series with the given id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     removeSeriesProvider: {
         parameters: {
             query?: never;
@@ -7231,6 +7454,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryFractionals"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getLibrarySourceless: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The series with downloaded sourceless chapters (possibly empty). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySourceless"];
                 };
             };
             /** @description Missing or invalid Bearer token. */
