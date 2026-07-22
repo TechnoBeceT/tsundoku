@@ -338,6 +338,14 @@ func removableFractionals(row *ent.Series) []*ent.Chapter {
 	return out
 }
 
+// hasDownloadedFile reports whether a chapter has a real CBZ on disk: it is in the
+// downloaded state AND carries a filename. The ONE definition of "there is a file
+// here" shared by every cleanup rule (fractional and sourceless) so they can never
+// drift on what a deletable, on-disk chapter is (§2 DRY).
+func hasDownloadedFile(ch *ent.Chapter) bool {
+	return ch.State == entchapter.StateDownloaded && ch.Filename != ""
+}
+
 // isDownloadedFractional reports whether a chapter is a DOWNLOADED fractional
 // with a file on disk — the IGNORE-AGNOSTIC predicate ("is there a fractional CBZ
 // here at all"). It is the first half of the removable rule, extracted so the two
@@ -345,7 +353,7 @@ func removableFractionals(row *ent.Series) []*ent.Chapter {
 // set) and downloadedFractionalCount (the library-wide list tally) — can never
 // drift on what "a downloaded fractional" means (§2 DRY).
 func isDownloadedFractional(ch *ent.Chapter) bool {
-	if ch.State != entchapter.StateDownloaded || ch.Filename == "" {
+	if !hasDownloadedFile(ch) {
 		return false
 	}
 	return ch.Number != nil && chapterrange.IsFractional(*ch.Number)
