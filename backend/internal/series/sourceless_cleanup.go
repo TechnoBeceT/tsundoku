@@ -34,10 +34,11 @@ type SourcelessCleanupDTO struct {
 // removed (RemoveProvider keeps downloaded chapters by the keep-CBZs invariant, so
 // they persist with no source that could ever re-supply them). It DELETES NOTHING.
 //
-// This is the exact INVERSE of the fractional-cleanup rule, which by design REFUSES
-// zero-carrier chapters (fractional_cleanup.go isRemovableFractional): a sourceless
-// chapter is irreplaceable by any current source, and this endpoint exists precisely
-// to let the owner remove it deliberately. An unknown id yields ErrSeriesNotFound.
+// This is the exact INVERSE of the fractional-cleanup rule (RemoveFractionalChapters,
+// SANCTIONED OWNER DELETION PATH #5), which by design REFUSES zero-carrier chapters
+// (fractional_cleanup.go isRemovableFractional): a sourceless chapter is irreplaceable
+// by any current source, and this endpoint exists precisely to let the owner remove it
+// deliberately. An unknown id yields ErrSeriesNotFound.
 func (s *Service) SourcelessCleanupPreview(ctx context.Context, id uuid.UUID) (SourcelessCleanupDTO, error) {
 	row, err := loadSeriesForCleanup(ctx, s.client, id)
 	if err != nil {

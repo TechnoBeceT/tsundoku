@@ -121,7 +121,9 @@ func (s *Service) FractionalCleanupPreview(ctx context.Context, id uuid.UUID) (F
 // 🔴 SANCTIONED OWNER DELETION PATH #5. It is owner-triggered, per-chapter, and
 // confirmed in a dialog. NOTHING AUTOMATIC MAY EVER CALL IT — no sweep, no job, no
 // side effect of the ignore_fractional toggle (flipping that toggle still deletes
-// nothing). The never-auto-delete invariant is intact.
+// nothing). The never-auto-delete invariant is intact. See RemoveSourcelessChapters
+// (PATH #6, sourceless_cleanup.go) for the exact-inverse zero-carrier case this rule
+// deliberately refuses.
 //
 // The removable set is RE-COMPUTED SERVER-SIDE (see FractionalCleanupPreview) and
 // any id outside it — a whole chapter, a fractional a live source still carries, a

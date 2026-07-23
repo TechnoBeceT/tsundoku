@@ -2,6 +2,15 @@
 // series that M2's ingest populates, with per-series chapter-state rollups.
 // The ent predicate package internal/ent/series collides with this package name
 // and must be imported aliased (entseries) wherever both are needed.
+//
+// It also owns the two structural chapter-cleanup previews, each a strict
+// server-recomputed removable set with no automatic caller: FractionalCleanupPreview
+// / RemoveFractionalChapters removes already-downloaded fractional CBZs once every
+// carrying source ignores fractionals (fractional_cleanup.go), and
+// SourcelessCleanupPreview / RemoveSourcelessChapters / LibrarySourceless removes
+// downloaded chapters no remaining source feed carries at all (sourceless_cleanup.go,
+// library_sourceless.go) — its exact inverse. Both reuse the same rollback-safe
+// delete-then-file-then-commit machinery (deleteRemovableTargets).
 package series
 
 import (
